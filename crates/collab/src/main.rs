@@ -1,4 +1,4 @@
-use anyhow::{Context as _, anyhow};
+use anyhow::anyhow;
 use axum::headers::HeaderMapExt;
 use axum::{
     Extension, Router,
@@ -7,19 +7,16 @@ use axum::{
     routing::get,
 };
 
-use collab::ServiceMode;
 use collab::api::CloudflareIpCountryHeader;
-use collab::llm::db::LlmDatabase;
-use collab::migrations::run_database_migrations;
 use collab::{
     AppState, Config, Result, api::fetch_extensions_from_blob_store_periodically, db, env,
     executor::Executor,
 };
+use collab::{REVISION, ServiceMode, VERSION};
 use db::Database;
 use std::{
     env::args,
     net::{SocketAddr, TcpListener},
-    path::Path,
     sync::Arc,
     time::Duration,
 };
@@ -30,9 +27,6 @@ use tracing_subscriber::{
     Layer, filter::EnvFilter, fmt::format::JsonFields, util::SubscriberInitExt,
 };
 use util::ResultExt as _;
-
-const VERSION: &str = env!("CARGO_PKG_VERSION");
-const REVISION: Option<&'static str> = option_env!("GITHUB_SHA");
 
 #[expect(clippy::result_large_err)]
 #[tokio::main]
@@ -48,10 +42,6 @@ async fn main() -> Result<()> {
     match args.next().as_deref() {
         Some("version") => {
             println!("collab v{} ({})", VERSION, REVISION.unwrap_or("unknown"));
-        }
-        Some("migrate") => {
-            let config = envy::from_env::<Config>().expect("error loading config");
-            setup_app_database(&config).await?;
         }
         Some("seed") => {
             let config = envy::from_env::<Config>().expect("error loading config");
@@ -69,7 +59,7 @@ async fn main() -> Result<()> {
                 Some("all") => ServiceMode::All,
                 _ => {
                     return Err(anyhow!(
-                        "usage: collab <version | migrate | seed | serve <api|collab|all>>"
+                        "usage: collab <version | seed | serve <api|collab|all>>"
                     ))?;
                 }
             };
@@ -90,7 +80,6 @@ async fn main() -> Result<()> {
 
             if mode.is_collab() || mode.is_api() {
                 setup_app_database(&config).await?;
-                setup_llm_database(&config).await?;
 
                 let state = AppState::new(config, Executor::Production).await?;
 
@@ -102,9 +91,7 @@ async fn main() -> Result<()> {
                     let rpc_server = collab::rpc::Server::new(epoch, state.clone());
                     rpc_server.start().await?;
 
-                    app = app
-                        .merge(collab::api::routes(rpc_server.clone()))
-                        .merge(collab::rpc::routes(rpc_server.clone()));
+                    app = app.merge(collab::rpc::routes(rpc_server.clone()));
 
                     on_shutdown = Some(Box::new(move || rpc_server.teardown()));
                 }
@@ -211,60 +198,10 @@ async fn setup_app_database(config: &Config) -> Result<()> {
     let db_options = db::ConnectOptions::new(config.database_url.clone());
     let mut db = Database::new(db_options).await?;
 
-    let migrations_path = config.migrations_path.as_deref().unwrap_or_else(|| {
-        #[cfg(feature = "sqlite")]
-        let default_migrations = concat!(env!("CARGO_MANIFEST_DIR"), "/migrations.sqlite");
-        #[cfg(not(feature = "sqlite"))]
-        let default_migrations = concat!(env!("CARGO_MANIFEST_DIR"), "/migrations");
-
-        Path::new(default_migrations)
-    });
-
-    let migrations = run_database_migrations(db.options(), migrations_path).await?;
-    for (migration, duration) in migrations {
-        log::info!(
-            "Migrated {} {} {:?}",
-            migration.version,
-            migration.description,
-            duration
-        );
-    }
-
     db.initialize_notification_kinds().await?;
 
     if config.seed_path.is_some() {
         collab::seed::seed(config, &db, false).await?;
-    }
-
-    Ok(())
-}
-
-async fn setup_llm_database(config: &Config) -> Result<()> {
-    let database_url = config
-        .llm_database_url
-        .as_ref()
-        .context("missing LLM_DATABASE_URL")?;
-
-    let db_options = db::ConnectOptions::new(database_url.clone());
-    let db = LlmDatabase::new(db_options, Executor::Production).await?;
-
-    let migrations_path = config
-        .llm_database_migrations_path
-        .as_deref()
-        .unwrap_or_else(|| {
-            let default_migrations = concat!(env!("CARGO_MANIFEST_DIR"), "/migrations_llm");
-
-            Path::new(default_migrations)
-        });
-
-    let migrations = run_database_migrations(db.options(), migrations_path).await?;
-    for (migration, duration) in migrations {
-        log::info!(
-            "Migrated {} {} {:?}",
-            migration.version,
-            migration.description,
-            duration
-        );
     }
 
     Ok(())

@@ -44,15 +44,16 @@ pub enum ToggleStyle {
 pub struct Checkbox {
     id: ElementId,
     toggle_state: ToggleState,
+    style: ToggleStyle,
     disabled: bool,
     placeholder: bool,
-    on_click: Option<Box<dyn Fn(&ToggleState, &ClickEvent, &mut Window, &mut App) + 'static>>,
     filled: bool,
-    style: ToggleStyle,
-    tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView>>,
+    visualization: bool,
     label: Option<SharedString>,
     label_size: LabelSize,
     label_color: Color,
+    tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView>>,
+    on_click: Option<Box<dyn Fn(&ToggleState, &ClickEvent, &mut Window, &mut App) + 'static>>,
 }
 
 impl Checkbox {
@@ -61,15 +62,16 @@ impl Checkbox {
         Self {
             id: id.into(),
             toggle_state: checked,
-            disabled: false,
-            on_click: None,
-            filled: false,
             style: ToggleStyle::default(),
-            tooltip: None,
+            disabled: false,
+            placeholder: false,
+            filled: false,
+            visualization: false,
             label: None,
             label_size: LabelSize::Default,
             label_color: Color::Muted,
-            placeholder: false,
+            tooltip: None,
+            on_click: None,
         }
     }
 
@@ -107,6 +109,13 @@ impl Checkbox {
     /// Sets the `fill` setting of the checkbox, indicating whether it should be filled.
     pub fn fill(mut self) -> Self {
         self.filled = true;
+        self
+    }
+
+    /// Makes the checkbox look enabled but without pointer cursor and hover styles.
+    /// Primarily used for uninteractive markdown previews.
+    pub fn visualization_only(mut self, visualization: bool) -> Self {
+        self.visualization = visualization;
         self
     }
 
@@ -209,11 +218,10 @@ impl RenderOnce for Checkbox {
         let size = Self::container_size();
 
         let checkbox = h_flex()
-            .id(self.id.clone())
-            .justify_center()
-            .items_center()
-            .size(size)
             .group(group_id.clone())
+            .id(self.id.clone())
+            .size(size)
+            .justify_center()
             .child(
                 div()
                     .flex()
@@ -230,7 +238,7 @@ impl RenderOnce for Checkbox {
                     .when(self.disabled, |this| {
                         this.bg(cx.theme().colors().element_disabled.opacity(0.6))
                     })
-                    .when(!self.disabled, |this| {
+                    .when(!self.disabled && !self.visualization, |this| {
                         this.group_hover(group_id.clone(), |el| el.border_color(hover_border_color))
                     })
                     .when(self.placeholder, |this| {
@@ -250,20 +258,14 @@ impl RenderOnce for Checkbox {
             .map(|this| {
                 if self.disabled {
                     this.cursor_not_allowed()
+                } else if self.visualization {
+                    this.cursor_default()
                 } else {
                     this.cursor_pointer()
                 }
             })
             .gap(DynamicSpacing::Base06.rems(cx))
             .child(checkbox)
-            .when_some(
-                self.on_click.filter(|_| !self.disabled),
-                |this, on_click| {
-                    this.on_click(move |click, window, cx| {
-                        on_click(&self.toggle_state.inverse(), click, window, cx)
-                    })
-                },
-            )
             .when_some(self.label, |this, label| {
                 this.child(
                     Label::new(label)
@@ -274,6 +276,14 @@ impl RenderOnce for Checkbox {
             .when_some(self.tooltip, |this, tooltip| {
                 this.tooltip(move |window, cx| tooltip(window, cx))
             })
+            .when_some(
+                self.on_click.filter(|_| !self.disabled),
+                |this, on_click| {
+                    this.on_click(move |click, window, cx| {
+                        on_click(&self.toggle_state.inverse(), click, window, cx)
+                    })
+                },
+            )
     }
 }
 
@@ -281,11 +291,7 @@ impl RenderOnce for Checkbox {
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
 pub enum SwitchColor {
     #[default]
-    Default,
     Accent,
-    Error,
-    Warning,
-    Success,
     Custom(Hsla),
 }
 
@@ -299,27 +305,10 @@ impl SwitchColor {
         }
 
         match self {
-            SwitchColor::Default => {
-                let colors = cx.theme().colors();
-                let base_color = colors.text;
-                let bg_color = colors.element_background.blend(base_color.opacity(0.08));
-                (bg_color, colors.border_variant)
-            }
             SwitchColor::Accent => {
                 let status = cx.theme().status();
-                (status.info.opacity(0.4), status.info.opacity(0.2))
-            }
-            SwitchColor::Error => {
-                let status = cx.theme().status();
-                (status.error.opacity(0.4), status.error.opacity(0.2))
-            }
-            SwitchColor::Warning => {
-                let status = cx.theme().status();
-                (status.warning.opacity(0.4), status.warning.opacity(0.2))
-            }
-            SwitchColor::Success => {
-                let status = cx.theme().status();
-                (status.success.opacity(0.4), status.success.opacity(0.2))
+                let colors = cx.theme().colors();
+                (status.info.opacity(0.4), colors.text_accent.opacity(0.2))
             }
             SwitchColor::Custom(color) => (*color, color.opacity(0.6)),
         }
@@ -329,11 +318,7 @@ impl SwitchColor {
 impl From<SwitchColor> for Color {
     fn from(color: SwitchColor) -> Self {
         match color {
-            SwitchColor::Default => Color::Default,
             SwitchColor::Accent => Color::Accent,
-            SwitchColor::Error => Color::Error,
-            SwitchColor::Warning => Color::Warning,
-            SwitchColor::Success => Color::Success,
             SwitchColor::Custom(_) => Color::Default,
         }
     }
@@ -939,6 +924,15 @@ impl Component for Checkbox {
                                 .into_any_element(),
                         )],
                     ),
+                    example_group_with_title(
+                        "Extra",
+                        vec![single_example(
+                            "Visualization-Only",
+                            Checkbox::new("viz_only", ToggleState::Selected)
+                                .visualization_only(true)
+                                .into_any_element(),
+                        )],
+                    ),
                 ])
                 .into_any_element(),
         )
@@ -980,37 +974,8 @@ impl Component for Switch {
                         "Colors",
                         vec![
                             single_example(
-                                "Default",
-                                Switch::new("switch_default_style", ToggleState::Selected)
-                                    .color(SwitchColor::Default)
-                                    .on_click(|_, _, _cx| {})
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Accent",
+                                "Accent (Default)",
                                 Switch::new("switch_accent_style", ToggleState::Selected)
-                                    .color(SwitchColor::Accent)
-                                    .on_click(|_, _, _cx| {})
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Error",
-                                Switch::new("switch_error_style", ToggleState::Selected)
-                                    .color(SwitchColor::Error)
-                                    .on_click(|_, _, _cx| {})
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Warning",
-                                Switch::new("switch_warning_style", ToggleState::Selected)
-                                    .color(SwitchColor::Warning)
-                                    .on_click(|_, _, _cx| {})
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Success",
-                                Switch::new("switch_success_style", ToggleState::Selected)
-                                    .color(SwitchColor::Success)
                                     .on_click(|_, _, _cx| {})
                                     .into_any_element(),
                             ),

@@ -2,7 +2,7 @@ use collab_ui::collab_panel;
 use gpui::{App, Menu, MenuItem, OsAction};
 use release_channel::ReleaseChannel;
 use terminal_view::terminal_panel;
-use zed_actions::{ToggleFocus as ToggleDebugPanel, dev};
+use zed_actions::{debug_panel, dev};
 
 pub fn app_menus(cx: &mut App) -> Vec<Menu> {
     use zed_actions::Quit;
@@ -29,18 +29,21 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
         MenuItem::action("Toggle Right Dock", workspace::ToggleRightDock),
         MenuItem::action("Toggle Bottom Dock", workspace::ToggleBottomDock),
         MenuItem::action("Toggle All Docks", workspace::ToggleAllDocks),
-        MenuItem::submenu(Menu::new("Editor Layout").items([
-            MenuItem::action("Split Up", workspace::SplitUp),
-            MenuItem::action("Split Down", workspace::SplitDown),
-            MenuItem::action("Split Left", workspace::SplitLeft),
-            MenuItem::action("Split Right", workspace::SplitRight),
-        ])),
+        MenuItem::submenu(Menu {
+            name: "Editor Layout".into(),
+            items: vec![
+                MenuItem::action("Split Up", workspace::SplitUp::default()),
+                MenuItem::action("Split Down", workspace::SplitDown::default()),
+                MenuItem::action("Split Left", workspace::SplitLeft::default()),
+                MenuItem::action("Split Right", workspace::SplitRight::default()),
+            ],
+        }),
         MenuItem::separator(),
         MenuItem::action("Project Panel", zed_actions::project_panel::ToggleFocus),
         MenuItem::action("Outline Panel", outline_panel::ToggleFocus),
         MenuItem::action("Collab Panel", collab_panel::ToggleFocus),
         MenuItem::action("Terminal Panel", terminal_panel::ToggleFocus),
-        MenuItem::action("Debugger Panel", ToggleDebugPanel),
+        MenuItem::action("Debugger Panel", debug_panel::ToggleFocus),
         MenuItem::separator(),
         MenuItem::action("Diagnostics", diagnostics::Deploy),
         MenuItem::separator(),
@@ -115,7 +118,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                     } else {
                         "Open…"
                     },
-                    workspace::Open,
+                    workspace::Open::default(),
                 ),
                 MenuItem::action(
                     "Open Recent...",
@@ -144,6 +147,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                         close_pinned: true,
                     },
                 ),
+                MenuItem::action("Close Project", workspace::CloseProject),
                 MenuItem::action("Close Window", workspace::CloseWindow),
             ],
         },
@@ -160,7 +164,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                 MenuItem::os_action("Paste", editor::actions::Paste, OsAction::Paste),
                 MenuItem::separator(),
                 MenuItem::action("Find", search::buffer_search::Deploy::find()),
-                MenuItem::action("Find In Project", workspace::DeploySearch::find()),
+                MenuItem::action("Find in Project", workspace::DeploySearch::find()),
                 MenuItem::separator(),
                 MenuItem::action(
                     "Toggle Line Comment",
@@ -241,7 +245,10 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                 MenuItem::action("Go to Definition", editor::actions::GoToDefinition),
                 MenuItem::action("Go to Declaration", editor::actions::GoToDeclaration),
                 MenuItem::action("Go to Type Definition", editor::actions::GoToTypeDefinition),
-                MenuItem::action("Find All References", editor::actions::FindAllReferences),
+                MenuItem::action(
+                    "Find All References",
+                    editor::actions::FindAllReferences::default(),
+                ),
                 MenuItem::separator(),
                 MenuItem::action("Next Problem", editor::actions::GoToDiagnostic::default()),
                 MenuItem::action(
@@ -272,7 +279,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                 MenuItem::separator(),
                 MenuItem::action("Toggle Breakpoint", editor::actions::ToggleBreakpoint),
                 MenuItem::action("Edit Breakpoint", editor::actions::EditLogBreakpoint),
-                MenuItem::action("Clear all Breakpoints", debugger_ui::ClearAllBreakpoints),
+                MenuItem::action("Clear All Breakpoints", debugger_ui::ClearAllBreakpoints),
             ],
         },
         Menu {

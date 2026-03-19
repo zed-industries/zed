@@ -13,6 +13,8 @@ interface github {
         name: string,
         /// The download URL for the asset.
         download-url: string,
+        /// The SHA-256 of the release asset if provided by the GitHub API.
+        digest: option<string>,
     }
 
     /// The options used to filter down GitHub releases.

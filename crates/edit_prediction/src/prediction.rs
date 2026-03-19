@@ -1,14 +1,10 @@
-use std::{
-    ops::Range,
-    path::Path,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{ops::Range, sync::Arc};
 
 use cloud_llm_client::EditPredictionRejectReason;
+use edit_prediction_types::{PredictedCursorPosition, interpolate_edits};
 use gpui::{AsyncApp, Entity, SharedString};
-use language::{Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, TextBufferSnapshot};
-use serde::Serialize;
+use language::{Anchor, Buffer, BufferSnapshot, EditPreview, TextBufferSnapshot};
+use zeta_prompt::ZetaPromptInput;
 
 #[derive(Clone, Default, Debug, PartialEq, Eq, Hash)]
 pub struct EditPredictionId(pub SharedString);
@@ -29,6 +25,7 @@ impl std::fmt::Display for EditPredictionId {
 pub struct EditPredictionResult {
     pub id: EditPredictionId,
     pub prediction: Result<EditPrediction, EditPredictionRejectReason>,
+    pub e2e_latency: std::time::Duration,
 }
 
 impl EditPredictionResult {
@@ -37,31 +34,32 @@ impl EditPredictionResult {
         edited_buffer: &Entity<Buffer>,
         edited_buffer_snapshot: &BufferSnapshot,
         edits: Arc<[(Range<Anchor>, Arc<str>)]>,
-        buffer_snapshotted_at: Instant,
-        response_received_at: Instant,
-        inputs: EditPredictionInputs,
+        cursor_position: Option<PredictedCursorPosition>,
+        inputs: ZetaPromptInput,
+        model_version: Option<String>,
+        e2e_latency: std::time::Duration,
         cx: &mut AsyncApp,
     ) -> Self {
         if edits.is_empty() {
             return Self {
                 id,
+                e2e_latency,
                 prediction: Err(EditPredictionRejectReason::Empty),
             };
         }
 
-        let Some((edits, snapshot, edit_preview_task)) = edited_buffer
-            .read_with(cx, |buffer, cx| {
+        let Some((edits, snapshot, edit_preview_task)) =
+            edited_buffer.read_with(cx, |buffer, cx| {
                 let new_snapshot = buffer.snapshot();
                 let edits: Arc<[_]> =
-                    interpolate_edits(&edited_buffer_snapshot, &new_snapshot, edits)?.into();
+                    interpolate_edits(&edited_buffer_snapshot, &new_snapshot, &edits)?.into();
 
                 Some((edits.clone(), new_snapshot, buffer.preview_edits(edits, cx)))
             })
-            .ok()
-            .flatten()
         else {
             return Self {
                 id,
+                e2e_latency,
                 prediction: Err(EditPredictionRejectReason::InterpolatedEmpty),
             };
         };
@@ -70,15 +68,16 @@ impl EditPredictionResult {
 
         Self {
             id: id.clone(),
+            e2e_latency,
             prediction: Ok(EditPrediction {
                 id,
                 edits,
+                cursor_position,
                 snapshot,
                 edit_preview,
                 inputs,
                 buffer: edited_buffer.clone(),
-                buffer_snapshotted_at,
-                response_received_at,
+                model_version,
             }),
         }
     }
@@ -88,20 +87,12 @@ impl EditPredictionResult {
 pub struct EditPrediction {
     pub id: EditPredictionId,
     pub edits: Arc<[(Range<Anchor>, Arc<str>)]>,
+    pub cursor_position: Option<PredictedCursorPosition>,
     pub snapshot: BufferSnapshot,
     pub edit_preview: EditPreview,
     pub buffer: Entity<Buffer>,
-    pub buffer_snapshotted_at: Instant,
-    pub response_received_at: Instant,
-    pub inputs: EditPredictionInputs,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct EditPredictionInputs {
-    pub events: Vec<Arc<cloud_llm_client::predict_edits_v3::Event>>,
-    pub included_files: Vec<cloud_llm_client::predict_edits_v3::RelatedFile>,
-    pub cursor_point: cloud_llm_client::predict_edits_v3::Point,
-    pub cursor_path: Arc<Path>,
+    pub inputs: zeta_prompt::ZetaPromptInput,
+    pub model_version: Option<String>,
 }
 
 impl EditPrediction {
@@ -109,15 +100,11 @@ impl EditPrediction {
         &self,
         new_snapshot: &TextBufferSnapshot,
     ) -> Option<Vec<(Range<Anchor>, Arc<str>)>> {
-        interpolate_edits(&self.snapshot, new_snapshot, self.edits.clone())
+        interpolate_edits(&self.snapshot, new_snapshot, &self.edits)
     }
 
     pub fn targets_buffer(&self, buffer: &Buffer) -> bool {
         self.snapshot.remote_id() == buffer.remote_id()
-    }
-
-    pub fn latency(&self) -> Duration {
-        self.response_received_at - self.buffer_snapshotted_at
     }
 }
 
@@ -130,57 +117,14 @@ impl std::fmt::Debug for EditPrediction {
     }
 }
 
-pub fn interpolate_edits(
-    old_snapshot: &TextBufferSnapshot,
-    new_snapshot: &TextBufferSnapshot,
-    current_edits: Arc<[(Range<Anchor>, Arc<str>)]>,
-) -> Option<Vec<(Range<Anchor>, Arc<str>)>> {
-    let mut edits = Vec::new();
-
-    let mut model_edits = current_edits.iter().peekable();
-    for user_edit in new_snapshot.edits_since::<usize>(&old_snapshot.version) {
-        while let Some((model_old_range, _)) = model_edits.peek() {
-            let model_old_range = model_old_range.to_offset(old_snapshot);
-            if model_old_range.end < user_edit.old.start {
-                let (model_old_range, model_new_text) = model_edits.next().unwrap();
-                edits.push((model_old_range.clone(), model_new_text.clone()));
-            } else {
-                break;
-            }
-        }
-
-        if let Some((model_old_range, model_new_text)) = model_edits.peek() {
-            let model_old_offset_range = model_old_range.to_offset(old_snapshot);
-            if user_edit.old == model_old_offset_range {
-                let user_new_text = new_snapshot
-                    .text_for_range(user_edit.new.clone())
-                    .collect::<String>();
-
-                if let Some(model_suffix) = model_new_text.strip_prefix(&user_new_text) {
-                    if !model_suffix.is_empty() {
-                        let anchor = old_snapshot.anchor_after(user_edit.old.end);
-                        edits.push((anchor..anchor, model_suffix.into()));
-                    }
-
-                    model_edits.next();
-                    continue;
-                }
-            }
-        }
-
-        return None;
-    }
-
-    edits.extend(model_edits.cloned());
-
-    if edits.is_empty() { None } else { Some(edits) }
-}
-
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
     use gpui::{App, Entity, TestAppContext, prelude::*};
     use language::{Buffer, ToOffset as _};
+    use zeta_prompt::ZetaPromptInput;
 
     #[gpui::test]
     async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
@@ -196,20 +140,26 @@ mod tests {
         let prediction = EditPrediction {
             id: EditPredictionId("prediction-1".into()),
             edits,
+            cursor_position: None,
             snapshot: cx.read(|cx| buffer.read(cx).snapshot()),
             buffer: buffer.clone(),
             edit_preview,
-            inputs: EditPredictionInputs {
+            model_version: None,
+            inputs: ZetaPromptInput {
                 events: vec![],
-                included_files: vec![],
-                cursor_point: cloud_llm_client::predict_edits_v3::Point {
-                    line: cloud_llm_client::predict_edits_v3::Line(0),
-                    column: 0,
-                },
+                related_files: Some(vec![]),
+                active_buffer_diagnostics: vec![],
                 cursor_path: Path::new("path.txt").into(),
+                cursor_offset_in_excerpt: 0,
+                cursor_excerpt: "".into(),
+                excerpt_start_row: None,
+                excerpt_ranges: Default::default(),
+                syntax_ranges: None,
+                experiment: None,
+                in_open_source_repo: false,
+                can_collect_data: false,
+                repo_url: None,
             },
-            buffer_snapshotted_at: Instant::now(),
-            response_received_at: Instant::now(),
         };
 
         cx.update(|cx| {

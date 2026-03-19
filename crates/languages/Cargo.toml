@@ -68,6 +68,7 @@ serde_json.workspace = true
 serde_json_lenient.workspace = true
 settings.workspace = true
 smallvec.workspace = true
+semver.workspace = true
 smol.workspace = true
 snippet.workspace = true
 task.workspace = true
@@ -97,7 +98,6 @@ util.workspace = true
 
 [dev-dependencies]
 pretty_assertions.workspace = true
-text.workspace = true
 theme = { workspace = true, features = ["test-support"] }
 tree-sitter-bash.workspace = true
 tree-sitter-c.workspace = true
@@ -108,4 +108,3 @@ tree-sitter-python.workspace = true
 tree-sitter-typescript.workspace = true
 tree-sitter.workspace = true
 unindent.workspace = true
-workspace = { workspace = true, features = ["test-support"] }

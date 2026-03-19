@@ -297,7 +297,7 @@ impl PickerDelegate for ChannelModalDelegate {
                             StringMatchCandidate::new(id, &member.user.github_login)
                         }));
 
-                    let matches = cx.background_executor().block(match_strings(
+                    let matches = cx.foreground_executor().block_on(match_strings(
                         &self.match_candidates,
                         &query,
                         true,
@@ -642,7 +642,7 @@ impl ChannelModalDelegate {
             });
             menu
         });
-        window.focus(&context_menu.focus_handle(cx));
+        window.focus(&context_menu.focus_handle(cx), cx);
         let subscription = cx.subscribe_in(
             &context_menu,
             window,

@@ -70,15 +70,18 @@ impl log::Log for Zlog {
         if !self.enabled(record.metadata()) {
             return;
         }
-        let (crate_name_scope, module_scope) = match record.module_path_static() {
+        let module_path = record.module_path().or(record.file());
+        let (crate_name_scope, module_scope) = match module_path {
             Some(module_path) => {
                 let crate_name = private::extract_crate_name_from_module_path(module_path);
-                let crate_name_scope = private::scope_new(&[crate_name]);
-                let module_scope = private::scope_new(&[module_path]);
+                let crate_name_scope = private::scope_ref_new(&[crate_name]);
+                let module_scope = private::scope_ref_new(&[module_path]);
                 (crate_name_scope, module_scope)
             }
-            // TODO: when do we hit this
-            None => (private::scope_new(&[]), private::scope_new(&["*unknown*"])),
+            None => {
+                // TODO: when do we hit this
+                (private::scope_new(&[]), private::scope_new(&["*unknown*"]))
+            }
         };
         let level = record.metadata().level();
         if !filter::is_scope_enabled(&crate_name_scope, Some(record.target()), level) {
@@ -89,7 +92,7 @@ impl log::Log for Zlog {
             level,
             message: record.args(),
             // PERF(batching): store non-static paths in a cache + leak them and pass static str here
-            module_path: record.module_path().or(record.file()),
+            module_path,
             line: record.line(),
         });
     }
@@ -252,6 +255,10 @@ pub mod private {
     }
 
     pub const fn scope_new(scopes: &[&'static str]) -> Scope {
+        scope_ref_new(scopes)
+    }
+
+    pub const fn scope_ref_new<'a>(scopes: &[&'a str]) -> ScopeRef<'a> {
         assert!(scopes.len() <= SCOPE_DEPTH_MAX);
         let mut scope = [""; SCOPE_DEPTH_MAX];
         let mut i = 0;
@@ -275,6 +282,7 @@ pub mod private {
 }
 
 pub type Scope = [&'static str; SCOPE_DEPTH_MAX];
+pub type ScopeRef<'a> = [&'a str; SCOPE_DEPTH_MAX];
 pub type ScopeAlloc = [String; SCOPE_DEPTH_MAX];
 const SCOPE_STRING_SEP_STR: &str = ".";
 const SCOPE_STRING_SEP_CHAR: char = '.';

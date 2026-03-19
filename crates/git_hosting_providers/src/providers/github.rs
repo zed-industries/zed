@@ -9,6 +9,7 @@ use http_client::{AsyncBody, HttpClient, HttpRequestExt, Request};
 use regex::Regex;
 use serde::Deserialize;
 use url::Url;
+use urlencoding::encode;
 
 use git::{
     BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,
@@ -65,6 +66,15 @@ struct User {
 pub struct Github {
     name: String,
     base_url: Url,
+}
+
+fn build_cdn_avatar_url(email: &str) -> Result<Url> {
+    let email = email.trim_start_matches('<').trim_end_matches('>');
+    Url::parse(&format!(
+        "https://avatars.githubusercontent.com/u/e?email={}&s=128",
+        encode(email)
+    ))
+    .context("failed to construct avatar URL")
 }
 
 impl Github {
@@ -224,6 +234,19 @@ impl GitHostingProvider for Github {
         permalink
     }
 
+    fn build_create_pull_request_url(
+        &self,
+        remote: &ParsedGitRemote,
+        source_branch: &str,
+    ) -> Option<Url> {
+        let ParsedGitRemote { owner, repo } = remote;
+        let encoded_source = encode(source_branch);
+
+        self.base_url()
+            .join(&format!("{owner}/{repo}/pull/new/{encoded_source}"))
+            .ok()
+    }
+
     fn extract_pull_request(&self, remote: &ParsedGitRemote, message: &str) -> Option<PullRequest> {
         let line = message.lines().next()?;
         let capture = pull_request_number_regex().captures(line)?;
@@ -241,8 +264,13 @@ impl GitHostingProvider for Github {
         repo_owner: &str,
         repo: &str,
         commit: SharedString,
+        author_email: Option<SharedString>,
         http_client: Arc<dyn HttpClient>,
     ) -> Result<Option<Url>> {
+        if let Some(email) = author_email {
+            return Ok(Some(build_cdn_avatar_url(&email)?));
+        }
+
         let commit = commit.to_string();
         let avatar_url = self
             .fetch_github_commit_author(repo_owner, repo, &commit, &http_client)
@@ -467,6 +495,25 @@ mod tests {
     }
 
     #[test]
+    fn test_build_github_create_pr_url() {
+        let remote = ParsedGitRemote {
+            owner: "zed-industries".into(),
+            repo: "zed".into(),
+        };
+
+        let provider = Github::public_instance();
+
+        let url = provider
+            .build_create_pull_request_url(&remote, "feature/something cool")
+            .expect("url should be constructed");
+
+        assert_eq!(
+            url.as_str(),
+            "https://github.com/zed-industries/zed/pull/new/feature%2Fsomething%20cool"
+        );
+    }
+
+    #[test]
     fn test_github_pull_requests() {
         let remote = ParsedGitRemote {
             owner: "zed-industries".into(),
@@ -525,5 +572,61 @@ mod tests {
 
         let expected_url = "https://github.com/zed-industries/nonexistent/blob/3ef1539900037dd3601be7149b2b39ed6d0ce3db/app/blog/%5Bslug%5D/page.tsx#L8";
         assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_create_pull_request_url() {
+        let remote = ParsedGitRemote {
+            owner: "zed-industries".into(),
+            repo: "zed".into(),
+        };
+
+        let github = Github::public_instance();
+        let url = github
+            .build_create_pull_request_url(&remote, "feature/new-feature")
+            .unwrap();
+
+        assert_eq!(
+            url.as_str(),
+            "https://github.com/zed-industries/zed/pull/new/feature%2Fnew-feature"
+        );
+
+        let base_url = Url::parse("https://github.zed.com").unwrap();
+        let github = Github::new("GitHub Self-Hosted", base_url);
+        let url = github
+            .build_create_pull_request_url(&remote, "feature/new-feature")
+            .expect("should be able to build pull request url");
+
+        assert_eq!(
+            url.as_str(),
+            "https://github.zed.com/zed-industries/zed/pull/new/feature%2Fnew-feature"
+        );
+    }
+
+    #[test]
+    fn test_build_cdn_avatar_url_simple_email() {
+        let url = build_cdn_avatar_url("user@example.com").unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://avatars.githubusercontent.com/u/e?email=user%40example.com&s=128"
+        );
+    }
+
+    #[test]
+    fn test_build_cdn_avatar_url_with_angle_brackets() {
+        let url = build_cdn_avatar_url("<user@example.com>").unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://avatars.githubusercontent.com/u/e?email=user%40example.com&s=128"
+        );
+    }
+
+    #[test]
+    fn test_build_cdn_avatar_url_with_special_chars() {
+        let url = build_cdn_avatar_url("user+tag@example.com").unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://avatars.githubusercontent.com/u/e?email=user%2Btag%40example.com&s=128"
+        );
     }
 }

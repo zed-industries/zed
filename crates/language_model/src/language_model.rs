@@ -1,3 +1,4 @@
+mod api_key;
 mod model;
 mod rate_limiter;
 mod registry;
@@ -12,10 +13,11 @@ pub mod fake_provider;
 use anthropic::{AnthropicError, parse_prompt_too_long};
 use anyhow::{Result, anyhow};
 use client::Client;
-use cloud_llm_client::{CompletionMode, CompletionRequestStatus, UsageLimit};
+use client::UserStore;
+use cloud_llm_client::CompletionRequestStatus;
 use futures::FutureExt;
 use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, App, AsyncApp, SharedString, Task, Window};
+use gpui::{AnyView, App, AsyncApp, Entity, SharedString, Task, Window};
 use http_client::{StatusCode, http};
 use icons::IconName;
 use open_router::OpenRouterError;
@@ -30,6 +32,7 @@ use std::{fmt, io};
 use thiserror::Error;
 use util::serde::is_default;
 
+pub use crate::api_key::{ApiKey, ApiKeyState};
 pub use crate::model::*;
 pub use crate::rate_limiter::*;
 pub use crate::registry::*;
@@ -37,6 +40,7 @@ pub use crate::request::*;
 pub use crate::role::*;
 pub use crate::telemetry::*;
 pub use crate::tool_schema::LanguageModelToolSchemaFormat;
+pub use zed_env_vars::{EnvVar, env_var};
 
 pub const ANTHROPIC_PROVIDER_ID: LanguageModelProviderId =
     LanguageModelProviderId::new("anthropic");
@@ -58,9 +62,9 @@ pub const ZED_CLOUD_PROVIDER_ID: LanguageModelProviderId = LanguageModelProvider
 pub const ZED_CLOUD_PROVIDER_NAME: LanguageModelProviderName =
     LanguageModelProviderName::new("Zed");
 
-pub fn init(client: Arc<Client>, cx: &mut App) {
+pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
     init_settings(cx);
-    RefreshLlmTokenListener::register(client, cx);
+    RefreshLlmTokenListener::register(client, user_store, cx);
 }
 
 pub fn init_settings(cx: &mut App) {
@@ -74,11 +78,6 @@ pub enum LanguageModelCompletionEvent {
         position: usize,
     },
     Started,
-    UsageUpdated {
-        amount: usize,
-        limit: UsageLimit,
-    },
-    ToolUseLimitReached,
     Stop(StopReason),
     Text(String),
     Thinking {
@@ -106,18 +105,13 @@ impl LanguageModelCompletionEvent {
     pub fn from_completion_request_status(
         status: CompletionRequestStatus,
         upstream_provider: LanguageModelProviderName,
-    ) -> Result<Self, LanguageModelCompletionError> {
+    ) -> Result<Option<Self>, LanguageModelCompletionError> {
         match status {
             CompletionRequestStatus::Queued { position } => {
-                Ok(LanguageModelCompletionEvent::Queued { position })
+                Ok(Some(LanguageModelCompletionEvent::Queued { position }))
             }
-            CompletionRequestStatus::Started => Ok(LanguageModelCompletionEvent::Started),
-            CompletionRequestStatus::UsageUpdated { amount, limit } => {
-                Ok(LanguageModelCompletionEvent::UsageUpdated { amount, limit })
-            }
-            CompletionRequestStatus::ToolUseLimitReached => {
-                Ok(LanguageModelCompletionEvent::ToolUseLimitReached)
-            }
+            CompletionRequestStatus::Started => Ok(Some(LanguageModelCompletionEvent::Started)),
+            CompletionRequestStatus::Unknown | CompletionRequestStatus::StreamEnded => Ok(None),
             CompletionRequestStatus::Failed {
                 code,
                 message,
@@ -215,6 +209,9 @@ pub enum LanguageModelCompletionError {
         #[source]
         error: serde_json::Error,
     },
+
+    #[error("stream from {provider} ended unexpectedly")]
+    StreamEndedUnexpectedly { provider: LanguageModelProviderName },
 
     // TODO: Ideally this would be removed in favor of having a comprehensive list of errors.
     #[error(transparent)]
@@ -577,6 +574,13 @@ impl Default for LanguageModelTextStream {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct LanguageModelEffortLevel {
+    pub name: SharedString,
+    pub value: SharedString,
+    pub is_default: bool,
+}
+
 pub trait LanguageModel: Send + Sync {
     fn id(&self) -> LanguageModelId;
     fn name(&self) -> LanguageModelName;
@@ -589,10 +593,41 @@ pub trait LanguageModel: Send + Sync {
         self.provider_name()
     }
 
+    /// Returns whether this model is the "latest", so we can highlight it in the UI.
+    fn is_latest(&self) -> bool {
+        false
+    }
+
     fn telemetry_id(&self) -> String;
 
     fn api_key(&self, _cx: &App) -> Option<String> {
         None
+    }
+
+    /// Information about the cost of using this model, if available.
+    fn model_cost_info(&self) -> Option<LanguageModelCostInfo> {
+        None
+    }
+
+    /// Whether this model supports thinking.
+    fn supports_thinking(&self) -> bool {
+        false
+    }
+
+    fn supports_fast_mode(&self) -> bool {
+        false
+    }
+
+    /// Returns the list of supported effort levels that can be used when thinking.
+    fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
+        Vec::new()
+    }
+
+    /// Returns the default effort level to use when thinking.
+    fn default_effort_level(&self) -> Option<LanguageModelEffortLevel> {
+        self.supported_effort_levels()
+            .into_iter()
+            .find(|effort_level| effort_level.is_default)
     }
 
     /// Whether this model supports images
@@ -604,8 +639,14 @@ pub trait LanguageModel: Send + Sync {
     /// Whether this model supports choosing which tool to use.
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool;
 
-    /// Returns whether this model supports "burn mode";
-    fn supports_burn_mode(&self) -> bool {
+    /// Returns whether this model or provider supports streaming tool calls;
+    fn supports_streaming_tools(&self) -> bool {
+        false
+    }
+
+    /// Returns whether this model/provider reports accurate split input/output token counts.
+    /// When true, the UI may show separate input/output token indicators.
+    fn supports_split_token_display(&self) -> bool {
         false
     }
 
@@ -614,10 +655,6 @@ pub trait LanguageModel: Send + Sync {
     }
 
     fn max_token_count(&self) -> u64;
-    /// Returns the maximum token count for this model in burn mode (If `supports_burn_mode` is `false` this returns `None`)
-    fn max_token_count_in_burn_mode(&self) -> Option<u64> {
-        None
-    }
     fn max_output_tokens(&self) -> Option<u64> {
         None
     }
@@ -675,8 +712,6 @@ pub trait LanguageModel: Send + Sync {
                             match result {
                                 Ok(LanguageModelCompletionEvent::Queued { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::Started) => None,
-                                Ok(LanguageModelCompletionEvent::UsageUpdated { .. }) => None,
-                                Ok(LanguageModelCompletionEvent::ToolUseLimitReached) => None,
                                 Ok(LanguageModelCompletionEvent::StartMessage { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::Text(text)) => Some(Ok(text)),
                                 Ok(LanguageModelCompletionEvent::Thinking { .. }) => None,
@@ -707,6 +742,40 @@ pub trait LanguageModel: Send + Sync {
         .boxed()
     }
 
+    fn stream_completion_tool(
+        &self,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<LanguageModelToolUse, LanguageModelCompletionError>> {
+        let future = self.stream_completion(request, cx);
+
+        async move {
+            let events = future.await?;
+            let mut events = events.fuse();
+
+            // Iterate through events until we find a complete ToolUse
+            while let Some(event) = events.next().await {
+                match event {
+                    Ok(LanguageModelCompletionEvent::ToolUse(tool_use))
+                        if tool_use.is_input_complete =>
+                    {
+                        return Ok(tool_use);
+                    }
+                    Err(err) => {
+                        return Err(err);
+                    }
+                    _ => {}
+                }
+            }
+
+            // Stream ended without a complete tool use
+            Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
+                "Stream ended without receiving a complete tool use"
+            )))
+        }
+        .boxed()
+    }
+
     fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
         None
     }
@@ -717,17 +786,20 @@ pub trait LanguageModel: Send + Sync {
     }
 }
 
-pub trait LanguageModelExt: LanguageModel {
-    fn max_token_count_for_mode(&self, mode: CompletionMode) -> u64 {
-        match mode {
-            CompletionMode::Normal => self.max_token_count(),
-            CompletionMode::Max => self
-                .max_token_count_in_burn_mode()
-                .unwrap_or_else(|| self.max_token_count()),
-        }
+impl std::fmt::Debug for dyn LanguageModel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("<dyn LanguageModel>")
+            .field("id", &self.id())
+            .field("name", &self.name())
+            .field("provider_id", &self.provider_id())
+            .field("provider_name", &self.provider_name())
+            .field("upstream_provider_name", &self.upstream_provider_name())
+            .field("upstream_provider_id", &self.upstream_provider_id())
+            .field("upstream_provider_id", &self.upstream_provider_id())
+            .field("supports_streaming_tools", &self.supports_streaming_tools())
+            .finish()
     }
 }
-impl LanguageModelExt for dyn LanguageModel {}
 
 /// An error that occurred when trying to authenticate the language model provider.
 #[derive(Debug, Error)]
@@ -740,11 +812,26 @@ pub enum AuthenticateError {
     Other(#[from] anyhow::Error),
 }
 
+/// Either a built-in icon name or a path to an external SVG.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IconOrSvg {
+    /// A built-in icon from Zed's icon set.
+    Icon(IconName),
+    /// Path to a custom SVG icon file.
+    Svg(SharedString),
+}
+
+impl Default for IconOrSvg {
+    fn default() -> Self {
+        Self::Icon(IconName::ZedAssistant)
+    }
+}
+
 pub trait LanguageModelProvider: 'static {
     fn id(&self) -> LanguageModelProviderId;
     fn name(&self) -> LanguageModelProviderName;
-    fn icon(&self) -> IconName {
-        IconName::ZedAssistant
+    fn icon(&self) -> IconOrSvg {
+        IconOrSvg::default()
     }
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>>;
     fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>>;
@@ -763,7 +850,7 @@ pub trait LanguageModelProvider: 'static {
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>>;
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, PartialEq, Eq)]
 pub enum ConfigurationViewTargetAgent {
     #[default]
     ZedAgent,
@@ -808,6 +895,44 @@ pub struct LanguageModelProviderId(pub SharedString);
 
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
 pub struct LanguageModelProviderName(pub SharedString);
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum LanguageModelCostInfo {
+    /// Cost per 1,000 input and output tokens
+    TokenCost {
+        input_token_cost_per_1m: f64,
+        output_token_cost_per_1m: f64,
+    },
+    /// Cost per request
+    RequestCost { cost_per_request: f64 },
+}
+
+impl LanguageModelCostInfo {
+    pub fn to_shared_string(&self) -> SharedString {
+        match self {
+            LanguageModelCostInfo::RequestCost { cost_per_request } => {
+                let cost_str = format!("{}×", Self::cost_value_to_string(cost_per_request));
+                SharedString::from(cost_str)
+            }
+            LanguageModelCostInfo::TokenCost {
+                input_token_cost_per_1m,
+                output_token_cost_per_1m,
+            } => {
+                let input_cost = Self::cost_value_to_string(input_token_cost_per_1m);
+                let output_cost = Self::cost_value_to_string(output_token_cost_per_1m);
+                SharedString::from(format!("{}$/{}$", input_cost, output_cost))
+            }
+        }
+    }
+
+    fn cost_value_to_string(cost: &f64) -> SharedString {
+        if (cost.fract() - 0.0).abs() < std::f64::EPSILON {
+            SharedString::from(format!("{:.0}", cost))
+        } else {
+            SharedString::from(format!("{:.2}", cost))
+        }
+    }
+}
 
 impl LanguageModelProviderId {
     pub const fn new(id: &'static str) -> Self {

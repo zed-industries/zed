@@ -23,7 +23,7 @@ actions!(livekit_client, [Quit]);
 fn main() {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
-    gpui::Application::new().run(|cx| {
+    gpui_platform::application().run(|cx| {
         #[cfg(any(test, feature = "test-support"))]
         println!("USING TEST LIVEKIT");
 
@@ -136,7 +136,6 @@ impl LivekitWindow {
             )
             .unwrap()
         })
-        .unwrap()
     }
 
     fn handle_room_event(&mut self, event: RoomEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -248,7 +247,7 @@ impl LivekitWindow {
         } else {
             let room = self.room.clone();
             cx.spawn_in(window, async move |this, cx| {
-                let (publication, stream) = room
+                let (publication, stream, _input_lag_us) = room
                     .publish_local_microphone_track("test_user".to_string(), false, cx)
                     .await
                     .unwrap();
@@ -370,7 +369,7 @@ impl Render for LivekitWindow {
                             .when_some(state.audio_output_stream.as_ref(), |el, state| {
                                 el.child(
                                     button()
-                                        .id(SharedString::from(identity.0.clone()))
+                                        .id(identity.0.clone())
                                         .child(if state.0.is_enabled() {
                                             "Deafen"
                                         } else {

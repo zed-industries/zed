@@ -40,6 +40,24 @@ pub struct EvalOutput<M> {
     pub metadata: M,
 }
 
+impl<M: Default> EvalOutput<M> {
+    pub fn passed(message: impl Into<String>) -> Self {
+        EvalOutput {
+            outcome: OutcomeKind::Passed,
+            data: message.into(),
+            metadata: M::default(),
+        }
+    }
+
+    pub fn failed(message: impl Into<String>) -> Self {
+        EvalOutput {
+            outcome: OutcomeKind::Failed,
+            data: message.into(),
+            metadata: M::default(),
+        }
+    }
+}
+
 pub struct NoProcessor;
 impl EvalOutputProcessor for NoProcessor {
     type Metadata = ();
@@ -64,7 +82,7 @@ pub fn eval<P>(
 
     let (tx, rx) = mpsc::channel();
 
-    let executor = gpui::background_executor();
+    let executor = gpui_platform::background_executor();
     let semaphore = Arc::new(smol::lock::Semaphore::new(32));
     let evalf = Arc::new(evalf);
     // Warm the cache once

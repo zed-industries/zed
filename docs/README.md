@@ -64,6 +64,22 @@ This will render a human-readable version of the action name, e.g., "zed: open s
 Templates are functions that modify the source of the docs pages (usually with a regex match and replace).
 You can see how the actions and keybindings are templated in `crates/docs_preprocessor/src/main.rs` for reference on how to create new templates.
 
+## Consent Banner
+
+We pre-bundle the `c15t` package because the docs pipeline does not include a JS bundler. If you need to update `c15t` and rebuild the bundle, use:
+
+```
+mkdir c15t-bundle && cd c15t-bundle
+npm init -y
+npm install c15t@<version> esbuild
+echo "import { getOrCreateConsentRuntime } from 'c15t'; window.c15t = { getOrCreateConsentRuntime };" > entry.js
+npx esbuild entry.js --bundle --format=iife --minify --outfile=c15t@<version>.js
+cp c15t@<version>.js ../theme/c15t@<version>.js
+cd .. && rm -rf c15t-bundle
+```
+
+Replace `<version>` with the new version of `c15t` you are installing. Then update `book.toml` to reference the new bundle filename.
+
 ### References
 
 - Template Trait: `crates/docs_preprocessor/src/templates.rs`

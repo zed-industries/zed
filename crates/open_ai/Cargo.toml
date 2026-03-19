@@ -19,6 +19,7 @@ schemars = ["dep:schemars"]
 anyhow.workspace = true
 futures.workspace = true
 http_client.workspace = true
+rand.workspace = true
 schemars = { workspace = true, optional = true }
 log.workspace = true
 serde.workspace = true

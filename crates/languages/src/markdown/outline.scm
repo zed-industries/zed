@@ -1,5 +1,6 @@
-(atx_heading
+(section
+  (atx_heading
     .
     (_) @context
     .
-    (_) @name ) @item
+    (_) @name)) @item

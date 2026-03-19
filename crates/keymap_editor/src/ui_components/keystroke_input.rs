@@ -388,7 +388,7 @@ impl KeystrokeInput {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        window.focus(&self.inner_focus_handle);
+        window.focus(&self.inner_focus_handle, cx);
         self.clear_keystrokes(&ClearKeystrokes, window, cx);
         self.previous_modifiers = window.modifiers();
         #[cfg(test)]
@@ -407,7 +407,7 @@ impl KeystrokeInput {
         if !self.is_recording(window) {
             return;
         }
-        window.focus(&self.outer_focus_handle);
+        window.focus(&self.outer_focus_handle, cx);
         if let Some(close_keystrokes_start) = self.close_keystrokes_start.take()
             && close_keystrokes_start < self.keystrokes.len()
         {
@@ -674,7 +674,7 @@ mod tests {
     use itertools::Itertools as _;
     use project::Project;
     use settings::SettingsStore;
-    use workspace::Workspace;
+    use workspace::MultiWorkspace;
 
     pub struct KeystrokeInputTestHelper {
         input: Entity<KeystrokeInput>,
@@ -1120,9 +1120,9 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = VisualTestContext::from_window(*workspace, cx);
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let cx = VisualTestContext::from_window(window_handle.into(), cx);
         KeystrokeInputTestHelper::new(cx)
     }
 

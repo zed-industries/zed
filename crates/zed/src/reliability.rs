@@ -1,20 +1,42 @@
 use anyhow::{Context as _, Result};
 use client::{Client, telemetry::MINIDUMP_ENDPOINT};
-use futures::AsyncReadExt;
+use feature_flags::FeatureFlagAppExt;
+use futures::{AsyncReadExt, TryStreamExt};
 use gpui::{App, AppContext as _, SerializedThreadTaskTimings};
-use http_client::{self, HttpClient};
+use http_client::{self, AsyncBody, HttpClient, Request};
 use log::info;
 use project::Project;
 use proto::{CrashReport, GetCrashFilesResponse};
-use reqwest::multipart::{Form, Part};
+use reqwest::{
+    Method,
+    multipart::{Form, Part},
+};
+use serde::Deserialize;
 use smol::stream::StreamExt;
 use std::{ffi::OsStr, fs, sync::Arc, thread::ThreadId, time::Duration};
+use sysinfo::{MemoryRefreshKind, RefreshKind, System};
 use util::ResultExt;
 
 use crate::STARTUP_TIME;
 
+const MAX_HANG_TRACES: usize = 3;
+
 pub fn init(client: Arc<Client>, cx: &mut App) {
     monitor_hangs(cx);
+
+    cx.on_flags_ready({
+        let client = client.clone();
+        move |flags_ready, cx| {
+            if flags_ready.is_staff {
+                let client = client.clone();
+                cx.background_spawn(async move {
+                    upload_build_timings(client).await.warn_on_err();
+                })
+                .detach();
+            }
+        }
+    })
+    .detach();
 
     if client.telemetry().diagnostics_enabled() {
         let client = client.clone();
@@ -79,6 +101,8 @@ fn monitor_hangs(cx: &App) {
         .spawn({
             let background_executor = background_executor.clone();
             async move {
+                cleanup_old_hang_traces();
+
                 let mut hang_time = None;
 
                 let mut hanging = false;
@@ -112,12 +136,33 @@ fn monitor_hangs(cx: &App) {
         .detach();
 }
 
+fn cleanup_old_hang_traces() {
+    if let Ok(entries) = std::fs::read_dir(paths::hang_traces_dir()) {
+        let mut files: Vec<_> = entries
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry
+                    .path()
+                    .extension()
+                    .is_some_and(|ext| ext == "json" || ext == "miniprof")
+            })
+            .collect();
+
+        if files.len() > MAX_HANG_TRACES {
+            files.sort_by_key(|entry| entry.file_name());
+            for entry in files.iter().take(files.len() - MAX_HANG_TRACES) {
+                std::fs::remove_file(entry.path()).log_err();
+            }
+        }
+    }
+}
+
 fn save_hang_trace(
     main_thread_id: ThreadId,
     background_executor: &gpui::BackgroundExecutor,
     hang_time: chrono::DateTime<chrono::Local>,
 ) {
-    let thread_timings = background_executor.dispatcher.get_all_timings();
+    let thread_timings = background_executor.dispatcher().get_all_timings();
     let thread_timings = thread_timings
         .into_iter()
         .map(|mut timings| {
@@ -130,7 +175,7 @@ fn save_hang_trace(
         .collect::<Vec<_>>();
 
     let trace_path = paths::hang_traces_dir().join(&format!(
-        "hang-{}.miniprof",
+        "hang-{}.miniprof.json",
         hang_time.format("%Y-%m-%d_%H-%M-%S")
     ));
 
@@ -140,6 +185,25 @@ fn save_hang_trace(
     else {
         return;
     };
+
+    if let Ok(entries) = std::fs::read_dir(paths::hang_traces_dir()) {
+        let mut files: Vec<_> = entries
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry
+                    .path()
+                    .extension()
+                    .is_some_and(|ext| ext == "json" || ext == "miniprof")
+            })
+            .collect();
+
+        if files.len() >= MAX_HANG_TRACES {
+            files.sort_by_key(|entry| entry.file_name());
+            for entry in files.iter().take(files.len() - (MAX_HANG_TRACES - 1)) {
+                std::fs::remove_file(entry.path()).log_err();
+            }
+        }
+    }
 
     std::fs::write(&trace_path, timings)
         .context("hang trace file writing")
@@ -166,18 +230,24 @@ pub async fn upload_previous_minidumps(client: Arc<Client>) -> anyhow::Result<()
         }
         let mut json_path = child_path.clone();
         json_path.set_extension("json");
-        if let Ok(metadata) = serde_json::from_slice(&smol::fs::read(&json_path).await?)
-            && upload_minidump(
-                client.clone(),
-                minidump_endpoint,
-                smol::fs::read(&child_path)
-                    .await
-                    .context("Failed to read minidump")?,
-                &metadata,
-            )
+        let Ok(metadata) = smol::fs::read(&json_path)
             .await
-            .log_err()
-            .is_some()
+            .map_err(|e| anyhow::anyhow!(e))
+            .and_then(|data| serde_json::from_slice(&data).map_err(|e| anyhow::anyhow!(e)))
+        else {
+            continue;
+        };
+        if upload_minidump(
+            client.clone(),
+            minidump_endpoint,
+            smol::fs::read(&child_path)
+                .await
+                .context("Failed to read minidump")?,
+            &metadata,
+        )
+        .await
+        .log_err()
+        .is_some()
         {
             fs::remove_file(child_path).ok();
             fs::remove_file(json_path).ok();
@@ -218,16 +288,23 @@ async fn upload_minidump(
         form = form.text("minidump_error", minidump_error);
     }
 
-    if let Some(id) = client.telemetry().metrics_id() {
-        form = form.text("sentry[user][id]", id.to_string());
+    if let Some(is_staff) = &metadata
+        .user_info
+        .as_ref()
+        .and_then(|user_info| user_info.is_staff)
+    {
         form = form.text(
             "sentry[user][is_staff]",
-            if client.telemetry().is_staff().unwrap_or_default() {
-                "true"
-            } else {
-                "false"
-            },
+            if *is_staff { "true" } else { "false" },
         );
+    }
+
+    if let Some(metrics_id) = metadata
+        .user_info
+        .as_ref()
+        .and_then(|user_info| user_info.metrics_id.as_ref())
+    {
+        form = form.text("sentry[user][id]", metrics_id.clone());
     } else if let Some(id) = client.telemetry().installation_id() {
         form = form.text("sentry[user][id]", format!("installation-{}", id))
     }
@@ -296,11 +373,20 @@ async fn upload_minidump(
 
     // TODO: feature-flag-context, and more of device-context like screen resolution, available ram, device model, etc
 
+    let content_type = format!("multipart/form-data; boundary={}", form.boundary());
+    let mut body_bytes = Vec::new();
+    let mut stream = form
+        .into_stream()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+        .into_async_read();
+    stream.read_to_end(&mut body_bytes).await?;
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri(endpoint)
+        .header("Content-Type", content_type)
+        .body(AsyncBody::from(body_bytes))?;
     let mut response_text = String::new();
-    let mut response = client
-        .http_client()
-        .send_multipart_form(endpoint, form)
-        .await?;
+    let mut response = client.http_client().send(req).await?;
     response
         .body_mut()
         .read_to_string(&mut response_text)
@@ -309,6 +395,81 @@ async fn upload_minidump(
         anyhow::bail!("failed to upload minidump: {response_text}");
     }
     log::info!("Uploaded minidump. event id: {response_text}");
+    Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+struct BuildTiming {
+    started_at: chrono::DateTime<chrono::Utc>,
+    duration_ms: f32,
+    first_crate: String,
+    target: String,
+    blocked_ms: f32,
+    command: String,
+}
+
+// NOTE: this is a bit of a hack. We want to be able to have internal
+// metrics around build times, but we don't have an easy way to authenticate
+// users - except - we know internal users use Zed.
+// So, we have it upload the timings on their behalf, it'd be better to do
+// this more directly in ./script/cargo-timing-info.js.
+async fn upload_build_timings(_client: Arc<Client>) -> Result<()> {
+    let build_timings_dir = paths::data_dir().join("build_timings");
+
+    if !build_timings_dir.exists() {
+        return Ok(());
+    }
+
+    let cpu_count = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    let system = System::new_with_specifics(
+        RefreshKind::nothing().with_memory(MemoryRefreshKind::everything()),
+    );
+    let ram_size_gb = (system.total_memory() as f64) / (1024.0 * 1024.0 * 1024.0);
+
+    let mut entries = smol::fs::read_dir(&build_timings_dir).await?;
+    while let Some(entry) = entries.next().await {
+        let entry = entry?;
+        let path = entry.path();
+
+        if path.extension() != Some(OsStr::new("json")) {
+            continue;
+        }
+
+        let contents = match smol::fs::read_to_string(&path).await {
+            Ok(contents) => contents,
+            Err(err) => {
+                log::warn!("Failed to read build timing file {:?}: {}", path, err);
+                continue;
+            }
+        };
+
+        let timing: BuildTiming = match serde_json::from_str(&contents) {
+            Ok(timing) => timing,
+            Err(err) => {
+                log::warn!("Failed to parse build timing file {:?}: {}", path, err);
+                continue;
+            }
+        };
+
+        telemetry::event!(
+            "Build Timing: Cargo Build",
+            started_at = timing.started_at.to_rfc3339(),
+            duration_ms = timing.duration_ms,
+            first_crate = timing.first_crate,
+            target = timing.target,
+            blocked_ms = timing.blocked_ms,
+            command = timing.command,
+            cpu_count = cpu_count,
+            ram_size_gb = ram_size_gb
+        );
+
+        if let Err(err) = smol::fs::remove_file(&path).await {
+            log::warn!("Failed to delete build timing file {:?}: {}", path, err);
+        }
+    }
+
     Ok(())
 }
 

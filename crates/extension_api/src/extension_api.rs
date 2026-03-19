@@ -100,6 +100,28 @@ pub trait Extension: Send + Sync {
         Ok(None)
     }
 
+    /// Returns the JSON schema for the initialization options.
+    ///
+    /// The schema must conform to the JSON Schema speification.
+    fn language_server_initialization_options_schema(
+        &mut self,
+        _language_server_id: &LanguageServerId,
+        _worktree: &Worktree,
+    ) -> Option<serde_json::Value> {
+        None
+    }
+
+    /// Returns the JSON schema for the workspace configuration.
+    ///
+    /// The schema must conform to the JSON Schema specification.
+    fn language_server_workspace_configuration_schema(
+        &mut self,
+        _language_server_id: &LanguageServerId,
+        _worktree: &Worktree,
+    ) -> Option<serde_json::Value> {
+        None
+    }
+
     /// Returns the initialization options to pass to the other language server.
     fn language_server_additional_initialization_options(
         &mut self,
@@ -331,7 +353,6 @@ static mut EXTENSION: Option<Box<dyn Extension>> = None;
 pub static ZED_API_VERSION: [u8; 6] = *include_bytes!(concat!(env!("OUT_DIR"), "/version_bytes"));
 
 mod wit {
-
     wit_bindgen::generate!({
         skip: ["init-extension"],
         path: "./wit/since_v0.8.0",
@@ -369,6 +390,26 @@ impl wit::Guest for Component {
         Ok(extension()
             .language_server_workspace_configuration(&language_server_id, worktree)?
             .and_then(|value| serde_json::to_string(&value).ok()))
+    }
+
+    fn language_server_initialization_options_schema(
+        language_server_id: String,
+        worktree: &Worktree,
+    ) -> Option<String> {
+        let language_server_id = LanguageServerId(language_server_id);
+        extension()
+            .language_server_initialization_options_schema(&language_server_id, worktree)
+            .and_then(|value| serde_json::to_string(&value).ok())
+    }
+
+    fn language_server_workspace_configuration_schema(
+        language_server_id: String,
+        worktree: &Worktree,
+    ) -> Option<String> {
+        let language_server_id = LanguageServerId(language_server_id);
+        extension()
+            .language_server_workspace_configuration_schema(&language_server_id, worktree)
+            .and_then(|value| serde_json::to_string(&value).ok())
     }
 
     fn language_server_additional_initialization_options(
@@ -524,6 +565,12 @@ impl wit::Guest for Component {
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
 pub struct LanguageServerId(String);
 
+impl LanguageServerId {
+    pub fn new(value: String) -> Self {
+        Self(value)
+    }
+}
+
 impl AsRef<str> for LanguageServerId {
     fn as_ref(&self) -> &str {
         &self.0
@@ -539,6 +586,12 @@ impl fmt::Display for LanguageServerId {
 /// The ID of a context server.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
 pub struct ContextServerId(String);
+
+impl ContextServerId {
+    pub fn new(value: String) -> Self {
+        Self(value)
+    }
+}
 
 impl AsRef<str> for ContextServerId {
     fn as_ref(&self) -> &str {

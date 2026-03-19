@@ -1,35 +1,51 @@
-use crate::assemble_excerpts::assemble_excerpts;
+use crate::assemble_excerpts::assemble_excerpt_ranges;
 use anyhow::Result;
 use collections::HashMap;
 use futures::{FutureExt, StreamExt as _, channel::mpsc, future};
-use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
-use language::{Anchor, Buffer, BufferSnapshot, OffsetRangeExt as _, Point, Rope, ToOffset as _};
+use gpui::{App, AppContext, AsyncApp, Context, Entity, EntityId, EventEmitter, Task, WeakEntity};
+use language::{Anchor, Buffer, BufferSnapshot, OffsetRangeExt as _, Point, ToOffset as _};
 use project::{LocationLink, Project, ProjectPath};
-use serde::{Serialize, Serializer};
 use smallvec::SmallVec;
 use std::{
     collections::hash_map,
     ops::Range,
+    path::Path,
     sync::Arc,
     time::{Duration, Instant},
 };
+use util::paths::PathStyle;
+use util::rel_path::RelPath;
 use util::{RangeExt as _, ResultExt};
 
 mod assemble_excerpts;
 #[cfg(test)]
 mod edit_prediction_context_tests;
-mod excerpt;
 #[cfg(test)]
 mod fake_definition_lsp;
 
-pub use cloud_llm_client::predict_edits_v3::Line;
-pub use excerpt::{EditPredictionExcerpt, EditPredictionExcerptOptions, EditPredictionExcerptText};
+pub use zeta_prompt::{RelatedExcerpt, RelatedFile};
+
+const IDENTIFIER_LINE_COUNT: u32 = 3;
 
 pub struct RelatedExcerptStore {
     project: WeakEntity<Project>,
-    related_files: Vec<RelatedFile>,
+    related_buffers: Vec<RelatedBuffer>,
     cache: HashMap<Identifier, Arc<CacheEntry>>,
     update_tx: mpsc::UnboundedSender<(Entity<Buffer>, Anchor)>,
+    identifier_line_count: u32,
+}
+
+struct RelatedBuffer {
+    buffer: Entity<Buffer>,
+    path: Arc<Path>,
+    anchor_ranges: Vec<Range<Anchor>>,
+    excerpt_orders: Vec<usize>,
+    cached_file: Option<CachedRelatedFile>,
+}
+
+struct CachedRelatedFile {
+    excerpts: Vec<RelatedExcerpt>,
+    buffer_version: clock::Global,
 }
 
 pub enum RelatedExcerptStoreEvent {
@@ -50,12 +66,16 @@ struct Identifier {
 
 enum DefinitionTask {
     CacheHit(Arc<CacheEntry>),
-    CacheMiss(Task<Result<Option<Vec<LocationLink>>>>),
+    CacheMiss {
+        definitions: Task<Result<Option<Vec<LocationLink>>>>,
+        type_definitions: Task<Result<Option<Vec<LocationLink>>>>,
+    },
 }
 
 #[derive(Debug)]
 struct CacheEntry {
     definitions: SmallVec<[CachedDefinition; 1]>,
+    type_definitions: SmallVec<[CachedDefinition; 1]>,
 }
 
 #[derive(Clone, Debug)]
@@ -63,82 +83,6 @@ struct CachedDefinition {
     path: ProjectPath,
     buffer: Entity<Buffer>,
     anchor_range: Range<Anchor>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct RelatedFile {
-    #[serde(serialize_with = "serialize_project_path")]
-    pub path: ProjectPath,
-    #[serde(skip)]
-    pub buffer: WeakEntity<Buffer>,
-    pub excerpts: Vec<RelatedExcerpt>,
-    pub max_row: u32,
-}
-
-impl RelatedFile {
-    pub fn merge_excerpts(&mut self) {
-        self.excerpts.sort_unstable_by(|a, b| {
-            a.point_range
-                .start
-                .cmp(&b.point_range.start)
-                .then(b.point_range.end.cmp(&a.point_range.end))
-        });
-
-        let mut index = 1;
-        while index < self.excerpts.len() {
-            if self.excerpts[index - 1]
-                .point_range
-                .end
-                .cmp(&self.excerpts[index].point_range.start)
-                .is_ge()
-            {
-                let removed = self.excerpts.remove(index);
-                if removed
-                    .point_range
-                    .end
-                    .cmp(&self.excerpts[index - 1].point_range.end)
-                    .is_gt()
-                {
-                    self.excerpts[index - 1].point_range.end = removed.point_range.end;
-                    self.excerpts[index - 1].anchor_range.end = removed.anchor_range.end;
-                }
-            } else {
-                index += 1;
-            }
-        }
-    }
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct RelatedExcerpt {
-    #[serde(skip)]
-    pub anchor_range: Range<Anchor>,
-    #[serde(serialize_with = "serialize_point_range")]
-    pub point_range: Range<Point>,
-    #[serde(serialize_with = "serialize_rope")]
-    pub text: Rope,
-}
-
-fn serialize_project_path<S: Serializer>(
-    project_path: &ProjectPath,
-    serializer: S,
-) -> Result<S::Ok, S::Error> {
-    project_path.path.serialize(serializer)
-}
-
-fn serialize_rope<S: Serializer>(rope: &Rope, serializer: S) -> Result<S::Ok, S::Error> {
-    rope.to_string().serialize(serializer)
-}
-
-fn serialize_point_range<S: Serializer>(
-    range: &Range<Point>,
-    serializer: S,
-) -> Result<S::Ok, S::Error> {
-    [
-        [range.start.row, range.start.column],
-        [range.end.row, range.end.column],
-    ]
-    .serialize(serializer)
 }
 
 const DEBOUNCE_DURATION: Duration = Duration::from_millis(100);
@@ -176,17 +120,80 @@ impl RelatedExcerptStore {
         RelatedExcerptStore {
             project: project.downgrade(),
             update_tx,
-            related_files: Vec::new(),
+            related_buffers: Vec::new(),
             cache: Default::default(),
+            identifier_line_count: IDENTIFIER_LINE_COUNT,
         }
+    }
+
+    pub fn set_identifier_line_count(&mut self, count: u32) {
+        self.identifier_line_count = count;
     }
 
     pub fn refresh(&mut self, buffer: Entity<Buffer>, position: Anchor, _: &mut Context<Self>) {
         self.update_tx.unbounded_send((buffer, position)).ok();
     }
 
-    pub fn related_files(&self) -> &[RelatedFile] {
-        &self.related_files
+    pub fn related_files(&mut self, cx: &App) -> Vec<RelatedFile> {
+        self.related_buffers
+            .iter_mut()
+            .map(|related| related.related_file(cx))
+            .collect()
+    }
+
+    pub fn related_files_with_buffers(
+        &mut self,
+        cx: &App,
+    ) -> impl Iterator<Item = (RelatedFile, Entity<Buffer>)> {
+        self.related_buffers
+            .iter_mut()
+            .map(|related| (related.related_file(cx), related.buffer.clone()))
+    }
+
+    pub fn set_related_files(&mut self, files: Vec<RelatedFile>, cx: &App) {
+        self.related_buffers = files
+            .into_iter()
+            .filter_map(|file| {
+                let project = self.project.upgrade()?;
+                let project = project.read(cx);
+                let worktree = project.worktrees(cx).find(|wt| {
+                    let root_name = wt.read(cx).root_name().as_unix_str();
+                    file.path
+                        .components()
+                        .next()
+                        .is_some_and(|c| c.as_os_str() == root_name)
+                })?;
+                let worktree = worktree.read(cx);
+                let relative_path = file
+                    .path
+                    .strip_prefix(worktree.root_name().as_unix_str())
+                    .ok()?;
+                let relative_path = RelPath::new(relative_path, PathStyle::Posix).ok()?;
+                let project_path = ProjectPath {
+                    worktree_id: worktree.id(),
+                    path: relative_path.into_owned().into(),
+                };
+                let buffer = project.get_open_buffer(&project_path, cx)?;
+                let snapshot = buffer.read(cx).snapshot();
+                let mut anchor_ranges = Vec::with_capacity(file.excerpts.len());
+                let mut excerpt_orders = Vec::with_capacity(file.excerpts.len());
+                for excerpt in &file.excerpts {
+                    let start = snapshot.anchor_before(Point::new(excerpt.row_range.start, 0));
+                    let end_row = excerpt.row_range.end;
+                    let end_col = snapshot.line_len(end_row);
+                    let end = snapshot.anchor_after(Point::new(end_row, end_col));
+                    anchor_ranges.push(start..end);
+                    excerpt_orders.push(excerpt.order);
+                }
+                Some(RelatedBuffer {
+                    buffer,
+                    path: file.path.clone(),
+                    anchor_ranges,
+                    excerpt_orders,
+                    cached_file: None,
+                })
+            })
+            .collect();
     }
 
     async fn fetch_excerpts(
@@ -195,8 +202,12 @@ impl RelatedExcerptStore {
         position: Anchor,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        let (project, snapshot) = this.read_with(cx, |this, cx| {
-            (this.project.upgrade(), buffer.read(cx).snapshot())
+        let (project, snapshot, identifier_line_count) = this.read_with(cx, |this, cx| {
+            (
+                this.project.upgrade(),
+                buffer.read(cx).snapshot(),
+                this.identifier_line_count,
+            )
         })?;
         let Some(project) = project else {
             return Ok(());
@@ -211,26 +222,74 @@ impl RelatedExcerptStore {
             cx.emit(RelatedExcerptStoreEvent::StartedRefresh);
         })?;
 
-        let identifiers = cx
-            .background_spawn(async move { identifiers_for_position(&snapshot, position) })
+        let identifiers_with_ranks = cx
+            .background_spawn(async move {
+                let cursor_offset = position.to_offset(&snapshot);
+                let identifiers =
+                    identifiers_for_position(&snapshot, position, identifier_line_count);
+
+                // Compute byte distance from cursor to each identifier, then sort by
+                // distance so we can assign ordinal ranks. Identifiers at the same
+                // distance share the same rank.
+                let mut identifiers_with_distance: Vec<(Identifier, usize)> = identifiers
+                    .into_iter()
+                    .map(|id| {
+                        let start = id.range.start.to_offset(&snapshot);
+                        let end = id.range.end.to_offset(&snapshot);
+                        let distance = if cursor_offset < start {
+                            start - cursor_offset
+                        } else if cursor_offset > end {
+                            cursor_offset - end
+                        } else {
+                            0
+                        };
+                        (id, distance)
+                    })
+                    .collect();
+                identifiers_with_distance.sort_by_key(|(_, distance)| *distance);
+
+                let mut cursor_distances: HashMap<Identifier, usize> = HashMap::default();
+                let mut current_rank = 0;
+                let mut previous_distance = None;
+                for (identifier, distance) in &identifiers_with_distance {
+                    if previous_distance != Some(*distance) {
+                        current_rank = cursor_distances.len();
+                        previous_distance = Some(*distance);
+                    }
+                    cursor_distances.insert(identifier.clone(), current_rank);
+                }
+
+                (identifiers_with_distance, cursor_distances)
+            })
             .await;
+
+        let (identifiers_with_distance, cursor_distances) = identifiers_with_ranks;
 
         let async_cx = cx.clone();
         let start_time = Instant::now();
         let futures = this.update(cx, |this, cx| {
-            identifiers
+            identifiers_with_distance
                 .into_iter()
-                .filter_map(|identifier| {
+                .filter_map(|(identifier, _)| {
                     let task = if let Some(entry) = this.cache.get(&identifier) {
                         DefinitionTask::CacheHit(entry.clone())
                     } else {
-                        DefinitionTask::CacheMiss(
-                            this.project
-                                .update(cx, |project, cx| {
-                                    project.definitions(&buffer, identifier.range.start, cx)
-                                })
-                                .ok()?,
-                        )
+                        let definitions = this
+                            .project
+                            .update(cx, |project, cx| {
+                                project.definitions(&buffer, identifier.range.start, cx)
+                            })
+                            .ok()?;
+                        let type_definitions = this
+                            .project
+                            .update(cx, |project, cx| {
+                                project.type_definitions(&buffer, identifier.range.start, cx)
+                            })
+                            .ok()?;
+                        DefinitionTask::CacheMiss {
+                            definitions,
+                            type_definitions,
+                        }
                     };
 
                     let cx = async_cx.clone();
@@ -240,24 +299,54 @@ impl RelatedExcerptStore {
                             DefinitionTask::CacheHit(cache_entry) => {
                                 Some((identifier, cache_entry, None))
                             }
-                            DefinitionTask::CacheMiss(task) => {
-                                let locations = task.await.log_err()??;
+                            DefinitionTask::CacheMiss {
+                                definitions,
+                                type_definitions,
+                            } => {
+                                let (definition_locations, type_definition_locations) =
+                                    futures::join!(definitions, type_definitions);
                                 let duration = start_time.elapsed();
-                                cx.update(|cx| {
+
+                                let definition_locations =
+                                    definition_locations.log_err().flatten().unwrap_or_default();
+                                let type_definition_locations = type_definition_locations
+                                    .log_err()
+                                    .flatten()
+                                    .unwrap_or_default();
+
+                                Some(cx.update(|cx| {
+                                    let definitions: SmallVec<[CachedDefinition; 1]> =
+                                        definition_locations
+                                            .into_iter()
+                                            .filter_map(|location| {
+                                                process_definition(location, &project, cx)
+                                            })
+                                            .collect();
+
+                                    let type_definitions: SmallVec<[CachedDefinition; 1]> =
+                                        type_definition_locations
+                                            .into_iter()
+                                            .filter_map(|location| {
+                                                process_definition(location, &project, cx)
+                                            })
+                                            .filter(|type_def| {
+                                                !definitions.iter().any(|def| {
+                                                    def.buffer.entity_id()
+                                                        == type_def.buffer.entity_id()
+                                                        && def.anchor_range == type_def.anchor_range
+                                                })
+                                            })
+                                            .collect();
+
                                     (
                                         identifier,
                                         Arc::new(CacheEntry {
-                                            definitions: locations
-                                                .into_iter()
-                                                .filter_map(|location| {
-                                                    process_definition(location, &project, cx)
-                                                })
-                                                .collect(),
+                                            definitions,
+                                            type_definitions,
                                         }),
                                         Some(duration),
                                     )
-                                })
-                                .ok()
+                                }))
                             }
                         }
                     })
@@ -283,7 +372,8 @@ impl RelatedExcerptStore {
         }
         mean_definition_latency /= cache_miss_count.max(1) as u32;
 
-        let (new_cache, related_files) = rebuild_related_files(new_cache, cx).await?;
+        let (new_cache, related_buffers) =
+            rebuild_related_files(&project, new_cache, &cursor_distances, cx).await?;
 
         if let Some(file) = &file {
             log::debug!(
@@ -295,7 +385,7 @@ impl RelatedExcerptStore {
 
         this.update(cx, |this, cx| {
             this.cache = new_cache;
-            this.related_files = related_files;
+            this.related_buffers = related_buffers;
             cx.emit(RelatedExcerptStoreEvent::FinishedRefresh {
                 cache_hit_count,
                 cache_miss_count,
@@ -309,65 +399,178 @@ impl RelatedExcerptStore {
 }
 
 async fn rebuild_related_files(
-    new_entries: HashMap<Identifier, Arc<CacheEntry>>,
+    project: &Entity<Project>,
+    mut new_entries: HashMap<Identifier, Arc<CacheEntry>>,
+    cursor_distances: &HashMap<Identifier, usize>,
     cx: &mut AsyncApp,
-) -> Result<(HashMap<Identifier, Arc<CacheEntry>>, Vec<RelatedFile>)> {
+) -> Result<(HashMap<Identifier, Arc<CacheEntry>>, Vec<RelatedBuffer>)> {
     let mut snapshots = HashMap::default();
+    let mut worktree_root_names = HashMap::default();
     for entry in new_entries.values() {
-        for definition in &entry.definitions {
+        for definition in entry
+            .definitions
+            .iter()
+            .chain(entry.type_definitions.iter())
+        {
             if let hash_map::Entry::Vacant(e) = snapshots.entry(definition.buffer.entity_id()) {
                 definition
                     .buffer
-                    .read_with(cx, |buffer, _| buffer.parsing_idle())?
+                    .read_with(cx, |buffer, _| buffer.parsing_idle())
                     .await;
                 e.insert(
                     definition
                         .buffer
-                        .read_with(cx, |buffer, _| buffer.snapshot())?,
+                        .read_with(cx, |buffer, _| buffer.snapshot()),
                 );
+            }
+            let worktree_id = definition.path.worktree_id;
+            if let hash_map::Entry::Vacant(e) =
+                worktree_root_names.entry(definition.path.worktree_id)
+            {
+                project.read_with(cx, |project, cx| {
+                    if let Some(worktree) = project.worktree_for_id(worktree_id, cx) {
+                        e.insert(worktree.read(cx).root_name().as_unix_str().to_string());
+                    }
+                });
             }
         }
     }
 
+    let cursor_distances = cursor_distances.clone();
     Ok(cx
         .background_spawn(async move {
-            let mut files = Vec::<RelatedFile>::new();
-            let mut ranges_by_buffer = HashMap::<_, Vec<Range<Point>>>::default();
+            let mut ranges_by_buffer =
+                HashMap::<EntityId, (Entity<Buffer>, Vec<(Range<Point>, usize)>)>::default();
             let mut paths_by_buffer = HashMap::default();
-            for entry in new_entries.values() {
-                for definition in &entry.definitions {
+            let mut min_rank_by_buffer = HashMap::<EntityId, usize>::default();
+            for (identifier, entry) in new_entries.iter_mut() {
+                let rank = cursor_distances
+                    .get(identifier)
+                    .copied()
+                    .unwrap_or(usize::MAX);
+                for definition in entry
+                    .definitions
+                    .iter()
+                    .chain(entry.type_definitions.iter())
+                {
                     let Some(snapshot) = snapshots.get(&definition.buffer.entity_id()) else {
                         continue;
                     };
                     paths_by_buffer.insert(definition.buffer.entity_id(), definition.path.clone());
+
+                    let buffer_rank = min_rank_by_buffer
+                        .entry(definition.buffer.entity_id())
+                        .or_insert(usize::MAX);
+                    *buffer_rank = (*buffer_rank).min(rank);
+
                     ranges_by_buffer
-                        .entry(definition.buffer.clone())
-                        .or_default()
-                        .push(definition.anchor_range.to_point(snapshot));
+                        .entry(definition.buffer.entity_id())
+                        .or_insert_with(|| (definition.buffer.clone(), Vec::new()))
+                        .1
+                        .push((definition.anchor_range.to_point(snapshot), rank));
                 }
             }
 
-            for (buffer, ranges) in ranges_by_buffer {
-                let Some(snapshot) = snapshots.get(&buffer.entity_id()) else {
-                    continue;
-                };
-                let Some(project_path) = paths_by_buffer.get(&buffer.entity_id()) else {
-                    continue;
-                };
-                let excerpts = assemble_excerpts(snapshot, ranges);
-                files.push(RelatedFile {
-                    path: project_path.clone(),
-                    buffer: buffer.downgrade(),
-                    excerpts,
-                    max_row: snapshot.max_point().row,
-                });
-            }
+            let mut related_buffers: Vec<RelatedBuffer> = ranges_by_buffer
+                .into_iter()
+                .filter_map(|(entity_id, (buffer, ranges))| {
+                    let snapshot = snapshots.get(&entity_id)?;
+                    let project_path = paths_by_buffer.get(&entity_id)?;
+                    let assembled = assemble_excerpt_ranges(snapshot, ranges);
+                    let root_name = worktree_root_names.get(&project_path.worktree_id)?;
 
-            files.sort_by_key(|file| file.path.clone());
-            (new_entries, files)
+                    let path: Arc<Path> = Path::new(&format!(
+                        "{}/{}",
+                        root_name,
+                        project_path.path.as_unix_str()
+                    ))
+                    .into();
+
+                    let mut anchor_ranges = Vec::with_capacity(assembled.len());
+                    let mut excerpt_orders = Vec::with_capacity(assembled.len());
+                    for (row_range, order) in assembled {
+                        let start = snapshot.anchor_before(Point::new(row_range.start, 0));
+                        let end_col = snapshot.line_len(row_range.end);
+                        let end = snapshot.anchor_after(Point::new(row_range.end, end_col));
+                        anchor_ranges.push(start..end);
+                        excerpt_orders.push(order);
+                    }
+
+                    let mut related_buffer = RelatedBuffer {
+                        buffer,
+                        path,
+                        anchor_ranges,
+                        excerpt_orders,
+                        cached_file: None,
+                    };
+                    related_buffer.fill_cache(snapshot);
+                    Some(related_buffer)
+                })
+                .collect();
+
+            related_buffers.sort_by(|a, b| {
+                let rank_a = min_rank_by_buffer
+                    .get(&a.buffer.entity_id())
+                    .copied()
+                    .unwrap_or(usize::MAX);
+                let rank_b = min_rank_by_buffer
+                    .get(&b.buffer.entity_id())
+                    .copied()
+                    .unwrap_or(usize::MAX);
+                rank_a.cmp(&rank_b).then_with(|| a.path.cmp(&b.path))
+            });
+
+            (new_entries, related_buffers)
         })
         .await)
 }
+
+impl RelatedBuffer {
+    fn related_file(&mut self, cx: &App) -> RelatedFile {
+        let buffer = self.buffer.read(cx);
+        let path = self.path.clone();
+        let cached = if let Some(cached) = &self.cached_file
+            && buffer.version() == cached.buffer_version
+        {
+            cached
+        } else {
+            self.fill_cache(buffer)
+        };
+        let related_file = RelatedFile {
+            path,
+            excerpts: cached.excerpts.clone(),
+            max_row: buffer.max_point().row,
+            in_open_source_repo: false,
+        };
+        return related_file;
+    }
+
+    fn fill_cache(&mut self, buffer: &text::BufferSnapshot) -> &CachedRelatedFile {
+        let excerpts = self
+            .anchor_ranges
+            .iter()
+            .zip(self.excerpt_orders.iter())
+            .map(|(range, &order)| {
+                let start = range.start.to_point(buffer);
+                let end = range.end.to_point(buffer);
+                RelatedExcerpt {
+                    row_range: start.row..end.row,
+                    text: buffer.text_for_range(start..end).collect::<String>().into(),
+                    order,
+                }
+            })
+            .collect::<Vec<_>>();
+        self.cached_file = Some(CachedRelatedFile {
+            excerpts: excerpts,
+            buffer_version: buffer.version().clone(),
+        });
+        self.cached_file.as_ref().unwrap()
+    }
+}
+
+use language::ToPoint as _;
+
+const MAX_TARGET_LEN: usize = 128;
 
 fn process_definition(
     location: LocationLink,
@@ -381,6 +584,15 @@ fn process_definition(
     if worktree.read(cx).is_single_file() {
         return None;
     }
+
+    // If the target range is large, it likely means we requested the definition of an entire module.
+    // For individual definitions, the target range should be small as it only covers the symbol.
+    let buffer = location.target.buffer.read(cx);
+    let target_len = anchor_range.to_offset(&buffer).len();
+    if target_len > MAX_TARGET_LEN {
+        return None;
+    }
+
     Some(CachedDefinition {
         path: ProjectPath {
             worktree_id: file.worktree_id(cx),
@@ -393,14 +605,21 @@ fn process_definition(
 
 /// Gets all of the identifiers that are present in the given line, and its containing
 /// outline items.
-fn identifiers_for_position(buffer: &BufferSnapshot, position: Anchor) -> Vec<Identifier> {
+fn identifiers_for_position(
+    buffer: &BufferSnapshot,
+    position: Anchor,
+    identifier_line_count: u32,
+) -> Vec<Identifier> {
     let offset = position.to_offset(buffer);
     let point = buffer.offset_to_point(offset);
 
-    let line_range = Point::new(point.row, 0)..Point::new(point.row + 1, 0).min(buffer.max_point());
+    // Search for identifiers on lines adjacent to the cursor.
+    let start = Point::new(point.row.saturating_sub(identifier_line_count), 0);
+    let end = Point::new(point.row + identifier_line_count + 1, 0).min(buffer.max_point());
+    let line_range = start..end;
     let mut ranges = vec![line_range.to_offset(&buffer)];
 
-    // Include the range of the outline item itself, but not its body.
+    // Search for identifiers mentioned in headers/signatures of containing outline items.
     let outline_items = buffer.outline_items_as_offsets_containing(offset..offset, false, None);
     for item in outline_items {
         if let Some(body_range) = item.body_range(&buffer) {
@@ -425,14 +644,12 @@ fn identifiers_for_position(buffer: &BufferSnapshot, position: Anchor) -> Vec<Id
     let outer_range =
         ranges.first().map_or(0, |r| r.start)..ranges.last().map_or(buffer.len(), |r| r.end);
 
-    let mut captures = buffer
-        .syntax
-        .captures(outer_range.clone(), &buffer.text, |grammar| {
-            grammar
-                .highlights_config
-                .as_ref()
-                .map(|config| &config.query)
-        });
+    let mut captures = buffer.captures(outer_range.clone(), |grammar| {
+        grammar
+            .highlights_config
+            .as_ref()
+            .map(|config| &config.query)
+    });
 
     for range in ranges {
         captures.set_byte_range(range.start..outer_range.end);

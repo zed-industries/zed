@@ -1,7 +1,10 @@
+#![cfg_attr(target_family = "wasm", no_main)]
+
 use gpui::{
-    App, Application, Bounds, Context, Div, ElementId, FocusHandle, KeyBinding, SharedString,
-    Stateful, Window, WindowBounds, WindowOptions, actions, div, prelude::*, px, size,
+    App, Bounds, Context, Div, ElementId, FocusHandle, KeyBinding, SharedString, Stateful, Window,
+    WindowBounds, WindowOptions, actions, div, prelude::*, px, size,
 };
+use gpui_platform::application;
 
 actions!(example, [Tab, TabPrev]);
 
@@ -22,7 +25,7 @@ impl Example {
         ];
 
         let focus_handle = cx.focus_handle();
-        window.focus(&focus_handle);
+        window.focus(&focus_handle, cx);
 
         Self {
             focus_handle,
@@ -31,13 +34,13 @@ impl Example {
         }
     }
 
-    fn on_tab(&mut self, _: &Tab, window: &mut Window, _: &mut Context<Self>) {
-        window.focus_next();
+    fn on_tab(&mut self, _: &Tab, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus_next(cx);
         self.message = SharedString::from("You have pressed `Tab`.");
     }
 
-    fn on_tab_prev(&mut self, _: &TabPrev, window: &mut Window, _: &mut Context<Self>) {
-        window.focus_prev();
+    fn on_tab_prev(&mut self, _: &TabPrev, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus_prev(cx);
         self.message = SharedString::from("You have pressed `Shift-Tab`.");
     }
 }
@@ -130,11 +133,55 @@ impl Render for Example {
                             })),
                     ),
             )
+            .child(
+                div()
+                    .id("group-1")
+                    .tab_index(6)
+                    .tab_group()
+                    .tab_stop(false)
+                    .child(
+                        button("group-1-button-1")
+                            .tab_index(1)
+                            .child("Tab index [6, 1]"),
+                    )
+                    .child(
+                        button("group-1-button-2")
+                            .tab_index(2)
+                            .child("Tab index [6, 2]"),
+                    )
+                    .child(
+                        button("group-1-button-3")
+                            .tab_index(3)
+                            .child("Tab index [6, 3]"),
+                    ),
+            )
+            .child(
+                div()
+                    .id("group-2")
+                    .tab_index(7)
+                    .tab_group()
+                    .tab_stop(false)
+                    .child(
+                        button("group-2-button-1")
+                            .tab_index(1)
+                            .child("Tab index [7, 1]"),
+                    )
+                    .child(
+                        button("group-2-button-2")
+                            .tab_index(2)
+                            .child("Tab index [7, 2]"),
+                    )
+                    .child(
+                        button("group-2-button-3")
+                            .tab_index(3)
+                            .child("Tab index [7, 3]"),
+                    ),
+            )
     }
 }
 
-fn main() {
-    Application::new().run(|cx: &mut App| {
+fn run_example() {
+    application().run(|cx: &mut App| {
         cx.bind_keys([
             KeyBinding::new("tab", Tab, None),
             KeyBinding::new("shift-tab", TabPrev, None),
@@ -152,4 +199,16 @@ fn main() {
 
         cx.activate(true);
     });
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn main() {
+    run_example();
+}
+
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn start() {
+    gpui_platform::web_init();
+    run_example();
 }

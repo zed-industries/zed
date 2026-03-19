@@ -42,6 +42,8 @@ sum_tree.workspace = true
 text.workspace = true
 theme.workspace = true
 tree-sitter.workspace = true
+ztracing.workspace = true
+tracing.workspace = true
 util.workspace = true
 
 [dev-dependencies]
@@ -50,9 +52,11 @@ gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
-project = { workspace = true, features = ["test-support"] }
 rand.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 text = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["tracing"]

@@ -528,7 +528,12 @@ fn get_wrapper_type(field: &Field, ty: &Type) -> syn::Type {
         } else {
             panic!("Expected struct type for a refineable field");
         };
-        let refinement_struct_name = format_ident!("{}Refinement", struct_name);
+
+        let refinement_struct_name = if struct_name.to_string().ends_with("Refinement") {
+            format_ident!("{}", struct_name)
+        } else {
+            format_ident!("{}Refinement", struct_name)
+        };
         let generics = if let Type::Path(tp) = ty {
             &tp.path.segments.last().unwrap().arguments
         } else {

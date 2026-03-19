@@ -133,7 +133,7 @@ impl ViewState {
     fn set_offset(&mut self, point: Point<Pixels>) {
         if point.y >= -Pixels::ZERO {
             self.schedule_scroll_up();
-        } else if point.y <= -self.scroll_handle.max_offset().height {
+        } else if point.y <= -self.scroll_handle.max_offset().y {
             self.schedule_scroll_down();
         }
         self.scroll_handle.set_offset(point);
@@ -141,7 +141,7 @@ impl ViewState {
 }
 
 impl ScrollableHandle for ViewStateHandle {
-    fn max_offset(&self) -> gpui::Size<Pixels> {
+    fn max_offset(&self) -> gpui::Point<Pixels> {
         self.0.borrow().scroll_handle.max_offset()
     }
 
@@ -403,7 +403,7 @@ impl MemoryView {
                 this.set_placeholder_text("Write to Selected Memory Range", window, cx);
             });
             self.is_writing_memory = true;
-            self.query_editor.focus_handle(cx).focus(window);
+            self.query_editor.focus_handle(cx).focus(window, cx);
         } else {
             self.query_editor.update(cx, |this, cx| {
                 this.clear(window, cx);

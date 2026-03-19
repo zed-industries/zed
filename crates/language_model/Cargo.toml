@@ -18,8 +18,10 @@ test-support = []
 [dependencies]
 anthropic = { workspace = true, features = ["schemars"] }
 anyhow.workspace = true
+credentials_provider.workspace = true
 base64.workspace = true
 client.workspace = true
+cloud_api_client.workspace = true
 cloud_api_types.workspace = true
 cloud_llm_client.workspace = true
 collections.workspace = true
@@ -38,9 +40,9 @@ serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 smol.workspace = true
-telemetry_events.workspace = true
 thiserror.workspace = true
 util.workspace = true
+zed_env_vars.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

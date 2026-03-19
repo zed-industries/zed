@@ -6,7 +6,7 @@ use rpc::proto::{self, REMOTE_SERVER_PROJECT_ID};
 use std::{collections::VecDeque, path::Path, sync::Arc};
 use task::{Shell, shell_to_proto};
 use terminal::terminal_settings::TerminalSettings;
-use util::{ResultExt, command::new_smol_command, rel_path::RelPath};
+use util::{ResultExt, command::new_command, rel_path::RelPath};
 use worktree::Worktree;
 
 use collections::HashMap;
@@ -216,7 +216,7 @@ impl ProjectEnvironment {
                 let shell = shell.clone();
                 let tx = self.environment_error_messages_tx.clone();
                 cx.spawn(async move |cx| {
-                    let mut shell_env = cx
+                    let mut shell_env = match cx
                         .background_spawn(load_directory_shell_environment(
                             shell,
                             abs_path.clone(),
@@ -224,7 +224,15 @@ impl ProjectEnvironment {
                             tx,
                         ))
                         .await
-                        .log_err();
+                    {
+                        Ok(shell_env) => Some(shell_env),
+                        Err(e) => {
+                            log::error!(
+                                "Failed to load shell environment for directory {abs_path:?}: {e:#}"
+                            );
+                            None
+                        }
+                    };
 
                     if let Some(shell_env) = shell_env.as_mut() {
                         let path = shell_env
@@ -394,7 +402,7 @@ async fn load_direnv_environment(
     };
 
     let args = &["export", "json"];
-    let direnv_output = new_smol_command(&direnv_path)
+    let direnv_output = new_command(&direnv_path)
         .args(args)
         .envs(env)
         .env("TERM", "dumb")

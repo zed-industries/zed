@@ -1,4 +1,3 @@
-use crate::RelatedExcerpt;
 use language::{BufferSnapshot, OffsetRangeExt as _, Point};
 use std::ops::Range;
 
@@ -7,18 +6,20 @@ const MAX_OUTLINE_ITEM_BODY_SIZE: usize = 512;
 #[cfg(test)]
 const MAX_OUTLINE_ITEM_BODY_SIZE: usize = 24;
 
-pub fn assemble_excerpts(
+pub fn assemble_excerpt_ranges(
     buffer: &BufferSnapshot,
-    mut input_ranges: Vec<Range<Point>>,
-) -> Vec<RelatedExcerpt> {
+    input_ranges: Vec<(Range<Point>, usize)>,
+) -> Vec<(Range<u32>, usize)> {
+    let mut input_ranges: Vec<(Range<Point>, usize)> = input_ranges
+        .into_iter()
+        .map(|(range, order)| (clip_range_to_lines(&range, false, buffer), order))
+        .collect();
     merge_ranges(&mut input_ranges);
 
-    let mut outline_ranges = Vec::new();
+    let mut outline_ranges: Vec<(Range<Point>, usize)> = Vec::new();
     let outline_items = buffer.outline_items_as_points_containing(0..buffer.len(), false, None);
     let mut outline_ix = 0;
-    for input_range in &mut input_ranges {
-        *input_range = clip_range_to_lines(input_range, false, buffer);
-
+    for (input_range, input_order) in &mut input_ranges {
         while let Some(outline_item) = outline_items.get(outline_ix) {
             let item_range = clip_range_to_lines(&outline_item.range, false, buffer);
 
@@ -37,6 +38,7 @@ pub fn assemble_excerpts(
                 add_outline_item(
                     item_range.clone(),
                     body_range.clone(),
+                    *input_order,
                     buffer,
                     &mut outline_ranges,
                 );
@@ -58,11 +60,12 @@ pub fn assemble_excerpts(
                                 next_outline_item
                                     .body_range(buffer)
                                     .map(|body| clip_range_to_lines(&body, true, buffer)),
+                                *input_order,
                                 buffer,
                                 &mut outline_ranges,
                             );
-                            child_outline_ix += 1;
                         }
+                        child_outline_ix += 1;
                     }
                 }
             }
@@ -71,20 +74,12 @@ pub fn assemble_excerpts(
         }
     }
 
-    input_ranges.extend_from_slice(&outline_ranges);
+    input_ranges.extend(outline_ranges);
     merge_ranges(&mut input_ranges);
 
     input_ranges
         .into_iter()
-        .map(|range| {
-            let offset_range = range.to_offset(buffer);
-            RelatedExcerpt {
-                point_range: range,
-                anchor_range: buffer.anchor_before(offset_range.start)
-                    ..buffer.anchor_after(offset_range.end),
-                text: buffer.as_rope().slice(offset_range),
-            }
-        })
+        .map(|(range, order)| (range.start.row..range.end.row, order))
         .collect()
 }
 
@@ -111,8 +106,9 @@ fn clip_range_to_lines(
 fn add_outline_item(
     mut item_range: Range<Point>,
     body_range: Option<Range<Point>>,
+    order: usize,
     buffer: &BufferSnapshot,
-    outline_ranges: &mut Vec<Range<Point>>,
+    outline_ranges: &mut Vec<(Range<Point>, usize)>,
 ) {
     if let Some(mut body_range) = body_range {
         if body_range.start.column > 0 {
@@ -122,203 +118,41 @@ fn add_outline_item(
 
         let head_range = item_range.start..body_range.start;
         if head_range.start < head_range.end {
-            outline_ranges.push(head_range);
+            outline_ranges.push((head_range, order));
         }
 
         let tail_range = body_range.end..item_range.end;
         if tail_range.start < tail_range.end {
-            outline_ranges.push(tail_range);
+            outline_ranges.push((tail_range, order));
         }
     } else {
         item_range.start.column = 0;
         item_range.end.column = buffer.line_len(item_range.end.row);
-        outline_ranges.push(item_range);
+        outline_ranges.push((item_range, order));
     }
 }
 
-pub fn merge_ranges(ranges: &mut Vec<Range<Point>>) {
-    ranges.sort_unstable_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
+pub fn merge_ranges(ranges: &mut Vec<(Range<Point>, usize)>) {
+    ranges.sort_unstable_by(|(a, _), (b, _)| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
 
     let mut index = 1;
     while index < ranges.len() {
-        let mut prev_range_end = ranges[index - 1].end;
+        let mut prev_range_end = ranges[index - 1].0.end;
         if prev_range_end.column > 0 {
             prev_range_end += Point::new(1, 0);
         }
 
         if (prev_range_end + Point::new(1, 0))
-            .cmp(&ranges[index].start)
+            .cmp(&ranges[index].0.start)
             .is_ge()
         {
             let removed = ranges.remove(index);
-            if removed.end.cmp(&ranges[index - 1].end).is_gt() {
-                ranges[index - 1].end = removed.end;
+            if removed.0.end.cmp(&ranges[index - 1].0.end).is_gt() {
+                ranges[index - 1].0.end = removed.0.end;
             }
+            ranges[index - 1].1 = ranges[index - 1].1.min(removed.1);
         } else {
             index += 1;
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use gpui::{TestAppContext, prelude::*};
-    use indoc::indoc;
-    use language::{Buffer, Language, LanguageConfig, LanguageMatcher, OffsetRangeExt};
-    use pretty_assertions::assert_eq;
-    use std::{fmt::Write as _, sync::Arc};
-    use util::test::marked_text_ranges;
-
-    #[gpui::test]
-    fn test_rust(cx: &mut TestAppContext) {
-        let table = [
-            (
-                indoc! {r#"
-                    struct User {
-                        first_name: String,
-                        «last_name»: String,
-                        age: u32,
-                        email: String,
-                        create_at: Instant,
-                    }
-
-                    impl User {
-                        pub fn first_name(&self) -> String {
-                            self.first_name.clone()
-                        }
-
-                        pub fn full_name(&self) -> String {
-                    «        format!("{} {}", self.first_name, self.last_name)
-                    »    }
-                    }
-                "#},
-                indoc! {r#"
-                    struct User {
-                        first_name: String,
-                        last_name: String,
-                    …
-                    }
-
-                    impl User {
-                    …
-                        pub fn full_name(&self) -> String {
-                            format!("{} {}", self.first_name, self.last_name)
-                        }
-                    }
-                "#},
-            ),
-            (
-                indoc! {r#"
-                    struct «User» {
-                        first_name: String,
-                        last_name: String,
-                        age: u32,
-                    }
-
-                    impl User {
-                        // methods
-                    }
-                    "#
-                },
-                indoc! {r#"
-                    struct User {
-                        first_name: String,
-                        last_name: String,
-                        age: u32,
-                    }
-                    …
-                "#},
-            ),
-            (
-                indoc! {r#"
-                    trait «FooProvider» {
-                        const NAME: &'static str;
-
-                        fn provide_foo(&self, id: usize) -> Foo;
-
-                        fn provide_foo_batched(&self, ids: &[usize]) -> Vec<Foo> {
-                             ids.iter()
-                                .map(|id| self.provide_foo(*id))
-                                .collect()
-                        }
-
-                        fn sync(&self);
-                    }
-                    "#
-                },
-                indoc! {r#"
-                    trait FooProvider {
-                        const NAME: &'static str;
-
-                        fn provide_foo(&self, id: usize) -> Foo;
-
-                        fn provide_foo_batched(&self, ids: &[usize]) -> Vec<Foo> {
-                    …
-                        }
-
-                        fn sync(&self);
-                    }
-                "#},
-            ),
-        ];
-
-        for (input, expected_output) in table {
-            let (input, ranges) = marked_text_ranges(&input, false);
-            let buffer =
-                cx.new(|cx| Buffer::local(input, cx).with_language(Arc::new(rust_lang()), cx));
-            buffer.read_with(cx, |buffer, _cx| {
-                let ranges: Vec<Range<Point>> = ranges
-                    .into_iter()
-                    .map(|range| range.to_point(&buffer))
-                    .collect();
-
-                let excerpts = assemble_excerpts(&buffer.snapshot(), ranges);
-
-                let output = format_excerpts(buffer, &excerpts);
-                assert_eq!(output, expected_output);
-            });
-        }
-    }
-
-    fn format_excerpts(buffer: &Buffer, excerpts: &[RelatedExcerpt]) -> String {
-        let mut output = String::new();
-        let file_line_count = buffer.max_point().row;
-        let mut current_row = 0;
-        for excerpt in excerpts {
-            if excerpt.text.is_empty() {
-                continue;
-            }
-            if current_row < excerpt.point_range.start.row {
-                writeln!(&mut output, "…").unwrap();
-            }
-            current_row = excerpt.point_range.start.row;
-
-            for line in excerpt.text.to_string().lines() {
-                output.push_str(line);
-                output.push('\n');
-                current_row += 1;
-            }
-        }
-        if current_row < file_line_count {
-            writeln!(&mut output, "…").unwrap();
-        }
-        output
-    }
-
-    fn rust_lang() -> Language {
-        Language::new(
-            LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            Some(language::tree_sitter_rust::LANGUAGE.into()),
-        )
-        .with_outline_query(include_str!("../../languages/src/rust/outline.scm"))
-        .unwrap()
     }
 }

@@ -2,7 +2,8 @@
 
 (string) @string
 
-(template_string (string_fragment) @string)
+(template_string
+  (string_fragment) @string)
 
 (jsx_element) @element
 
@@ -13,6 +14,7 @@
   (jsx_expression)
 ] @default
 
-(_ value: (call_expression
-  function: (identifier) @function_name_before_type_arguments
-  type_arguments: (type_arguments)))
+(_
+  value: (call_expression
+    function: (identifier) @function_name_before_type_arguments
+    type_arguments: (type_arguments)))

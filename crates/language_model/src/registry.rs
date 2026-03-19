@@ -2,11 +2,15 @@ use crate::{
     LanguageModel, LanguageModelId, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderState,
 };
-use collections::BTreeMap;
+use collections::{BTreeMap, HashSet};
 use gpui::{App, Context, Entity, EventEmitter, Global, prelude::*};
 use std::{str::FromStr, sync::Arc};
 use thiserror::Error;
 use util::maybe;
+
+/// Function type for checking if a built-in provider should be hidden.
+/// Returns Some(extension_id) if the provider should be hidden when that extension is installed.
+pub type BuiltinProviderHidingFn = Box<dyn Fn(&str) -> Option<&'static str> + Send + Sync>;
 
 pub fn init(cx: &mut App) {
     let registry = cx.new(|_cx| LanguageModelRegistry::default());
@@ -48,6 +52,11 @@ pub struct LanguageModelRegistry {
     thread_summary_model: Option<ConfiguredModel>,
     providers: BTreeMap<LanguageModelProviderId, Arc<dyn LanguageModelProvider>>,
     inline_alternatives: Vec<Arc<dyn LanguageModel>>,
+    /// Set of installed extension IDs that provide language models.
+    /// Used to determine which built-in providers should be hidden.
+    installed_llm_extension_ids: HashSet<Arc<str>>,
+    /// Function to check if a built-in provider should be hidden by an extension.
+    builtin_provider_hiding_fn: Option<BuiltinProviderHidingFn>,
 }
 
 #[derive(Debug)]
@@ -104,6 +113,8 @@ pub enum Event {
     ProviderStateChanged(LanguageModelProviderId),
     AddedProvider(LanguageModelProviderId),
     RemovedProvider(LanguageModelProviderId),
+    /// Emitted when provider visibility changes due to extension install/uninstall.
+    ProvidersChanged,
 }
 
 impl EventEmitter<Event> for LanguageModelRegistry {}
@@ -181,6 +192,60 @@ impl LanguageModelRegistry {
             }
         }));
         providers
+    }
+
+    /// Returns providers, filtering out hidden built-in providers.
+    pub fn visible_providers(&self) -> Vec<Arc<dyn LanguageModelProvider>> {
+        self.providers()
+            .into_iter()
+            .filter(|p| !self.should_hide_provider(&p.id()))
+            .collect()
+    }
+
+    /// Sets the function used to check if a built-in provider should be hidden.
+    pub fn set_builtin_provider_hiding_fn(&mut self, hiding_fn: BuiltinProviderHidingFn) {
+        self.builtin_provider_hiding_fn = Some(hiding_fn);
+    }
+
+    /// Called when an extension is installed/loaded.
+    /// If the extension provides language models, track it so we can hide the corresponding built-in.
+    pub fn extension_installed(&mut self, extension_id: Arc<str>, cx: &mut Context<Self>) {
+        if self.installed_llm_extension_ids.insert(extension_id) {
+            cx.emit(Event::ProvidersChanged);
+            cx.notify();
+        }
+    }
+
+    /// Called when an extension is uninstalled/unloaded.
+    pub fn extension_uninstalled(&mut self, extension_id: &str, cx: &mut Context<Self>) {
+        if self.installed_llm_extension_ids.remove(extension_id) {
+            cx.emit(Event::ProvidersChanged);
+            cx.notify();
+        }
+    }
+
+    /// Sync the set of installed LLM extension IDs.
+    pub fn sync_installed_llm_extensions(
+        &mut self,
+        extension_ids: HashSet<Arc<str>>,
+        cx: &mut Context<Self>,
+    ) {
+        if extension_ids != self.installed_llm_extension_ids {
+            self.installed_llm_extension_ids = extension_ids;
+            cx.emit(Event::ProvidersChanged);
+            cx.notify();
+        }
+    }
+
+    /// Returns true if a provider should be hidden from the UI.
+    /// Built-in providers are hidden when their corresponding extension is installed.
+    pub fn should_hide_provider(&self, provider_id: &LanguageModelProviderId) -> bool {
+        if let Some(ref hiding_fn) = self.builtin_provider_hiding_fn {
+            if let Some(extension_id) = hiding_fn(&provider_id.0) {
+                return self.installed_llm_extension_ids.contains(extension_id);
+            }
+        }
+        false
     }
 
     pub fn configuration_error(
@@ -415,5 +480,133 @@ mod tests {
 
         let providers = registry.read(cx).providers();
         assert!(providers.is_empty());
+    }
+
+    #[gpui::test]
+    fn test_provider_hiding_on_extension_install(cx: &mut App) {
+        let registry = cx.new(|_| LanguageModelRegistry::default());
+
+        let provider = Arc::new(FakeLanguageModelProvider::default());
+        let provider_id = provider.id();
+
+        registry.update(cx, |registry, cx| {
+            registry.register_provider(provider.clone(), cx);
+
+            registry.set_builtin_provider_hiding_fn(Box::new(|id| {
+                if id == "fake" {
+                    Some("fake-extension")
+                } else {
+                    None
+                }
+            }));
+        });
+
+        let visible = registry.read(cx).visible_providers();
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].id(), provider_id);
+
+        registry.update(cx, |registry, cx| {
+            registry.extension_installed("fake-extension".into(), cx);
+        });
+
+        let visible = registry.read(cx).visible_providers();
+        assert!(visible.is_empty());
+
+        let all = registry.read(cx).providers();
+        assert_eq!(all.len(), 1);
+    }
+
+    #[gpui::test]
+    fn test_provider_unhiding_on_extension_uninstall(cx: &mut App) {
+        let registry = cx.new(|_| LanguageModelRegistry::default());
+
+        let provider = Arc::new(FakeLanguageModelProvider::default());
+        let provider_id = provider.id();
+
+        registry.update(cx, |registry, cx| {
+            registry.register_provider(provider.clone(), cx);
+
+            registry.set_builtin_provider_hiding_fn(Box::new(|id| {
+                if id == "fake" {
+                    Some("fake-extension")
+                } else {
+                    None
+                }
+            }));
+
+            registry.extension_installed("fake-extension".into(), cx);
+        });
+
+        let visible = registry.read(cx).visible_providers();
+        assert!(visible.is_empty());
+
+        registry.update(cx, |registry, cx| {
+            registry.extension_uninstalled("fake-extension", cx);
+        });
+
+        let visible = registry.read(cx).visible_providers();
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].id(), provider_id);
+    }
+
+    #[gpui::test]
+    fn test_should_hide_provider(cx: &mut App) {
+        let registry = cx.new(|_| LanguageModelRegistry::default());
+
+        registry.update(cx, |registry, cx| {
+            registry.set_builtin_provider_hiding_fn(Box::new(|id| {
+                if id == "anthropic" {
+                    Some("anthropic")
+                } else if id == "openai" {
+                    Some("openai")
+                } else {
+                    None
+                }
+            }));
+
+            registry.extension_installed("anthropic".into(), cx);
+        });
+
+        let registry_read = registry.read(cx);
+
+        assert!(registry_read.should_hide_provider(&LanguageModelProviderId("anthropic".into())));
+
+        assert!(!registry_read.should_hide_provider(&LanguageModelProviderId("openai".into())));
+
+        assert!(!registry_read.should_hide_provider(&LanguageModelProviderId("unknown".into())));
+    }
+
+    #[gpui::test]
+    fn test_sync_installed_llm_extensions(cx: &mut App) {
+        let registry = cx.new(|_| LanguageModelRegistry::default());
+
+        let provider = Arc::new(FakeLanguageModelProvider::default());
+
+        registry.update(cx, |registry, cx| {
+            registry.register_provider(provider.clone(), cx);
+
+            registry.set_builtin_provider_hiding_fn(Box::new(|id| {
+                if id == "fake" {
+                    Some("fake-extension")
+                } else {
+                    None
+                }
+            }));
+        });
+
+        let mut extension_ids = HashSet::default();
+        extension_ids.insert(Arc::from("fake-extension"));
+
+        registry.update(cx, |registry, cx| {
+            registry.sync_installed_llm_extensions(extension_ids, cx);
+        });
+
+        assert!(registry.read(cx).visible_providers().is_empty());
+
+        registry.update(cx, |registry, cx| {
+            registry.sync_installed_llm_extensions(HashSet::default(), cx);
+        });
+
+        assert_eq!(registry.read(cx).visible_providers().len(), 1);
     }
 }
