@@ -136,7 +136,7 @@ impl ReplStore {
         cx.notify();
     }
 
-    pub fn mark_ipykernel_installed(&mut self, spec: &PythonEnvKernelSpecification) {
+    pub fn mark_ipykernel_installed(&mut self, cx: &mut Context<Self>, spec: &PythonEnvKernelSpecification) {
         for specs in self.kernel_specifications_for_worktree.values_mut() {
             for kernel_spec in specs.iter_mut() {
                 if let KernelSpecification::PythonEnv(env_spec) = kernel_spec {
@@ -146,6 +146,7 @@ impl ReplStore {
                 }
             }
         }
+        cx.notify();
     }
 
     pub fn refresh_python_kernelspecs(

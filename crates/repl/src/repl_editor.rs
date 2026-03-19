@@ -87,10 +87,7 @@ pub fn install_ipykernel_and_assign(
 
     let python_path = env_spec.path.clone();
     let env_name = env_spec.name.clone();
-    let is_uv = env_spec
-        .environment_kind
-        .as_deref()
-        .is_some_and(|kind| kind.starts_with("uv"));
+    let is_uv = env_spec.is_uv();
     let env_spec = env_spec.clone();
 
     struct IpykernelInstall;
@@ -165,8 +162,8 @@ pub fn install_ipykernel_and_assign(
                 window_handle
                     .update(cx, |_, window, cx| {
                         let store = ReplStore::global(cx);
-                        store.update(cx, |store, _cx| {
-                            store.mark_ipykernel_installed(&env_spec);
+                        store.update(cx, |store, cx| {
+                            store.mark_ipykernel_installed(cx, &env_spec);
                         });
 
                         let updated_spec =
