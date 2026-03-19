@@ -1115,7 +1115,9 @@ pub fn into_bedrock(
                 BedrockModelMode::Thinking { budget_tokens } => {
                     Some(bedrock::Thinking::Enabled { budget_tokens })
                 }
-                BedrockModelMode::AdaptiveThinking { effort: default_effort } => {
+                BedrockModelMode::AdaptiveThinking {
+                    effort: default_effort,
+                } => {
                     let effort = request
                         .thinking_effort
                         .as_deref()
