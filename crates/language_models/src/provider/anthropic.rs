@@ -298,7 +298,7 @@ fn to_anthropic_content(content: MessageContent) -> Option<anthropic::RequestCon
 pub fn into_anthropic_count_tokens_request(
     request: LanguageModelRequest,
     model: String,
-    thinking_mode: AnthropicModelMode,
+    mode: AnthropicModelMode,
 ) -> CountTokensRequest {
     let mut new_messages: Vec<anthropic::Message> = Vec::new();
     let mut system_message = String::new();
@@ -354,7 +354,7 @@ pub fn into_anthropic_count_tokens_request(
             Some(anthropic::StringOrContents::String(system_message))
         },
         thinking: if request.thinking_allowed {
-            match thinking_mode {
+            match mode {
                 AnthropicModelMode::Thinking { budget_tokens } => {
                     Some(anthropic::Thinking::Enabled { budget_tokens })
                 }
