@@ -102,7 +102,7 @@ actions!(
 /// Maximum number of events to track.
 const EVENT_COUNT_MAX: usize = 10;
 const CHANGE_GROUPING_LINE_SPAN: u32 = 8;
-const EDIT_HISTORY_DIFF_SIZE_LIMIT: usize = 100_000;
+const EDIT_HISTORY_DIFF_SIZE_LIMIT: usize = 2048 * 3; // ~2048 tokens or ~50% of typical prompt budget
 const COLLABORATOR_EDIT_LOCALITY_CONTEXT_TOKENS: usize = 512;
 const LAST_CHANGE_GROUPING_TIME: Duration = Duration::from_secs(1);
 const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_choice";
