@@ -2551,23 +2551,19 @@ impl Sidebar {
                         this.pl(px(ui::utils::TRAFFIC_LIGHT_PADDING))
                     })
                     .pr_1p5()
+                    .gap_1()
                     .border_b_1()
                     .border_color(cx.theme().colors().border)
-                    .justify_between()
-                    .child(self.render_sidebar_toggle_button(cx))
+                    .justify_end()
                     .child(
-                        h_flex()
-                            .gap_0p5()
-                            .child(
-                                IconButton::new("archive", IconName::Archive)
-                                    .icon_size(IconSize::Small)
-                                    .tooltip(Tooltip::text("View Archived Threads"))
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.show_archive(window, cx);
-                                    })),
-                            )
-                            .child(self.render_recent_projects_button(cx)),
-                    ),
+                        IconButton::new("archive", IconName::Archive)
+                            .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::text("View Archived Threads"))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.show_archive(window, cx);
+                            })),
+                    )
+                    .child(self.render_recent_projects_button(cx)),
             )
             .when(!empty_state, |this| {
                 this.child(
@@ -2612,9 +2608,7 @@ impl Sidebar {
     }
 
     fn render_sidebar_toggle_button(&self, _cx: &mut Context<Self>) -> impl IntoElement {
-        let icon = IconName::ThreadsSidebarLeftOpen;
-
-        IconButton::new("sidebar-close-toggle", icon)
+        IconButton::new("sidebar-close-toggle", IconName::ThreadsSidebarLeftOpen)
             .icon_size(IconSize::Small)
             .tooltip(Tooltip::element(move |_window, cx| {
                 v_flex()
@@ -2816,6 +2810,13 @@ impl Render for Sidebar {
                     }),
                 SidebarView::Archive(archive_view) => this.child(archive_view.clone()),
             })
+            .child(
+                h_flex()
+                    .p_1()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .child(self.render_sidebar_toggle_button(cx)),
+            )
     }
 }
 
@@ -2874,8 +2875,8 @@ mod tests {
         let multi_workspace = multi_workspace.clone();
         let sidebar =
             cx.update(|window, cx| cx.new(|cx| Sidebar::new(multi_workspace.clone(), window, cx)));
-        multi_workspace.update(cx, |mw, _cx| {
-            mw.register_sidebar(sidebar.clone());
+        multi_workspace.update(cx, |mw, cx| {
+            mw.register_sidebar(sidebar.clone(), cx);
         });
         cx.run_until_parked();
         sidebar

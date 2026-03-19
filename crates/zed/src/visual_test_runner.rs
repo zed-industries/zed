@@ -2659,8 +2659,8 @@ fn run_multi_workspace_sidebar_visual_tests(
         .context("Failed to create sidebar")?;
 
     multi_workspace_window
-        .update(cx, |multi_workspace, _window, _cx| {
-            multi_workspace.register_sidebar(sidebar.clone());
+        .update(cx, |multi_workspace, _window, cx| {
+            multi_workspace.register_sidebar(sidebar.clone(), cx);
         })
         .context("Failed to register sidebar")?;
 
@@ -3191,8 +3191,8 @@ edition = "2021"
         .context("Failed to create sidebar")?;
 
     workspace_window
-        .update(cx, |multi_workspace, _window, _cx| {
-            multi_workspace.register_sidebar(sidebar.clone());
+        .update(cx, |multi_workspace, _window, cx| {
+            multi_workspace.register_sidebar(sidebar.clone(), cx);
         })
         .context("Failed to register sidebar")?;
 
