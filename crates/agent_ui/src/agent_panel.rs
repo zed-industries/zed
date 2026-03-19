@@ -29,7 +29,7 @@ use zed_actions::agent::{
 use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal, HoldForDefault};
 use crate::{
     AddContextServer, AgentDiffPane, ConversationView, CopyThreadToClipboard, CycleStartThreadIn,
-    Follow, InlineAssistant, LoadThreadFromClipboard, NewTextThread, NewThread,
+    DuplicateThread, Follow, InlineAssistant, LoadThreadFromClipboard, NewTextThread, NewThread,
     OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ResetTrialEndUpsell, ResetTrialUpsell,
     StartThreadIn, ToggleNavigationMenu, ToggleNewThreadMenu, ToggleOptionsMenu,
     agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
@@ -303,6 +303,13 @@ pub fn init(cx: &mut App) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
                             panel.load_thread_from_clipboard(window, cx);
+                        });
+                    }
+                })
+                .register_action(|workspace, _: &DuplicateThread, window, cx| {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        panel.update(cx, |panel, cx| {
+                            panel.duplicate_thread(window, cx);
                         });
                     }
                 })
@@ -1747,6 +1754,62 @@ impl AgentPanel {
                     .detach_and_log_err(cx);
             });
         }
+    }
+
+    fn duplicate_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let ActiveView::AgentThread {
+            conversation_view, ..
+        } = &self.active_view
+        else {
+            Self::show_deferred_toast(&self.workspace, "No active thread to duplicate", cx);
+            return;
+        };
+
+        let session_id = conversation_view
+            .read(cx)
+            .active_thread()
+            .map(|view| view.read(cx).thread.read(cx).session_id().clone());
+
+        let Some(session_id) = session_id else {
+            Self::show_deferred_toast(&self.workspace, "No active thread to duplicate", cx);
+            return;
+        };
+
+        let thread_store = self.thread_store.clone();
+        let workspace = self.workspace.clone();
+
+        cx.spawn_in(window, async move |this, cx| {
+            let (new_session_id, title) = thread_store
+                .update(&mut cx.clone(), |store, cx| {
+                    store.duplicate_thread(session_id, cx)
+                })
+                .await?;
+
+            this.update_in(cx, |this, window, cx| {
+                this.open_thread(new_session_id, None, Some(title), window, cx);
+            })?;
+
+            this.update_in(cx, |_, _window, cx| {
+                if let Some(workspace) = workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        struct ThreadDuplicatedToast;
+                        workspace.show_toast(
+                            workspace::Toast::new(
+                                workspace::notifications::NotificationId::unique::<
+                                    ThreadDuplicatedToast,
+                                >(),
+                                "Thread duplicated",
+                            )
+                            .autohide(),
+                            cx,
+                        );
+                    });
+                }
+            })?;
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     fn copy_thread_to_clipboard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -3430,6 +3493,7 @@ impl AgentPanel {
                                             );
                                         }
                                     })
+                                    .action("Duplicate Thread", Box::new(DuplicateThread))
                                     .separator();
                             }
                         }

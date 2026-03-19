@@ -1,7 +1,8 @@
 use crate::{DbThread, DbThreadMetadata, ThreadsDatabase};
 use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
-use gpui::{App, Context, Entity, Global, Task, prelude::*};
+use chrono::Utc;
+use gpui::{App, Context, Entity, Global, SharedString, Task, prelude::*};
 use util::path_list::PathList;
 
 struct GlobalThreadStore(Entity<ThreadStore>);
@@ -62,6 +63,45 @@ impl ThreadStore {
             let database = database_future.await.map_err(|err| anyhow!(err))?;
             database.save_thread(id, thread, folder_paths).await?;
             this.update(cx, |this, cx| this.reload(cx))
+        })
+    }
+
+    pub fn duplicate_thread(
+        &mut self,
+        source_id: acp::SessionId,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(acp::SessionId, SharedString)>> {
+        let folder_paths = self
+            .thread_from_session_id(&source_id)
+            .map(|meta| meta.folder_paths.clone())
+            .unwrap_or_default();
+
+        let database_future = ThreadsDatabase::connect(cx);
+
+        cx.spawn(async move |this, cx| {
+            let database = database_future.await.map_err(|err| anyhow!(err))?;
+
+            let mut thread = database
+                .load_thread(source_id)
+                .await?
+                .ok_or_else(|| anyhow!("Thread not found"))?;
+
+            let new_id = acp::SessionId::new(uuid::Uuid::new_v4().to_string());
+
+            thread.title = SharedString::from(format!("Copy of {}", thread.title));
+            thread.updated_at = Utc::now();
+            thread.draft_prompt = None;
+            thread.ui_scroll_position = None;
+
+            let title = thread.title.clone();
+
+            database
+                .save_thread(new_id.clone(), thread, folder_paths)
+                .await?;
+
+            this.update(cx, |this, cx| this.reload(cx))?;
+
+            Ok((new_id, title))
         })
     }
 

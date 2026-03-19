@@ -109,6 +109,8 @@ actions!(
         AddContextServer,
         /// Removes the currently selected thread.
         RemoveSelectedThread,
+        /// Duplicates the current thread, creating a copy with a new session ID.
+        DuplicateThread,
         /// Starts a chat conversation with follow-up enabled.
         ChatWithFollow,
         /// Cycles to the next inline assist suggestion.
