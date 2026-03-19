@@ -283,12 +283,16 @@ impl MarkdownPreviewView {
                     | EditorEvent::BufferEdited { .. }
                     | EditorEvent::DirtyChanged
                     | EditorEvent::ExcerptsEdited { .. } => {
-                        this.update_markdown_from_active_editor(true, window, cx);
+                        this.update_markdown_from_active_editor(true, false, window, cx);
                     }
                     EditorEvent::SelectionsChanged { .. } => {
-                        let selection_start =
-                            editor.update(cx, |editor, cx| Self::selected_source_index(editor, cx));
-                        this.sync_preview_to_source_index(selection_start, true, cx);
+                        let (selection_start, editor_is_focused) =
+                            editor.update(cx, |editor, cx| {
+                                let index = Self::selected_source_index(editor, cx);
+                                let focused = editor.focus_handle(cx).is_focused(window);
+                                (index, focused)
+                            });
+                        this.sync_preview_to_source_index(selection_start, editor_is_focused, cx);
                         cx.notify();
                     }
                     _ => {}
@@ -302,12 +306,13 @@ impl MarkdownPreviewView {
             _subscription: subscription,
         });
 
-        self.update_markdown_from_active_editor(false, window, cx);
+        self.update_markdown_from_active_editor(false, true, window, cx);
     }
 
     fn update_markdown_from_active_editor(
         &mut self,
         wait_for_debounce: bool,
+        should_reveal: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -318,6 +323,7 @@ impl MarkdownPreviewView {
             }
             self.pending_update_task = Some(self.schedule_markdown_update(
                 wait_for_debounce,
+                should_reveal,
                 state.editor.clone(),
                 window,
                 cx,
@@ -328,12 +334,11 @@ impl MarkdownPreviewView {
     fn schedule_markdown_update(
         &mut self,
         wait_for_debounce: bool,
+        should_reveal_selection: bool,
         editor: Entity<Editor>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let should_reveal_selection = !wait_for_debounce;
-
         cx.spawn_in(window, async move |view, cx| {
             if wait_for_debounce {
                 // Wait for the user to stop typing
@@ -608,7 +613,7 @@ impl MarkdownPreviewView {
                     });
                     if let Some(view) = view_handle.upgrade() {
                         cx.update_entity(&view, |this, cx| {
-                            this.update_markdown_from_active_editor(false, window, cx);
+                            this.update_markdown_from_active_editor(false, false, window, cx);
                         });
                     }
                 });
