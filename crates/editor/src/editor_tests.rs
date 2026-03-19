@@ -1325,6 +1325,57 @@ fn test_fold_action_multiple_line_breaks(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_fold_with_multiline_string_containing_low_indentation(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let text = "
+        fn outer() {
+            fn inner() {
+                let text = r#\"
+        [
+          {
+            \"code\": \"custom\",
+            \"message\": \"error\"
+          }
+        ]
+        \"#;
+                println!(\"{}\", text);
+            }
+        }
+    "
+    .unindent();
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple(&text, cx);
+        buffer.update(cx, |multi_buffer, cx| {
+            multi_buffer
+                .as_singleton()
+                .unwrap()
+                .update(cx, |buffer, cx| {
+                    buffer.set_language(Some(rust_lang()), cx);
+                });
+        });
+        build_editor(buffer, window, cx)
+    });
+
+    cx.executor().run_until_parked();
+
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.fold_at(MultiBufferRow(1), window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            "
+                fn outer() {
+                    fn inner() {⋯
+                    }
+                }
+            "
+            .unindent(),
+        );
+    });
+}
+
+#[gpui::test]
 fn test_fold_at_level(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

@@ -2315,11 +2315,16 @@ impl DisplaySnapshot {
             let max_point = self.buffer_snapshot().max_point();
             let mut end = None;
 
-            for row in (buffer_row.0 + 1)..=max_point.row {
+            let mut row = buffer_row.0 + 1;
+            while row <= max_point.row {
                 let line_indent = self.line_indent_for_buffer_row(MultiBufferRow(row));
                 if !line_indent.is_line_blank()
                     && line_indent.raw_len() <= start_line_indent.raw_len()
                 {
+                    if let Some(literal_end_row) = self.multiline_literal_end_row(row) {
+                        row = literal_end_row + 1;
+                        continue;
+                    }
                     let prev_row = row - 1;
                     end = Some(Point::new(
                         prev_row,
@@ -2327,6 +2332,7 @@ impl DisplaySnapshot {
                     ));
                     break;
                 }
+                row += 1;
             }
 
             let mut row_before_line_breaks = end.unwrap_or(max_point);
@@ -2353,6 +2359,28 @@ impl DisplaySnapshot {
             })
         } else {
             None
+        }
+    }
+
+    // Returns the end row of a multiline literal node containing `row`, so
+    // the indent-based fold scan can skip past content whose indentation is
+    // not structurally meaningful.
+    fn multiline_literal_end_row(&self, row: u32) -> Option<u32> {
+        let point = Point::new(row, 0);
+        let (node, _) = self.buffer_snapshot().syntax_ancestor(point..point)?;
+
+        let mut current = node;
+        loop {
+            if current.start_position().row != current.end_position().row
+                && is_multiline_literal_node(current.kind())
+            {
+                return Some(current.end_position().row as u32);
+            }
+            if let Some(parent) = current.parent() {
+                current = parent;
+            } else {
+                return None;
+            }
         }
     }
 
@@ -2435,6 +2463,18 @@ impl std::ops::Deref for DisplaySnapshot {
     fn deref(&self) -> &Self::Target {
         &self.block_snapshot
     }
+}
+
+// Matched by substring because tree-sitter grammars use varied node kind names
+// across languages (e.g. `string_literal`, `raw_string`, `block_comment`).
+// "heredoc" is separate because those nodes don't contain "string" or "comment"
+// in their names (e.g. `heredoc_body` in Bash, Ruby, Perl).
+const MULTILINE_LITERAL_NODE_PATTERNS: &[&str] = &["string", "comment", "heredoc"];
+
+fn is_multiline_literal_node(kind: &str) -> bool {
+    MULTILINE_LITERAL_NODE_PATTERNS
+        .iter()
+        .any(|pattern| kind.contains(pattern))
 }
 
 /// A zero-indexed point in a text buffer consisting of a row and column adjusted for inserted blocks.
