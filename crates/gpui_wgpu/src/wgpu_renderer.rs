@@ -1620,7 +1620,9 @@ impl WgpuRenderer {
     }
 
     pub fn destroy(&mut self) {
-        // wgpu resources are automatically cleaned up when dropped
+        // Release surface-bound GPU resources eagerly so the underlying native
+        // window can be destroyed before the renderer itself is dropped.
+        self.resources.take();
     }
 
     /// Returns true if the GPU device was lost and recovery is needed.
