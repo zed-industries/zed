@@ -928,7 +928,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         };
 
         if has_siblings_to_show {
-            entries.push(ProjectPickerEntry::Header("Open on This Window".into()));
+            entries.push(ProjectPickerEntry::Header("This Window".into()));
 
             if is_empty_query {
                 for (id, (workspace_id, _, _, _)) in self.workspaces.iter().enumerate() {
