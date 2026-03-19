@@ -24,18 +24,19 @@ use settings::Settings as _;
 use std::collections::{HashMap, HashSet};
 use std::mem;
 use std::path::Path;
+use std::rc::Rc;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
-    AgentThreadStatus, CommonAnimationExt, Divider, HighlightedLabel, KeyBinding, ListItem,
-    ListItemSpacing, PopoverMenu, PopoverMenuHandle, Tab, ThreadItem, TintColor, Tooltip,
-    WithScrollbar, prelude::*,
+    AgentThreadStatus, CommonAnimationExt, ContextMenu, Divider, HighlightedLabel, KeyBinding,
+    ListItem, PopoverMenu, PopoverMenuHandle, Tab, ThreadItem, TintColor, Tooltip, WithScrollbar,
+    prelude::*,
 };
 use util::ResultExt as _;
 use util::path_list::PathList;
 use workspace::{
-    FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent, Open, Sidebar as WorkspaceSidebar,
-    ToggleWorkspaceSidebar, Workspace, WorkspaceId,
+    AddFolderToProject, FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent, Open,
+    Sidebar as WorkspaceSidebar, ToggleWorkspaceSidebar, Workspace, WorkspaceId,
 };
 
 use zed_actions::OpenRecent;
@@ -248,6 +249,7 @@ pub struct Sidebar {
     expanded_groups: HashMap<PathList, usize>,
     view: SidebarView,
     recent_projects_popover_handle: PopoverMenuHandle<SidebarRecentProjects>,
+    project_header_menu_ix: Option<usize>,
     _subscriptions: Vec<gpui::Subscription>,
     _draft_observation: Option<gpui::Subscription>,
 }
@@ -338,6 +340,7 @@ impl Sidebar {
             expanded_groups: HashMap::new(),
             view: SidebarView::default(),
             recent_projects_popover_handle: PopoverMenuHandle::default(),
+            project_header_menu_ix: None,
             _subscriptions: Vec::new(),
             _draft_observation: None,
         }
@@ -1167,7 +1170,9 @@ impl Sidebar {
         } else {
             IconName::ChevronDown
         };
+
         let workspace_for_remove = workspace.clone();
+        let workspace_for_menu = workspace.clone();
 
         let path_list_for_toggle = path_list.clone();
         let path_list_for_collapse = path_list.clone();
@@ -1192,7 +1197,6 @@ impl Sidebar {
             .height(Tab::content_height(cx))
             .group_name(group_name)
             .focused(is_selected)
-            .spacing(ListItemSpacing::Dense)
             .child(
                 h_flex()
                     .relative()
@@ -1234,27 +1238,21 @@ impl Sidebar {
                     }),
             )
             .end_hover_gradient_overlay(true)
-            .end_hover_slot(
+            .end_slot({
                 h_flex()
-                    .gap_1()
-                    .when(workspace_count > 1, |this| {
-                        this.child(
-                            IconButton::new(
-                                SharedString::from(format!(
-                                    "{id_prefix}project-header-remove-{ix}",
-                                )),
-                                IconName::Close,
-                            )
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .tooltip(Tooltip::text("Remove Project"))
-                            .on_click(cx.listener(
-                                move |this, _, window, cx| {
-                                    this.remove_workspace(&workspace_for_remove, window, cx);
-                                },
-                            )),
-                        )
+                    .when(self.project_header_menu_ix != Some(ix), |this| {
+                        this.visible_on_hover("list_item")
                     })
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                        cx.stop_propagation();
+                    })
+                    .child(self.render_project_header_menu(
+                        ix,
+                        id_prefix,
+                        &workspace_for_menu,
+                        &workspace_for_remove,
+                        cx,
+                    ))
                     .when(view_more_expanded && !is_collapsed, |this| {
                         this.child(
                             IconButton::new(
@@ -1275,8 +1273,27 @@ impl Sidebar {
                                 }
                             })),
                         )
-                    }),
-            )
+                    })
+                    .when(workspace_count > 1, |this| {
+                        let workspace_for_remove_btn = workspace_for_remove.clone();
+                        this.child(
+                            IconButton::new(
+                                SharedString::from(format!(
+                                    "{id_prefix}project-header-remove-{ix}",
+                                )),
+                                IconName::Close,
+                            )
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .tooltip(Tooltip::text("Remove Project"))
+                            .on_click(cx.listener(
+                                move |this, _, window, cx| {
+                                    this.remove_workspace(&workspace_for_remove_btn, window, cx);
+                                },
+                            )),
+                        )
+                    })
+            })
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.selection = None;
                 this.toggle_collapse(&path_list_for_toggle, window, cx);
@@ -1287,6 +1304,133 @@ impl Sidebar {
             //     this.activate_workspace(&workspace_for_activate, window, cx);
             // }))
             .into_any_element()
+    }
+
+    fn render_project_header_menu(
+        &self,
+        ix: usize,
+        id_prefix: &str,
+        workspace: &Entity<Workspace>,
+        workspace_for_remove: &Entity<Workspace>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let workspace_for_menu = workspace.clone();
+        let workspace_for_remove = workspace_for_remove.clone();
+        let multi_workspace = self.multi_workspace.clone();
+        let this = cx.weak_entity();
+
+        PopoverMenu::new(format!("{id_prefix}project-header-menu-{ix}"))
+            .on_open(Rc::new({
+                let this = this.clone();
+                move |_window, cx| {
+                    this.update(cx, |sidebar, cx| {
+                        sidebar.project_header_menu_ix = Some(ix);
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            }))
+            .menu(move |window, cx| {
+                let workspace = workspace_for_menu.clone();
+                let workspace_for_remove = workspace_for_remove.clone();
+                let multi_workspace = multi_workspace.clone();
+
+                let menu = ContextMenu::build_persistent(window, cx, move |menu, _window, cx| {
+                    let worktrees: Vec<_> = workspace
+                        .read(cx)
+                        .visible_worktrees(cx)
+                        .map(|worktree| {
+                            let worktree_read = worktree.read(cx);
+                            let id = worktree_read.id();
+                            let name: SharedString =
+                                worktree_read.root_name().as_unix_str().to_string().into();
+                            (id, name)
+                        })
+                        .collect();
+
+                    let worktree_count = worktrees.len();
+
+                    let mut menu = menu
+                        .header("Project Folders")
+                        .end_slot_action(Box::new(menu::EndSlot));
+
+                    for (worktree_id, name) in &worktrees {
+                        let worktree_id = *worktree_id;
+                        let workspace_for_worktree = workspace.clone();
+                        let workspace_for_remove_worktree = workspace_for_remove.clone();
+                        let multi_workspace_for_worktree = multi_workspace.clone();
+
+                        let remove_handler = move |window: &mut Window, cx: &mut App| {
+                            if worktree_count <= 1 {
+                                if let Some(mw) = multi_workspace_for_worktree.upgrade() {
+                                    let ws = workspace_for_remove_worktree.clone();
+                                    mw.update(cx, |multi_workspace, cx| {
+                                        if let Some(index) = multi_workspace
+                                            .workspaces()
+                                            .iter()
+                                            .position(|w| *w == ws)
+                                        {
+                                            multi_workspace.remove_workspace(index, window, cx);
+                                        }
+                                    });
+                                }
+                            } else {
+                                workspace_for_worktree.update(cx, |workspace, cx| {
+                                    workspace.project().update(cx, |project, cx| {
+                                        project.remove_worktree(worktree_id, cx);
+                                    });
+                                });
+                            }
+                        };
+
+                        menu = menu.entry_with_end_slot_on_hover(
+                            name.clone(),
+                            None,
+                            |_, _| {},
+                            IconName::Close,
+                            "Remove Folder".into(),
+                            remove_handler,
+                        );
+                    }
+
+                    let workspace_for_add = workspace.clone();
+                    menu.separator().entry(
+                        "Add Folder to Project",
+                        Some(Box::new(AddFolderToProject)),
+                        move |window, cx| {
+                            let focus = workspace_for_add.read(cx).focus_handle(cx);
+                            focus.dispatch_action(&AddFolderToProject, window, cx);
+                        },
+                    )
+                });
+
+                let this = this.clone();
+                window
+                    .subscribe(&menu, cx, move |_, _: &gpui::DismissEvent, _window, cx| {
+                        this.update(cx, |sidebar, cx| {
+                            sidebar.project_header_menu_ix = None;
+                            cx.notify();
+                        })
+                        .ok();
+                    })
+                    .detach();
+
+                Some(menu)
+            })
+            .trigger(
+                IconButton::new(
+                    SharedString::from(format!("{id_prefix}-ellipsis-menu-{ix}")),
+                    IconName::Ellipsis,
+                )
+                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Muted),
+            )
+            .anchor(gpui::Corner::TopRight)
+            .offset(gpui::Point {
+                x: px(0.),
+                y: px(2.),
+            })
     }
 
     fn render_sticky_header(
@@ -1459,7 +1603,7 @@ impl Sidebar {
             return;
         }
 
-        if self.selection.is_none() {
+        if self.selection.is_none() && self.focus_handle.is_focused(window) {
             self.filter_editor.focus_handle(cx).focus(window, cx);
         }
     }
@@ -2341,7 +2485,7 @@ impl Sidebar {
                 },
             )
             .offset(gpui::Point {
-                x: px(0.0),
+                x: px(-2.0),
                 y: px(-2.0),
             })
             .anchor(gpui::Corner::BottomRight)

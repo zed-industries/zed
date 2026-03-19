@@ -1,6 +1,3 @@
-// `highlights_for_path` and `icon_for_remote_connection` are defined as pub(crate) in the parent
-// module (recent_projects.rs) and re-used here.
-
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -109,7 +106,7 @@ impl Render for SidebarRecentProjects {
     fn render(&mut self, _: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("SidebarRecentProjects")
-            .w(rems(16.))
+            .w(rems(18.))
             .child(self.picker.clone())
     }
 }

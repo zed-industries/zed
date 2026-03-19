@@ -38,7 +38,6 @@ impl HighlightedLabel {
     }
 }
 
-// Style methods.
 impl HighlightedLabel {
     fn style(&mut self) -> &mut StyleRefinement {
         self.base.base.style()
