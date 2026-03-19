@@ -929,7 +929,20 @@ impl MessageEditor {
             }
         }
 
+        let has_non_text_content = cx
+            .read_from_clipboard()
+            .map(|item| {
+                item.entries().iter().any(|entry| {
+                    matches!(
+                        entry,
+                        ClipboardEntry::Image(_) | ClipboardEntry::ExternalPaths(_)
+                    )
+                })
+            })
+            .unwrap_or(false);
+
         if self.session_capabilities.read().supports_images()
+            && has_non_text_content
             && let Some(task) = paste_images_as_context(
                 self.editor.clone(),
                 self.mention_set.clone(),
@@ -938,6 +951,7 @@ impl MessageEditor {
                 cx,
             )
         {
+            cx.stop_propagation();
             task.detach();
             return;
         }
