@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use futures::StreamExt as _;
 use futures::channel::oneshot;
 use gpui::{AsyncApp, ScreenCaptureStream};
@@ -98,9 +98,11 @@ pub(crate) async fn start_wayland_desktop_capture(
     let permanent_error = Arc::new(AtomicBool::new(false));
     let permanent_error_cb = permanent_error.clone();
 
-    std::thread::Builder::new()
-        .name("wayland-screen-capture".into())
-        .spawn(move || {
+    let executor = cx.background_executor().clone();
+
+    let capture_executor = executor.clone();
+    executor
+        .spawn(async move {
             let mut options = DesktopCapturerOptions::new(DesktopCaptureSourceType::Generic);
             options.set_include_cursor(true);
 
@@ -112,24 +114,22 @@ pub(crate) async fn start_wayland_desktop_capture(
             };
 
             let frame_tx_cb = parking_lot::Mutex::new(frame_tx.clone());
-            capturer.start_capture(None, move |result| {
-                match result {
-                    Ok(frame) => {
-                        let captured = CapturedFrame {
-                            width: frame.width() as u32,
-                            height: frame.height() as u32,
-                            stride: frame.stride(),
-                            data: frame.data().to_vec(),
-                        };
-                        frame_tx_cb.lock().try_send(captured).ok();
-                    }
-                    Err(CaptureError::Temporary) => {
-                        // Expected before the portal picker completes
-                    }
-                    Err(CaptureError::Permanent) => {
-                        permanent_error_cb.store(true, Ordering::Relaxed);
-                        log::error!("Wayland desktop capture encountered a permanent error");
-                    }
+            capturer.start_capture(None, move |result| match result {
+                Ok(frame) => {
+                    let captured = CapturedFrame {
+                        width: frame.width() as u32,
+                        height: frame.height() as u32,
+                        stride: frame.stride(),
+                        data: frame.data().to_vec(),
+                    };
+                    frame_tx_cb.lock().try_send(captured).ok();
+                }
+                Err(CaptureError::Temporary) => {
+                    // Expected before the portal picker completes
+                }
+                Err(CaptureError::Permanent) => {
+                    permanent_error_cb.store(true, Ordering::Relaxed);
+                    log::error!("Wayland desktop capture encountered a permanent error");
                 }
             });
 
@@ -138,14 +138,12 @@ pub(crate) async fn start_wayland_desktop_capture(
                 if permanent_error.load(Ordering::Relaxed) {
                     break;
                 }
-                std::thread::sleep(Duration::from_millis(33));
+                capture_executor.timer(Duration::from_millis(33)).await;
             }
 
             drop(frame_tx);
         })
-        .context("failed to spawn Wayland capture thread")?;
-
-    let executor = cx.background_executor().clone();
+        .detach();
     let first_frame = frame_rx
         .next()
         .with_timeout(Duration::from_secs(15), &executor)

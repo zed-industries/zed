@@ -569,18 +569,14 @@ impl TitleBar {
                         .room()
                         .is_some_and(|room| !room.read(cx).is_sharing_screen());
 
-                    if is_wayland {
-                        if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
+                    #[cfg(target_os = "linux")]
+                    {
+                        if is_wayland
+                            && let Some(room) = ActiveCall::global(cx).read(cx).room().cloned()
+                        {
                             let task = room.update(cx, |room, cx| {
                                 if should_share {
-                                    #[cfg(target_os = "linux")]
-                                    {
-                                        room.share_screen_wayland(cx)
-                                    }
-                                    #[cfg(not(target_os = "linux"))]
-                                    {
-                                        Task::ready(Err(anyhow::anyhow!("not supported")))
-                                    }
+                                    room.share_screen_wayland(cx)
                                 } else {
                                     room.unshare_screen(true, cx)
                                         .map(|()| Task::ready(Ok(())))
@@ -594,7 +590,8 @@ impl TitleBar {
                                 |e, _, _| Some(format!("{e:?}")),
                             );
                         }
-                    } else {
+                    }
+                    if !is_wayland {
                         window
                             .spawn(cx, async move |cx| {
                                 let screen = if should_share {
