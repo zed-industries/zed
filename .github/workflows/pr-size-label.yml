@@ -92,7 +92,7 @@ jobs:
             const labelColor = String(result.label_color);
             const hasReviewGuidance = Boolean(result.has_review_guidance);
 
-            if (!prNumber || !sizeLabel.startsWith('size/')) {
+            if (!prNumber || !sizeLabel.startsWith('Size ')) {
               core.setFailed(`Invalid artifact data: pr=${prNumber}, label=${sizeLabel}`);
               return;
             }
@@ -106,7 +106,7 @@ jobs:
               issue_number: prNumber,
             })).data.map(l => l.name);
 
-            const existingSizeLabels = existingLabels.filter(l => l.startsWith('size/'));
+            const existingSizeLabels = existingLabels.filter(l => l.startsWith('Size '));
             const alreadyCorrect = existingSizeLabels.length === 1 && existingSizeLabels[0] === sizeLabel;
 
             if (!alreadyCorrect) {

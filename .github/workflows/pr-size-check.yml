@@ -62,13 +62,13 @@ jobs:
 
             // Assign size bracket
             const SIZE_BRACKETS = [
-              ['size/S',  0,       100,  '0e8a16'],
-              ['size/M',  100,     400,  'fbca04'],
-              ['size/L',  400,     800,  'e99695'],
-              ['size/XL', 800, Infinity, 'b60205'],
+              ['Size S',  0,       100,  '0e8a16'],
+              ['Size M',  100,     400,  'fbca04'],
+              ['Size L',  400,     800,  'e99695'],
+              ['Size XL', 800, Infinity, 'b60205'],
             ];
 
-            let sizeLabel = 'size/S';
+            let sizeLabel = 'Size S';
             let labelColor = '0e8a16';
             for (const [label, min, max, color] of SIZE_BRACKETS) {
               if (totalChanges >= min && totalChanges < max) {
