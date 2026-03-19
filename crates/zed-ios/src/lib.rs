@@ -304,8 +304,27 @@ mod ios {
 
         release_channel::init(semver::Version::new(0, 1, 0), cx);
 
-        // Settings — use empty default settings for now
+        // Settings
         settings::init(cx);
+
+        // Minimal keybindings for the editor — just enough for text editing
+        // and form navigation. Loading the full default keymap is deferred until
+        // we understand the performance characteristics on iOS.
+        cx.bind_keys([
+            gpui::KeyBinding::new("tab", editor::actions::Tab, Some("Editor")),
+            gpui::KeyBinding::new("shift-tab", editor::actions::Backtab, Some("Editor")),
+            gpui::KeyBinding::new("tab", editor::actions::Tab, Some("FormFields")),
+            gpui::KeyBinding::new("shift-tab", editor::actions::Backtab, Some("FormFields")),
+            gpui::KeyBinding::new("backspace", editor::actions::Backspace, Some("Editor")),
+            gpui::KeyBinding::new("delete", editor::actions::Delete, Some("Editor")),
+            gpui::KeyBinding::new("enter", editor::actions::Newline, Some("Editor")),
+            gpui::KeyBinding::new("cmd-a", editor::actions::SelectAll, Some("Editor")),
+            gpui::KeyBinding::new("cmd-c", editor::actions::Copy, Some("Editor")),
+            gpui::KeyBinding::new("cmd-v", editor::actions::Paste, Some("Editor")),
+            gpui::KeyBinding::new("cmd-x", editor::actions::Cut, Some("Editor")),
+            gpui::KeyBinding::new("cmd-z", editor::actions::Undo, Some("Editor")),
+            gpui::KeyBinding::new("cmd-shift-z", editor::actions::Redo, Some("Editor")),
+        ]);
 
         // HTTP client
         let http = Arc::new(
