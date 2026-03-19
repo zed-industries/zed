@@ -762,6 +762,7 @@ impl EventEmitter<DismissEvent> for RecentProjectsDelegate {}
 pub enum RecentProjectsStableId {
     OpenFolder(WorktreeId),
     RecentProject(WorkspaceId),
+    OpenProject { candidate_id: usize },
 }
 
 impl PickerDelegate for RecentProjectsDelegate {
@@ -804,6 +805,11 @@ impl PickerDelegate for RecentProjectsDelegate {
                 Some(RecentProjectsStableId::RecentProject(*workspace_id))
             }
             ProjectPickerEntry::Header(_) => None,
+            ProjectPickerEntry::OpenProject(string_match) => {
+                Some(RecentProjectsStableId::OpenProject {
+                    candidate_id: string_match.candidate_id,
+                })
+            }
         }
     }
 
