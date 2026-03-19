@@ -40,21 +40,15 @@ pub fn init(cx: &mut App) {
 /// TODO: Remove this after N weeks of shipping the sidebar
 fn migrate_thread_metadata(cx: &mut App) {
     let store = SidebarThreadMetadataStore::global(cx);
-    let reload_task = store.read(cx).reload_task.clone();
+    let db = store.read(cx).db.clone();
 
     cx.spawn(async move |cx| {
-        if let Some(reload_task) = reload_task {
-            reload_task.await;
+        if !db.is_empty()? {
+            return Ok::<(), anyhow::Error>(());
         }
 
-        let should_migrate = store.read_with(cx, |store, _app| store.is_empty());
-        if !should_migrate {
-            return anyhow::Ok(());
-        }
-
-        let (db, metadata) = store.read_with(cx, |store, app| {
-            let db = store.db.clone();
-            let metadata = ThreadStore::global(app)
+        let metadata = store.read_with(cx, |_store, app| {
+            ThreadStore::global(app)
                 .read(app)
                 .entries()
                 .map(|entry| ThreadMetadata {
@@ -65,8 +59,7 @@ fn migrate_thread_metadata(cx: &mut App) {
                     created_at: entry.created_at,
                     folder_paths: entry.folder_paths,
                 })
-                .collect::<Vec<_>>();
-            (db, metadata)
+                .collect::<Vec<_>>()
         });
 
         // Manually save each entry to the database and call reload, otherwise
@@ -74,10 +67,8 @@ fn migrate_thread_metadata(cx: &mut App) {
         for entry in metadata {
             db.save(entry).await?;
         }
-        store.update(cx, |store, cx| {
-            store.reload(cx);
-        });
 
+        let _ = store.update(cx, |store, cx| store.reload(cx));
         Ok(())
     })
     .detach_and_log_err(cx);
@@ -221,7 +212,7 @@ impl SidebarThreadMetadataStore {
             .cloned()
     }
 
-    fn reload(&mut self, cx: &mut Context<Self>) {
+    fn reload(&mut self, cx: &mut Context<Self>) -> Shared<Task<()>> {
         let db = self.db.clone();
         self.reload_task.take();
 
@@ -251,7 +242,8 @@ impl SidebarThreadMetadataStore {
                 .ok();
             })
             .shared();
-        self.reload_task = Some(reload_task);
+        self.reload_task = Some(reload_task.clone());
+        reload_task
     }
 
     pub fn save(&mut self, metadata: ThreadMetadata, cx: &mut Context<Self>) -> Task<Result<()>> {
@@ -262,7 +254,9 @@ impl SidebarThreadMetadataStore {
         let db = self.db.clone();
         cx.spawn(async move |this, cx| {
             db.save(metadata).await?;
-            this.update(cx, |this, cx| this.reload(cx))
+            let reload_task = this.update(cx, |this, cx| this.reload(cx))?;
+            reload_task.await;
+            Ok(())
         })
     }
 
@@ -278,7 +272,9 @@ impl SidebarThreadMetadataStore {
         let db = self.db.clone();
         cx.spawn(async move |this, cx| {
             db.delete(session_id).await?;
-            this.update(cx, |this, cx| this.reload(cx))
+            let reload_task = this.update(cx, |this, cx| this.reload(cx))?;
+            reload_task.await;
+            Ok(())
         })
     }
 
@@ -322,7 +318,7 @@ impl SidebarThreadMetadataStore {
             reload_task: None,
             session_subscriptions: HashMap::default(),
         };
-        this.reload(cx);
+        let _ = this.reload(cx);
         this
     }
 
@@ -372,6 +368,11 @@ impl Domain for ThreadMetadataDb {
 db::static_connection!(ThreadMetadataDb, []);
 
 impl ThreadMetadataDb {
+    pub fn is_empty(&self) -> anyhow::Result<bool> {
+        self.select::<i64>("SELECT COUNT(*) FROM sidebar_threads")?()
+            .map(|counts| counts.into_iter().next().unwrap_or_default() == 0)
+    }
+
     /// List all sidebar thread metadata, ordered by updated_at descending.
     pub fn list(&self) -> anyhow::Result<Vec<ThreadMetadata>> {
         self.select::<ThreadMetadata>(
