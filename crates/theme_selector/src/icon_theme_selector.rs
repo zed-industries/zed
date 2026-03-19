@@ -91,7 +91,7 @@ impl IconThemeSelectorDelegate {
                 .cmp(&b.appearance.is_light())
                 .then(a.name.cmp(&b.name))
         });
-        let matches: Vec<StringMatch> = themes
+        let matches = themes
             .iter()
             .map(|meta| StringMatch {
                 candidate_id: 0,
@@ -99,7 +99,7 @@ impl IconThemeSelectorDelegate {
                 positions: Default::default(),
                 string: meta.name.to_string(),
             })
-            .collect();
+            .collect::<Vec<_>>();
         let selected_index = matches
             .iter()
             .position(|mat| mat.string == original_theme.0.as_ref())

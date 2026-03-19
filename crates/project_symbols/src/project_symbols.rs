@@ -4,6 +4,7 @@ use gpui::{
     App, Context, DismissEvent, Entity, HighlightStyle, ParentElement, StyledText, Task, TextStyle,
     WeakEntity, Window, relative, rems,
 };
+use language::{PointUtf16, Unclipped};
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use project::{Project, Symbol, lsp_store::SymbolLocation};
@@ -105,9 +106,15 @@ impl ProjectSymbolsDelegate {
     }
 }
 
+pub struct ProjectSymbolStableId {
+    path: SymbolLocation,
+    symbol_name: String,
+    symbol_range_start: Unclipped<PointUtf16>,
+}
+
 impl PickerDelegate for ProjectSymbolsDelegate {
     type ListItem = ListItem;
-    type StableId = SharedString;
+    type StableId = ProjectSymbolStableId;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search project symbols...".into()
@@ -226,30 +233,24 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         })
     }
 
-    fn match_stable_id(&self, ix: usize) -> Option<SharedString> {
+    fn match_stable_id(&self, ix: usize) -> Option<ProjectSymbolStableId> {
         let mat = self.matches.get(ix)?;
         let symbol = self.symbols.get(mat.candidate_id)?;
-        let path_str = match &symbol.path {
-            SymbolLocation::InProject(path) => format!("{:?}:{:?}", path.worktree_id, path.path),
-            SymbolLocation::OutsideProject { abs_path, .. } => format!("{:?}", abs_path),
-        };
-        Some(format!("{}:{}:{:?}", path_str, symbol.name, symbol.range.start).into())
+        Some(ProjectSymbolStableId {
+            path: symbol.path.clone(),
+            symbol_name: symbol.name.clone(),
+            symbol_range_start: symbol.range.start,
+        })
     }
 
-    fn find_match_by_stable_id(&self, stable_id: &SharedString) -> Option<usize> {
+    fn find_match_by_stable_id(&self, stable_id: &ProjectSymbolStableId) -> Option<usize> {
         self.matches.iter().position(|mat| {
-            if let Some(symbol) = self.symbols.get(mat.candidate_id) {
-                let path_str = match &symbol.path {
-                    SymbolLocation::InProject(path) => {
-                        format!("{:?}:{:?}", path.worktree_id, path.path)
-                    }
-                    SymbolLocation::OutsideProject { abs_path, .. } => format!("{:?}", abs_path),
-                };
-                format!("{}:{}:{:?}", path_str, symbol.name, symbol.range.start)
-                    == stable_id.as_ref()
-            } else {
-                false
-            }
+            let Some(symbol) = self.symbols.get(mat.candidate_id) else {
+                return false;
+            };
+            stable_id.path == symbol.path
+                && stable_id.symbol_name == symbol.name
+                && stable_id.symbol_range_start == symbol.range.start
         })
     }
 

@@ -762,7 +762,7 @@ impl EventEmitter<DismissEvent> for RecentProjectsDelegate {}
 pub enum RecentProjectsStableId {
     OpenFolder(WorktreeId),
     RecentProject(WorkspaceId),
-    OpenProject { candidate_id: usize },
+    OpenProject(WorkspaceId),
 }
 
 impl PickerDelegate for RecentProjectsDelegate {
@@ -805,10 +805,9 @@ impl PickerDelegate for RecentProjectsDelegate {
                 Some(RecentProjectsStableId::RecentProject(*workspace_id))
             }
             ProjectPickerEntry::Header(_) => None,
-            ProjectPickerEntry::OpenProject(string_match) => {
-                Some(RecentProjectsStableId::OpenProject {
-                    candidate_id: string_match.candidate_id,
-                })
+            ProjectPickerEntry::OpenProject(mat) => {
+                let (workspace_id, _, _, _) = self.workspaces.get(mat.candidate_id)?;
+                Some(RecentProjectsStableId::OpenProject(*workspace_id))
             }
         }
     }
@@ -827,6 +826,13 @@ impl PickerDelegate for RecentProjectsDelegate {
                 (
                     ProjectPickerEntry::RecentProject(mat),
                     RecentProjectsStableId::RecentProject(workspace_id),
+                ) => self
+                    .workspaces
+                    .get(mat.candidate_id)
+                    .is_some_and(|(id, _, _, _)| id == workspace_id),
+                (
+                    ProjectPickerEntry::OpenProject(mat),
+                    RecentProjectsStableId::OpenProject(workspace_id),
                 ) => self
                     .workspaces
                     .get(mat.candidate_id)

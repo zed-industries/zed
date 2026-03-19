@@ -162,7 +162,7 @@ impl ThemeSelectorDelegate {
                 .then(a.name.cmp(&b.name))
         });
 
-        let matches: Vec<StringMatch> = themes
+        let matches = themes
             .iter()
             .map(|meta| StringMatch {
                 candidate_id: 0,
@@ -170,7 +170,7 @@ impl ThemeSelectorDelegate {
                 positions: Default::default(),
                 string: meta.name.to_string(),
             })
-            .collect();
+            .collect::<Vec<_>>();
 
         // The current theme is likely in this list, so default to first showing that.
         let selected_index = matches
