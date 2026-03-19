@@ -34099,6 +34099,7 @@ async fn test_observe_pending_input_selection_refresh(cx: &mut TestAppContext) {
     );
 }
 
+#[gpui::test]
 async fn test_restore_and_next(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
