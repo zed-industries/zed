@@ -17772,7 +17772,6 @@ dependencies = [
  "client",
  "cloud_api_types",
  "db",
- "feature_flags",
  "git_ui",
  "gpui",
  "icons",
