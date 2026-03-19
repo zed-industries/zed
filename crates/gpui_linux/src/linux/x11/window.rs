@@ -533,12 +533,22 @@ impl X11WindowState {
                 && let Some(title) = titlebar.title
             {
                 check_reply(
-                    || "X11 ChangeProperty8 on window title failed.",
+                    || "X11 ChangeProperty8 on WM_NAME failed.",
                     xcb.change_property8(
                         xproto::PropMode::REPLACE,
                         x_window,
                         xproto::AtomEnum::WM_NAME,
                         xproto::AtomEnum::STRING,
+                        title.as_bytes(),
+                    ),
+                )?;
+                check_reply(
+                    || "X11 ChangeProperty8 on _NET_WM_NAME failed.",
+                    xcb.change_property8(
+                        xproto::PropMode::REPLACE,
+                        x_window,
+                        atoms._NET_WM_NAME,
+                        atoms.UTF8_STRING,
                         title.as_bytes(),
                     ),
                 )?;
