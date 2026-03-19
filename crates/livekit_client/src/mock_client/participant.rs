@@ -8,10 +8,7 @@ use collections::HashMap;
 use gpui::{
     AsyncApp, DevicePixels, ScreenCaptureSource, ScreenCaptureStream, SourceMetadata, size,
 };
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
-};
+use std::sync::{Arc, atomic::AtomicU64};
 
 #[derive(Clone, Debug)]
 pub struct LocalParticipant {
@@ -207,7 +204,7 @@ struct TestWaylandScreenCaptureStream {
 impl TestWaylandScreenCaptureStream {
     fn new() -> Self {
         Self {
-            id: NEXT_TEST_WAYLAND_SHARE_ID.fetch_add(1, Ordering::Relaxed),
+            id: NEXT_TEST_WAYLAND_SHARE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
     }
 }

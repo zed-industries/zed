@@ -6711,7 +6711,6 @@ async fn test_unshare_screen_wayland(
         .unwrap();
 
     let room_a = active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
-    let room_b = active_call_b.read_with(cx_b, |call, _| call.room().unwrap().clone());
     executor.run_until_parked();
 
     // User A shares their screen via the Wayland path.
