@@ -548,6 +548,11 @@ impl TitleBar {
         );
 
         if can_use_microphone && screen_sharing_supported {
+            #[cfg(target_os = "linux")]
+            let is_wayland = gpui::guess_compositor() == "Wayland";
+            #[cfg(not(target_os = "linux"))]
+            let is_wayland = false;
+
             let trigger = IconButton::new("screen-share", IconName::Screen)
                 .style(ButtonStyle::Subtle)
                 .icon_size(IconSize::Small)
@@ -564,28 +569,59 @@ impl TitleBar {
                         .room()
                         .is_some_and(|room| !room.read(cx).is_sharing_screen());
 
-                    window
-                        .spawn(cx, async move |cx| {
-                            let screen = if should_share {
-                                cx.update(|_, cx| pick_default_screen(cx))?.await
-                            } else {
-                                Ok(None)
-                            };
-                            cx.update(|window, cx| toggle_screen_sharing(screen, window, cx))?;
+                    if is_wayland {
+                        if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
+                            let task = room.update(cx, |room, cx| {
+                                if should_share {
+                                    #[cfg(target_os = "linux")]
+                                    {
+                                        room.share_screen_wayland(cx)
+                                    }
+                                    #[cfg(not(target_os = "linux"))]
+                                    {
+                                        Task::ready(Err(anyhow::anyhow!("not supported")))
+                                    }
+                                } else {
+                                    room.unshare_screen(true, cx)
+                                        .map(|()| Task::ready(Ok(())))
+                                        .unwrap_or_else(|e| Task::ready(Err(e)))
+                                }
+                            });
+                            task.detach_and_prompt_err(
+                                "Sharing Screen Failed",
+                                window,
+                                cx,
+                                |e, _, _| Some(format!("{e:?}")),
+                            );
+                        }
+                    } else {
+                        window
+                            .spawn(cx, async move |cx| {
+                                let screen = if should_share {
+                                    cx.update(|_, cx| pick_default_screen(cx))?.await
+                                } else {
+                                    Ok(None)
+                                };
+                                cx.update(|window, cx| toggle_screen_sharing(screen, window, cx))?;
 
-                            Result::<_, anyhow::Error>::Ok(())
-                        })
-                        .detach();
+                                Result::<_, anyhow::Error>::Ok(())
+                            })
+                            .detach();
+                    }
                 });
 
-            children.push(
-                SplitButton::new(
-                    trigger.render(window, cx),
-                    self.render_screen_list().into_any_element(),
-                )
-                .style(SplitButtonStyle::Transparent)
-                .into_any_element(),
-            );
+            if is_wayland {
+                children.push(trigger.into_any_element());
+            } else {
+                children.push(
+                    SplitButton::new(
+                        trigger.render(window, cx),
+                        self.render_screen_list().into_any_element(),
+                    )
+                    .style(SplitButtonStyle::Transparent)
+                    .into_any_element(),
+                );
+            }
         }
 
         children.push(div().pr_2().into_any_element());
