@@ -356,10 +356,14 @@ mod tests {
 
         let profiles_json = json!({
             classroom_and_streaming_profile_name.clone(): {
-                "buffer_font_size": 20.0,
+                "settings": {
+                    "buffer_font_size": 20.0,
+                }
             },
             demo_videos_profile_name.clone(): {
-                "buffer_font_size": 15.0
+                "settings": {
+                    "buffer_font_size": 15.0
+                }
             }
         });
         let (workspace, cx) = init_test(profiles_json.clone(), cx).await;
@@ -581,16 +585,16 @@ mod tests {
     ) {
         // Must be unique names (HashMap)
         let profiles_json = json!({
-            "z": {},
-            "e": {},
-            "d": {},
-            " ": {},
-            "r": {},
-            "u": {},
-            "l": {},
-            "3": {},
-            "s": {},
-            "!": {},
+            "z": { "settings": {} },
+            "e": { "settings": {} },
+            "d": { "settings": {} },
+            " ": { "settings": {} },
+            "r": { "settings": {} },
+            "u": { "settings": {} },
+            "l": { "settings": {} },
+            "3": { "settings": {} },
+            "s": { "settings": {} },
+            "!": { "settings": {} },
         });
         let (workspace, cx) = init_test(profiles_json.clone(), cx).await;
 

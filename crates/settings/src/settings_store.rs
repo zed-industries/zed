@@ -36,8 +36,8 @@ use crate::{
     LanguageToSettingsMap, LspSettings, LspSettingsMap, SemanticTokenRules, ThemeName,
     UserSettingsContentExt, VsCodeSettings, WorktreeId,
     settings_content::{
-        ExtensionsSettingsContent, ProjectSettingsContent, RootUserSettings, SettingsContent,
-        UserSettingsContent, merge_from::MergeFrom,
+        ExtensionsSettingsContent, ProfileBase, ProjectSettingsContent, RootUserSettings,
+        SettingsContent, UserSettingsContent, merge_from::MergeFrom,
     },
 };
 
@@ -1210,10 +1210,20 @@ impl SettingsStore {
             merged.merge_from_option(self.extension_settings.as_deref());
             merged.merge_from_option(self.global_settings.as_deref());
             if let Some(user_settings) = self.user_settings.as_ref() {
-                merged.merge_from(&user_settings.content);
-                merged.merge_from_option(user_settings.for_release_channel());
-                merged.merge_from_option(user_settings.for_os());
-                merged.merge_from_option(user_settings.for_profile(cx));
+                let active_profile = user_settings.for_profile(cx);
+                let uses_default_base = active_profile
+                    .and_then(|p| p.base)
+                    .is_some_and(|b| b == ProfileBase::Default);
+
+                if !uses_default_base {
+                    merged.merge_from(&user_settings.content);
+                    merged.merge_from_option(user_settings.for_release_channel());
+                    merged.merge_from_option(user_settings.for_os());
+                }
+
+                if let Some(profile) = active_profile {
+                    merged.merge_from(&profile.settings);
+                }
             }
             merged.merge_from_option(self.server_settings.as_deref());
 
@@ -2623,5 +2633,49 @@ mod tests {
 
         assert!(user_schema_str.contains("\"auto_update\""));
         assert!(!project_schema_str.contains("\"auto_update\""));
+    }
+
+    #[gpui::test]
+    fn test_settings_profile_with_default_base(cx: &mut App) {
+        let mut store = SettingsStore::new(cx, &default_settings());
+        store.register_setting::<AutoUpdateSetting>();
+
+        // Default auto_update is true
+        assert_eq!(
+            store.get::<AutoUpdateSetting>(None),
+            &AutoUpdateSetting { auto_update: true }
+        );
+
+        // User sets auto_update to false and defines a profile with base: "default"
+        store
+            .set_user_settings(
+                r#"{
+                    "auto_update": false,
+                    "profiles": {
+                        "clean_slate": {
+                            "base": "default",
+                            "settings": {}
+                        }
+                    }
+                }"#,
+                cx,
+            )
+            .unwrap();
+
+        // Without profile active, user setting applies
+        assert_eq!(
+            store.get::<AutoUpdateSetting>(None),
+            &AutoUpdateSetting { auto_update: false }
+        );
+
+        // Activate the profile with base: "default"
+        cx.set_global(ActiveSettingsProfileName("clean_slate".to_string()));
+        store.recompute_values(None, cx);
+
+        // With profile active, user settings are skipped, so we get the default value
+        assert_eq!(
+            store.get::<AutoUpdateSetting>(None),
+            &AutoUpdateSetting { auto_update: true }
+        );
     }
 }
