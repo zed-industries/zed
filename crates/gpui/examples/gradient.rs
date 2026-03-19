@@ -50,8 +50,10 @@ impl Render for GradientViewer {
                                 .active(|this| this.opacity(0.8))
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.color_space = match this.color_space {
-                                        ColorSpace::Oklab => ColorSpace::Srgb,
                                         ColorSpace::Srgb => ColorSpace::Oklab,
+                                        ColorSpace::Oklab => ColorSpace::DisplayP3,
+                                        ColorSpace::DisplayP3 => ColorSpace::Untagged,
+                                        ColorSpace::Untagged => ColorSpace::Srgb,
                                     };
                                     cx.notify();
                                 })),

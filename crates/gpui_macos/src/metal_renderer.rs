@@ -7,9 +7,9 @@ use cocoa::{
     quartzcore::AutoresizingMask,
 };
 use gpui::{
-    AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, MonochromeSprite, PaintSurface,
-    Path, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
-    Surface, Underline, point, size,
+    AtlasTextureId, Background, Bounds, ColorSpace, ContentMask, DevicePixels, MonochromeSprite,
+    PaintSurface, Path, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow,
+    Size, Surface, Underline, point, size,
 };
 #[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
@@ -324,7 +324,7 @@ impl MetalRenderer {
         let core_video_texture_cache =
             CVMetalTextureCache::new(None, device.clone(), None).unwrap();
 
-        Self {
+        let renderer = Self {
             device,
             layer,
             presents_with_transaction: false,
@@ -347,7 +347,12 @@ impl MetalRenderer {
             path_intermediate_texture: None,
             path_intermediate_msaa_texture: None,
             path_sample_count: PATH_SAMPLE_COUNT,
-        }
+        };
+
+        // Set initial color space to default (sRGB)
+        renderer.update_color_space(ColorSpace::default());
+
+        renderer
     }
 
     pub fn layer(&self) -> Option<&metal::MetalLayerRef> {
@@ -430,6 +435,36 @@ impl MetalRenderer {
         self.opaque = !transparent;
         if let Some(layer) = &self.layer {
             layer.set_opaque(!transparent);
+        }
+    }
+
+    pub fn update_color_space(&self, color_space: ColorSpace) {
+        use core_foundation::string::CFString;
+        use core_graphics::color_space::CGColorSpace;
+
+        unsafe {
+            match color_space {
+                ColorSpace::Srgb | ColorSpace::Oklab => {
+                    let srgb_name = CFString::from_static_string("kCGColorSpaceSRGB");
+                    if let Some(colorspace) =
+                        CGColorSpace::create_with_name(srgb_name.as_concrete_TypeRef())
+                    {
+                        let _: () = msg_send![&*self.layer, setColorspace: colorspace.as_ptr()];
+                    }
+                }
+                ColorSpace::DisplayP3 => {
+                    let p3_name = CFString::from_static_string("kCGColorSpaceDisplayP3");
+                    if let Some(colorspace) =
+                        CGColorSpace::create_with_name(p3_name.as_concrete_TypeRef())
+                    {
+                        let _: () = msg_send![&*self.layer, setColorspace: colorspace.as_ptr()];
+                    }
+                }
+                ColorSpace::Untagged => {
+                    let _: () =
+                        msg_send![&*self.layer, setColorspace: std::ptr::null::<cocoa::base::id>()];
+                }
+            }
         }
     }
 
