@@ -19,9 +19,9 @@ use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::{AgentId, AgentServerStore};
 use theme::ActiveTheme;
 use ui::{
-    ButtonLike, CommonAnimationExt, ContextMenu, ContextMenuEntry, HighlightedLabel, KeyBinding,
-    ListItem, PopoverMenu, PopoverMenuHandle, Tab, TintColor, Tooltip, WithScrollbar, prelude::*,
-    utils::platform_title_bar_height,
+    ButtonLike, CommonAnimationExt, ContextMenu, ContextMenuEntry, Divider, HighlightedLabel,
+    KeyBinding, ListItem, PopoverMenu, PopoverMenuHandle, Tab, TintColor, Tooltip, WithScrollbar,
+    prelude::*, utils::platform_title_bar_height,
 };
 use util::ResultExt as _;
 use zed_actions::editor::{MoveDown, MoveUp};
@@ -185,6 +185,11 @@ impl ThreadsArchiveView {
         this
     }
 
+    pub fn focus_filter_editor(&self, window: &mut Window, cx: &mut App) {
+        let handle = self.filter_editor.read(cx).focus_handle(cx);
+        handle.focus(window, cx);
+    }
+
     fn set_selected_agent(&mut self, agent: Agent, window: &mut Window, cx: &mut Context<Self>) {
         self.selected_agent = agent.clone();
         self.is_loading = true;
@@ -285,11 +290,6 @@ impl ThreadsArchiveView {
         self.filter_editor.update(cx, |editor, cx| {
             editor.set_text("", window, cx);
         });
-    }
-
-    fn go_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.reset_filter_editor_text(window, cx);
-        cx.emit(ThreadsArchiveViewEvent::Close);
     }
 
     fn unarchive_thread(
@@ -729,61 +729,44 @@ impl ThreadsArchiveView {
         let traffic_lights = cfg!(target_os = "macos") && !window.is_fullscreen();
         let header_height = platform_title_bar_height(window);
 
-        v_flex()
+        h_flex()
+            .h(header_height)
+            .mt_px()
+            .pb_px()
+            .when(traffic_lights, |this| {
+                this.pl(px(ui::utils::TRAFFIC_LIGHT_PADDING))
+            })
+            .pr_1p5()
+            .gap_1()
+            .justify_between()
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
+            .child(Divider::vertical().color(ui::DividerColor::Border))
             .child(
                 h_flex()
-                    .h(header_height)
-                    .mt_px()
-                    .pb_px()
-                    .when(traffic_lights, |this| {
-                        this.pl(px(ui::utils::TRAFFIC_LIGHT_PADDING))
-                    })
-                    .pr_1p5()
-                    .border_b_1()
-                    .border_color(cx.theme().colors().border)
-                    .justify_between()
+                    .ml_1()
+                    .min_w_0()
+                    .w_full()
+                    .gap_1()
                     .child(
-                        h_flex()
-                            .gap_1p5()
-                            .child(
-                                IconButton::new("back", IconName::ArrowLeft)
-                                    .icon_size(IconSize::Small)
-                                    .tooltip(Tooltip::text("Back to Sidebar"))
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.go_back(window, cx);
-                                    })),
-                            )
-                            .child(Label::new("Threads Archive").size(LabelSize::Small).mb_px()),
+                        Icon::new(IconName::MagnifyingGlass)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
                     )
-                    .child(self.render_agent_picker(cx)),
+                    .child(self.filter_editor.clone()),
             )
-            .child(
-                h_flex()
-                    .h(Tab::container_height(cx))
-                    .px_1p5()
-                    .gap_1p5()
-                    .border_b_1()
-                    .border_color(cx.theme().colors().border)
-                    .child(
-                        h_flex().size_4().flex_none().justify_center().child(
-                            Icon::new(IconName::MagnifyingGlass)
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
-                        ),
-                    )
-                    .child(self.filter_editor.clone())
-                    .when(has_query, |this| {
-                        this.child(
-                            IconButton::new("clear_filter", IconName::Close)
-                                .icon_size(IconSize::Small)
-                                .tooltip(Tooltip::text("Clear Search"))
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.reset_filter_editor_text(window, cx);
-                                    this.update_items(cx);
-                                })),
-                        )
-                    }),
-            )
+            .when(!has_query, |this| this.child(self.render_agent_picker(cx)))
+            .when(has_query, |this| {
+                this.child(
+                    IconButton::new("clear_filter", IconName::Close)
+                        .icon_size(IconSize::Small)
+                        .tooltip(Tooltip::text("Clear Search"))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.reset_filter_editor_text(window, cx);
+                            this.update_items(cx);
+                        })),
+                )
+            })
     }
 }
 
