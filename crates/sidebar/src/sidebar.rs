@@ -4965,7 +4965,7 @@ mod tests {
             .with_git_state(std::path::Path::new("/project/.git"), false, |state| {
                 state.worktrees.push(git::repository::Worktree {
                     path: std::path::PathBuf::from("/wt/rosewood"),
-                    ref_name: "refs/heads/rosewood".into(),
+                    ref_name: Some("refs/heads/rosewood".into()),
                     sha: "abc".into(),
                 });
             })
@@ -5026,7 +5026,7 @@ mod tests {
             .with_git_state(std::path::Path::new("/project/.git"), true, |state| {
                 state.worktrees.push(git::repository::Worktree {
                     path: std::path::PathBuf::from("/wt/rosewood"),
-                    ref_name: "refs/heads/rosewood".into(),
+                    ref_name: Some("refs/heads/rosewood".into()),
                     sha: "abc".into(),
                 });
             })
@@ -5130,12 +5130,12 @@ mod tests {
         fs.with_git_state(std::path::Path::new("/project/.git"), false, |state| {
             state.worktrees.push(git::repository::Worktree {
                 path: std::path::PathBuf::from("/wt-feature-a"),
-                ref_name: "refs/heads/feature-a".into(),
+                ref_name: Some("refs/heads/feature-a".into()),
                 sha: "aaa".into(),
             });
             state.worktrees.push(git::repository::Worktree {
                 path: std::path::PathBuf::from("/wt-feature-b"),
-                ref_name: "refs/heads/feature-b".into(),
+                ref_name: Some("refs/heads/feature-b".into()),
                 sha: "bbb".into(),
             });
         })
@@ -5232,7 +5232,7 @@ mod tests {
         fs.with_git_state(std::path::Path::new("/project/.git"), false, |state| {
             state.worktrees.push(git::repository::Worktree {
                 path: std::path::PathBuf::from("/wt-feature-a"),
-                ref_name: "refs/heads/feature-a".into(),
+                ref_name: Some("refs/heads/feature-a".into()),
                 sha: "aaa".into(),
             });
         })
@@ -5348,7 +5348,7 @@ mod tests {
         fs.with_git_state(std::path::Path::new("/project/.git"), false, |state| {
             state.worktrees.push(git::repository::Worktree {
                 path: std::path::PathBuf::from("/wt-feature-a"),
-                ref_name: "refs/heads/feature-a".into(),
+                ref_name: Some("refs/heads/feature-a".into()),
                 sha: "aaa".into(),
             });
         })
@@ -5457,7 +5457,7 @@ mod tests {
         fs.with_git_state(std::path::Path::new("/project/.git"), false, |state| {
             state.worktrees.push(git::repository::Worktree {
                 path: std::path::PathBuf::from("/wt-feature-a"),
-                ref_name: "refs/heads/feature-a".into(),
+                ref_name: Some("refs/heads/feature-a".into()),
                 sha: "aaa".into(),
             });
         })
@@ -5563,7 +5563,7 @@ mod tests {
         fs.with_git_state(std::path::Path::new("/project/.git"), false, |state| {
             state.worktrees.push(git::repository::Worktree {
                 path: std::path::PathBuf::from("/wt-feature-a"),
-                ref_name: "refs/heads/feature-a".into(),
+                ref_name: Some("refs/heads/feature-a".into()),
                 sha: "aaa".into(),
             });
         })
