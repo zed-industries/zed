@@ -345,16 +345,16 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
         };
 
         let mut path_start_offset = 0;
-        let (match_labels, _paths): (Vec<_>, Vec<_>) = paths
+        let match_labels: Vec<_> = paths
             .ordered_paths()
             .map(|p| p.compact())
             .map(|path| {
-                let highlighted_text =
+                let (label, path_match) =
                     highlights_for_path(path.as_ref(), &hit.positions, path_start_offset);
-                path_start_offset += highlighted_text.1.text.len();
-                highlighted_text
+                path_start_offset += path_match.text.len();
+                label
             })
-            .unzip();
+            .collect();
 
         let prefix = match &location {
             SerializedWorkspaceLocation::Remote(options) => {

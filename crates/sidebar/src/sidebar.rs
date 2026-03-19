@@ -2960,7 +2960,6 @@ impl Render for Sidebar {
             .on_action(cx.listener(|this, _: &OpenRecent, window, cx| {
                 this.recent_projects_popover_handle.toggle(window, cx);
             }))
-            .on_action(cx.listener(Self::toggle_archive))
             .font(ui_font)
             .h_full()
             .w(self.width)
