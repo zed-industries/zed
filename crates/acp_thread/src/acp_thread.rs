@@ -1987,7 +1987,18 @@ impl AcpThread {
                 this.project
                     .update(cx, |project, cx| project.set_agent_location(None, cx));
                 let Ok(response) = response else {
-                    // tx dropped, just return
+                    // tx dropped — the send_task was cancelled (e.g. rapid cancel
+                    // sequence dropped a Task in the chain). Clean up running_turn
+                    // if it still belongs to this turn, otherwise the thread gets
+                    // permanently stuck in Generating state.
+                    let is_same_turn = this
+                        .running_turn
+                        .as_ref()
+                        .is_some_and(|turn| turn_id == turn.id);
+                    if is_same_turn {
+                        this.running_turn.take();
+                    }
+                    cx.emit(AcpThreadEvent::Stopped);
                     return Ok(None);
                 };
 
@@ -4744,6 +4755,80 @@ mod tests {
             2,
             "Stopped must be emitted once per turn: once for the displaced turn 1 and once for turn 2"
         );
+    }
+
+    /// Tests that when a send_task is dropped (e.g. due to a GPUI Task being
+    /// cancelled in a rapid cancel chain), the outer future handles the broken
+    /// oneshot channel and clears running_turn instead of leaving the thread
+    /// permanently stuck in Generating state.
+    #[gpui::test]
+    async fn test_dropped_send_task_clears_running_turn(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+
+        // Handler blocks forever — we'll drop the send_task before it completes
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message({
+            move |_params, _thread, _cx| {
+                async move {
+                    futures::future::pending::<()>().await;
+                    unreachable!()
+                }
+                .boxed_local()
+            }
+        }));
+
+        let thread = cx
+            .update(|cx| connection.new_session(project, Path::new(path!("/test")), cx))
+            .await
+            .unwrap();
+
+        // Track Stopped events
+        let stopped_count = Rc::new(RefCell::new(0usize));
+        thread.update(cx, |_, cx| {
+            cx.subscribe(
+                &thread,
+                {
+                    let stopped_count = stopped_count.clone();
+                    move |_, _, event: &AcpThreadEvent, _| {
+                        if matches!(event, AcpThreadEvent::Stopped) {
+                            *stopped_count.borrow_mut() += 1;
+                        }
+                    }
+                },
+            )
+            .detach();
+        });
+
+        // Send a message — handler will block forever
+        let outer_future = thread.update(cx, |thread, cx| thread.send_raw("test", cx));
+
+        assert!(
+            thread.read_with(cx, |t, _| t.running_turn.is_some()),
+            "running_turn should be set after send"
+        );
+
+        // Simulate the bug: drop the send_task by taking running_turn.
+        // This drops the Task, which cancels the underlying future,
+        // which drops the tx oneshot sender.
+        thread.update(cx, |thread, _| {
+            thread.running_turn.take();
+        });
+
+        // The outer future should handle the broken channel and emit Stopped
+        let result = outer_future.await;
+        assert!(result.is_ok(), "outer future should return Ok(None), not panic");
+
+        assert_eq!(
+            *stopped_count.borrow(),
+            1,
+            "Stopped should be emitted when send_task is dropped"
+        );
+
+        // running_turn was already taken by our manual drop above,
+        // but the key assertion is that the outer future completed
+        // (didn't hang) and emitted Stopped.
     }
 
     #[gpui::test]

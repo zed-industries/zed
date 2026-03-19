@@ -13,6 +13,7 @@
 //	Phase 6: Query UI state (verify Zed reports active thread)
 //	Phase 7: Open thread + follow-up (open_thread command then chat_message)
 //	Phase 8: Mid-stream interrupt (send follow-up while previous response is streaming)
+//	Phase 9: Rapid 3-turn cancel (chat_message, then simulate_user_input interrupt, then chat_message)
 //
 // Exit codes: 0 = all tests passed, 1 = test failure
 package main
@@ -65,6 +66,11 @@ type testDriver struct {
 	phase8ThreadID      string // thread ID created in phase 8
 	phase8InterruptSent bool   // whether we have already sent the interrupt
 	phase8Completions   int    // number of message_completed events received for phase 8 thread
+
+	// Phase 9: rapid 3-turn cancel state
+	phase9ThreadID       string // thread ID (reuses phase 8's thread)
+	phase9RapidSent      bool   // whether the rapid sequence has been sent
+	phase9Completions    int    // number of message_completed events for phase 9
 }
 
 func newTestDriver(srv *server.HelixAPIServer, store *memorystore.MemoryStore) *testDriver {
@@ -124,6 +130,26 @@ func (d *testDriver) syncEventCallback(sessionID string, syncMsg *types.SyncMess
 			}
 		}
 
+		// Phase 9: as soon as the first assistant token arrives for the initial
+		// turn, fire a rapid sequence: simulate_user_input (like user pressing
+		// Enter in Zed) + chat_message (like Helix's queue delivery). This
+		// creates a 3-turn rapid cancel chain that previously caused a Task to
+		// be dropped, breaking the oneshot channel and hanging the thread.
+		if d.phase == 9 && !d.phase9RapidSent {
+			role, _ := syncMsg.Data["role"].(string)
+			threadID, _ := syncMsg.Data["acp_thread_id"].(string)
+			if role == "assistant" && threadID == d.phase9ThreadID {
+				d.phase9RapidSent = true
+				d.mu.Unlock()
+				log.Printf("[test-server] Phase 9: First assistant token arrived, sending rapid 2-message sequence")
+				// Turn 2: simulate user typing in Zed (interrupt)
+				d.sendSimulateUserInput(threadID, "User interrupt from Zed", "req-phase9-user-input", "zed-agent")
+				// Turn 3: simulate Helix queue delivery (arrives while turn 2 is starting)
+				d.sendChatMessage("Queue delivery from Helix", "req-phase9-queue", "zed-agent", threadID)
+				return
+			}
+		}
+
 	case "message_completed":
 		acpThreadID, _ := syncMsg.Data["acp_thread_id"].(string)
 		requestID, _ := syncMsg.Data["request_id"].(string)
@@ -140,6 +166,22 @@ func (d *testDriver) syncEventCallback(sessionID string, syncMsg *types.SyncMess
 				completions, truncate(acpThreadID, 12), requestID)
 			if completions >= 2 {
 				log.Println("[test-server] Phase 8: Both turns completed (cancelled + interrupt)")
+				time.Sleep(500 * time.Millisecond)
+				go d.advanceAfterCompletion(8)
+			}
+			return
+		}
+
+		// Phase 9: rapid 3-turn cancel — we expect at least 2 completions
+		// (some turns may be cancelled/dropped, but the thread must not hang).
+		if currentPhase == 9 && acpThreadID == d.phase9ThreadID {
+			d.phase9Completions++
+			completions := d.phase9Completions
+			d.mu.Unlock()
+			log.Printf("[test-server] Phase 9: Completion %d for thread=%s req=%s",
+				completions, truncate(acpThreadID, 12), requestID)
+			if completions >= 2 {
+				log.Println("[test-server] Phase 9: Received enough completions — thread did not hang")
 				time.Sleep(500 * time.Millisecond)
 				close(d.done)
 			}
@@ -274,6 +316,11 @@ func (d *testDriver) advanceAfterCompletion(completedPhase int) {
 		d.phase = 8
 		d.mu.Unlock()
 		d.runPhase8()
+	case 8:
+		d.mu.Lock()
+		d.phase = 9
+		d.mu.Unlock()
+		d.runPhase9()
 	}
 }
 
@@ -391,6 +438,29 @@ func (d *testDriver) runPhase8() {
 		"Write me a detailed explanation of recursion with three worked examples.",
 		"req-phase8-initial",
 		"zed-agent",
+	)
+}
+
+func (d *testDriver) runPhase9() {
+	log.Println("\n==================================================")
+	log.Println("  PHASE 9: Rapid 3-turn cancel (regression test)")
+	log.Println("==================================================")
+	log.Println("  Sends chat_message, then while streaming, fires")
+	log.Println("  simulate_user_input + chat_message back-to-back.")
+	log.Println("  Without the fix, the thread hangs permanently.")
+
+	// Reuse the phase 8 thread (it completed, so we can send follow-ups).
+	d.mu.Lock()
+	d.phase9ThreadID = d.phase8ThreadID
+	d.mu.Unlock()
+
+	// Turn 1: start a long-running response. The syncEventCallback will
+	// fire the rapid sequence as soon as the first assistant token arrives.
+	d.sendChatMessage(
+		"Write a detailed explanation of merge sort with code examples.",
+		"req-phase9-initial",
+		"zed-agent",
+		d.phase8ThreadID,
 	)
 }
 
@@ -567,9 +637,26 @@ func (d *testDriver) validate() bool {
 		}
 	}
 
+	// Phase 9: rapid 3-turn cancel (regression test for thread hang)
+	// The key assertion: we received at least 2 completions, meaning the thread
+	// did NOT hang permanently. Without the fix in acp_thread.rs (handling dropped
+	// oneshot tx in run_turn's outer future), the thread would be stuck in
+	// Generating state forever and no completions would arrive.
+	if d.phase9ThreadID == "" {
+		errors = append(errors, "Phase 9: No thread ID (phase 9 may not have run)")
+	} else {
+		if d.phase9Completions < 2 {
+			errors = append(errors, fmt.Sprintf(
+				"Phase 9: Expected at least 2 message_completed events (got %d) — thread may have hung",
+				d.phase9Completions))
+		} else {
+			log.Printf("[test-server] Phase 9: Received %d completions — thread recovered from rapid cancel (correct)", d.phase9Completions)
+		}
+	}
+
 	// Too many threads (follow-ups should not create new threads)
 	// Phases 1, 3, 8 each create one thread = 3 threads total.
-	// Phases 2, 4, 5, 7 use existing threads. Phase 8 interrupt uses the phase 8 thread.
+	// Phases 2, 4, 5, 7, 9 use existing threads. Phase 8 interrupt uses the phase 8 thread.
 	if len(threadCreatedEvents) > 3 {
 		errors = append(errors, fmt.Sprintf("Too many thread_created events (%d, expected 3)", len(threadCreatedEvents)))
 	}
