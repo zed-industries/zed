@@ -699,8 +699,6 @@ actions!(
         Rename,
         /// Restarts the language server for the current file.
         RestartLanguageServer,
-        /// Reveals the current file in the system file manager.
-        RevealInFileManager,
         /// Reverses the order of selected lines.
         ReverseLines,
         /// Reloads the file from disk.
@@ -883,6 +881,8 @@ actions!(
         UnwrapSyntaxNode,
         /// Wraps selections in tag specified by language.
         WrapSelectionsInTag,
+        /// Aligns selections from different rows into the same column
+        AlignSelections,
     ]
 );
 

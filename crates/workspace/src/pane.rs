@@ -3192,6 +3192,7 @@ impl Pane {
                             });
 
                             let entry_abs_path = pane.read(cx).entry_abs_path(entry, cx);
+                            let reveal_path = entry_abs_path.clone();
                             let parent_abs_path = entry_abs_path
                                 .as_deref()
                                 .and_then(|abs_path| Some(abs_path.parent()?.to_path_buf()));
@@ -3201,6 +3202,15 @@ impl Pane {
 
                             let visible_in_project_panel = relative_path.is_some()
                                 && worktree.is_some_and(|worktree| worktree.read(cx).is_visible());
+                            let is_local = pane.read(cx).project.upgrade().is_some_and(|project| {
+                                let project = project.read(cx);
+                                project.is_local() || project.is_via_wsl_with_host_interop(cx)
+                            });
+                            let is_remote = pane
+                                .read(cx)
+                                .project
+                                .upgrade()
+                                .is_some_and(|project| project.read(cx).is_remote());
 
                             let entry_id = entry.to_proto();
 
@@ -3233,8 +3243,26 @@ impl Pane {
                                         }),
                                     )
                                 })
+                                .when(is_local, |menu| {
+                                    menu.when_some(reveal_path, |menu, reveal_path| {
+                                        menu.separator().entry(
+                                            ui::utils::reveal_in_file_manager_label(is_remote),
+                                            Some(Box::new(
+                                                zed_actions::editor::RevealInFileManager,
+                                            )),
+                                            window.handler_for(&pane, move |pane, _, cx| {
+                                                if let Some(project) = pane.project.upgrade() {
+                                                    project.update(cx, |project, cx| {
+                                                        project.reveal_path(&reveal_path, cx);
+                                                    });
+                                                } else {
+                                                    cx.reveal_path(&reveal_path);
+                                                }
+                                            }),
+                                        )
+                                    })
+                                })
                                 .map(pin_tab_entries)
-                                .separator()
                                 .when(visible_in_project_panel, |menu| {
                                     menu.entry(
                                         "Reveal In Project Panel",

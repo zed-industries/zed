@@ -1,5 +1,6 @@
 use std::{path::Path, sync::Arc};
 
+use acp_thread::AgentSessionInfo;
 use agent::{ThreadStore, ZED_AGENT_ID};
 use agent_client_protocol as acp;
 use anyhow::Result;
@@ -83,6 +84,62 @@ pub struct ThreadMetadata {
     pub folder_paths: PathList,
 }
 
+impl ThreadMetadata {
+    pub fn from_session_info(agent_id: AgentId, session: &AgentSessionInfo) -> Self {
+        let session_id = session.session_id.clone();
+        let title = session.title.clone().unwrap_or_default();
+        let updated_at = session.updated_at.unwrap_or_else(|| Utc::now());
+        let created_at = session.created_at.unwrap_or(updated_at);
+        let folder_paths = session.work_dirs.clone().unwrap_or_default();
+        let agent_id = if agent_id.as_ref() == ZED_AGENT_ID.as_ref() {
+            None
+        } else {
+            Some(agent_id)
+        };
+        Self {
+            session_id,
+            agent_id,
+            title,
+            updated_at,
+            created_at: Some(created_at),
+            folder_paths,
+        }
+    }
+
+    pub fn from_thread(thread: &Entity<acp_thread::AcpThread>, cx: &App) -> Self {
+        let thread_ref = thread.read(cx);
+        let session_id = thread_ref.session_id().clone();
+        let title = thread_ref.title();
+        let updated_at = Utc::now();
+
+        let agent_id = thread_ref.connection().agent_id();
+
+        let agent_id = if agent_id.as_ref() == ZED_AGENT_ID.as_ref() {
+            None
+        } else {
+            Some(agent_id)
+        };
+
+        let folder_paths = {
+            let project = thread_ref.project().read(cx);
+            let paths: Vec<Arc<Path>> = project
+                .visible_worktrees(cx)
+                .map(|worktree| worktree.read(cx).abs_path())
+                .collect();
+            PathList::new(&paths)
+        };
+
+        Self {
+            session_id,
+            agent_id,
+            title,
+            created_at: Some(updated_at), // handled by db `ON CONFLICT`
+            updated_at,
+            folder_paths,
+        }
+    }
+}
+
 pub struct ThreadMetadataStore {
     db: ThreadMetadataDb,
     session_subscriptions: HashMap<acp::SessionId, Subscription>,
@@ -95,7 +152,7 @@ impl ThreadMetadataStore {
             return;
         }
 
-        let db = THREAD_METADATA_DB.clone();
+        let db = ThreadMetadataDb::global(cx);
         let thread_store = cx.new(|cx| Self::new(db, cx));
         cx.set_global(GlobalThreadMetadataStore(thread_store));
     }
@@ -117,6 +174,22 @@ impl ThreadMetadataStore {
 
     pub fn global(cx: &App) -> Entity<Self> {
         cx.global::<GlobalThreadMetadataStore>().0.clone()
+    }
+
+    pub fn list_ids(&self, cx: &App) -> Task<Result<Vec<acp::SessionId>>> {
+        let db = self.db.clone();
+        cx.background_spawn(async move {
+            let s = db.list_ids()?;
+            Ok(s)
+        })
+    }
+
+    pub fn list_sidebar_ids(&self, cx: &App) -> Task<Result<Vec<acp::SessionId>>> {
+        let db = self.db.clone();
+        cx.background_spawn(async move {
+            let s = db.list_sidebar_ids()?;
+            Ok(s)
+        })
     }
 
     pub fn list(&self, cx: &App) -> Task<Result<Vec<ThreadMetadata>>> {
@@ -209,49 +282,16 @@ impl ThreadMetadataStore {
             acp_thread::AcpThreadEvent::NewEntry
             | acp_thread::AcpThreadEvent::EntryUpdated(_)
             | acp_thread::AcpThreadEvent::TitleUpdated => {
-                let metadata = Self::metadata_for_acp_thread(thread.read(cx), cx);
+                let metadata = ThreadMetadata::from_thread(&thread, cx);
                 self.save(metadata, cx).detach_and_log_err(cx);
             }
             _ => {}
-        }
-    }
-
-    fn metadata_for_acp_thread(thread: &acp_thread::AcpThread, cx: &App) -> ThreadMetadata {
-        let session_id = thread.session_id().clone();
-        let title = thread.title();
-        let updated_at = Utc::now();
-
-        let agent_id = thread.connection().agent_id();
-
-        let agent_id = if agent_id.as_ref() == ZED_AGENT_ID.as_ref() {
-            None
-        } else {
-            Some(agent_id)
-        };
-
-        let folder_paths = {
-            let project = thread.project().read(cx);
-            let paths: Vec<Arc<Path>> = project
-                .visible_worktrees(cx)
-                .map(|worktree| worktree.read(cx).abs_path())
-                .collect();
-            PathList::new(&paths)
-        };
-
-        ThreadMetadata {
-            session_id,
-            agent_id,
-            title,
-            created_at: Some(updated_at), // handled by db `ON CONFLICT`
-            updated_at,
-            folder_paths,
         }
     }
 }
 
 impl Global for ThreadMetadataStore {}
 
-#[derive(Clone)]
 struct ThreadMetadataDb(ThreadSafeConnection);
 
 impl Domain for ThreadMetadataDb {
@@ -270,9 +310,25 @@ impl Domain for ThreadMetadataDb {
     )];
 }
 
-db::static_connection!(THREAD_METADATA_DB, ThreadMetadataDb, []);
+db::static_connection!(ThreadMetadataDb, []);
 
 impl ThreadMetadataDb {
+    /// List all sidebar thread session IDs.
+    pub fn list_ids(&self) -> anyhow::Result<Vec<acp::SessionId>> {
+        self.select::<Arc<str>>("SELECT session_id FROM sidebar_threads")?()
+            .map(|ids| ids.into_iter().map(|id| acp::SessionId::new(id)).collect())
+    }
+
+    /// List session IDs of threads that belong to a real project workspace
+    /// (i.e. have non-empty folder_paths). These are the threads shown in
+    /// the sidebar, as opposed to threads created in empty workspaces.
+    pub fn list_sidebar_ids(&self) -> anyhow::Result<Vec<acp::SessionId>> {
+        self.select::<Arc<str>>(
+            "SELECT session_id FROM sidebar_threads WHERE folder_paths IS NOT NULL AND folder_paths != ''",
+        )?()
+        .map(|ids| ids.into_iter().map(|id| acp::SessionId::new(id)).collect())
+    }
+
     /// List all sidebar thread metadata, ordered by updated_at descending.
     pub fn list(&self) -> anyhow::Result<Vec<ThreadMetadata>> {
         self.select::<ThreadMetadata>(

@@ -640,15 +640,14 @@ impl MessageEditor {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
-        let editor_clipboard_selections = cx
-            .read_from_clipboard()
-            .and_then(|item| item.entries().first().cloned())
-            .and_then(|entry| match entry {
+        let editor_clipboard_selections = cx.read_from_clipboard().and_then(|item| {
+            item.entries().iter().find_map(|entry| match entry {
                 ClipboardEntry::String(text) => {
                     text.metadata_json::<Vec<editor::ClipboardSelection>>()
                 }
                 _ => None,
-            });
+            })
+        });
 
         // Insert creases for pasted clipboard selections that:
         // 1. Contain exactly one selection
@@ -774,14 +773,12 @@ impl MessageEditor {
         // Handle text paste with potential markdown mention links.
         // This must be checked BEFORE paste_images_as_context because that function
         // returns a task even when there are no images in the clipboard.
-        if let Some(clipboard_text) = cx
-            .read_from_clipboard()
-            .and_then(|item| item.entries().first().cloned())
-            .and_then(|entry| match entry {
+        if let Some(clipboard_text) = cx.read_from_clipboard().and_then(|item| {
+            item.entries().iter().find_map(|entry| match entry {
                 ClipboardEntry::String(text) => Some(text.text().to_string()),
                 _ => None,
             })
-        {
+        }) {
             if clipboard_text.contains("[@") {
                 cx.stop_propagation();
                 let selections_before = self.editor.update(cx, |editor, cx| {

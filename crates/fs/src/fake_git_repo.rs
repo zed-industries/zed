@@ -392,6 +392,8 @@ impl GitRepository for FakeGitRepository {
                 .map(|branch_name| {
                     let ref_name = if branch_name.starts_with("refs/") {
                         branch_name.into()
+                    } else if branch_name.contains('/') {
+                        format!("refs/remotes/{branch_name}").into()
                     } else {
                         format!("refs/heads/{branch_name}").into()
                     };
@@ -436,15 +438,14 @@ impl GitRepository for FakeGitRepository {
 
     fn create_worktree(
         &self,
-        name: String,
-        directory: PathBuf,
+        branch_name: String,
+        path: PathBuf,
         from_commit: Option<String>,
     ) -> BoxFuture<'_, Result<()>> {
         let fs = self.fs.clone();
         let executor = self.executor.clone();
         let dot_git_path = self.dot_git_path.clone();
         async move {
-            let path = directory.join(&name);
             executor.simulate_random_delay().await;
             // Check for simulated error before any side effects
             fs.with_git_state(&dot_git_path, false, |state| {
@@ -459,10 +460,10 @@ impl GitRepository for FakeGitRepository {
             fs.with_git_state(&dot_git_path, true, {
                 let path = path.clone();
                 move |state| {
-                    if state.branches.contains(&name) {
-                        bail!("a branch named '{}' already exists", name);
+                    if state.branches.contains(&branch_name) {
+                        bail!("a branch named '{}' already exists", branch_name);
                     }
-                    let ref_name = format!("refs/heads/{name}");
+                    let ref_name = format!("refs/heads/{branch_name}");
                     let sha = from_commit.unwrap_or_else(|| "fake-sha".to_string());
                     state.refs.insert(ref_name.clone(), sha.clone());
                     state.worktrees.push(Worktree {
@@ -470,7 +471,7 @@ impl GitRepository for FakeGitRepository {
                         ref_name: ref_name.into(),
                         sha: sha.into(),
                     });
-                    state.branches.insert(name);
+                    state.branches.insert(branch_name);
                     Ok::<(), anyhow::Error>(())
                 }
             })??;

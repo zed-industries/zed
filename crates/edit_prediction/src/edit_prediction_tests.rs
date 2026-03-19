@@ -1807,7 +1807,9 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
                 reason: EditPredictionRejectReason::Replaced,
                 was_shown: false,
                 model_version: None,
-                e2e_latency_ms: Some(0),
+                // 2 throttle waits (for 2nd and 3rd requests) elapsed
+                // between this request's start and response.
+                e2e_latency_ms: Some(2 * EditPredictionStore::THROTTLE_TIMEOUT.as_millis()),
             }
         ]
     );

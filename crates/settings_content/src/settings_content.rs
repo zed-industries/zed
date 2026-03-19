@@ -640,6 +640,11 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: false
     pub show_count_badge: Option<bool>,
+
+    /// Whether the git panel should open on startup.
+    ///
+    /// Default: false
+    pub starts_open: Option<bool>,
 }
 
 #[derive(
