@@ -1168,12 +1168,10 @@ impl Sidebar {
 
         let label = if highlight_positions.is_empty() {
             Label::new(label.clone())
-                .size(LabelSize::Small)
                 .color(Color::Muted)
                 .into_any_element()
         } else {
             HighlightedLabel::new(label.clone(), highlight_positions.to_vec())
-                .size(LabelSize::Small)
                 .color(Color::Muted)
                 .into_any_element()
         };
@@ -2362,7 +2360,7 @@ impl Sidebar {
         ThreadItem::new(id, label)
             .icon(icon)
             .focused(is_selected)
-            .title_label_color(Color::Custom(cx.theme().colors().text.opacity(0.85)))
+            .title_label_color(Color::Muted)
             .on_click(cx.listener(move |this, _, _window, cx| {
                 this.selection = None;
                 if is_fully_expanded {
@@ -2804,7 +2802,7 @@ impl Render for Sidebar {
                 h_flex()
                     .p_1()
                     .border_t_1()
-                    .border_color(cx.theme().colors().border_variant)
+                    .border_color(cx.theme().colors().border)
                     .child(self.render_sidebar_toggle_button(cx)),
             )
     }
