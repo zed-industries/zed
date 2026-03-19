@@ -339,6 +339,12 @@ impl Sidebar {
         }
     }
 
+    fn is_active_workspace(&self, workspace: &Entity<Workspace>, cx: &App) -> bool {
+        self.multi_workspace
+            .upgrade()
+            .map_or(false, |mw| mw.read(cx).workspace() == workspace)
+    }
+
     fn subscribe_to_workspace(
         &mut self,
         workspace: &Entity<Workspace>,
@@ -397,7 +403,9 @@ impl Sidebar {
 
         if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
             self.subscribe_to_agent_panel(&agent_panel, window, cx);
-            self.agent_panel_visible = AgentPanel::is_visible(workspace, cx);
+            if self.is_active_workspace(workspace, cx) {
+                self.agent_panel_visible = AgentPanel::is_visible(workspace, cx);
+            }
             self.observe_draft_editor(cx);
         }
     }
@@ -435,7 +443,12 @@ impl Sidebar {
         for dock in docks {
             let workspace = workspace.clone();
             cx.observe(&dock, move |this, _dock, cx| {
+                if !this.is_active_workspace(&workspace, cx) {
+                    return;
+                }
+
                 let is_visible = AgentPanel::is_visible(&workspace, cx);
+
                 if this.agent_panel_visible != is_visible {
                     this.agent_panel_visible = is_visible;
                     cx.notify();
@@ -593,6 +606,12 @@ impl Sidebar {
         if panel_focused.is_some() {
             self.focused_thread = panel_focused;
         }
+
+        // Re-derive agent_panel_visible from the active workspace so it stays
+        // correct after workspace switches.
+        self.agent_panel_visible = active_workspace
+            .as_ref()
+            .map_or(false, |ws| AgentPanel::is_visible(ws, cx));
 
         let previous = mem::take(&mut self.contents);
 
