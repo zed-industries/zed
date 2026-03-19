@@ -1394,12 +1394,19 @@ impl Sidebar {
                     }
 
                     let workspace_for_add = workspace.clone();
+                    let multi_workspace_for_add = multi_workspace.clone();
                     menu.separator().entry(
                         "Add Folder to Project",
                         Some(Box::new(AddFolderToProject)),
                         move |window, cx| {
-                            let focus = workspace_for_add.read(cx).focus_handle(cx);
-                            focus.dispatch_action(&AddFolderToProject, window, cx);
+                            if let Some(mw) = multi_workspace_for_add.upgrade() {
+                                mw.update(cx, |mw, cx| {
+                                    mw.activate(workspace_for_add.clone(), cx);
+                                });
+                            }
+                            workspace_for_add.update(cx, |workspace, cx| {
+                                workspace.add_folder_to_project(&AddFolderToProject, window, cx);
+                            });
                         },
                     )
                 });
