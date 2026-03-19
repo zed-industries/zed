@@ -25080,13 +25080,7 @@ impl Editor {
                 if let Some(existing_ranges) = existing_pending {
                     let edits = existing_ranges.iter().map(|range| (range.clone(), ""));
                     this.edit(edits, cx);
-
-                    let current_selections = this
-                        .selections
-                        .all::<MultiBufferOffset>(&this.display_snapshot(cx));
-                    this.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                        s.select_ranges(current_selections.iter().map(|sel| sel.start..sel.end));
-                    });
+                    this.refresh_selections(window, cx);
                 }
             });
 
@@ -25703,6 +25697,38 @@ impl Editor {
 
     fn disable_runnables(&mut self) {
         self.enable_runnables = false;
+    }
+
+    /// Re-resolves selection anchors so they reference live buffer fragments.
+    ///
+    /// When a fragment is deleted, the CRDT tombstones it rather than removing
+    /// it from the tree. An anchor sitting at the right boundary of the deleted
+    /// fragment still resolves to the correct visible offset, but its identity
+    /// in the CRDT is tied to the tombstoned fragment. Text inserted at that
+    /// position is then ordered relative to the tombstone, which places it on
+    /// the wrong side of the cursor.
+    ///
+    /// Round-tripping each anchor through its concrete offset and back produces
+    /// a fresh anchor bound to the nearest live fragment, restoring correct
+    /// insertion ordering.
+    fn refresh_selections(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let snapshot = self.display_snapshot(cx);
+        let selections = self.selections.all::<MultiBufferOffset>(&snapshot);
+
+        self.change_selections(
+            SelectionEffects::no_scroll(),
+            window,
+            cx,
+            |selections_collection| {
+                selections_collection.select_ranges(selections.iter().map(|selection| {
+                    if selection.reversed {
+                        selection.end..selection.start
+                    } else {
+                        selection.start..selection.end
+                    }
+                }));
+            },
+        );
     }
 }
 

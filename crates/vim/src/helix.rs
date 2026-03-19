@@ -871,7 +871,7 @@ mod test {
     use crate::{SwitchToHelixNormalMode, VimAddon, state::Mode, test::VimTestContext};
 
     #[gpui::test]
-    async fn test_insert_line(cx: &mut gpui::TestAppContext) {
+    async fn test_open_line_after_pending_input_mode_switch(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.enable_helix();
 

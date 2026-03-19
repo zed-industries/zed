@@ -17,7 +17,7 @@ use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkS
 use collections::HashMap;
 use futures::{StreamExt, channel::oneshot};
 use gpui::{
-    BackgroundExecutor, DismissEvent, TestAppContext, UpdateGlobal, VisualTestContext,
+    BackgroundExecutor, DismissEvent, KeyBinding, TestAppContext, UpdateGlobal, VisualTestContext,
     WindowBounds, WindowOptions, div,
 };
 use indoc::indoc;
@@ -33270,4 +33270,46 @@ comment */ˇ»;"#},
     editor.update(cx, |editor, cx| {
         assert_text_with_selections(editor, indoc! {r#"let arr = [«1, 2, 3]ˇ»;"#}, cx);
     });
+}
+
+#[gpui::test]
+async fn test_observe_pending_input_selection_refresh(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    // Setup a keybinding that uses multiple keystrokes so we can trigger the
+    // pending input code path. The action itself is not relevant, we just need
+    // one that doesn't actually affect the cursor position.
+    cx.update(|cx| {
+        cx.bind_keys([KeyBinding::new("j j", super::ExpandAllDiffHunks, None)]);
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("hello world!ˇ");
+
+    let anchor_before = cx.editor(|editor, _, cx| {
+        let snapshot = editor.display_snapshot(cx);
+        let selections = editor.selections.all_anchors(&snapshot);
+        selections[0].start.text_anchor
+    });
+
+    // Trigger the multi-key binding. During this sequence,
+    // `observe_pending_input` inserts the first "j" as pending text, then
+    // deletes it when the binding matches. Without refreshing selections, the
+    // cursor anchor ends up pointing to the tombstoned "j" fragment. This
+    // causes subsequent insertions at the cursor to order incorrectly in the
+    // CRDT.
+    cx.simulate_keystrokes("j j");
+    cx.assert_editor_state("hello world!ˇ");
+
+    let anchor_after = cx.editor(|editor, _, cx| {
+        let snapshot = editor.display_snapshot(cx);
+        let selections = editor.selections.all_anchors(&snapshot);
+        selections[0].start.text_anchor
+    });
+
+    assert_eq!(
+        anchor_before, anchor_after,
+        "cursor anchor should be restored after multi-key binding resolves, \
+         not left pointing at a tombstoned fragment"
+    );
 }
