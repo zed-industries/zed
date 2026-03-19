@@ -446,7 +446,7 @@ impl<D: PickerDelegate> Picker<D> {
     /// Use this for user-driven selections (keyboard navigation, mouse clicks) where you want
     /// the user's choice to be maintained as they continue typing. For programmatic selections
     /// that should not persist, use `set_selected_index` instead.
-    pub fn select_index_sticky(
+    pub fn set_selected_manually(
         &mut self,
         ix: usize,
         fallback_direction: Option<Direction>,
@@ -536,7 +536,7 @@ impl<D: PickerDelegate> Picker<D> {
         if count > 0 {
             let index = self.delegate.selected_index();
             let ix = if index == count - 1 { 0 } else { index + 1 };
-            self.select_index_sticky(ix, Some(Direction::Down), true, window, cx);
+            self.set_selected_manually(ix, Some(Direction::Down), true, window, cx);
             cx.notify();
         }
     }
@@ -563,7 +563,7 @@ impl<D: PickerDelegate> Picker<D> {
         if count > 0 {
             let index = self.delegate.selected_index();
             let ix = if index == 0 { count - 1 } else { index - 1 };
-            self.select_index_sticky(ix, Some(Direction::Up), true, window, cx);
+            self.set_selected_manually(ix, Some(Direction::Up), true, window, cx);
             cx.notify();
         }
     }
@@ -580,7 +580,7 @@ impl<D: PickerDelegate> Picker<D> {
     ) {
         let count = self.delegate.match_count();
         if count > 0 {
-            self.select_index_sticky(0, Some(Direction::Down), true, window, cx);
+            self.set_selected_manually(0, Some(Direction::Down), true, window, cx);
             cx.notify();
         }
     }
@@ -588,7 +588,7 @@ impl<D: PickerDelegate> Picker<D> {
     fn select_last(&mut self, _: &menu::SelectLast, window: &mut Window, cx: &mut Context<Self>) {
         let count = self.delegate.match_count();
         if count > 0 {
-            self.select_index_sticky(count - 1, Some(Direction::Up), true, window, cx);
+            self.set_selected_manually(count - 1, Some(Direction::Up), true, window, cx);
             cx.notify();
         }
     }
@@ -597,7 +597,7 @@ impl<D: PickerDelegate> Picker<D> {
         let count = self.delegate.match_count();
         let index = self.delegate.selected_index();
         let new_index = if index + 1 == count { 0 } else { index + 1 };
-        self.select_index_sticky(new_index, Some(Direction::Down), true, window, cx);
+        self.set_selected_manually(new_index, Some(Direction::Down), true, window, cx);
         cx.notify();
     }
 
@@ -673,7 +673,7 @@ impl<D: PickerDelegate> Picker<D> {
         if !self.delegate.can_select(ix, window, cx) {
             return;
         }
-        self.select_index_sticky(ix, None, false, window, cx);
+        self.set_selected_manually(ix, None, false, window, cx);
         self.do_confirm(secondary, window, cx)
     }
 
@@ -1266,7 +1266,7 @@ mod tests {
         // Navigate to third item (cherry)
         picker
             .update(cx, |picker, window, cx| {
-                picker.select_index_sticky(2, None, true, window, cx);
+                picker.set_selected_manually(2, None, true, window, cx);
                 assert_eq!(picker.delegate.selected_index(), 2);
             })
             .unwrap();
@@ -1315,7 +1315,7 @@ mod tests {
         // Navigate to box (index 1)
         picker
             .update(cx, |picker, window, cx| {
-                picker.select_index_sticky(1, None, true, window, cx);
+                picker.set_selected_manually(1, None, true, window, cx);
                 assert_eq!(picker.delegate.selected_index(), 1);
             })
             .unwrap();
@@ -1378,7 +1378,7 @@ mod tests {
                     .iter()
                     .position(|&ix| picker.delegate.items[ix].id == "d")
                     .unwrap();
-                picker.select_index_sticky(door_index, None, true, window, cx);
+                picker.set_selected_manually(door_index, None, true, window, cx);
                 assert_eq!(picker.delegate.selected_index(), door_index);
             })
             .unwrap();
@@ -1620,7 +1620,7 @@ mod tests {
                     .iter()
                     .position(|&ix| picker.delegate.items[ix].id == "a")
                     .unwrap();
-                picker.select_index_sticky(something_index, None, true, window, cx);
+                picker.set_selected_manually(something_index, None, true, window, cx);
                 assert_eq!(picker.delegate.selected_index(), something_index);
             })
             .unwrap();
@@ -1811,7 +1811,7 @@ mod tests {
         // Select somethingNotifier (index 0 in matches)
         picker
             .update(cx, |picker, window, cx| {
-                picker.select_index_sticky(0, None, true, window, cx);
+                picker.set_selected_manually(0, None, true, window, cx);
                 assert_eq!(picker.delegate.selected_index(), 0);
             })
             .unwrap();
@@ -1906,7 +1906,7 @@ mod tests {
                     .iter()
                     .position(|&ix| picker.delegate.items[ix].id == "a")
                     .unwrap();
-                picker.select_index_sticky(something_index, None, true, window, cx);
+                picker.set_selected_manually(something_index, None, true, window, cx);
                 assert_eq!(picker.delegate.selected_index(), something_index);
             })
             .unwrap();
@@ -1967,7 +1967,7 @@ mod tests {
         // Navigate to cherry (index 2) using sticky selection
         picker
             .update(cx, |picker, window, cx| {
-                picker.select_index_sticky(2, None, true, window, cx);
+                picker.set_selected_manually(2, None, true, window, cx);
                 assert_eq!(picker.delegate.selected_index(), 2);
             })
             .unwrap();
