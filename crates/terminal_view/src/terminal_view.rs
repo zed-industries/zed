@@ -813,17 +813,16 @@ impl TerminalView {
             return;
         };
 
-        if clipboard.entries().iter().any(|entry| match entry {
-            ClipboardEntry::Image(image) => !image.bytes.is_empty(),
-            _ => false,
-        }) {
-            self.forward_ctrl_v(cx);
-            return;
-        }
-
-        if let Some(text) = clipboard.text() {
-            self.terminal
-                .update(cx, |terminal, _cx| terminal.paste(&text));
+        match clipboard.entries().first() {
+            Some(ClipboardEntry::Image(image)) if !image.bytes.is_empty() => {
+                self.forward_ctrl_v(cx);
+            }
+            _ => {
+                if let Some(text) = clipboard.text() {
+                    self.terminal
+                        .update(cx, |terminal, _cx| terminal.paste(&text));
+                }
+            }
         }
     }
 

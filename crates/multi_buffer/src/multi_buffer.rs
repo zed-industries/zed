@@ -5188,6 +5188,11 @@ impl MultiBufferSnapshot {
         }
     }
 
+    pub fn line_len_utf16(&self, row: MultiBufferRow) -> u32 {
+        self.clip_point_utf16(Unclipped(PointUtf16::new(row.0, u32::MAX)), Bias::Left)
+            .column
+    }
+
     pub fn buffer_line_for_row(
         &self,
         row: MultiBufferRow,

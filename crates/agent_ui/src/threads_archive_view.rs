@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     Agent, RemoveSelectedThread, agent_connection_store::AgentConnectionStore,
-    thread_history::ThreadHistory, thread_metadata_store::ThreadMetadataStore,
+    thread_history::ThreadHistory,
 };
 use acp_thread::AgentSessionInfo;
 use agent::ThreadStore;
@@ -135,7 +135,6 @@ pub struct ThreadsArchiveView {
     _subscriptions: Vec<gpui::Subscription>,
     selected_agent_menu: PopoverMenuHandle<ContextMenu>,
     _refresh_history_task: Task<()>,
-    _update_items_task: Option<Task<()>>,
     is_loading: bool,
 }
 
@@ -180,7 +179,6 @@ impl ThreadsArchiveView {
             _subscriptions: vec![filter_editor_subscription],
             selected_agent_menu: PopoverMenuHandle::default(),
             _refresh_history_task: Task::ready(()),
-            _update_items_task: None,
             is_loading: true,
         };
         this.set_selected_agent(Agent::NativeAgent, window, cx);
@@ -243,58 +241,44 @@ impl ThreadsArchiveView {
         let query = self.filter_editor.read(cx).text(cx).to_lowercase();
         let today = Local::now().naive_local().date();
 
-        self._update_items_task.take();
-        let unarchived_ids_task = ThreadMetadataStore::global(cx).read(cx).list_ids(cx);
-        self._update_items_task = Some(cx.spawn(async move |this, cx| {
-            let unarchived_session_ids = unarchived_ids_task.await.unwrap_or_default();
+        let mut items = Vec::with_capacity(sessions.len() + 5);
+        let mut current_bucket: Option<TimeBucket> = None;
 
-            let mut items = Vec::with_capacity(sessions.len() + 5);
-            let mut current_bucket: Option<TimeBucket> = None;
-
-            for session in sessions {
-                // Skip sessions that are shown in the sidebar
-                if unarchived_session_ids.contains(&session.session_id) {
-                    continue;
+        for session in sessions {
+            let highlight_positions = if !query.is_empty() {
+                let title = session.title.as_ref().map(|t| t.as_ref()).unwrap_or("");
+                match fuzzy_match_positions(&query, title) {
+                    Some(positions) => positions,
+                    None => continue,
                 }
+            } else {
+                Vec::new()
+            };
 
-                let highlight_positions = if !query.is_empty() {
-                    let title = session.title.as_ref().map(|t| t.as_ref()).unwrap_or("");
-                    match fuzzy_match_positions(&query, title) {
-                        Some(positions) => positions,
-                        None => continue,
-                    }
-                } else {
-                    Vec::new()
-                };
+            let entry_bucket = session
+                .updated_at
+                .map(|timestamp| {
+                    let entry_date = timestamp.with_timezone(&Local).naive_local().date();
+                    TimeBucket::from_dates(today, entry_date)
+                })
+                .unwrap_or(TimeBucket::Older);
 
-                let entry_bucket = session
-                    .updated_at
-                    .map(|timestamp| {
-                        let entry_date = timestamp.with_timezone(&Local).naive_local().date();
-                        TimeBucket::from_dates(today, entry_date)
-                    })
-                    .unwrap_or(TimeBucket::Older);
-
-                if Some(entry_bucket) != current_bucket {
-                    current_bucket = Some(entry_bucket);
-                    items.push(ArchiveListItem::BucketSeparator(entry_bucket));
-                }
-
-                items.push(ArchiveListItem::Entry {
-                    session,
-                    highlight_positions,
-                });
+            if Some(entry_bucket) != current_bucket {
+                current_bucket = Some(entry_bucket);
+                items.push(ArchiveListItem::BucketSeparator(entry_bucket));
             }
 
-            this.update(cx, |this, cx| {
-                this.list_state.reset(items.len());
-                this.items = items;
-                this.selection = None;
-                this.hovered_index = None;
-                cx.notify();
-            })
-            .ok();
-        }));
+            items.push(ArchiveListItem::Entry {
+                session,
+                highlight_positions,
+            });
+        }
+
+        self.list_state.reset(items.len());
+        self.items = items;
+        self.selection = None;
+        self.hovered_index = None;
+        cx.notify();
     }
 
     fn reset_filter_editor_text(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -428,6 +412,12 @@ impl ThreadsArchiveView {
         let Some(ArchiveListItem::Entry { session, .. }) = self.items.get(ix) else {
             return;
         };
+
+        let can_unarchive = session.work_dirs.as_ref().is_some_and(|p| !p.is_empty());
+        if !can_unarchive {
+            return;
+        }
+
         self.unarchive_thread(session.clone(), window, cx);
     }
 
@@ -444,7 +434,7 @@ impl ThreadsArchiveView {
         match item {
             ArchiveListItem::BucketSeparator(bucket) => div()
                 .w_full()
-                .px_2()
+                .px_2p5()
                 .pt_3()
                 .pb_1()
                 .child(
@@ -475,6 +465,8 @@ impl ThreadsArchiveView {
                         Some(paths_str)
                     }
                 });
+
+                let can_unarchive = session.work_dirs.as_ref().is_some_and(|p| !p.is_empty());
 
                 let supports_delete = self
                     .history
@@ -518,7 +510,7 @@ impl ThreadsArchiveView {
                             .min_w_0()
                             .w_full()
                             .py_1()
-                            .pl_0p5()
+                            .pl_1()
                             .child(title_label)
                             .child(
                                 h_flex()
@@ -550,24 +542,30 @@ impl ThreadsArchiveView {
                             h_flex()
                                 .pr_2p5()
                                 .gap_0p5()
-                                .child(
-                                    Button::new("unarchive-thread", "Unarchive")
-                                        .style(ButtonStyle::OutlinedGhost)
-                                        .label_size(LabelSize::Small)
-                                        .when(is_focused, |this| {
-                                            this.key_binding(
-                                                KeyBinding::for_action_in(
-                                                    &menu::Confirm,
-                                                    &focus_handle,
-                                                    cx,
+                                .when(can_unarchive, |this| {
+                                    this.child(
+                                        Button::new("unarchive-thread", "Unarchive")
+                                            .style(ButtonStyle::OutlinedGhost)
+                                            .label_size(LabelSize::Small)
+                                            .when(is_focused, |this| {
+                                                this.key_binding(
+                                                    KeyBinding::for_action_in(
+                                                        &menu::Confirm,
+                                                        &focus_handle,
+                                                        cx,
+                                                    )
+                                                    .map(|kb| kb.size(rems_from_px(12.))),
                                                 )
-                                                .map(|kb| kb.size(rems_from_px(12.))),
-                                            )
-                                        })
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.unarchive_thread(session_info.clone(), window, cx);
-                                        })),
-                                )
+                                            })
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                this.unarchive_thread(
+                                                    session_info.clone(),
+                                                    window,
+                                                    cx,
+                                                );
+                                            })),
+                                    )
+                                })
                                 .when(supports_delete, |this| {
                                     this.child(
                                         IconButton::new("delete-thread", IconName::Trash)
@@ -767,9 +765,11 @@ impl ThreadsArchiveView {
                     .border_b_1()
                     .border_color(cx.theme().colors().border)
                     .child(
-                        Icon::new(IconName::MagnifyingGlass)
-                            .size(IconSize::Small)
-                            .color(Color::Muted),
+                        h_flex().size_4().flex_none().justify_center().child(
+                            Icon::new(IconName::MagnifyingGlass)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        ),
                     )
                     .child(self.filter_editor.clone())
                     .when(has_query, |this| {

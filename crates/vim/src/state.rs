@@ -191,14 +191,15 @@ impl From<Register> for ClipboardItem {
 
 impl From<ClipboardItem> for Register {
     fn from(item: ClipboardItem) -> Self {
-        // For now, we don't store metadata for multiple entries.
-        match item.entries().first() {
-            Some(ClipboardEntry::String(value)) if item.entries().len() == 1 => Register {
+        match item.entries().iter().find_map(|entry| match entry {
+            ClipboardEntry::String(value) => Some(value),
+            _ => None,
+        }) {
+            Some(value) => Register {
                 text: value.text().to_owned().into(),
                 clipboard_selections: value.metadata_json::<Vec<ClipboardSelection>>(),
             },
-            // For now, registers can't store images. This could change in the future.
-            _ => Register::default(),
+            None => Register::default(),
         }
     }
 }

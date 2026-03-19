@@ -60,6 +60,8 @@ use git::{
     repository::{InitialGraphCommitData, RepoPath, repo_path},
     status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
+#[cfg(feature = "test-support")]
+use util::normalize_path;
 
 #[cfg(feature = "test-support")]
 use smol::io::AsyncReadExt;
@@ -2883,10 +2885,6 @@ impl Fs for FakeFs {
     fn as_fake(&self) -> Arc<FakeFs> {
         self.this.upgrade().unwrap()
     }
-}
-
-pub fn normalize_path(path: &Path) -> PathBuf {
-    util::normalize_path(path)
 }
 
 pub async fn copy_recursive<'a>(

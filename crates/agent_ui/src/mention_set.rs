@@ -843,6 +843,17 @@ pub(crate) fn paste_images_as_context(
     cx: &mut App,
 ) -> Option<Task<()>> {
     let clipboard = cx.read_from_clipboard()?;
+
+    // Only handle paste if the first clipboard entry is an image or file path.
+    // If text comes first, return None so the caller falls through to text paste.
+    // This respects the priority order set by the source application.
+    if matches!(
+        clipboard.entries().first(),
+        Some(ClipboardEntry::String(_)) | None
+    ) {
+        return None;
+    }
+
     Some(window.spawn(cx, async move |mut cx| {
         use itertools::Itertools;
         let (mut images, paths) = clipboard
@@ -885,12 +896,9 @@ pub(crate) fn paste_images_as_context(
             );
         }
 
-        cx.update(|_window, cx| {
-            cx.stop_propagation();
-        })
-        .ok();
-
-        insert_images_as_context(images, editor, mention_set, workspace, &mut cx).await;
+        if !images.is_empty() {
+            insert_images_as_context(images, editor, mention_set, workspace, &mut cx).await;
+        }
     }))
 }
 
