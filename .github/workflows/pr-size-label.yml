@@ -64,7 +64,9 @@ jobs:
 
       - name: Unzip artifact
         if: steps.download.outputs.found == 'true'
-        run: unzip "${{ runner.temp }}/pr-size/result.zip" -d "${{ runner.temp }}/pr-size"
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/pr-size
+        run: unzip "$ARTIFACT_DIR/result.zip" -d "$ARTIFACT_DIR"
 
       - name: Apply labels and comment
         if: steps.download.outputs.found == 'true'
