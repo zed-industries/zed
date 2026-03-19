@@ -1,0 +1,222 @@
+# Monthly Review Health Report
+#
+# Generates a review health report covering the last 30 days and creates a
+# GitHub Issue with the results. Designed for SOC2 Type II evidence collection
+# and team retrospectives.
+#
+# Metrics collected:
+#   - PRs merged without review (excl. hotfix — should be 0)
+#   - Hotfix exception count
+#   - PR size distribution (S/M/L/XL)
+#   - Reviewer load distribution (top 10)
+#
+# Security note: No untrusted input (PR titles, bodies, etc.) is interpolated
+# into shell commands. All PR metadata is read via gh API + jq. The only
+# expressions used in run: blocks are github.repository (not attacker-controlled)
+# and inputs.days (workflow_dispatch input with numeric type).
+#
+# No external SaaS. Runs entirely on GitHub Actions + gh CLI + jq.
+
+name: Monthly Review Health Report
+
+on:
+  schedule:
+    - cron: "0 9 1 * *" # 9 AM UTC on the 1st of every month
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Number of days to look back (default: 30)"
+        type: number
+        default: 30
+
+jobs:
+  report:
+    if: github.repository_owner == 'zed-industries'
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: write  # create report issue
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      REPO: ${{ github.repository }}
+      DAYS: ${{ inputs.days || 30 }}
+    steps:
+      - name: Generate review health report
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +x  # Reduce log noise for data-heavy step
+
+          SINCE=$(date -u -v-"${DAYS}"d +%Y-%m-%dT00:00:00Z 2>/dev/null \
+            || date -u -d "${DAYS} days ago" +%Y-%m-%dT00:00:00Z)
+          TODAY=$(date -u +%Y-%m-%d)
+
+          echo "Fetching merged PRs since $SINCE..."
+
+          # Fetch all merged PRs in the window
+          gh api --paginate \
+            "repos/${REPO}/pulls?state=closed&sort=updated&direction=desc&per_page=100" \
+            --jq "[.[] | select(.merged_at != null) | select(.merged_at > \"$SINCE\")]" \
+            > /tmp/all_prs.json
+
+          TOTAL=$(jq 'length' /tmp/all_prs.json)
+          echo "Found $TOTAL merged PRs"
+
+          # --- PRs merged without review (excl. hotfix) ---
+          NO_REVIEW_COUNT=0
+          NO_REVIEW_JSON="[]"
+          HOTFIX_COUNT=0
+
+          API_CALLS=0
+          for PR_NUMBER in $(jq -r '.[].number' /tmp/all_prs.json); do
+            IS_HOTFIX=$(jq -r ".[] | select(.number == $PR_NUMBER) | .labels | map(.name) | if index(\"hotfix\") then \"yes\" else \"\" end" /tmp/all_prs.json)
+
+            if [ -n "$IS_HOTFIX" ]; then
+              HOTFIX_COUNT=$((HOTFIX_COUNT + 1))
+              continue
+            fi
+
+            APPROVALS=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" \
+              --jq "[.[] | select(.state == \"APPROVED\")] | length" 2>/dev/null || echo "0")
+            API_CALLS=$((API_CALLS + 1))
+
+            if [ "$APPROVALS" -eq 0 ]; then
+              NO_REVIEW_COUNT=$((NO_REVIEW_COUNT + 1))
+              NO_REVIEW_JSON=$(echo "$NO_REVIEW_JSON" | jq \
+                --argjson num "$PR_NUMBER" \
+                '. + [$num]')
+            fi
+
+            # Rate limit: pause every 20 API calls
+            if [ $((API_CALLS % 20)) -eq 0 ]; then sleep 1; fi
+          done
+
+          # --- PR size distribution ---
+          # Note: uses raw additions+deletions from the PR list API. Unlike
+          # pr-size-check.yml, this does not exclude lock/generated/fixture files,
+          # so counts may differ slightly from the size labels on individual PRs.
+          jq '[.[] | (.additions + .deletions)] | {
+            "S_lt100":     [.[] | select(. < 100)]     | length,
+            "M_100_399":   [.[] | select(. >= 100 and . < 400)] | length,
+            "L_400_799":   [.[] | select(. >= 400 and . < 800)] | length,
+            "XL_800_plus": [.[] | select(. >= 800)]    | length
+          }' /tmp/all_prs.json > /tmp/size_dist.json
+
+          SIZE_S=$(jq '.S_lt100' /tmp/size_dist.json)
+          SIZE_M=$(jq '.M_100_399' /tmp/size_dist.json)
+          SIZE_L=$(jq '.L_400_799' /tmp/size_dist.json)
+          SIZE_XL=$(jq '.XL_800_plus' /tmp/size_dist.json)
+          LARGE_PCT=0
+          if [ "$TOTAL" -gt 0 ]; then
+            LARGE_PCT=$(( (SIZE_L + SIZE_XL) * 100 / TOTAL ))
+          fi
+
+          # --- Reviewer load distribution (top 10, sampled from up to 200 PRs) ---
+          API_CALLS=0
+          for PR_NUMBER in $(jq -r '.[].number' /tmp/all_prs.json | head -200); do
+            gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" \
+              --jq '.[].user.login' 2>/dev/null || true
+            API_CALLS=$((API_CALLS + 1))
+            if [ $((API_CALLS % 20)) -eq 0 ]; then sleep 1; fi
+          done | sort | uniq -c | sort -rn | head -10 > /tmp/reviewer_load.txt
+
+          # --- Build markdown report ---
+          SINCE_DATE=$(echo "$SINCE" | cut -dT -f1)
+
+          {
+            echo "## Monthly Review Health Report"
+            echo ""
+            echo "**Period:** ${SINCE_DATE} to ${TODAY}"
+            echo "**Total merged PRs:** ${TOTAL}"
+            echo ""
+            echo "### SOC2 Compliance"
+            echo ""
+            echo "| Metric | Value | Status |"
+            echo "|---|---|---|"
+
+            if [ "$NO_REVIEW_COUNT" -eq 0 ]; then
+              echo "| PRs merged without review (excl. hotfix) | 0 | :white_check_mark: Healthy |"
+            else
+              echo "| PRs merged without review (excl. hotfix) | ${NO_REVIEW_COUNT} | :x: **Investigate** |"
+            fi
+
+            if [ "$HOTFIX_COUNT" -le 3 ]; then
+              echo "| Hotfix exceptions | ${HOTFIX_COUNT} | :white_check_mark: Healthy |"
+            else
+              echo "| Hotfix exceptions | ${HOTFIX_COUNT} | :warning: Elevated |"
+            fi
+
+            echo ""
+
+            if [ "$NO_REVIEW_COUNT" -gt 0 ]; then
+              echo "<details>"
+              echo "<summary>PRs merged without review (${NO_REVIEW_COUNT})</summary>"
+              echo ""
+              echo "PR numbers: $(echo "$NO_REVIEW_JSON" | jq -r 'map("#\(.)") | join(", ")')"
+              echo ""
+              echo "</details>"
+              echo ""
+            fi
+
+            echo "### PR Size Distribution"
+            echo ""
+            echo "| Size | Count | % |"
+            echo "|---|---|---|"
+            echo "| S (<100 LOC) | ${SIZE_S} | $((TOTAL > 0 ? SIZE_S * 100 / TOTAL : 0))% |"
+            echo "| M (100-399 LOC) | ${SIZE_M} | $((TOTAL > 0 ? SIZE_M * 100 / TOTAL : 0))% |"
+            echo "| L (400-799 LOC) | ${SIZE_L} | $((TOTAL > 0 ? SIZE_L * 100 / TOTAL : 0))% |"
+            echo "| XL (800+ LOC) | ${SIZE_XL} | $((TOTAL > 0 ? SIZE_XL * 100 / TOTAL : 0))% |"
+            echo ""
+
+            if [ "$LARGE_PCT" -le 20 ]; then
+              echo "**PRs > 400 LOC:** ${LARGE_PCT}% :white_check_mark:"
+            else
+              echo "**PRs > 400 LOC:** ${LARGE_PCT}% :warning: Above 20% threshold"
+            fi
+
+            echo ""
+            echo "### Reviewer Load (Top 10, sampled from up to 200 PRs)"
+            echo ""
+            echo "| Reviews | Reviewer |"
+            echo "|---|---|"
+            while read -r count reviewer; do
+              echo "| ${count} | @${reviewer} |"
+            done < /tmp/reviewer_load.txt
+
+            echo ""
+            echo "---"
+            echo ""
+            echo "### Health Thresholds"
+            echo ""
+            echo "| Signal | Healthy | Investigate |"
+            echo "|---|---|---|"
+            echo "| PRs merged without review | 0 | Any |"
+            echo "| Hotfix exceptions / month | < 3 | > 5 |"
+            echo "| PRs > 400 LOC | < 10% | > 20% |"
+            echo "| Top reviewer doing > 30% of all reviews | No | Yes (bottleneck risk) |"
+            echo ""
+            echo "---"
+            echo "*Generated by review-health.yml*"
+          } > /tmp/report.md
+
+      - name: Create GitHub issue with report
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          MONTH=$(date +%Y-%m)
+
+          gh label create "review-metrics" \
+            --repo "${REPO}" \
+            --color "0075ca" \
+            --description "Monthly review health reports" \
+            --force
+
+          gh issue create \
+            --repo "${REPO}" \
+            --title "Review Health Report — ${MONTH}" \
+            --body-file /tmp/report.md \
+            --label "review-metrics"
+defaults:
+  run:
+    shell: bash -euxo pipefail {0}

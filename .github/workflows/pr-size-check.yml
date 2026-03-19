@@ -11,11 +11,8 @@
 name: PR Size Check
 
 on:
-  pull_request_target:
+  pull_request:
     types: [opened, synchronize]
-
-permissions:
-  contents: read
 
 jobs:
   check-size:
@@ -74,15 +71,18 @@ jobs:
               }
             }
 
-            // Remove existing size labels, then apply the current one
+            // Update size label only if the classification changed
             const existingLabels = (await github.rest.issues.listLabelsOnIssue({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
             })).data.map(l => l.name);
 
-            for (const label of existingLabels) {
-              if (label.startsWith('size/')) {
+            const existingSizeLabels = existingLabels.filter(l => l.startsWith('size/'));
+            const alreadyCorrect = existingSizeLabels.length === 1 && existingSizeLabels[0] === sizeLabel;
+
+            if (!alreadyCorrect) {
+              for (const label of existingSizeLabels) {
                 await github.rest.issues.removeLabel({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
@@ -90,26 +90,26 @@ jobs:
                   name: label,
                 });
               }
-            }
 
-            // Create the label if it doesn't exist (ignore 422 = already exists)
-            try {
-              await github.rest.issues.createLabel({
+              // Create the label if it doesn't exist (ignore 422 = already exists)
+              try {
+                await github.rest.issues.createLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: sizeLabel,
+                  color: labelColor,
+                });
+              } catch (e) {
+                if (e.status !== 422) throw e;
+              }
+
+              await github.rest.issues.addLabels({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                name: sizeLabel,
-                color: labelColor,
+                issue_number: context.issue.number,
+                labels: [sizeLabel],
               });
-            } catch (e) {
-              if (e.status !== 422) throw e;
             }
-
-            await github.rest.issues.addLabels({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              labels: [sizeLabel],
-            });
 
             // For large PRs (400+ LOC): auto-apply large-pr label and comment once
             if (totalChanges >= 400) {
