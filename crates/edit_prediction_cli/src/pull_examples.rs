@@ -14,18 +14,14 @@ use telemetry_events::EditPredictionRating;
 
 use zeta_prompt::{ZetaFormat, ZetaPromptInput, excerpt_range_for_format};
 
-use crate::example::Example;
+use crate::PredictionProvider;
+use crate::example::{Example, ExamplePrompt};
 use crate::progress::{InfoStyle, Progress, Step};
-const EDIT_PREDICTION_DEPLOYMENT_EVENT: &str = "Edit Prediction Deployment";
 use edit_prediction::example_spec::{ExampleSpec, TelemetrySource};
 
 pub(crate) const SNOWFLAKE_SUCCESS_CODE: &str = "090001";
 pub(crate) const SNOWFLAKE_ASYNC_IN_PROGRESS_CODE: &str = "333334";
 const SNOWFLAKE_TIMEOUT_CODE: &str = "000630";
-const PREDICTIVE_EDIT_REQUESTED_EVENT: &str = "Predictive Edit Requested";
-const PREDICTIVE_EDIT_REJECTED_EVENT: &str = "Predictive Edit Rejected";
-const EDIT_PREDICTION_RATED_EVENT: &str = "Edit Prediction Rated";
-const EDIT_PREDICTION_SETTLED_EVENT: &str = "Edit Prediction Settled";
 
 /// Minimum Zed version for filtering captured examples.
 /// For example, `MinCaptureVersion { minor: 224, patch: 1 }` means only pull examples
@@ -573,33 +569,28 @@ pub async fn fetch_rejected_examples_after(
 
         let statement = indoc! {r#"
             SELECT
-                req.event_properties:request_id::string AS request_id,
-                req.device_id::string AS device_id,
-                req.time::string AS continuation_time,
-                req.time::string AS time,
-                req.event_properties:input AS input,
-                req.event_properties:prompt::string AS prompt,
-                req.event_properties:output::string AS output,
-                rej.event_properties:was_shown::boolean AS was_shown,
-                rej.event_properties:reason::string AS reason,
-                req.event_properties:zed_version::string AS zed_version
-            FROM events req
-            INNER JOIN events rej
-                ON req.event_properties:request_id = rej.event_properties:request_id
-            WHERE req.event_type = ?
-                AND rej.event_type = ?
-                AND req.time > TRY_TO_TIMESTAMP_NTZ(?)
-                AND req.event_properties:version = 'V3'
-                AND rej.event_properties:was_shown = true
-                AND req.event_properties:input:can_collect_data = true
+                ep_request_id AS request_id,
+                device_id AS device_id,
+                requested_at::string AS continuation_time,
+                requested_at::string AS time,
+                input_payload AS input,
+                prompt AS prompt,
+                requested_output AS output,
+                is_ep_shown_before_rejected AS was_shown,
+                ep_rejected_reason AS reason,
+                zed_version AS zed_version
+            FROM ZED_DBT.DBT_PROD.fct_edit_prediction_examples
+            WHERE ep_outcome LIKE 'Rejected%'
+                AND is_ep_shown_before_rejected = true
+                AND requested_at > TRY_TO_TIMESTAMP_NTZ(?)
                 AND (? IS NULL OR (
-                    TRY_CAST(SPLIT_PART(req.event_properties:zed_version::string, '.', 2) AS INTEGER) > ?
+                    TRY_CAST(SPLIT_PART(zed_version, '.', 2) AS INTEGER) > ?
                     OR (
-                        TRY_CAST(SPLIT_PART(req.event_properties:zed_version::string, '.', 2) AS INTEGER) = ?
-                        AND TRY_CAST(SPLIT_PART(SPLIT_PART(req.event_properties:zed_version::string, '.', 3), '+', 1) AS INTEGER) >= ?
+                        TRY_CAST(SPLIT_PART(zed_version, '.', 2) AS INTEGER) = ?
+                        AND TRY_CAST(SPLIT_PART(SPLIT_PART(zed_version, '.', 3), '+', 1) AS INTEGER) >= ?
                     )
                 ))
-            ORDER BY req.time ASC
+            ORDER BY requested_at ASC
             LIMIT ?
             OFFSET ?
         "#};
@@ -616,15 +607,13 @@ pub async fn fetch_rejected_examples_after(
             },
             |retry_state| {
                 json!({
-                    "1": { "type": "TEXT", "value": PREDICTIVE_EDIT_REQUESTED_EVENT },
-                    "2": { "type": "TEXT", "value": PREDICTIVE_EDIT_REJECTED_EVENT },
-                    "3": { "type": "TEXT", "value": retry_state.resume_after },
+                    "1": { "type": "TEXT", "value": retry_state.resume_after },
+                    "2": { "type": "FIXED", "value": min_minor_str_ref },
+                    "3": { "type": "FIXED", "value": min_minor_str_ref },
                     "4": { "type": "FIXED", "value": min_minor_str_ref },
-                    "5": { "type": "FIXED", "value": min_minor_str_ref },
-                    "6": { "type": "FIXED", "value": min_minor_str_ref },
-                    "7": { "type": "FIXED", "value": min_patch_str_ref },
-                    "8": { "type": "FIXED", "value": format_limit(retry_state.remaining_limit) },
-                    "9": { "type": "FIXED", "value": retry_state.offset.to_string() }
+                    "5": { "type": "FIXED", "value": min_patch_str_ref },
+                    "6": { "type": "FIXED", "value": format_limit(retry_state.remaining_limit) },
+                    "7": { "type": "FIXED", "value": retry_state.offset.to_string() }
                 })
             },
             &[
@@ -680,25 +669,22 @@ pub async fn fetch_requested_examples_after(
 
         let statement = indoc! {r#"
             SELECT
-                req.event_properties:request_id::string AS request_id,
-                req.device_id::string AS device_id,
-                req.time::string AS continuation_time,
-                req.time::string AS time,
-                req.event_properties:input AS input,
-                req.event_properties:zed_version::string AS zed_version
-            FROM events req
-            WHERE req.event_type = ?
-                AND req.time > TRY_TO_TIMESTAMP_NTZ(?)
-                AND req.event_properties:version = 'V3'
-                AND req.event_properties:input:can_collect_data = true
+                ep_request_id AS request_id,
+                device_id AS device_id,
+                requested_at::string AS continuation_time,
+                requested_at::string AS time,
+                input_payload AS input,
+                zed_version AS zed_version
+            FROM ZED_DBT.DBT_PROD.fct_edit_prediction_examples
+            WHERE requested_at > TRY_TO_TIMESTAMP_NTZ(?)
                 AND (? IS NULL OR (
-                    TRY_CAST(SPLIT_PART(req.event_properties:zed_version::string, '.', 2) AS INTEGER) > ?
+                    TRY_CAST(SPLIT_PART(zed_version, '.', 2) AS INTEGER) > ?
                     OR (
-                        TRY_CAST(SPLIT_PART(req.event_properties:zed_version::string, '.', 2) AS INTEGER) = ?
-                        AND TRY_CAST(SPLIT_PART(SPLIT_PART(req.event_properties:zed_version::string, '.', 3), '+', 1) AS INTEGER) >= ?
+                        TRY_CAST(SPLIT_PART(zed_version, '.', 2) AS INTEGER) = ?
+                        AND TRY_CAST(SPLIT_PART(SPLIT_PART(zed_version, '.', 3), '+', 1) AS INTEGER) >= ?
                     )
                 ))
-            ORDER BY req.time ASC
+            ORDER BY requested_at ASC
             LIMIT ?
             OFFSET ?
         "#};
@@ -715,14 +701,13 @@ pub async fn fetch_requested_examples_after(
             },
             |retry_state| {
                 json!({
-                    "1": { "type": "TEXT", "value": PREDICTIVE_EDIT_REQUESTED_EVENT },
-                    "2": { "type": "TEXT", "value": retry_state.resume_after },
+                    "1": { "type": "TEXT", "value": retry_state.resume_after },
+                    "2": { "type": "FIXED", "value": min_minor_str_ref },
                     "3": { "type": "FIXED", "value": min_minor_str_ref },
                     "4": { "type": "FIXED", "value": min_minor_str_ref },
-                    "5": { "type": "FIXED", "value": min_minor_str_ref },
-                    "6": { "type": "FIXED", "value": min_patch_str_ref },
-                    "7": { "type": "FIXED", "value": format_limit(retry_state.remaining_limit) },
-                    "8": { "type": "FIXED", "value": retry_state.offset.to_string() }
+                    "5": { "type": "FIXED", "value": min_patch_str_ref },
+                    "6": { "type": "FIXED", "value": format_limit(retry_state.remaining_limit) },
+                    "7": { "type": "FIXED", "value": retry_state.offset.to_string() }
                 })
             },
             &["request_id", "device_id", "time", "input", "zed_version"],
@@ -764,32 +749,26 @@ pub async fn fetch_captured_examples_after(
 
         let statement = indoc! {r#"
             SELECT
-                settled.event_properties:request_id::string AS request_id,
-                settled.device_id::string AS device_id,
-                settled.time::string AS continuation_time,
-                settled.time::string AS time,
-                req.event_properties:input AS input,
-                settled.event_properties:settled_editable_region::string AS settled_editable_region,
-                settled.event_properties:example AS example,
-                req.event_properties:zed_version::string AS zed_version
-            FROM events settled
-            INNER JOIN events req
-                ON settled.event_properties:request_id::string = req.event_properties:request_id::string
-            WHERE settled.event_type = ?
-                AND req.event_type = ?
-                AND settled.time > TRY_TO_TIMESTAMP_NTZ(?)
-                AND req.event_properties:version = 'V3'
-                AND req.event_properties:input:can_collect_data = true
-                AND settled.event_properties:example IS NOT NULL
-                AND TYPEOF(settled.event_properties:example) != 'NULL_VALUE'
+                ep_request_id AS request_id,
+                device_id AS device_id,
+                requested_at::string AS continuation_time,
+                requested_at::string AS time,
+                input_payload AS input,
+                settled_editable_region AS settled_editable_region,
+                example_payload AS example,
+                zed_version AS zed_version
+            FROM ZED_DBT.DBT_PROD.fct_edit_prediction_examples
+            WHERE settled_editable_region IS NOT NULL
+                AND example_payload IS NOT NULL
+                AND requested_at > TRY_TO_TIMESTAMP_NTZ(?)
                 AND (? IS NULL OR (
-                    TRY_CAST(SPLIT_PART(req.event_properties:zed_version::string, '.', 2) AS INTEGER) > ?
+                    TRY_CAST(SPLIT_PART(zed_version, '.', 2) AS INTEGER) > ?
                     OR (
-                        TRY_CAST(SPLIT_PART(req.event_properties:zed_version::string, '.', 2) AS INTEGER) = ?
-                        AND TRY_CAST(SPLIT_PART(SPLIT_PART(req.event_properties:zed_version::string, '.', 3), '+', 1) AS INTEGER) >= ?
+                        TRY_CAST(SPLIT_PART(zed_version, '.', 2) AS INTEGER) = ?
+                        AND TRY_CAST(SPLIT_PART(SPLIT_PART(zed_version, '.', 3), '+', 1) AS INTEGER) >= ?
                     )
                 ))
-            ORDER BY settled.time ASC
+            ORDER BY requested_at ASC
             LIMIT ?
             OFFSET ?
         "#};
@@ -806,15 +785,13 @@ pub async fn fetch_captured_examples_after(
             },
             |retry_state| {
                 json!({
-                    "1": { "type": "TEXT", "value": EDIT_PREDICTION_SETTLED_EVENT },
-                    "2": { "type": "TEXT", "value": PREDICTIVE_EDIT_REQUESTED_EVENT },
-                    "3": { "type": "TEXT", "value": retry_state.resume_after },
+                    "1": { "type": "TEXT", "value": retry_state.resume_after },
+                    "2": { "type": "FIXED", "value": min_minor_str_ref },
+                    "3": { "type": "FIXED", "value": min_minor_str_ref },
                     "4": { "type": "FIXED", "value": min_minor_str_ref },
-                    "5": { "type": "FIXED", "value": min_minor_str_ref },
-                    "6": { "type": "FIXED", "value": min_minor_str_ref },
-                    "7": { "type": "FIXED", "value": min_patch_str_ref },
-                    "8": { "type": "FIXED", "value": format_limit(retry_state.remaining_limit) },
-                    "9": { "type": "FIXED", "value": retry_state.offset.to_string() }
+                    "5": { "type": "FIXED", "value": min_patch_str_ref },
+                    "6": { "type": "FIXED", "value": format_limit(retry_state.remaining_limit) },
+                    "7": { "type": "FIXED", "value": retry_state.offset.to_string() }
                 })
             },
             &[
@@ -860,37 +837,20 @@ pub async fn fetch_settled_examples_after(
         let _ = min_capture_version;
 
         let statement = indoc! {r#"
-            WITH requested AS (
-                SELECT
-                    req.event_properties:request_id::string AS request_id,
-                    req.device_id::string AS device_id,
-                    req.time AS continuation_time,
-                    req.time::string AS time,
-                    req.event_properties:input AS input,
-                    req.event_properties:format::string AS requested_format,
-                    req.event_properties:output::string AS requested_output,
-                    req.event_properties:zed_version::string AS zed_version
-                FROM events req
-                WHERE req.event_type = ?
-                    AND req.time > TRY_TO_TIMESTAMP_NTZ(?)
-                    AND req.event_properties:version = 'V3'
-                    AND req.event_properties:input:can_collect_data = true
-            )
             SELECT
-                req.request_id AS request_id,
-                req.device_id AS device_id,
-                req.continuation_time::string AS continuation_time,
-                req.time AS time,
-                req.input AS input,
-                req.requested_output AS requested_output,
-                settled.event_properties:settled_editable_region::string AS settled_editable_region,
-                req.requested_format AS requested_format,
-                req.zed_version AS zed_version
-            FROM requested req
-            INNER JOIN events settled
-                ON req.request_id = settled.event_properties:request_id::string
-            WHERE settled.event_type = ?
-            ORDER BY req.continuation_time ASC
+                ep_request_id AS request_id,
+                device_id AS device_id,
+                requested_at::string AS continuation_time,
+                requested_at::string AS time,
+                input_payload AS input,
+                requested_output AS requested_output,
+                settled_editable_region AS settled_editable_region,
+                requested_format AS requested_format,
+                zed_version AS zed_version
+            FROM ZED_DBT.DBT_PROD.fct_edit_prediction_examples
+            WHERE settled_editable_region IS NOT NULL
+                AND requested_at > TRY_TO_TIMESTAMP_NTZ(?)
+            ORDER BY requested_at ASC
             LIMIT ?
             OFFSET ?
         "#};
@@ -907,11 +867,9 @@ pub async fn fetch_settled_examples_after(
             },
             |retry_state| {
                 json!({
-                    "1": { "type": "TEXT", "value": PREDICTIVE_EDIT_REQUESTED_EVENT },
-                    "2": { "type": "TEXT", "value": retry_state.resume_after },
-                    "3": { "type": "TEXT", "value": EDIT_PREDICTION_SETTLED_EVENT },
-                    "4": { "type": "FIXED", "value": format_limit(retry_state.remaining_limit) },
-                    "5": { "type": "FIXED", "value": retry_state.offset.to_string() }
+                    "1": { "type": "TEXT", "value": retry_state.resume_after },
+                    "2": { "type": "FIXED", "value": format_limit(retry_state.remaining_limit) },
+                    "3": { "type": "FIXED", "value": retry_state.offset.to_string() }
                 })
             },
             &[
@@ -967,33 +925,25 @@ pub async fn fetch_rated_examples_after(
 
         let statement = indoc! {r#"
             SELECT
-                rated.event_properties:request_id::string AS request_id,
-                rated.event_properties:inputs AS inputs,
-                rated.event_properties:output::string AS output,
-                rated.event_properties:rating::string AS rating,
-                rated.event_properties:feedback::string AS feedback,
-                rated.device_id::string AS device_id,
-                rated.time::string AS continuation_time,
-                rated.time::string AS time,
-                deploy.event_properties:experiment_name::string AS experiment_name,
-                deploy.event_properties:environment::string AS environment,
-                rated.event_properties:zed_version::string AS zed_version
-            FROM events rated
-            LEFT JOIN events req
-                ON rated.event_properties:request_id::string = req.event_properties:request_id::string
-                AND req.event_type = ?
-            LEFT JOIN events deploy
-                ON req.event_properties:headers:x_baseten_model_id::string = deploy.event_properties:model_id::string
-                AND req.event_properties:headers:x_baseten_model_version_id::string = deploy.event_properties:model_version_id::string
-                AND deploy.event_type = ?
-            WHERE rated.event_type = ?
-                AND (? IS NULL OR rated.event_properties:rating::string = ?)
-                AND rated.time > TRY_TO_TIMESTAMP_NTZ(?)
-                AND rated.event_properties:inputs IS NOT NULL
-                AND rated.event_properties:inputs:cursor_excerpt IS NOT NULL
-                AND rated.event_properties:output IS NOT NULL
-                AND rated.event_properties:inputs:can_collect_data = true
-            ORDER BY rated.time ASC
+                ep_request_id AS request_id,
+                rated_inputs AS inputs,
+                rated_output AS output,
+                rating AS rating,
+                feedback AS feedback,
+                device_id AS device_id,
+                requested_at::string AS continuation_time,
+                requested_at::string AS time,
+                NULL AS experiment_name,
+                NULL AS environment,
+                zed_version AS zed_version
+            FROM ZED_DBT.DBT_PROD.fct_edit_prediction_examples
+            WHERE rating IS NOT NULL
+                AND (? IS NULL OR rating = ?)
+                AND requested_at > TRY_TO_TIMESTAMP_NTZ(?)
+                AND rated_inputs IS NOT NULL
+                AND rated_inputs:cursor_excerpt IS NOT NULL
+                AND rated_output IS NOT NULL
+            ORDER BY requested_at ASC
             LIMIT ?
             OFFSET ?
         "#};
@@ -1010,14 +960,11 @@ pub async fn fetch_rated_examples_after(
             },
             |retry_state| {
                 json!({
-                    "1": { "type": "TEXT", "value": PREDICTIVE_EDIT_REQUESTED_EVENT },
-                    "2": { "type": "TEXT", "value": EDIT_PREDICTION_DEPLOYMENT_EVENT },
-                    "3": { "type": "TEXT", "value": EDIT_PREDICTION_RATED_EVENT },
-                    "4": { "type": "TEXT", "value": rating_value },
-                    "5": { "type": "TEXT", "value": rating_value },
-                    "6": { "type": "TEXT", "value": retry_state.resume_after },
-                    "7": { "type": "FIXED", "value": format_limit(retry_state.remaining_limit) },
-                    "8": { "type": "FIXED", "value": retry_state.offset.to_string() }
+                    "1": { "type": "TEXT", "value": rating_value },
+                    "2": { "type": "TEXT", "value": rating_value },
+                    "3": { "type": "TEXT", "value": retry_state.resume_after },
+                    "4": { "type": "FIXED", "value": format_limit(retry_state.remaining_limit) },
+                    "5": { "type": "FIXED", "value": retry_state.offset.to_string() }
                 })
             },
             &[
@@ -1659,6 +1606,7 @@ fn rejected_examples_from_response<'a>(
             let input_json = get_json("input");
             let input: Option<ZetaPromptInput> =
                 input_json.clone().and_then(|v| serde_json::from_value(v).ok());
+            let prompt = get_string("prompt");
             let output = get_string("output");
             let was_shown = get_bool("was_shown");
             let reason = get_string("reason");
@@ -1671,6 +1619,7 @@ fn rejected_examples_from_response<'a>(
                         device_id,
                         time,
                         input,
+                        prompt,
                         output,
                         was_shown,
                         reason,
@@ -1701,6 +1650,7 @@ fn build_rejected_example(
     device_id: String,
     time: String,
     input: ZetaPromptInput,
+    prompt: Option<String>,
     output: String,
     was_shown: bool,
     reason: String,
@@ -1722,6 +1672,13 @@ fn build_rejected_example(
         zed_version,
     );
     example.spec.rejected_patch = Some(rejected_patch);
+    example.prompt = prompt.map(|prompt| ExamplePrompt {
+        input: prompt,
+        expected_output: String::new(),
+        rejected_output: Some(output),
+        prefill: None,
+        provider: PredictionProvider::default(),
+    });
     example
 }
 
