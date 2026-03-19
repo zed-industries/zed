@@ -795,25 +795,21 @@ impl PickerDelegate for RecentProjectsDelegate {
 
     fn match_stable_id(&self, ix: usize) -> Option<Box<dyn Any>> {
         let entry = self.filtered_entries.get(ix)?;
-        match entry {
+        Some(Box::new(match entry {
             ProjectPickerEntry::OpenFolder { index, .. } => {
                 let folder = self.open_folders.get(*index)?;
-                Some(Box::new(RecentProjectsStableId::OpenFolder(
-                    folder.worktree_id,
-                )))
+                RecentProjectsStableId::OpenFolder(folder.worktree_id)
             }
             ProjectPickerEntry::RecentProject(mat) => {
                 let (workspace_id, _, _, _) = self.workspaces.get(mat.candidate_id)?;
-                Some(Box::new(RecentProjectsStableId::RecentProject(
-                    *workspace_id,
-                )))
+                RecentProjectsStableId::RecentProject(*workspace_id)
             }
-            ProjectPickerEntry::Header(_) => None,
             ProjectPickerEntry::OpenProject(mat) => {
                 let (workspace_id, _, _, _) = self.workspaces.get(mat.candidate_id)?;
-                Some(Box::new(RecentProjectsStableId::OpenProject(*workspace_id)))
+                RecentProjectsStableId::OpenProject(*workspace_id)
             }
-        }
+            ProjectPickerEntry::Header(_) => return None,
+        }))
     }
 
     fn find_match_by_stable_id(&self, stable_id: &dyn Any) -> Option<usize> {

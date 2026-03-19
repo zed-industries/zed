@@ -442,10 +442,10 @@ impl PickerDelegate for ThemeSelectorDelegate {
     }
 
     fn match_stable_id(&self, ix: usize) -> Option<Box<dyn Any>> {
-        self.matches.get(ix).map(|m| -> Box<dyn Any> {
+        self.matches.get(ix).map(|m| {
             Box::new(SharedString::from(
                 self.themes[m.candidate_id].name.to_string(),
-            ))
+            )) as Box<_>
         })
     }
 

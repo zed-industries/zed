@@ -249,7 +249,7 @@ impl PickerDelegate for IconThemeSelectorDelegate {
     fn match_stable_id(&self, ix: usize) -> Option<Box<dyn Any>> {
         self.matches
             .get(ix)
-            .map(|m| -> Box<dyn Any> { Box::new(SharedString::from(m.string.clone())) })
+            .map(|m| Box::new(SharedString::from(m.string.clone())) as Box<_>)
     }
 
     fn find_match_by_stable_id(&self, stable_id: &dyn Any) -> Option<usize> {

@@ -789,18 +789,17 @@ impl PickerDelegate for BranchListDelegate {
                 .log_err();
         })
     }
+
     fn match_stable_id(&self, ix: usize) -> Option<Box<dyn Any>> {
-        match self.matches.get(ix)? {
-            Entry::Branch { branch, .. } => {
-                Some(Box::new(BranchStableId::Branch(branch.ref_name.clone())))
-            }
-            Entry::NewUrl { url } => Some(Box::new(BranchStableId::NewUrl(url.clone()))),
-            Entry::NewBranch { name } => Some(Box::new(BranchStableId::NewBranch(name.clone()))),
-            Entry::NewRemoteName { name, url } => Some(Box::new(BranchStableId::NewRemoteName {
+        Some(Box::new(match self.matches.get(ix)? {
+            Entry::Branch { branch, .. } => BranchStableId::Branch(branch.ref_name.clone()),
+            Entry::NewUrl { url } => BranchStableId::NewUrl(url.clone()),
+            Entry::NewBranch { name } => BranchStableId::NewBranch(name.clone()),
+            Entry::NewRemoteName { name, url } => BranchStableId::NewRemoteName {
                 name: name.clone(),
                 url: url.clone(),
-            })),
-        }
+            },
+        }))
     }
 
     fn find_match_by_stable_id(&self, stable_id: &dyn Any) -> Option<usize> {
