@@ -2637,15 +2637,12 @@ impl Sidebar {
             .agent_server_store()
             .clone();
 
-        let has_open_project = !workspace_path_list(&active_workspace, cx).is_empty();
-
         let archive_view = cx.new(|cx| {
             ThreadsArchiveView::new(
                 agent_connection_store,
                 agent_server_store,
                 thread_store,
                 fs,
-                has_open_project,
                 window,
                 cx,
             )

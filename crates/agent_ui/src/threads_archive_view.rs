@@ -136,7 +136,6 @@ pub struct ThreadsArchiveView {
     selected_agent_menu: PopoverMenuHandle<ContextMenu>,
     _refresh_history_task: Task<()>,
     is_loading: bool,
-    has_open_project: bool,
 }
 
 impl ThreadsArchiveView {
@@ -145,7 +144,6 @@ impl ThreadsArchiveView {
         agent_server_store: Entity<AgentServerStore>,
         thread_store: Entity<ThreadStore>,
         fs: Arc<dyn Fs>,
-        has_open_project: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -186,7 +184,6 @@ impl ThreadsArchiveView {
             selected_agent_menu: PopoverMenuHandle::default(),
             _refresh_history_task: Task::ready(()),
             is_loading: true,
-            has_open_project,
         };
         this.set_selected_agent(Agent::NativeAgent, window, cx);
         this
@@ -248,20 +245,10 @@ impl ThreadsArchiveView {
         let query = self.filter_editor.read(cx).text(cx).to_lowercase();
         let today = Local::now().naive_local().date();
 
-        let unarchived_session_ids: collections::HashSet<_> =
-            SidebarThreadMetadataStore::global(cx)
-                .read(cx)
-                .entry_ids()
-                .collect();
         let mut items = Vec::with_capacity(sessions.len() + 5);
         let mut current_bucket: Option<TimeBucket> = None;
 
         for session in sessions {
-            // Skip sessions that are shown in the sidebar
-            if unarchived_session_ids.contains(&session.session_id) {
-                continue;
-            }
-
             let highlight_positions = if !query.is_empty() {
                 let title = session.title.as_ref().map(|t| t.as_ref()).unwrap_or("");
                 match fuzzy_match_positions(&query, title) {
@@ -430,8 +417,8 @@ impl ThreadsArchiveView {
             return;
         };
 
-        let thread_has_project = session.work_dirs.as_ref().is_some_and(|p| !p.is_empty());
-        if !thread_has_project && !self.has_open_project {
+        let can_unarchive = session.work_dirs.as_ref().is_some_and(|p| !p.is_empty());
+        if !can_unarchive {
             return;
         }
 
@@ -483,8 +470,7 @@ impl ThreadsArchiveView {
                     }
                 });
 
-                let thread_has_project = session.work_dirs.as_ref().is_some_and(|p| !p.is_empty());
-                let can_unarchive = thread_has_project || self.has_open_project;
+                let can_unarchive = session.work_dirs.as_ref().is_some_and(|p| !p.is_empty());
 
                 let supports_delete = self
                     .history

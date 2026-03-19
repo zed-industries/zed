@@ -7,7 +7,7 @@ use acp_thread::{
 use acp_thread::{AgentConnection, Plan};
 use action_log::{ActionLog, ActionLogTelemetry, DiffStats};
 use agent::{NativeAgentServer, NativeAgentSessionList, SharedThread, ThreadStore};
-use agent_client_protocol::{self as acp, PromptCapabilities};
+use agent_client_protocol as acp;
 use agent_servers::AgentServer;
 #[cfg(test)]
 use agent_servers::AgentServerDelegate;
@@ -36,11 +36,13 @@ use gpui::{
 use language::Buffer;
 use language_model::LanguageModelRegistry;
 use markdown::{Markdown, MarkdownElement, MarkdownFont, MarkdownStyle};
+use parking_lot::RwLock;
 use project::{AgentId, AgentServerStore, Project, ProjectEntryId};
 use prompt_store::{PromptId, PromptStore};
+
+use crate::message_editor::SessionCapabilities;
 use rope::Point;
 use settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore};
-use std::cell::RefCell;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
@@ -588,11 +590,7 @@ impl ConversationView {
         if let Some(view) = self.active_thread() {
             view.update(cx, |this, cx| {
                 this.message_editor.update(cx, |editor, cx| {
-                    editor.set_command_state(
-                        this.prompt_capabilities.clone(),
-                        this.available_commands.clone(),
-                        cx,
-                    );
+                    editor.set_session_capabilities(this.session_capabilities.clone(), cx);
                 });
             });
         }
@@ -821,12 +819,12 @@ impl ConversationView {
         cx: &mut Context<Self>,
     ) -> Entity<ThreadView> {
         let agent_id = self.agent.agent_id();
-        let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
-        let available_commands = Rc::new(RefCell::new(vec![]));
+        let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::new(
+            thread.read(cx).prompt_capabilities(),
+            vec![],
+        )));
 
         let action_log = thread.read(cx).action_log().clone();
-
-        prompt_capabilities.replace(thread.read(cx).prompt_capabilities());
 
         let entry_view_state = cx.new(|_| {
             EntryViewState::new(
@@ -835,8 +833,7 @@ impl ConversationView {
                 self.thread_store.clone(),
                 history.as_ref().map(|h| h.downgrade()),
                 self.prompt_store.clone(),
-                prompt_capabilities.clone(),
-                available_commands.clone(),
+                session_capabilities.clone(),
                 self.agent.agent_id(),
             )
         });
@@ -995,8 +992,7 @@ impl ConversationView {
                 model_selector,
                 profile_selector,
                 list_state,
-                prompt_capabilities,
-                available_commands,
+                session_capabilities,
                 resumed_without_history,
                 self.project.downgrade(),
                 self.thread_store.clone(),
@@ -1411,8 +1407,9 @@ impl ConversationView {
                 if let Some(active) = self.thread_view(&thread_id) {
                     active.update(cx, |active, _cx| {
                         active
-                            .prompt_capabilities
-                            .replace(thread.read(_cx).prompt_capabilities());
+                            .session_capabilities
+                            .write()
+                            .set_prompt_capabilities(thread.read(_cx).prompt_capabilities());
                     });
                 }
             }
@@ -1437,7 +1434,10 @@ impl ConversationView {
                 let has_commands = !available_commands.is_empty();
                 if let Some(active) = self.active_thread() {
                     active.update(cx, |active, _cx| {
-                        active.available_commands.replace(available_commands);
+                        active
+                            .session_capabilities
+                            .write()
+                            .set_available_commands(available_commands);
                     });
                 }
 
@@ -2217,8 +2217,7 @@ impl ConversationView {
         let Some(thread) = connected.active_view() else {
             return;
         };
-        let prompt_capabilities = thread.read(cx).prompt_capabilities.clone();
-        let available_commands = thread.read(cx).available_commands.clone();
+        let session_capabilities = thread.read(cx).session_capabilities.clone();
 
         let current_count = thread.read(cx).queued_message_editors.len();
         let last_synced = thread.read(cx).last_synced_queue_length;
@@ -2257,8 +2256,7 @@ impl ConversationView {
                     None,
                     history.clone(),
                     None,
-                    prompt_capabilities.clone(),
-                    available_commands.clone(),
+                    session_capabilities.clone(),
                     agent_name.clone(),
                     "",
                     EditorMode::AutoHeight {
