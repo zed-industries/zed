@@ -399,14 +399,9 @@
     },
   },
   {
-    "context": "BufferSearchBar && !in_replace > Editor && mode == auto_height && start_of_input",
+    "context": "BufferSearchBar && !in_replace > Editor",
     "bindings": {
       "up": "search::PreviousHistoryQuery",
-    },
-  },
-  {
-    "context": "BufferSearchBar && !in_replace > Editor && mode == auto_height && end_of_input",
-    "bindings": {
       "down": "search::NextHistoryQuery",
     },
   },
@@ -423,21 +418,9 @@
     },
   },
   {
-    "context": "ProjectSearchBar > Editor && mode == single_line",
+    "context": "ProjectSearchBar > Editor",
     "bindings": {
       "up": "search::PreviousHistoryQuery",
-      "down": "search::NextHistoryQuery",
-    },
-  },
-  {
-    "context": "ProjectSearchBar > Editor && mode == auto_height && start_of_input",
-    "bindings": {
-      "up": "search::PreviousHistoryQuery",
-    },
-  },
-  {
-    "context": "ProjectSearchBar > Editor && mode == auto_height && end_of_input",
-    "bindings": {
       "down": "search::NextHistoryQuery",
     },
   },

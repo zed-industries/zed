@@ -6,8 +6,9 @@ use crate::{
     ToggleCaseSensitive, ToggleRegex, ToggleReplace, ToggleSelection, ToggleWholeWord,
     buffer_search::registrar::WithResultsOrExternalQuery,
     search_bar::{
-        ActionButtonState, alignment_element, filter_search_results_input, input_base_styles,
-        render_action_button, render_text_input,
+        ActionButtonState, HistoryNavigationDirection, alignment_element,
+        filter_search_results_input, input_base_styles, render_action_button, render_text_input,
+        should_navigate_history,
     },
 };
 use any_vec::AnyVec;
@@ -1705,15 +1706,19 @@ impl BufferSearchBar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !should_navigate_history(&self.query_editor, HistoryNavigationDirection::Next, cx) {
+            cx.propagate();
+            return;
+        }
+
         if let Some(new_query) = self
             .search_history
             .next(&mut self.search_history_cursor)
             .map(str::to_string)
         {
             drop(self.search(&new_query, Some(self.search_options), false, window, cx));
-        } else {
-            self.search_history_cursor.reset();
-            drop(self.search("", Some(self.search_options), false, window, cx));
+        } else if let Some(draft) = self.search_history_cursor.take_draft() {
+            drop(self.search(&draft, Some(self.search_options), false, window, cx));
         }
     }
 
@@ -1723,6 +1728,11 @@ impl BufferSearchBar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !should_navigate_history(&self.query_editor, HistoryNavigationDirection::Previous, cx) {
+            cx.propagate();
+            return;
+        }
+
         if self.query(cx).is_empty()
             && let Some(new_query) = self
                 .search_history
@@ -1733,9 +1743,10 @@ impl BufferSearchBar {
             return;
         }
 
+        let current_query = self.query(cx);
         if let Some(new_query) = self
             .search_history
-            .previous(&mut self.search_history_cursor)
+            .previous(&mut self.search_history_cursor, &current_query)
             .map(str::to_string)
         {
             drop(self.search(&new_query, Some(self.search_options), false, window, cx));
@@ -2717,13 +2728,13 @@ mod tests {
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
         });
 
-        // Next history query after the latest should set the query to the empty string.
+        // Next history query after the latest should preserve the current query.
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.next_history_query(&NextHistoryQuery, window, cx);
         });
         cx.background_executor.run_until_parked();
         search_bar.update(cx, |search_bar, cx| {
-            assert_eq!(search_bar.query(cx), "");
+            assert_eq!(search_bar.query(cx), "c");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
         });
         search_bar.update_in(cx, |search_bar, window, cx| {
@@ -2731,17 +2742,17 @@ mod tests {
         });
         cx.background_executor.run_until_parked();
         search_bar.update(cx, |search_bar, cx| {
-            assert_eq!(search_bar.query(cx), "");
+            assert_eq!(search_bar.query(cx), "c");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
         });
 
-        // First previous query for empty current query should set the query to the latest.
+        // Previous query should navigate backwards through history.
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.previous_history_query(&PreviousHistoryQuery, window, cx);
         });
         cx.background_executor.run_until_parked();
         search_bar.update(cx, |search_bar, cx| {
-            assert_eq!(search_bar.query(cx), "c");
+            assert_eq!(search_bar.query(cx), "b");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
         });
 
@@ -2751,7 +2762,7 @@ mod tests {
         });
         cx.background_executor.run_until_parked();
         search_bar.update(cx, |search_bar, cx| {
-            assert_eq!(search_bar.query(cx), "b");
+            assert_eq!(search_bar.query(cx), "a");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
         });
 
@@ -2832,7 +2843,7 @@ mod tests {
         });
         cx.background_executor.run_until_parked();
         search_bar.update(cx, |search_bar, cx| {
-            assert_eq!(search_bar.query(cx), "");
+            assert_eq!(search_bar.query(cx), "ba");
             assert_eq!(search_bar.search_options, SearchOptions::NONE);
         });
     }
