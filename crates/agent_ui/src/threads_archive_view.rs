@@ -137,7 +137,6 @@ pub struct ThreadsArchiveView {
     _refresh_history_task: Task<()>,
     _update_items_task: Option<Task<()>>,
     is_loading: bool,
-    has_open_project: bool,
 }
 
 impl ThreadsArchiveView {
@@ -146,7 +145,6 @@ impl ThreadsArchiveView {
         agent_server_store: Entity<AgentServerStore>,
         thread_store: Entity<ThreadStore>,
         fs: Arc<dyn Fs>,
-        has_open_project: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -184,7 +182,6 @@ impl ThreadsArchiveView {
             _refresh_history_task: Task::ready(()),
             _update_items_task: None,
             is_loading: true,
-            has_open_project,
         };
         this.set_selected_agent(Agent::NativeAgent, window, cx);
         this
@@ -247,7 +244,9 @@ impl ThreadsArchiveView {
         let today = Local::now().naive_local().date();
 
         self._update_items_task.take();
-        let unarchived_ids_task = SidebarThreadMetadataStore::global(cx).read(cx).list_ids(cx);
+        let unarchived_ids_task = SidebarThreadMetadataStore::global(cx)
+            .read(cx)
+            .list_sidebar_ids(cx);
         self._update_items_task = Some(cx.spawn(async move |this, cx| {
             let unarchived_session_ids = unarchived_ids_task.await.unwrap_or_default();
 
@@ -432,8 +431,8 @@ impl ThreadsArchiveView {
             return;
         };
 
-        let thread_has_project = session.work_dirs.as_ref().is_some_and(|p| !p.is_empty());
-        if !thread_has_project && !self.has_open_project {
+        let can_unarchive = session.work_dirs.as_ref().is_some_and(|p| !p.is_empty());
+        if !can_unarchive {
             return;
         }
 
@@ -485,8 +484,7 @@ impl ThreadsArchiveView {
                     }
                 });
 
-                let thread_has_project = session.work_dirs.as_ref().is_some_and(|p| !p.is_empty());
-                let can_unarchive = thread_has_project || self.has_open_project;
+                let can_unarchive = session.work_dirs.as_ref().is_some_and(|p| !p.is_empty());
 
                 let supports_delete = self
                     .history
