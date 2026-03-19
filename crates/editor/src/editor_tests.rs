@@ -30828,7 +30828,7 @@ async fn test_scroll_by_clicking_sticky_header(cx: &mut TestAppContext) {
 
     let fn_foo = || empty_range(0, 0);
     let impl_bar = || empty_range(4, 0);
-    let fn_new = || empty_range(5, 4);
+    let fn_new = || empty_range(5, 0);
 
     let mut scroll_and_click = |scroll_offset: ScrollOffset, click_offset: ScrollOffset| {
         cx.update_editor(|e, window, cx| {
@@ -30914,6 +30914,36 @@ async fn test_scroll_by_clicking_sticky_header(cx: &mut TestAppContext) {
         // we don't assert on the visible_range because if we clicked the gutter, our line is fully selected
         (gpui::Point { x: 0., y: 1.5 })
     );
+
+    // Verify clicking at a specific x position within a sticky header places
+    // the cursor at the corresponding column.
+    let (text_origin_x, em_width) = cx.update_editor(|editor, _, _| {
+        let position_map = editor.last_position_map.as_ref().unwrap();
+        (
+            position_map.text_hitbox.bounds.origin.x,
+            position_map.em_layout_width,
+        )
+    });
+
+    // Click on "impl Bar {" sticky header at column 5 (the 'B' in 'Bar').
+    // The text "impl Bar {" starts at column 0, so column 5 = 'B'.
+    let click_x = text_origin_x + em_width * 5.5;
+    cx.update_editor(|e, window, cx| {
+        e.scroll(gpui::Point { x: 0., y: 4.5 }, None, window, cx);
+    });
+    cx.run_until_parked();
+    cx.simulate_click(
+        gpui::Point {
+            x: click_x,
+            y: 0.25 * line_height,
+        },
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+    let (scroll_pos, selections) =
+        cx.update_editor(|e, _, cx| (e.scroll_position(cx), display_ranges(e, cx)));
+    assert_eq!(scroll_pos, gpui::Point { x: 0., y: 4. });
+    assert_eq!(selections, vec![empty_range(4, 5)]);
 }
 
 #[gpui::test]
