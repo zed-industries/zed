@@ -412,7 +412,7 @@ impl SelectionsCollection {
     /// Returns `None` if the range is not empty but it starts past the line's
     /// length, meaning that the line isn't long enough to be contained within
     /// part of the provided range.
-    pub fn build_columnar_selection_from_utf16_columns(
+    fn build_columnar_selection_from_utf16_columns(
         &mut self,
         display_map: &DisplaySnapshot,
         buffer_row: u32,
