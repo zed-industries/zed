@@ -24699,6 +24699,163 @@ async fn test_goto_definition_no_fallback(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_goto_definition_close_ranges_open_singleton(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            definition_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    // File content: 10 lines with functions defined on lines 3, 5, and 7 (0-indexed).
+    // With the default excerpt_context_lines of 2, ranges that are within
+    // 2 * 2 = 4 rows of each other should be grouped into one excerpt.
+    cx.set_state(
+        &r#"fn caller() {
+            let _ = ˇtarget();
+        }
+        fn target_a() {}
+
+        fn target_b() {}
+
+        fn target_c() {}
+        "#
+        .unindent(),
+    );
+
+    // Return two definitions that are close together (lines 3 and 5, gap of 2 rows)
+    cx.set_request_handler::<lsp::request::GotoDefinition, _, _>(move |url, _, _| async move {
+        Ok(Some(lsp::GotoDefinitionResponse::Array(vec![
+            lsp::Location {
+                uri: url.clone(),
+                range: lsp::Range::new(lsp::Position::new(3, 3), lsp::Position::new(3, 11)),
+            },
+            lsp::Location {
+                uri: url,
+                range: lsp::Range::new(lsp::Position::new(5, 3), lsp::Position::new(5, 11)),
+            },
+        ])))
+    });
+
+    let navigated = cx
+        .update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition, window, cx))
+        .await
+        .expect("Failed to navigate to definitions");
+    assert_eq!(navigated, Navigated::Yes);
+
+    let editors = cx.update_workspace(|workspace, _, cx| {
+        workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>()
+    });
+    cx.update_editor(|_, _, _| {
+        assert_eq!(
+            editors.len(),
+            1,
+            "Close ranges should navigate in-place without opening a new editor"
+        );
+    });
+
+    // Both target ranges should be selected
+    cx.assert_editor_state(
+        &r#"fn caller() {
+            let _ = target();
+        }
+        fn «target_aˇ»() {}
+
+        fn «target_bˇ»() {}
+
+        fn target_c() {}
+        "#
+        .unindent(),
+    );
+}
+
+#[gpui::test]
+async fn test_goto_definition_far_ranges_open_multibuffer(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            definition_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    // Create a file with definitions far apart (more than 2 * excerpt_context_lines rows).
+    cx.set_state(
+        &r#"fn caller() {
+            let _ = ˇtarget();
+        }
+        fn target_a() {}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        fn target_b() {}
+        "#
+        .unindent(),
+    );
+
+    // Return two definitions that are far apart (lines 3 and 19, gap of 16 rows)
+    cx.set_request_handler::<lsp::request::GotoDefinition, _, _>(move |url, _, _| async move {
+        Ok(Some(lsp::GotoDefinitionResponse::Array(vec![
+            lsp::Location {
+                uri: url.clone(),
+                range: lsp::Range::new(lsp::Position::new(3, 3), lsp::Position::new(3, 11)),
+            },
+            lsp::Location {
+                uri: url,
+                range: lsp::Range::new(lsp::Position::new(19, 3), lsp::Position::new(19, 11)),
+            },
+        ])))
+    });
+
+    let navigated = cx
+        .update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition, window, cx))
+        .await
+        .expect("Failed to navigate to definitions");
+    assert_eq!(navigated, Navigated::Yes);
+
+    let editors = cx.update_workspace(|workspace, _, cx| {
+        workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>()
+    });
+    cx.update_editor(|_, _, test_editor_cx| {
+        assert_eq!(
+            editors.len(),
+            2,
+            "Far apart ranges should open a new multibuffer editor"
+        );
+        let multibuffer_editor = editors
+            .into_iter()
+            .find(|editor| *editor != test_editor_cx.entity())
+            .expect("Should have a multibuffer editor");
+        let multibuffer_text = multibuffer_editor.read(test_editor_cx).text(test_editor_cx);
+        assert!(
+            multibuffer_text.contains("target_a"),
+            "Multibuffer should contain the first definition"
+        );
+        assert!(
+            multibuffer_text.contains("target_b"),
+            "Multibuffer should contain the second definition"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_find_all_references_editor_reuse(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorLspTestContext::new_rust(
