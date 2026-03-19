@@ -13114,7 +13114,6 @@ impl Editor {
 
         // Split selections to respect paragraph, indent, and comment prefix boundaries.
         let wrap_ranges = selections.into_iter().flat_map(|selection| {
-
             let language_settings = buffer.language_settings_at(selection.head(), cx);
             let language_scope = buffer.language_scope_at(selection.head());
 
@@ -13202,9 +13201,9 @@ impl Editor {
                     Some(CommentFormat::Line(prefix) | CommentFormat::BlockLine(prefix)) => {
                         Some(prefix.as_str())
                     }
-                    Some(CommentFormat::BlockCommentWithEnd(BlockCommentConfig { prefix, .. })) => {
-                        Some(prefix.as_ref())
-                    }
+                    Some(CommentFormat::BlockCommentWithEnd(BlockCommentConfig {
+                        prefix, ..
+                    })) => Some(prefix.as_ref()),
                     Some(CommentFormat::BlockCommentWithStart(BlockCommentConfig {
                         start: _,
                         end: _,
@@ -13309,13 +13308,8 @@ impl Editor {
         let mut edits = Vec::new();
         let mut rewrapped_row_ranges = Vec::<RangeInclusive<u32>>::new();
 
-        for (
-            language_settings,
-            wrap_range,
-            mut indent_size,
-            comment_prefix,
-            rewrap_prefix,
-        ) in wrap_ranges
+        for (language_settings, wrap_range, mut indent_size, comment_prefix, rewrap_prefix) in
+            wrap_ranges
         {
             let start_row = wrap_range.start.row;
             let end_row = wrap_range.end.row;
