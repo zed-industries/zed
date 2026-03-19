@@ -1366,6 +1366,9 @@ fn process_patch_hunk(
     let mut diff_base_byte_range: Option<Range<usize>> = None;
     let mut first_addition_old_row: Option<u32> = None;
 
+    let mut num_of_addtion_lines = 0;
+    let mut num_of_deletion_lines = 0;
+
     for line_index in 0..line_item_count {
         let line = patch.line_in_hunk(hunk_index, line_index).unwrap();
         let kind = line.origin_value();
@@ -1373,6 +1376,8 @@ fn process_patch_hunk(
         let content_len = line.content().len() as isize;
         match kind {
             GitDiffLineType::Addition => {
+                num_of_addtion_lines += 1;
+
                 if first_addition_old_row.is_none() {
                     first_addition_old_row = Some(
                         (line.new_lineno().unwrap() as i64 - *buffer_row_divergence - 1) as u32,
@@ -1387,6 +1392,8 @@ fn process_patch_hunk(
                 }
             }
             GitDiffLineType::Deletion => {
+                num_of_deletion_lines += 1;
+
                 let end = content_offset + content_len;
 
                 match &mut diff_base_byte_range {
@@ -1426,7 +1433,7 @@ fn process_patch_hunk(
 
     let (base_word_diffs, buffer_word_diffs) = if let Some(diff_options) = diff_options
         && !buffer_row_range.is_empty()
-        && base_line_count == buffer_row_range.len()
+        && num_of_deletion_lines == num_of_addtion_lines
         && diff_options.max_word_diff_line_count >= base_line_count
     {
         let base_text: String = diff_base
