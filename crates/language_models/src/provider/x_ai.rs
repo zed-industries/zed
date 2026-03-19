@@ -197,7 +197,6 @@ impl XAiLanguageModel {
     fn stream_completion(
         &self,
         request: open_ai::Request,
-        bypass_rate_limit: bool,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -213,24 +212,21 @@ impl XAiLanguageModel {
             (state.api_key_state.key(&api_url), api_url)
         });
 
-        let future = self.request_limiter.stream_with_bypass(
-            async move {
-                let provider = PROVIDER_NAME;
-                let Some(api_key) = api_key else {
-                    return Err(LanguageModelCompletionError::NoApiKey { provider });
-                };
-                let request = open_ai::stream_completion(
-                    http_client.as_ref(),
-                    provider.0.as_str(),
-                    &api_url,
-                    &api_key,
-                    request,
-                );
-                let response = request.await?;
-                Ok(response)
-            },
-            bypass_rate_limit,
-        );
+        let future = self.request_limiter.stream(async move {
+            let provider = PROVIDER_NAME;
+            let Some(api_key) = api_key else {
+                return Err(LanguageModelCompletionError::NoApiKey { provider });
+            };
+            let request = open_ai::stream_completion(
+                http_client.as_ref(),
+                provider.0.as_str(),
+                &api_url,
+                &api_key,
+                request,
+            );
+            let response = request.await?;
+            Ok(response)
+        });
 
         async move { Ok(future.await?.boxed()) }.boxed()
     }
@@ -261,6 +257,10 @@ impl LanguageModel for XAiLanguageModel {
         self.model.supports_images()
     }
 
+    fn supports_streaming_tools(&self) -> bool {
+        true
+    }
+
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
             LanguageModelToolChoice::Auto
@@ -269,8 +269,7 @@ impl LanguageModel for XAiLanguageModel {
         }
     }
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
-        let model_id = self.model.id().trim().to_lowercase();
-        if model_id.eq(x_ai::Model::Grok4.id()) || model_id.eq(x_ai::Model::GrokCodeFast1.id()) {
+        if self.model.requires_json_schema_subset() {
             LanguageModelToolSchemaFormat::JsonSchemaSubset
         } else {
             LanguageModelToolSchemaFormat::JsonSchema
@@ -287,6 +286,10 @@ impl LanguageModel for XAiLanguageModel {
 
     fn max_output_tokens(&self) -> Option<u64> {
         self.model.max_output_tokens()
+    }
+
+    fn supports_split_token_display(&self) -> bool {
+        true
     }
 
     fn count_tokens(
@@ -311,7 +314,6 @@ impl LanguageModel for XAiLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let bypass_rate_limit = request.bypass_rate_limit;
         let request = crate::provider::open_ai::into_open_ai(
             request,
             self.model.id(),
@@ -320,7 +322,7 @@ impl LanguageModel for XAiLanguageModel {
             self.max_output_tokens(),
             None,
         );
-        let completions = self.stream_completion(request, bypass_rate_limit, cx);
+        let completions = self.stream_completion(request, cx);
         async move {
             let mapper = crate::provider::open_ai::OpenAiEventMapper::new();
             Ok(mapper.map_stream(completions.await?).boxed())

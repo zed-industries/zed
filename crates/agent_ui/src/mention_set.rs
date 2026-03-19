@@ -118,6 +118,53 @@ impl MentionSet {
         self.mentions.insert(crease_id, (uri, task));
     }
 
+    /// Creates the appropriate confirmation task for a mention based on its URI type.
+    /// This is used when pasting mention links to properly load their content.
+    pub fn confirm_mention_for_uri(
+        &mut self,
+        mention_uri: MentionUri,
+        supports_images: bool,
+        http_client: Arc<HttpClientWithUrl>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Mention>> {
+        match mention_uri {
+            MentionUri::Fetch { url } => self.confirm_mention_for_fetch(url, http_client, cx),
+            MentionUri::Directory { .. } => Task::ready(Ok(Mention::Link)),
+            MentionUri::Thread { id, .. } => self.confirm_mention_for_thread(id, cx),
+            MentionUri::TextThread { .. } => {
+                Task::ready(Err(anyhow!("Text thread mentions are no longer supported")))
+            }
+            MentionUri::File { abs_path } => {
+                self.confirm_mention_for_file(abs_path, supports_images, cx)
+            }
+            MentionUri::Symbol {
+                abs_path,
+                line_range,
+                ..
+            } => self.confirm_mention_for_symbol(abs_path, line_range, cx),
+            MentionUri::Rule { id, .. } => self.confirm_mention_for_rule(id, cx),
+            MentionUri::Diagnostics {
+                include_errors,
+                include_warnings,
+            } => self.confirm_mention_for_diagnostics(include_errors, include_warnings, cx),
+            MentionUri::GitDiff { base_ref } => {
+                self.confirm_mention_for_git_diff(base_ref.into(), cx)
+            }
+            MentionUri::Selection {
+                abs_path: Some(abs_path),
+                line_range,
+            } => self.confirm_mention_for_symbol(abs_path, line_range, cx),
+            MentionUri::Selection { abs_path: None, .. } => Task::ready(Err(anyhow!(
+                "Untitled buffer selection mentions are not supported for paste"
+            ))),
+            MentionUri::PastedImage
+            | MentionUri::TerminalSelection { .. }
+            | MentionUri::MergeConflict { .. } => {
+                Task::ready(Err(anyhow!("Unsupported mention URI type for paste")))
+            }
+        }
+    }
+
     pub fn remove_mention(&mut self, crease_id: &CreaseId) {
         self.mentions.remove(crease_id);
     }
@@ -195,6 +242,9 @@ impl MentionSet {
                 content_len,
                 mention_uri.name().into(),
                 IconName::Image.path().into(),
+                mention_uri.tooltip_text(),
+                Some(mention_uri.clone()),
+                Some(workspace.downgrade()),
                 Some(image),
                 editor.clone(),
                 window,
@@ -207,6 +257,9 @@ impl MentionSet {
                 content_len,
                 crease_text,
                 mention_uri.icon_path(cx),
+                mention_uri.tooltip_text(),
+                Some(mention_uri.clone()),
+                Some(workspace.downgrade()),
                 None,
                 editor.clone(),
                 window,
@@ -249,6 +302,17 @@ impl MentionSet {
                 debug_panic!("unexpected selection URI");
                 Task::ready(Err(anyhow!("unexpected selection URI")))
             }
+            MentionUri::TerminalSelection { .. } => {
+                debug_panic!("unexpected terminal URI");
+                Task::ready(Err(anyhow!("unexpected terminal URI")))
+            }
+            MentionUri::GitDiff { base_ref } => {
+                self.confirm_mention_for_git_diff(base_ref.into(), cx)
+            }
+            MentionUri::MergeConflict { .. } => {
+                debug_panic!("unexpected merge conflict URI");
+                Task::ready(Err(anyhow!("unexpected merge conflict URI")))
+            }
         };
         let task = cx
             .spawn(async move |_, _| task.await.map_err(|e| e.to_string()))
@@ -256,8 +320,9 @@ impl MentionSet {
         self.mentions.insert(crease_id, (mention_uri, task.clone()));
 
         // Notify the user if we failed to load the mentioned context
-        cx.spawn_in(window, async move |this, cx| {
-            let result = task.await.notify_async_err(cx);
+        let workspace = workspace.downgrade();
+        cx.spawn(async move |this, mut cx| {
+            let result = task.await.notify_workspace_async_err(workspace, &mut cx);
             drop(tx);
             if result.is_none() {
                 this.update(cx, |this, cx| {
@@ -438,6 +503,7 @@ impl MentionSet {
             let crease = crease_for_mention(
                 selection_name(abs_path.as_deref(), &line_range).into(),
                 uri.icon_path(cx),
+                uri.tooltip_text(),
                 range,
                 editor.downgrade(),
             );
@@ -494,19 +560,17 @@ impl MentionSet {
             project.read(cx).fs().clone(),
             thread_store,
         ));
-        let delegate = AgentServerDelegate::new(
-            project.read(cx).agent_server_store().clone(),
-            project.clone(),
-            None,
-            None,
-        );
-        let connection = server.connect(None, delegate, cx);
+        let delegate =
+            AgentServerDelegate::new(project.read(cx).agent_server_store().clone(), None);
+        let connection = server.connect(delegate, cx);
         cx.spawn(async move |_, cx| {
-            let (agent, _) = connection.await?;
+            let agent = connection.await?;
             let agent = agent.downcast::<agent::NativeAgentConnection>().unwrap();
             let summary = agent
                 .0
-                .update(cx, |agent, cx| agent.thread_summary(id, cx))
+                .update(cx, |agent, cx| {
+                    agent.thread_summary(id, project.clone(), cx)
+                })
                 .await?;
             Ok(Mention::Text {
                 content: summary.to_string(),
@@ -543,6 +607,42 @@ impl MentionSet {
                 content,
                 tracked_buffers: Vec::new(),
             })
+        })
+    }
+
+    pub fn confirm_mention_for_git_diff(
+        &self,
+        base_ref: SharedString,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Mention>> {
+        let Some(project) = self.project.upgrade() else {
+            return Task::ready(Err(anyhow!("project not found")));
+        };
+
+        let Some(repo) = project.read(cx).active_repository(cx) else {
+            return Task::ready(Err(anyhow!("no active repository")));
+        };
+
+        let diff_receiver = repo.update(cx, |repo, cx| {
+            repo.diff(
+                git::repository::DiffType::MergeBase { base_ref: base_ref },
+                cx,
+            )
+        });
+
+        cx.spawn(async move |_, _| {
+            let diff_text = diff_receiver.await??;
+            if diff_text.is_empty() {
+                Ok(Mention::Text {
+                    content: "No changes found in branch diff.".into(),
+                    tracked_buffers: Vec::new(),
+                })
+            } else {
+                Ok(Mention::Text {
+                    content: diff_text,
+                    tracked_buffers: Vec::new(),
+                })
+            }
         })
     }
 }
@@ -595,16 +695,166 @@ mod tests {
             "Unexpected error: {error:#}"
         );
     }
+
+    #[gpui::test]
+    async fn test_selection_mentions_supported_for_paste(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({"file.rs": "line 1\nline 2\nline 3\nline 4\n"}),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let mention_set = cx.new(|_cx| MentionSet::new(project.downgrade(), None, None));
+
+        let mention_task = mention_set.update(cx, |mention_set, cx| {
+            let http_client = project.read(cx).client().http_client();
+            mention_set.confirm_mention_for_uri(
+                MentionUri::Selection {
+                    abs_path: Some(path!("/project/file.rs").into()),
+                    line_range: 1..=2,
+                },
+                false,
+                http_client,
+                cx,
+            )
+        });
+
+        let mention = mention_task.await.unwrap();
+        match mention {
+            Mention::Text {
+                content,
+                tracked_buffers,
+            } => {
+                assert_eq!(content, "line 2\nline 3\n");
+                assert_eq!(tracked_buffers.len(), 1);
+            }
+            other => panic!("Expected selection mention to resolve as text, got {other:?}"),
+        }
+    }
+}
+
+/// Inserts a list of images into the editor as context mentions.
+/// This is the shared implementation used by both paste and file picker operations.
+pub(crate) async fn insert_images_as_context(
+    images: Vec<gpui::Image>,
+    editor: Entity<Editor>,
+    mention_set: Entity<MentionSet>,
+    workspace: WeakEntity<Workspace>,
+    cx: &mut gpui::AsyncWindowContext,
+) {
+    if images.is_empty() {
+        return;
+    }
+
+    let replacement_text = MentionUri::PastedImage.as_link().to_string();
+
+    for image in images {
+        let Some((excerpt_id, text_anchor, multibuffer_anchor)) = editor
+            .update_in(cx, |editor, window, cx| {
+                let snapshot = editor.snapshot(window, cx);
+                let (excerpt_id, _, buffer_snapshot) =
+                    snapshot.buffer_snapshot().as_singleton().unwrap();
+
+                let cursor_anchor = editor.selections.newest_anchor().start.text_anchor;
+                let text_anchor = cursor_anchor.bias_left(&buffer_snapshot);
+                let multibuffer_anchor = snapshot
+                    .buffer_snapshot()
+                    .anchor_in_excerpt(excerpt_id, text_anchor);
+                editor.insert(&format!("{replacement_text} "), window, cx);
+                (excerpt_id, text_anchor, multibuffer_anchor)
+            })
+            .ok()
+        else {
+            break;
+        };
+
+        let content_len = replacement_text.len();
+        let Some(start_anchor) = multibuffer_anchor else {
+            continue;
+        };
+        let end_anchor = editor.update(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            snapshot.anchor_before(start_anchor.to_offset(&snapshot) + content_len)
+        });
+        let image = Arc::new(image);
+        let Ok(Some((crease_id, tx))) = cx.update(|window, cx| {
+            insert_crease_for_mention(
+                excerpt_id,
+                text_anchor,
+                content_len,
+                MentionUri::PastedImage.name().into(),
+                IconName::Image.path().into(),
+                None,
+                None,
+                None,
+                Some(Task::ready(Ok(image.clone())).shared()),
+                editor.clone(),
+                window,
+                cx,
+            )
+        }) else {
+            continue;
+        };
+        let task = cx
+            .spawn(async move |cx| {
+                let image = cx
+                    .update(|_, cx| LanguageModelImage::from_image(image, cx))
+                    .map_err(|e| e.to_string())?
+                    .await;
+                drop(tx);
+                if let Some(image) = image {
+                    Ok(Mention::Image(MentionImage {
+                        data: image.source,
+                        format: LanguageModelImage::FORMAT,
+                    }))
+                } else {
+                    Err("Failed to convert image".into())
+                }
+            })
+            .shared();
+
+        mention_set.update(cx, |mention_set, _cx| {
+            mention_set.insert_mention(crease_id, MentionUri::PastedImage, task.clone())
+        });
+
+        if task
+            .await
+            .notify_workspace_async_err(workspace.clone(), cx)
+            .is_none()
+        {
+            editor.update(cx, |editor, cx| {
+                editor.edit([(start_anchor..end_anchor, "")], cx);
+            });
+            mention_set.update(cx, |mention_set, _cx| {
+                mention_set.remove_mention(&crease_id)
+            });
+        }
+    }
 }
 
 pub(crate) fn paste_images_as_context(
     editor: Entity<Editor>,
     mention_set: Entity<MentionSet>,
+    workspace: WeakEntity<Workspace>,
     window: &mut Window,
     cx: &mut App,
 ) -> Option<Task<()>> {
     let clipboard = cx.read_from_clipboard()?;
-    Some(window.spawn(cx, async move |cx| {
+
+    // Only handle paste if the first clipboard entry is an image or file path.
+    // If text comes first, return None so the caller falls through to text paste.
+    // This respects the priority order set by the source application.
+    if matches!(
+        clipboard.entries().first(),
+        Some(ClipboardEntry::String(_)) | None
+    ) {
+        return None;
+    }
+
+    Some(window.spawn(cx, async move |mut cx| {
         use itertools::Itertools;
         let (mut images, paths) = clipboard
             .into_entries()
@@ -646,94 +896,8 @@ pub(crate) fn paste_images_as_context(
             );
         }
 
-        if images.is_empty() {
-            return;
-        }
-
-        let replacement_text = MentionUri::PastedImage.as_link().to_string();
-        cx.update(|_window, cx| {
-            cx.stop_propagation();
-        })
-        .ok();
-        for image in images {
-            let Some((excerpt_id, text_anchor, multibuffer_anchor)) = editor
-                .update_in(cx, |message_editor, window, cx| {
-                    let snapshot = message_editor.snapshot(window, cx);
-                    let (excerpt_id, _, buffer_snapshot) =
-                        snapshot.buffer_snapshot().as_singleton().unwrap();
-
-                    let text_anchor = buffer_snapshot.anchor_before(buffer_snapshot.len());
-                    let multibuffer_anchor = snapshot
-                        .buffer_snapshot()
-                        .anchor_in_excerpt(*excerpt_id, text_anchor);
-                    message_editor.edit(
-                        [(
-                            multi_buffer::Anchor::max()..multi_buffer::Anchor::max(),
-                            format!("{replacement_text} "),
-                        )],
-                        cx,
-                    );
-                    (*excerpt_id, text_anchor, multibuffer_anchor)
-                })
-                .ok()
-            else {
-                break;
-            };
-
-            let content_len = replacement_text.len();
-            let Some(start_anchor) = multibuffer_anchor else {
-                continue;
-            };
-            let end_anchor = editor.update(cx, |editor, cx| {
-                let snapshot = editor.buffer().read(cx).snapshot(cx);
-                snapshot.anchor_before(start_anchor.to_offset(&snapshot) + content_len)
-            });
-            let image = Arc::new(image);
-            let Ok(Some((crease_id, tx))) = cx.update(|window, cx| {
-                insert_crease_for_mention(
-                    excerpt_id,
-                    text_anchor,
-                    content_len,
-                    MentionUri::PastedImage.name().into(),
-                    IconName::Image.path().into(),
-                    Some(Task::ready(Ok(image.clone())).shared()),
-                    editor.clone(),
-                    window,
-                    cx,
-                )
-            }) else {
-                continue;
-            };
-            let task = cx
-                .spawn(async move |cx| {
-                    let image = cx
-                        .update(|_, cx| LanguageModelImage::from_image(image, cx))
-                        .map_err(|e| e.to_string())?
-                        .await;
-                    drop(tx);
-                    if let Some(image) = image {
-                        Ok(Mention::Image(MentionImage {
-                            data: image.source,
-                            format: LanguageModelImage::FORMAT,
-                        }))
-                    } else {
-                        Err("Failed to convert image".into())
-                    }
-                })
-                .shared();
-
-            mention_set.update(cx, |mention_set, _cx| {
-                mention_set.insert_mention(crease_id, MentionUri::PastedImage, task.clone())
-            });
-
-            if task.await.notify_async_err(cx).is_none() {
-                editor.update(cx, |editor, cx| {
-                    editor.edit([(start_anchor..end_anchor, "")], cx);
-                });
-                mention_set.update(cx, |mention_set, _cx| {
-                    mention_set.remove_mention(&crease_id)
-                });
-            }
+        if !images.is_empty() {
+            insert_images_as_context(images, editor, mention_set, workspace, &mut cx).await;
         }
     }))
 }
@@ -744,7 +908,9 @@ pub(crate) fn insert_crease_for_mention(
     content_len: usize,
     crease_label: SharedString,
     crease_icon: SharedString,
-    // abs_path: Option<Arc<Path>>,
+    crease_tooltip: Option<SharedString>,
+    mention_uri: Option<MentionUri>,
+    workspace: Option<WeakEntity<Workspace>>,
     image: Option<Shared<Task<Result<Arc<Image>, String>>>>,
     editor: Entity<Editor>,
     window: &mut Window,
@@ -764,6 +930,9 @@ pub(crate) fn insert_crease_for_mention(
             render: render_mention_fold_button(
                 crease_label.clone(),
                 crease_icon.clone(),
+                crease_tooltip,
+                mention_uri.clone(),
+                workspace.clone(),
                 start..end,
                 rx,
                 image,
@@ -797,11 +966,12 @@ pub(crate) fn insert_crease_for_mention(
 pub(crate) fn crease_for_mention(
     label: SharedString,
     icon_path: SharedString,
+    tooltip: Option<SharedString>,
     range: Range<Anchor>,
     editor_entity: WeakEntity<Editor>,
 ) -> Crease<Anchor> {
     let placeholder = FoldPlaceholder {
-        render: render_fold_icon_button(icon_path.clone(), label.clone(), editor_entity),
+        render: render_fold_icon_button(icon_path.clone(), label.clone(), tooltip, editor_entity),
         merge_adjacent: false,
         ..Default::default()
     };
@@ -815,6 +985,7 @@ pub(crate) fn crease_for_mention(
 fn render_fold_icon_button(
     icon_path: SharedString,
     label: SharedString,
+    tooltip: Option<SharedString>,
     editor: WeakEntity<Editor>,
 ) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
     Arc::new({
@@ -825,6 +996,9 @@ fn render_fold_icon_button(
 
             MentionCrease::new(fold_id, icon_path.clone(), label.clone())
                 .is_toggled(is_in_text_selection)
+                .when_some(tooltip.clone(), |this, tooltip_text| {
+                    this.tooltip(tooltip_text)
+                })
                 .into_any_element()
         }
     })
@@ -957,6 +1131,9 @@ fn render_directory_contents(entries: Vec<(Arc<RelPath>, String, String)>) -> St
 fn render_mention_fold_button(
     label: SharedString,
     icon: SharedString,
+    tooltip: Option<SharedString>,
+    mention_uri: Option<MentionUri>,
+    workspace: Option<WeakEntity<Workspace>>,
     range: Range<Anchor>,
     mut loading_finished: postage::barrier::Receiver,
     image_task: Option<Shared<Task<Result<Arc<Image>, String>>>>,
@@ -976,6 +1153,9 @@ fn render_mention_fold_button(
             id: cx.entity_id(),
             label,
             icon,
+            tooltip,
+            mention_uri: mention_uri.clone(),
+            workspace: workspace.clone(),
             range,
             editor,
             loading: Some(loading),
@@ -989,6 +1169,9 @@ struct LoadingContext {
     id: EntityId,
     label: SharedString,
     icon: SharedString,
+    tooltip: Option<SharedString>,
+    mention_uri: Option<MentionUri>,
+    workspace: Option<WeakEntity<Workspace>>,
     range: Range<Anchor>,
     editor: WeakEntity<Editor>,
     loading: Option<Task<()>>,
@@ -1005,8 +1188,13 @@ impl Render for LoadingContext {
         let id = ElementId::from(("loading_context", self.id));
 
         MentionCrease::new(id, self.icon.clone(), self.label.clone())
+            .mention_uri(self.mention_uri.clone())
+            .workspace(self.workspace.clone())
             .is_toggled(is_in_text_selection)
             .is_loading(self.loading.is_some())
+            .when_some(self.tooltip.clone(), |this, tooltip_text| {
+                this.tooltip(tooltip_text)
+            })
             .when_some(self.image.clone(), |this, image_task| {
                 this.image_preview(move |_, cx| {
                     let image = image_task.peek().cloned().transpose().ok().flatten();
@@ -1036,9 +1224,13 @@ struct ImageHover {
 }
 
 impl Render for ImageHover {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(image) = self.image.clone() {
-            gpui::img(image).max_w_96().max_h_96().into_any_element()
+            div()
+                .p_1p5()
+                .elevation_2(cx)
+                .child(gpui::img(image).h_auto().max_w_96().rounded_sm())
+                .into_any_element()
         } else {
             gpui::Empty.into_any_element()
         }

@@ -9,18 +9,16 @@ use axum::{
     response::Redirect,
     routing::get,
 };
-use collections::{BTreeSet, HashMap};
-use rpc::{ExtensionApiManifest, ExtensionProvides, GetExtensionsResponse};
+use cloud_api_types::{ExtensionApiManifest, GetExtensionsResponse};
+use collections::HashMap;
 use semver::Version as SemanticVersion;
 use serde::Deserialize;
-use std::str::FromStr;
 use std::{sync::Arc, time::Duration};
 use time::PrimitiveDateTime;
 use util::{ResultExt, maybe};
 
 pub fn router() -> Router {
     Router::new()
-        .route("/extensions", get(get_extensions))
         .route("/extensions/updates", get(get_extension_updates))
         .route("/extensions/:extension_id", get(get_extension_versions))
         .route(
@@ -31,76 +29,6 @@ pub fn router() -> Router {
             "/extensions/:extension_id/:version/download",
             get(download_extension),
         )
-}
-
-#[derive(Debug, Deserialize)]
-struct GetExtensionsParams {
-    filter: Option<String>,
-    /// A comma-delimited list of features that the extension must provide.
-    ///
-    /// For example:
-    /// - `themes`
-    /// - `themes,icon-themes`
-    /// - `languages,language-servers`
-    #[serde(default)]
-    provides: Option<String>,
-    #[serde(default)]
-    max_schema_version: i32,
-}
-
-async fn get_extensions(
-    Extension(app): Extension<Arc<AppState>>,
-    Query(params): Query<GetExtensionsParams>,
-) -> Result<Json<GetExtensionsResponse>> {
-    let provides_filter = params.provides.map(|provides| {
-        provides
-            .split(',')
-            .map(|value| value.trim())
-            .filter_map(|value| ExtensionProvides::from_str(value).ok())
-            .collect::<BTreeSet<_>>()
-    });
-
-    let mut extensions = app
-        .db
-        .get_extensions(
-            params.filter.as_deref(),
-            provides_filter.as_ref(),
-            params.max_schema_version,
-            1_000,
-        )
-        .await?;
-
-    if let Some(filter) = params.filter.as_deref() {
-        let extension_id = filter.to_lowercase();
-        let mut exact_match = None;
-        extensions.retain(|extension| {
-            if extension.id.as_ref() == extension_id {
-                exact_match = Some(extension.clone());
-                false
-            } else {
-                true
-            }
-        });
-        if exact_match.is_none() {
-            exact_match = app
-                .db
-                .get_extensions_by_ids(&[&extension_id], None)
-                .await?
-                .first()
-                .cloned();
-        }
-
-        if let Some(exact_match) = exact_match {
-            extensions.insert(0, exact_match);
-        }
-    };
-
-    if let Some(query) = params.filter.as_deref() {
-        let count = extensions.len();
-        tracing::info!(query, count, "extension_search")
-    }
-
-    Ok(Json(GetExtensionsResponse { data: extensions }))
 }
 
 #[derive(Debug, Deserialize)]

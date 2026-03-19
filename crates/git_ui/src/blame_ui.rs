@@ -44,9 +44,18 @@ impl BlameRenderer for GitBlameRenderer {
         let name = util::truncate_and_trailoff(author_name, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED);
 
         let avatar = if ProjectSettings::get_global(cx).git.blame.show_avatar {
+            let author_email = blame_entry.author_mail.as_ref().map(|email| {
+                SharedString::from(
+                    email
+                        .trim_start_matches('<')
+                        .trim_end_matches('>')
+                        .to_string(),
+                )
+            });
             Some(
                 CommitAvatar::new(
                     &blame_entry.sha.to_string().into(),
+                    author_email,
                     details.as_ref().and_then(|it| it.remote.as_ref()),
                 )
                 .render(window, cx),
@@ -186,8 +195,20 @@ impl BlameRenderer for GitBlameRenderer {
             .unwrap_or("<no name>".to_string())
             .into();
         let author_email = blame.author_mail.as_deref().unwrap_or_default();
-        let avatar = CommitAvatar::new(&sha, details.as_ref().and_then(|it| it.remote.as_ref()))
-            .render(window, cx);
+        let author_email_for_avatar = blame.author_mail.as_ref().map(|email| {
+            SharedString::from(
+                email
+                    .trim_start_matches('<')
+                    .trim_end_matches('>')
+                    .to_string(),
+            )
+        });
+        let avatar = CommitAvatar::new(
+            &sha,
+            author_email_for_avatar,
+            details.as_ref().and_then(|it| it.remote.as_ref()),
+        )
+        .render(window, cx);
 
         let short_commit_id = sha
             .get(..8)
@@ -301,10 +322,11 @@ impl BlameRenderer for GitBlameRenderer {
                                                         format!("#{}", pr.number),
                                                     )
                                                     .color(Color::Muted)
-                                                    .icon(IconName::PullRequest)
-                                                    .icon_color(Color::Muted)
-                                                    .icon_position(IconPosition::Start)
-                                                    .icon_size(IconSize::Small)
+                                                    .start_icon(
+                                                        Icon::new(IconName::PullRequest)
+                                                            .size(IconSize::Small)
+                                                            .color(Color::Muted),
+                                                    )
                                                     .on_click(move |_, _, cx| {
                                                         cx.stop_propagation();
                                                         cx.open_url(pr.url.as_str())
@@ -318,10 +340,11 @@ impl BlameRenderer for GitBlameRenderer {
                                                     short_commit_id.clone(),
                                                 )
                                                 .color(Color::Muted)
-                                                .icon(IconName::FileGit)
-                                                .icon_color(Color::Muted)
-                                                .icon_position(IconPosition::Start)
-                                                .icon_size(IconSize::Small)
+                                                .start_icon(
+                                                    Icon::new(IconName::FileGit)
+                                                        .size(IconSize::Small)
+                                                        .color(Color::Muted),
+                                                )
                                                 .on_click(move |_, window, cx| {
                                                     CommitView::open(
                                                         commit_summary.sha.clone().into(),
@@ -379,13 +402,13 @@ fn deploy_blame_entry_context_menu(
     let context_menu = ContextMenu::build(window, cx, move |menu, _, _| {
         let sha = format!("{}", blame_entry.sha);
         menu.on_blur_subscription(Subscription::new(|| {}))
-            .entry("Copy commit SHA", None, move |_, cx| {
+            .entry("Copy Commit SHA", None, move |_, cx| {
                 cx.write_to_clipboard(ClipboardItem::new_string(sha.clone()));
             })
             .when_some(
                 details.and_then(|details| details.permalink.clone()),
                 |this, url| {
-                    this.entry("Open permalink", None, move |_, cx| {
+                    this.entry("Open Permalink", None, move |_, cx| {
                         cx.open_url(url.as_str())
                     })
                 },

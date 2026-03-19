@@ -1,114 +1,130 @@
 (comment)+ @comment.around
 
 (function_declaration
-    body: (_
-        "{"
-        (_)* @function.inside
-        "}")) @function.around
+  body: (_
+    "{"
+    (_)* @function.inside
+    "}")) @function.around
 
 (method_definition
-    body: (_
-        "{"
-        (_)* @function.inside
-        "}")) @function.around
+  body: (_
+    "{"
+    (_)* @function.inside
+    "}")) @function.around
 
 (function_expression
-    body: (_
-        "{"
-        (_)* @function.inside
-        "}")) @function.around
+  body: (_
+    "{"
+    (_)* @function.inside
+    "}")) @function.around
 
 ((arrow_function
-    body: (statement_block
-        "{"
-        (_)* @function.inside
-        "}")) @function.around
- (#not-has-parent? @function.around variable_declarator))
+  body: (statement_block
+    "{"
+    (_)* @function.inside
+    "}")) @function.around
+  (#not-has-parent? @function.around variable_declarator))
 
 ; Arrow function in variable declaration - capture the full declaration
 ([
-    (lexical_declaration
-        (variable_declarator
-            value: (arrow_function
-                body: (statement_block
-                    "{"
-                    (_)* @function.inside
-                    "}"))))
-    (variable_declaration
-        (variable_declarator
-            value: (arrow_function
-                body: (statement_block
-                    "{"
-                    (_)* @function.inside
-                    "}"))))
+  (lexical_declaration
+    (variable_declarator
+      value: (arrow_function
+        body: (statement_block
+          "{"
+          (_)* @function.inside
+          "}"))))
+  (variable_declaration
+    (variable_declarator
+      value: (arrow_function
+        body: (statement_block
+          "{"
+          (_)* @function.inside
+          "}"))))
 ]) @function.around
 
 ; Arrow function in variable declaration - capture body as @function.inside
 ; (for statement blocks, the more specific pattern above captures just the contents)
 ([
-    (lexical_declaration
-        (variable_declarator
-            value: (arrow_function
-                body: (_) @function.inside)))
-    (variable_declaration
-        (variable_declarator
-            value: (arrow_function
-                body: (_) @function.inside)))
+  (lexical_declaration
+    (variable_declarator
+      value: (arrow_function
+        body: (_) @function.inside)))
+  (variable_declaration
+    (variable_declarator
+      value: (arrow_function
+        body: (_) @function.inside)))
 ]) @function.around
 
 ; Catch-all for arrow functions in other contexts (callbacks, etc.)
 ((arrow_function
-    body: (_) @function.inside) @function.around
- (#not-has-parent? @function.around variable_declarator))
+  body: (_) @function.inside) @function.around
+  (#not-has-parent? @function.around variable_declarator))
+
 (function_signature) @function.around
 
 (generator_function
-    body: (_
-        "{"
-        (_)* @function.inside
-        "}")) @function.around
+  body: (_
+    "{"
+    (_)* @function.inside
+    "}")) @function.around
 
 (generator_function_declaration
-    body: (_
-        "{"
-        (_)* @function.inside
-        "}")) @function.around
+  body: (_
+    "{"
+    (_)* @function.inside
+    "}")) @function.around
 
 (class_declaration
-    body: (_
-        "{"
-        [(_) ";"?]* @class.inside
-        "}" )) @class.around
+  body: (_
+    "{"
+    [
+      (_)
+      ";"?
+    ]* @class.inside
+    "}")) @class.around
 
 (class
-    body: (_
-        "{"
-        (_)* @class.inside
-        "}" )) @class.around
+  body: (_
+    "{"
+    (_)* @class.inside
+    "}")) @class.around
 
 (interface_declaration
-    body: (_
-        "{"
-        [(_) ";"?]* @class.inside
-        "}" )) @class.around
+  body: (_
+    "{"
+    [
+      (_)
+      ";"?
+    ]* @class.inside
+    "}")) @class.around
 
 (enum_declaration
-    body: (_
-        "{"
-        [(_) ","?]* @class.inside
-        "}" )) @class.around
+  body: (_
+    "{"
+    [
+      (_)
+      ","?
+    ]* @class.inside
+    "}")) @class.around
 
 (ambient_declaration
-    (module
+  (module
     body: (_
-        "{"
-        [(_) ";"?]* @class.inside
-        "}" ))) @class.around
+      "{"
+      [
+        (_)
+        ";"?
+      ]* @class.inside
+      "}"))) @class.around
 
 (internal_module
-    body: (_
-        "{"
-        [(_) ";"?]* @class.inside
-        "}" )) @class.around
+  body: (_
+    "{"
+    [
+      (_)
+      ";"?
+    ]* @class.inside
+    "}")) @class.around
 
 (type_alias_declaration) @class.around

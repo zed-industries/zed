@@ -17,6 +17,9 @@ pub trait KeyEvent: InputEvent {}
 /// A mouse event from the platform.
 pub trait MouseEvent: InputEvent {}
 
+/// A gesture event from the platform.
+pub trait GestureEvent: InputEvent {}
+
 /// The key down event equivalent for the platform.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct KeyDownEvent {
@@ -284,6 +287,19 @@ impl ClickEvent {
         }
     }
 
+    /// Returns if this was a middle click
+    ///
+    /// `Keyboard`: false
+    /// `Mouse`: Whether the middle button was pressed and released
+    pub fn is_middle_click(&self) -> bool {
+        match self {
+            ClickEvent::Keyboard(_) => false,
+            ClickEvent::Mouse(event) => {
+                event.down.button == MouseButton::Middle && event.up.button == MouseButton::Middle
+            }
+        }
+    }
+
     /// Returns whether the click was a standard click
     ///
     /// `Keyboard`: Always true
@@ -454,6 +470,51 @@ impl Default for ScrollDelta {
     }
 }
 
+/// A pinch gesture event from the platform, generated when the user performs
+/// a pinch-to-zoom gesture (typically on a trackpad).
+///
+/// Note: This event is only available on macOS and Wayland (Linux).
+/// On Windows, pinch gestures are simulated as scroll wheel events with Ctrl held.
+#[derive(Clone, Debug, Default)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub struct PinchEvent {
+    /// The position of the pinch center on the window.
+    pub position: Point<Pixels>,
+
+    /// The zoom delta for this event.
+    /// Positive values indicate zooming in, negative values indicate zooming out.
+    /// For example, 0.1 represents a 10% zoom increase.
+    pub delta: f32,
+
+    /// The modifiers that were held down during the pinch gesture.
+    pub modifiers: Modifiers,
+
+    /// The phase of the pinch gesture.
+    pub phase: TouchPhase,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl Sealed for PinchEvent {}
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl InputEvent for PinchEvent {
+    fn to_platform_input(self) -> PlatformInput {
+        PlatformInput::Pinch(self)
+    }
+}
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl GestureEvent for PinchEvent {}
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl MouseEvent for PinchEvent {}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl Deref for PinchEvent {
+    type Target = Modifiers;
+
+    fn deref(&self) -> &Self::Target {
+        &self.modifiers
+    }
+}
+
 impl ScrollDelta {
     /// Returns true if this is a precise scroll delta in pixels.
     pub fn precise(&self) -> bool {
@@ -544,7 +605,7 @@ impl Deref for MouseExitEvent {
 
 /// A collection of paths from the platform, such as from a file drop.
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
-pub struct ExternalPaths(pub(crate) SmallVec<[PathBuf; 2]>);
+pub struct ExternalPaths(pub SmallVec<[PathBuf; 2]>);
 
 impl ExternalPaths {
     /// Convert this collection of paths into a slice.
@@ -613,6 +674,9 @@ pub enum PlatformInput {
     MouseExited(MouseExitEvent),
     /// The scroll wheel was used.
     ScrollWheel(ScrollWheelEvent),
+    /// A pinch gesture was performed.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    Pinch(PinchEvent),
     /// Files were dragged and dropped onto the window.
     FileDrop(FileDropEvent),
 }
@@ -629,6 +693,8 @@ impl PlatformInput {
             PlatformInput::MousePressure(event) => Some(event),
             PlatformInput::MouseExited(event) => Some(event),
             PlatformInput::ScrollWheel(event) => Some(event),
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            PlatformInput::Pinch(event) => Some(event),
             PlatformInput::FileDrop(event) => Some(event),
         }
     }
@@ -644,6 +710,8 @@ impl PlatformInput {
             PlatformInput::MousePressure(_) => None,
             PlatformInput::MouseExited(_) => None,
             PlatformInput::ScrollWheel(_) => None,
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            PlatformInput::Pinch(_) => None,
             PlatformInput::FileDrop(_) => None,
         }
     }

@@ -1,4 +1,6 @@
 {
+  pkgs,
+  system,
   lib,
   stdenv,
 
@@ -24,10 +26,18 @@
   fontconfig,
   freetype,
   git,
+  glib,
+  libdrm,
+  libgbm,
   libgit2,
   libglvnd,
+  libva,
+  libxcomposite,
+  libxdamage,
+  libxext,
+  libxfixes,
   libxkbcommon,
-  livekit-libwebrtc,
+  libxrandr,
   nodejs_22,
   openssl,
   perl,
@@ -42,6 +52,7 @@
 
   withGLES ? false,
   profile ? "release",
+  commitSha ? null,
 }:
 assert withGLES -> stdenv.hostPlatform.isLinux;
 let
@@ -74,7 +85,10 @@ let
     in
     rec {
       pname = "zed-editor";
-      version = zedCargoLock.package.version + "-nightly";
+      version =
+        zedCargoLock.package.version
+        + "-nightly"
+        + lib.optionalString (commitSha != null) "+${builtins.substring 0 7 commitSha}";
       src = builtins.path {
         path = ../.;
         filter = mkIncludeFilter ../.;
@@ -161,18 +175,28 @@ let
       ]
       ++ lib.optionals stdenv'.hostPlatform.isLinux [
         alsa-lib
+        glib
+        libva
         libxkbcommon
         wayland
         gpu-lib
         xorg.libX11
         xorg.libxcb
+        libdrm
+        libgbm
+        libva
+        libxcomposite
+        libxdamage
+        libxext
+        libxfixes
+        libxrandr
       ]
       ++ lib.optionals stdenv'.hostPlatform.isDarwin [
         apple-sdk_15
         (darwinMinVersionHook "10.15")
       ];
 
-      cargoExtraArgs = "-p zed -p cli --locked --features=gpui/runtime_shaders";
+      cargoExtraArgs = "-p zed -p cli --locked --features=gpui_platform/runtime_shaders";
 
       stdenv =
         pkgs:
@@ -200,7 +224,8 @@ let
         };
         ZED_UPDATE_EXPLANATION = "Zed has been installed using Nix. Auto-updates have thus been disabled.";
         RELEASE_VERSION = version;
-        LK_CUSTOM_WEBRTC = livekit-libwebrtc;
+        ZED_COMMIT_SHA = lib.optionalString (commitSha != null) "${commitSha}";
+        LK_CUSTOM_WEBRTC = pkgs.callPackage ./livekit-libwebrtc/package.nix { };
         PROTOC = "${protobuf}/bin/protoc";
 
         CARGO_PROFILE = profile;
@@ -213,6 +238,7 @@ let
           lib.makeLibraryPath [
             gpu-lib
             wayland
+            libva
           ]
         }";
 
@@ -244,6 +270,16 @@ let
             postPatch = ''
               substituteInPlace webrtc-sys/build.rs --replace-fail \
                 "cargo:rustc-link-lib=static=webrtc" "cargo:rustc-link-lib=dylib=webrtc"
+
+              substituteInPlace webrtc-sys/build.rs --replace-fail \
+                'add_gio_headers(&mut builder);' \
+                'for lib_name in ["glib-2.0", "gio-2.0"] {
+                    if let Ok(lib) = pkg_config::Config::new().cargo_metadata(false).probe(lib_name) {
+                        for path in lib.include_paths {
+                            builder.include(&path);
+                        }
+                    }
+                }'
             ''
             + lib.optionalString withGLES ''
               cat ${glesConfig} >> .cargo/config/config.toml

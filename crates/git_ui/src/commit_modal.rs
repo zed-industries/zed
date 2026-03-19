@@ -1,8 +1,8 @@
 use crate::branch_picker::{self, BranchList};
-use crate::git_panel::{GitPanel, commit_message_editor};
+use crate::git_panel::{GitPanel, commit_message_editor, panel_editor_style};
 use git::repository::CommitOptions;
 use git::{Amend, Commit, GenerateCommitMessage, Signoff};
-use panel::{panel_button, panel_editor_style};
+use panel::panel_button;
 use project::DisableAiSettings;
 use settings::Settings;
 use ui::{
@@ -366,11 +366,12 @@ impl CommitModal {
             .unwrap_or_else(|| "<no branch>".to_owned());
 
         let branch_picker_button = panel_button(branch)
-            .icon(IconName::GitBranch)
-            .icon_size(IconSize::Small)
-            .icon_color(Color::Placeholder)
+            .start_icon(
+                Icon::new(IconName::GitBranch)
+                    .size(IconSize::Small)
+                    .color(Color::Placeholder),
+            )
             .color(Color::Muted)
-            .icon_position(IconPosition::Start)
             .on_click(cx.listener(|_, _, window, cx| {
                 window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
             }))

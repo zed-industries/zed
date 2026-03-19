@@ -1,6 +1,6 @@
 use crate::{
-    BackgroundExecutor, Clock, ForegroundExecutor, Priority, RunnableMeta, Scheduler, SessionId,
-    TestClock, Timer,
+    BackgroundExecutor, Clock, ForegroundExecutor, Instant, Priority, RunnableMeta, Scheduler,
+    SessionId, TestClock, Timer,
 };
 use async_task::Runnable;
 use backtrace::{Backtrace, BacktraceFrame};
@@ -26,7 +26,7 @@ use std::{
     },
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
     thread::{self, Thread},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 const PENDING_TRACES_VAR_NAME: &str = "PENDING_TRACES";
@@ -57,7 +57,7 @@ impl TestScheduler {
             .map(|seed| seed.parse().unwrap())
             .unwrap_or(0);
 
-        (seed..num_iterations as u64)
+        (seed..seed + num_iterations as u64)
             .map(|seed| {
                 let mut unwind_safe_f = AssertUnwindSafe(&mut f);
                 eprintln!("Running seed: {seed}");
@@ -320,10 +320,6 @@ impl TestScheduler {
         };
 
         if let Some(runnable) = runnable {
-            // Check if the executor that spawned this task was closed
-            if runnable.runnable.metadata().is_closed() {
-                return true;
-            }
             let is_foreground = runnable.session_id.is_some();
             let was_main_thread = self.state.lock().is_main_thread;
             self.state.lock().is_main_thread = is_foreground;
@@ -333,6 +329,28 @@ impl TestScheduler {
         }
 
         false
+    }
+
+    /// Drops all runnable tasks from the scheduler.
+    ///
+    /// This is used by the leak detector to ensure that all tasks have been dropped as tasks may keep entities alive otherwise.
+    /// Why do we even have tasks left when tests finish you may ask. The reason for that is simple, the scheduler itself is the executor and it retains the scheduled runnables.
+    /// A lot of tasks, including every foreground task contain an executor handle that keeps the test scheduler alive, causing a reference cycle, thus the need for this function right now.
+    pub fn drain_tasks(&self) {
+        // dropping runnables may reschedule tasks
+        // due to drop impls with executors in them
+        // so drop until we reach a fixpoint
+        loop {
+            let mut state = self.state.lock();
+            if state.runnables.is_empty() && state.timers.is_empty() {
+                break;
+            }
+            let runnables = std::mem::take(&mut state.runnables);
+            let timers = std::mem::take(&mut state.timers);
+            drop(state);
+            drop(timers);
+            drop(runnables);
+        }
     }
 
     pub fn advance_clock_to_next_timer(&self) -> bool {
@@ -614,6 +632,7 @@ impl Scheduler for TestScheduler {
         });
     }
 
+    #[track_caller]
     fn timer(&self, duration: Duration) -> Timer {
         let (tx, rx) = oneshot::channel();
         let state = &mut *self.state.lock();

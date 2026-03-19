@@ -12,7 +12,7 @@ use rand::prelude::*;
 use worktree::{Entry, EntryKind, Event, PathChange, Worktree, WorktreeModelHandle};
 
 use serde_json::json;
-use settings::SettingsStore;
+use settings::{SettingsStore, WorktreeId};
 use std::{
     env,
     fmt::Write,
@@ -49,6 +49,7 @@ async fn test_traversal(cx: &mut TestAppContext) {
         fs,
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -114,6 +115,7 @@ async fn test_circular_symlinks(cx: &mut TestAppContext) {
         fs.clone(),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -214,6 +216,7 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
         fs.clone(),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -365,6 +368,7 @@ async fn test_renaming_case_only(cx: &mut TestAppContext) {
         fs.clone(),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -406,6 +410,164 @@ async fn test_renaming_case_only(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_root_rescan_reconciles_stale_state(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "old.txt": "",
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| entry.path.as_ref())
+                .collect::<Vec<_>>(),
+            vec![rel_path(""), rel_path("old.txt")]
+        );
+    });
+
+    fs.pause_events();
+    fs.remove_file(Path::new("/root/old.txt"), RemoveOptions::default())
+        .await
+        .unwrap();
+    fs.insert_file(Path::new("/root/new.txt"), Vec::new()).await;
+    assert_eq!(fs.buffered_event_count(), 2);
+    fs.clear_buffered_events();
+
+    tree.read_with(cx, |tree, _| {
+        assert!(tree.entry_for_path(rel_path("old.txt")).is_some());
+        assert!(tree.entry_for_path(rel_path("new.txt")).is_none());
+    });
+
+    fs.emit_fs_event("/root", Some(fs::PathEventKind::Rescan));
+    fs.unpause_events_and_flush();
+    tree.flush_fs_events(cx).await;
+
+    tree.read_with(cx, |tree, _| {
+        assert!(tree.entry_for_path(rel_path("old.txt")).is_none());
+        assert!(tree.entry_for_path(rel_path("new.txt")).is_some());
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| entry.path.as_ref())
+                .collect::<Vec<_>>(),
+            vec![rel_path(""), rel_path("new.txt")]
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_subtree_rescan_reports_unchanged_descendants_as_updated(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "dir": {
+                "child.txt": "",
+                "nested": {
+                    "grandchild.txt": "",
+                },
+                "remove": {
+                    "removed.txt": "",
+                }
+            },
+            "other.txt": "",
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    let tree_updates = Arc::new(Mutex::new(Vec::new()));
+    tree.update(cx, |_, cx| {
+        let tree_updates = tree_updates.clone();
+        cx.subscribe(&tree, move |_, _, event, _| {
+            if let Event::UpdatedEntries(update) = event {
+                tree_updates.lock().extend(
+                    update
+                        .iter()
+                        .filter(|(path, _, _)| path.as_ref() != rel_path("fs-event-sentinel"))
+                        .map(|(path, _, change)| (path.clone(), *change)),
+                );
+            }
+        })
+        .detach();
+    });
+    fs.pause_events();
+    fs.insert_file("/root/dir/new.txt", b"new content".to_vec())
+        .await;
+    fs.remove_dir(
+        "/root/dir/remove".as_ref(),
+        RemoveOptions {
+            recursive: true,
+            ignore_if_not_exists: false,
+        },
+    )
+    .await
+    .unwrap();
+    fs.clear_buffered_events();
+    fs.unpause_events_and_flush();
+
+    fs.emit_fs_event("/root/dir", Some(fs::PathEventKind::Rescan));
+    tree.flush_fs_events(cx).await;
+
+    assert_eq!(
+        mem::take(&mut *tree_updates.lock()),
+        &[
+            (rel_path("dir").into(), PathChange::Updated),
+            (rel_path("dir/child.txt").into(), PathChange::Updated),
+            (rel_path("dir/nested").into(), PathChange::Updated),
+            (
+                rel_path("dir/nested/grandchild.txt").into(),
+                PathChange::Updated
+            ),
+            (rel_path("dir/new.txt").into(), PathChange::Added),
+            (rel_path("dir/remove").into(), PathChange::Removed),
+            (
+                rel_path("dir/remove/removed.txt").into(),
+                PathChange::Removed
+            ),
+        ]
+    );
+
+    tree.read_with(cx, |tree, _| {
+        assert!(tree.entry_for_path(rel_path("other.txt")).is_some());
+    });
+}
+
+#[gpui::test]
 async fn test_open_gitignored_files(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
@@ -443,6 +605,7 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
         fs.clone(),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -608,6 +771,7 @@ async fn test_dirs_no_longer_ignored(cx: &mut TestAppContext) {
         fs.clone(),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -709,6 +873,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -807,6 +972,7 @@ async fn test_file_scan_inclusions(cx: &mut TestAppContext) {
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -873,6 +1039,7 @@ async fn test_file_scan_exclusions_overrules_inclusions(cx: &mut TestAppContext)
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -932,6 +1099,7 @@ async fn test_file_scan_inclusions_reindexes_on_setting_change(cx: &mut TestAppC
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -1018,6 +1186,7 @@ async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -1100,6 +1269,7 @@ async fn test_hidden_files(cx: &mut TestAppContext) {
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -1211,6 +1381,7 @@ async fn test_fs_events_in_exclusions(cx: &mut TestAppContext) {
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -1323,6 +1494,7 @@ async fn test_fs_events_in_dot_git_worktree(cx: &mut TestAppContext) {
         Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -1362,6 +1534,7 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
         fs,
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -1431,6 +1604,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         fs_fake,
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -1473,6 +1647,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         fs_real,
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -1582,6 +1757,7 @@ async fn test_create_file_in_expanded_gitignored_dir(cx: &mut TestAppContext) {
         fs.clone(),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -1678,6 +1854,7 @@ async fn test_fs_event_for_gitignored_dir_does_not_lose_contents(cx: &mut TestAp
         fs.clone(),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -1756,6 +1933,7 @@ async fn test_random_worktree_operations_during_initial_scan(
         fs.clone(),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -1847,6 +2025,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
         fs.clone(),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -1920,6 +2099,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
             fs.clone(),
             Default::default(),
             true,
+            WorktreeId::from_proto(0),
             &mut cx.to_async(),
         )
         .await
@@ -2244,6 +2424,7 @@ async fn test_private_single_file_worktree(cx: &mut TestAppContext) {
         fs.clone(),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -2277,6 +2458,7 @@ async fn test_repository_above_root(executor: BackgroundExecutor, cx: &mut TestA
         fs.clone(),
         Arc::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -2343,6 +2525,7 @@ async fn test_global_gitignore(executor: BackgroundExecutor, cx: &mut TestAppCon
         fs.clone(),
         Arc::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -2449,6 +2632,7 @@ async fn test_repo_exclude(executor: BackgroundExecutor, cx: &mut TestAppContext
         fs.clone(),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -2665,6 +2849,7 @@ async fn test_load_file_encoding(cx: &mut TestAppContext) {
         fs,
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -2728,6 +2913,7 @@ async fn test_write_file_encoding(cx: &mut gpui::TestAppContext) {
         fs.clone(),
         Default::default(),
         true,
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await
@@ -2866,6 +3052,7 @@ async fn test_refresh_entries_for_paths_creates_ancestors(cx: &mut TestAppContex
         fs.clone(),
         Default::default(),
         false, // Disable scanning so the initial scan doesn't discover any entries
+        WorktreeId::from_proto(0),
         &mut cx.to_async(),
     )
     .await

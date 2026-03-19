@@ -30,6 +30,8 @@ secret!(AZURE_SIGNING_CLIENT_ID);
 secret!(AZURE_SIGNING_CLIENT_SECRET);
 secret!(AZURE_SIGNING_TENANT_ID);
 secret!(CACHIX_AUTH_TOKEN);
+secret!(CLUSTER_NAME);
+secret!(DIGITALOCEAN_ACCESS_TOKEN);
 secret!(DIGITALOCEAN_SPACES_ACCESS_KEY);
 secret!(DIGITALOCEAN_SPACES_SECRET_KEY);
 secret!(GITHUB_TOKEN);
@@ -46,6 +48,9 @@ secret!(DISCORD_WEBHOOK_RELEASE_NOTES);
 secret!(WINGET_TOKEN);
 secret!(VERCEL_TOKEN);
 secret!(SLACK_WEBHOOK_WORKFLOW_FAILURES);
+secret!(R2_ACCOUNT_ID);
+secret!(R2_ACCESS_KEY_ID);
+secret!(R2_SECRET_ACCESS_KEY);
 
 // todo(ci) make these secrets too...
 var!(AZURE_SIGNING_ACCOUNT_NAME);
@@ -151,14 +156,31 @@ pub(crate) struct StepOutput {
 
 impl StepOutput {
     pub fn new<T>(step: &Step<T>, name: &'static str) -> Self {
-        Self {
-            name,
-            step_id: step
-                .value
-                .id
-                .clone()
-                .expect("Steps that produce outputs must have an ID"),
-        }
+        let step_id = step
+            .value
+            .id
+            .clone()
+            .expect("Steps that produce outputs must have an ID");
+
+        assert!(
+            step.value
+                .run
+                .as_ref()
+                .is_none_or(|run_command| run_command.contains(name)),
+            "Step Output name {name} must occur at least once in run command with ID {step_id}!"
+        );
+
+        Self { name, step_id }
+    }
+
+    pub fn new_unchecked<T>(step: &Step<T>, name: &'static str) -> Self {
+        let step_id = step
+            .value
+            .id
+            .clone()
+            .expect("Steps that produce outputs must have an ID");
+
+        Self { name, step_id }
     }
 
     pub fn expr(&self) -> String {
@@ -337,6 +359,8 @@ pub mod assets {
     pub const REMOTE_SERVER_MAC_X86_64: &str = "zed-remote-server-macos-x86_64.gz";
     pub const REMOTE_SERVER_LINUX_AARCH64: &str = "zed-remote-server-linux-aarch64.gz";
     pub const REMOTE_SERVER_LINUX_X86_64: &str = "zed-remote-server-linux-x86_64.gz";
+    pub const REMOTE_SERVER_WINDOWS_AARCH64: &str = "zed-remote-server-windows-aarch64.zip";
+    pub const REMOTE_SERVER_WINDOWS_X86_64: &str = "zed-remote-server-windows-x86_64.zip";
 
     pub fn all() -> Vec<&'static str> {
         vec![
@@ -350,6 +374,8 @@ pub mod assets {
             REMOTE_SERVER_MAC_X86_64,
             REMOTE_SERVER_LINUX_AARCH64,
             REMOTE_SERVER_LINUX_X86_64,
+            REMOTE_SERVER_WINDOWS_AARCH64,
+            REMOTE_SERVER_WINDOWS_X86_64,
         ]
     }
 }

@@ -550,7 +550,7 @@ impl Default for EditorStyle {
 }
 
 pub fn make_inlay_hints_style(cx: &mut App) -> HighlightStyle {
-    let show_background = language_settings::language_settings(cx).get()
+    let show_background = language_settings::language_settings(None, None, cx)
         .inlay_hints
         .show_background;
 
@@ -5989,7 +5989,7 @@ impl Editor {
 
         let file = buffer.file();
 
-        if !language_settings(cx).buffer(buffer).get().show_edit_predictions {
+        if !language_settings(buffer.language().map(|l| l.name()), file, cx).show_edit_predictions {
             return EditPredictionSettings::Disabled;
         };
 
@@ -18800,7 +18800,7 @@ fn choose_completion_range(
     } = &completion.source
     {
         let completion_mode_setting =
-            language_settings(cx).buffer(buffer).get()
+            language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
                 .completions
                 .lsp_insert_mode;
 
@@ -19849,7 +19849,7 @@ fn inlay_hint_settings(
 ) -> InlayHintSettings {
     let file = snapshot.file_at(location);
     let language = snapshot.language_at(location).map(|l| l.name());
-    language_settings(cx).language(language).file(file).get().inlay_hints
+    language_settings(language, file, cx).inlay_hints
 }
 
 fn consume_contiguous_rows(

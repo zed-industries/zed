@@ -491,7 +491,7 @@ impl ListState {
 
     /// Returns the maximum scroll offset according to the items we have measured.
     /// This value remains constant while dragging to prevent the scrollbar from moving away unexpectedly.
-    pub fn max_offset_for_scrollbar(&self) -> Size<Pixels> {
+    pub fn max_offset_for_scrollbar(&self) -> Point<Pixels> {
         let state = self.0.borrow();
         let bounds = state.last_layout_bounds.unwrap_or_default();
 
@@ -499,7 +499,7 @@ impl ListState {
             .scrollbar_drag_start_height
             .unwrap_or_else(|| state.items.summary().height);
 
-        Size::new(Pixels::ZERO, Pixels::ZERO.max(height - bounds.size.height))
+        point(Pixels::ZERO, Pixels::ZERO.max(height - bounds.size.height))
     }
 
     /// Returns the current scroll offset adjusted for the scrollbar
@@ -1103,6 +1103,7 @@ impl Element for List {
             );
 
             state.items = new_items;
+            state.measuring_behavior.reset();
         }
 
         let padding = style
@@ -1285,7 +1286,7 @@ mod test {
 
         // Paint
         cx.draw(point(px(0.), px(0.)), size(px(100.), px(20.)), |_, cx| {
-            cx.new(|_| TestView(state.clone()))
+            cx.new(|_| TestView(state.clone())).into_any_element()
         });
 
         // Reset
@@ -1322,7 +1323,7 @@ mod test {
 
         // Paint
         cx.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, cx| {
-            cx.new(|_| TestView(state.clone()))
+            cx.new(|_| TestView(state.clone())).into_any_element()
         });
 
         // Test positive distance: start at item 1, move down 30px
@@ -1346,6 +1347,41 @@ mod test {
         let offset = state.logical_scroll_top();
         assert_eq!(offset.item_ix, 0);
         assert_eq!(offset.offset_in_item, px(0.));
+    }
+
+    #[gpui::test]
+    fn test_measure_all_after_width_change(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        let state = ListState::new(10, crate::ListAlignment::Top, px(0.)).measure_all();
+
+        struct TestView(ListState);
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                list(self.0.clone(), |_, _, _| {
+                    div().h(px(50.)).w_full().into_any()
+                })
+                .w_full()
+                .h_full()
+            }
+        }
+
+        let view = cx.update(|_, cx| cx.new(|_| TestView(state.clone())));
+
+        // First draw at width 100: all 10 items measured (total 500px).
+        // Viewport is 200px, so max scroll offset should be 300px.
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
+            view.clone().into_any_element()
+        });
+        assert_eq!(state.max_offset_for_scrollbar().y, px(300.));
+
+        // Second draw at a different width: items get invalidated.
+        // Without the fix, max_offset would drop because unmeasured items
+        // contribute 0 height.
+        cx.draw(point(px(0.), px(0.)), size(px(200.), px(200.)), |_, _| {
+            view.into_any_element()
+        });
+        assert_eq!(state.max_offset_for_scrollbar().y, px(300.));
     }
 
     #[gpui::test]
@@ -1391,7 +1427,7 @@ mod test {
         });
 
         cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
-            view.clone()
+            view.clone().into_any_element()
         });
 
         let offset = state.logical_scroll_top();
@@ -1405,7 +1441,9 @@ mod test {
         item_height.set(50);
         state.remeasure();
 
-        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| view);
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
+            view.into_any_element()
+        });
 
         let offset = state.logical_scroll_top();
         assert_eq!(offset.item_ix, 2);

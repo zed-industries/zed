@@ -12,8 +12,10 @@ use gpui::{
 };
 use settings::SettingsStore;
 use std::sync::Arc;
-use ui::{ContextMenu, Divider, DividerColor, IconButton, Tooltip, h_flex};
-use ui::{prelude::*, right_click_menu};
+use ui::{
+    ContextMenu, CountBadge, Divider, DividerColor, IconButton, Tooltip, prelude::*,
+    right_click_menu,
+};
 use util::ResultExt as _;
 
 pub(crate) const RESIZE_HANDLE_SIZE: Pixels = px(6.);
@@ -26,72 +28,6 @@ pub enum PanelEvent {
 }
 
 pub use proto::PanelId;
-
-pub struct MinimizePane;
-pub struct ClosePane;
-
-pub trait UtilityPane: EventEmitter<MinimizePane> + EventEmitter<ClosePane> + Render {
-    fn position(&self, window: &Window, cx: &App) -> UtilityPanePosition;
-    /// The icon to render in the adjacent pane's tab bar for toggling this utility pane
-    fn toggle_icon(&self, cx: &App) -> IconName;
-    fn expanded(&self, cx: &App) -> bool;
-    fn set_expanded(&mut self, expanded: bool, cx: &mut Context<Self>);
-    fn width(&self, cx: &App) -> Pixels;
-    fn set_width(&mut self, width: Option<Pixels>, cx: &mut Context<Self>);
-}
-
-pub trait UtilityPaneHandle: 'static + Send + Sync {
-    fn position(&self, window: &Window, cx: &App) -> UtilityPanePosition;
-    fn toggle_icon(&self, cx: &App) -> IconName;
-    fn expanded(&self, cx: &App) -> bool;
-    fn set_expanded(&self, expanded: bool, cx: &mut App);
-    fn width(&self, cx: &App) -> Pixels;
-    fn set_width(&self, width: Option<Pixels>, cx: &mut App);
-    fn to_any(&self) -> AnyView;
-    fn box_clone(&self) -> Box<dyn UtilityPaneHandle>;
-}
-
-impl<T> UtilityPaneHandle for Entity<T>
-where
-    T: UtilityPane,
-{
-    fn position(&self, window: &Window, cx: &App) -> UtilityPanePosition {
-        self.read(cx).position(window, cx)
-    }
-
-    fn toggle_icon(&self, cx: &App) -> IconName {
-        self.read(cx).toggle_icon(cx)
-    }
-
-    fn expanded(&self, cx: &App) -> bool {
-        self.read(cx).expanded(cx)
-    }
-
-    fn set_expanded(&self, expanded: bool, cx: &mut App) {
-        self.update(cx, |this, cx| this.set_expanded(expanded, cx))
-    }
-
-    fn width(&self, cx: &App) -> Pixels {
-        self.read(cx).width(cx)
-    }
-
-    fn set_width(&self, width: Option<Pixels>, cx: &mut App) {
-        self.update(cx, |this, cx| this.set_width(width, cx))
-    }
-
-    fn to_any(&self) -> AnyView {
-        self.clone().into()
-    }
-
-    fn box_clone(&self) -> Box<dyn UtilityPaneHandle> {
-        Box::new(self.clone())
-    }
-}
-
-pub enum UtilityPanePosition {
-    Left,
-    Right,
-}
 
 pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn persistent_name() -> &'static str;
@@ -1006,6 +942,7 @@ impl Render for PanelButtons {
                 };
 
                 let focus_handle = dock.focus_handle(cx);
+                let icon_label = entry.panel.icon_label(window, cx);
 
                 Some(
                     right_click_menu(name)
@@ -1039,7 +976,7 @@ impl Render for PanelButtons {
                         .trigger(move |is_active, _window, _cx| {
                             // Include active state in element ID to invalidate the cached
                             // tooltip when panel state changes (e.g., via keyboard shortcut)
-                            IconButton::new((name, is_active_button as u64), icon)
+                            let button = IconButton::new((name, is_active_button as u64), icon)
                                 .icon_size(IconSize::Small)
                                 .toggle_state(is_active_button)
                                 .on_click({
@@ -1053,7 +990,15 @@ impl Render for PanelButtons {
                                     this.tooltip(move |_window, cx| {
                                         Tooltip::for_action(tooltip.clone(), &*action, cx)
                                     })
-                                })
+                                });
+
+                            div().relative().child(button).when_some(
+                                icon_label
+                                    .clone()
+                                    .filter(|_| !is_active_button)
+                                    .and_then(|label| label.parse::<usize>().ok()),
+                                |this, count| this.child(CountBadge::new(count)),
+                            )
                         }),
                 )
             })
