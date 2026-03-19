@@ -179,6 +179,10 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: false
     pub show_count_badge: Option<bool>,
+    /// Whether to play a system-defined sound when the `BEL` character (`\a`) is printed to terminal.
+    ///
+    /// Default: true
+    pub audible_bell: Option<bool>,
 }
 
 /// Shell configuration to open the terminal with.
