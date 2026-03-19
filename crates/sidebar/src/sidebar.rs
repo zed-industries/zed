@@ -1429,7 +1429,7 @@ impl Sidebar {
             .anchor(gpui::Corner::TopRight)
             .offset(gpui::Point {
                 x: px(0.),
-                y: px(2.),
+                y: px(1.),
             })
     }
 
@@ -1599,11 +1599,13 @@ impl Sidebar {
     }
 
     fn focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if matches!(self.view, SidebarView::Archive(_)) {
+        if !self.focus_handle.is_focused(window) {
             return;
         }
 
-        if self.selection.is_none() && self.focus_handle.is_focused(window) {
+        if let SidebarView::Archive(archive) = &self.view {
+            archive.update(cx, |view, cx| view.focus_filter_editor(window, cx));
+        } else if self.selection.is_none() {
             self.filter_editor.focus_handle(cx).focus(window, cx);
         }
     }
