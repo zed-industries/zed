@@ -20,8 +20,8 @@ use project::{AgentId, AgentServerStore};
 use theme::ActiveTheme;
 use ui::{
     ButtonLike, CommonAnimationExt, ContextMenu, ContextMenuEntry, Divider, HighlightedLabel,
-    KeyBinding, ListItem, PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, WithScrollbar,
-    prelude::*, utils::platform_title_bar_height,
+    KeyBinding, PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, WithScrollbar, prelude::*,
+    utils::platform_title_bar_height,
 };
 use util::ResultExt as _;
 use zed_actions::agents_sidebar::FocusSidebarFilter;
@@ -535,9 +535,19 @@ impl ThreadsArchiveView {
                         .into_any_element()
                 };
 
-                ListItem::new(id)
-                    .selectable(!can_unarchive)
-                    .focused(is_focused)
+                h_flex()
+                    .id(id)
+                    .min_w_0()
+                    .w_full()
+                    .px(DynamicSpacing::Base06.rems(cx))
+                    .border_1()
+                    .map(|this| {
+                        if is_focused {
+                            this.border_color(cx.theme().colors().border_focused)
+                        } else {
+                            this.border_color(gpui::transparent_black())
+                        }
+                    })
                     .on_hover(cx.listener(move |this, is_hovered, _window, cx| {
                         if *is_hovered {
                             this.hovered_index = Some(ix);
