@@ -144,7 +144,11 @@ jobs:
 
               const alreadyCommented = comments.some(c => c.body.includes(MARKER));
               if (!alreadyCommented) {
-                const prBody = context.payload.pull_request.body || '';
+                // Strip HTML comments before checking — the PR template's
+                // placeholder text contains "guided tour" and "read in order"
+                // which causes false positives.
+                const prBody = (context.payload.pull_request.body || '')
+                  .replace(/<!--[\s\S]*?-->/g, '');
                 const guidedTourPresent = /how to review|guided tour|read.*in.*order/i.test(prBody);
 
                 let body = `${MARKER}\n`;
