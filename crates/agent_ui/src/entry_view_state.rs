@@ -1,17 +1,17 @@
-use std::{cell::RefCell, ops::Range, rc::Rc};
+use std::ops::Range;
 
 use super::thread_history::ThreadHistory;
 use acp_thread::{AcpThread, AgentThreadEntry};
 use agent::ThreadStore;
-use agent_client_protocol::{self as acp, ToolCallId};
+use agent_client_protocol::ToolCallId;
 use collections::HashMap;
 use editor::{Editor, EditorEvent, EditorMode, MinimapVisibility, SizingBehavior};
 use gpui::{
     AnyEntity, App, AppContext as _, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    ScrollHandle, SharedString, TextStyleRefinement, WeakEntity, Window,
+    ScrollHandle, TextStyleRefinement, WeakEntity, Window,
 };
 use language::language_settings::SoftWrap;
-use project::Project;
+use project::{AgentId, Project};
 use prompt_store::PromptStore;
 use rope::Point;
 use settings::Settings as _;
@@ -20,18 +20,17 @@ use theme::ThemeSettings;
 use ui::{Context, TextSize};
 use workspace::Workspace;
 
-use crate::message_editor::{MessageEditor, MessageEditorEvent};
+use crate::message_editor::{MessageEditor, MessageEditorEvent, SharedSessionCapabilities};
 
 pub struct EntryViewState {
     workspace: WeakEntity<Workspace>,
     project: WeakEntity<Project>,
     thread_store: Option<Entity<ThreadStore>>,
-    history: WeakEntity<ThreadHistory>,
+    history: Option<WeakEntity<ThreadHistory>>,
     prompt_store: Option<Entity<PromptStore>>,
     entries: Vec<Entry>,
-    prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
-    available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
-    agent_name: SharedString,
+    session_capabilities: SharedSessionCapabilities,
+    agent_id: AgentId,
 }
 
 impl EntryViewState {
@@ -39,11 +38,10 @@ impl EntryViewState {
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
-        history: WeakEntity<ThreadHistory>,
+        history: Option<WeakEntity<ThreadHistory>>,
         prompt_store: Option<Entity<PromptStore>>,
-        prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
-        available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
-        agent_name: SharedString,
+        session_capabilities: SharedSessionCapabilities,
+        agent_id: AgentId,
     ) -> Self {
         Self {
             workspace,
@@ -52,9 +50,8 @@ impl EntryViewState {
             history,
             prompt_store,
             entries: Vec::new(),
-            prompt_capabilities,
-            available_commands,
-            agent_name,
+            session_capabilities,
+            agent_id,
         }
     }
 
@@ -94,9 +91,8 @@ impl EntryViewState {
                             self.thread_store.clone(),
                             self.history.clone(),
                             self.prompt_store.clone(),
-                            self.prompt_capabilities.clone(),
-                            self.available_commands.clone(),
-                            self.agent_name.clone(),
+                            self.session_capabilities.clone(),
+                            self.agent_id.clone(),
                             "Edit message － @ to include context",
                             editor::EditorMode::AutoHeight {
                                 min_lines: 1,
@@ -227,7 +223,10 @@ impl EntryViewState {
                 } else {
                     self.set_entry(
                         index,
-                        Entry::AssistantMessage(AssistantMessageEntry::default()),
+                        Entry::AssistantMessage(AssistantMessageEntry {
+                            scroll_handles_by_chunk_index: HashMap::default(),
+                            focus_handle: cx.focus_handle(),
+                        }),
                     );
                     let Some(Entry::AssistantMessage(entry)) = self.entries.get_mut(index) else {
                         unreachable!()
@@ -291,9 +290,10 @@ pub enum ViewEvent {
     },
 }
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct AssistantMessageEntry {
     scroll_handles_by_chunk_index: HashMap<usize, ScrollHandle>,
+    focus_handle: FocusHandle,
 }
 
 impl AssistantMessageEntry {
@@ -326,7 +326,8 @@ impl Entry {
     pub fn focus_handle(&self, cx: &App) -> Option<FocusHandle> {
         match self {
             Self::UserMessage(editor) => Some(editor.read(cx).focus_handle(cx)),
-            Self::AssistantMessage(_) | Self::ToolCall(_) => None,
+            Self::AssistantMessage(message) => Some(message.focus_handle.clone()),
+            Self::ToolCall(_) => None,
         }
     }
 
@@ -453,6 +454,7 @@ fn diff_editor_text_style_refinement(cx: &mut App) -> TextStyleRefinement {
 mod tests {
     use std::path::Path;
     use std::rc::Rc;
+    use std::sync::Arc;
 
     use acp_thread::{AgentConnection, StubAgentConnection};
     use agent_client_protocol as acp;
@@ -460,15 +462,17 @@ mod tests {
     use editor::RowInfo;
     use fs::FakeFs;
     use gpui::{AppContext as _, TestAppContext};
+    use parking_lot::RwLock;
 
     use crate::entry_view_state::EntryViewState;
+    use crate::message_editor::SessionCapabilities;
     use multi_buffer::MultiBufferRow;
     use pretty_assertions::assert_matches;
     use project::Project;
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
-    use workspace::MultiWorkspace;
+    use workspace::{MultiWorkspace, PathList};
 
     #[gpui::test]
     async fn test_diff_sync(cx: &mut TestAppContext) {
@@ -495,9 +499,11 @@ mod tests {
         let connection = Rc::new(StubAgentConnection::new());
         let thread = cx
             .update(|_, cx| {
-                connection
-                    .clone()
-                    .new_session(project.clone(), Path::new(path!("/project")), cx)
+                connection.clone().new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new(path!("/project"))]),
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -508,18 +514,16 @@ mod tests {
         });
 
         let thread_store = None;
-        let history =
-            cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
+        let history: Option<gpui::WeakEntity<crate::ThreadHistory>> = None;
 
         let view_state = cx.new(|_cx| {
             EntryViewState::new(
                 workspace.downgrade(),
                 project.downgrade(),
                 thread_store,
-                history.downgrade(),
+                history,
                 None,
-                Default::default(),
-                Default::default(),
+                Arc::new(RwLock::new(SessionCapabilities::default())),
                 "Test Agent".into(),
             )
         });

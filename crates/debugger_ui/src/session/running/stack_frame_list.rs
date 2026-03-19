@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::{Context as _, Result, anyhow};
 use dap::StackFrameId;
 use dap::adapters::DebugAdapterName;
-use db::kvp::KEY_VALUE_STORE;
+use db::kvp::KeyValueStore;
 use gpui::{
     Action, AnyElement, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, ListState,
     Subscription, Task, WeakEntity, list,
@@ -122,7 +122,7 @@ impl StackFrameList {
             .flatten()
             .and_then(|database_id| {
                 let key = stack_frame_filter_key(&session.read(cx).adapter(), database_id);
-                KEY_VALUE_STORE
+                KeyValueStore::global(cx)
                     .read_kvp(&key)
                     .ok()
                     .flatten()
@@ -852,8 +852,10 @@ impl StackFrameList {
             .flatten()
         {
             let key = stack_frame_filter_key(&self.session.read(cx).adapter(), database_id);
-            let save_task = KEY_VALUE_STORE.write_kvp(key, self.list_filter.into());
-            cx.background_spawn(save_task).detach();
+            let kvp = KeyValueStore::global(cx);
+            let filter: String = self.list_filter.into();
+            cx.background_spawn(async move { kvp.write_kvp(key, filter).await })
+                .detach();
         }
 
         if let Some(ThreadStatus::Stopped) = thread_status {

@@ -27,8 +27,12 @@ use collections::{FxHashMap, FxHashSet, HashMap, VecDeque};
 pub use context::*;
 pub use entity_map::*;
 use gpui_util::{ResultExt, debug_panic};
+#[cfg(any(test, feature = "test-support"))]
+pub use headless_app_context::*;
 use http_client::{HttpClient, Url};
 use smallvec::SmallVec;
+#[cfg(any(test, feature = "test-support"))]
+pub use test_app::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
@@ -53,6 +57,10 @@ use crate::{
 mod async_context;
 mod context;
 mod entity_map;
+#[cfg(any(test, feature = "test-support"))]
+mod headless_app_context;
+#[cfg(any(test, feature = "test-support"))]
+mod test_app;
 #[cfg(any(test, feature = "test-support"))]
 mod test_context;
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]

@@ -1,9 +1,9 @@
 use anyhow::{Context as _, Result};
 
-use audio::{AudioSettings, CHANNEL_COUNT, LEGACY_CHANNEL_COUNT, LEGACY_SAMPLE_RATE, SAMPLE_RATE};
+use audio::{AudioSettings, CHANNEL_COUNT, SAMPLE_RATE};
 use cpal::DeviceId;
 use cpal::traits::{DeviceTrait, StreamTrait as _};
-use futures::channel::mpsc::UnboundedSender;
+use futures::channel::mpsc::Sender;
 use futures::{Stream, StreamExt as _};
 use gpui::{
     AsyncApp, BackgroundExecutor, Priority, ScreenCaptureFrame, ScreenCaptureSource,
@@ -27,10 +27,15 @@ use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::cell::RefCell;
 use std::sync::Weak;
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
-use std::time::Duration;
-use std::{borrow::Cow, collections::VecDeque, sync::Arc, thread};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
+use std::{borrow::Cow, collections::VecDeque, sync::Arc};
 use util::{ResultExt as _, maybe};
+
+struct TimestampedFrame {
+    frame: AudioFrame<'static>,
+    captured_at: Instant,
+}
 
 mod source;
 
@@ -99,8 +104,8 @@ impl AudioStack {
         let next_ssrc = self.next_ssrc.fetch_add(1, Ordering::Relaxed);
         let source = AudioMixerSource {
             ssrc: next_ssrc,
-            sample_rate: LEGACY_SAMPLE_RATE.get(),
-            num_channels: LEGACY_CHANNEL_COUNT.get() as u32,
+            sample_rate: SAMPLE_RATE.get(),
+            num_channels: CHANNEL_COUNT.get() as u32,
             buffer: Arc::default(),
         };
         self.mixer.lock().add_source(source.clone());
@@ -111,7 +116,7 @@ impl AudioStack {
             source.num_channels as i32,
         );
 
-        let receive_task = self.executor.spawn({
+        let receive_task = self.executor.spawn_with_priority(Priority::RealtimeAudio, {
             let source = source.clone();
             async move {
                 while let Some(frame) = stream.next().await {
@@ -139,12 +144,14 @@ impl AudioStack {
         let task = Arc::new(self.executor.spawn({
             let apm = self.apm.clone();
             let mixer = self.mixer.clone();
+            let executor = self.executor.clone();
             async move {
                 Self::play_output(
+                    executor,
                     apm,
                     mixer,
-                    LEGACY_SAMPLE_RATE.get(),
-                    LEGACY_CHANNEL_COUNT.get().into(),
+                    SAMPLE_RATE.get(),
+                    CHANNEL_COUNT.get().into(),
                     output_audio_device,
                 )
                 .await
@@ -160,7 +167,7 @@ impl AudioStack {
         user_name: String,
         is_staff: bool,
         cx: &AsyncApp,
-    ) -> Result<(crate::LocalAudioTrack, AudioStream)> {
+    ) -> Result<(crate::LocalAudioTrack, AudioStream, Arc<AtomicU64>)> {
         let legacy_audio_compatible =
             AudioSettings::try_read_global(cx, |setting| setting.legacy_audio_compatible)
                 .unwrap_or(true);
@@ -169,8 +176,9 @@ impl AudioStack {
             NativeAudioSource::new(
                 // n.b. this struct's options are always ignored, noise cancellation is provided by apm.
                 AudioSourceOptions::default(),
-                LEGACY_SAMPLE_RATE.get(),
-                LEGACY_CHANNEL_COUNT.get().into(),
+                SAMPLE_RATE.get(), // TODO(audio): this was legacy params,
+                // removed for now for simplicity
+                CHANNEL_COUNT.get().into(),
                 10,
             )
         } else {
@@ -199,11 +207,15 @@ impl AudioStack {
 
         let apm = self.apm.clone();
 
-        let (frame_tx, mut frame_rx) = futures::channel::mpsc::unbounded();
-        let transmit_task = self.executor.spawn({
+        let input_lag_us = Arc::new(AtomicU64::new(0));
+        let (frame_tx, mut frame_rx) = futures::channel::mpsc::channel::<TimestampedFrame>(1);
+        let transmit_task = self.executor.spawn_with_priority(Priority::RealtimeAudio, {
+            let input_lag_us = input_lag_us.clone();
             async move {
-                while let Some(frame) = frame_rx.next().await {
-                    source.capture_frame(&frame).await.log_err();
+                while let Some(timestamped) = frame_rx.next().await {
+                    let lag = timestamped.captured_at.elapsed();
+                    input_lag_us.store(lag.as_micros() as u64, Ordering::Relaxed);
+                    source.capture_frame(&timestamped.frame).await.log_err();
                 }
             }
         });
@@ -225,12 +237,14 @@ impl AudioStack {
             let input_audio_device =
                 AudioSettings::try_read_global(cx, |settings| settings.input_audio_device.clone())
                     .flatten();
+            let executor = self.executor.clone();
             self.executor.spawn(async move {
                 Self::capture_input(
+                    executor,
                     apm,
                     frame_tx,
-                    LEGACY_SAMPLE_RATE.get(),
-                    LEGACY_CHANNEL_COUNT.get().into(),
+                    SAMPLE_RATE.get(), // TODO(audio): was legacy removed for now
+                    CHANNEL_COUNT.get().into(),
                     input_audio_device,
                 )
                 .await
@@ -246,14 +260,16 @@ impl AudioStack {
             AudioStream::Output {
                 _drop: Box::new(on_drop),
             },
+            input_lag_us,
         ))
     }
 
     async fn play_output(
+        executor: BackgroundExecutor,
         apm: Arc<Mutex<apm::AudioProcessingModule>>,
         mixer: Arc<Mutex<audio_mixer::AudioMixer>>,
         sample_rate: u32,
-        num_channels: u32,
+        _num_channels: u32,
         output_audio_device: Option<DeviceId>,
     ) -> Result<()> {
         // Prevent App Nap from throttling audio playback on macOS.
@@ -265,15 +281,15 @@ impl AudioStack {
             let mut device_change_listener = DeviceChangeListener::new(false)?;
             let (output_device, output_config) =
                 crate::default_device(false, output_audio_device.as_ref())?;
+            info!("Output config: {output_config:?}");
             let (end_on_drop_tx, end_on_drop_rx) = std::sync::mpsc::channel::<()>();
             let mixer = mixer.clone();
             let apm = apm.clone();
             let mut resampler = audio_resampler::AudioResampler::default();
             let mut buf = Vec::new();
 
-            thread::Builder::new()
-                .name("AudioPlayback".to_owned())
-                .spawn(move || {
+            executor
+                .spawn_with_priority(Priority::RealtimeAudio, async move {
                     let output_stream = output_device.build_output_stream(
                         &output_config.config(),
                         {
@@ -296,7 +312,12 @@ impl AudioStack {
                                     let sampled = resampler.remix_and_resample(
                                         mixed,
                                         sample_rate / 100,
-                                        num_channels,
+                                        // We need to assume output number of channels as otherwise we will
+                                        // crash in process_reverse_stream otherwise as livekit's audio resampler
+                                        // does not seem to support non-matching channel counts.
+                                        // NOTE: you can verify this by debug printing buf.len() after this stage.
+                                        // For 2->4 channel upmix, we should see buf.len=1920, buf we get only 960.
+                                        output_config.channels() as u32,
                                         sample_rate,
                                         output_config.channels() as u32,
                                         output_config.sample_rate(),
@@ -324,7 +345,7 @@ impl AudioStack {
                     // Block forever to keep the output stream alive
                     end_on_drop_rx.recv().ok();
                 })
-                .unwrap();
+                .detach();
 
             device_change_listener.next().await;
             drop(end_on_drop_tx)
@@ -332,8 +353,9 @@ impl AudioStack {
     }
 
     async fn capture_input(
+        executor: BackgroundExecutor,
         apm: Arc<Mutex<apm::AudioProcessingModule>>,
-        frame_tx: UnboundedSender<AudioFrame<'static>>,
+        frame_tx: Sender<TimestampedFrame>,
         sample_rate: u32,
         num_channels: u32,
         input_audio_device: Option<DeviceId>,
@@ -343,12 +365,11 @@ impl AudioStack {
             let (device, config) = crate::default_device(true, input_audio_device.as_ref())?;
             let (end_on_drop_tx, end_on_drop_rx) = std::sync::mpsc::channel::<()>();
             let apm = apm.clone();
-            let frame_tx = frame_tx.clone();
+            let mut frame_tx = frame_tx.clone();
             let mut resampler = audio_resampler::AudioResampler::default();
 
-            thread::Builder::new()
-                .name("AudioCapture".to_owned())
-                .spawn(move || {
+            executor
+                .spawn_with_priority(Priority::RealtimeAudio, async move {
                     maybe!({
                         if let Some(desc) = device.description().ok() {
                             log::info!("Using microphone: {}", desc.name())
@@ -365,6 +386,7 @@ impl AudioStack {
                                 &config.config(),
                                 config.sample_format(),
                                 move |data, _: &_| {
+                                    let captured_at = Instant::now();
                                     let data = crate::get_sample_data(config.sample_format(), data)
                                         .log_err();
                                     let Some(data) = data else {
@@ -398,11 +420,14 @@ impl AudioStack {
                                                 .log_err();
                                             buf.clear();
                                             frame_tx
-                                                .unbounded_send(AudioFrame {
-                                                    data: Cow::Owned(sampled),
-                                                    sample_rate,
-                                                    num_channels,
-                                                    samples_per_channel: sample_rate / 100,
+                                                .try_send(TimestampedFrame {
+                                                    frame: AudioFrame {
+                                                        data: Cow::Owned(sampled),
+                                                        sample_rate,
+                                                        num_channels,
+                                                        samples_per_channel: sample_rate / 100,
+                                                    },
+                                                    captured_at,
                                                 })
                                                 .ok();
                                         }
@@ -420,7 +445,7 @@ impl AudioStack {
                     })
                     .log_err();
                 })
-                .unwrap();
+                .detach();
 
             device_change_listener.next().await;
             drop(end_on_drop_tx)
@@ -435,7 +460,7 @@ pub struct Speaker {
     pub sends_legacy_audio: bool,
 }
 
-fn send_to_livekit(frame_tx: UnboundedSender<AudioFrame<'static>>, mut microphone: impl Source) {
+fn send_to_livekit(mut frame_tx: Sender<TimestampedFrame>, mut microphone: impl Source) {
     use cpal::Sample;
     let sample_rate = microphone.sample_rate().get();
     let num_channels = microphone.channels().get() as u32;
@@ -448,17 +473,22 @@ fn send_to_livekit(frame_tx: UnboundedSender<AudioFrame<'static>>, mut microphon
             .map(|s| s.to_sample())
             .collect();
 
-        if frame_tx
-            .unbounded_send(AudioFrame {
+        match frame_tx.try_send(TimestampedFrame {
+            frame: AudioFrame {
                 sample_rate,
                 num_channels,
                 samples_per_channel: sampled.len() as u32 / num_channels,
                 data: Cow::Owned(sampled),
-            })
-            .is_err()
-        {
-            // must rx has dropped or is not consuming
-            break;
+            },
+            captured_at: Instant::now(),
+        }) {
+            Ok(_) => {}
+            Err(err) => {
+                if !err.is_full() {
+                    // must rx has dropped or is not consuming
+                    break;
+                }
+            }
         }
     }
 }

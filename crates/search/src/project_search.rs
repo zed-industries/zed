@@ -1583,9 +1583,7 @@ impl ProjectSearchView {
             )
             .child(
                 Button::new("filter-paths", "Include/exclude specific paths")
-                    .icon(IconName::Filter)
-                    .icon_position(IconPosition::Start)
-                    .icon_size(IconSize::Small)
+                    .start_icon(Icon::new(IconName::Filter).size(IconSize::Small))
                     .key_binding(KeyBinding::for_action_in(&ToggleFilters, &focus_handle, cx))
                     .on_click(|_event, window, cx| {
                         window.dispatch_action(ToggleFilters.boxed_clone(), cx)
@@ -1593,9 +1591,7 @@ impl ProjectSearchView {
             )
             .child(
                 Button::new("find-replace", "Find and replace")
-                    .icon(IconName::Replace)
-                    .icon_position(IconPosition::Start)
-                    .icon_size(IconSize::Small)
+                    .start_icon(Icon::new(IconName::Replace).size(IconSize::Small))
                     .key_binding(KeyBinding::for_action_in(&ToggleReplace, &focus_handle, cx))
                     .on_click(|_event, window, cx| {
                         window.dispatch_action(ToggleReplace.boxed_clone(), cx)
@@ -1603,9 +1599,7 @@ impl ProjectSearchView {
             )
             .child(
                 Button::new("regex", "Match with regex")
-                    .icon(IconName::Regex)
-                    .icon_position(IconPosition::Start)
-                    .icon_size(IconSize::Small)
+                    .start_icon(Icon::new(IconName::Regex).size(IconSize::Small))
                     .key_binding(KeyBinding::for_action_in(&ToggleRegex, &focus_handle, cx))
                     .on_click(|_event, window, cx| {
                         window.dispatch_action(ToggleRegex.boxed_clone(), cx)
@@ -1613,9 +1607,7 @@ impl ProjectSearchView {
             )
             .child(
                 Button::new("match-case", "Match case")
-                    .icon(IconName::CaseSensitive)
-                    .icon_position(IconPosition::Start)
-                    .icon_size(IconSize::Small)
+                    .start_icon(Icon::new(IconName::CaseSensitive).size(IconSize::Small))
                     .key_binding(KeyBinding::for_action_in(
                         &ToggleCaseSensitive,
                         &focus_handle,
@@ -1627,9 +1619,7 @@ impl ProjectSearchView {
             )
             .child(
                 Button::new("match-whole-words", "Match whole words")
-                    .icon(IconName::WholeWord)
-                    .icon_position(IconPosition::Start)
-                    .icon_size(IconSize::Small)
+                    .start_icon(Icon::new(IconName::WholeWord).size(IconSize::Small))
                     .key_binding(KeyBinding::for_action_in(
                         &ToggleWholeWord,
                         &focus_handle,

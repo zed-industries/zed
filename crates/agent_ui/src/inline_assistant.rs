@@ -266,7 +266,7 @@ impl InlineAssistant {
             return;
         };
 
-        let configuration_error = || {
+        let configuration_error = |cx| {
             let model_registry = LanguageModelRegistry::read_global(cx);
             model_registry.configuration_error(model_registry.inline_assistant_model(), cx)
         };
@@ -278,7 +278,11 @@ impl InlineAssistant {
 
         let prompt_store = agent_panel.prompt_store().as_ref().cloned();
         let thread_store = agent_panel.thread_store().clone();
-        let history = agent_panel.history().downgrade();
+        let history = agent_panel
+            .connection_store()
+            .read(cx)
+            .entry(&crate::Agent::NativeAgent)
+            .and_then(|s| s.read(cx).history().cloned());
 
         let handle_assist =
             |window: &mut Window, cx: &mut Context<Workspace>| match inline_assist_target {
@@ -290,7 +294,7 @@ impl InlineAssistant {
                             workspace.project().downgrade(),
                             thread_store,
                             prompt_store,
-                            history,
+                            history.as_ref().map(|h| h.downgrade()),
                             action.prompt.clone(),
                             window,
                             cx,
@@ -305,7 +309,7 @@ impl InlineAssistant {
                             workspace.project().downgrade(),
                             thread_store,
                             prompt_store,
-                            history,
+                            history.as_ref().map(|h| h.downgrade()),
                             action.prompt.clone(),
                             window,
                             cx,
@@ -314,7 +318,7 @@ impl InlineAssistant {
                 }
             };
 
-        if let Some(error) = configuration_error() {
+        if let Some(error) = configuration_error(cx) {
             if let ConfigurationError::ProviderNotAuthenticated(provider) = error {
                 cx.spawn(async move |_, cx| {
                     cx.update(|cx| provider.authenticate(cx)).await?;
@@ -322,7 +326,7 @@ impl InlineAssistant {
                 })
                 .detach_and_log_err(cx);
 
-                if configuration_error().is_none() {
+                if configuration_error(cx).is_none() {
                     handle_assist(window, cx);
                 }
             } else {
@@ -487,7 +491,7 @@ impl InlineAssistant {
         project: WeakEntity<Project>,
         thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
-        history: WeakEntity<ThreadHistory>,
+        history: Option<WeakEntity<ThreadHistory>>,
         initial_prompt: Option<String>,
         window: &mut Window,
         codegen_ranges: &[Range<Anchor>],
@@ -626,7 +630,7 @@ impl InlineAssistant {
         project: WeakEntity<Project>,
         thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
-        history: WeakEntity<ThreadHistory>,
+        history: Option<WeakEntity<ThreadHistory>>,
         initial_prompt: Option<String>,
         window: &mut Window,
         cx: &mut App,
@@ -671,7 +675,7 @@ impl InlineAssistant {
         workspace: Entity<Workspace>,
         thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
-        history: WeakEntity<ThreadHistory>,
+        history: Option<WeakEntity<ThreadHistory>>,
         window: &mut Window,
         cx: &mut App,
     ) -> InlineAssistId {
@@ -1969,7 +1973,15 @@ impl CodeActionProvider for AssistantCodeActionProvider {
                     .panel::<AgentPanel>(cx)
                     .context("missing agent panel")?
                     .read(cx);
-                anyhow::Ok((panel.thread_store().clone(), panel.history().downgrade()))
+
+                let history = panel
+                    .connection_store()
+                    .read(cx)
+                    .entry(&crate::Agent::NativeAgent)
+                    .and_then(|e| e.read(cx).history())
+                    .map(|h| h.downgrade());
+
+                anyhow::Ok((panel.thread_store().clone(), history))
             })??;
             let editor = editor.upgrade().context("editor was released")?;
             let range = editor
@@ -2138,7 +2150,7 @@ pub mod test {
 
         setup(cx);
 
-        let (_editor, buffer, _history) = cx.update(|window, cx| {
+        let (_editor, buffer) = cx.update(|window, cx| {
             let buffer = cx.new(|cx| Buffer::local("", cx));
             let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
             let editor = cx.new(|cx| Editor::for_multibuffer(multibuffer, None, window, cx));
@@ -2155,7 +2167,6 @@ pub mod test {
             });
 
             let thread_store = cx.new(|cx| ThreadStore::new(cx));
-            let history = cx.new(|cx| crate::ThreadHistory::new(None, window, cx));
 
             // Add editor to workspace
             workspace.update(cx, |workspace, cx| {
@@ -2171,7 +2182,7 @@ pub mod test {
                         project.downgrade(),
                         thread_store,
                         None,
-                        history.downgrade(),
+                        None,
                         Some(prompt),
                         window,
                         cx,
@@ -2181,7 +2192,7 @@ pub mod test {
                 inline_assistant.start_assist(assist_id, window, cx);
             });
 
-            (editor, buffer, history)
+            (editor, buffer)
         });
 
         cx.run_until_parked();

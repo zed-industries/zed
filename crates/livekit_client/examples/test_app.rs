@@ -255,7 +255,7 @@ impl LivekitWindow {
         } else {
             let room = self.room.clone();
             cx.spawn_in(window, async move |this, cx| {
-                let (publication, stream) = room
+                let (publication, stream, _input_lag_us) = room
                     .publish_local_microphone_track("test_user".to_string(), false, cx)
                     .await
                     .unwrap();

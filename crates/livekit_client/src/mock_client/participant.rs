@@ -1,6 +1,6 @@
 use crate::{
-    AudioStream, LocalAudioTrack, LocalTrackPublication, LocalVideoTrack, Participant,
-    ParticipantIdentity, RemoteTrack, RemoteTrackPublication, TrackSid,
+    AudioStream, ConnectionQuality, LocalAudioTrack, LocalTrackPublication, LocalVideoTrack,
+    Participant, ParticipantIdentity, RemoteTrack, RemoteTrackPublication, TrackSid,
     test::{Room, WeakRoom},
 };
 use anyhow::Result;
@@ -8,6 +8,7 @@ use collections::HashMap;
 use gpui::{
     AsyncApp, DevicePixels, ScreenCaptureSource, ScreenCaptureStream, SourceMetadata, size,
 };
+use std::sync::{Arc, atomic::AtomicU64};
 
 #[derive(Clone, Debug)]
 pub struct LocalParticipant {
@@ -28,9 +29,31 @@ impl Participant {
             Participant::Remote(participant) => participant.identity.clone(),
         }
     }
+
+    pub fn connection_quality(&self) -> ConnectionQuality {
+        match self {
+            Participant::Local(p) => p.connection_quality(),
+            Participant::Remote(p) => p.connection_quality(),
+        }
+    }
+
+    pub fn audio_level(&self) -> f32 {
+        match self {
+            Participant::Local(p) => p.audio_level(),
+            Participant::Remote(p) => p.audio_level(),
+        }
+    }
 }
 
 impl LocalParticipant {
+    pub fn connection_quality(&self) -> ConnectionQuality {
+        ConnectionQuality::Excellent
+    }
+
+    pub fn audio_level(&self) -> f32 {
+        0.0
+    }
+
     pub async fn unpublish_track(&self, track: TrackSid, _cx: &AsyncApp) -> Result<()> {
         self.room
             .test_server()
@@ -41,7 +64,7 @@ impl LocalParticipant {
     pub(crate) async fn publish_microphone_track(
         &self,
         _cx: &AsyncApp,
-    ) -> Result<(LocalTrackPublication, AudioStream)> {
+    ) -> Result<(LocalTrackPublication, AudioStream, Arc<AtomicU64>)> {
         let this = self.clone();
         let server = this.room.test_server();
         let sid = server
@@ -54,6 +77,7 @@ impl LocalParticipant {
                 sid,
             },
             AudioStream {},
+            Arc::new(AtomicU64::new(0)),
         ))
     }
 
@@ -78,6 +102,14 @@ impl LocalParticipant {
 }
 
 impl RemoteParticipant {
+    pub fn connection_quality(&self) -> ConnectionQuality {
+        ConnectionQuality::Excellent
+    }
+
+    pub fn audio_level(&self) -> f32 {
+        0.0
+    }
+
     pub fn track_publications(&self) -> HashMap<TrackSid, RemoteTrackPublication> {
         if let Some(room) = self.room.upgrade() {
             let server = room.test_server();

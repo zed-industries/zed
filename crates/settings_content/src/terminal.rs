@@ -171,6 +171,10 @@ pub struct TerminalSettingsContent {
     /// Default: 45
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub minimum_contrast: Option<f32>,
+    /// Whether to show a badge on the terminal panel icon with the count of open terminals.
+    ///
+    /// Default: false
+    pub show_count_badge: Option<bool>,
 }
 
 /// Shell configuration to open the terminal with.

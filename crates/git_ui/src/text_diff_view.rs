@@ -165,7 +165,7 @@ impl TextDiffView {
         let (buffer_changes_tx, mut buffer_changes_rx) = watch::channel(());
 
         cx.subscribe(&source_buffer, move |this, _, event, _| match event {
-            language::BufferEvent::Edited
+            language::BufferEvent::Edited { .. }
             | language::BufferEvent::LanguageChanged(_)
             | language::BufferEvent::Reparsed => {
                 this.buffer_changes_tx.send(()).ok();

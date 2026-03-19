@@ -5,7 +5,7 @@ description: "Create Zed extensions: languages, themes, debuggers, slash command
 
 # Developing Extensions {#developing-extensions}
 
-Zed extensions are Git repositories containing an `extension.toml` manifest. They can provide languages, themes, debuggers, slash commands, and MCP servers.
+Zed extensions are Git repositories containing an `extension.toml` manifest. They can provide languages, themes, debuggers, snippets, slash commands, and MCP servers.
 
 ## Extension Features {#extension-features}
 
@@ -15,6 +15,7 @@ Extensions can provide:
 - [Debuggers](./debugger-extensions.md)
 - [Themes](./themes.md)
 - [Icon Themes](./icon-themes.md)
+- [Snippets](./snippets.md)
 - [Slash Commands](./slash-commands.md)
 - [MCP Servers](./mcp-extensions.md)
 
@@ -63,6 +64,9 @@ my-extension/
       highlights.scm
   themes/
     my-theme.json
+  snippets/
+    snippets.json
+    rust.json
 ```
 
 ## WebAssembly

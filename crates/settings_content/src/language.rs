@@ -955,6 +955,8 @@ pub enum Formatter {
     /// or falling back to formatting via language server.
     #[default]
     Auto,
+    /// Do not format code.
+    None,
     /// Format code using Zed's Prettier integration.
     Prettier,
     /// Format code using an external command.
@@ -1147,6 +1149,12 @@ mod test {
         assert_eq!(
             settings.formatter,
             Some(FormatterList::Single(Formatter::Auto))
+        );
+        let raw_none = "{\"formatter\": \"none\"}";
+        let settings: LanguageSettingsContent = serde_json::from_str(raw_none).unwrap();
+        assert_eq!(
+            settings.formatter,
+            Some(FormatterList::Single(Formatter::None))
         );
         let raw = "{\"formatter\": \"language_server\"}";
         let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();

@@ -1,7 +1,8 @@
 use acp_thread::{AgentConnection, StubAgentConnection};
 use agent_client_protocol as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
-use gpui::{Entity, SharedString, Task, TestAppContext, VisualTestContext};
+use gpui::{Entity, Task, TestAppContext, VisualTestContext};
+use project::AgentId;
 use settings::SettingsStore;
 use std::any::Any;
 use std::rc::Rc;
@@ -37,7 +38,7 @@ where
         ui::IconName::Ai
     }
 
-    fn name(&self) -> SharedString {
+    fn agent_id(&self) -> AgentId {
         "Test".into()
     }
 
@@ -81,7 +82,7 @@ pub fn open_thread_with_connection(
 }
 
 pub fn send_message(panel: &Entity<AgentPanel>, cx: &mut VisualTestContext) {
-    let thread_view = panel.read_with(cx, |panel, cx| panel.as_active_thread_view(cx).unwrap());
+    let thread_view = panel.read_with(cx, |panel, cx| panel.active_thread_view(cx).unwrap());
     let message_editor = thread_view.read_with(cx, |view, _cx| view.message_editor.clone());
     message_editor.update_in(cx, |editor, window, cx| {
         editor.set_text("Hello", window, cx);
