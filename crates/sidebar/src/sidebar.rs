@@ -789,7 +789,7 @@ impl Sidebar {
                                     .unwrap_or_default();
                             linked_worktree_queries.push((
                                 PathList::new(std::slice::from_ref(&git_worktree.path)),
-                                worktree_name.into(),
+                                worktree_name,
                                 Arc::from(git_worktree.path.as_path()),
                             ));
                         }
