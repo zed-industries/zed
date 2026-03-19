@@ -1,5 +1,6 @@
 use anyhow::{Context as _, Result};
 use futures::StreamExt as _;
+use futures::channel::oneshot;
 use gpui::{AsyncApp, ScreenCaptureStream};
 use livekit::track;
 use livekit::webrtc::{
@@ -18,14 +19,14 @@ static NEXT_WAYLAND_SHARE_ID: AtomicU64 = AtomicU64::new(1);
 
 pub struct WaylandScreenCaptureStream {
     id: u64,
-    stop_flag: Arc<std::sync::atomic::AtomicBool>,
+    stop_flag: Arc<AtomicBool>,
     _feed_task: gpui::Task<()>,
 }
 
 impl WaylandScreenCaptureStream {
-    pub fn new(stop_flag: Arc<std::sync::atomic::AtomicBool>, feed_task: gpui::Task<()>) -> Self {
+    pub fn new(stop_flag: Arc<AtomicBool>, feed_task: gpui::Task<()>) -> Self {
         Self {
-            id: NEXT_WAYLAND_SHARE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            id: NEXT_WAYLAND_SHARE_ID.fetch_add(1, Ordering::Relaxed),
             stop_flag,
             _feed_task: feed_task,
         }
@@ -45,8 +46,7 @@ impl ScreenCaptureStream for WaylandScreenCaptureStream {
 
 impl Drop for WaylandScreenCaptureStream {
     fn drop(&mut self) {
-        self.stop_flag
-            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.stop_flag.store(true, Ordering::Relaxed);
     }
 }
 
@@ -79,7 +79,12 @@ fn desktop_frame_to_nv12(frame: &CapturedFrame) -> livekit::webrtc::prelude::NV1
 
 pub(crate) async fn start_wayland_desktop_capture(
     cx: &mut AsyncApp,
-) -> Result<(crate::LocalVideoTrack, Arc<AtomicBool>, gpui::Task<()>)> {
+) -> Result<(
+    crate::LocalVideoTrack,
+    Arc<AtomicBool>,
+    gpui::Task<()>,
+    oneshot::Receiver<()>,
+)> {
     use futures::channel::mpsc;
     use gpui::FutureExt as _;
     use libwebrtc::desktop_capturer::{
@@ -179,6 +184,7 @@ pub(crate) async fn start_wayland_desktop_capture(
         RtcVideoSource::Native(video_source.clone()),
     ));
 
+    let (failure_tx, failure_rx) = oneshot::channel::<()>();
     let feed_stop = stop_flag.clone();
     let feed_task = cx.background_executor().spawn(async move {
         while let Some(frame) = frame_rx.next().await {
@@ -192,7 +198,11 @@ pub(crate) async fn start_wayland_desktop_capture(
                 buffer: nv12,
             });
         }
+        if !feed_stop.load(Ordering::Relaxed) {
+            log::error!("Wayland screen capture ended unexpectedly");
+            let _ = failure_tx.send(());
+        }
     });
 
-    Ok((track, stop_flag, feed_task))
+    Ok((track, stop_flag, feed_task, failure_rx))
 }

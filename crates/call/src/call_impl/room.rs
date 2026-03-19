@@ -1567,13 +1567,22 @@ impl Room {
                 };
 
                 match publication {
-                    Ok((publication, stream)) => {
+                    Ok((publication, stream, failure_rx)) => {
                         if canceled {
                             cx.spawn(async move |_, cx| {
                                 participant.unpublish_track(publication.sid(), cx).await
                             })
                             .detach()
                         } else {
+                            cx.spawn(async move |this, cx| {
+                                if failure_rx.await.is_ok() {
+                                    log::warn!("Wayland capture died, auto-unsharing screen");
+                                    let _ =
+                                        this.update(cx, |this, cx| this.unshare_screen(false, cx));
+                                }
+                            })
+                            .detach();
+
                             live_kit.screen_track = LocalTrack::Published {
                                 track_publication: publication,
                                 _stream: stream,

@@ -238,8 +238,13 @@ impl LocalParticipant {
     pub async fn publish_screenshare_track_wayland(
         &self,
         cx: &mut AsyncApp,
-    ) -> Result<(LocalTrackPublication, Box<dyn ScreenCaptureStream>)> {
-        let (track, stop_flag, feed_task) = linux::start_wayland_desktop_capture(cx).await?;
+    ) -> Result<(
+        LocalTrackPublication,
+        Box<dyn ScreenCaptureStream>,
+        futures::channel::oneshot::Receiver<()>,
+    )> {
+        let (track, stop_flag, feed_task, failure_rx) =
+            linux::start_wayland_desktop_capture(cx).await?;
         let options = livekit::options::TrackPublishOptions {
             source: livekit::track::TrackSource::Screenshare,
             video_codec: livekit::options::VideoCodec::VP8,
@@ -252,6 +257,7 @@ impl LocalParticipant {
         Ok((
             publication,
             Box::new(linux::WaylandScreenCaptureStream::new(stop_flag, feed_task)),
+            failure_rx,
         ))
     }
 }
