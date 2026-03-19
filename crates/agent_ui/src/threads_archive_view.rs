@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     Agent, RemoveSelectedThread, agent_connection_store::AgentConnectionStore,
-    thread_history::ThreadHistory, thread_metadata_store::SidebarThreadMetadataStore,
+    thread_history::ThreadHistory,
 };
 use acp_thread::AgentSessionInfo;
 use agent::ThreadStore;
@@ -161,10 +161,6 @@ impl ThreadsArchiveView {
                     this.update_items(cx);
                 }
             });
-        let metadata_store_subscription =
-            cx.observe(&SidebarThreadMetadataStore::global(cx), |this, _, cx| {
-                this.update_items(cx);
-            });
 
         let mut this = Self {
             agent_connection_store,
@@ -180,7 +176,7 @@ impl ThreadsArchiveView {
             selection: None,
             hovered_index: None,
             filter_editor,
-            _subscriptions: vec![filter_editor_subscription, metadata_store_subscription],
+            _subscriptions: vec![filter_editor_subscription],
             selected_agent_menu: PopoverMenuHandle::default(),
             _refresh_history_task: Task::ready(()),
             is_loading: true,
