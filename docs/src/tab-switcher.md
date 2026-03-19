@@ -1,3 +1,8 @@
+---
+title: Tab Switcher
+description: "The Tab Switcher provides a quick way to navigate between open tabs in Zed. It displays a list of your open tabs sorted by recent usage, making it easy to ju..."
+---
+
 # Tab Switcher
 
 The Tab Switcher provides a quick way to navigate between open tabs in Zed. It

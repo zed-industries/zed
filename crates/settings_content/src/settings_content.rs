@@ -32,6 +32,37 @@ use collections::{HashMap, IndexMap};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
+
+/// Defines a settings override struct where each field is
+/// `Option<Box<SettingsContent>>`, along with:
+/// - `OVERRIDE_KEYS`: a `&[&str]` of the field names (the JSON keys)
+/// - `get_by_key(&self, key) -> Option<&SettingsContent>`: accessor by key
+///
+/// The field list is the single source of truth for the override key strings.
+macro_rules! settings_overrides {
+    (
+        $(#[$attr:meta])*
+        pub struct $name:ident { $($field:ident),* $(,)? }
+    ) => {
+        $(#[$attr])*
+        pub struct $name {
+            $(pub $field: Option<Box<SettingsContent>>,)*
+        }
+
+        impl $name {
+            /// The JSON override keys, derived from the field names on this struct.
+            pub const OVERRIDE_KEYS: &[&str] = &[$(stringify!($field)),*];
+
+            /// Look up an override by its JSON key name.
+            pub fn get_by_key(&self, key: &str) -> Option<&SettingsContent> {
+                match key {
+                    $(stringify!($field) => self.$field.as_deref(),)*
+                    _ => None,
+                }
+            }
+        }
+    }
+}
 use std::collections::BTreeSet;
 use std::sync::Arc;
 pub use util::serde::default_true;
@@ -166,11 +197,6 @@ pub struct SettingsContent {
     // Settings related to calls in Zed
     pub calls: Option<CallSettingsContent>,
 
-    /// Whether to disable all AI features in Zed.
-    ///
-    /// Default: false
-    pub disable_ai: Option<SaturatingBool>,
-
     /// Settings for the which-key popup.
     pub which_key: Option<WhichKeySettingsContent>,
 
@@ -217,20 +243,29 @@ impl RootUserSettings for UserSettingsContent {
     }
 }
 
+settings_overrides! {
+    #[with_fallible_options]
+    #[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+    pub struct ReleaseChannelOverrides { dev, nightly, preview, stable }
+}
+
+settings_overrides! {
+    #[with_fallible_options]
+    #[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+    pub struct PlatformOverrides { macos, linux, windows }
+}
+
 #[with_fallible_options]
 #[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct UserSettingsContent {
     #[serde(flatten)]
     pub content: Box<SettingsContent>,
 
-    pub dev: Option<Box<SettingsContent>>,
-    pub nightly: Option<Box<SettingsContent>>,
-    pub preview: Option<Box<SettingsContent>>,
-    pub stable: Option<Box<SettingsContent>>,
+    #[serde(flatten)]
+    pub release_channel_overrides: ReleaseChannelOverrides,
 
-    pub macos: Option<Box<SettingsContent>>,
-    pub windows: Option<Box<SettingsContent>>,
-    pub linux: Option<Box<SettingsContent>>,
+    #[serde(flatten)]
+    pub platform_overrides: PlatformOverrides,
 
     #[serde(default)]
     pub profiles: IndexMap<String, SettingsContent>,
@@ -360,6 +395,48 @@ pub struct AudioSettingsContent {
     /// You need to rejoin a call for this setting to apply
     #[serde(rename = "experimental.legacy_audio_compatible")]
     pub legacy_audio_compatible: Option<bool>,
+    /// Requires 'rodio_audio: true'
+    ///
+    /// Select specific output audio device.
+    #[serde(rename = "experimental.output_audio_device")]
+    pub output_audio_device: Option<AudioOutputDeviceName>,
+    /// Requires 'rodio_audio: true'
+    ///
+    /// Select specific input audio device.
+    #[serde(rename = "experimental.input_audio_device")]
+    pub input_audio_device: Option<AudioInputDeviceName>,
+}
+
+#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct AudioOutputDeviceName(pub Option<String>);
+
+impl AsRef<Option<String>> for AudioInputDeviceName {
+    fn as_ref(&self) -> &Option<String> {
+        &self.0
+    }
+}
+
+impl From<Option<String>> for AudioInputDeviceName {
+    fn from(value: Option<String>) -> Self {
+        Self(value)
+    }
+}
+
+#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct AudioInputDeviceName(pub Option<String>);
+
+impl AsRef<Option<String>> for AudioOutputDeviceName {
+    fn as_ref(&self) -> &Option<String> {
+        &self.0
+    }
+}
+
+impl From<Option<String>> for AudioOutputDeviceName {
+    fn from(value: Option<String>) -> Self {
+        Self(value)
+    }
 }
 
 /// Control what info is collected by Zed.
@@ -516,6 +593,17 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: icon
     pub status_style: Option<StatusStyle>,
+
+    /// Whether to show file icons in the git panel.
+    ///
+    /// Default: false
+    pub file_icons: Option<bool>,
+
+    /// Whether to show folder icons or chevrons for directories in the git panel.
+    ///
+    /// Default: true
+    pub folder_icons: Option<bool>,
+
     /// How and when the scrollbar should be displayed.
     ///
     /// Default: inherits editor scrollbar settings
@@ -542,6 +630,21 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: false
     pub tree_view: Option<bool>,
+
+    /// Whether to show the addition/deletion change count next to each file in the Git panel.
+    ///
+    /// Default: true
+    pub diff_stats: Option<bool>,
+
+    /// Whether to show a badge on the git panel icon with the count of uncommitted changes.
+    ///
+    /// Default: false
+    pub show_count_badge: Option<bool>,
+
+    /// Whether the git panel should open on startup.
+    ///
+    /// Default: false
+    pub starts_open: Option<bool>,
 }
 
 #[derive(
@@ -589,6 +692,10 @@ pub struct NotificationPanelSettingsContent {
     /// Default: 300
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_width: Option<f32>,
+    /// Whether to show a badge on the notification panel icon with the count of unread notifications.
+    ///
+    /// Default: false
+    pub show_count_badge: Option<bool>,
 }
 
 #[with_fallible_options]
@@ -634,15 +741,15 @@ pub struct FileFinderSettingsContent {
     ///
     /// Default: true
     pub skip_focus_for_active_in_search: Option<bool>,
-    /// Determines whether to show the git status in the file finder
-    ///
-    /// Default: true
-    pub git_status: Option<bool>,
     /// Whether to use gitignored files when searching.
     /// Only the file Zed had indexed will be used, not necessary all the gitignored files.
     ///
     /// Default: Smart
     pub include_ignored: Option<IncludeIgnoredContent>,
+    /// Whether to include text channels in file finder results.
+    ///
+    /// Default: false
+    pub include_channels: Option<bool>,
 }
 
 #[derive(
@@ -701,6 +808,9 @@ pub struct VimSettingsContent {
     pub toggle_relative_line_numbers: Option<bool>,
     pub use_system_clipboard: Option<UseSystemClipboard>,
     pub use_smartcase_find: Option<bool>,
+    /// When enabled, the `:substitute` command replaces all matches in a line
+    /// by default. The 'g' flag then toggles this behavior.,
+    pub gdefault: Option<bool>,
     pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
     pub highlight_on_yank_duration: Option<u64>,
     pub cursor_shape: Option<CursorShapeSettings>,
@@ -976,6 +1086,7 @@ pub struct RemoteSettingsContent {
     pub wsl_connections: Option<Vec<WslConnection>>,
     pub dev_container_connections: Option<Vec<DevContainerConnection>>,
     pub read_ssh_config: Option<bool>,
+    pub use_podman: Option<bool>,
 }
 
 #[with_fallible_options]
@@ -984,7 +1095,9 @@ pub struct RemoteSettingsContent {
 )]
 pub struct DevContainerConnection {
     pub name: String,
+    pub remote_user: String,
     pub container_id: String,
+    pub use_podman: bool,
 }
 
 #[with_fallible_options]
@@ -1059,6 +1172,11 @@ pub struct ReplSettingsContent {
     ///
     /// Default: 50
     pub inline_output_max_length: Option<usize>,
+    /// Maximum number of lines of output to display before scrolling.
+    /// Set to 0 to disable output height limits.
+    ///
+    /// Default: 0
+    pub output_max_height_lines: Option<usize>,
 }
 
 /// Settings for configuring the which-key popup behaviour.

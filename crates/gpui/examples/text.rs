@@ -1,3 +1,5 @@
+#![cfg_attr(target_family = "wasm", no_main)]
+
 use std::{
     borrow::Cow,
     ops::{Deref, DerefMut},
@@ -5,10 +7,11 @@ use std::{
 };
 
 use gpui::{
-    AbsoluteLength, App, Application, Context, DefiniteLength, ElementId, Global, Hsla, Menu,
-    SharedString, TextStyle, TitlebarOptions, Window, WindowBounds, WindowOptions, bounds,
-    colors::DefaultColors, div, point, prelude::*, px, relative, rgb, size,
+    AbsoluteLength, App, Context, DefiniteLength, ElementId, Global, Hsla, Menu, SharedString,
+    TextStyle, TitlebarOptions, Window, WindowBounds, WindowOptions, bounds, colors::DefaultColors,
+    div, point, prelude::*, px, relative, rgb, size,
 };
+use gpui_platform::application;
 use std::iter;
 
 #[derive(Clone, Debug)]
@@ -343,8 +346,8 @@ impl Render for TextExample {
     }
 }
 
-fn main() {
-    Application::new().run(|cx: &mut App| {
+fn run_example() {
+    application().run(|cx: &mut App| {
         cx.set_menus(vec![Menu {
             name: "GPUI Typography".into(),
             items: vec![],
@@ -390,4 +393,16 @@ fn main() {
             })
             .unwrap();
     });
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn main() {
+    run_example();
+}
+
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn start() {
+    gpui_platform::web_init();
+    run_example();
 }

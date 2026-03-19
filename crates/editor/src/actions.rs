@@ -568,6 +568,10 @@ actions!(
         GoToParentModule,
         /// Goes to the previous change in the file.
         GoToPreviousChange,
+        /// Goes to the next symbol.
+        GoToNextSymbol,
+        /// Goes to the previous symbol.
+        GoToPreviousSymbol,
         /// Goes to the next reference to the symbol under the cursor.
         GoToNextReference,
         /// Goes to the previous reference to the symbol under the cursor.
@@ -602,8 +606,6 @@ actions!(
         LineDown,
         /// Moves cursor up one line.
         LineUp,
-        /// Moves cursor down.
-        MoveDown,
         /// Moves cursor left.
         MoveLeft,
         /// Moves the current line down.
@@ -642,8 +644,6 @@ actions!(
         MoveToStartOfLargerSyntaxNode,
         /// Moves cursor to the end of the next larger syntax node.
         MoveToEndOfLargerSyntaxNode,
-        /// Moves cursor up.
-        MoveUp,
         /// Inserts a new line and moves cursor to it.
         Newline,
         /// Inserts a new line above the current line.
@@ -699,8 +699,6 @@ actions!(
         Rename,
         /// Restarts the language server for the current file.
         RestartLanguageServer,
-        /// Reveals the current file in the system file manager.
-        RevealInFileManager,
         /// Reverses the order of selected lines.
         ReverseLines,
         /// Reloads the file from disk.
@@ -737,6 +735,10 @@ actions!(
         SelectDown,
         /// Selects the enclosing symbol.
         SelectEnclosingSymbol,
+        /// Selects to the start of the next larger syntax node.
+        SelectToStartOfLargerSyntaxNode,
+        /// Selects to the end of the next larger syntax node.
+        SelectToEndOfLargerSyntaxNode,
         /// Selects the next larger syntax node.
         SelectLargerSyntaxNode,
         /// Selects the next syntax node sibling.
@@ -825,6 +827,8 @@ actions!(
         ToggleIndentGuides,
         /// Toggles inlay hints display.
         ToggleInlayHints,
+        /// Toggles semantic highlights display.
+        ToggleSemanticHighlights,
         /// Toggles inline values display.
         ToggleInlineValues,
         /// Toggles inline diagnostics display.
@@ -877,6 +881,8 @@ actions!(
         UnwrapSyntaxNode,
         /// Wraps selections in tag specified by language.
         WrapSelectionsInTag,
+        /// Aligns selections from different rows into the same column
+        AlignSelections,
     ]
 );
 

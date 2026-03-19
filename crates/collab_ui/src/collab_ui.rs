@@ -1,3 +1,4 @@
+mod call_stats_modal;
 pub mod channel_view;
 pub mod collab_panel;
 pub mod notification_panel;
@@ -16,7 +17,9 @@ use release_channel::ReleaseChannel;
 use ui::px;
 use workspace::AppState;
 
+// Another comment, nice.
 pub fn init(app_state: &Arc<AppState>, cx: &mut App) {
+    call_stats_modal::init(cx);
     channel_view::init(cx);
     collab_panel::init(cx);
     notification_panel::init(cx);

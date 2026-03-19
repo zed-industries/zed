@@ -1,7 +1,6 @@
-use crate::Vim;
+use crate::{Vim, state::Mode};
 use editor::{
-    DisplayPoint, Editor, EditorSettings, SelectionEffects,
-    display_map::{DisplayRow, ToDisplayPoint},
+    DisplayPoint, Editor, EditorSettings, SelectionEffects, display_map::DisplayRow,
     scroll::ScrollAmount,
 };
 use gpui::{Context, Window, actions};
@@ -89,7 +88,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 impl Vim {
     fn scroll(
         &mut self,
-        move_cursor: bool,
+        preserve_cursor_position: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
         by: fn(c: Option<f32>) -> ScrollAmount,
@@ -97,67 +96,66 @@ impl Vim {
         let amount = by(Vim::take_count(cx).map(|c| c as f32));
         Vim::take_forced_motion(cx);
         self.exit_temporary_normal(window, cx);
-        self.update_editor(cx, |_, editor, cx| {
-            scroll_editor(editor, move_cursor, amount, window, cx)
-        });
-    }
-}
-
-fn scroll_editor(
-    editor: &mut Editor,
-    preserve_cursor_position: bool,
-    amount: ScrollAmount,
-    window: &mut Window,
-    cx: &mut Context<Editor>,
-) {
-    let should_move_cursor = editor.newest_selection_on_screen(cx).is_eq();
-    let old_top_anchor = editor.scroll_manager.anchor().anchor;
-
-    if editor.scroll_hover(amount, window, cx) {
-        return;
+        self.scroll_editor(preserve_cursor_position, amount, window, cx);
     }
 
-    let full_page_up = amount.is_full_page() && amount.direction().is_upwards();
-    let amount = match (amount.is_full_page(), editor.visible_line_count()) {
-        (true, Some(visible_line_count)) => {
-            if amount.direction().is_upwards() {
-                ScrollAmount::Line((amount.lines(visible_line_count) + 1.0) as f32)
-            } else {
-                ScrollAmount::Line((amount.lines(visible_line_count) - 1.0) as f32)
+    fn scroll_editor(
+        &mut self,
+        preserve_cursor_position: bool,
+        amount: ScrollAmount,
+        window: &mut Window,
+        cx: &mut Context<Vim>,
+    ) {
+        self.update_editor(cx, |vim, editor, cx| {
+            let should_move_cursor = editor.newest_selection_on_screen(cx).is_eq();
+            let display_snapshot = editor.display_map.update(cx, |map, cx| map.snapshot(cx));
+            let old_top = editor
+                .scroll_manager
+                .scroll_top_display_point(&display_snapshot, cx);
+
+            if editor.scroll_hover(amount, window, cx) {
+                return;
             }
-        }
-        _ => amount,
-    };
 
-    editor.scroll_screen(&amount, window, cx);
-    if !should_move_cursor {
-        return;
-    }
+            let full_page_up = amount.is_full_page() && amount.direction().is_upwards();
+            let amount = match (amount.is_full_page(), editor.visible_line_count()) {
+                (true, Some(visible_line_count)) => {
+                    if amount.direction().is_upwards() {
+                        ScrollAmount::Line((amount.lines(visible_line_count) + 1.0) as f32)
+                    } else {
+                        ScrollAmount::Line((amount.lines(visible_line_count) - 1.0) as f32)
+                    }
+                }
+                _ => amount,
+            };
 
-    let Some(visible_line_count) = editor.visible_line_count() else {
-        return;
-    };
+            editor.scroll_screen(&amount, window, cx);
+            if !should_move_cursor {
+                return;
+            }
 
-    let Some(visible_column_count) = editor.visible_column_count() else {
-        return;
-    };
+            let Some(visible_line_count) = editor.visible_line_count() else {
+                return;
+            };
 
-    let top_anchor = editor.scroll_manager.anchor().anchor;
-    let vertical_scroll_margin = EditorSettings::get_global(cx).vertical_scroll_margin;
+            let Some(visible_column_count) = editor.visible_column_count() else {
+                return;
+            };
 
-    editor.change_selections(
-        SelectionEffects::no_scroll().nav_history(false),
-        window,
-        cx,
-        |s| {
-            s.move_with(|map, selection| {
+            let display_snapshot = editor.display_map.update(cx, |map, cx| map.snapshot(cx));
+            let top = editor
+                .scroll_manager
+                .scroll_top_display_point(&display_snapshot, cx);
+            let vertical_scroll_margin = EditorSettings::get_global(cx).vertical_scroll_margin;
+
+            let mut move_cursor = |map: &editor::display_map::DisplaySnapshot,
+                                   mut head: DisplayPoint,
+                                   goal: SelectionGoal| {
                 // TODO: Improve the logic and function calls below to be dependent on
                 // the `amount`. If the amount is vertical, we don't care about
                 // columns, while if it's horizontal, we don't care about rows,
                 // so we don't need to calculate both and deal with logic for
                 // both.
-                let mut head = selection.head();
-                let top = top_anchor.to_display_point(map);
                 let max_point = map.max_point();
                 let starting_column = head.column();
 
@@ -165,16 +163,18 @@ fn scroll_editor(
                     (vertical_scroll_margin as u32).min(visible_line_count as u32 / 2);
 
                 if preserve_cursor_position {
-                    let old_top = old_top_anchor.to_display_point(map);
-                    let new_row = if old_top.row() == top.row() {
-                        DisplayRow(
-                            head.row()
-                                .0
-                                .saturating_add_signed(amount.lines(visible_line_count) as i32),
-                        )
-                    } else {
-                        DisplayRow(top.row().0 + selection.head().row().0 - old_top.row().0)
-                    };
+                    let new_row =
+                        if old_top.row() == top.row() {
+                            DisplayRow(
+                                head.row()
+                                    .0
+                                    .saturating_add_signed(amount.lines(visible_line_count) as i32),
+                            )
+                        } else {
+                            DisplayRow(top.row().0.saturating_add_signed(
+                                head.row().0 as i32 - old_top.row().0 as i32,
+                            ))
+                        };
                     head = map.clip_point(DisplayPoint::new(new_row, head.column()), Bias::Left)
                 }
 
@@ -220,7 +220,7 @@ fn scroll_editor(
                 // maximum column for the current line, so the minimum column
                 // would end up being the same as the maximum column.
                 let min_column = match preserve_cursor_position {
-                    true => old_top_anchor.to_display_point(map).column(),
+                    true => old_top.column(),
                     false => top.column(),
                 };
 
@@ -252,17 +252,36 @@ fn scroll_editor(
                 let new_head = map.clip_point(DisplayPoint::new(new_row, new_column), Bias::Left);
                 let goal = match amount {
                     ScrollAmount::Column(_) | ScrollAmount::PageWidth(_) => SelectionGoal::None,
-                    _ => selection.goal,
+                    _ => goal,
                 };
 
-                if selection.is_empty() {
-                    selection.collapse_to(new_head, goal)
-                } else {
-                    selection.set_head(new_head, goal)
-                };
-            })
-        },
-    );
+                Some((new_head, goal))
+            };
+
+            if vim.mode == Mode::VisualBlock {
+                vim.visual_block_motion(true, editor, window, cx, &mut move_cursor);
+            } else {
+                editor.change_selections(
+                    SelectionEffects::no_scroll().nav_history(false),
+                    window,
+                    cx,
+                    |s| {
+                        s.move_with(&mut |map, selection| {
+                            if let Some((new_head, goal)) =
+                                move_cursor(map, selection.head(), selection.goal)
+                            {
+                                if selection.is_empty() || !vim.mode.is_visual() {
+                                    selection.collapse_to(new_head, goal)
+                                } else {
+                                    selection.set_head(new_head, goal)
+                                }
+                            }
+                        })
+                    },
+                );
+            }
+        });
+    }
 }
 
 #[cfg(test)]

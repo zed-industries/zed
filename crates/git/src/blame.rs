@@ -1,16 +1,16 @@
 use crate::Oid;
 use crate::commit::get_messages;
-use crate::repository::RepoPath;
+use crate::repository::{GitBinary, RepoPath};
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
 use futures::AsyncWriteExt;
 use serde::{Deserialize, Serialize};
-use std::process::Stdio;
-use std::{ops::Range, path::Path};
+use std::ops::Range;
 use text::{LineEnding, Rope};
 use time::OffsetDateTime;
 use time::UtcOffset;
 use time::macros::format_description;
+use util::command::Stdio;
 
 pub use git2 as libgit;
 
@@ -21,15 +21,13 @@ pub struct Blame {
 }
 
 impl Blame {
-    pub async fn for_path(
-        git_binary: &Path,
-        working_directory: &Path,
+    pub(crate) async fn for_path(
+        git: &GitBinary,
         path: &RepoPath,
         content: &Rope,
         line_ending: LineEnding,
     ) -> Result<Self> {
-        let output =
-            run_git_blame(git_binary, working_directory, path, content, line_ending).await?;
+        let output = run_git_blame(git, path, content, line_ending).await?;
         let mut entries = parse_git_blame(&output)?;
         entries.sort_unstable_by(|a, b| a.range.start.cmp(&b.range.start));
 
@@ -40,7 +38,7 @@ impl Blame {
         }
 
         let shas = unique_shas.into_iter().collect::<Vec<_>>();
-        let messages = get_messages(working_directory, &shas)
+        let messages = get_messages(git, &shas)
             .await
             .context("failed to get commit messages")?;
 
@@ -52,8 +50,7 @@ const GIT_BLAME_NO_COMMIT_ERROR: &str = "fatal: no such ref: HEAD";
 const GIT_BLAME_NO_PATH: &str = "fatal: no such path";
 
 async fn run_git_blame(
-    git_binary: &Path,
-    working_directory: &Path,
+    git: &GitBinary,
     path: &RepoPath,
     contents: &Rope,
     line_ending: LineEnding,
@@ -61,12 +58,7 @@ async fn run_git_blame(
     let mut child = {
         let span = ztracing::debug_span!("spawning git-blame command", path = path.as_unix_str());
         let _enter = span.enter();
-        util::command::new_smol_command(git_binary)
-            .current_dir(working_directory)
-            .arg("blame")
-            .arg("--incremental")
-            .arg("--contents")
-            .arg("-")
+        git.build_command(&["blame", "--incremental", "--contents", "-"])
             .arg(path.as_unix_str())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

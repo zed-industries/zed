@@ -57,7 +57,6 @@ impl Example for AddArgToTraitMethod {
             "rename_tool",
             "symbol_info_tool",
             "terminal_tool",
-            "thinking_tool",
             "web_search_tool",
         ];
 

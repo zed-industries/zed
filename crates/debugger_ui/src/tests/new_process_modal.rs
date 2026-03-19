@@ -5,7 +5,10 @@ use project::{FakeFs, Fs as _, Project};
 use serde_json::json;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use task::{DebugRequest, DebugScenario, LaunchRequest, TaskContext, VariableName, ZedDebugConfig};
+use task::{
+    DebugRequest, DebugScenario, LaunchRequest, SharedTaskContext, TaskContext, VariableName,
+    ZedDebugConfig,
+};
 use text::Point;
 use util::path;
 
@@ -40,11 +43,12 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
     .into_iter()
     .collect();
 
-    let task_context = TaskContext {
+    let task_context: SharedTaskContext = TaskContext {
         cwd: None,
         task_variables: test_variables,
         project_env: Default::default(),
-    };
+    }
+    .into();
 
     let home_dir = paths::home_dir();
 
@@ -141,15 +145,17 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
         };
 
         workspace
-            .update(cx, |workspace, window, cx| {
-                workspace.start_debug_session(
-                    scenario,
-                    task_context.clone(),
-                    None,
-                    None,
-                    window,
-                    cx,
-                )
+            .update(cx, |multi, window, cx| {
+                multi.workspace().update(cx, |workspace, cx| {
+                    workspace.start_debug_session(
+                        scenario,
+                        task_context.clone(),
+                        None,
+                        None,
+                        window,
+                        cx,
+                    );
+                })
             })
             .unwrap();
 
@@ -178,8 +184,10 @@ async fn test_save_debug_scenario_to_file(executor: BackgroundExecutor, cx: &mut
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     workspace
-        .update(cx, |workspace, window, cx| {
-            NewProcessModal::show(workspace, window, NewProcessMode::Debug, None, cx);
+        .update(cx, |multi, window, cx| {
+            multi.workspace().update(cx, |workspace, cx| {
+                NewProcessModal::show(workspace, window, NewProcessMode::Debug, None, cx);
+            });
         })
         .unwrap();
 
@@ -320,8 +328,10 @@ async fn test_debug_modal_subtitles_with_multiple_worktrees(
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     workspace
-        .update(cx, |workspace, window, cx| {
-            NewProcessModal::show(workspace, window, NewProcessMode::Debug, None, cx);
+        .update(cx, |multi, window, cx| {
+            multi.workspace().update(cx, |workspace, cx| {
+                NewProcessModal::show(workspace, window, NewProcessMode::Debug, None, cx);
+            });
         })
         .unwrap();
 

@@ -1,8 +1,10 @@
-use db::kvp::KEY_VALUE_STORE;
+use db::kvp::KeyValueStore;
+use dev_container::find_configs_in_snapshot;
 use gpui::{SharedString, Window};
 use project::{Project, WorktreeId};
 use std::sync::LazyLock;
 use ui::prelude::*;
+use util::ResultExt;
 use util::rel_path::RelPath;
 use workspace::Workspace;
 use workspace::notifications::NotificationId;
@@ -11,9 +13,15 @@ use worktree::UpdatedEntriesSet;
 
 const DEV_CONTAINER_SUGGEST_KEY: &str = "dev_container_suggest_dismissed";
 
-fn devcontainer_path() -> &'static RelPath {
+fn devcontainer_dir_path() -> &'static RelPath {
     static PATH: LazyLock<&'static RelPath> =
         LazyLock::new(|| RelPath::unix(".devcontainer").expect("valid path"));
+    *PATH
+}
+
+fn devcontainer_json_path() -> &'static RelPath {
+    static PATH: LazyLock<&'static RelPath> =
+        LazyLock::new(|| RelPath::unix(".devcontainer.json").expect("valid path"));
     *PATH
 }
 
@@ -28,9 +36,9 @@ pub fn suggest_on_worktree_updated(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    let devcontainer_updated = updated_entries
-        .iter()
-        .any(|(path, _, _)| path.as_ref() == devcontainer_path());
+    let devcontainer_updated = updated_entries.iter().any(|(path, _, _)| {
+        path.as_ref() == devcontainer_dir_path() || path.as_ref() == devcontainer_json_path()
+    });
 
     if !devcontainer_updated {
         return;
@@ -46,11 +54,7 @@ pub fn suggest_on_worktree_updated(
         return;
     }
 
-    let has_devcontainer = worktree
-        .entry_for_path(devcontainer_path())
-        .is_some_and(|entry| entry.is_dir());
-
-    if !has_devcontainer {
+    if find_configs_in_snapshot(worktree).is_empty() {
         return;
     }
 
@@ -58,7 +62,7 @@ pub fn suggest_on_worktree_updated(
     let project_path = abs_path.to_string_lossy().to_string();
     let key_for_dismiss = project_devcontainer_key(&project_path);
 
-    let already_dismissed = KEY_VALUE_STORE
+    let already_dismissed = KeyValueStore::global(cx)
         .read_kvp(&key_for_dismiss)
         .ok()
         .flatten()
@@ -95,9 +99,13 @@ pub fn suggest_on_worktree_updated(
                 .secondary_on_click({
                     move |_window, cx| {
                         let key = key_for_dismiss.clone();
-                        db::write_and_log(cx, move || {
-                            KEY_VALUE_STORE.write_kvp(key, "dismissed".to_string())
-                        });
+                        let kvp = KeyValueStore::global(cx);
+                        cx.background_spawn(async move {
+                            kvp.write_kvp(key, "dismissed".to_string())
+                                .await
+                                .log_err();
+                        })
+                        .detach();
                     }
                 })
             })

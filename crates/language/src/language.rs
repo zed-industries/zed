@@ -23,7 +23,7 @@ mod toolchain;
 pub mod buffer_tests;
 
 use crate::language_settings::SoftWrap;
-pub use crate::language_settings::{EditPredictionsMode, IndentGuideSettings};
+pub use crate::language_settings::{AutoIndentMode, EditPredictionsMode, IndentGuideSettings};
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet, IndexSet};
@@ -66,8 +66,9 @@ use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
 use task::RunnableTag;
 pub use task_context::{ContextLocation, ContextProvider, RunnableRange};
 pub use text_diff::{
-    DiffOptions, apply_diff_patch, line_diff, text_diff, text_diff_with_options, unified_diff,
-    unified_diff_with_offsets, word_diff_ranges,
+    DiffOptions, apply_diff_patch, apply_reversed_diff_patch, char_diff, line_diff, text_diff,
+    text_diff_with_options, unified_diff, unified_diff_with_context, unified_diff_with_offsets,
+    word_diff_ranges,
 };
 use theme::SyntaxTheme;
 pub use toolchain::{
@@ -96,6 +97,7 @@ pub use tree_sitter::{Node, Parser, Tree, TreeCursor};
 static QUERY_CURSORS: Mutex<Vec<QueryCursor>> = Mutex::new(vec![]);
 static PARSERS: Mutex<Vec<Parser>> = Mutex::new(vec![]);
 
+#[ztracing::instrument(skip_all)]
 pub fn with_parser<F, R>(func: F) -> R
 where
     F: FnOnce(&mut Parser) -> R,
@@ -194,6 +196,13 @@ pub trait ToLspPosition {
 pub struct Location {
     pub buffer: Entity<Buffer>,
     pub range: Range<Anchor>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Symbol {
+    pub name: String,
+    pub kind: lsp::SymbolKind,
+    pub container_name: Option<String>,
 }
 
 type ServerBinaryCache = futures::lock::Mutex<Option<(bool, LanguageServerBinary)>>;
@@ -315,7 +324,7 @@ impl CachedLspAdapter {
 
     pub async fn labels_for_symbols(
         &self,
-        symbols: &[(String, lsp::SymbolKind)],
+        symbols: &[Symbol],
         language: &Arc<Language>,
     ) -> Result<Vec<Option<CodeLabel>>> {
         self.adapter
@@ -346,6 +355,17 @@ impl CachedLspAdapter {
             .await
     }
 
+    pub async fn settings_schema(
+        &self,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        cx: &mut AsyncApp,
+    ) -> Option<serde_json::Value> {
+        self.adapter
+            .clone()
+            .settings_schema(delegate, self.cached_binary.clone().lock_owned().await, cx)
+            .await
+    }
+
     pub fn process_prompt_response(&self, context: &PromptResponseContext, cx: &mut AsyncApp) {
         self.adapter.process_prompt_response(context, cx)
     }
@@ -359,7 +379,7 @@ pub trait LspAdapterDelegate: Send + Sync {
     fn http_client(&self) -> Arc<dyn HttpClient>;
     fn worktree_id(&self) -> WorktreeId;
     fn worktree_root_path(&self) -> &Path;
-    fn resolve_executable_path(&self, path: PathBuf) -> PathBuf;
+    fn resolve_relative_path(&self, path: PathBuf) -> PathBuf;
     fn update_status(&self, language: LanguageServerName, status: BinaryStatus);
     fn registered_lsp_adapters(&self) -> Vec<Arc<dyn LspAdapter>>;
     async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>>;
@@ -445,12 +465,12 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
 
     async fn labels_for_symbols(
         self: Arc<Self>,
-        symbols: &[(String, lsp::SymbolKind)],
+        symbols: &[Symbol],
         language: &Arc<Language>,
     ) -> Result<Vec<Option<CodeLabel>>> {
         let mut labels = Vec::new();
-        for (ix, (name, kind)) in symbols.iter().enumerate() {
-            let label = self.label_for_symbol(name, *kind, language).await;
+        for (ix, symbol) in symbols.iter().enumerate() {
+            let label = self.label_for_symbol(symbol, language).await;
             if let Some(label) = label {
                 labels.resize(ix + 1, None);
                 *labels.last_mut().unwrap() = Some(label);
@@ -461,9 +481,8 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
 
     async fn label_for_symbol(
         &self,
-        _: &str,
-        _: lsp::SymbolKind,
-        _: &Arc<Language>,
+        _symbol: &Symbol,
+        _language: &Arc<Language>,
     ) -> Option<CodeLabel> {
         None
     }
@@ -472,12 +491,25 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
     async fn initialization_options(
         self: Arc<Self>,
         _: &Arc<dyn LspAdapterDelegate>,
+        _cx: &mut AsyncApp,
     ) -> Result<Option<Value>> {
         Ok(None)
     }
 
     /// Returns the JSON schema of the initialization_options for the language server.
     async fn initialization_options_schema(
+        self: Arc<Self>,
+        _delegate: &Arc<dyn LspAdapterDelegate>,
+        _cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
+        _cx: &mut AsyncApp,
+    ) -> Option<serde_json::Value> {
+        None
+    }
+
+    /// Returns the JSON schema of the settings for the language server.
+    /// This corresponds to the `settings` field in `LspSettings`, which is used
+    /// to respond to `workspace/configuration` requests from the language server.
+    async fn settings_schema(
         self: Arc<Self>,
         _delegate: &Arc<dyn LspAdapterDelegate>,
         _cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
@@ -803,6 +835,11 @@ pub struct LanguageConfig {
     pub name: LanguageName,
     /// The name of this language for a Markdown code fence block
     pub code_fence_block_name: Option<Arc<str>>,
+    /// Alternative language names that Jupyter kernels may report for this language.
+    /// Used when a kernel's `language` field differs from Zed's language name.
+    /// For example, the Nu extension would set this to `["nushell"]`.
+    #[serde(default)]
+    pub kernel_language_names: Vec<Arc<str>>,
     // The name of the grammar in a WASM bundle (experimental).
     pub grammar: Option<Arc<str>>,
     /// The criteria for matching this language to a given file.
@@ -922,6 +959,15 @@ pub struct LanguageConfig {
     #[serde(default, deserialize_with = "deserialize_regex")]
     #[schemars(schema_with = "regex_json_schema")]
     pub import_path_strip_regex: Option<Regex>,
+}
+
+impl LanguageConfig {
+    pub const FILE_NAME: &str = "config.toml";
+
+    pub fn load(config_path: impl AsRef<Path>) -> Result<Self> {
+        let config = std::fs::read_to_string(config_path.as_ref())?;
+        toml::from_str(&config).map_err(Into::into)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Default, JsonSchema)]
@@ -1109,6 +1155,7 @@ impl Default for LanguageConfig {
         Self {
             name: LanguageName::new_static(""),
             code_fence_block_name: None,
+            kernel_language_names: Default::default(),
             grammar: None,
             matcher: LanguageMatcher::default(),
             brackets: Default::default(),
@@ -2043,6 +2090,23 @@ impl Language {
             .unwrap_or_else(|| self.config.name.as_ref().to_lowercase().into())
     }
 
+    pub fn matches_kernel_language(&self, kernel_language: &str) -> bool {
+        let kernel_language_lower = kernel_language.to_lowercase();
+
+        if self.code_fence_block_name().to_lowercase() == kernel_language_lower {
+            return true;
+        }
+
+        if self.config.name.as_ref().to_lowercase() == kernel_language_lower {
+            return true;
+        }
+
+        self.config
+            .kernel_language_names
+            .iter()
+            .any(|name| name.to_lowercase() == kernel_language_lower)
+    }
+
     pub fn context_provider(&self) -> Option<Arc<dyn ContextProvider>> {
         self.context_provider.clone()
     }
@@ -2607,6 +2671,7 @@ impl LspAdapter for FakeLspAdapter {
     async fn initialization_options(
         self: Arc<Self>,
         _: &Arc<dyn LspAdapterDelegate>,
+        _cx: &mut AsyncApp,
     ) -> Result<Option<Value>> {
         Ok(self.initialization_options.clone())
     }

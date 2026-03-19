@@ -86,10 +86,6 @@ enum OpenBuffer {
 
 pub enum BufferStoreEvent {
     BufferAdded(Entity<Buffer>),
-    BufferOpened {
-        buffer: Entity<Buffer>,
-        project_path: ProjectPath,
-    },
     SharedBufferClosed(proto::PeerId, BufferId),
     BufferDropped(BufferId),
     BufferChangedFilePath {
@@ -531,7 +527,10 @@ impl LocalBufferStore {
             let new_file = if let Some(entry) = snapshot_entry {
                 File {
                     disk_state: match entry.mtime {
-                        Some(mtime) => DiskState::Present { mtime },
+                        Some(mtime) => DiskState::Present {
+                            mtime,
+                            size: entry.size,
+                        },
                         None => old_file.disk_state,
                     },
                     is_local: true,
@@ -634,6 +633,7 @@ impl LocalBufferStore {
         self.save_local_buffer(buffer, worktree, path.path, true, cx)
     }
 
+    #[ztracing::instrument(skip_all)]
     fn open_buffer(
         &self,
         path: Arc<RelPath>,
@@ -844,17 +844,13 @@ impl BufferStore {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     pub fn open_buffer(
         &mut self,
         project_path: ProjectPath,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
         if let Some(buffer) = self.get_by_path(&project_path) {
-            cx.emit(BufferStoreEvent::BufferOpened {
-                buffer: buffer.clone(),
-                project_path,
-            });
-
             return Task::ready(Ok(buffer));
         }
 
@@ -876,19 +872,13 @@ impl BufferStore {
 
                 entry
                     .insert(
-                        // todo(lw): hot foreground spawn
                         cx.spawn(async move |this, cx| {
                             let load_result = load_buffer.await;
-                            this.update(cx, |this, cx| {
+                            this.update(cx, |this, _cx| {
                                 // Record the fact that the buffer is no longer loading.
                                 this.loading_buffers.remove(&project_path);
 
                                 let buffer = load_result.map_err(Arc::new)?;
-                                cx.emit(BufferStoreEvent::BufferOpened {
-                                    buffer: buffer.clone(),
-                                    project_path,
-                                });
-
                                 Ok(buffer)
                             })?
                         })
