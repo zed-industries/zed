@@ -1271,7 +1271,11 @@ impl Element for MarkdownElement {
                             builder.table.start(alignments.clone());
 
                             let column_count = alignments.len();
-                            builder.push_div(div().flex().flex_col().items_start(), range, markdown_end);
+                            builder.push_div(
+                                div().flex().flex_col().items_start(),
+                                range,
+                                markdown_end,
+                            );
                             builder.push_div(
                                 div()
                                     .id(("table", range.start))

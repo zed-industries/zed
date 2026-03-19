@@ -359,7 +359,7 @@ impl ToTaffy<taffy::style::Style> for Style {
             flex_grow: self.flex_grow,
             flex_shrink: self.flex_shrink,
             grid_template_rows: to_grid_repeat(&self.grid_rows),
-            grid_cols: to_grid_repeat(&self.grid_cols),
+            grid_template_columns: to_grid_repeat(&self.grid_cols),
             grid_row: self
                 .grid_location
                 .as_ref()
