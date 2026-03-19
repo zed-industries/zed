@@ -4,18 +4,22 @@ use gh_workflow::Workflow;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::tasks::workflow_checks::{self};
+
 mod after_release;
 mod autofix_pr;
 mod bump_patch_version;
 mod cherry_pick;
 mod compare_perf;
 mod danger;
+mod deploy_collab;
+mod extension_auto_bump;
 mod extension_bump;
-mod extension_release;
 mod extension_tests;
 mod extension_workflow_rollout;
 mod extensions;
 mod nix_build;
+mod publish_extension_cli;
 mod release_nightly;
 mod run_bundling;
 
@@ -26,38 +30,99 @@ mod runners;
 mod steps;
 mod vars;
 
+#[derive(Clone)]
+pub(crate) struct GitSha(String);
+
+impl AsRef<str> for GitSha {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+#[allow(
+    clippy::disallowed_methods,
+    reason = "This runs only in a CLI environment"
+)]
+fn parse_ref(value: &str) -> Result<GitSha, String> {
+    const GIT_SHA_LENGTH: usize = 40;
+    (value.len() == GIT_SHA_LENGTH)
+        .then_some(value)
+        .ok_or_else(|| {
+            format!(
+                "Git SHA has wrong length! \
+                Only SHAs with a full length of {GIT_SHA_LENGTH} are supported, found {len} characters.",
+                len = value.len()
+            )
+        })
+        .and_then(|value| {
+            let mut tmp = [0; 4];
+            value
+                .chars()
+                .all(|char| u16::from_str_radix(char.encode_utf8(&mut tmp), 16).is_ok()).then_some(value)
+                .ok_or_else(|| "Not a valid Git SHA".to_owned())
+        })
+        .and_then(|sha| {
+           std::process::Command::new("git")
+               .args([
+                   "rev-parse",
+                   "--quiet",
+                   "--verify",
+                   &format!("{sha}^{{commit}}")
+               ])
+               .output()
+               .map_err(|_| "Failed to spawn Git command to verify SHA".to_owned())
+               .and_then(|output|
+                   output
+                       .status.success()
+                       .then_some(sha)
+                       .ok_or_else(|| format!("SHA {sha} is not a valid Git SHA within this repository!")))
+        }).map(|sha| GitSha(sha.to_owned()))
+}
+
 #[derive(Parser)]
-pub struct GenerateWorkflowArgs {}
+pub(crate) struct GenerateWorkflowArgs {
+    #[arg(value_parser = parse_ref)]
+    /// The Git SHA to use when invoking this
+    pub(crate) sha: Option<GitSha>,
+}
+
+enum WorkflowSource {
+    Contextless(fn() -> Workflow),
+    WithContext(fn(&GenerateWorkflowArgs) -> Workflow),
+}
 
 struct WorkflowFile {
-    source: fn() -> Workflow,
+    source: WorkflowSource,
     r#type: WorkflowType,
 }
 
 impl WorkflowFile {
     fn zed(f: fn() -> Workflow) -> WorkflowFile {
         WorkflowFile {
-            source: f,
+            source: WorkflowSource::Contextless(f),
             r#type: WorkflowType::Zed,
         }
     }
 
-    fn extension(f: fn() -> Workflow) -> WorkflowFile {
+    fn extension(f: fn(&GenerateWorkflowArgs) -> Workflow) -> WorkflowFile {
         WorkflowFile {
-            source: f,
-            r#type: WorkflowType::ExtensionCI,
+            source: WorkflowSource::WithContext(f),
+            r#type: WorkflowType::ExtensionCi,
         }
     }
 
-    fn extension_shared(f: fn() -> Workflow) -> WorkflowFile {
+    fn extension_shared(f: fn(&GenerateWorkflowArgs) -> Workflow) -> WorkflowFile {
         WorkflowFile {
-            source: f,
+            source: WorkflowSource::WithContext(f),
             r#type: WorkflowType::ExtensionsShared,
         }
     }
 
-    fn generate_file(&self) -> Result<()> {
-        let workflow = (self.source)();
+    fn generate_file(&self, workflow_args: &GenerateWorkflowArgs) -> Result<()> {
+        let workflow = match &self.source {
+            WorkflowSource::Contextless(f) => f(),
+            WorkflowSource::WithContext(f) => f(workflow_args),
+        };
         let workflow_folder = self.r#type.folder_path();
 
         fs::create_dir_all(&workflow_folder).with_context(|| {
@@ -86,13 +151,13 @@ impl WorkflowFile {
     }
 }
 
-#[derive(PartialEq, Eq)]
-enum WorkflowType {
+#[derive(PartialEq, Eq, strum::EnumIter)]
+pub enum WorkflowType {
     /// Workflows living in the Zed repository
     Zed,
     /// Workflows living in the `zed-extensions/workflows` repository that are
     /// required workflows for PRs to the extension organization
-    ExtensionCI,
+    ExtensionCi,
     /// Workflows living in each of the extensions to perform checks and version
     /// bumps until a better, more centralized system for that is in place.
     ExtensionsShared,
@@ -112,16 +177,16 @@ impl WorkflowType {
         )
     }
 
-    fn folder_path(&self) -> PathBuf {
+    pub fn folder_path(&self) -> PathBuf {
         match self {
             WorkflowType::Zed => PathBuf::from(".github/workflows"),
-            WorkflowType::ExtensionCI => PathBuf::from("extensions/workflows"),
+            WorkflowType::ExtensionCi => PathBuf::from("extensions/workflows"),
             WorkflowType::ExtensionsShared => PathBuf::from("extensions/workflows/shared"),
         }
     }
 }
 
-pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
+pub fn run_workflows(args: GenerateWorkflowArgs) -> Result<()> {
     if !Path::new("crates/zed/").is_dir() {
         anyhow::bail!("xtask workflows must be ran from the project root");
     }
@@ -133,10 +198,12 @@ pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
         WorkflowFile::zed(cherry_pick::cherry_pick),
         WorkflowFile::zed(compare_perf::compare_perf),
         WorkflowFile::zed(danger::danger),
+        WorkflowFile::zed(deploy_collab::deploy_collab),
         WorkflowFile::zed(extension_bump::extension_bump),
-        WorkflowFile::zed(extension_release::extension_release),
+        WorkflowFile::zed(extension_auto_bump::extension_auto_bump),
         WorkflowFile::zed(extension_tests::extension_tests),
         WorkflowFile::zed(extension_workflow_rollout::extension_workflow_rollout),
+        WorkflowFile::zed(publish_extension_cli::publish_extension_cli),
         WorkflowFile::zed(release::release),
         WorkflowFile::zed(release_nightly::release_nightly),
         WorkflowFile::zed(run_agent_evals::run_agent_evals),
@@ -147,12 +214,11 @@ pub fn run_workflows(_: GenerateWorkflowArgs) -> Result<()> {
         /* workflows used for CI/CD in extension repositories */
         WorkflowFile::extension(extensions::run_tests::run_tests),
         WorkflowFile::extension_shared(extensions::bump_version::bump_version),
-        WorkflowFile::extension_shared(extensions::release_version::release_version),
     ];
 
     for workflow_file in workflows {
-        workflow_file.generate_file()?;
+        workflow_file.generate_file(&args)?;
     }
 
-    Ok(())
+    workflow_checks::validate(Default::default())
 }

@@ -12,7 +12,7 @@ permissions:
 jobs:
   add-triage-label:
     if: github.repository == 'zed-industries/zed'
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-2x4-ubuntu-2404
     timeout-minutes: 5
     steps:
       - id: get-app-token
@@ -42,8 +42,10 @@ jobs:
             }
 
       - if: steps.check-staff.outputs.result == 'true'
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: |
-          echo "::notice::Skipping issue #${{ github.event.issue.number }} - actor is staff member"
+          echo "::notice::Skipping issue #$ISSUE_NUMBER - actor is staff member"
 
       - if: steps.check-staff.outputs.result == 'false'
         id: add-label

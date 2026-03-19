@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use collections::HashMap;
 use futures::{FutureExt, Stream, StreamExt, future::BoxFuture};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task};
@@ -16,11 +16,12 @@ use open_router::{
 };
 use settings::{OpenRouterAvailableModel as AvailableModel, Settings, SettingsStore};
 use std::pin::Pin;
-use std::str::FromStr as _;
 use std::sync::{Arc, LazyLock};
 use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
+
+use crate::provider::util::parse_tool_arguments;
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("openrouter");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("OpenRouter");
@@ -189,7 +190,7 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
     }
 
     fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        Some(self.create_language_model(open_router::Model::default_fast()))
+        None
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -311,6 +312,14 @@ impl LanguageModel for OpenRouterLanguageModel {
 
     fn supports_tools(&self) -> bool {
         self.model.supports_tool_calls()
+    }
+
+    fn supports_streaming_tools(&self) -> bool {
+        true
+    }
+
+    fn supports_thinking(&self) -> bool {
+        matches!(self.model.mode, OpenRouterModelMode::Thinking { .. })
     }
 
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
@@ -586,13 +595,20 @@ impl OpenRouterEventMapper {
         &mut self,
         event: ResponseStreamEvent,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
-        let Some(choice) = event.choices.first() else {
-            return vec![Err(LanguageModelCompletionError::from(anyhow!(
-                "Response contained no choices"
-            )))];
-        };
-
         let mut events = Vec::new();
+
+        if let Some(usage) = event.usage {
+            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                input_tokens: usage.prompt_tokens,
+                output_tokens: usage.completion_tokens,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+            })));
+        }
+
+        let Some(choice) = event.choices.first() else {
+            return events;
+        };
 
         if let Some(details) = choice.delta.reasoning_details.clone() {
             // Emit reasoning_details immediately
@@ -638,16 +654,24 @@ impl OpenRouterEventMapper {
                         entry.thought_signature = Some(signature);
                     }
                 }
-            }
-        }
 
-        if let Some(usage) = event.usage {
-            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
-                input_tokens: usage.prompt_tokens,
-                output_tokens: usage.completion_tokens,
-                cache_creation_input_tokens: 0,
-                cache_read_input_tokens: 0,
-            })));
+                if !entry.id.is_empty() && !entry.name.is_empty() {
+                    if let Ok(input) = serde_json::from_str::<serde_json::Value>(
+                        &partial_json_fixer::fix_json(&entry.arguments),
+                    ) {
+                        events.push(Ok(LanguageModelCompletionEvent::ToolUse(
+                            LanguageModelToolUse {
+                                id: entry.id.clone().into(),
+                                name: entry.name.as_str().into(),
+                                is_input_complete: false,
+                                input,
+                                raw_input: entry.arguments.clone(),
+                                thought_signature: entry.thought_signature.clone(),
+                            },
+                        )));
+                    }
+                }
+            }
         }
 
         match choice.finish_reason.as_deref() {
@@ -657,7 +681,7 @@ impl OpenRouterEventMapper {
             }
             Some("tool_calls") => {
                 events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {
-                    match serde_json::Value::from_str(&tool_call.arguments) {
+                    match parse_tool_arguments(&tool_call.arguments) {
                         Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
                             LanguageModelToolUse {
                                 id: tool_call.id.clone().into(),
@@ -886,7 +910,7 @@ mod tests {
             ResponseStreamEvent {
                 id: Some("response_123".into()),
                 created: 1234567890,
-                model: "google/gemini-3-pro-preview".into(),
+                model: "google/gemini-3.1-pro-preview".into(),
                 choices: vec![ChoiceDelta {
                     index: 0,
                     delta: ResponseMessageDelta {
@@ -911,7 +935,7 @@ mod tests {
             ResponseStreamEvent {
                 id: Some("response_123".into()),
                 created: 1234567890,
-                model: "google/gemini-3-pro-preview".into(),
+                model: "google/gemini-3.1-pro-preview".into(),
                 choices: vec![ChoiceDelta {
                     index: 0,
                     delta: ResponseMessageDelta {
@@ -937,7 +961,7 @@ mod tests {
             ResponseStreamEvent {
                 id: Some("response_123".into()),
                 created: 1234567890,
-                model: "google/gemini-3-pro-preview".into(),
+                model: "google/gemini-3.1-pro-preview".into(),
                 choices: vec![ChoiceDelta {
                     index: 0,
                     delta: ResponseMessageDelta {
@@ -964,7 +988,7 @@ mod tests {
             ResponseStreamEvent {
                 id: Some("response_123".into()),
                 created: 1234567890,
-                model: "google/gemini-3-pro-preview".into(),
+                model: "google/gemini-3.1-pro-preview".into(),
                 choices: vec![ChoiceDelta {
                     index: 0,
                     delta: ResponseMessageDelta {
@@ -1048,6 +1072,32 @@ mod tests {
             thought_signature_value.unwrap(),
             "sha256:test_signature_xyz789"
         );
+    }
+
+    #[gpui::test]
+    async fn test_usage_only_chunk_with_empty_choices_does_not_error() {
+        let mut mapper = OpenRouterEventMapper::new();
+
+        let events = mapper.map_event(ResponseStreamEvent {
+            id: Some("response_123".into()),
+            created: 1234567890,
+            model: "google/gemini-3-flash-preview".into(),
+            choices: Vec::new(),
+            usage: Some(open_router::Usage {
+                prompt_tokens: 12,
+                completion_tokens: 7,
+                total_tokens: 19,
+            }),
+        });
+
+        assert_eq!(events.len(), 1);
+        match events.into_iter().next().unwrap() {
+            Ok(LanguageModelCompletionEvent::UsageUpdate(usage)) => {
+                assert_eq!(usage.input_tokens, 12);
+                assert_eq!(usage.output_tokens, 7);
+            }
+            other => panic!("Expected usage update event, got: {other:?}"),
+        }
     }
 
     #[gpui::test]

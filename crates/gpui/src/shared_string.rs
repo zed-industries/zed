@@ -1,12 +1,12 @@
 use derive_more::{Deref, DerefMut};
 
+use gpui_util::arc_cow::ArcCow;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::{Borrow, Cow},
     sync::Arc,
 };
-use util::arc_cow::ArcCow;
 
 /// A shared string is an immutable string that can be cheaply cloned in GPUI
 /// tasks. Essentially an abstraction over an `Arc<str>` and `&'static str`,

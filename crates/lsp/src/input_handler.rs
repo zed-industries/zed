@@ -103,18 +103,19 @@ impl LspStdoutHandler {
                 id, error, result, ..
             }) = serde_json::from_slice(&buffer)
             {
-                let mut response_handlers = response_handlers.lock();
-                if let Some(handler) = response_handlers
-                    .as_mut()
-                    .and_then(|handlers| handlers.remove(&id))
-                {
-                    drop(response_handlers);
+                let handler = {
+                    response_handlers
+                        .lock()
+                        .as_mut()
+                        .and_then(|handlers| handlers.remove(&id))
+                };
+                if let Some(handler) = handler {
                     if let Some(error) = error {
-                        handler(Err(error));
+                        handler(Err(error)).await;
                     } else if let Some(result) = result {
-                        handler(Ok(result.get().into()));
+                        handler(Ok(result.get().into())).await;
                     } else {
-                        handler(Ok("null".into()));
+                        handler(Ok("null".into())).await;
                     }
                 }
             } else {

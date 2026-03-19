@@ -1,5 +1,5 @@
 use crate::{
-    example::{Example, ExamplePromptInputs, ExampleState},
+    example::{Example, ExampleState},
     git,
     headless::EpAppState,
     progress::{ExampleProgress, InfoStyle, Step, StepProgress},
@@ -7,13 +7,15 @@ use crate::{
 use anyhow::{Context as _, Result};
 use edit_prediction::{
     EditPredictionStore,
+    cursor_excerpt::{compute_cursor_excerpt, compute_syntax_ranges},
     udiff::{OpenedBuffers, refresh_worktree_entries, strip_diff_path_prefix},
 };
 use futures::AsyncWriteExt as _;
 use gpui::{AsyncApp, Entity};
-use language::{Anchor, Buffer, LanguageNotFound, ToOffset, ToPoint};
+use language::{Anchor, Buffer, LanguageNotFound, ToOffset};
 use project::{Project, ProjectPath, buffer_store::BufferStoreEvent};
 use std::{fs, path::PathBuf, sync::Arc};
+use zeta_prompt::ZetaPromptInput;
 
 pub async fn run_load_project(
     example: &mut Example,
@@ -58,7 +60,7 @@ pub async fn run_load_project(
         .read_with(&cx, |buffer, _| buffer.parsing_idle())
         .await;
 
-    let edit_history = ep_store.update(&mut cx, |store, cx| {
+    let events: Vec<Arc<zeta_prompt::Event>> = ep_store.update(&mut cx, |store, cx| {
         store
             .edit_history_for_project(&project, cx)
             .into_iter()
@@ -66,24 +68,48 @@ pub async fn run_load_project(
             .collect()
     });
 
+    let existing_related_files = example
+        .prompt_inputs
+        .take()
+        .and_then(|inputs| inputs.related_files);
+
     let (prompt_inputs, language_name) = buffer.read_with(&cx, |buffer, _cx| {
-        let cursor_point = cursor_position.to_point(&buffer);
+        let snapshot = buffer.snapshot();
+        let cursor_offset = cursor_position.to_offset(&snapshot);
         let language_name = buffer
             .language()
             .map(|l| l.name().to_string())
             .unwrap_or_else(|| "Unknown".to_string());
+
+        let (excerpt_point_range, excerpt_offset_range, cursor_offset_in_excerpt) =
+            compute_cursor_excerpt(&snapshot, cursor_offset);
+
+        let cursor_excerpt: Arc<str> = buffer
+            .text_for_range(excerpt_offset_range.clone())
+            .collect::<String>()
+            .into();
+        let syntax_ranges = compute_syntax_ranges(&snapshot, cursor_offset, &excerpt_offset_range);
+        let excerpt_ranges = zeta_prompt::compute_legacy_excerpt_ranges(
+            &cursor_excerpt,
+            cursor_offset_in_excerpt,
+            &syntax_ranges,
+        );
+
         (
-            ExamplePromptInputs {
-                content: buffer.text(),
-                cursor_row: cursor_point.row,
-                cursor_column: cursor_point.column,
-                cursor_offset: cursor_position.to_offset(&buffer),
-                edit_history,
-                related_files: example
-                    .prompt_inputs
-                    .take()
-                    .map(|inputs| inputs.related_files)
-                    .unwrap_or_default(),
+            ZetaPromptInput {
+                cursor_path: example.spec.cursor_path.clone(),
+                cursor_excerpt,
+                cursor_offset_in_excerpt,
+                excerpt_start_row: Some(excerpt_point_range.start.row),
+                events,
+                related_files: existing_related_files,
+                active_buffer_diagnostics: vec![],
+                excerpt_ranges,
+                syntax_ranges: Some(syntax_ranges),
+                in_open_source_repo: false,
+                can_collect_data: false,
+                experiment: None,
+                repo_url: None,
             },
             language_name,
         )
@@ -189,20 +215,6 @@ async fn setup_project(
 
     let worktree_path = setup_worktree(example, step_progress).await?;
 
-    if let Some(project) = app_state.project_cache.get(&example.spec.repository_url) {
-        let buffer_store = project.read_with(cx, |project, _| project.buffer_store().clone());
-        let buffers = buffer_store.read_with(cx, |buffer_store, _| {
-            buffer_store.buffers().collect::<Vec<_>>()
-        });
-        for buffer in buffers {
-            buffer.update(cx, |buffer, cx| buffer.reload(cx)).await.ok();
-        }
-        ep_store.update(cx, |ep_store, _| {
-            ep_store.clear_history_for_project(&project);
-        });
-        return Ok(project);
-    }
-
     let project = cx.update(|cx| {
         Project::local(
             app_state.client.clone(),
@@ -211,7 +223,10 @@ async fn setup_project(
             app_state.languages.clone(),
             app_state.fs.clone(),
             None,
-            false,
+            project::LocalProjectFlags {
+                init_worktree_trust: false,
+                watch_global_configs: false,
+            },
             cx,
         )
     });
@@ -223,16 +238,18 @@ async fn setup_project(
         })
         .await?;
 
-    app_state
-        .project_cache
-        .insert(example.spec.repository_url.clone(), project.clone());
-
     let buffer_store = project.read_with(cx, |project, _| project.buffer_store().clone());
     cx.subscribe(&buffer_store, {
-        let project = project.clone();
+        let project = project.downgrade();
+        let ep_store = ep_store.downgrade();
         move |_, event, cx| match event {
             BufferStoreEvent::BufferAdded(buffer) => {
-                ep_store.update(cx, |store, cx| store.register_buffer(&buffer, &project, cx));
+                let Some(project) = project.upgrade() else {
+                    return;
+                };
+                ep_store
+                    .update(cx, |store, cx| store.register_buffer(&buffer, &project, cx))
+                    .ok();
             }
             _ => {}
         }
@@ -254,14 +271,23 @@ async fn setup_worktree(example: &Example, step_progress: &StepProgress) -> Resu
     let worktree_git_dir = repo_dir
         .join(".git/worktrees")
         .join(repo_name.name.as_ref());
-    let index_lock = worktree_git_dir.join("index.lock");
-    if index_lock.exists() {
-        fs::remove_file(&index_lock).ok();
+    for lock_file in &["index.lock", "HEAD.lock", "config.lock"] {
+        let worktree_lock_path = worktree_git_dir.join(lock_file);
+        let repo_lock_path = repo_dir.join(".git").join(lock_file);
+        if worktree_lock_path.exists() {
+            fs::remove_file(&worktree_lock_path).ok();
+        }
+        if repo_lock_path.exists() {
+            fs::remove_file(&repo_lock_path).ok();
+        }
     }
 
     let mut git_repo_exists = false;
     if repo_dir.is_dir() {
-        if git::run_git(&repo_dir, &["status"]).await.is_ok() {
+        if git::run_git(&repo_dir, &["remote", "get-url", "origin"])
+            .await
+            .map_or(false, |origin| origin.trim() == example.spec.repository_url)
+        {
             git_repo_exists = true;
         } else {
             fs::remove_dir_all(&repo_dir).ok();
@@ -283,25 +309,36 @@ async fn setup_worktree(example: &Example, step_progress: &StepProgress) -> Resu
     step_progress.set_substatus("fetching");
     let revision = git::fetch_if_needed(&repo_dir, &example.spec.revision).await?;
 
+    // Clean up any stale worktree registrations from previous crashed runs.
+    git::run_git(&repo_dir, &["worktree", "prune"]).await.ok();
+
     // Create the worktree for this example if needed.
     step_progress.set_substatus("preparing worktree");
 
-    let mut worktree_exists = false;
-    if worktree_path.is_dir() {
-        if git::run_git(&worktree_path, &["clean", "--force", "-d"])
+    // Check if worktree exists and is valid (not just a directory from a crashed run).
+    let worktree_valid = worktree_path.is_dir()
+        && git::run_git(&worktree_path, &["rev-parse", "--git-dir"])
             .await
-            .is_ok()
-        {
-            git::run_git(&worktree_path, &["reset", "--hard", "HEAD"]).await?;
-            git::run_git(&worktree_path, &["checkout", revision.as_str()]).await?;
-            worktree_exists = true;
-        } else {
+            .is_ok();
+
+    if worktree_valid {
+        git::run_git(&worktree_path, &["clean", "--force", "-d"]).await?;
+        git::run_git(&worktree_path, &["reset", "--hard", "HEAD"]).await?;
+        git::run_git(&worktree_path, &["checkout", revision.as_str()]).await?;
+    } else {
+        let worktree_path_string = worktree_path.to_string_lossy();
+
+        // Clean up invalid worktree directory and registration if they exist.
+        if worktree_path.exists() {
             fs::remove_dir_all(&worktree_path).ok();
         }
-    }
+        git::run_git(
+            &repo_dir,
+            &["worktree", "remove", "--force", &worktree_path_string],
+        )
+        .await
+        .ok();
 
-    if !worktree_exists {
-        let worktree_path_string = worktree_path.to_string_lossy();
         let branch_name = example.spec.filename();
         git::run_git(
             &repo_dir,

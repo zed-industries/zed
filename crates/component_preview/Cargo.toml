@@ -13,7 +13,6 @@ path = "src/component_preview.rs"
 
 [features]
 default = []
-preview = []
 test-support = ["db/test-support"]
 
 [dependencies]
@@ -39,7 +38,9 @@ ui_input.workspace = true
 uuid.workspace = true
 workspace.workspace = true
 
+[dev-dependencies]
+gpui_platform = { workspace = true, features = ["screen-capture"] }
+
 [[example]]
 name = "component_preview"
 path = "examples/component_preview.rs"
-required-features = ["preview"]

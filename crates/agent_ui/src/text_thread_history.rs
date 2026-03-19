@@ -116,6 +116,10 @@ impl TextThreadHistory {
         this
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.visible_items.is_empty()
+    }
+
     fn update_visible_items(&mut self, preserve_selected_item: bool, cx: &mut Context<Self>) {
         let entries = self.text_thread_store.update(cx, |store, _| {
             store.ordered_text_threads().cloned().collect::<Vec<_>>()
@@ -521,7 +525,7 @@ impl Render for TextThreadHistory {
 
                 if has_no_history {
                     view.justify_center().items_center().child(
-                        Label::new("You don't have any past threads yet.")
+                        Label::new("You don't have any past text threads yet.")
                             .size(LabelSize::Small)
                             .color(Color::Muted),
                     )

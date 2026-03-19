@@ -1,8 +1,12 @@
-<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-<path fill-rule="evenodd" clip-rule="evenodd" d="M10.4 4.4V6.8H9.2V4.4H10.4ZM12.8 2V4.4H11.6V2H12.8ZM2 2H3.2V14H2V2ZM6.8 9.2H8V11.6H6.8V9.2ZM11.6 9.2H12.8V14H11.6V9.2Z" fill="black"/>
-<path opacity="0.4" fill-rule="evenodd" clip-rule="evenodd" d="M12.8 2H15.2V4.4H12.8V2ZM3.2 2H5.6V4.4H3.2V2Z" fill="black"/>
-<path opacity="0.5" fill-rule="evenodd" clip-rule="evenodd" d="M10.4 6.8V4.4H15.2V6.8H10.4ZM3.2 6.8V4.4H8V6.8H3.2Z" fill="black"/>
-<path opacity="0.6" fill-rule="evenodd" clip-rule="evenodd" d="M3.2 9.2V6.8H15.2V9.2H3.2Z" fill="black"/>
-<path opacity="0.7" fill-rule="evenodd" clip-rule="evenodd" d="M8 9.2H10.4V11.6H8V9.2ZM12.8 9.2H15.2V11.6H12.8V9.2ZM3.2 9.2H5.6V11.6H3.2V9.2Z" fill="black"/>
-<path opacity="0.8" fill-rule="evenodd" clip-rule="evenodd" d="M12.8 11.6H15.2V14H12.8V11.6ZM3.2 11.6H5.6V14H3.2V11.6Z" fill="black"/>
+<svg width="16" height="16" xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 16 16">
+  <rect x="2.75" y="2.75" width="2.1" height="2.1"/>
+  <rect x="11.15" y="2.75" width="2.1" height="2.1"/>
+  <rect x="6.95" y="9.05" width="2.1" height="2.1"/>
+  <rect x="2.75" y="9.05" width="2.1" height="2.1"/>
+  <rect x="11.15" y="9.05" width="2.1" height="2.1"/>
+  <rect x="2.75" y="4.85" width="4.2" height="2.1"/>
+  <rect x=".65" y="11.15" width="6.3" height="2.1"/>
+  <rect x="9.05" y="11.15" width="6.3" height="2.1"/>
+  <rect x="2.75" y="6.95" width="10.49" height="2.1"/>
+  <rect x="9.05" y="4.85" width="4.2" height="2.1"/>
 </svg>

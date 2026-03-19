@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
 
 use crate::{
-    CenteredPaddingSettings, DelayMs, DockPosition, DockSide, InactiveOpacity,
-    ScrollbarSettingsContent, ShowIndentGuides, serialize_optional_f32_with_two_decimal_places,
+    CenteredPaddingSettings, DelayMs, DockPosition, DockSide, InactiveOpacity, ShowIndentGuides,
+    ShowScrollbar, serialize_optional_f32_with_two_decimal_places,
 };
 
 #[with_fallible_options]
@@ -113,6 +113,12 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: true
     pub zoomed_padding: Option<bool>,
+    /// Whether toggling a panel (e.g. with its keyboard shortcut) also closes
+    /// the panel when it is already focused, instead of just moving focus back
+    /// to the editor.
+    ///
+    /// Default: false
+    pub close_panel_on_toggle: Option<bool>,
     /// What draws window decorations/titlebar, the client application (Zed) or display server
     /// Default: client
     pub window_decorations: Option<WindowDecorations>,
@@ -695,12 +701,16 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub auto_fold_dirs: Option<bool>,
+    /// Whether to show folder names with bold text in the project panel.
+    ///
+    /// Default: false
+    pub bold_folder_labels: Option<bool>,
     /// Whether the project panel should open on startup.
     ///
     /// Default: true
     pub starts_open: Option<bool>,
     /// Scrollbar-related settings
-    pub scrollbar: Option<ScrollbarSettingsContent>,
+    pub scrollbar: Option<ProjectPanelScrollbarSettingsContent>,
     /// Which files containing diagnostic errors/warnings to mark in the project panel.
     ///
     /// Default: all
@@ -729,6 +739,10 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: directories_first
     pub sort_mode: Option<ProjectPanelSortMode>,
+    /// Whether to show error and warning count badges next to file names in the project panel.
+    ///
+    /// Default: true
+    pub diagnostic_badges: Option<bool>,
 }
 
 #[derive(
@@ -783,6 +797,126 @@ pub enum ProjectPanelSortMode {
 #[derive(
     Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq, Default,
 )]
+pub struct ProjectPanelScrollbarSettingsContent {
+    /// When to show the scrollbar in the project panel.
+    ///
+    /// Default: inherits editor scrollbar settings
+    pub show: Option<ShowScrollbar>,
+    /// Whether to allow horizontal scrolling in the project panel.
+    /// When false, the view is locked to the leftmost position and
+    /// long file names are clipped.
+    ///
+    /// Default: true
+    pub horizontal_scroll: Option<bool>,
+}
+
+#[with_fallible_options]
+#[derive(
+    Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq, Default,
+)]
 pub struct ProjectPanelIndentGuidesSettings {
     pub show: Option<ShowIndentGuides>,
+}
+
+/// Controls how semantic tokens from language servers are used for syntax highlighting.
+#[derive(
+    Debug,
+    PartialEq,
+    Eq,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+    strum::EnumMessage,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SemanticTokens {
+    /// Do not request semantic tokens from language servers.
+    #[default]
+    Off,
+    /// Use LSP semantic tokens together with tree-sitter highlighting.
+    Combined,
+    /// Use LSP semantic tokens exclusively, replacing tree-sitter highlighting.
+    Full,
+}
+
+impl SemanticTokens {
+    /// Returns true if semantic tokens should be requested from language servers.
+    pub fn enabled(&self) -> bool {
+        self != &Self::Off
+    }
+
+    /// Returns true if tree-sitter syntax highlighting should be used.
+    /// In `full` mode, tree-sitter is disabled in favor of LSP semantic tokens.
+    pub fn use_tree_sitter(&self) -> bool {
+        self != &Self::Full
+    }
+}
+
+#[derive(
+    Debug,
+    PartialEq,
+    Eq,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentFoldingRanges {
+    /// Do not request folding ranges from language servers; use tree-sitter and indent-based folding.
+    #[default]
+    Off,
+    /// Use LSP folding wherever possible, falling back to tree-sitter and indent-based folding when no results were returned by the server.
+    On,
+}
+
+impl DocumentFoldingRanges {
+    /// Returns true if LSP folding ranges should be requested from language servers.
+    pub fn enabled(&self) -> bool {
+        self != &Self::Off
+    }
+}
+
+#[derive(
+    Debug,
+    PartialEq,
+    Eq,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentSymbols {
+    /// Use tree-sitter queries to compute document symbols for outlines and breadcrumbs (default).
+    #[default]
+    #[serde(alias = "tree_sitter")]
+    Off,
+    /// Use the language server's `textDocument/documentSymbol` LSP response for outlines and
+    /// breadcrumbs. When enabled, tree-sitter is not used for document symbols.
+    #[serde(alias = "language_server")]
+    On,
+}
+
+impl DocumentSymbols {
+    /// Returns true if LSP document symbols should be used instead of tree-sitter.
+    pub fn lsp_enabled(&self) -> bool {
+        self == &Self::On
+    }
 }

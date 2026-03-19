@@ -9,6 +9,6 @@
 (comment) @comment
 
 [
-(version)
-(go_version)
+  (version)
+  (go_version)
 ] @string

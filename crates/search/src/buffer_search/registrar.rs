@@ -1,5 +1,5 @@
-use gpui::{Action, Context, Div, Entity, InteractiveElement, Window, div};
-use workspace::Workspace;
+use gpui::{Action, App, Context, Div, Entity, InteractiveElement, Window, div};
+use workspace::{Pane, Workspace};
 
 use crate::BufferSearchBar;
 
@@ -56,6 +56,57 @@ impl<T: 'static> SearchActionsRegistrar for DivRegistrar<'_, '_, T> {
             }))
         });
     }
+}
+
+pub struct PaneDivRegistrar {
+    div: Option<Div>,
+    pane: Entity<Pane>,
+}
+
+impl PaneDivRegistrar {
+    pub fn new(div: Div, pane: Entity<Pane>) -> Self {
+        Self {
+            div: Some(div),
+            pane,
+        }
+    }
+
+    pub fn into_div(self) -> Div {
+        self.div.unwrap()
+    }
+}
+
+impl SearchActionsRegistrar for PaneDivRegistrar {
+    fn register_handler<A: Action>(&mut self, callback: impl ActionExecutor<A>) {
+        let pane = self.pane.clone();
+        self.div = self.div.take().map(|div| {
+            div.on_action(move |action: &A, window: &mut Window, cx: &mut App| {
+                let search_bar = pane
+                    .read(cx)
+                    .toolbar()
+                    .read(cx)
+                    .item_of_type::<BufferSearchBar>();
+                let should_notify = search_bar
+                    .map(|search_bar| {
+                        search_bar.update(cx, |search_bar, cx| {
+                            callback.execute(search_bar, action, window, cx)
+                        })
+                    })
+                    .unwrap_or(false);
+                if should_notify {
+                    pane.update(cx, |_, cx| cx.notify());
+                } else {
+                    cx.propagate();
+                }
+            })
+        });
+    }
+}
+
+pub fn register_pane_search_actions(div: Div, pane: Entity<Pane>) -> Div {
+    let mut registrar = PaneDivRegistrar::new(div, pane);
+    BufferSearchBar::register(&mut registrar);
+    registrar.into_div()
 }
 
 /// Register actions for an active pane.

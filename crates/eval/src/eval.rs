@@ -18,7 +18,7 @@ use collections::{HashMap, HashSet};
 use extension::ExtensionHostProxy;
 use futures::future;
 use gpui::http_client::read_proxy_from_env;
-use gpui::{App, AppContext, Application, AsyncApp, Entity, UpdateGlobal};
+use gpui::{App, AppContext, AsyncApp, Entity, UpdateGlobal};
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
 use language_model::{ConfiguredModel, LanguageModel, LanguageModelRegistry, SelectedModel};
@@ -114,7 +114,7 @@ fn main() {
     let languages: HashSet<String> = args.languages.into_iter().collect();
 
     let http_client = Arc::new(ReqwestClient::new());
-    let app = Application::headless().with_http_client(http_client);
+    let app = gpui_platform::headless().with_http_client(http_client);
     let all_threads = examples::all(&examples_dir);
 
     app.run(move |cx| {
@@ -429,7 +429,7 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
     let extension_host_proxy = ExtensionHostProxy::global(cx);
     debug_adapter_extension::init(extension_host_proxy.clone(), cx);
     language_extension::init(LspAccess::Noop, extension_host_proxy, languages.clone());
-    language_model::init(client.clone(), cx);
+    language_model::init(user_store.clone(), client.clone(), cx);
     language_models::init(user_store.clone(), client.clone(), cx);
     languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
     prompt_store::init(cx);

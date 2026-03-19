@@ -22,12 +22,13 @@ use lsp::{LanguageServer, LanguageServerId, LanguageServerName};
 use node_runtime::NodeRuntime;
 use paths::default_prettier_dir;
 use prettier::Prettier;
+use settings::Settings;
 use smol::stream::StreamExt;
 use util::{ResultExt, TryFutureExt, rel_path::RelPath};
 
 use crate::{
     File, PathChange, ProjectEntryId, Worktree, lsp_store::WorktreeId,
-    worktree_store::WorktreeStore,
+    project_settings::ProjectSettings, worktree_store::WorktreeStore,
 };
 
 pub struct PrettierStore {
@@ -280,17 +281,27 @@ impl PrettierStore {
         worktree_id: Option<WorktreeId>,
         cx: &mut Context<Self>,
     ) -> PrettierTask {
+        let request_timeout = ProjectSettings::get_global(cx)
+            .global_lsp_settings
+            .get_request_timeout();
+
         cx.spawn(async move |prettier_store, cx| {
             log::info!("Starting prettier at path {prettier_dir:?}");
             let new_server_id = prettier_store.read_with(cx, |prettier_store, _| {
                 prettier_store.languages.next_language_server_id()
             })?;
 
-            let new_prettier = Prettier::start(new_server_id, prettier_dir, node, cx.clone())
-                .await
-                .context("default prettier spawn")
-                .map(Arc::new)
-                .map_err(Arc::new)?;
+            let new_prettier = Prettier::start(
+                new_server_id,
+                prettier_dir,
+                node,
+                request_timeout,
+                cx.clone(),
+            )
+            .await
+            .context("default prettier spawn")
+            .map(Arc::new)
+            .map_err(Arc::new)?;
             Self::register_new_prettier(
                 &prettier_store,
                 &new_prettier,
@@ -454,62 +465,75 @@ impl PrettierStore {
 
         let prettier_config_file_changed = changes
             .iter()
-            .filter(|(_, _, change)| !matches!(change, PathChange::Loaded))
-            .filter(|(path, _, _)| {
-                !path
-                    .components()
-                    .any(|component| component == "node_modules")
+            .filter(|(path, _, change)| {
+                !matches!(change, PathChange::Loaded)
+                    && !path
+                        .components()
+                        .any(|component| component == "node_modules")
             })
             .find(|(path, _, _)| prettier_config_files.contains(path.as_ref()));
-        let current_worktree_id = worktree.read(cx).id();
-        if let Some((config_path, _, _)) = prettier_config_file_changed {
-            log::info!(
-                "Prettier config file {config_path:?} changed, reloading prettier instances for worktree {current_worktree_id}"
-            );
-            let prettiers_to_reload =
-                self.prettiers_per_worktree
-                    .get(&current_worktree_id)
-                    .iter()
-                    .flat_map(|prettier_paths| prettier_paths.iter())
-                    .flatten()
-                    .filter_map(|prettier_path| {
-                        Some((
-                            current_worktree_id,
-                            Some(prettier_path.clone()),
-                            self.prettier_instances.get(prettier_path)?.clone(),
-                        ))
-                    })
-                    .chain(self.default_prettier.instance().map(|default_prettier| {
-                        (current_worktree_id, None, default_prettier.clone())
-                    }))
-                    .collect::<Vec<_>>();
 
-            cx.background_spawn(async move {
-                let _: Vec<()> = future::join_all(prettiers_to_reload.into_iter().map(|(worktree_id, prettier_path, prettier_instance)| {
-                    async move {
-                        if let Some(instance) = prettier_instance.prettier {
-                            match instance.await {
-                                Ok(prettier) => {
-                                    prettier.clear_cache().log_err().await;
-                                },
-                                Err(e) => {
-                                    match prettier_path {
-                                        Some(prettier_path) => log::error!(
-                                            "Failed to clear prettier {prettier_path:?} cache for worktree {worktree_id:?} on prettier settings update: {e:#}"
-                                        ),
-                                        None => log::error!(
-                                            "Failed to clear default prettier cache for worktree {worktree_id:?} on prettier settings update: {e:#}"
-                                        ),
-                                    }
-                                },
-                            }
-                        }
-                    }
-                }))
-                .await;
+        let Some((config_path, _, _)) = prettier_config_file_changed else {
+            return;
+        };
+
+        let current_worktree_id = worktree.read(cx).id();
+
+        log::info!(
+            "Prettier config file {config_path:?} changed, reloading prettier instances for worktree {current_worktree_id}"
+        );
+
+        let prettiers_to_reload = self
+            .prettiers_per_worktree
+            .get(&current_worktree_id)
+            .iter()
+            .flat_map(|prettier_paths| prettier_paths.iter())
+            .flatten()
+            .filter_map(|prettier_path| {
+                Some((
+                    current_worktree_id,
+                    Some(prettier_path.clone()),
+                    self.prettier_instances.get(prettier_path)?.clone(),
+                ))
             })
-                .detach();
-        }
+            .chain(
+                self.default_prettier
+                    .instance()
+                    .map(|default_prettier| (current_worktree_id, None, default_prettier.clone())),
+            )
+            .collect::<Vec<_>>();
+
+        let request_timeout = ProjectSettings::get_global(cx)
+            .global_lsp_settings
+            .get_request_timeout();
+
+        cx.background_spawn(async move {
+            let _: Vec<()> = future::join_all(prettiers_to_reload.into_iter().map(|(worktree_id, prettier_path, prettier_instance)| {
+                async move {
+                    let Some(instance) = prettier_instance.prettier else {
+                        return
+                    };
+
+                    match instance.await {
+                        Ok(prettier) => {
+                            prettier.clear_cache(request_timeout).log_err().await;
+                        },
+                        Err(e) => {
+                            match prettier_path {
+                                Some(prettier_path) => log::error!(
+                                    "Failed to clear prettier {prettier_path:?} cache for worktree {worktree_id:?} on prettier settings update: {e:#}"
+                                ),
+                                None => log::error!(
+                                    "Failed to clear default prettier cache for worktree {worktree_id:?} on prettier settings update: {e:#}"
+                                ),
+                            }
+                        },
+                    }
+                }
+            }))
+            .await;
+        })
+            .detach();
     }
 
     pub fn install_default_prettier(
@@ -735,6 +759,12 @@ pub(super) async fn format_with_prettier(
         None => "default prettier instance".to_string(),
     };
 
+    let request_timeout: Duration = cx.update(|app| {
+        ProjectSettings::get_global(app)
+            .global_lsp_settings
+            .get_request_timeout()
+    });
+
     match prettier_task.await {
         Ok(prettier) => {
             let buffer_path = buffer.update(cx, |buffer, cx| {
@@ -742,7 +772,7 @@ pub(super) async fn format_with_prettier(
             });
 
             let format_result = prettier
-                .format(buffer, buffer_path, ignore_dir, cx)
+                .format(buffer, buffer_path, ignore_dir, request_timeout, cx)
                 .await
                 .with_context(|| format!("{} failed to format buffer", prettier_description));
 

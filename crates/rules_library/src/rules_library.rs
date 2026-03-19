@@ -4,14 +4,15 @@ use editor::{CompletionProvider, SelectionEffects};
 use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle, actions::Tab};
 use gpui::{
     App, Bounds, DEFAULT_ADDITIONAL_WINDOW_SIZE, Entity, EventEmitter, Focusable, PromptLevel,
-    Subscription, Task, TextStyle, TitlebarOptions, WindowBounds, WindowHandle, WindowOptions,
-    actions, point, size, transparent_black,
+    Subscription, Task, TextStyle, Tiling, TitlebarOptions, WindowBounds, WindowHandle,
+    WindowOptions, actions, point, size, transparent_black,
 };
 use language::{Buffer, LanguageRegistry, language_settings::SoftWrap};
 use language_model::{
     ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
 use picker::{Picker, PickerDelegate};
+use platform_title_bar::PlatformTitleBar;
 use release_channel::ReleaseChannel;
 use rope::Rope;
 use settings::Settings;
@@ -20,10 +21,10 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use theme::ThemeSettings;
-use title_bar::platform_title_bar::PlatformTitleBar;
 use ui::{Divider, ListItem, ListItemSpacing, ListSubHeader, Tooltip, prelude::*};
+use ui_input::ErasedEditor;
 use util::{ResultExt, TryFutureExt};
-use workspace::{Workspace, WorkspaceSettings, client_side_decorations};
+use workspace::{MultiWorkspace, Workspace, WorkspaceSettings, client_side_decorations};
 use zed_actions::assistant::InlineAssist;
 
 use prompt_store::*;
@@ -221,7 +222,7 @@ impl PickerDelegate for RulePickerDelegate {
         cx.notify();
     }
 
-    fn can_select(&mut self, ix: usize, _: &mut Window, _: &mut Context<Picker<Self>>) -> bool {
+    fn can_select(&self, ix: usize, _: &mut Window, _: &mut Context<Picker<Self>>) -> bool {
         match self.filtered_entries.get(ix) {
             Some(RulePickerEntry::Rule(_)) => true,
             Some(RulePickerEntry::Header(_)) | Some(RulePickerEntry::Separator) | None => false,
@@ -445,10 +446,12 @@ impl PickerDelegate for RulePickerDelegate {
 
     fn render_editor(
         &self,
-        editor: &Entity<Editor>,
+        editor: &Arc<dyn ErasedEditor>,
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Div {
+        let editor = editor.as_any().downcast_ref::<Entity<Editor>>().unwrap();
+
         h_flex()
             .py_1()
             .px_1p5()
@@ -965,12 +968,14 @@ impl RulesLibrary {
                 .assist(rule_editor, initial_prompt, window, cx);
         } else {
             for window in cx.windows() {
-                if let Some(workspace) = window.downcast::<Workspace>() {
-                    let panel = workspace
-                        .update(cx, |workspace, window, cx| {
+                if let Some(multi_workspace) = window.downcast::<MultiWorkspace>() {
+                    let panel = multi_workspace
+                        .update(cx, |multi_workspace, window, cx| {
                             window.activate_window();
-                            self.inline_assist_delegate
-                                .focus_agent_panel(workspace, window, cx)
+                            multi_workspace.workspace().update(cx, |workspace, cx| {
+                                self.inline_assist_delegate
+                                    .focus_agent_panel(workspace, window, cx)
+                            })
                         })
                         .ok();
                     if panel == Some(true) {
@@ -983,7 +988,7 @@ impl RulesLibrary {
 
     fn move_down_from_title(
         &mut self,
-        _: &editor::actions::MoveDown,
+        _: &zed_actions::editor::MoveDown,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -996,7 +1001,7 @@ impl RulesLibrary {
 
     fn move_up_from_body(
         &mut self,
-        _: &editor::actions::MoveUp,
+        _: &zed_actions::editor::MoveUp,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1100,6 +1105,8 @@ impl RulesLibrary {
                                     stop: Vec::new(),
                                     temperature: None,
                                     thinking_allowed: true,
+                                    thinking_effort: None,
+                                    speed: None,
                                 },
                                 cx,
                             )
@@ -1152,10 +1159,11 @@ impl RulesLibrary {
                             Button::new("new-rule", "New Rule")
                                 .full_width()
                                 .style(ButtonStyle::Outlined)
-                                .icon(IconName::Plus)
-                                .icon_size(IconSize::Small)
-                                .icon_position(IconPosition::Start)
-                                .icon_color(Color::Muted)
+                                .start_icon(
+                                    Icon::new(IconName::Plus)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
                                 .on_click(|_, window, cx| {
                                     window.dispatch_action(Box::new(NewRule), cx);
                                 }),
@@ -1423,6 +1431,7 @@ impl Render for RulesLibrary {
                 ),
             window,
             cx,
+            Tiling::default(),
         )
     }
 }

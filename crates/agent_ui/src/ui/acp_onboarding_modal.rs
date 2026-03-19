@@ -1,4 +1,4 @@
-use client::zed_urls;
+use agent_servers::GEMINI_ID;
 use gpui::{
     ClickEvent, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, MouseDownEvent, Render,
     linear_color_stop, linear_gradient,
@@ -37,7 +37,13 @@ impl AcpOnboardingModal {
 
             if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                 panel.update(cx, |panel, cx| {
-                    panel.new_agent_thread(AgentType::Gemini, window, cx);
+                    panel.new_agent_thread(
+                        AgentType::Custom {
+                            id: GEMINI_ID.into(),
+                        },
+                        window,
+                        cx,
+                    );
                 });
             }
         });
@@ -47,11 +53,11 @@ impl AcpOnboardingModal {
         acp_onboarding_event!("Open Panel Clicked");
     }
 
-    fn view_docs(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        cx.open_url(&zed_urls::external_agents_docs(cx));
+    fn open_agent_registry(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        window.dispatch_action(Box::new(zed_actions::AcpRegistry), cx);
         cx.notify();
 
-        acp_onboarding_event!("Documentation Link Clicked");
+        acp_onboarding_event!("Open Agent Registry Clicked");
     }
 
     fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
@@ -187,17 +193,18 @@ impl Render for AcpOnboardingModal {
         let copy = "Bring the agent of your choice to Zed via our new Agent Client Protocol (ACP), starting with Google's Gemini CLI integration.";
 
         let open_panel_button = Button::new("open-panel", "Start with Gemini CLI")
-            .icon_size(IconSize::Indicator)
             .style(ButtonStyle::Tinted(TintColor::Accent))
             .full_width()
             .on_click(cx.listener(Self::open_panel));
 
         let docs_button = Button::new("add-other-agents", "Add Other Agents")
-            .icon(IconName::ArrowUpRight)
-            .icon_size(IconSize::Indicator)
-            .icon_color(Color::Muted)
+            .end_icon(
+                Icon::new(IconName::ArrowUpRight)
+                    .size(IconSize::Indicator)
+                    .color(Color::Muted),
+            )
             .full_width()
-            .on_click(cx.listener(Self::view_docs));
+            .on_click(cx.listener(Self::open_agent_registry));
 
         let close_button = h_flex().absolute().top_2().right_2().child(
             IconButton::new("cancel", IconName::Close).on_click(cx.listener(
