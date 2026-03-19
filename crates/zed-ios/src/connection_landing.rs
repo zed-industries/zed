@@ -1,14 +1,59 @@
+use std::path::PathBuf;
+
 use editor::{Editor, actions::{Backtab, Tab}};
 use gpui::{
     App, ClickEvent, Context, Entity, Focusable as _, IntoElement, Render, SharedString, Window,
     WindowOptions, div, prelude::*,
 };
+use serde::{Deserialize, Serialize};
+use util::ResultExt;
 use theme::ActiveTheme;
 use ui::{
     ButtonCommon, ButtonStyle, Clickable, Color, FixedWidth, Headline, Icon, IconButton, IconName,
     IconSize, Indicator, Label, LabelCommon, LabelSize, Vector, VectorName, h_flex, rems_from_px,
     v_flex,
 };
+
+/// On-disk representation of a saved SSH host.
+#[derive(Clone, Serialize, Deserialize)]
+struct SavedHostEntry {
+    nickname: Option<String>,
+    host: String,
+    username: String,
+    #[serde(default = "default_port")]
+    port: u16,
+}
+
+fn default_port() -> u16 {
+    22
+}
+
+fn saved_hosts_path() -> PathBuf {
+    paths::config_dir().join("ssh_hosts.json")
+}
+
+fn load_saved_host_entries() -> Vec<SavedHostEntry> {
+    let path = saved_hosts_path();
+    match std::fs::read_to_string(&path) {
+        Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn save_host_entries(entries: &[SavedHostEntry]) {
+    let path = saved_hosts_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).log_err();
+    }
+    match serde_json::to_string_pretty(entries) {
+        Ok(json) => {
+            std::fs::write(&path, json).log_err();
+        }
+        Err(error) => {
+            log::error!("failed to serialize saved hosts: {error}");
+        }
+    }
+}
 
 /// Status of a saved host connection.
 enum ConnectionStatus {
@@ -28,6 +73,25 @@ struct SavedHost {
 }
 
 impl SavedHost {
+    fn from_entry(entry: SavedHostEntry) -> Self {
+        Self {
+            nickname: entry.nickname.map(SharedString::from),
+            host: SharedString::from(entry.host),
+            username: SharedString::from(entry.username),
+            port: entry.port,
+            status: ConnectionStatus::Disconnected,
+        }
+    }
+
+    fn to_entry(&self) -> SavedHostEntry {
+        SavedHostEntry {
+            nickname: self.nickname.as_ref().map(|s| s.to_string()),
+            host: self.host.to_string(),
+            username: self.username.to_string(),
+            port: self.port,
+        }
+    }
+
     fn display_name(&self) -> SharedString {
         if let Some(nickname) = &self.nickname {
             nickname.clone()
@@ -113,11 +177,16 @@ impl ConnectionLanding {
             editor
         });
 
+        let saved_hosts = load_saved_host_entries()
+            .into_iter()
+            .map(SavedHost::from_entry)
+            .collect();
+
         Self {
             focus_handle: cx.focus_handle(),
             mode: LandingMode::Default,
             editing_hosts: false,
-            saved_hosts: Self::dummy_hosts(),
+            saved_hosts,
             name_editor,
             host_editor,
             username_editor,
@@ -135,30 +204,9 @@ impl ConnectionLanding {
         Ok(())
     }
 
-    fn dummy_hosts() -> Vec<SavedHost> {
-        vec![
-            SavedHost {
-                nickname: Some("Dev Server".into()),
-                host: "dev.example.com".into(),
-                username: "dcow".into(),
-                port: 22,
-                status: ConnectionStatus::Connected { project_count: 2 },
-            },
-            SavedHost {
-                nickname: None,
-                host: "192.168.1.42".into(),
-                username: "root".into(),
-                port: 2222,
-                status: ConnectionStatus::Disconnected,
-            },
-            SavedHost {
-                nickname: Some("CI Box".into()),
-                host: "ci.internal".into(),
-                username: "builder".into(),
-                port: 22,
-                status: ConnectionStatus::Error("Connection refused".into()),
-            },
-        ]
+    fn persist_hosts(&self) {
+        let entries: Vec<SavedHostEntry> = self.saved_hosts.iter().map(|h| h.to_entry()).collect();
+        save_host_entries(&entries);
     }
 
     fn switch_to_add_host(
@@ -224,6 +272,7 @@ impl ConnectionLanding {
             port,
             status: ConnectionStatus::Disconnected,
         });
+        self.persist_hosts();
 
         self.mode = LandingMode::Default;
         self.focus_handle.focus(window, cx);
@@ -250,6 +299,7 @@ impl ConnectionLanding {
     fn remove_host(&mut self, index: usize, _window: &mut Window, cx: &mut Context<Self>) {
         if index < self.saved_hosts.len() {
             self.saved_hosts.remove(index);
+            self.persist_hosts();
             cx.notify();
         }
     }

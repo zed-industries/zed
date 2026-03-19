@@ -22143,6 +22143,8 @@ dependencies = [
  "release_channel",
  "reqwest_client",
  "semver",
+ "serde",
+ "serde_json",
  "session",
  "settings",
  "theme",
