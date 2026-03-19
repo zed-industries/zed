@@ -2885,6 +2885,11 @@ impl Editor {
         if self.in_leading_whitespace {
             key_context.add("in_leading_whitespace");
         }
+        if self.edit_prediction_requires_modifier() {
+            key_context.set("edit_prediction_mode", "subtle")
+        } else {
+            key_context.set("edit_prediction_mode", "eager");
+        }
 
         if self.selection_mark_mode {
             key_context.add("selection_mode");
