@@ -1645,14 +1645,9 @@ impl SearchableItem for Editor {
         match setting {
             SeedQuerySetting::Never => String::new(),
             SeedQuerySetting::Selection | SeedQuerySetting::Always if !selection.is_empty() => {
-                let text: String = buffer_snapshot
+                buffer_snapshot
                     .text_for_range(selection.start..selection.end)
-                    .collect();
-                if text.contains('\n') {
-                    String::new()
-                } else {
-                    text
-                }
+                    .collect()
             }
             SeedQuerySetting::Selection => String::new(),
             SeedQuerySetting::Always => {
