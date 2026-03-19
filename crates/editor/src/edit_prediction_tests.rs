@@ -1,7 +1,7 @@
 use edit_prediction_types::{
     EditPredictionDelegate, EditPredictionIconSet, PredictedCursorPosition,
 };
-use gpui::{Entity, KeyBinding, Keystroke, Modifiers, NoAction, Task, prelude::*};
+use gpui::{Entity, KeyBinding, Modifiers, NoAction, Task, prelude::*};
 use indoc::indoc;
 use language::EditPredictionsMode;
 use language::{Buffer, CodeLabel};
@@ -557,16 +557,52 @@ async fn test_inline_edit_prediction_keybind_selection_cases(cx: &mut gpui::Test
         ShowingCompletionsAndLeadingWhitespace,
     }
 
+    enum ExpectedKeystroke {
+        DefaultAccept,
+        DefaultPreview,
+        Literal(&'static str),
+    }
+
     struct InlineKeybindCase {
         name: &'static str,
         use_default_keymap: bool,
         mode: EditPredictionsMode,
         extra_bindings: Vec<KeyBinding>,
         state: InlineKeybindState,
-        expected_accept_keystroke: &'static str,
-        expected_preview_keystroke: &'static str,
-        expected_displayed_keystroke: &'static str,
+        expected_accept_keystroke: ExpectedKeystroke,
+        expected_preview_keystroke: ExpectedKeystroke,
+        expected_displayed_keystroke: ExpectedKeystroke,
     }
+
+    init_test(cx, |_| {});
+    load_default_keymap(cx);
+    let mut default_cx = EditorTestContext::new(cx).await;
+    let provider = default_cx.new(|_| FakeEditPredictionDelegate::default());
+    assign_editor_completion_provider(provider.clone(), &mut default_cx);
+    default_cx.set_state("let x = ˇ;");
+    propose_edits(&provider, vec![(8..8, "42")], &mut default_cx);
+    default_cx
+        .update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+
+    let (default_accept_keystroke, default_preview_keystroke) =
+        default_cx.update_editor(|editor, window, cx| {
+            let keybind_display = editor.edit_prediction_keybind_display(
+                EditPredictionKeybindSurface::Inline,
+                window,
+                cx,
+            );
+            let accept_keystroke = keybind_display
+                .accept_keystroke
+                .as_ref()
+                .expect("default inline edit prediction should have an accept binding")
+                .to_string();
+            let preview_keystroke = keybind_display
+                .preview_keystroke
+                .as_ref()
+                .expect("default inline edit prediction should have a preview binding")
+                .to_string();
+            (accept_keystroke, preview_keystroke)
+        });
 
     let cases = [
         InlineKeybindCase {
@@ -575,9 +611,9 @@ async fn test_inline_edit_prediction_keybind_selection_cases(cx: &mut gpui::Test
             mode: EditPredictionsMode::Eager,
             extra_bindings: Vec::new(),
             state: InlineKeybindState::Normal,
-            expected_accept_keystroke: "tab",
-            expected_preview_keystroke: "alt-tab",
-            expected_displayed_keystroke: "tab",
+            expected_accept_keystroke: ExpectedKeystroke::DefaultAccept,
+            expected_preview_keystroke: ExpectedKeystroke::DefaultPreview,
+            expected_displayed_keystroke: ExpectedKeystroke::DefaultAccept,
         },
         InlineKeybindCase {
             name: "subtle mode displays preview binding inline",
@@ -585,23 +621,23 @@ async fn test_inline_edit_prediction_keybind_selection_cases(cx: &mut gpui::Test
             mode: EditPredictionsMode::Subtle,
             extra_bindings: Vec::new(),
             state: InlineKeybindState::Normal,
-            expected_accept_keystroke: "tab",
-            expected_preview_keystroke: "alt-tab",
-            expected_displayed_keystroke: "alt-tab",
+            expected_accept_keystroke: ExpectedKeystroke::DefaultAccept,
+            expected_preview_keystroke: ExpectedKeystroke::DefaultPreview,
+            expected_displayed_keystroke: ExpectedKeystroke::DefaultPreview,
         },
         InlineKeybindCase {
             name: "removing default tab binding still displays tab",
             use_default_keymap: true,
             mode: EditPredictionsMode::Eager,
             extra_bindings: vec![KeyBinding::new(
-                "tab",
+                &default_accept_keystroke,
                 NoAction,
                 Some("Editor && edit_prediction"),
             )],
             state: InlineKeybindState::Normal,
-            expected_accept_keystroke: "alt-tab",
-            expected_preview_keystroke: "alt-tab",
-            expected_displayed_keystroke: "alt-tab",
+            expected_accept_keystroke: ExpectedKeystroke::DefaultPreview,
+            expected_preview_keystroke: ExpectedKeystroke::DefaultPreview,
+            expected_displayed_keystroke: ExpectedKeystroke::DefaultPreview,
         },
         InlineKeybindCase {
             name: "custom-only rebound accept key uses replacement key",
@@ -613,9 +649,9 @@ async fn test_inline_edit_prediction_keybind_selection_cases(cx: &mut gpui::Test
                 Some("Editor && edit_prediction"),
             )],
             state: InlineKeybindState::Normal,
-            expected_accept_keystroke: "ctrl-enter",
-            expected_preview_keystroke: "ctrl-enter",
-            expected_displayed_keystroke: "ctrl-enter",
+            expected_accept_keystroke: ExpectedKeystroke::Literal("ctrl-enter"),
+            expected_preview_keystroke: ExpectedKeystroke::Literal("ctrl-enter"),
+            expected_displayed_keystroke: ExpectedKeystroke::Literal("ctrl-enter"),
         },
         InlineKeybindCase {
             name: "showing completions restores conflict-context binding",
@@ -627,9 +663,9 @@ async fn test_inline_edit_prediction_keybind_selection_cases(cx: &mut gpui::Test
                 Some("Editor && edit_prediction && showing_completions"),
             )],
             state: InlineKeybindState::ShowingCompletions,
-            expected_accept_keystroke: "ctrl-enter",
-            expected_preview_keystroke: "ctrl-enter",
-            expected_displayed_keystroke: "ctrl-enter",
+            expected_accept_keystroke: ExpectedKeystroke::Literal("ctrl-enter"),
+            expected_preview_keystroke: ExpectedKeystroke::Literal("ctrl-enter"),
+            expected_displayed_keystroke: ExpectedKeystroke::Literal("ctrl-enter"),
         },
         InlineKeybindCase {
             name: "leading whitespace restores conflict-context binding",
@@ -641,9 +677,9 @@ async fn test_inline_edit_prediction_keybind_selection_cases(cx: &mut gpui::Test
                 Some("Editor && edit_prediction && in_leading_whitespace"),
             )],
             state: InlineKeybindState::InLeadingWhitespace,
-            expected_accept_keystroke: "ctrl-enter",
-            expected_preview_keystroke: "ctrl-enter",
-            expected_displayed_keystroke: "ctrl-enter",
+            expected_accept_keystroke: ExpectedKeystroke::Literal("ctrl-enter"),
+            expected_preview_keystroke: ExpectedKeystroke::Literal("ctrl-enter"),
+            expected_displayed_keystroke: ExpectedKeystroke::Literal("ctrl-enter"),
         },
         InlineKeybindCase {
             name: "showing completions and leading whitespace restore combined conflict binding",
@@ -655,9 +691,9 @@ async fn test_inline_edit_prediction_keybind_selection_cases(cx: &mut gpui::Test
                 Some("Editor && edit_prediction && showing_completions && in_leading_whitespace"),
             )],
             state: InlineKeybindState::ShowingCompletionsAndLeadingWhitespace,
-            expected_accept_keystroke: "ctrl-enter",
-            expected_preview_keystroke: "ctrl-enter",
-            expected_displayed_keystroke: "ctrl-enter",
+            expected_accept_keystroke: ExpectedKeystroke::Literal("ctrl-enter"),
+            expected_preview_keystroke: ExpectedKeystroke::Literal("ctrl-enter"),
+            expected_displayed_keystroke: ExpectedKeystroke::Literal("ctrl-enter"),
         },
     ];
 
@@ -732,43 +768,37 @@ async fn test_inline_edit_prediction_keybind_selection_cases(cx: &mut gpui::Test
                 .as_ref()
                 .unwrap_or_else(|| panic!("case '{}' should have a displayed binding", case.name));
 
-            let expected_accept_keystroke = Keystroke::parse(case.expected_accept_keystroke)
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "case '{}' has invalid expected accept keystroke '{}': {}",
-                        case.name, case.expected_accept_keystroke, error
-                    )
-                });
-            let expected_preview_keystroke = Keystroke::parse(case.expected_preview_keystroke)
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "case '{}' has invalid expected preview keystroke '{}': {}",
-                        case.name, case.expected_preview_keystroke, error
-                    )
-                });
-            let expected_displayed_keystroke = Keystroke::parse(case.expected_displayed_keystroke)
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "case '{}' has invalid expected displayed keystroke '{}': {}",
-                        case.name, case.expected_displayed_keystroke, error
-                    )
-                });
+            let expected_accept_keystroke = match case.expected_accept_keystroke {
+                ExpectedKeystroke::DefaultAccept => default_accept_keystroke.as_str(),
+                ExpectedKeystroke::DefaultPreview => default_preview_keystroke.as_str(),
+                ExpectedKeystroke::Literal(keystroke) => keystroke,
+            };
+            let expected_preview_keystroke = match case.expected_preview_keystroke {
+                ExpectedKeystroke::DefaultAccept => default_accept_keystroke.as_str(),
+                ExpectedKeystroke::DefaultPreview => default_preview_keystroke.as_str(),
+                ExpectedKeystroke::Literal(keystroke) => keystroke,
+            };
+            let expected_displayed_keystroke = match case.expected_displayed_keystroke {
+                ExpectedKeystroke::DefaultAccept => default_accept_keystroke.as_str(),
+                ExpectedKeystroke::DefaultPreview => default_preview_keystroke.as_str(),
+                ExpectedKeystroke::Literal(keystroke) => keystroke,
+            };
 
             assert_eq!(
-                accept_keystroke.inner(),
-                &expected_accept_keystroke,
+                accept_keystroke.to_string(),
+                expected_accept_keystroke,
                 "case '{}' selected the wrong accept binding",
                 case.name
             );
             assert_eq!(
-                preview_keystroke.inner(),
-                &expected_preview_keystroke,
+                preview_keystroke.to_string(),
+                expected_preview_keystroke,
                 "case '{}' selected the wrong preview binding",
                 case.name
             );
             assert_eq!(
-                displayed_keystroke.inner(),
-                &expected_displayed_keystroke,
+                displayed_keystroke.to_string(),
+                expected_displayed_keystroke,
                 "case '{}' selected the wrong displayed binding",
                 case.name
             );
