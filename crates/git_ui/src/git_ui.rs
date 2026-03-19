@@ -295,11 +295,12 @@ pub fn resolve_active_repository(workspace: &Workspace, cx: &App) -> Option<Enti
                     git_store
                         .repositories()
                         .values()
-                        .find(|repo| {
+                        .filter(|repo| {
                             let repo_path = &repo.read(cx).work_directory_abs_path;
                             *repo_path == worktree_abs_path
                                 || worktree_abs_path.starts_with(repo_path.as_ref())
                         })
+                        .max_by_key(|repo| repo.read(cx).work_directory_abs_path.as_os_str().len())
                         .cloned()
                 })
         })

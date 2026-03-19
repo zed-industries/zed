@@ -1,11 +1,11 @@
-use crate::{ItemHandle, Pane};
+use crate::{ItemHandle, Pane, ToggleWorkspaceSidebar};
 use gpui::{
-    AnyView, App, Context, Decorations, Entity, IntoElement, ParentElement, Render, Styled,
+    Action, AnyView, App, Context, Decorations, Entity, IntoElement, ParentElement, Render, Styled,
     Subscription, Window,
 };
 use std::any::TypeId;
 use theme::CLIENT_SIDE_DECORATION_ROUNDING;
-use ui::{h_flex, prelude::*};
+use ui::{Divider, Indicator, Tooltip, prelude::*};
 use util::ResultExt;
 
 pub trait StatusItemView: Render {
@@ -35,6 +35,8 @@ pub struct StatusBar {
     active_pane: Entity<Pane>,
     _observe_active_pane: Subscription,
     workspace_sidebar_open: bool,
+    sidebar_has_notifications: bool,
+    show_sidebar_toggle: bool,
 }
 
 impl Render for StatusBar {
@@ -43,8 +45,7 @@ impl Render for StatusBar {
             .w_full()
             .justify_between()
             .gap(DynamicSpacing::Base08.rems(cx))
-            .py(DynamicSpacing::Base04.rems(cx))
-            .px(DynamicSpacing::Base06.rems(cx))
+            .p(DynamicSpacing::Base04.rems(cx))
             .bg(cx.theme().colors().status_bar_background)
             .map(|el| match window.window_decorations() {
                 Decorations::Server => el,
@@ -61,17 +62,21 @@ impl Render for StatusBar {
                     .border_b(px(1.0))
                     .border_color(cx.theme().colors().status_bar_background),
             })
-            .child(self.render_left_tools())
+            .child(self.render_left_tools(cx))
             .child(self.render_right_tools())
     }
 }
 
 impl StatusBar {
-    fn render_left_tools(&self) -> impl IntoElement {
+    fn render_left_tools(&self, cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
             .gap_1()
             .min_w_0()
             .overflow_x_hidden()
+            .when(
+                self.show_sidebar_toggle && !self.workspace_sidebar_open,
+                |this| this.child(self.render_sidebar_toggle(cx)),
+            )
             .children(self.left_items.iter().map(|item| item.to_any()))
     }
 
@@ -81,6 +86,29 @@ impl StatusBar {
             .gap_1()
             .overflow_x_hidden()
             .children(self.right_items.iter().rev().map(|item| item.to_any()))
+    }
+
+    fn render_sidebar_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        h_flex()
+            .gap_0p5()
+            .child(
+                IconButton::new(
+                    "toggle-workspace-sidebar",
+                    IconName::ThreadsSidebarLeftClosed,
+                )
+                .icon_size(IconSize::Small)
+                .when(self.sidebar_has_notifications, |this| {
+                    this.indicator(Indicator::dot().color(Color::Accent))
+                        .indicator_border_color(Some(cx.theme().colors().status_bar_background))
+                })
+                .tooltip(move |_, cx| {
+                    Tooltip::for_action("Open Threads Sidebar", &ToggleWorkspaceSidebar, cx)
+                })
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(ToggleWorkspaceSidebar.boxed_clone(), cx);
+                }),
+            )
+            .child(Divider::vertical().color(ui::DividerColor::Border))
     }
 }
 
@@ -94,6 +122,8 @@ impl StatusBar {
                 this.update_active_pane_item(window, cx)
             }),
             workspace_sidebar_open: false,
+            sidebar_has_notifications: false,
+            show_sidebar_toggle: false,
         };
         this.update_active_pane_item(window, cx);
         this
@@ -101,6 +131,16 @@ impl StatusBar {
 
     pub fn set_workspace_sidebar_open(&mut self, open: bool, cx: &mut Context<Self>) {
         self.workspace_sidebar_open = open;
+        cx.notify();
+    }
+
+    pub fn set_sidebar_has_notifications(&mut self, has: bool, cx: &mut Context<Self>) {
+        self.sidebar_has_notifications = has;
+        cx.notify();
+    }
+
+    pub fn set_show_sidebar_toggle(&mut self, show: bool, cx: &mut Context<Self>) {
+        self.show_sidebar_toggle = show;
         cx.notify();
     }
 

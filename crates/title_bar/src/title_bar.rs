@@ -25,16 +25,14 @@ use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore, zed_urls};
 use cloud_api_types::Plan;
-use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
+
 use gpui::{
     Action, AnyElement, App, Context, Corner, Element, Empty, Entity, Focusable,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
     StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window, actions, div,
 };
 use onboarding_banner::OnboardingBanner;
-use project::{
-    DisableAiSettings, Project, git_store::GitStoreEvent, trusted_worktrees::TrustedWorktrees,
-};
+use project::{Project, git_store::GitStoreEvent, trusted_worktrees::TrustedWorktrees};
 use remote::RemoteConnectionOptions;
 use settings::Settings;
 use settings::WorktreeId;
@@ -43,14 +41,13 @@ use std::sync::Arc;
 use theme::ActiveTheme;
 use title_bar_settings::TitleBarSettings;
 use ui::{
-    Avatar, ButtonLike, ContextMenu, Divider, IconWithIndicator, Indicator, PopoverMenu,
-    PopoverMenuHandle, TintColor, Tooltip, prelude::*, utils::platform_title_bar_height,
+    Avatar, ButtonLike, ContextMenu, IconWithIndicator, Indicator, PopoverMenu, PopoverMenuHandle,
+    TintColor, Tooltip, prelude::*, utils::platform_title_bar_height,
 };
 use update_version::UpdateVersion;
 use util::ResultExt;
 use workspace::{
-    MultiWorkspace, ToggleWorkspaceSidebar, ToggleWorktreeSecurity, Workspace, WorkspaceId,
-    notifications::NotifyResultExt,
+    MultiWorkspace, ToggleWorktreeSecurity, Workspace, WorkspaceId, notifications::NotifyResultExt,
 };
 use zed_actions::OpenRemote;
 
@@ -198,7 +195,6 @@ impl Render for TitleBar {
                     let mut render_project_items = title_bar_settings.show_branch_name
                         || title_bar_settings.show_project_items;
                     title_bar
-                        .children(self.render_workspace_sidebar_toggle(window, cx))
                         .when_some(
                             self.application_menu.clone().filter(|_| !show_menus),
                             |title_bar, menu| {
@@ -402,19 +398,15 @@ impl TitleBar {
                     };
 
                     let is_open = multi_workspace.read(cx).sidebar_open();
-                    let has_notifications = multi_workspace.read(cx).sidebar_has_notifications(cx);
                     platform_titlebar.update(cx, |titlebar, cx| {
                         titlebar.set_workspace_sidebar_open(is_open, cx);
-                        titlebar.set_sidebar_has_notifications(has_notifications, cx);
                     });
 
                     let platform_titlebar = platform_titlebar.clone();
                     let subscription = cx.observe(&multi_workspace, move |mw, cx| {
                         let is_open = mw.read(cx).sidebar_open();
-                        let has_notifications = mw.read(cx).sidebar_has_notifications(cx);
                         platform_titlebar.update(cx, |titlebar, cx| {
                             titlebar.set_workspace_sidebar_open(is_open, cx);
-                            titlebar.set_sidebar_has_notifications(has_notifications, cx);
                         });
                     });
 
@@ -520,14 +512,15 @@ impl TitleBar {
         let git_store = project.git_store().read(cx);
         let worktree_path = worktree.read(cx).abs_path();
 
-        for repo in git_store.repositories().values() {
-            let repo_path = &repo.read(cx).work_directory_abs_path;
-            if worktree_path == *repo_path || worktree_path.starts_with(repo_path.as_ref()) {
-                return Some(repo.clone());
-            }
-        }
-
-        None
+        git_store
+            .repositories()
+            .values()
+            .filter(|repo| {
+                let repo_path = &repo.read(cx).work_directory_abs_path;
+                worktree_path == *repo_path || worktree_path.starts_with(repo_path.as_ref())
+            })
+            .max_by_key(|repo| repo.read(cx).work_directory_abs_path.as_os_str().len())
+            .cloned()
     }
 
     fn render_remote_project_connection(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -719,50 +712,6 @@ impl TitleBar {
                             .log_err();
                     })
                 })
-                .into_any_element(),
-        )
-    }
-
-    fn render_workspace_sidebar_toggle(
-        &self,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        if !cx.has_flag::<AgentV2FeatureFlag>() || DisableAiSettings::get_global(cx).disable_ai {
-            return None;
-        }
-
-        let is_sidebar_open = self.platform_titlebar.read(cx).is_workspace_sidebar_open();
-
-        if is_sidebar_open {
-            return None;
-        }
-
-        let has_notifications = self.platform_titlebar.read(cx).sidebar_has_notifications();
-
-        Some(
-            h_flex()
-                .h_full()
-                .gap_0p5()
-                .child(
-                    IconButton::new(
-                        "toggle-workspace-sidebar",
-                        IconName::ThreadsSidebarLeftClosed,
-                    )
-                    .icon_size(IconSize::Small)
-                    .when(has_notifications, |button| {
-                        button
-                            .indicator(Indicator::dot().color(Color::Accent))
-                            .indicator_border_color(Some(cx.theme().colors().title_bar_background))
-                    })
-                    .tooltip(move |_, cx| {
-                        Tooltip::for_action("Open Threads Sidebar", &ToggleWorkspaceSidebar, cx)
-                    })
-                    .on_click(|_, window, cx| {
-                        window.dispatch_action(ToggleWorkspaceSidebar.boxed_clone(), cx);
-                    }),
-                )
-                .child(Divider::vertical().color(ui::DividerColor::Border))
                 .into_any_element(),
         )
     }

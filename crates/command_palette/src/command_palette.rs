@@ -33,7 +33,11 @@ pub fn init(cx: &mut App) {
     cx.observe_new(CommandPalette::register).detach();
 }
 
-impl ModalView for CommandPalette {}
+impl ModalView for CommandPalette {
+    fn is_command_palette(&self) -> bool {
+        true
+    }
+}
 
 pub struct CommandPalette {
     picker: Entity<Picker<CommandPaletteDelegate>>,

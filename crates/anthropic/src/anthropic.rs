@@ -34,6 +34,7 @@ pub enum AnthropicModelMode {
     Thinking {
         budget_tokens: Option<u32>,
     },
+    AdaptiveThinking,
 }
 
 impl From<ModelMode> for AnthropicModelMode {
@@ -50,6 +51,7 @@ impl From<AnthropicModelMode> for ModelMode {
         match value {
             AnthropicModelMode::Default => ModelMode::Default,
             AnthropicModelMode::Thinking { budget_tokens } => ModelMode::Thinking { budget_tokens },
+            AnthropicModelMode::AdaptiveThinking => ModelMode::Default,
         }
     }
 }
@@ -57,87 +59,78 @@ impl From<AnthropicModelMode> for ModelMode {
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
-    #[serde(rename = "claude-opus-4", alias = "claude-opus-4-latest")]
-    ClaudeOpus4,
-    #[serde(rename = "claude-opus-4-1", alias = "claude-opus-4-1-latest")]
-    ClaudeOpus4_1,
     #[serde(
-        rename = "claude-opus-4-thinking",
+        rename = "claude-opus-4",
+        alias = "claude-opus-4-latest",
+        alias = "claude-opus-4-thinking",
         alias = "claude-opus-4-thinking-latest"
     )]
-    ClaudeOpus4Thinking,
+    ClaudeOpus4,
     #[serde(
-        rename = "claude-opus-4-1-thinking",
+        rename = "claude-opus-4-1",
+        alias = "claude-opus-4-1-latest",
+        alias = "claude-opus-4-1-thinking",
         alias = "claude-opus-4-1-thinking-latest"
     )]
-    ClaudeOpus4_1Thinking,
-    #[serde(rename = "claude-opus-4-5", alias = "claude-opus-4-5-latest")]
-    ClaudeOpus4_5,
+    ClaudeOpus4_1,
     #[serde(
-        rename = "claude-opus-4-5-thinking",
+        rename = "claude-opus-4-5",
+        alias = "claude-opus-4-5-latest",
+        alias = "claude-opus-4-5-thinking",
         alias = "claude-opus-4-5-thinking-latest"
     )]
-    ClaudeOpus4_5Thinking,
+    ClaudeOpus4_5,
     #[serde(
         rename = "claude-opus-4-6",
         alias = "claude-opus-4-6-latest",
         alias = "claude-opus-4-6-1m-context",
-        alias = "claude-opus-4-6-1m-context-latest"
-    )]
-    ClaudeOpus4_6,
-    #[serde(
-        rename = "claude-opus-4-6-thinking",
+        alias = "claude-opus-4-6-1m-context-latest",
+        alias = "claude-opus-4-6-thinking",
         alias = "claude-opus-4-6-thinking-latest",
         alias = "claude-opus-4-6-1m-context-thinking",
         alias = "claude-opus-4-6-1m-context-thinking-latest"
     )]
-    ClaudeOpus4_6Thinking,
-    #[serde(rename = "claude-sonnet-4", alias = "claude-sonnet-4-latest")]
-    ClaudeSonnet4,
+    ClaudeOpus4_6,
     #[serde(
-        rename = "claude-sonnet-4-thinking",
+        rename = "claude-sonnet-4",
+        alias = "claude-sonnet-4-latest",
+        alias = "claude-sonnet-4-thinking",
         alias = "claude-sonnet-4-thinking-latest"
     )]
-    ClaudeSonnet4Thinking,
-    #[serde(rename = "claude-sonnet-4-5", alias = "claude-sonnet-4-5-latest")]
-    ClaudeSonnet4_5,
+    ClaudeSonnet4,
     #[serde(
-        rename = "claude-sonnet-4-5-thinking",
+        rename = "claude-sonnet-4-5",
+        alias = "claude-sonnet-4-5-latest",
+        alias = "claude-sonnet-4-5-thinking",
         alias = "claude-sonnet-4-5-thinking-latest"
     )]
-    ClaudeSonnet4_5Thinking,
+    ClaudeSonnet4_5,
     #[serde(
         rename = "claude-sonnet-4-5-1m-context",
-        alias = "claude-sonnet-4-5-1m-context-latest"
-    )]
-    ClaudeSonnet4_5_1mContext,
-    #[serde(
-        rename = "claude-sonnet-4-5-1m-context-thinking",
+        alias = "claude-sonnet-4-5-1m-context-latest",
+        alias = "claude-sonnet-4-5-1m-context-thinking",
         alias = "claude-sonnet-4-5-1m-context-thinking-latest"
     )]
-    ClaudeSonnet4_5_1mContextThinking,
+    ClaudeSonnet4_5_1mContext,
     #[default]
     #[serde(
         rename = "claude-sonnet-4-6",
         alias = "claude-sonnet-4-6-latest",
         alias = "claude-sonnet-4-6-1m-context",
-        alias = "claude-sonnet-4-6-1m-context-latest"
-    )]
-    ClaudeSonnet4_6,
-    #[serde(
-        rename = "claude-sonnet-4-6-thinking",
+        alias = "claude-sonnet-4-6-1m-context-latest",
+        alias = "claude-sonnet-4-6-thinking",
         alias = "claude-sonnet-4-6-thinking-latest",
         alias = "claude-sonnet-4-6-1m-context-thinking",
         alias = "claude-sonnet-4-6-1m-context-thinking-latest"
     )]
-    ClaudeSonnet4_6Thinking,
-    #[serde(rename = "claude-haiku-4-5", alias = "claude-haiku-4-5-latest")]
-    ClaudeHaiku4_5,
+    ClaudeSonnet4_6,
     #[serde(
-        rename = "claude-haiku-4-5-thinking",
+        rename = "claude-haiku-4-5",
+        alias = "claude-haiku-4-5-latest",
+        alias = "claude-haiku-4-5-thinking",
         alias = "claude-haiku-4-5-thinking-latest"
     )]
-    ClaudeHaiku4_5Thinking,
+    ClaudeHaiku4_5,
     #[serde(rename = "claude-3-haiku", alias = "claude-3-haiku-latest")]
     Claude3Haiku,
     #[serde(rename = "custom")]
@@ -165,36 +158,12 @@ impl Model {
     }
 
     pub fn from_id(id: &str) -> Result<Self> {
-        if id.starts_with("claude-opus-4-6-1m-context-thinking") {
-            return Ok(Self::ClaudeOpus4_6Thinking);
-        }
-
-        if id.starts_with("claude-opus-4-6-1m-context") {
-            return Ok(Self::ClaudeOpus4_6);
-        }
-
-        if id.starts_with("claude-opus-4-6-thinking") {
-            return Ok(Self::ClaudeOpus4_6Thinking);
-        }
-
         if id.starts_with("claude-opus-4-6") {
             return Ok(Self::ClaudeOpus4_6);
         }
 
-        if id.starts_with("claude-opus-4-5-thinking") {
-            return Ok(Self::ClaudeOpus4_5Thinking);
-        }
-
         if id.starts_with("claude-opus-4-5") {
             return Ok(Self::ClaudeOpus4_5);
-        }
-
-        if id.starts_with("claude-opus-4-1-thinking") {
-            return Ok(Self::ClaudeOpus4_1Thinking);
-        }
-
-        if id.starts_with("claude-opus-4-thinking") {
-            return Ok(Self::ClaudeOpus4Thinking);
         }
 
         if id.starts_with("claude-opus-4-1") {
@@ -205,48 +174,20 @@ impl Model {
             return Ok(Self::ClaudeOpus4);
         }
 
-        if id.starts_with("claude-sonnet-4-6-1m-context-thinking") {
-            return Ok(Self::ClaudeSonnet4_6Thinking);
-        }
-
-        if id.starts_with("claude-sonnet-4-6-1m-context") {
-            return Ok(Self::ClaudeSonnet4_6);
-        }
-
-        if id.starts_with("claude-sonnet-4-6-thinking") {
-            return Ok(Self::ClaudeSonnet4_6Thinking);
-        }
-
         if id.starts_with("claude-sonnet-4-6") {
             return Ok(Self::ClaudeSonnet4_6);
-        }
-
-        if id.starts_with("claude-sonnet-4-5-1m-context-thinking") {
-            return Ok(Self::ClaudeSonnet4_5_1mContextThinking);
         }
 
         if id.starts_with("claude-sonnet-4-5-1m-context") {
             return Ok(Self::ClaudeSonnet4_5_1mContext);
         }
 
-        if id.starts_with("claude-sonnet-4-5-thinking") {
-            return Ok(Self::ClaudeSonnet4_5Thinking);
-        }
-
         if id.starts_with("claude-sonnet-4-5") {
             return Ok(Self::ClaudeSonnet4_5);
         }
 
-        if id.starts_with("claude-sonnet-4-thinking") {
-            return Ok(Self::ClaudeSonnet4Thinking);
-        }
-
         if id.starts_with("claude-sonnet-4") {
             return Ok(Self::ClaudeSonnet4);
-        }
-
-        if id.starts_with("claude-haiku-4-5-thinking") {
-            return Ok(Self::ClaudeHaiku4_5Thinking);
         }
 
         if id.starts_with("claude-haiku-4-5") {
@@ -264,24 +205,13 @@ impl Model {
         match self {
             Self::ClaudeOpus4 => "claude-opus-4-latest",
             Self::ClaudeOpus4_1 => "claude-opus-4-1-latest",
-            Self::ClaudeOpus4Thinking => "claude-opus-4-thinking-latest",
-            Self::ClaudeOpus4_1Thinking => "claude-opus-4-1-thinking-latest",
             Self::ClaudeOpus4_5 => "claude-opus-4-5-latest",
-            Self::ClaudeOpus4_5Thinking => "claude-opus-4-5-thinking-latest",
             Self::ClaudeOpus4_6 => "claude-opus-4-6-latest",
-            Self::ClaudeOpus4_6Thinking => "claude-opus-4-6-thinking-latest",
             Self::ClaudeSonnet4 => "claude-sonnet-4-latest",
-            Self::ClaudeSonnet4Thinking => "claude-sonnet-4-thinking-latest",
             Self::ClaudeSonnet4_5 => "claude-sonnet-4-5-latest",
-            Self::ClaudeSonnet4_5Thinking => "claude-sonnet-4-5-thinking-latest",
             Self::ClaudeSonnet4_5_1mContext => "claude-sonnet-4-5-1m-context-latest",
-            Self::ClaudeSonnet4_5_1mContextThinking => {
-                "claude-sonnet-4-5-1m-context-thinking-latest"
-            }
             Self::ClaudeSonnet4_6 => "claude-sonnet-4-6-latest",
-            Self::ClaudeSonnet4_6Thinking => "claude-sonnet-4-6-thinking-latest",
             Self::ClaudeHaiku4_5 => "claude-haiku-4-5-latest",
-            Self::ClaudeHaiku4_5Thinking => "claude-haiku-4-5-thinking-latest",
             Self::Claude3Haiku => "claude-3-haiku-20240307",
             Self::Custom { name, .. } => name,
         }
@@ -290,17 +220,14 @@ impl Model {
     /// The id of the model that should be used for making API requests
     pub fn request_id(&self) -> &str {
         match self {
-            Self::ClaudeOpus4 | Self::ClaudeOpus4Thinking => "claude-opus-4-20250514",
-            Self::ClaudeOpus4_1 | Self::ClaudeOpus4_1Thinking => "claude-opus-4-1-20250805",
-            Self::ClaudeOpus4_5 | Self::ClaudeOpus4_5Thinking => "claude-opus-4-5-20251101",
-            Self::ClaudeOpus4_6 | Self::ClaudeOpus4_6Thinking => "claude-opus-4-6",
-            Self::ClaudeSonnet4 | Self::ClaudeSonnet4Thinking => "claude-sonnet-4-20250514",
-            Self::ClaudeSonnet4_5
-            | Self::ClaudeSonnet4_5Thinking
-            | Self::ClaudeSonnet4_5_1mContext
-            | Self::ClaudeSonnet4_5_1mContextThinking => "claude-sonnet-4-5-20250929",
-            Self::ClaudeSonnet4_6 | Self::ClaudeSonnet4_6Thinking => "claude-sonnet-4-6",
-            Self::ClaudeHaiku4_5 | Self::ClaudeHaiku4_5Thinking => "claude-haiku-4-5-20251001",
+            Self::ClaudeOpus4 => "claude-opus-4-20250514",
+            Self::ClaudeOpus4_1 => "claude-opus-4-1-20250805",
+            Self::ClaudeOpus4_5 => "claude-opus-4-5-20251101",
+            Self::ClaudeOpus4_6 => "claude-opus-4-6",
+            Self::ClaudeSonnet4 => "claude-sonnet-4-20250514",
+            Self::ClaudeSonnet4_5 | Self::ClaudeSonnet4_5_1mContext => "claude-sonnet-4-5-20250929",
+            Self::ClaudeSonnet4_6 => "claude-sonnet-4-6",
+            Self::ClaudeHaiku4_5 => "claude-haiku-4-5-20251001",
             Self::Claude3Haiku => "claude-3-haiku-20240307",
             Self::Custom { name, .. } => name,
         }
@@ -310,22 +237,13 @@ impl Model {
         match self {
             Self::ClaudeOpus4 => "Claude Opus 4",
             Self::ClaudeOpus4_1 => "Claude Opus 4.1",
-            Self::ClaudeOpus4Thinking => "Claude Opus 4 Thinking",
-            Self::ClaudeOpus4_1Thinking => "Claude Opus 4.1 Thinking",
             Self::ClaudeOpus4_5 => "Claude Opus 4.5",
-            Self::ClaudeOpus4_5Thinking => "Claude Opus 4.5 Thinking",
             Self::ClaudeOpus4_6 => "Claude Opus 4.6",
-            Self::ClaudeOpus4_6Thinking => "Claude Opus 4.6 Thinking",
             Self::ClaudeSonnet4 => "Claude Sonnet 4",
-            Self::ClaudeSonnet4Thinking => "Claude Sonnet 4 Thinking",
             Self::ClaudeSonnet4_5 => "Claude Sonnet 4.5",
-            Self::ClaudeSonnet4_5Thinking => "Claude Sonnet 4.5 Thinking",
             Self::ClaudeSonnet4_5_1mContext => "Claude Sonnet 4.5 (1M context)",
-            Self::ClaudeSonnet4_5_1mContextThinking => "Claude Sonnet 4.5 Thinking (1M context)",
             Self::ClaudeSonnet4_6 => "Claude Sonnet 4.6",
-            Self::ClaudeSonnet4_6Thinking => "Claude Sonnet 4.6 Thinking",
             Self::ClaudeHaiku4_5 => "Claude Haiku 4.5",
-            Self::ClaudeHaiku4_5Thinking => "Claude Haiku 4.5 Thinking",
             Self::Claude3Haiku => "Claude 3 Haiku",
             Self::Custom {
                 name, display_name, ..
@@ -337,22 +255,13 @@ impl Model {
         match self {
             Self::ClaudeOpus4
             | Self::ClaudeOpus4_1
-            | Self::ClaudeOpus4Thinking
-            | Self::ClaudeOpus4_1Thinking
             | Self::ClaudeOpus4_5
-            | Self::ClaudeOpus4_5Thinking
             | Self::ClaudeOpus4_6
-            | Self::ClaudeOpus4_6Thinking
             | Self::ClaudeSonnet4
-            | Self::ClaudeSonnet4Thinking
             | Self::ClaudeSonnet4_5
-            | Self::ClaudeSonnet4_5Thinking
             | Self::ClaudeSonnet4_5_1mContext
-            | Self::ClaudeSonnet4_5_1mContextThinking
             | Self::ClaudeSonnet4_6
-            | Self::ClaudeSonnet4_6Thinking
             | Self::ClaudeHaiku4_5
-            | Self::ClaudeHaiku4_5Thinking
             | Self::Claude3Haiku => Some(AnthropicModelCacheConfiguration {
                 min_total_token: 2_048,
                 should_speculate: true,
@@ -369,46 +278,28 @@ impl Model {
         match self {
             Self::ClaudeOpus4
             | Self::ClaudeOpus4_1
-            | Self::ClaudeOpus4Thinking
-            | Self::ClaudeOpus4_1Thinking
             | Self::ClaudeOpus4_5
-            | Self::ClaudeOpus4_5Thinking
             | Self::ClaudeSonnet4
-            | Self::ClaudeSonnet4Thinking
             | Self::ClaudeSonnet4_5
-            | Self::ClaudeSonnet4_5Thinking
             | Self::ClaudeHaiku4_5
-            | Self::ClaudeHaiku4_5Thinking
             | Self::Claude3Haiku => 200_000,
-            Self::ClaudeOpus4_6
-            | Self::ClaudeOpus4_6Thinking
-            | Self::ClaudeSonnet4_5_1mContext
-            | Self::ClaudeSonnet4_5_1mContextThinking
-            | Self::ClaudeSonnet4_6
-            | Self::ClaudeSonnet4_6Thinking => 1_000_000,
+            Self::ClaudeOpus4_6 | Self::ClaudeSonnet4_5_1mContext | Self::ClaudeSonnet4_6 => {
+                1_000_000
+            }
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
 
     pub fn max_output_tokens(&self) -> u64 {
         match self {
-            Self::ClaudeOpus4
-            | Self::ClaudeOpus4Thinking
-            | Self::ClaudeOpus4_1
-            | Self::ClaudeOpus4_1Thinking => 32_000,
+            Self::ClaudeOpus4 | Self::ClaudeOpus4_1 => 32_000,
             Self::ClaudeOpus4_5
-            | Self::ClaudeOpus4_5Thinking
             | Self::ClaudeSonnet4
-            | Self::ClaudeSonnet4Thinking
             | Self::ClaudeSonnet4_5
-            | Self::ClaudeSonnet4_5Thinking
             | Self::ClaudeSonnet4_5_1mContext
-            | Self::ClaudeSonnet4_5_1mContextThinking
             | Self::ClaudeSonnet4_6
-            | Self::ClaudeSonnet4_6Thinking
-            | Self::ClaudeHaiku4_5
-            | Self::ClaudeHaiku4_5Thinking => 64_000,
-            Self::ClaudeOpus4_6 | Self::ClaudeOpus4_6Thinking => 128_000,
+            | Self::ClaudeHaiku4_5 => 64_000,
+            Self::ClaudeOpus4_6 => 128_000,
             Self::Claude3Haiku => 4_096,
             Self::Custom {
                 max_output_tokens, ..
@@ -420,22 +311,13 @@ impl Model {
         match self {
             Self::ClaudeOpus4
             | Self::ClaudeOpus4_1
-            | Self::ClaudeOpus4Thinking
-            | Self::ClaudeOpus4_1Thinking
             | Self::ClaudeOpus4_5
-            | Self::ClaudeOpus4_5Thinking
             | Self::ClaudeOpus4_6
-            | Self::ClaudeOpus4_6Thinking
             | Self::ClaudeSonnet4
-            | Self::ClaudeSonnet4Thinking
             | Self::ClaudeSonnet4_5
-            | Self::ClaudeSonnet4_5Thinking
             | Self::ClaudeSonnet4_5_1mContext
-            | Self::ClaudeSonnet4_5_1mContextThinking
             | Self::ClaudeSonnet4_6
-            | Self::ClaudeSonnet4_6Thinking
             | Self::ClaudeHaiku4_5
-            | Self::ClaudeHaiku4_5Thinking
             | Self::Claude3Haiku => 1.0,
             Self::Custom {
                 default_temperature,
@@ -445,37 +327,41 @@ impl Model {
     }
 
     pub fn mode(&self) -> AnthropicModelMode {
-        match self {
-            Self::ClaudeOpus4
-            | Self::ClaudeOpus4_1
-            | Self::ClaudeOpus4_5
-            | Self::ClaudeOpus4_6
-            | Self::ClaudeSonnet4
-            | Self::ClaudeSonnet4_5
-            | Self::ClaudeSonnet4_5_1mContext
-            | Self::ClaudeSonnet4_6
-            | Self::ClaudeHaiku4_5
-            | Self::Claude3Haiku => AnthropicModelMode::Default,
-            Self::ClaudeOpus4Thinking
-            | Self::ClaudeOpus4_1Thinking
-            | Self::ClaudeOpus4_5Thinking
-            | Self::ClaudeOpus4_6Thinking
-            | Self::ClaudeSonnet4Thinking
-            | Self::ClaudeSonnet4_5Thinking
-            | Self::ClaudeSonnet4_5_1mContextThinking
-            | Self::ClaudeSonnet4_6Thinking
-            | Self::ClaudeHaiku4_5Thinking => AnthropicModelMode::Thinking {
+        if self.supports_adaptive_thinking() {
+            AnthropicModelMode::AdaptiveThinking
+        } else if self.supports_thinking() {
+            AnthropicModelMode::Thinking {
                 budget_tokens: Some(4_096),
-            },
-            Self::Custom { mode, .. } => mode.clone(),
+            }
+        } else {
+            AnthropicModelMode::Default
         }
+    }
+
+    pub fn supports_thinking(&self) -> bool {
+        matches!(
+            self,
+            Self::ClaudeOpus4
+                | Self::ClaudeOpus4_1
+                | Self::ClaudeOpus4_5
+                | Self::ClaudeOpus4_6
+                | Self::ClaudeSonnet4
+                | Self::ClaudeSonnet4_5
+                | Self::ClaudeSonnet4_5_1mContext
+                | Self::ClaudeSonnet4_6
+                | Self::ClaudeHaiku4_5
+        )
+    }
+
+    pub fn supports_adaptive_thinking(&self) -> bool {
+        matches!(self, Self::ClaudeOpus4_6 | Self::ClaudeSonnet4_6)
     }
 
     pub fn beta_headers(&self) -> Option<String> {
         let mut headers = vec![];
 
         match self {
-            Self::ClaudeSonnet4_5_1mContext | Self::ClaudeSonnet4_5_1mContextThinking => {
+            Self::ClaudeSonnet4_5_1mContext => {
                 headers.push(CONTEXT_1M_BETA_HEADER.to_string());
             }
             Self::Custom {

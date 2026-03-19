@@ -5305,6 +5305,7 @@ dependencies = [
  "client",
  "cloud_llm_client",
  "collections",
+ "db",
  "debug_adapter_extension",
  "dirs 4.0.0",
  "edit_prediction",
@@ -15385,6 +15386,7 @@ dependencies = [
  "language",
  "lsp",
  "menu",
+ "multi_buffer",
  "pretty_assertions",
  "project",
  "serde",
@@ -17714,15 +17716,14 @@ dependencies = [
 
 [[package]]
 name = "tiny_http"
-version = "0.8.2"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ce51b50006056f590c9b7c3808c3bd70f0d1101666629713866c227d6e58d39"
+checksum = "389915df6413a2e74fb181895f933386023c71110878cd0825588928e64cdc82"
 dependencies = [
  "ascii",
- "chrono",
  "chunked_transfer",
+ "httpdate",
  "log",
- "url",
 ]
 
 [[package]]
@@ -17772,7 +17773,6 @@ dependencies = [
  "client",
  "cloud_api_types",
  "db",
- "feature_flags",
  "git_ui",
  "gpui",
  "icons",
@@ -19144,6 +19144,7 @@ dependencies = [
 name = "vim_mode_setting"
 version = "0.1.0"
 dependencies = [
+ "gpui",
  "settings",
 ]
 
@@ -21486,6 +21487,7 @@ dependencies = [
  "ui",
  "util",
  "uuid",
+ "vim_mode_setting",
  "windows 0.61.3",
  "zed_actions",
  "zlog",

@@ -2160,9 +2160,17 @@ impl Workspace {
         &self.status_bar
     }
 
-    pub fn set_workspace_sidebar_open(&self, open: bool, cx: &mut App) {
+    pub fn set_workspace_sidebar_open(
+        &self,
+        open: bool,
+        has_notifications: bool,
+        show_toggle: bool,
+        cx: &mut App,
+    ) {
         self.status_bar.update(cx, |status_bar, cx| {
             status_bar.set_workspace_sidebar_open(open, cx);
+            status_bar.set_sidebar_has_notifications(has_notifications, cx);
+            status_bar.set_show_sidebar_toggle(show_toggle, cx);
         });
     }
 
@@ -6988,6 +6996,12 @@ impl Workspace {
 
     pub fn has_active_modal(&self, _: &mut Window, cx: &mut App) -> bool {
         self.modal_layer.read(cx).has_active_modal()
+    }
+
+    pub fn is_active_modal_command_palette(&self, cx: &mut App) -> bool {
+        self.modal_layer
+            .read(cx)
+            .is_active_modal_command_palette(cx)
     }
 
     pub fn active_modal<V: ManagedView + 'static>(&self, cx: &App) -> Option<Entity<V>> {

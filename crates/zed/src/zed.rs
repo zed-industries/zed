@@ -397,8 +397,8 @@ pub fn initialize_workspace(
                 .update(cx, |_, window, cx| {
                     let sidebar =
                         cx.new(|cx| Sidebar::new(multi_workspace_handle.clone(), window, cx));
-                    multi_workspace_handle.update(cx, |multi_workspace, _cx| {
-                        multi_workspace.register_sidebar(sidebar);
+                    multi_workspace_handle.update(cx, |multi_workspace, cx| {
+                        multi_workspace.register_sidebar(sidebar, cx);
                     });
                 })
                 .ok();
