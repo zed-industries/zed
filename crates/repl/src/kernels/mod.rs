@@ -178,8 +178,11 @@ impl PythonEnvKernelSpecification {
         }
     }
 
-    pub fn is_uv(&self) -> bool{
-        matches!(self.environment_kind.as_deref(), Some("uv" | "uv (Workspace)"))
+    pub fn is_uv(&self) -> bool {
+        matches!(
+            self.environment_kind.as_deref(),
+            Some("uv" | "uv (Workspace)")
+        )
     }
 }
 
