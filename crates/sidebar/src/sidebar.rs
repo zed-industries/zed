@@ -828,10 +828,6 @@ impl Sidebar {
 
                 // Merge live info into threads and update notification state
                 // in a single pass.
-                let is_active_workspace = active_workspace
-                    .as_ref()
-                    .is_some_and(|active| active == workspace);
-
                 for thread in &mut threads {
                     let session_id = &thread.session_info.session_id;
 
@@ -846,16 +842,23 @@ impl Sidebar {
                         thread.diff_stats = info.diff_stats;
                     }
 
+                    let is_thread_workspace_active = match &thread.workspace {
+                        ThreadEntryWorkspace::Open(thread_workspace) => active_workspace
+                            .as_ref()
+                            .is_some_and(|active| active == thread_workspace),
+                        ThreadEntryWorkspace::Closed(_) => false,
+                    };
+
                     if thread.is_background && thread.status == AgentThreadStatus::Completed {
                         notified_threads.insert(session_id.clone());
                     } else if thread.status == AgentThreadStatus::Completed
-                        && !is_active_workspace
+                        && !is_thread_workspace_active
                         && old_statuses.get(session_id) == Some(&AgentThreadStatus::Running)
                     {
                         notified_threads.insert(session_id.clone());
                     }
 
-                    if is_active_workspace && !thread.is_background {
+                    if is_thread_workspace_active && !thread.is_background {
                         notified_threads.remove(session_id);
                     }
                 }
