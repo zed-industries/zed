@@ -4114,7 +4114,7 @@ pub mod tests {
             text: pilot_emoji,
             style: None,
             is_tab: false,
-            is_inlay: false,
+            kind: ChunkKind::None,
             replacement: None,
         };
 
