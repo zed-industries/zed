@@ -680,7 +680,7 @@ impl<D: PickerDelegate> Picker<D> {
     fn do_confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(update_query) = self.delegate.confirm_update_query(window, cx) {
             self.set_query(&update_query, window, cx);
-            self.set_selected_index(0, Some(Direction::Down), false, window, cx);
+            self.set_selected_manually(0, Some(Direction::Down), false, window, cx);
         } else {
             self.delegate.confirm(secondary, window, cx)
         }
@@ -1168,7 +1168,7 @@ mod tests {
             self.matches
                 .get(ix)
                 .and_then(|&item_ix| self.items.get(item_ix))
-                .map(|item| -> Box<dyn Any> { Box::new(SharedString::from(item.id.clone())) })
+                .map(|item| Box::new(SharedString::from(item.id.clone())) as Box<_>)
         }
 
         fn find_match_by_stable_id(&self, stable_id: &dyn Any) -> Option<usize> {
@@ -1500,7 +1500,7 @@ mod tests {
             self.matches
                 .get(ix)
                 .and_then(|&item_ix| self.items.get(item_ix))
-                .map(|item| -> Box<dyn Any> { Box::new(SharedString::from(item.id.clone())) })
+                .map(|item| Box::new(SharedString::from(item.id.clone())) as Box<_>)
         }
 
         fn find_match_by_stable_id(&self, stable_id: &dyn Any) -> Option<usize> {
@@ -1703,7 +1703,7 @@ mod tests {
             self.matches
                 .get(ix)
                 .and_then(|&item_ix| self.items.get(item_ix))
-                .map(|item| -> Box<dyn Any> { Box::new(SharedString::from(item.id.clone())) })
+                .map(|item| Box::new(SharedString::from(item.id.clone())) as Box<_>)
         }
 
         fn find_match_by_stable_id(&self, stable_id: &dyn Any) -> Option<usize> {
