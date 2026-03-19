@@ -506,7 +506,6 @@ async fn test_edit_prediction_preview_activates_when_prediction_arrives_with_mod
     });
 
     let preview_modifiers = cx.update_editor(|editor, window, cx| {
-        let key_context = editor.key_context_internal(true, window, cx);
         *editor
             .preview_edit_prediction_keystroke(window, cx)
             .unwrap()
