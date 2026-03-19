@@ -2359,7 +2359,7 @@ impl Sidebar {
             .map(|w| w.read(cx).focus_handle(cx))
             .unwrap_or_else(|| cx.focus_handle());
 
-        let excluded_workspace_ids: HashSet<WorkspaceId> = multi_workspace
+        let sibling_workspace_ids: HashSet<WorkspaceId> = multi_workspace
             .as_ref()
             .map(|mw| {
                 mw.read(cx)
@@ -2378,7 +2378,7 @@ impl Sidebar {
                 workspace.as_ref().map(|ws| {
                     RecentProjects::popover(
                         ws.clone(),
-                        excluded_workspace_ids.clone(),
+                        sibling_workspace_ids.clone(),
                         false,
                         focus_handle.clone(),
                         window,

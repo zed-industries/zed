@@ -804,7 +804,7 @@ impl TitleBar {
             .map(|w| w.read(cx).focus_handle(cx))
             .unwrap_or_else(|| cx.focus_handle());
 
-        let excluded_workspace_ids: HashSet<WorkspaceId> = self
+        let sibling_workspace_ids: HashSet<WorkspaceId> = self
             .multi_workspace
             .as_ref()
             .and_then(|mw| mw.upgrade())
@@ -821,7 +821,7 @@ impl TitleBar {
             .menu(move |window, cx| {
                 Some(recent_projects::RecentProjects::popover(
                     workspace.clone(),
-                    excluded_workspace_ids.clone(),
+                    sibling_workspace_ids.clone(),
                     false,
                     focus_handle.clone(),
                     window,
