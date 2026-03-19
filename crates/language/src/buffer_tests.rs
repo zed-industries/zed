@@ -43,6 +43,29 @@ fn init_logger() {
 }
 
 #[gpui::test]
+fn test_crash_reproducer(cx: &mut gpui::App) {
+    let reponse = std::fs::read("bad-response.json").unwrap();
+    let response =
+        serde_json::from_slice::<::rpc::proto::JoinChannelBufferResponse>(&reponse).unwrap();
+    cx.new(|cx| {
+        let mut buffer = Buffer::remote(
+            BufferId::new(response.buffer_id).unwrap(),
+            ReplicaId::new(response.replica_id as u16),
+            Capability::ReadOnly,
+            response.base_text,
+        );
+        let operations = response
+            .operations
+            .into_iter()
+            .map(proto::deserialize_operation)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        buffer.apply_ops(operations, cx);
+        buffer
+    });
+}
+
+#[gpui::test]
 fn test_line_endings(cx: &mut gpui::App) {
     init_settings(cx, |_| {});
 
