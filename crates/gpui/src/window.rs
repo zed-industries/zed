@@ -2407,12 +2407,10 @@ impl Window {
             }
 
             // Sort by priority for this round
-            let mut sorted_indices = (0..deferred_count).collect::<SmallVec<[_; 8]>>();
-            sorted_indices.sort_by_key(|ix| self.next_frame.deferred_draws[*ix].priority);
-
+            let traversal_order = self.deferred_draw_traversal_order();
             let mut deferred_draws = mem::take(&mut self.next_frame.deferred_draws);
 
-            for deferred_draw_ix in sorted_indices {
+            for deferred_draw_ix in traversal_order {
                 let deferred_draw = &mut deferred_draws[deferred_draw_ix];
                 self.element_id_stack
                     .clone_from(&deferred_draw.element_id_stack);
@@ -2457,16 +2455,13 @@ impl Window {
 
         // Paint all deferred draws in priority order.
         // Since prepaint has already processed nested deferreds, we just paint them all.
-        let deferred_count = self.next_frame.deferred_draws.len();
-        if deferred_count == 0 {
+        if self.next_frame.deferred_draws.len() == 0 {
             return;
         }
 
-        let mut sorted_indices = (0..deferred_count).collect::<SmallVec<[_; 8]>>();
-        sorted_indices.sort_by_key(|ix| self.next_frame.deferred_draws[*ix].priority);
-
+        let traversal_order = self.deferred_draw_traversal_order();
         let mut deferred_draws = mem::take(&mut self.next_frame.deferred_draws);
-        for deferred_draw_ix in sorted_indices {
+        for deferred_draw_ix in traversal_order {
             let mut deferred_draw = &mut deferred_draws[deferred_draw_ix];
             self.element_id_stack
                 .clone_from(&deferred_draw.element_id_stack);
@@ -2489,6 +2484,13 @@ impl Window {
         }
         self.next_frame.deferred_draws = deferred_draws;
         self.element_id_stack.clear();
+    }
+
+    fn deferred_draw_traversal_order(&mut self) -> SmallVec<[usize; 8]> {
+        let deferred_count = self.next_frame.deferred_draws.len();
+        let mut sorted_indices = (0..deferred_count).collect::<SmallVec<[_; 8]>>();
+        sorted_indices.sort_by_key(|ix| self.next_frame.deferred_draws[*ix].priority);
+        sorted_indices
     }
 
     pub(crate) fn prepaint_index(&self) -> PrepaintStateIndex {
