@@ -6,9 +6,7 @@ use anyhow::{Context as _, anyhow};
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
-        NSApplication, NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
-        NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel, NSSavePanel,
-        NSVisualEffectState, NSVisualEffectView, NSWindow,
+        NSApplication, NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular, NSControl as _, NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel, NSSavePanel, NSVisualEffectState, NSVisualEffectView, NSWindow
     },
     base::{BOOL, NO, YES, id, nil, selector},
     foundation::{

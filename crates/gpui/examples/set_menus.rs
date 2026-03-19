@@ -2,7 +2,7 @@
 
 use gpui::{
     App, Context, Global, Menu, MenuItem, SharedString, SystemMenuType, Window, WindowOptions,
-    actions, div, prelude::*, rgb,
+    actions, div, prelude::*,
 };
 use gpui_platform::application;
 
