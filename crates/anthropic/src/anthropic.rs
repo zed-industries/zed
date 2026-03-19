@@ -327,9 +327,14 @@ impl Model {
     }
 
     pub fn mode(&self) -> AnthropicModelMode {
-        match self {
-            Self::Custom { mode, .. } => mode.clone(),
-            _ => AnthropicModelMode::Default,
+        if self.supports_adaptive_thinking() {
+            AnthropicModelMode::AdaptiveThinking
+        } else if self.supports_thinking() {
+            AnthropicModelMode::Thinking {
+                budget_tokens: Some(4_096),
+            }
+        } else {
+            AnthropicModelMode::Default
         }
     }
 
@@ -350,18 +355,6 @@ impl Model {
 
     pub fn supports_adaptive_thinking(&self) -> bool {
         matches!(self, Self::ClaudeOpus4_6 | Self::ClaudeSonnet4_6)
-    }
-
-    pub fn thinking_mode(&self) -> AnthropicModelMode {
-        if self.supports_adaptive_thinking() {
-            AnthropicModelMode::AdaptiveThinking
-        } else if self.supports_thinking() {
-            AnthropicModelMode::Thinking {
-                budget_tokens: Some(4_096),
-            }
-        } else {
-            AnthropicModelMode::Default
-        }
     }
 
     pub fn beta_headers(&self) -> Option<String> {

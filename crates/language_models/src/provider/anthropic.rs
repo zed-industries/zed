@@ -576,7 +576,7 @@ impl LanguageModel for AnthropicModel {
     ) -> BoxFuture<'static, Result<u64>> {
         let http_client = self.http_client.clone();
         let model_id = self.model.request_id().to_string();
-        let thinking_mode = self.model.thinking_mode();
+        let mode = self.model.mode();
 
         let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
             let api_url = AnthropicLanguageModelProvider::api_url(cx);
@@ -593,7 +593,7 @@ impl LanguageModel for AnthropicModel {
             };
 
             let count_request =
-                into_anthropic_count_tokens_request(request.clone(), model_id, thinking_mode);
+                into_anthropic_count_tokens_request(request.clone(), model_id, mode);
 
             match anthropic::count_tokens(http_client.as_ref(), &api_url, &api_key, count_request)
                 .await
@@ -626,7 +626,7 @@ impl LanguageModel for AnthropicModel {
             self.model.request_id().into(),
             self.model.default_temperature(),
             self.model.max_output_tokens(),
-            self.model.thinking_mode(),
+            self.model.mode(),
         );
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
@@ -652,7 +652,7 @@ pub fn into_anthropic(
     model: String,
     default_temperature: f32,
     max_output_tokens: u64,
-    thinking_mode: AnthropicModelMode,
+    mode: AnthropicModelMode,
 ) -> anthropic::Request {
     let mut new_messages: Vec<anthropic::Message> = Vec::new();
     let mut system_message = String::new();
@@ -731,7 +731,7 @@ pub fn into_anthropic(
             Some(anthropic::StringOrContents::String(system_message))
         },
         thinking: if request.thinking_allowed {
-            match thinking_mode {
+            match mode {
                 AnthropicModelMode::Thinking { budget_tokens } => {
                     Some(anthropic::Thinking::Enabled { budget_tokens })
                 }
@@ -758,7 +758,7 @@ pub fn into_anthropic(
         }),
         metadata: None,
         output_config: if request.thinking_allowed
-            && matches!(thinking_mode, AnthropicModelMode::AdaptiveThinking)
+            && matches!(mode, AnthropicModelMode::AdaptiveThinking)
         {
             request.thinking_effort.as_deref().and_then(|effort| {
                 let effort = match effort {
