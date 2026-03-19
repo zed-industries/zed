@@ -26,6 +26,10 @@ actions!(
         ScrollUpByItem,
         /// Scrolls down by one markdown element in the markdown preview
         ScrollDownByItem,
+        /// Scrolls to the top of the markdown preview.
+        ScrollToTop,
+        /// Scrolls to the bottom of the markdown preview.
+        ScrollToBottom,
         /// Opens a following markdown preview that syncs with the editor.
         OpenFollowingPreview
     ]

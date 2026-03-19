@@ -1787,6 +1787,7 @@ async fn test_project_reconnect(
 
     // While disconnected, close project 3
     cx_a.update(|_| drop(project_a3));
+    executor.run_until_parked();
 
     // Client B reconnects. They re-join the room and the remaining shared project.
     server.allow_connections();

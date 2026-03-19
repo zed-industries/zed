@@ -22,8 +22,9 @@ jobs:
       with:
         clean: false
     - name: autofix_pr::run_autofix::checkout_pr
-      run: gh pr checkout ${{ inputs.pr_number }}
+      run: gh pr checkout "$PR_NUMBER"
       env:
+        PR_NUMBER: ${{ inputs.pr_number }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     - name: steps::setup_cargo_config
       run: |
@@ -36,8 +37,6 @@ jobs:
         path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
-    - name: steps::install_mold
-      run: ./script/install-mold
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
     - name: steps::setup_pnpm
@@ -104,8 +103,9 @@ jobs:
         clean: false
         token: ${{ steps.get-app-token.outputs.token }}
     - name: autofix_pr::commit_changes::checkout_pr
-      run: gh pr checkout ${{ inputs.pr_number }}
+      run: gh pr checkout "$PR_NUMBER"
       env:
+        PR_NUMBER: ${{ inputs.pr_number }}
         GITHUB_TOKEN: ${{ steps.get-app-token.outputs.token }}
     - name: autofix_pr::download_patch_artifact
       uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53

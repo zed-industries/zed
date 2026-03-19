@@ -89,7 +89,7 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
     (
         "cpp",
         &[
-            "c++", "h++", "cc", "cpp", "cxx", "hh", "hpp", "hxx", "inl", "ixx",
+            "c++", "h++", "cc", "cpp", "cppm", "cxx", "hh", "hpp", "hxx", "inl", "ixx",
         ],
     ),
     ("crystal", &["cr", "ecr"]),

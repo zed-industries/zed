@@ -37,16 +37,6 @@ impl FeatureFlag for AgentSharingFeatureFlag {
     const NAME: &'static str = "agent-sharing";
 }
 
-pub struct AgentGitWorktreesFeatureFlag;
-
-impl FeatureFlag for AgentGitWorktreesFeatureFlag {
-    const NAME: &'static str = "agent-git-worktrees";
-
-    fn enabled_for_staff() -> bool {
-        false
-    }
-}
-
 pub struct DiffReviewFeatureFlag;
 
 impl FeatureFlag for DiffReviewFeatureFlag {
@@ -67,6 +57,16 @@ pub struct StreamingEditFileToolFeatureFlag;
 
 impl FeatureFlag for StreamingEditFileToolFeatureFlag {
     const NAME: &'static str = "streaming-edit-file-tool";
+
+    fn enabled_for_staff() -> bool {
+        true
+    }
+}
+
+pub struct ProjectPanelUndoRedoFeatureFlag;
+
+impl FeatureFlag for ProjectPanelUndoRedoFeatureFlag {
+    const NAME: &'static str = "project-panel-undo-redo";
 
     fn enabled_for_staff() -> bool {
         false

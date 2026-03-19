@@ -601,6 +601,7 @@ const ROW_COL_CAPTURE_REGEX: &str = r"(?xs)
         |
         \((\d+)\)()     # filename(row)
     )
+    \:*$
     |
     (.+?)(?:
         \:+(\d+)\:(\d+)\:*$  # filename:row:column
@@ -2097,6 +2098,15 @@ mod tests {
                 column: Some(9),
             }
         );
+
+        assert_eq!(
+            PathWithPosition::parse_str("main (1).log"),
+            PathWithPosition {
+                path: PathBuf::from("main (1).log"),
+                row: None,
+                column: None
+            }
+        );
     }
 
     #[perf]
@@ -2171,6 +2181,15 @@ mod tests {
             PathWithPosition::parse_str("C:\\Users\\someone\\test_file.rs"),
             PathWithPosition {
                 path: PathBuf::from("C:\\Users\\someone\\test_file.rs"),
+                row: None,
+                column: None
+            }
+        );
+
+        assert_eq!(
+            PathWithPosition::parse_str("C:\\Users\\someone\\main (1).log"),
+            PathWithPosition {
+                path: PathBuf::from("C:\\Users\\someone\\main (1).log"),
                 row: None,
                 column: None
             }

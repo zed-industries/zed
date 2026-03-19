@@ -4,7 +4,7 @@ use crate::{
     NavigationData, ReportEditorEvent, SelectionEffects, ToPoint as _,
     display_map::HighlightKey,
     editor_settings::SeedQuerySetting,
-    persistence::{DB, SerializedEditor},
+    persistence::{EditorDb, SerializedEditor},
     scroll::{ScrollAnchor, ScrollOffset},
 };
 use anyhow::{Context as _, Result, anyhow};
@@ -14,12 +14,12 @@ use fs::MTime;
 use futures::future::try_join_all;
 use git::status::GitSummary;
 use gpui::{
-    AnyElement, App, AsyncWindowContext, Context, Entity, EntityId, EventEmitter, IntoElement,
-    ParentElement, Pixels, SharedString, Styled, Task, WeakEntity, Window, point,
+    AnyElement, App, AsyncWindowContext, Context, Entity, EntityId, EventEmitter, Font,
+    IntoElement, ParentElement, Pixels, SharedString, Styled, Task, WeakEntity, Window, point,
 };
 use language::{
-    Bias, Buffer, BufferRow, CharKind, CharScopeContext, LocalFile, Point, SelectionGoal,
-    proto::serialize_anchor as serialize_text_anchor,
+    Bias, Buffer, BufferRow, CharKind, CharScopeContext, HighlightedText, LocalFile, Point,
+    SelectionGoal, proto::serialize_anchor as serialize_text_anchor,
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::MultiBufferOffset;
@@ -41,6 +41,7 @@ use std::{
 use text::{BufferId, BufferSnapshot, Selection};
 use ui::{IconDecorationKind, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::PathExt};
+use workspace::item::{Dedup, ItemSettings, SerializableItem, TabContentParams};
 use workspace::{
     CollaboratorId, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
     invalid_item_view::InvalidItemView,
@@ -51,12 +52,8 @@ use workspace::{
     },
 };
 use workspace::{
-    OpenOptions,
-    item::{Dedup, ItemSettings, SerializableItem, TabContentParams},
-};
-use workspace::{
-    OpenVisible, Pane, WorkspaceSettings,
-    item::{BreadcrumbText, FollowEvent, ProjectItemKind},
+    Pane, WorkspaceSettings,
+    item::{FollowEvent, ProjectItemKind},
     searchable::SearchOptions,
 };
 use zed_actions::preview::{
@@ -981,9 +978,10 @@ impl Item for Editor {
     }
 
     // In a non-singleton case, the breadcrumbs are actually shown on sticky file headers of the multibuffer.
-    fn breadcrumbs(&self, cx: &App) -> Option<Vec<BreadcrumbText>> {
+    fn breadcrumbs(&self, cx: &App) -> Option<(Vec<HighlightedText>, Option<Font>)> {
         if self.buffer.read(cx).is_singleton() {
-            self.breadcrumbs_inner(cx)
+            let font = theme::ThemeSettings::get_global(cx).buffer_font.clone();
+            Some((self.breadcrumbs_inner(cx)?, Some(font)))
         } else {
             None
         }
@@ -1137,18 +1135,24 @@ impl SerializableItem for Editor {
         _window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        workspace::delete_unloaded_items(alive_items, workspace_id, "editors", &DB, cx)
+        workspace::delete_unloaded_items(
+            alive_items,
+            workspace_id,
+            "editors",
+            &EditorDb::global(cx),
+            cx,
+        )
     }
 
     fn deserialize(
         project: Entity<Project>,
-        workspace: WeakEntity<Workspace>,
+        _workspace: WeakEntity<Workspace>,
         workspace_id: workspace::WorkspaceId,
         item_id: ItemId,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
-        let serialized_editor = match DB
+        let serialized_editor = match EditorDb::global(cx)
             .get_serialized_editor(item_id, workspace_id)
             .context("Failed to query editor state")
         {
@@ -1266,42 +1270,33 @@ impl SerializableItem for Editor {
                         })
                     }),
                     None => {
-                        // File is not in any worktree (e.g., opened as a standalone file)
-                        // We need to open it via workspace and then restore dirty contents
+                        // File is not in any worktree (e.g., opened as a standalone file).
+                        // Open the buffer directly via the project rather than through
+                        // workspace.open_abs_path(), which has the side effect of adding
+                        // the item to a pane. The caller (deserialize_to) will add the
+                        // returned item to the correct pane.
                         window.spawn(cx, async move |cx| {
-                            let open_by_abs_path =
-                                workspace.update_in(cx, |workspace, window, cx| {
-                                    workspace.open_abs_path(
-                                        abs_path.clone(),
-                                        OpenOptions {
-                                            visible: Some(OpenVisible::None),
-                                            ..Default::default()
-                                        },
-                                        window,
-                                        cx,
-                                    )
+                            let buffer = project
+                                .update(cx, |project, cx| project.open_local_buffer(&abs_path, cx))
+                                .await
+                                .with_context(|| {
+                                    format!("Failed to open buffer for {abs_path:?}")
                                 })?;
-                            let editor =
-                                open_by_abs_path.await?.downcast::<Editor>().with_context(
-                                    || format!("path {abs_path:?} cannot be opened as an Editor"),
-                                )?;
 
                             if let Some(contents) = contents {
-                                editor.update_in(cx, |editor, _window, cx| {
-                                    if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
-                                        buffer.update(cx, |buffer, cx| {
-                                            restore_serialized_buffer_contents(
-                                                buffer, contents, mtime, cx,
-                                            );
-                                        });
-                                    }
-                                })?;
+                                buffer.update(cx, |buffer, cx| {
+                                    restore_serialized_buffer_contents(buffer, contents, mtime, cx);
+                                });
                             }
 
-                            editor.update_in(cx, |editor, window, cx| {
-                                editor.read_metadata_from_db(item_id, workspace_id, window, cx);
-                            })?;
-                            Ok(editor)
+                            cx.update(|window, cx| {
+                                cx.new(|cx| {
+                                    let mut editor =
+                                        Editor::for_buffer(buffer, Some(project), window, cx);
+                                    editor.read_metadata_from_db(item_id, workspace_id, window, cx);
+                                    editor
+                                })
+                            })
                         })
                     }
                 }
@@ -1372,6 +1367,7 @@ impl SerializableItem for Editor {
 
         let snapshot = buffer.read(cx).snapshot();
 
+        let db = EditorDb::global(cx);
         Some(cx.spawn_in(window, async move |_this, cx| {
             cx.background_spawn(async move {
                 let (contents, language) = if serialize_dirty_buffers && is_dirty {
@@ -1389,7 +1385,7 @@ impl SerializableItem for Editor {
                     mtime,
                 };
                 log::debug!("Serializing editor {item_id:?} in workspace {workspace_id:?}");
-                DB.save_serialized_editor(item_id, workspace_id, editor)
+                db.save_serialized_editor(item_id, workspace_id, editor)
                     .await
                     .context("failed to save serialized editor")
             })
@@ -1971,6 +1967,8 @@ pub fn entry_git_aware_label_color(git_status: GitSummary, ignored: bool, select
     let tracked = git_status.index + git_status.worktree;
     if git_status.conflict > 0 {
         Color::Conflict
+    } else if tracked.deleted > 0 {
+        Color::Deleted
     } else if tracked.modified > 0 {
         Color::Modified
     } else if tracked.added > 0 || git_status.untracked > 0 {
@@ -2066,6 +2064,7 @@ mod tests {
     use gpui::{App, VisualTestContext};
     use language::TestFile;
     use project::FakeFs;
+    use serde_json::json;
     use std::path::{Path, PathBuf};
     use util::{path, rel_path::RelPath};
 
@@ -2118,7 +2117,9 @@ mod tests {
                 MultiWorkspace::test_new(project.clone(), window, cx)
             });
             let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
-            let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
+            let db = cx.update(|_, cx| workspace::WorkspaceDb::global(cx));
+            let workspace_id = db.next_id().await.unwrap();
+            let editor_db = cx.update(|_, cx| EditorDb::global(cx));
             let item_id = 1234 as ItemId;
             let mtime = fs
                 .metadata(Path::new(path!("/file.rs")))
@@ -2134,7 +2135,8 @@ mod tests {
                 mtime: Some(mtime),
             };
 
-            DB.save_serialized_editor(item_id, workspace_id, serialized_editor.clone())
+            editor_db
+                .save_serialized_editor(item_id, workspace_id, serialized_editor.clone())
                 .await
                 .unwrap();
 
@@ -2157,8 +2159,10 @@ mod tests {
                 MultiWorkspace::test_new(project.clone(), window, cx)
             });
             let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+            let db = cx.update(|_, cx| workspace::WorkspaceDb::global(cx));
+            let editor_db = cx.update(|_, cx| EditorDb::global(cx));
 
-            let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
+            let workspace_id = db.next_id().await.unwrap();
 
             let item_id = 5678 as ItemId;
             let serialized_editor = SerializedEditor {
@@ -2168,7 +2172,8 @@ mod tests {
                 mtime: None,
             };
 
-            DB.save_serialized_editor(item_id, workspace_id, serialized_editor)
+            editor_db
+                .save_serialized_editor(item_id, workspace_id, serialized_editor)
                 .await
                 .unwrap();
 
@@ -2197,8 +2202,10 @@ mod tests {
                 MultiWorkspace::test_new(project.clone(), window, cx)
             });
             let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+            let db = cx.update(|_, cx| workspace::WorkspaceDb::global(cx));
+            let editor_db = cx.update(|_, cx| EditorDb::global(cx));
 
-            let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
+            let workspace_id = db.next_id().await.unwrap();
 
             let item_id = 9012 as ItemId;
             let serialized_editor = SerializedEditor {
@@ -2208,7 +2215,8 @@ mod tests {
                 mtime: None,
             };
 
-            DB.save_serialized_editor(item_id, workspace_id, serialized_editor)
+            editor_db
+                .save_serialized_editor(item_id, workspace_id, serialized_editor)
                 .await
                 .unwrap();
 
@@ -2235,8 +2243,10 @@ mod tests {
                 MultiWorkspace::test_new(project.clone(), window, cx)
             });
             let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+            let db = cx.update(|_, cx| workspace::WorkspaceDb::global(cx));
+            let editor_db = cx.update(|_, cx| EditorDb::global(cx));
 
-            let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
+            let workspace_id = db.next_id().await.unwrap();
 
             let item_id = 9345 as ItemId;
             let old_mtime = MTime::from_seconds_and_nanos(0, 50);
@@ -2247,7 +2257,8 @@ mod tests {
                 mtime: Some(old_mtime),
             };
 
-            DB.save_serialized_editor(item_id, workspace_id, serialized_editor)
+            editor_db
+                .save_serialized_editor(item_id, workspace_id, serialized_editor)
                 .await
                 .unwrap();
 
@@ -2267,8 +2278,10 @@ mod tests {
                 MultiWorkspace::test_new(project.clone(), window, cx)
             });
             let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+            let db = cx.update(|_, cx| workspace::WorkspaceDb::global(cx));
+            let editor_db = cx.update(|_, cx| EditorDb::global(cx));
 
-            let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
+            let workspace_id = db.next_id().await.unwrap();
 
             let item_id = 10000 as ItemId;
             let serialized_editor = SerializedEditor {
@@ -2278,7 +2291,8 @@ mod tests {
                 mtime: None,
             };
 
-            DB.save_serialized_editor(item_id, workspace_id, serialized_editor)
+            editor_db
+                .save_serialized_editor(item_id, workspace_id, serialized_editor)
                 .await
                 .unwrap();
 
@@ -2309,8 +2323,10 @@ mod tests {
                 MultiWorkspace::test_new(project.clone(), window, cx)
             });
             let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+            let db = cx.update(|_, cx| workspace::WorkspaceDb::global(cx));
+            let editor_db = cx.update(|_, cx| EditorDb::global(cx));
 
-            let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
+            let workspace_id = db.next_id().await.unwrap();
             let item_id = 11000 as ItemId;
 
             let mtime = fs
@@ -2328,7 +2344,8 @@ mod tests {
                 mtime: Some(mtime),
             };
 
-            DB.save_serialized_editor(item_id, workspace_id, serialized_editor)
+            editor_db
+                .save_serialized_editor(item_id, workspace_id, serialized_editor)
                 .await
                 .unwrap();
 
@@ -2345,5 +2362,76 @@ mod tests {
                 assert!(buffer.file().is_some());
             });
         }
+    }
+
+    // Regression test for https://github.com/zed-industries/zed/issues/35947
+    // Verifies that deserializing a non-worktree editor does not add the item
+    // to any pane as a side effect.
+    #[gpui::test]
+    async fn test_deserialize_non_worktree_file_does_not_add_to_pane(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/outside"), json!({ "settings.json": "{}" }))
+            .await;
+
+        // Project with a different root — settings.json is NOT in any worktree
+        let project = Project::test(fs.clone(), [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let db = cx.update(|_, cx| workspace::WorkspaceDb::global(cx));
+        let editor_db = cx.update(|_, cx| EditorDb::global(cx));
+
+        let workspace_id = db.next_id().await.unwrap();
+        let item_id = 99999 as ItemId;
+
+        let serialized_editor = SerializedEditor {
+            abs_path: Some(PathBuf::from(path!("/outside/settings.json"))),
+            contents: None,
+            language: None,
+            mtime: None,
+        };
+
+        editor_db
+            .save_serialized_editor(item_id, workspace_id, serialized_editor)
+            .await
+            .unwrap();
+
+        // Count items in all panes before deserialization
+        let pane_items_before = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .panes()
+                .iter()
+                .map(|pane| pane.read(cx).items_len())
+                .sum::<usize>()
+        });
+
+        let deserialized =
+            deserialize_editor(item_id, workspace_id, workspace.clone(), project, cx).await;
+
+        cx.run_until_parked();
+
+        // The editor should exist and have the file
+        deserialized.update(cx, |editor, cx| {
+            let buffer = editor.buffer().read(cx).as_singleton().unwrap().read(cx);
+            assert!(buffer.file().is_some());
+        });
+
+        // No items should have been added to any pane as a side effect
+        let pane_items_after = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .panes()
+                .iter()
+                .map(|pane| pane.read(cx).items_len())
+                .sum::<usize>()
+        });
+
+        assert_eq!(
+            pane_items_before, pane_items_after,
+            "Editor::deserialize should not add items to panes as a side effect"
+        );
     }
 }

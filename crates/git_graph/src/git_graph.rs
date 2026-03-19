@@ -15,7 +15,7 @@ use gpui::{
     px, uniform_list,
 };
 use language::line_diff;
-use menu::{Cancel, SelectNext, SelectPrevious};
+use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::{
     Project,
     git_store::{
@@ -1171,20 +1171,33 @@ impl GitGraph {
         cx.notify();
     }
 
-    fn select_prev(&mut self, _: &SelectPrevious, _window: &mut Window, cx: &mut Context<Self>) {
+    fn select_first(&mut self, _: &SelectFirst, _window: &mut Window, cx: &mut Context<Self>) {
+        self.select_entry(0, cx);
+    }
+
+    fn select_prev(&mut self, _: &SelectPrevious, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(selected_entry_idx) = &self.selected_entry_idx {
             self.select_entry(selected_entry_idx.saturating_sub(1), cx);
         } else {
-            self.select_entry(0, cx);
+            self.select_first(&SelectFirst, window, cx);
         }
     }
 
     fn select_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(selected_entry_idx) = &self.selected_entry_idx {
-            self.select_entry(selected_entry_idx.saturating_add(1), cx);
+            self.select_entry(
+                selected_entry_idx
+                    .saturating_add(1)
+                    .min(self.graph_data.commits.len().saturating_sub(1)),
+                cx,
+            );
         } else {
             self.select_prev(&SelectPrevious, window, cx);
         }
+    }
+
+    fn select_last(&mut self, _: &SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
+        self.select_entry(self.graph_data.commits.len().saturating_sub(1), cx);
     }
 
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
@@ -1481,10 +1494,9 @@ impl GitGraph {
 
                                 this.child(
                                     Button::new("author-email-copy", author_email.clone())
-                                        .icon(icon)
-                                        .icon_size(IconSize::Small)
-                                        .icon_color(icon_color)
-                                        .icon_position(IconPosition::Start)
+                                        .start_icon(
+                                            Icon::new(icon).size(IconSize::Small).color(icon_color),
+                                        )
                                         .label_size(LabelSize::Small)
                                         .truncate(true)
                                         .color(Color::Muted)
@@ -1529,10 +1541,9 @@ impl GitGraph {
                                 };
 
                                 Button::new("sha-button", &full_sha)
-                                    .icon(icon)
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(icon_color)
-                                    .icon_position(IconPosition::Start)
+                                    .start_icon(
+                                        Icon::new(icon).size(IconSize::Small).color(icon_color),
+                                    )
                                     .label_size(LabelSize::Small)
                                     .truncate(true)
                                     .color(Color::Muted)
@@ -1589,10 +1600,9 @@ impl GitGraph {
                                         "view-on-provider",
                                         format!("View on {}", provider_name),
                                     )
-                                    .icon(icon)
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(Color::Muted)
-                                    .icon_position(IconPosition::Start)
+                                    .start_icon(
+                                        Icon::new(icon).size(IconSize::Small).color(Color::Muted),
+                                    )
                                     .label_size(LabelSize::Small)
                                     .truncate(true)
                                     .color(Color::Muted)
@@ -2260,8 +2270,10 @@ impl Render for GitGraph {
                 this.open_selected_commit_view(window, cx);
             }))
             .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_prev))
             .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::confirm))
             .child(content)
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {
@@ -2346,7 +2358,7 @@ impl SerializableItem for GitGraph {
             alive_items,
             workspace_id,
             "git_graphs",
-            &persistence::GIT_GRAPHS,
+            &persistence::GitGraphsDb::global(cx),
             cx,
         )
     }
@@ -2359,7 +2371,8 @@ impl SerializableItem for GitGraph {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<gpui::Result<Entity<Self>>> {
-        if persistence::GIT_GRAPHS
+        let db = persistence::GitGraphsDb::global(cx);
+        if db
             .get_git_graph(item_id, workspace_id)
             .ok()
             .is_some_and(|is_open| is_open)
@@ -2380,11 +2393,12 @@ impl SerializableItem for GitGraph {
         cx: &mut Context<Self>,
     ) -> Option<Task<gpui::Result<()>>> {
         let workspace_id = workspace.database_id()?;
-        Some(cx.background_spawn(async move {
-            persistence::GIT_GRAPHS
-                .save_git_graph(item_id, workspace_id, true)
-                .await
-        }))
+        let db = persistence::GitGraphsDb::global(cx);
+        Some(
+            cx.background_spawn(
+                async move { db.save_git_graph(item_id, workspace_id, true).await },
+            ),
+        )
     }
 
     fn should_serialize(&self, event: &Self::Event) -> bool {
@@ -2418,7 +2432,7 @@ mod persistence {
         )]);
     }
 
-    db::static_connection!(GIT_GRAPHS, GitGraphsDb, [WorkspaceDb]);
+    db::static_connection!(GitGraphsDb, [WorkspaceDb]);
 
     impl GitGraphsDb {
         query! {

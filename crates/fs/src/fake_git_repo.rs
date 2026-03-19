@@ -20,7 +20,7 @@ use ignore::gitignore::GitignoreBuilder;
 use parking_lot::Mutex;
 use rope::Rope;
 use smol::{channel::Sender, future::FutureExt as _};
-use std::{path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc, sync::atomic::AtomicBool};
 use text::LineEnding;
 use util::{paths::PathStyle, rel_path::RelPath};
 
@@ -32,6 +32,7 @@ pub struct FakeGitRepository {
     pub(crate) dot_git_path: PathBuf,
     pub(crate) repository_dir_path: PathBuf,
     pub(crate) common_dir_path: PathBuf,
+    pub(crate) is_trusted: Arc<AtomicBool>,
 }
 
 #[derive(Debug, Clone)]
@@ -391,6 +392,8 @@ impl GitRepository for FakeGitRepository {
                 .map(|branch_name| {
                     let ref_name = if branch_name.starts_with("refs/") {
                         branch_name.into()
+                    } else if branch_name.contains('/') {
+                        format!("refs/remotes/{branch_name}").into()
                     } else {
                         format!("refs/heads/{branch_name}").into()
                     };
@@ -435,15 +438,14 @@ impl GitRepository for FakeGitRepository {
 
     fn create_worktree(
         &self,
-        name: String,
-        directory: PathBuf,
+        branch_name: String,
+        path: PathBuf,
         from_commit: Option<String>,
     ) -> BoxFuture<'_, Result<()>> {
         let fs = self.fs.clone();
         let executor = self.executor.clone();
         let dot_git_path = self.dot_git_path.clone();
         async move {
-            let path = directory.join(&name);
             executor.simulate_random_delay().await;
             // Check for simulated error before any side effects
             fs.with_git_state(&dot_git_path, false, |state| {
@@ -458,10 +460,10 @@ impl GitRepository for FakeGitRepository {
             fs.with_git_state(&dot_git_path, true, {
                 let path = path.clone();
                 move |state| {
-                    if state.branches.contains(&name) {
-                        bail!("a branch named '{}' already exists", name);
+                    if state.branches.contains(&branch_name) {
+                        bail!("a branch named '{}' already exists", branch_name);
                     }
-                    let ref_name = format!("refs/heads/{name}");
+                    let ref_name = format!("refs/heads/{branch_name}");
                     let sha = from_commit.unwrap_or_else(|| "fake-sha".to_string());
                     state.refs.insert(ref_name.clone(), sha.clone());
                     state.worktrees.push(Worktree {
@@ -469,7 +471,7 @@ impl GitRepository for FakeGitRepository {
                         ref_name: ref_name.into(),
                         sha: sha.into(),
                     });
-                    state.branches.insert(name);
+                    state.branches.insert(branch_name);
                     Ok::<(), anyhow::Error>(())
                 }
             })??;
@@ -568,6 +570,11 @@ impl GitRepository for FakeGitRepository {
         _base_branch: Option<String>,
     ) -> BoxFuture<'_, Result<()>> {
         self.with_state_async(true, move |state| {
+            if let Some((remote, _)) = name.split_once('/')
+                && !state.remotes.contains_key(remote)
+            {
+                state.remotes.insert(remote.to_owned(), "".to_owned());
+            }
             state.branches.insert(name);
             Ok(())
         })
@@ -586,7 +593,7 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn delete_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
+    fn delete_branch(&self, _is_remote: bool, name: String) -> BoxFuture<'_, Result<()>> {
         self.with_state_async(true, move |state| {
             if !state.branches.remove(&name) {
                 bail!("no such branch: {name}");
@@ -789,13 +796,13 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn diff(&self, _diff: git::repository::DiffType) -> BoxFuture<'_, Result<String>> {
-        unimplemented!()
+        future::ready(Ok(String::new())).boxed()
     }
 
     fn diff_stat(
         &self,
-        diff_type: git::repository::DiffType,
-    ) -> BoxFuture<'_, Result<HashMap<RepoPath, git::status::DiffStat>>> {
+        path_prefixes: &[RepoPath],
+    ) -> BoxFuture<'_, Result<git::status::GitDiffStat>> {
         fn count_lines(s: &str) -> u32 {
             if s.is_empty() {
                 0
@@ -804,122 +811,95 @@ impl GitRepository for FakeGitRepository {
             }
         }
 
-        match diff_type {
-            git::repository::DiffType::HeadToIndex => self
-                .with_state_async(false, |state| {
-                    let mut result = HashMap::default();
-                    let all_paths: HashSet<&RepoPath> = state
-                        .head_contents
-                        .keys()
-                        .chain(state.index_contents.keys())
-                        .collect();
-                    for path in all_paths {
-                        let head = state.head_contents.get(path);
-                        let index = state.index_contents.get(path);
-                        match (head, index) {
-                            (Some(old), Some(new)) if old != new => {
-                                result.insert(
-                                    path.clone(),
-                                    git::status::DiffStat {
-                                        added: count_lines(new),
-                                        deleted: count_lines(old),
-                                    },
-                                );
-                            }
-                            (Some(old), None) => {
-                                result.insert(
-                                    path.clone(),
-                                    git::status::DiffStat {
-                                        added: 0,
-                                        deleted: count_lines(old),
-                                    },
-                                );
-                            }
-                            (None, Some(new)) => {
-                                result.insert(
-                                    path.clone(),
-                                    git::status::DiffStat {
-                                        added: count_lines(new),
-                                        deleted: 0,
-                                    },
-                                );
-                            }
-                            _ => {}
-                        }
-                    }
-                    Ok(result)
-                })
-                .boxed(),
-            git::repository::DiffType::HeadToWorktree => {
-                let workdir_path = self.dot_git_path.parent().unwrap().to_path_buf();
-                let worktree_files: HashMap<RepoPath, String> = self
-                    .fs
-                    .files()
-                    .iter()
-                    .filter_map(|path| {
-                        let repo_path = path.strip_prefix(&workdir_path).ok()?;
-                        if repo_path.starts_with(".git") {
-                            return None;
-                        }
-                        let content = self
-                            .fs
-                            .read_file_sync(path)
-                            .ok()
-                            .and_then(|bytes| String::from_utf8(bytes).ok())?;
-                        let repo_path = RelPath::new(repo_path, PathStyle::local()).ok()?;
-                        Some((RepoPath::from_rel_path(&repo_path), content))
-                    })
-                    .collect();
-
-                self.with_state_async(false, move |state| {
-                    let mut result = HashMap::default();
-                    let all_paths: HashSet<&RepoPath> = state
-                        .head_contents
-                        .keys()
-                        .chain(worktree_files.keys())
-                        .collect();
-                    for path in all_paths {
-                        let head = state.head_contents.get(path);
-                        let worktree = worktree_files.get(path);
-                        match (head, worktree) {
-                            (Some(old), Some(new)) if old != new => {
-                                result.insert(
-                                    path.clone(),
-                                    git::status::DiffStat {
-                                        added: count_lines(new),
-                                        deleted: count_lines(old),
-                                    },
-                                );
-                            }
-                            (Some(old), None) => {
-                                result.insert(
-                                    path.clone(),
-                                    git::status::DiffStat {
-                                        added: 0,
-                                        deleted: count_lines(old),
-                                    },
-                                );
-                            }
-                            (None, Some(new)) => {
-                                result.insert(
-                                    path.clone(),
-                                    git::status::DiffStat {
-                                        added: count_lines(new),
-                                        deleted: 0,
-                                    },
-                                );
-                            }
-                            _ => {}
-                        }
-                    }
-                    Ok(result)
-                })
-                .boxed()
+        fn matches_prefixes(path: &RepoPath, prefixes: &[RepoPath]) -> bool {
+            if prefixes.is_empty() {
+                return true;
             }
-            git::repository::DiffType::MergeBase { .. } => {
-                future::ready(Ok(HashMap::default())).boxed()
-            }
+            prefixes.iter().any(|prefix| {
+                let prefix_str = prefix.as_unix_str();
+                if prefix_str == "." {
+                    return true;
+                }
+                path == prefix || path.starts_with(&prefix)
+            })
         }
+
+        let path_prefixes = path_prefixes.to_vec();
+
+        let workdir_path = self.dot_git_path.parent().unwrap().to_path_buf();
+        let worktree_files: HashMap<RepoPath, String> = self
+            .fs
+            .files()
+            .iter()
+            .filter_map(|path| {
+                let repo_path = path.strip_prefix(&workdir_path).ok()?;
+                if repo_path.starts_with(".git") {
+                    return None;
+                }
+                let content = self
+                    .fs
+                    .read_file_sync(path)
+                    .ok()
+                    .and_then(|bytes| String::from_utf8(bytes).ok())?;
+                let repo_path = RelPath::new(repo_path, PathStyle::local()).ok()?;
+                Some((RepoPath::from_rel_path(&repo_path), content))
+            })
+            .collect();
+
+        self.with_state_async(false, move |state| {
+            let mut entries = Vec::new();
+            let all_paths: HashSet<&RepoPath> = state
+                .head_contents
+                .keys()
+                .chain(
+                    worktree_files
+                        .keys()
+                        .filter(|p| state.index_contents.contains_key(*p)),
+                )
+                .collect();
+            for path in all_paths {
+                if !matches_prefixes(path, &path_prefixes) {
+                    continue;
+                }
+                let head = state.head_contents.get(path);
+                let worktree = worktree_files.get(path);
+                match (head, worktree) {
+                    (Some(old), Some(new)) if old != new => {
+                        entries.push((
+                            path.clone(),
+                            git::status::DiffStat {
+                                added: count_lines(new),
+                                deleted: count_lines(old),
+                            },
+                        ));
+                    }
+                    (Some(old), None) => {
+                        entries.push((
+                            path.clone(),
+                            git::status::DiffStat {
+                                added: 0,
+                                deleted: count_lines(old),
+                            },
+                        ));
+                    }
+                    (None, Some(new)) => {
+                        entries.push((
+                            path.clone(),
+                            git::status::DiffStat {
+                                added: count_lines(new),
+                                deleted: 0,
+                            },
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+            entries.sort_by(|(a, _), (b, _)| a.cmp(b));
+            Ok(git::status::GitDiffStat {
+                entries: entries.into(),
+            })
+        })
+        .boxed()
     }
 
     fn checkpoint(&self) -> BoxFuture<'static, Result<GitRepositoryCheckpoint>> {
@@ -1007,6 +987,11 @@ impl GitRepository for FakeGitRepository {
 
     fn remove_remote(&self, name: String) -> BoxFuture<'_, Result<()>> {
         self.with_state_async(true, move |state| {
+            state.branches.retain(|branch| {
+                branch
+                    .split_once('/')
+                    .is_none_or(|(remote, _)| remote != name)
+            });
             state.remotes.remove(&name);
             Ok(())
         })
@@ -1034,5 +1019,14 @@ impl GitRepository for FakeGitRepository {
 
     fn commit_data_reader(&self) -> Result<CommitDataReader> {
         anyhow::bail!("commit_data_reader not supported for FakeGitRepository")
+    }
+
+    fn set_trusted(&self, trusted: bool) {
+        self.is_trusted
+            .store(trusted, std::sync::atomic::Ordering::Release);
+    }
+
+    fn is_trusted(&self) -> bool {
+        self.is_trusted.load(std::sync::atomic::Ordering::Acquire)
     }
 }
