@@ -144,12 +144,14 @@ jobs:
 
               const alreadyCommented = comments.some(c => c.body.includes(MARKER));
               if (!alreadyCommented) {
-                // Strip HTML comments before checking — the PR template's
-                // placeholder text contains "guided tour" and "read in order"
-                // which causes false positives.
-                const prBody = (context.payload.pull_request.body || '')
-                  .replace(/<!--[\s\S]*?-->/g, '');
-                const guidedTourPresent = /how to review|guided tour|read.*in.*order/i.test(prBody);
+                // Check if the author wrote content in the "How to Review" section.
+                // Extract the section, strip HTML comment placeholders from the
+                // template, and check for any remaining non-whitespace content.
+                const rawBody = context.payload.pull_request.body || '';
+                const howToReview = rawBody.match(/## How to Review\s*\n([\s\S]*?)(?=\n## |$)/i);
+                const guidedTourPresent = howToReview
+                  ? howToReview[1].replace(/<!--[\s\S]*?-->/g, '').trim().length > 0
+                  : false;
 
                 let body = `${MARKER}\n`;
                 body += `### :straight_ruler: PR Size: **${totalChanges} lines changed** (${sizeLabel})\n\n`;
@@ -158,7 +160,7 @@ jobs:
                 body += `- Ensure the PR description includes a **guided tour** in the "How to Review" section so reviewers know where to start\n`;
 
                 if (guidedTourPresent) {
-                  body += `\n:white_check_mark: Guided tour detected — thank you!\n`;
+                  body += `\n:white_check_mark: "How to Review" section appears to include guidance — thank you!\n`;
                 }
 
                 await github.rest.issues.createComment({
