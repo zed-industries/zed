@@ -7307,36 +7307,3 @@ fn tracked_status_to_proto(code: StatusCode) -> i32 {
         StatusCode::Unmodified => proto::GitStatus::Unmodified as _,
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use std::path::Path;
-
-    #[test]
-    fn linked_worktree_short_name() {
-        let examples = [
-            (
-                "/home/bob/zed",
-                "/home/bob/worktrees/olivetti/zed",
-                Some("olivetti".into()),
-            ),
-            ("/home/bob/zed", "/home/bob/zed2", Some("zed2".into())),
-            (
-                "/home/bob/zed",
-                "/home/bob/worktrees/zed/selectric",
-                Some("selectric".into()),
-            ),
-            ("/home/bob/zed", "/home/bob/zed", None),
-        ];
-        for (main_worktree_path, linked_worktree_path, expected) in examples {
-            let short_name = super::linked_worktree_short_name(
-                Path::new(main_worktree_path),
-                Path::new(linked_worktree_path),
-            );
-            assert_eq!(
-                short_name, expected,
-                "short name for {linked_worktree_path:?}, linked worktree of {main_worktree_path:?}, should be {expected:?}"
-            );
-        }
-    }
-}

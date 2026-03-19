@@ -1539,7 +1539,7 @@ mod trust_tests {
 mod resolve_worktree_tests {
     use fs::FakeFs;
     use gpui::TestAppContext;
-    use project::git_store::resolve_git_worktree_to_main_repo;
+    use project::{git_store::resolve_git_worktree_to_main_repo, linked_worktree_short_name};
     use serde_json::json;
     use std::path::{Path, PathBuf};
 
@@ -1615,5 +1615,33 @@ mod resolve_worktree_tests {
         let result =
             resolve_git_worktree_to_main_repo(fs.as_ref(), Path::new("/does-not-exist")).await;
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_linked_worktree_short_name() {
+        let examples = [
+            (
+                "/home/bob/zed",
+                "/home/bob/worktrees/olivetti/zed",
+                Some("olivetti".into()),
+            ),
+            ("/home/bob/zed", "/home/bob/zed2", Some("zed2".into())),
+            (
+                "/home/bob/zed",
+                "/home/bob/worktrees/zed/selectric",
+                Some("selectric".into()),
+            ),
+            ("/home/bob/zed", "/home/bob/zed", None),
+        ];
+        for (main_worktree_path, linked_worktree_path, expected) in examples {
+            let short_name = linked_worktree_short_name(
+                Path::new(main_worktree_path),
+                Path::new(linked_worktree_path),
+            );
+            assert_eq!(
+                short_name, expected,
+                "short name for {linked_worktree_path:?}, linked worktree of {main_worktree_path:?}, should be {expected:?}"
+            );
+        }
     }
 }
