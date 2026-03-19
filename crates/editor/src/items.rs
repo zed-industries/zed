@@ -1664,12 +1664,6 @@ impl SearchableItem for Editor {
         }
     }
 
-    fn has_non_empty_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        let snapshot = self.snapshot(window, cx);
-        let selection = self.selections.newest_adjusted(&snapshot.display_snapshot);
-        !selection.is_empty()
-    }
-
     fn activate_match(
         &mut self,
         index: usize,
