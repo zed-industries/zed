@@ -230,6 +230,7 @@ pub struct Sidebar {
     /// Note: This is NOT the same as the active item.
     selection: Option<usize>,
     focused_thread: Option<acp::SessionId>,
+    agent_panel_visible: bool,
     /// Set to true when WorkspaceRemoved fires so the subsequent
     /// ActiveWorkspaceChanged event knows not to clear focused_thread.
     /// A workspace removal changes the active workspace as a side-effect, but
@@ -360,6 +361,7 @@ impl Sidebar {
             contents: SidebarContents::default(),
             selection: None,
             focused_thread: None,
+            agent_panel_visible: false,
             pending_workspace_removal: false,
             active_entry_index: None,
             hovered_thread_index: None,
@@ -428,8 +430,11 @@ impl Sidebar {
         )
         .detach();
 
+        self.observe_docks(workspace, cx);
+
         if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
             self.subscribe_to_agent_panel(&agent_panel, window, cx);
+            self.agent_panel_visible = AgentPanel::is_visible(workspace, cx);
             // Seed the initial focused_thread so the correct thread item is
             // highlighted right away, without waiting for the panel to emit
             // an event (which only happens on *changes*, not on first load).
@@ -492,6 +497,27 @@ impl Sidebar {
             },
         )
         .detach();
+    }
+
+    fn observe_docks(&mut self, workspace: &Entity<Workspace>, cx: &mut Context<Self>) {
+        let workspace = workspace.clone();
+        let docks: Vec<_> = workspace
+            .read(cx)
+            .all_docks()
+            .into_iter()
+            .cloned()
+            .collect();
+        for dock in docks {
+            let workspace = workspace.clone();
+            cx.observe(&dock, move |this, _dock, cx| {
+                let is_visible = AgentPanel::is_visible(&workspace, cx);
+                if this.agent_panel_visible != is_visible {
+                    this.agent_panel_visible = is_visible;
+                    cx.notify();
+                }
+            })
+            .detach();
+        }
     }
 
     fn observe_draft_editor(&mut self, cx: &mut Context<Self>) {
@@ -2218,7 +2244,8 @@ impl Sidebar {
         let thread_workspace = thread.workspace.clone();
 
         let is_hovered = self.hovered_thread_index == Some(ix);
-        let is_selected = self.focused_thread.as_ref() == Some(&session_info.session_id);
+        let is_selected = self.agent_panel_visible
+            && self.focused_thread.as_ref() == Some(&session_info.session_id);
         let is_running = matches!(
             thread.status,
             AgentThreadStatus::Running | AgentThreadStatus::WaitingForConfirmation
@@ -2517,7 +2544,14 @@ impl Sidebar {
         is_selected: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let is_active = self.active_entry_index.is_none()
+        let focused_thread_in_list = self.focused_thread.as_ref().is_some_and(|focused_id| {
+            self.contents.entries.iter().any(|entry| {
+                matches!(entry, ListEntry::Thread(t) if &t.session_info.session_id == focused_id)
+            })
+        });
+
+        let is_active = self.agent_panel_visible
+            && !focused_thread_in_list
             && self
                 .multi_workspace
                 .upgrade()
