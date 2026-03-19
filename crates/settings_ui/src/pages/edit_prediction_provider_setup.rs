@@ -178,7 +178,7 @@ fn render_provider_dropdown(window: &mut Window, cx: &mut App) -> AnyElement {
                     v_flex()
                         .w_full()
                         .min_w_0()
-                        .max_w_2_3()
+                        .max_w_1_2()
                         .child(Label::new("Provider"))
                         .child(
                             Label::new("Select which provider to use for edit predictions.")
@@ -310,7 +310,7 @@ fn render_api_key_provider(
                     v_flex()
                         .w_full()
                         .min_w_0()
-                        .max_w_2_3()
+                        .max_w_1_2()
                         .child(Label::new("API Key"))
                         .child(description)
                         .when_some(env_var_name, |this, env_var_name| {
