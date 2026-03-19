@@ -1039,7 +1039,7 @@ func main() {
 	}
 
 	if driver.validate() {
-		log.Println("\n[test-server] ALL TESTS PASSED (7 phases, production handlers, in-memory store)")
+		log.Println("\n[test-server] ALL TESTS PASSED (9 phases, production handlers, in-memory store)")
 		os.Exit(0)
 	} else {
 		os.Exit(1)
