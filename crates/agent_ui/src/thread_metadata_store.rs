@@ -3,7 +3,7 @@ use std::{path::Path, sync::Arc};
 use acp_thread::AgentSessionInfo;
 use agent::{ThreadStore, ZED_AGENT_ID};
 use agent_client_protocol as acp;
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
 use db::{
@@ -14,9 +14,11 @@ use db::{
     sqlez_macros::sql,
 };
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
+use futures::{FutureExt as _, future::Shared};
 use gpui::{AppContext as _, Entity, Global, Subscription, Task};
 use project::AgentId;
 use ui::{App, Context, SharedString};
+use util::ResultExt as _;
 use workspace::PathList;
 
 pub fn init(cx: &mut App) {
@@ -37,35 +39,43 @@ pub fn init(cx: &mut App) {
 ///
 /// TODO: Remove this after N weeks of shipping the sidebar
 fn migrate_thread_metadata(cx: &mut App) {
-    SidebarThreadMetadataStore::global(cx).update(cx, |store, cx| {
-        let list = store.list(cx);
-        cx.spawn(async move |this, cx| {
-            let Ok(list) = list.await else {
-                return;
-            };
-            if list.is_empty() {
-                this.update(cx, |this, cx| {
-                    let metadata = ThreadStore::global(cx)
-                        .read(cx)
-                        .entries()
-                        .map(|entry| ThreadMetadata {
-                            session_id: entry.id,
-                            agent_id: None,
-                            title: entry.title,
-                            updated_at: entry.updated_at,
-                            created_at: entry.created_at,
-                            folder_paths: entry.folder_paths,
-                        })
-                        .collect::<Vec<_>>();
-                    for entry in metadata {
-                        this.save(entry, cx).detach_and_log_err(cx);
-                    }
+    let store = SidebarThreadMetadataStore::global(cx);
+    let reload_task = store.read(cx).reload_task.clone();
+
+    cx.spawn(async move |cx| {
+        if let Some(reload_task) = reload_task {
+            reload_task.await;
+        }
+
+        let should_migrate = store.read_with(cx, |store, _cx| store.is_empty());
+        if !should_migrate {
+            return Ok::<(), anyhow::Error>(());
+        }
+
+        let metadata = store.read_with(cx, |_store, app| {
+            ThreadStore::global(app)
+                .read(app)
+                .entries()
+                .map(|entry| ThreadMetadata {
+                    session_id: entry.id,
+                    agent_id: None,
+                    title: entry.title,
+                    updated_at: entry.updated_at,
+                    created_at: entry.created_at,
+                    folder_paths: entry.folder_paths,
                 })
-                .ok();
+                .collect::<Vec<_>>()
+        });
+
+        store.update(cx, |store, cx| {
+            for entry in metadata {
+                store.save(entry, cx).detach_and_log_err(cx);
             }
-        })
-        .detach();
-    });
+        });
+
+        Ok(())
+    })
+    .detach_and_log_err(cx);
 }
 
 struct GlobalThreadMetadataStore(Entity<SidebarThreadMetadataStore>);
@@ -146,6 +156,9 @@ impl ThreadMetadata {
 /// Automatically listens to AcpThread events and updates metadata if it has changed.
 pub struct SidebarThreadMetadataStore {
     db: ThreadMetadataDb,
+    threads: Vec<ThreadMetadata>,
+    threads_by_paths: HashMap<PathList, Vec<ThreadMetadata>>,
+    reload_task: Option<Shared<Task<()>>>,
     session_subscriptions: HashMap<acp::SessionId, Subscription>,
 }
 
@@ -180,28 +193,59 @@ impl SidebarThreadMetadataStore {
         cx.global::<GlobalThreadMetadataStore>().0.clone()
     }
 
-    pub fn list_ids(&self, cx: &App) -> Task<Result<Vec<acp::SessionId>>> {
-        let db = self.db.clone();
-        cx.background_spawn(async move {
-            let s = db.list_ids()?;
-            Ok(s)
-        })
+    pub fn is_empty(&self) -> bool {
+        self.threads.is_empty()
     }
 
-    pub fn list_sidebar_ids(&self, cx: &App) -> Task<Result<Vec<acp::SessionId>>> {
-        let db = self.db.clone();
-        cx.background_spawn(async move {
-            let s = db.list_sidebar_ids()?;
-            Ok(s)
-        })
+    pub fn entries(&self) -> impl Iterator<Item = ThreadMetadata> + '_ {
+        self.threads.iter().cloned()
     }
 
-    pub fn list(&self, cx: &App) -> Task<Result<Vec<ThreadMetadata>>> {
+    pub fn entry_ids(&self) -> impl Iterator<Item = acp::SessionId> + '_ {
+        self.threads.iter().map(|thread| thread.session_id.clone())
+    }
+
+    pub fn entries_for_path(
+        &self,
+        path_list: &PathList,
+    ) -> impl Iterator<Item = ThreadMetadata> + '_ {
+        self.threads_by_paths
+            .get(path_list)
+            .into_iter()
+            .flatten()
+            .cloned()
+    }
+
+    fn reload(&mut self, cx: &mut Context<Self>) {
         let db = self.db.clone();
-        cx.background_spawn(async move {
-            let s = db.list()?;
-            Ok(s)
-        })
+        self.reload_task.take();
+        let reload_task = cx
+            .spawn(async move |this, cx| {
+                let Some(rows) = db
+                    .list()
+                    .context("Failed to fetch sidebar metadata")
+                    .log_err()
+                else {
+                    return;
+                };
+                this.update(cx, |this, cx| {
+                    this.threads.clear();
+                    this.threads_by_paths.clear();
+
+                    for row in rows {
+                        this.threads_by_paths
+                            .entry(row.folder_paths.clone())
+                            .or_default()
+                            .push(row.clone());
+                        this.threads.push(row);
+                    }
+
+                    cx.notify();
+                })
+                .ok();
+            })
+            .shared();
+        self.reload_task = Some(reload_task);
     }
 
     pub fn save(&mut self, metadata: ThreadMetadata, cx: &mut Context<Self>) -> Task<Result<()>> {
@@ -212,7 +256,7 @@ impl SidebarThreadMetadataStore {
         let db = self.db.clone();
         cx.spawn(async move |this, cx| {
             db.save(metadata).await?;
-            this.update(cx, |_this, cx| cx.notify())
+            this.update(cx, |this, cx| this.reload(cx))
         })
     }
 
@@ -228,7 +272,7 @@ impl SidebarThreadMetadataStore {
         let db = self.db.clone();
         cx.spawn(async move |this, cx| {
             db.delete(session_id).await?;
-            this.update(cx, |_this, cx| cx.notify())
+            this.update(cx, |this, cx| this.reload(cx))
         })
     }
 
@@ -265,10 +309,15 @@ impl SidebarThreadMetadataStore {
         })
         .detach();
 
-        Self {
+        let mut this = Self {
             db,
+            threads: Vec::new(),
+            threads_by_paths: HashMap::default(),
+            reload_task: None,
             session_subscriptions: HashMap::default(),
-        }
+        };
+        this.reload(cx);
+        this
     }
 
     fn handle_thread_update(
@@ -317,22 +366,6 @@ impl Domain for ThreadMetadataDb {
 db::static_connection!(ThreadMetadataDb, []);
 
 impl ThreadMetadataDb {
-    /// List all sidebar thread session IDs.
-    pub fn list_ids(&self) -> anyhow::Result<Vec<acp::SessionId>> {
-        self.select::<Arc<str>>("SELECT session_id FROM sidebar_threads")?()
-            .map(|ids| ids.into_iter().map(|id| acp::SessionId::new(id)).collect())
-    }
-
-    /// List session IDs of threads that belong to a real project workspace
-    /// (i.e. have non-empty folder_paths). These are the threads shown in
-    /// the sidebar, as opposed to threads created in empty workspaces.
-    pub fn list_sidebar_ids(&self) -> anyhow::Result<Vec<acp::SessionId>> {
-        self.select::<Arc<str>>(
-            "SELECT session_id FROM sidebar_threads WHERE folder_paths IS NOT NULL AND folder_paths != ''",
-        )?()
-        .map(|ids| ids.into_iter().map(|id| acp::SessionId::new(id)).collect())
-    }
-
     /// List all sidebar thread metadata, ordered by updated_at descending.
     pub fn list(&self) -> anyhow::Result<Vec<ThreadMetadata>> {
         self.select::<ThreadMetadata>(
@@ -475,13 +508,11 @@ mod tests {
             SidebarThreadMetadataStore::init_global(cx);
         });
 
-        // Verify the list is empty before migration
-        let metadata_list = cx.update(|cx| {
+        // Verify the cache is empty before migration
+        let list = cx.update(|cx| {
             let store = SidebarThreadMetadataStore::global(cx);
-            store.read(cx).list(cx)
+            store.read(cx).entries().collect::<Vec<_>>()
         });
-
-        let list = metadata_list.await.unwrap();
         assert_eq!(list.len(), 0);
 
         let now = Utc::now();
@@ -523,12 +554,10 @@ mod tests {
         cx.run_until_parked();
 
         // Verify the metadata was migrated
-        let metadata_list = cx.update(|cx| {
+        let list = cx.update(|cx| {
             let store = SidebarThreadMetadataStore::global(cx);
-            store.read(cx).list(cx)
+            store.read(cx).entries().collect::<Vec<_>>()
         });
-
-        let list = metadata_list.await.unwrap();
         assert_eq!(list.len(), 2);
 
         let metadata1 = list
@@ -595,12 +624,10 @@ mod tests {
         cx.run_until_parked();
 
         // Verify only the existing metadata is present (migration was skipped)
-        let metadata_list = cx.update(|cx| {
+        let list = cx.update(|cx| {
             let store = SidebarThreadMetadataStore::global(cx);
-            store.read(cx).list(cx)
+            store.read(cx).entries().collect::<Vec<_>>()
         });
-
-        let list = metadata_list.await.unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].session_id.0.as_ref(), "existing-session");
     }
@@ -668,13 +695,11 @@ mod tests {
         });
         cx.run_until_parked();
 
-        // List all metadata from the store.
-        let metadata_list = cx.update(|cx| {
+        // List all metadata from the store cache.
+        let list = cx.update(|cx| {
             let store = SidebarThreadMetadataStore::global(cx);
-            store.read(cx).list(cx)
+            store.read(cx).entries().collect::<Vec<_>>()
         });
-
-        let list = metadata_list.await.unwrap();
 
         // The subagent thread should NOT appear in the sidebar metadata.
         // Only the regular thread should be listed.

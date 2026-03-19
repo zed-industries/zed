@@ -247,10 +247,12 @@ impl ThreadsArchiveView {
         let today = Local::now().naive_local().date();
 
         self._update_items_task.take();
-        let unarchived_ids_task = SidebarThreadMetadataStore::global(cx).read(cx).list_ids(cx);
+        let unarchived_session_ids: collections::HashSet<_> =
+            SidebarThreadMetadataStore::global(cx)
+                .read(cx)
+                .entry_ids()
+                .collect();
         self._update_items_task = Some(cx.spawn(async move |this, cx| {
-            let unarchived_session_ids = unarchived_ids_task.await.unwrap_or_default();
-
             let mut items = Vec::with_capacity(sessions.len() + 5);
             let mut current_bucket: Option<TimeBucket> = None;
 

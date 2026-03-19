@@ -242,11 +242,9 @@ pub struct Sidebar {
     hovered_thread_index: Option<usize>,
     collapsed_groups: HashSet<PathList>,
     expanded_groups: HashMap<PathList, usize>,
-    threads_by_paths: HashMap<PathList, Vec<ThreadMetadata>>,
     view: SidebarView,
     recent_projects_popover_handle: PopoverMenuHandle<RecentProjects>,
     _subscriptions: Vec<gpui::Subscription>,
-    _list_threads_task: Option<gpui::Task<()>>,
     _draft_observation: Option<gpui::Subscription>,
 }
 
@@ -303,7 +301,7 @@ impl Sidebar {
         cx.observe(
             &SidebarThreadMetadataStore::global(cx),
             |this, _store, cx| {
-                this.list_threads(cx);
+                this.update_entries(cx);
             },
         )
         .detach();
@@ -322,7 +320,6 @@ impl Sidebar {
         });
 
         Self {
-            _list_threads_task: None,
             multi_workspace: multi_workspace.downgrade(),
             width: DEFAULT_WIDTH,
             focus_handle,
@@ -335,7 +332,6 @@ impl Sidebar {
             hovered_thread_index: None,
             collapsed_groups: HashSet::new(),
             expanded_groups: HashMap::new(),
-            threads_by_paths: HashMap::new(),
             view: SidebarView::default(),
             recent_projects_popover_handle: PopoverMenuHandle::default(),
             _subscriptions: Vec::new(),
@@ -685,46 +681,47 @@ impl Sidebar {
             if should_load_threads {
                 let mut seen_session_ids: HashSet<acp::SessionId> = HashSet::new();
 
-                // Read threads from SidebarDb for this workspace's path list.
-                if let Some(rows) = self.threads_by_paths.get(&path_list) {
-                    for row in rows {
-                        seen_session_ids.insert(row.session_id.clone());
-                        let (agent, icon, icon_from_external_svg) = match &row.agent_id {
-                            None => (Agent::NativeAgent, IconName::ZedAgent, None),
-                            Some(id) => {
-                                let custom_icon = agent_server_store
-                                    .as_ref()
-                                    .and_then(|store| store.read(cx).agent_icon(&id));
-                                (
-                                    Agent::Custom { id: id.clone() },
-                                    IconName::Terminal,
-                                    custom_icon,
-                                )
-                            }
-                        };
-                        threads.push(ThreadEntry {
-                            agent,
-                            session_info: acp_thread::AgentSessionInfo {
-                                session_id: row.session_id.clone(),
-                                work_dirs: None,
-                                title: Some(row.title.clone()),
-                                updated_at: Some(row.updated_at),
-                                created_at: row.created_at,
-                                meta: None,
-                            },
-                            icon,
-                            icon_from_external_svg,
-                            status: AgentThreadStatus::default(),
-                            workspace: ThreadEntryWorkspace::Open(workspace.clone()),
-                            is_live: false,
-                            is_background: false,
-                            is_title_generating: false,
-                            highlight_positions: Vec::new(),
-                            worktree_name: None,
-                            worktree_highlight_positions: Vec::new(),
-                            diff_stats: DiffStats::default(),
-                        });
-                    }
+                // Read threads from the store cache for this workspace's path list.
+                let thread_store = SidebarThreadMetadataStore::global(cx);
+                let workspace_rows: Vec<_> =
+                    thread_store.read(cx).entries_for_path(&path_list).collect();
+                for row in workspace_rows {
+                    seen_session_ids.insert(row.session_id.clone());
+                    let (agent, icon, icon_from_external_svg) = match &row.agent_id {
+                        None => (Agent::NativeAgent, IconName::ZedAgent, None),
+                        Some(id) => {
+                            let custom_icon = agent_server_store
+                                .as_ref()
+                                .and_then(|store| store.read(cx).agent_icon(&id));
+                            (
+                                Agent::Custom { id: id.clone() },
+                                IconName::Terminal,
+                                custom_icon,
+                            )
+                        }
+                    };
+                    threads.push(ThreadEntry {
+                        agent,
+                        session_info: acp_thread::AgentSessionInfo {
+                            session_id: row.session_id.clone(),
+                            work_dirs: None,
+                            title: Some(row.title.clone()),
+                            updated_at: Some(row.updated_at),
+                            created_at: row.created_at,
+                            meta: None,
+                        },
+                        icon,
+                        icon_from_external_svg,
+                        status: AgentThreadStatus::default(),
+                        workspace: ThreadEntryWorkspace::Open(workspace.clone()),
+                        is_live: false,
+                        is_background: false,
+                        is_title_generating: false,
+                        highlight_positions: Vec::new(),
+                        worktree_name: None,
+                        worktree_highlight_positions: Vec::new(),
+                        diff_stats: DiffStats::default(),
+                    });
                 }
 
                 // Load threads from linked git worktrees of this workspace's repos.
@@ -765,52 +762,52 @@ impl Sidebar {
                                 None => ThreadEntryWorkspace::Closed(worktree_path_list.clone()),
                             };
 
-                        if let Some(rows) = self.threads_by_paths.get(worktree_path_list) {
-                            for row in rows {
-                                if !seen_session_ids.insert(row.session_id.clone()) {
-                                    continue;
-                                }
-                                let (agent, icon, icon_from_external_svg) = match &row.agent_id {
-                                    None => (Agent::NativeAgent, IconName::ZedAgent, None),
-                                    Some(name) => {
-                                        let custom_icon =
-                                            agent_server_store.as_ref().and_then(|store| {
-                                                store
-                                                    .read(cx)
-                                                    .agent_icon(&AgentId(name.clone().into()))
-                                            });
-                                        (
-                                            Agent::Custom {
-                                                id: AgentId::new(name.clone()),
-                                            },
-                                            IconName::Terminal,
-                                            custom_icon,
-                                        )
-                                    }
-                                };
-                                threads.push(ThreadEntry {
-                                    agent,
-                                    session_info: acp_thread::AgentSessionInfo {
-                                        session_id: row.session_id.clone(),
-                                        work_dirs: None,
-                                        title: Some(row.title.clone()),
-                                        updated_at: Some(row.updated_at),
-                                        created_at: row.created_at,
-                                        meta: None,
-                                    },
-                                    icon,
-                                    icon_from_external_svg,
-                                    status: AgentThreadStatus::default(),
-                                    workspace: target_workspace.clone(),
-                                    is_live: false,
-                                    is_background: false,
-                                    is_title_generating: false,
-                                    highlight_positions: Vec::new(),
-                                    worktree_name: Some(worktree_name.clone()),
-                                    worktree_highlight_positions: Vec::new(),
-                                    diff_stats: DiffStats::default(),
-                                });
+                        let worktree_rows: Vec<_> = thread_store
+                            .read(cx)
+                            .entries_for_path(worktree_path_list)
+                            .collect();
+                        for row in worktree_rows {
+                            if !seen_session_ids.insert(row.session_id.clone()) {
+                                continue;
                             }
+                            let (agent, icon, icon_from_external_svg) = match &row.agent_id {
+                                None => (Agent::NativeAgent, IconName::ZedAgent, None),
+                                Some(name) => {
+                                    let custom_icon =
+                                        agent_server_store.as_ref().and_then(|store| {
+                                            store.read(cx).agent_icon(&AgentId(name.clone().into()))
+                                        });
+                                    (
+                                        Agent::Custom {
+                                            id: AgentId::new(name.clone()),
+                                        },
+                                        IconName::Terminal,
+                                        custom_icon,
+                                    )
+                                }
+                            };
+                            threads.push(ThreadEntry {
+                                agent,
+                                session_info: acp_thread::AgentSessionInfo {
+                                    session_id: row.session_id.clone(),
+                                    work_dirs: None,
+                                    title: Some(row.title.clone()),
+                                    updated_at: Some(row.updated_at),
+                                    created_at: row.created_at,
+                                    meta: None,
+                                },
+                                icon,
+                                icon_from_external_svg,
+                                status: AgentThreadStatus::default(),
+                                workspace: target_workspace.clone(),
+                                is_live: false,
+                                is_background: false,
+                                is_title_generating: false,
+                                highlight_positions: Vec::new(),
+                                worktree_name: Some(worktree_name.clone()),
+                                worktree_highlight_positions: Vec::new(),
+                                diff_stats: DiffStats::default(),
+                            });
                         }
                     }
                 }
@@ -1006,27 +1003,6 @@ impl Sidebar {
             notified_threads,
             project_header_indices,
         };
-    }
-
-    fn list_threads(&mut self, cx: &mut Context<Self>) {
-        let list_task = SidebarThreadMetadataStore::global(cx).read(cx).list(cx);
-        self._list_threads_task = Some(cx.spawn(async move |this, cx| {
-            let Some(thread_entries) = list_task.await.log_err() else {
-                return;
-            };
-            this.update(cx, |this, cx| {
-                let mut threads_by_paths: HashMap<PathList, Vec<ThreadMetadata>> = HashMap::new();
-                for row in thread_entries {
-                    threads_by_paths
-                        .entry(row.folder_paths.clone())
-                        .or_default()
-                        .push(row);
-                }
-                this.threads_by_paths = threads_by_paths;
-                this.update_entries(cx);
-            })
-            .ok();
-        }));
     }
 
     /// Rebuilds the sidebar's visible entries from already-cached state.
