@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use editor::{DisplayPoint, MultiBufferOffset, display_map::DisplaySnapshot};
 use gpui::Context;
-use language::{Point, PointUtf16};
+use language::PointUtf16;
 use multi_buffer::MultiBufferRow;
 use text::Bias;
 use ui::Window;
@@ -89,13 +89,6 @@ fn find_next_valid_duplicate_space(
         .column;
     let end_col_utf16 = buffer.point_to_point_utf16(origin.end.to_point(map)).column;
 
-    let line_len_utf16 = |row: u32| {
-        let byte_len = buffer.line_len(MultiBufferRow(row));
-        buffer
-            .point_to_point_utf16(Point::new(row, byte_len))
-            .column
-    };
-
     let mut candidate = origin;
     loop {
         match direction {
@@ -115,10 +108,14 @@ fn find_next_valid_duplicate_space(
             }
         }
 
-        let start_row = DisplayPoint::new(candidate.start.row(), 0).to_point(map).row;
+        let start_row = DisplayPoint::new(candidate.start.row(), 0)
+            .to_point(map)
+            .row;
         let end_row = DisplayPoint::new(candidate.end.row(), 0).to_point(map).row;
 
-        if start_col_utf16 > line_len_utf16(start_row) || end_col_utf16 > line_len_utf16(end_row) {
+        if start_col_utf16 > buffer.line_len_utf16(MultiBufferRow(start_row))
+            || end_col_utf16 > buffer.line_len_utf16(MultiBufferRow(end_row))
+        {
             continue;
         }
 

@@ -422,12 +422,7 @@ impl SelectionsCollection {
     ) -> Option<Selection<Point>> {
         let snapshot = display_map.buffer_snapshot();
         let is_empty = positions.start == positions.end;
-        let line_len_utf16 = snapshot
-            .point_to_point_utf16(Point::new(
-                buffer_row,
-                snapshot.line_len(multi_buffer::MultiBufferRow(buffer_row)),
-            ))
-            .column;
+        let line_len_utf16 = snapshot.line_len_utf16(multi_buffer::MultiBufferRow(buffer_row));
 
         let (start, end) = if is_empty {
             let column = std::cmp::min(positions.start, line_len_utf16);
