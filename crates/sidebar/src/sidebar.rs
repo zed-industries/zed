@@ -321,7 +321,7 @@ impl Sidebar {
             this.update_entries(cx);
         });
 
-        Self {
+        let mut this = Self {
             _list_threads_task: None,
             multi_workspace: multi_workspace.downgrade(),
             width: DEFAULT_WIDTH,
@@ -340,7 +340,9 @@ impl Sidebar {
             recent_projects_popover_handle: PopoverMenuHandle::default(),
             _subscriptions: Vec::new(),
             _draft_observation: None,
-        }
+        };
+        this.list_threads(cx);
+        this
     }
 
     fn subscribe_to_workspace(
