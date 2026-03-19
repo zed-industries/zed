@@ -14350,8 +14350,16 @@ fn include_text(server: &lsp::LanguageServer) -> Option<bool> {
                 Some(save_options.include_text.unwrap_or(false))
             }
         },
-        // We do not have any save info. Kind affects didChange only.
-        lsp::TextDocumentSyncCapability::Kind(_) => None,
+        // Kind only specifies how didChange is synced, but for backwards compatibility
+        // with servers that don't declare explicit save options, send didSave without text
+        // for any non-None sync kind.
+        lsp::TextDocumentSyncCapability::Kind(kind) => {
+            if *kind != lsp::TextDocumentSyncKind::NONE {
+                Some(false)
+            } else {
+                None
+            }
+        }
     }
 }
 
