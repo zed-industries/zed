@@ -2484,7 +2484,7 @@ impl Sidebar {
         let workspace = workspace.clone();
         let id = SharedString::from(format!("new-thread-btn-{}", ix));
 
-        ThreadItem::new(id, label)
+        let thread_item = ThreadItem::new(id, label)
             .icon(IconName::Plus)
             .selected(is_active)
             .focused(is_selected)
@@ -2494,8 +2494,18 @@ impl Sidebar {
                     this.selection = None;
                     this.create_new_thread(&workspace, window, cx);
                 }))
-            })
-            .into_any_element()
+            });
+
+        if is_active {
+            div()
+                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                    cx.stop_propagation();
+                })
+                .child(thread_item)
+                .into_any_element()
+        } else {
+            thread_item.into_any_element()
+        }
     }
 
     fn render_no_results(&self, cx: &mut Context<Self>) -> impl IntoElement {
