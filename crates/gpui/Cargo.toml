@@ -144,7 +144,7 @@ windows = { version = "0.61", features = ["Win32_Foundation"] }
 backtrace.workspace = true
 collections = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
-gpui_platform.workspace = true
+gpui_platform = { workspace = true, features = ["font-kit"] }
 lyon = { version = "1.0", features = ["extra"] }
 rand.workspace = true
 scheduler = { workspace = true, features = ["test-support"] }
