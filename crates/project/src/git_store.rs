@@ -7030,7 +7030,7 @@ fn worktree_to_proto(worktree: &git::repository::Worktree) -> proto::Worktree {
 fn proto_to_worktree(proto: &proto::Worktree) -> git::repository::Worktree {
     git::repository::Worktree {
         path: PathBuf::from(proto.path.clone()),
-        ref_name: Some(SharedString::from(proto.ref_name.clone())),
+        ref_name: Some(SharedString::from(&proto.ref_name)),
         sha: proto.sha.clone().into(),
     }
 }
