@@ -1206,7 +1206,6 @@ impl DebugDelegate {
 
 impl PickerDelegate for DebugDelegate {
     type ListItem = ui::ListItem;
-    type StableId = ();
 
     fn match_count(&self) -> usize {
         self.matches.len()

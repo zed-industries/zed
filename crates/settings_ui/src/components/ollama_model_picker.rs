@@ -61,7 +61,6 @@ impl OllamaModelPickerDelegate {
 
 impl PickerDelegate for OllamaModelPickerDelegate {
     type ListItem = AnyElement;
-    type StableId = ();
 
     fn match_count(&self) -> usize {
         self.filtered_models.len()

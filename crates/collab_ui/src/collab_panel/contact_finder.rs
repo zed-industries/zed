@@ -70,7 +70,6 @@ impl Focusable for ContactFinder {
 
 impl PickerDelegate for ContactFinderDelegate {
     type ListItem = ListItem;
-    type StableId = ();
 
     fn match_count(&self) -> usize {
         self.potential_contacts.len()

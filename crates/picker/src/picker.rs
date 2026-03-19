@@ -14,7 +14,8 @@ use head::Head;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::{
-    cell::Cell, cell::RefCell, collections::HashMap, ops::Range, rc::Rc, sync::Arc, time::Duration,
+    any::Any, cell::Cell, cell::RefCell, collections::HashMap, ops::Range, rc::Rc, sync::Arc,
+    time::Duration,
 };
 use theme::ThemeSettings;
 use ui::{
@@ -76,8 +77,7 @@ pub struct Picker<D: PickerDelegate> {
     picker_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// Bounds tracking for items (for aside positioning) - maps item index to bounds
     item_bounds: Rc<RefCell<HashMap<usize, Bounds<Pixels>>>>,
-    /// Tracks the stable ID of a manually selected item to preserve it across match updates.
-    manually_selected_stable_id: Option<D::StableId>,
+    manually_selected_stable_id: Option<Box<dyn Any>>,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
@@ -91,7 +91,6 @@ pub enum PickerEditorPosition {
 
 pub trait PickerDelegate: Sized + 'static {
     type ListItem: IntoElement;
-    type StableId;
 
     fn match_count(&self) -> usize;
     fn selected_index(&self) -> usize;
@@ -142,13 +141,11 @@ pub trait PickerDelegate: Sized + 'static {
     /// Returns a stable identifier for the match at the given index.
     /// If implemented, the picker will try to preserve manual selections
     /// across match updates by finding the same item again.
-    fn match_stable_id(&self, _ix: usize) -> Option<Self::StableId> {
+    fn match_stable_id(&self, _ix: usize) -> Option<Box<dyn Any>> {
         None
     }
 
-    /// Finds the index of a match with the given stable identifier.
-    /// Used in conjunction with `match_stable_id` to restore selections.
-    fn find_match_by_stable_id(&self, _stable_id: &Self::StableId) -> Option<usize> {
+    fn find_match_by_stable_id(&self, _stable_id: &dyn Any) -> Option<usize> {
         None
     }
 
@@ -774,7 +771,7 @@ impl<D: PickerDelegate> Picker<D> {
         // Try to restore manually selected item
         let match_count = self.delegate.match_count();
         let index = if let Some(stable_id) = &self.manually_selected_stable_id {
-            if let Some(ix) = self.delegate.find_match_by_stable_id(stable_id) {
+            if let Some(ix) = self.delegate.find_match_by_stable_id(stable_id.as_ref()) {
                 // Found the manually selected item, restore selection
                 self.delegate.set_selected_index(ix, window, cx);
                 ix
@@ -966,7 +963,6 @@ mod tests {
 
     impl PickerDelegate for SelectabilityDelegate {
         type ListItem = ui::ListItem;
-        type StableId = ();
 
         fn match_count(&self) -> usize {
             self.items.len()
@@ -1146,7 +1142,6 @@ mod tests {
 
     impl PickerDelegate for TestDelegate {
         type ListItem = ListItem;
-        type StableId = SharedString;
 
         fn match_count(&self) -> usize {
             self.matches.len()
@@ -1169,14 +1164,15 @@ mod tests {
             "Search...".into()
         }
 
-        fn match_stable_id(&self, ix: usize) -> Option<SharedString> {
+        fn match_stable_id(&self, ix: usize) -> Option<Box<dyn Any>> {
             self.matches
                 .get(ix)
                 .and_then(|&item_ix| self.items.get(item_ix))
-                .map(|item| SharedString::from(item.id.clone()))
+                .map(|item| -> Box<dyn Any> { Box::new(SharedString::from(item.id.clone())) })
         }
 
-        fn find_match_by_stable_id(&self, stable_id: &SharedString) -> Option<usize> {
+        fn find_match_by_stable_id(&self, stable_id: &dyn Any) -> Option<usize> {
+            let stable_id = stable_id.downcast_ref::<SharedString>()?;
             self.matches.iter().position(|&item_ix| {
                 self.items
                     .get(item_ix)
@@ -1478,7 +1474,6 @@ mod tests {
 
     impl PickerDelegate for BestMatchDelegate {
         type ListItem = ListItem;
-        type StableId = SharedString;
 
         fn match_count(&self) -> usize {
             self.matches.len()
@@ -1501,14 +1496,15 @@ mod tests {
             "Search...".into()
         }
 
-        fn match_stable_id(&self, ix: usize) -> Option<SharedString> {
+        fn match_stable_id(&self, ix: usize) -> Option<Box<dyn Any>> {
             self.matches
                 .get(ix)
                 .and_then(|&item_ix| self.items.get(item_ix))
-                .map(|item| SharedString::from(item.id.clone()))
+                .map(|item| -> Box<dyn Any> { Box::new(SharedString::from(item.id.clone())) })
         }
 
-        fn find_match_by_stable_id(&self, stable_id: &SharedString) -> Option<usize> {
+        fn find_match_by_stable_id(&self, stable_id: &dyn Any) -> Option<usize> {
+            let stable_id = stable_id.downcast_ref::<SharedString>()?;
             self.matches.iter().position(|&item_ix| {
                 self.items
                     .get(item_ix)
@@ -1681,7 +1677,6 @@ mod tests {
 
     impl PickerDelegate for ReorderingDelegate {
         type ListItem = ListItem;
-        type StableId = SharedString;
 
         fn match_count(&self) -> usize {
             self.matches.len()
@@ -1704,14 +1699,15 @@ mod tests {
             "Search...".into()
         }
 
-        fn match_stable_id(&self, ix: usize) -> Option<SharedString> {
+        fn match_stable_id(&self, ix: usize) -> Option<Box<dyn Any>> {
             self.matches
                 .get(ix)
                 .and_then(|&item_ix| self.items.get(item_ix))
-                .map(|item| SharedString::from(item.id.clone()))
+                .map(|item| -> Box<dyn Any> { Box::new(SharedString::from(item.id.clone())) })
         }
 
-        fn find_match_by_stable_id(&self, stable_id: &SharedString) -> Option<usize> {
+        fn find_match_by_stable_id(&self, stable_id: &dyn Any) -> Option<usize> {
+            let stable_id = stable_id.downcast_ref::<SharedString>()?;
             self.matches.iter().position(|&item_ix| {
                 self.items
                     .get(item_ix)

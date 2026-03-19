@@ -8,7 +8,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use settings::{Settings, SettingsStore, update_settings_file};
-use std::sync::Arc;
+use std::{any::Any, sync::Arc};
 use theme::{
     Appearance, SystemAppearance, Theme, ThemeAppearanceMode, ThemeMeta, ThemeName, ThemeRegistry,
     ThemeSelection, ThemeSettings,
@@ -334,7 +334,6 @@ fn retain_original_opposing_theme(
 
 impl PickerDelegate for ThemeSelectorDelegate {
     type ListItem = ui::ListItem;
-    type StableId = SharedString;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Select Theme...".into()
@@ -442,13 +441,16 @@ impl PickerDelegate for ThemeSelectorDelegate {
         })
     }
 
-    fn match_stable_id(&self, ix: usize) -> Option<SharedString> {
-        self.matches
-            .get(ix)
-            .map(|m| self.themes[m.candidate_id].name.to_string().into())
+    fn match_stable_id(&self, ix: usize) -> Option<Box<dyn Any>> {
+        self.matches.get(ix).map(|m| -> Box<dyn Any> {
+            Box::new(SharedString::from(
+                self.themes[m.candidate_id].name.to_string(),
+            ))
+        })
     }
 
-    fn find_match_by_stable_id(&self, stable_id: &SharedString) -> Option<usize> {
+    fn find_match_by_stable_id(&self, stable_id: &dyn Any) -> Option<usize> {
+        let stable_id = stable_id.downcast_ref::<SharedString>()?;
         self.matches
             .iter()
             .position(|m| self.themes[m.candidate_id].name == stable_id.as_ref())

@@ -154,7 +154,6 @@ impl ToolPickerDelegate {
 
 impl PickerDelegate for ToolPickerDelegate {
     type ListItem = AnyElement;
-    type StableId = ();
 
     fn match_count(&self) -> usize {
         self.filtered_items.len()

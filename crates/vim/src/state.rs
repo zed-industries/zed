@@ -1214,7 +1214,6 @@ pub struct RegistersViewDelegate {
 
 impl PickerDelegate for RegistersViewDelegate {
     type ListItem = Div;
-    type StableId = ();
 
     fn match_count(&self) -> usize {
         self.matches.len()
@@ -1429,7 +1428,6 @@ pub struct MarksViewDelegate {
 
 impl PickerDelegate for MarksViewDelegate {
     type ListItem = Div;
-    type StableId = ();
 
     fn match_count(&self) -> usize {
         self.matches.len()

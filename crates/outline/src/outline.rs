@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::ops::Range;
 use std::{cmp, sync::Arc};
 
@@ -264,7 +265,6 @@ impl OutlineViewDelegate {
 
 impl PickerDelegate for OutlineViewDelegate {
     type ListItem = ListItem;
-    type StableId = OutlineStableId;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search buffer symbols...".into()
@@ -362,16 +362,17 @@ impl PickerDelegate for OutlineViewDelegate {
         })
     }
 
-    fn match_stable_id(&self, ix: usize) -> Option<OutlineStableId> {
+    fn match_stable_id(&self, ix: usize) -> Option<Box<dyn Any>> {
         let mat = self.matches.get(ix)?;
         let outline_item = self.outline.items.get(mat.candidate_id)?;
-        Some(OutlineStableId::new(
+        Some(Box::new(OutlineStableId::new(
             outline_item.text.clone(),
             outline_item.depth,
-        ))
+        )))
     }
 
-    fn find_match_by_stable_id(&self, stable_id: &OutlineStableId) -> Option<usize> {
+    fn find_match_by_stable_id(&self, stable_id: &dyn Any) -> Option<usize> {
+        let stable_id = stable_id.downcast_ref::<OutlineStableId>()?;
         self.matches.iter().position(|mat| {
             self.outline
                 .items

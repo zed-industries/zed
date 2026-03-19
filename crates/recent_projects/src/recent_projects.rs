@@ -5,6 +5,7 @@ mod remote_servers;
 mod ssh_config;
 
 use std::{
+    any::Any,
     collections::HashSet,
     path::{Path, PathBuf},
     sync::Arc,
@@ -767,7 +768,6 @@ pub enum RecentProjectsStableId {
 
 impl PickerDelegate for RecentProjectsDelegate {
     type ListItem = AnyElement;
-    type StableId = RecentProjectsStableId;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search projects…".into()
@@ -793,26 +793,31 @@ impl PickerDelegate for RecentProjectsDelegate {
         self.filtered_entries.len()
     }
 
-    fn match_stable_id(&self, ix: usize) -> Option<Self::StableId> {
+    fn match_stable_id(&self, ix: usize) -> Option<Box<dyn Any>> {
         let entry = self.filtered_entries.get(ix)?;
         match entry {
             ProjectPickerEntry::OpenFolder { index, .. } => {
                 let folder = self.open_folders.get(*index)?;
-                Some(RecentProjectsStableId::OpenFolder(folder.worktree_id))
+                Some(Box::new(RecentProjectsStableId::OpenFolder(
+                    folder.worktree_id,
+                )))
             }
             ProjectPickerEntry::RecentProject(mat) => {
                 let (workspace_id, _, _, _) = self.workspaces.get(mat.candidate_id)?;
-                Some(RecentProjectsStableId::RecentProject(*workspace_id))
+                Some(Box::new(RecentProjectsStableId::RecentProject(
+                    *workspace_id,
+                )))
             }
             ProjectPickerEntry::Header(_) => None,
             ProjectPickerEntry::OpenProject(mat) => {
                 let (workspace_id, _, _, _) = self.workspaces.get(mat.candidate_id)?;
-                Some(RecentProjectsStableId::OpenProject(*workspace_id))
+                Some(Box::new(RecentProjectsStableId::OpenProject(*workspace_id)))
             }
         }
     }
 
-    fn find_match_by_stable_id(&self, stable_id: &Self::StableId) -> Option<usize> {
+    fn find_match_by_stable_id(&self, stable_id: &dyn Any) -> Option<usize> {
+        let stable_id = stable_id.downcast_ref::<RecentProjectsStableId>()?;
         self.filtered_entries
             .iter()
             .position(|entry| match (entry, stable_id) {

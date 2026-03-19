@@ -198,7 +198,6 @@ impl ModelPickerDelegate {
 
 impl PickerDelegate for ModelPickerDelegate {
     type ListItem = AnyElement;
-    type StableId = ();
 
     fn match_count(&self) -> usize {
         self.filtered_entries.len()

@@ -73,7 +73,6 @@ where
 
 impl PickerDelegate for SlashCommandDelegate {
     type ListItem = ListItem;
-    type StableId = ();
 
     fn match_count(&self) -> usize {
         self.filtered_commands.len()

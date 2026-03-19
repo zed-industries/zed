@@ -1,6 +1,7 @@
 mod persistence;
 
 use std::{
+    any::Any,
     cmp::{self, Reverse},
     collections::{HashMap, VecDeque},
     sync::Arc,
@@ -371,7 +372,6 @@ pub struct CommandPaletteStableId(SharedString);
 
 impl PickerDelegate for CommandPaletteDelegate {
     type ListItem = ListItem;
-    type StableId = CommandPaletteStableId;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Execute a command...".into()
@@ -522,13 +522,14 @@ impl PickerDelegate for CommandPaletteDelegate {
         })
     }
 
-    fn match_stable_id(&self, ix: usize) -> Option<CommandPaletteStableId> {
+    fn match_stable_id(&self, ix: usize) -> Option<Box<dyn Any>> {
         let candidate_id = self.matches.get(ix)?.candidate_id;
         let name = self.commands.get(candidate_id)?.name.clone();
-        Some(CommandPaletteStableId(name.into()))
+        Some(Box::new(CommandPaletteStableId(name.into())))
     }
 
-    fn find_match_by_stable_id(&self, stable_id: &CommandPaletteStableId) -> Option<usize> {
+    fn find_match_by_stable_id(&self, stable_id: &dyn Any) -> Option<usize> {
+        let stable_id = stable_id.downcast_ref::<CommandPaletteStableId>()?;
         self.matches.iter().position(|m| {
             self.commands
                 .get(m.candidate_id)

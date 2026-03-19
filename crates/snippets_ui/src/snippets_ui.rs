@@ -198,7 +198,6 @@ impl ScopeSelectorDelegate {
 
 impl PickerDelegate for ScopeSelectorDelegate {
     type ListItem = ListItem;
-    type StableId = ();
 
     fn placeholder_text(&self, _window: &mut Window, _: &mut App) -> Arc<str> {
         "Select snippet scope...".into()

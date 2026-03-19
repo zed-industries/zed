@@ -58,7 +58,6 @@ impl IconThemePickerDelegate {
 
 impl PickerDelegate for IconThemePickerDelegate {
     type ListItem = AnyElement;
-    type StableId = ();
 
     fn match_count(&self) -> usize {
         self.filtered_themes.len()

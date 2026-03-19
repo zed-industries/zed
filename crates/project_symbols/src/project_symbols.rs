@@ -9,7 +9,7 @@ use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use project::{Project, Symbol, lsp_store::SymbolLocation};
 use settings::Settings;
-use std::{cmp::Reverse, sync::Arc};
+use std::{any::Any, cmp::Reverse, sync::Arc};
 use theme::{ActiveTheme, ThemeSettings};
 use util::ResultExt;
 use workspace::{
@@ -114,7 +114,6 @@ pub struct ProjectSymbolStableId {
 
 impl PickerDelegate for ProjectSymbolsDelegate {
     type ListItem = ListItem;
-    type StableId = ProjectSymbolStableId;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search project symbols...".into()
@@ -233,17 +232,18 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         })
     }
 
-    fn match_stable_id(&self, ix: usize) -> Option<ProjectSymbolStableId> {
+    fn match_stable_id(&self, ix: usize) -> Option<Box<dyn Any>> {
         let mat = self.matches.get(ix)?;
         let symbol = self.symbols.get(mat.candidate_id)?;
-        Some(ProjectSymbolStableId {
+        Some(Box::new(ProjectSymbolStableId {
             path: symbol.path.clone(),
             symbol_name: symbol.name.clone(),
             symbol_range_start: symbol.range.start,
-        })
+        }))
     }
 
-    fn find_match_by_stable_id(&self, stable_id: &ProjectSymbolStableId) -> Option<usize> {
+    fn find_match_by_stable_id(&self, stable_id: &dyn Any) -> Option<usize> {
+        let stable_id = stable_id.downcast_ref::<ProjectSymbolStableId>()?;
         self.matches.iter().position(|mat| {
             let Some(symbol) = self.symbols.get(mat.candidate_id) else {
                 return false;

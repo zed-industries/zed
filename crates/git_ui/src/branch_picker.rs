@@ -14,7 +14,7 @@ use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::git_store::Repository;
 use project::project_settings::ProjectSettings;
 use settings::Settings;
-use std::sync::Arc;
+use std::{any::Any, sync::Arc};
 use time::OffsetDateTime;
 use ui::{
     Divider, HighlightedLabel, KeyBinding, ListHeader, ListItem, ListItemSpacing, Tooltip,
@@ -567,7 +567,6 @@ impl BranchListDelegate {
 
 impl PickerDelegate for BranchListDelegate {
     type ListItem = ListItem;
-    type StableId = BranchStableId;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         match self.state {
@@ -790,19 +789,22 @@ impl PickerDelegate for BranchListDelegate {
                 .log_err();
         })
     }
-    fn match_stable_id(&self, ix: usize) -> Option<BranchStableId> {
+    fn match_stable_id(&self, ix: usize) -> Option<Box<dyn Any>> {
         match self.matches.get(ix)? {
-            Entry::Branch { branch, .. } => Some(BranchStableId::Branch(branch.ref_name.clone())),
-            Entry::NewUrl { url } => Some(BranchStableId::NewUrl(url.clone())),
-            Entry::NewBranch { name } => Some(BranchStableId::NewBranch(name.clone())),
-            Entry::NewRemoteName { name, url } => Some(BranchStableId::NewRemoteName {
+            Entry::Branch { branch, .. } => {
+                Some(Box::new(BranchStableId::Branch(branch.ref_name.clone())))
+            }
+            Entry::NewUrl { url } => Some(Box::new(BranchStableId::NewUrl(url.clone()))),
+            Entry::NewBranch { name } => Some(Box::new(BranchStableId::NewBranch(name.clone()))),
+            Entry::NewRemoteName { name, url } => Some(Box::new(BranchStableId::NewRemoteName {
                 name: name.clone(),
                 url: url.clone(),
-            }),
+            })),
         }
     }
 
-    fn find_match_by_stable_id(&self, stable_id: &BranchStableId) -> Option<usize> {
+    fn find_match_by_stable_id(&self, stable_id: &dyn Any) -> Option<usize> {
+        let stable_id = stable_id.downcast_ref::<BranchStableId>()?;
         self.matches
             .iter()
             .position(|entry| match (entry, stable_id) {

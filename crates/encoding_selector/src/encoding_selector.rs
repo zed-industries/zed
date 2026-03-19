@@ -220,7 +220,6 @@ fn available_encodings() -> Vec<&'static Encoding> {
 
 impl PickerDelegate for EncodingSelectorDelegate {
     type ListItem = ListItem;
-    type StableId = ();
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Reopen with encoding...".into()

@@ -6,7 +6,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use settings::{Settings as _, SettingsStore, update_settings_file};
-use std::sync::Arc;
+use std::{any::Any, sync::Arc};
 use theme::{
     Appearance, IconThemeName, IconThemeSelection, SystemAppearance, ThemeMeta, ThemeRegistry,
     ThemeSettings,
@@ -134,7 +134,6 @@ impl IconThemeSelectorDelegate {
 
 impl PickerDelegate for IconThemeSelectorDelegate {
     type ListItem = ui::ListItem;
-    type StableId = SharedString;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Select Icon Theme...".into()
@@ -247,11 +246,14 @@ impl PickerDelegate for IconThemeSelectorDelegate {
         })
     }
 
-    fn match_stable_id(&self, ix: usize) -> Option<SharedString> {
-        self.matches.get(ix).map(|m| m.string.clone().into())
+    fn match_stable_id(&self, ix: usize) -> Option<Box<dyn Any>> {
+        self.matches
+            .get(ix)
+            .map(|m| -> Box<dyn Any> { Box::new(SharedString::from(m.string.clone())) })
     }
 
-    fn find_match_by_stable_id(&self, stable_id: &SharedString) -> Option<usize> {
+    fn find_match_by_stable_id(&self, stable_id: &dyn Any) -> Option<usize> {
+        let stable_id = stable_id.downcast_ref::<SharedString>()?;
         self.matches
             .iter()
             .position(|m| m.string == stable_id.as_ref())

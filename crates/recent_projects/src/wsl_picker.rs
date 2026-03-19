@@ -74,7 +74,6 @@ impl EventEmitter<WslPickerDismissed> for Picker<WslPickerDelegate> {}
 
 impl picker::PickerDelegate for WslPickerDelegate {
     type ListItem = ListItem;
-    type StableId = ();
 
     fn match_count(&self) -> usize {
         self.matches.len()

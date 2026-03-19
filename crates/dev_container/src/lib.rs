@@ -238,7 +238,6 @@ impl TemplatePickerDelegate {
 
 impl PickerDelegate for TemplatePickerDelegate {
     type ListItem = AnyElement;
-    type StableId = ();
 
     fn match_count(&self) -> usize {
         self.matching_indices.len()
@@ -422,7 +421,6 @@ impl FeaturePickerDelegate {
 
 impl PickerDelegate for FeaturePickerDelegate {
     type ListItem = AnyElement;
-    type StableId = ();
 
     fn match_count(&self) -> usize {
         self.matching_indices.len()

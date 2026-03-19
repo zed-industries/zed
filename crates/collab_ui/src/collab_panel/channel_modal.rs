@@ -257,7 +257,6 @@ pub struct ChannelModalDelegate {
 
 impl PickerDelegate for ChannelModalDelegate {
     type ListItem = ListItem;
-    type StableId = ();
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search collaborator by username...".into()

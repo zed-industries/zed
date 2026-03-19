@@ -205,7 +205,6 @@ impl KernelPickerDelegate {
 
 impl PickerDelegate for KernelPickerDelegate {
     type ListItem = ListItem;
-    type StableId = ();
 
     fn match_count(&self) -> usize {
         self.filtered_entries.len()
