@@ -340,19 +340,71 @@ pub fn init(cx: &mut App) {
 
     cx.on_action(|open_recent: &OpenRecent, cx| {
         let create_new_window = open_recent.create_new_window;
-        with_active_or_new_workspace(cx, move |workspace, window, cx| {
-            let Some(recent_projects) = workspace.active_modal::<RecentProjects>(cx) else {
-                let focus_handle = workspace.focus_handle(cx);
-                RecentProjects::open(workspace, create_new_window, window, focus_handle, cx);
-                return;
-            };
 
-            recent_projects.update(cx, |recent_projects, cx| {
-                recent_projects
-                    .picker
-                    .update(cx, |picker, cx| picker.cycle_selection(window, cx))
-            });
-        });
+        match cx
+            .active_window()
+            .and_then(|w| w.downcast::<MultiWorkspace>())
+        {
+            Some(multi_workspace) => {
+                cx.defer(move |cx| {
+                    multi_workspace
+                        .update(cx, |multi_workspace, window, cx| {
+                            let sibling_workspace_ids: HashSet<WorkspaceId> = multi_workspace
+                                .workspaces()
+                                .iter()
+                                .filter_map(|ws| ws.read(cx).database_id())
+                                .collect();
+
+                            let workspace = multi_workspace.workspace().clone();
+                            workspace.update(cx, |workspace, cx| {
+                                let Some(recent_projects) =
+                                    workspace.active_modal::<RecentProjects>(cx)
+                                else {
+                                    let focus_handle = workspace.focus_handle(cx);
+                                    RecentProjects::open(
+                                        workspace,
+                                        create_new_window,
+                                        sibling_workspace_ids,
+                                        window,
+                                        focus_handle,
+                                        cx,
+                                    );
+                                    return;
+                                };
+
+                                recent_projects.update(cx, |recent_projects, cx| {
+                                    recent_projects
+                                        .picker
+                                        .update(cx, |picker, cx| picker.cycle_selection(window, cx))
+                                });
+                            });
+                        })
+                        .log_err();
+                });
+            }
+            None => {
+                with_active_or_new_workspace(cx, move |workspace, window, cx| {
+                    let Some(recent_projects) = workspace.active_modal::<RecentProjects>(cx) else {
+                        let focus_handle = workspace.focus_handle(cx);
+                        RecentProjects::open(
+                            workspace,
+                            create_new_window,
+                            HashSet::new(),
+                            window,
+                            focus_handle,
+                            cx,
+                        );
+                        return;
+                    };
+
+                    recent_projects.update(cx, |recent_projects, cx| {
+                        recent_projects
+                            .picker
+                            .update(cx, |picker, cx| picker.cycle_selection(window, cx))
+                    });
+                });
+            }
+        }
     });
     cx.on_action(|open_remote: &OpenRemote, cx| {
         let from_existing_connection = open_remote.from_existing_connection;
@@ -538,6 +590,7 @@ impl RecentProjects {
     pub fn open(
         workspace: &mut Workspace,
         create_new_window: bool,
+        sibling_workspace_ids: HashSet<WorkspaceId>,
         window: &mut Window,
         focus_handle: FocusHandle,
         cx: &mut Context<Workspace>,
@@ -546,22 +599,6 @@ impl RecentProjects {
         let open_folders = get_open_folders(workspace, cx);
         let project_connection_options = workspace.project().read(cx).remote_connection_options(cx);
         let fs = Some(workspace.app_state().fs.clone());
-
-        let sibling_workspace_ids: HashSet<WorkspaceId> = window
-            .window_handle()
-            .downcast::<MultiWorkspace>()
-            .and_then(|handle| {
-                handle
-                    .read_with(cx, |multi_workspace, cx| {
-                        multi_workspace
-                            .workspaces()
-                            .iter()
-                            .filter_map(|ws| ws.read(cx).database_id())
-                            .collect()
-                    })
-                    .ok()
-            })
-            .unwrap_or_default();
 
         workspace.toggle_modal(window, cx, |window, cx| {
             let delegate = RecentProjectsDelegate::new(
