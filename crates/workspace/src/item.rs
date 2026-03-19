@@ -946,15 +946,29 @@ impl<T: Item> ItemHandle for Entity<T> {
                         // Only trigger autosave if focus has truly left the item.
                         // If focus is still within the item's hierarchy (e.g., moved to a context menu),
                         // don't trigger autosave to avoid unwanted formatting and cursor jumps.
-                        // Also skip autosave if focus moved to a modal (e.g., command palette),
-                        // since the user is still interacting with the workspace.
                         let focus_handle = item.item_focus_handle(cx);
-                        if !focus_handle.contains_focused(window, cx)
-                            && !workspace.has_active_modal(window, cx)
-                        {
-                            Pane::autosave_item(&item, workspace.project.clone(), window, cx)
-                                .detach_and_log_err(cx);
+                        if focus_handle.contains_focused(window, cx) {
+                            return;
                         }
+
+                        let vim_mode = vim_mode_setting::VimModeSetting::is_enabled(cx);
+                        let helix_mode = vim_mode_setting::HelixModeSetting::is_enabled(cx);
+
+                        if vim_mode || helix_mode {
+                            // We use the command palette for executing commands in Vim and Helix modes (e.g., `:w`), so
+                            // in those cases we don't want to trigger auto-save if the focus has just been transferred
+                            // to the command palette.
+                            //
+                            // This isn't totally perfect, as you could still switch files indirectly via the command
+                            // palette (such as by opening up the tab switcher from it and then switching tabs that
+                            // way).
+                            if workspace.is_active_modal_command_palette(cx) {
+                                return;
+                            }
+                        }
+
+                        Pane::autosave_item(&item, workspace.project.clone(), window, cx)
+                            .detach_and_log_err(cx);
                     }
                 },
             )

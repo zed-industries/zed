@@ -6998,6 +6998,12 @@ impl Workspace {
         self.modal_layer.read(cx).has_active_modal()
     }
 
+    pub fn is_active_modal_command_palette(&self, cx: &mut App) -> bool {
+        self.modal_layer
+            .read(cx)
+            .is_active_modal_command_palette(cx)
+    }
+
     pub fn active_modal<V: ManagedView + 'static>(&self, cx: &App) -> Option<Entity<V>> {
         self.modal_layer.read(cx).active_modal()
     }
