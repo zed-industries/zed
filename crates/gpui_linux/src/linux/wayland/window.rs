@@ -52,6 +52,7 @@ pub(crate) struct Callbacks {
     appearance_changed: Option<Box<dyn FnMut()>>,
 }
 
+#[derive(Debug, Clone, Copy)]
 struct RawWindow {
     window: *mut c_void,
     display: *mut c_void,
@@ -1348,23 +1349,13 @@ impl PlatformWindow for WaylandWindow {
                     .display_ptr()
                     .cast::<std::ffi::c_void>(),
             };
-            let display_handle = rwh::HasDisplayHandle::display_handle(&raw_window)
-                .unwrap()
-                .as_raw();
-            let window_handle = rwh::HasWindowHandle::window_handle(&raw_window)
-                .unwrap()
-                .as_raw();
-
-            state
-                .renderer
-                .recover(display_handle, window_handle)
-                .unwrap_or_else(|err| {
-                    panic!(
-                        "GPU device lost and recovery failed. \
+            state.renderer.recover(&raw_window).unwrap_or_else(|err| {
+                panic!(
+                    "GPU device lost and recovery failed. \
                         This may happen after system suspend/resume. \
                         Please restart the application.\n\nError: {err}"
-                    )
-                });
+                )
+            });
 
             // The current scene references atlas textures that were cleared during recovery.
             // Skip this frame and let the next frame rebuild the scene with fresh textures.

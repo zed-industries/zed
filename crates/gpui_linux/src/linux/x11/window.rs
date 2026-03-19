@@ -225,6 +225,7 @@ fn find_visuals(xcb: &XCBConnection, screen_index: usize) -> VisualSet {
     set
 }
 
+#[derive(Debug, Clone, Copy)]
 struct RawWindow {
     connection: *mut c_void,
     screen_id: usize,
@@ -1603,23 +1604,13 @@ impl PlatformWindow for X11Window {
                 window_id: self.0.x_window,
                 visual_id: inner.visual_id,
             };
-            let display_handle = rwh::HasDisplayHandle::display_handle(&raw_window)
-                .unwrap()
-                .as_raw();
-            let window_handle = rwh::HasWindowHandle::window_handle(&raw_window)
-                .unwrap()
-                .as_raw();
-
-            inner
-                .renderer
-                .recover(display_handle, window_handle)
-                .unwrap_or_else(|err| {
-                    panic!(
-                        "GPU device lost and recovery failed. \
+            inner.renderer.recover(&raw_window).unwrap_or_else(|err| {
+                panic!(
+                    "GPU device lost and recovery failed. \
                         This may happen after system suspend/resume. \
                         Please restart the application.\n\nError: {err}"
-                    )
-                });
+                )
+            });
 
             // The current scene references atlas textures that were cleared during recovery.
             // Skip this frame and let the next frame rebuild the scene with fresh textures.
