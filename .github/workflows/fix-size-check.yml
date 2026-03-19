@@ -1,0 +1,131 @@
+# One-off: retroactively apply size labels and check runs to PRs
+# that failed due to the permissions ceiling bug. Delete after use.
+name: Fix Size Check (one-off)
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_numbers:
+        description: "Comma-separated PR numbers"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Apply size labels and check runs
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          script: |
+            const prNumbers = context.payload.inputs.pr_numbers
+              .split(',')
+              .map(n => parseInt(n.trim()))
+              .filter(n => !isNaN(n));
+
+            const IGNORED_PATTERNS = [
+              /\.lock$/,
+              /^Cargo\.lock$/,
+              /pnpm-lock\.yaml$/,
+              /\.generated\./,
+              /\/fixtures\//,
+              /\/snapshots\//,
+            ];
+
+            const SIZE_BRACKETS = [
+              ['size/S',  0,       100,  '0e8a16'],
+              ['size/M',  100,     400,  'fbca04'],
+              ['size/L',  400,     800,  'e99695'],
+              ['size/XL', 800, Infinity, 'b60205'],
+            ];
+
+            for (const prNumber of prNumbers) {
+              console.log(`Processing PR #${prNumber}...`);
+
+              const { data: pr } = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber,
+              });
+
+              const { data: files } = await github.rest.pulls.listFiles({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber,
+                per_page: 300,
+              });
+
+              let totalChanges = 0;
+              for (const file of files) {
+                const ignored = IGNORED_PATTERNS.some(p => p.test(file.filename));
+                if (!ignored) {
+                  totalChanges += file.additions + file.deletions;
+                }
+              }
+
+              let sizeLabel = 'size/S';
+              let labelColor = '0e8a16';
+              for (const [label, min, max, color] of SIZE_BRACKETS) {
+                if (totalChanges >= min && totalChanges < max) {
+                  sizeLabel = label;
+                  labelColor = color;
+                  break;
+                }
+              }
+
+              // Ensure label exists
+              try {
+                await github.rest.issues.createLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: sizeLabel,
+                  color: labelColor,
+                });
+              } catch (e) {
+                if (e.status !== 422) throw e;
+              }
+
+              // Remove old size labels, add correct one
+              const existingLabels = (await github.rest.issues.listLabelsOnIssue({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+              })).data.map(l => l.name);
+
+              for (const label of existingLabels.filter(l => l.startsWith('size/'))) {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: prNumber,
+                  name: label,
+                });
+              }
+
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                labels: [sizeLabel],
+              });
+
+              // Create passing check run
+              await github.rest.checks.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: 'check-size',
+                head_sha: pr.head.sha,
+                conclusion: 'success',
+                output: {
+                  title: `PR Size: ${totalChanges} LOC (${sizeLabel})`,
+                  summary: `Retroactively applied by fix-size-check workflow.`,
+                },
+              });
+
+              console.log(`PR #${prNumber}: ${totalChanges} LOC, labeled ${sizeLabel}, check posted`);
+            }
