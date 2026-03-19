@@ -11,7 +11,7 @@
 name: PR Size Check
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize]
 
 permissions:
