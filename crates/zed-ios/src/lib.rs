@@ -313,8 +313,8 @@ mod ios {
         cx.bind_keys([
             gpui::KeyBinding::new("tab", editor::actions::Tab, Some("Editor")),
             gpui::KeyBinding::new("shift-tab", editor::actions::Backtab, Some("Editor")),
-            gpui::KeyBinding::new("tab", editor::actions::Tab, Some("FormFields")),
-            gpui::KeyBinding::new("shift-tab", editor::actions::Backtab, Some("FormFields")),
+            gpui::KeyBinding::new("tab", editor::actions::Tab, None),
+            gpui::KeyBinding::new("shift-tab", editor::actions::Backtab, None),
             gpui::KeyBinding::new("backspace", editor::actions::Backspace, Some("Editor")),
             gpui::KeyBinding::new("delete", editor::actions::Delete, Some("Editor")),
             gpui::KeyBinding::new("enter", editor::actions::Newline, Some("Editor")),

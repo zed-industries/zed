@@ -5,8 +5,9 @@ use gpui::{
 };
 use theme::ActiveTheme;
 use ui::{
-    ButtonCommon, ButtonStyle, Clickable, Color, FixedWidth, Headline, Icon, IconName, Indicator,
-    Label, LabelCommon, LabelSize, Vector, VectorName, h_flex, rems_from_px, v_flex,
+    ButtonCommon, ButtonStyle, Clickable, Color, FixedWidth, Headline, Icon, IconButton, IconName,
+    IconSize, Indicator, Label, LabelCommon, LabelSize, Vector, VectorName, h_flex, rems_from_px,
+    v_flex,
 };
 
 /// Status of a saved host connection.
@@ -81,6 +82,7 @@ enum LandingMode {
 pub struct ConnectionLanding {
     focus_handle: gpui::FocusHandle,
     mode: LandingMode,
+    editing_hosts: bool,
     saved_hosts: Vec<SavedHost>,
     name_editor: Entity<Editor>,
     host_editor: Entity<Editor>,
@@ -114,6 +116,7 @@ impl ConnectionLanding {
         Self {
             focus_handle: cx.focus_handle(),
             mode: LandingMode::Default,
+            editing_hosts: false,
             saved_hosts: Self::dummy_hosts(),
             name_editor,
             host_editor,
@@ -125,7 +128,9 @@ impl ConnectionLanding {
     /// Open the connection landing screen in a new window.
     pub fn open(cx: &mut App) -> anyhow::Result<()> {
         cx.open_window(WindowOptions::default(), |window, cx| {
-            cx.new(|cx| Self::new(window, cx))
+            let landing = cx.new(|cx| Self::new(window, cx));
+            landing.focus_handle(cx).focus(window, cx);
+            landing
         })?;
         Ok(())
     }
@@ -182,17 +187,18 @@ impl ConnectionLanding {
     fn cancel_add_host(
         &mut self,
         _event: &ClickEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.mode = LandingMode::Default;
+        self.focus_handle.focus(window, cx);
         cx.notify();
     }
 
     fn confirm_add_host(
         &mut self,
         _event: &ClickEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let name = self.name_editor.read(cx).text(cx);
@@ -220,12 +226,30 @@ impl ConnectionLanding {
         });
 
         self.mode = LandingMode::Default;
+        self.focus_handle.focus(window, cx);
         cx.notify();
     }
 
     fn connect_host(&mut self, index: usize, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(host) = self.saved_hosts.get_mut(index) {
             host.status = ConnectionStatus::Connecting;
+            cx.notify();
+        }
+    }
+
+    fn toggle_editing_hosts(
+        &mut self,
+        _event: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.editing_hosts = !self.editing_hosts;
+        cx.notify();
+    }
+
+    fn remove_host(&mut self, index: usize, _window: &mut Window, cx: &mut Context<Self>) {
+        if index < self.saved_hosts.len() {
+            self.saved_hosts.remove(index);
             cx.notify();
         }
     }
@@ -272,9 +296,11 @@ impl ConnectionLanding {
         );
 
         let hover_bg = colors.ghost_element_hover;
+        let focus_border = colors.border_focused;
 
         div()
             .id(SharedString::from(format!("host-{index}")))
+            .tab_index(index as isize)
             .w_full()
             .px_4()
             .py_3()
@@ -283,7 +309,10 @@ impl ConnectionLanding {
             .justify_between()
             .cursor_pointer()
             .rounded_md()
+            .border_2()
+            .border_color(gpui::transparent_black())
             .hover(move |style| style.bg(hover_bg))
+            .focus(move |style| style.border_color(focus_border))
             .when(is_connectable, |this| {
                 this.on_click(cx.listener(move |this, _event, window, cx| {
                     this.connect_host(index, window, cx);
@@ -296,7 +325,7 @@ impl ConnectionLanding {
                     .child(
                         div().flex_shrink_0().child(
                             Icon::new(IconName::Server)
-                                .size(ui::IconSize::Small)
+                                .size(IconSize::Small)
                                 .color(Color::Muted),
                         ),
                     )
@@ -319,17 +348,51 @@ impl ConnectionLanding {
                         Label::new(status_label)
                             .size(LabelSize::Small)
                             .color(Color::Muted),
-                    ),
+                    )
+                    .when(self.editing_hosts, |this| {
+                        this.child(
+                            IconButton::new(
+                                SharedString::from(format!("remove-host-{index}")),
+                                IconName::Trash,
+                            )
+                            .size(ui::ButtonSize::Compact)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .style(ButtonStyle::Transparent)
+                            .on_click(cx.listener(move |this, _event, window, cx| {
+                                this.remove_host(index, window, cx);
+                            })),
+                        )
+                    }),
             )
     }
 
     fn render_hosts_list(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors();
+        let host_count = self.saved_hosts.len();
+
+        let editing = self.editing_hosts;
+        let has_hosts = !self.saved_hosts.is_empty();
 
         let mut list = v_flex().w_96().gap_2().child(
-            Label::new("SAVED HOSTS")
-                .size(LabelSize::XSmall)
-                .color(Color::Muted),
+            h_flex()
+                .justify_between()
+                .items_center()
+                .child(
+                    Label::new("SAVED HOSTS")
+                        .size(LabelSize::XSmall)
+                        .color(Color::Muted),
+                )
+                .when(has_hosts, |this| {
+                    this.child(
+                        IconButton::new("edit-hosts-btn", IconName::Pencil)
+                            .size(ui::ButtonSize::Compact)
+                            .icon_size(IconSize::XSmall)
+                            .icon_color(if editing { Color::Accent } else { Color::Muted })
+                            .style(ButtonStyle::Transparent)
+                            .on_click(cx.listener(Self::toggle_editing_hosts)),
+                    )
+                }),
         );
 
         if self.saved_hosts.is_empty() {
@@ -347,6 +410,7 @@ impl ConnectionLanding {
             let surface_bg = colors.surface_background;
 
             let mut entries = div()
+                .tab_group()
                 .rounded_lg()
                 .border_1()
                 .border_color(border)
@@ -363,15 +427,14 @@ impl ConnectionLanding {
             list = list.child(entries);
         }
 
-        list
-    }
-
-    fn render_add_host_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        ui::Button::new("add-host-btn", "Connect SSH Server")
-            .start_icon(Icon::new(IconName::Plus))
-            .full_width()
-            .style(ButtonStyle::Filled)
-            .on_click(cx.listener(Self::switch_to_add_host))
+        list.child(
+            ui::Button::new("add-host-btn", "Connect SSH Server")
+                .tab_index(host_count as isize)
+                .start_icon(Icon::new(IconName::Plus))
+                .full_width()
+                .style(ButtonStyle::Filled)
+                .on_click(cx.listener(Self::switch_to_add_host)),
+        )
     }
 
     fn render_add_host_form(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -383,15 +446,8 @@ impl ConnectionLanding {
 
         v_flex()
             .id("add-host-form")
-            .key_context("FormFields")
             .w_96()
             .gap_4()
-            .on_action(|_: &Tab, window, cx| {
-                window.focus_next(cx);
-            })
-            .on_action(|_: &Backtab, window, cx| {
-                window.focus_prev(cx);
-            })
             .child(
                 Label::new("NEW CONNECTION")
                     .size(LabelSize::XSmall)
@@ -521,6 +577,12 @@ impl Render for ConnectionLanding {
         let mut content = div()
             .id("connection-landing")
             .track_focus(&self.focus_handle)
+            .on_action(|_: &Tab, window, cx| {
+                window.focus_next(cx);
+            })
+            .on_action(|_: &Backtab, window, cx| {
+                window.focus_prev(cx);
+            })
             .size_full()
             .bg(colors.background)
             .flex()
@@ -532,9 +594,7 @@ impl Render for ConnectionLanding {
 
         match &self.mode {
             LandingMode::Default => {
-                content = content
-                    .child(self.render_hosts_list(cx))
-                    .child(div().w_96().child(self.render_add_host_button(cx)));
+                content = content.child(self.render_hosts_list(cx));
             }
             LandingMode::AddHost => {
                 content = content.child(self.render_add_host_form(cx));

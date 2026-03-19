@@ -211,6 +211,10 @@ impl IosWindow {
         let weak_ptr = Box::into_raw(Box::new(weak)) as *mut c_void;
         unsafe {
             (*ui_view).set_ivar("_window_state", weak_ptr);
+            // Make the view first responder immediately so hardware keyboard
+            // events (pressesBegan/pressesEnded) are delivered even before any
+            // editor or software keyboard is active.
+            let _: bool = msg_send![ui_view, becomeFirstResponder];
         }
 
         Ok(Self {
