@@ -17,7 +17,7 @@ use menu::{
     Cancel, Confirm, SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious,
 };
 use project::{AgentId, Event as ProjectEvent, linked_worktree_short_name};
-use recent_projects::RecentProjects;
+use recent_projects::sidebar_recent_projects::SidebarRecentProjects;
 use ui::utils::platform_title_bar_height;
 
 use settings::Settings as _;
@@ -28,7 +28,8 @@ use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
     AgentThreadStatus, CommonAnimationExt, Divider, HighlightedLabel, KeyBinding, ListItem,
-    PopoverMenu, PopoverMenuHandle, Tab, ThreadItem, TintColor, Tooltip, WithScrollbar, prelude::*,
+    ListItemSpacing, PopoverMenu, PopoverMenuHandle, Tab, ThreadItem, TintColor, Tooltip,
+    WithScrollbar, prelude::*,
 };
 use util::ResultExt as _;
 use util::path_list::PathList;
@@ -246,7 +247,7 @@ pub struct Sidebar {
     collapsed_groups: HashSet<PathList>,
     expanded_groups: HashMap<PathList, usize>,
     view: SidebarView,
-    recent_projects_popover_handle: PopoverMenuHandle<RecentProjects>,
+    recent_projects_popover_handle: PopoverMenuHandle<SidebarRecentProjects>,
     _subscriptions: Vec<gpui::Subscription>,
     _draft_observation: Option<gpui::Subscription>,
 }
@@ -1188,12 +1189,13 @@ impl Sidebar {
         };
 
         ListItem::new(id)
+            .height(Tab::content_height(cx))
             .group_name(group_name)
             .focused(is_selected)
+            .spacing(ListItemSpacing::Dense)
             .child(
                 h_flex()
                     .relative()
-                    .h(Tab::container_height(cx))
                     .min_w_0()
                     .w_full()
                     .gap_1p5()
@@ -2315,10 +2317,9 @@ impl Sidebar {
             .with_handle(popover_handle)
             .menu(move |window, cx| {
                 workspace.as_ref().map(|ws| {
-                    RecentProjects::popover(
+                    SidebarRecentProjects::popover(
                         ws.clone(),
                         sibling_workspace_ids.clone(),
-                        false,
                         focus_handle.clone(),
                         window,
                         cx,
@@ -2331,7 +2332,7 @@ impl Sidebar {
                     .selected_style(ButtonStyle::Tinted(TintColor::Accent)),
                 |_window, cx| {
                     Tooltip::for_action(
-                        "Recent Projects",
+                        "Add Project",
                         &OpenRecent {
                             create_new_window: false,
                         },
@@ -2339,7 +2340,11 @@ impl Sidebar {
                     )
                 },
             )
-            .anchor(gpui::Corner::TopLeft)
+            .offset(gpui::Point {
+                x: px(0.0),
+                y: px(-2.0),
+            })
+            .anchor(gpui::Corner::BottomRight)
     }
 
     fn render_view_more(
@@ -2727,14 +2732,6 @@ impl WorkspaceSidebar for Sidebar {
         !self.contents.notified_threads.is_empty()
     }
 
-    fn toggle_recent_projects_popover(&self, window: &mut Window, cx: &mut App) {
-        self.recent_projects_popover_handle.toggle(window, cx);
-    }
-
-    fn is_recent_projects_popover_deployed(&self) -> bool {
-        self.recent_projects_popover_handle.is_deployed()
-    }
-
     fn is_threads_list_view_active(&self) -> bool {
         matches!(self.view, SidebarView::ThreadList)
     }
@@ -2786,6 +2783,9 @@ impl Render for Sidebar {
             .on_action(cx.listener(Self::new_thread_in_group))
             .on_action(cx.listener(Self::toggle_archive))
             .on_action(cx.listener(Self::focus_sidebar_filter))
+            .on_action(cx.listener(|this, _: &OpenRecent, window, cx| {
+                this.recent_projects_popover_handle.toggle(window, cx);
+            }))
             .on_action(cx.listener(Self::toggle_archive))
             .font(ui_font)
             .h_full()
@@ -2834,6 +2834,7 @@ impl Render for Sidebar {
                     .child(
                         h_flex()
                             .gap_1()
+                            .child(self.render_recent_projects_button(cx))
                             .child(
                                 IconButton::new("archive", IconName::Archive)
                                     .icon_size(IconSize::Small)
@@ -2848,8 +2849,7 @@ impl Render for Sidebar {
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.toggle_archive(&ToggleArchive, window, cx);
                                     })),
-                            )
-                            .child(self.render_recent_projects_button(cx)),
+                            ),
                     ),
             )
     }

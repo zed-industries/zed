@@ -41,8 +41,7 @@ pub trait Sidebar: Focusable + Render + Sized {
     fn width(&self, cx: &App) -> Pixels;
     fn set_width(&mut self, width: Option<Pixels>, cx: &mut Context<Self>);
     fn has_notifications(&self, cx: &App) -> bool;
-    fn toggle_recent_projects_popover(&self, window: &mut Window, cx: &mut App);
-    fn is_recent_projects_popover_deployed(&self) -> bool;
+
     fn is_threads_list_view_active(&self) -> bool {
         true
     }
@@ -59,8 +58,7 @@ pub trait SidebarHandle: 'static + Send + Sync {
     fn has_notifications(&self, cx: &App) -> bool;
     fn to_any(&self) -> AnyView;
     fn entity_id(&self) -> EntityId;
-    fn toggle_recent_projects_popover(&self, window: &mut Window, cx: &mut App);
-    fn is_recent_projects_popover_deployed(&self, cx: &App) -> bool;
+
     fn is_threads_list_view_active(&self, cx: &App) -> bool;
 }
 
@@ -105,16 +103,6 @@ impl<T: Sidebar> SidebarHandle for Entity<T> {
 
     fn entity_id(&self) -> EntityId {
         Entity::entity_id(self)
-    }
-
-    fn toggle_recent_projects_popover(&self, window: &mut Window, cx: &mut App) {
-        self.update(cx, |this, cx| {
-            this.toggle_recent_projects_popover(window, cx);
-        });
-    }
-
-    fn is_recent_projects_popover_deployed(&self, cx: &App) -> bool {
-        self.read(cx).is_recent_projects_popover_deployed()
     }
 
     fn is_threads_list_view_active(&self, cx: &App) -> bool {
@@ -201,18 +189,6 @@ impl MultiWorkspace {
         self.sidebar
             .as_ref()
             .map_or(false, |s| s.has_notifications(cx))
-    }
-
-    pub fn toggle_recent_projects_popover(&self, window: &mut Window, cx: &mut App) {
-        if let Some(sidebar) = &self.sidebar {
-            sidebar.toggle_recent_projects_popover(window, cx);
-        }
-    }
-
-    pub fn is_recent_projects_popover_deployed(&self, cx: &App) -> bool {
-        self.sidebar
-            .as_ref()
-            .map_or(false, |s| s.is_recent_projects_popover_deployed(cx))
     }
 
     pub fn is_threads_list_view_active(&self, cx: &App) -> bool {

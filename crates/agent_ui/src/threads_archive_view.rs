@@ -20,7 +20,7 @@ use project::{AgentId, AgentServerStore};
 use theme::ActiveTheme;
 use ui::{
     ButtonLike, CommonAnimationExt, ContextMenu, ContextMenuEntry, Divider, HighlightedLabel,
-    KeyBinding, ListItem, PopoverMenu, PopoverMenuHandle, Tab, TintColor, Tooltip, WithScrollbar,
+    KeyBinding, ListItem, PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, WithScrollbar,
     prelude::*, utils::platform_title_bar_height,
 };
 use util::ResultExt as _;

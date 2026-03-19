@@ -2,6 +2,7 @@ mod dev_container_suggest;
 pub mod disconnected_overlay;
 mod remote_connections;
 mod remote_servers;
+pub mod sidebar_recent_projects;
 mod ssh_config;
 
 use std::{
@@ -1635,7 +1636,7 @@ impl PickerDelegate for RecentProjectsDelegate {
     }
 }
 
-fn icon_for_remote_connection(options: Option<&RemoteConnectionOptions>) -> IconName {
+pub(crate) fn icon_for_remote_connection(options: Option<&RemoteConnectionOptions>) -> IconName {
     match options {
         None => IconName::Screen,
         Some(options) => match options {
@@ -1649,7 +1650,7 @@ fn icon_for_remote_connection(options: Option<&RemoteConnectionOptions>) -> Icon
 }
 
 // Compute the highlighted text for the name and path
-fn highlights_for_path(
+pub(crate) fn highlights_for_path(
     path: &Path,
     match_positions: &Vec<usize>,
     path_start_offset: usize,
