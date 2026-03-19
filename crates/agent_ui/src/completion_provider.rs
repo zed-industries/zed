@@ -1719,16 +1719,6 @@ impl MentionCompletion {
 
         let last_mention_start = last_mention_start?;
 
-        //  Must be a word boundary before '@'
-        if last_mention_start > 0
-            && line[..last_mention_start]
-                .chars()
-                .last()
-                .is_some_and(|c| !c.is_whitespace())
-        {
-            return None;
-        }
-
         let rest_of_line = &line[last_mention_start + 1..];
 
         let mut mode = None;
