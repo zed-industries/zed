@@ -1794,7 +1794,8 @@ async fn test_copy_paste_directory(cx: &mut gpui::TestAppContext) {
             "        > inner_dir",
             "          one.txt",
             "          two.txt",
-            "    > d.1.20",
+            "    v d.1.20",
+            "          default.conf",
             "    > [EDITOR: 'd.1.20 copy']  <== selected",
         ],
         "Dotted directory names should not be split at the dot when disambiguating"
