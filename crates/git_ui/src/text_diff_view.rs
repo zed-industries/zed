@@ -43,75 +43,17 @@ impl TextDiffView {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Task<Result<Entity<Self>>>> {
-        let source_editor = diff_data.editor.clone();
-
-        let selection_data = source_editor.update(cx, |editor, cx| {
-            let multibuffer = editor.buffer().read(cx);
-            let source_buffer = multibuffer.as_singleton()?;
-            let selections = editor.selections.all::<Point>(&editor.display_snapshot(cx));
-            let buffer_snapshot = source_buffer.read(cx);
-            let first_selection = selections.first()?;
-            let max_point = buffer_snapshot.max_point();
-
-            if first_selection.is_empty() {
-                let full_range = Point::new(0, 0)..max_point;
-                return Some((source_buffer, full_range));
-            }
-
-            let start = first_selection.start;
-            let end = first_selection.end;
-            Some((source_buffer, start..end))
-        });
-
-        let Some((source_buffer, selection_range)) = selection_data else {
-            log::warn!("There should always be at least one selection in Zed. This is a bug.");
-            return None;
-        };
-        let language = source_buffer.read(cx).language().cloned();
-
-        let clipboard_text = diff_data.clipboard_text.clone();
-        let clipboard_buffer = build_buffer_from_text(clipboard_text, language.clone(), cx);
-
-        let selection_text = source_buffer.read_with(cx, |buffer, _| {
-            buffer
-                .text_for_range(selection_range.clone())
-                .collect::<String>()
-        });
-        let selection_buffer = build_buffer_from_text(selection_text, language, cx);
-        let selection_buffer_snapshot = selection_buffer.read(cx).snapshot();
-        let diff_buffer = cx.new(|cx| BufferDiff::new(&selection_buffer_snapshot.text, cx));
+        let text_diff_session = TextDiffSession::new(diff_data, cx)?;
 
         let workspace = workspace.weak_handle();
         let task = window.spawn(cx, async move |cx| {
             let project = workspace.update(cx, |workspace, _| workspace.project().clone())?;
 
-            update_diff_buffer(
-                &diff_buffer,
-                &source_buffer,
-                &selection_buffer,
-                &clipboard_buffer,
-                cx,
-            )
-            .await?;
+            text_diff_session.update_diff_buffer(cx).await?;
 
             workspace.update_in(cx, |workspace, window, cx| {
-                let diff_view = cx.new(|cx| {
-                    let source_buffer_snapshot = source_buffer.read(cx).snapshot();
-                    let selection_range_anchor = source_buffer_snapshot
-                        .anchor_before(selection_range.start)
-                        ..source_buffer_snapshot.anchor_after(selection_range.end);
-                    TextDiffView::new(
-                        clipboard_buffer,
-                        selection_buffer,
-                        source_editor,
-                        source_buffer,
-                        selection_range_anchor,
-                        diff_buffer,
-                        project,
-                        window,
-                        cx,
-                    )
-                });
+                let diff_view =
+                    cx.new(|cx| TextDiffView::new(text_diff_session, project, window, cx));
 
                 let pane = workspace.active_pane();
                 pane.update(cx, |pane, cx| {
@@ -126,29 +68,13 @@ impl TextDiffView {
     }
 
     pub fn new(
-        clipboard_buffer: Entity<Buffer>,
-        selection_buffer: Entity<Buffer>,
-        source_editor: Entity<Editor>,
-        source_buffer: Entity<Buffer>,
-        selection_range_anchor: Range<Anchor>,
-        diff_buffer: Entity<BufferDiff>,
+        text_diff_session: TextDiffSession,
         project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
-            let selection_snapshot = selection_buffer.read(cx).snapshot();
-            let full_range_in_selection_buffer = Point::new(0, 0)..selection_snapshot.max_point();
-            multibuffer.set_excerpts_for_buffer(
-                selection_buffer.clone(),
-                [full_range_in_selection_buffer],
-                0,
-                cx,
-            );
-            multibuffer.add_diff(diff_buffer.clone(), cx);
-            multibuffer
-        });
+        let multibuffer = text_diff_session.build_multibuffer(cx);
+
         let diff_editor = cx.new(|cx| {
             let mut editor = Editor::for_multibuffer(multibuffer, Some(project), window, cx);
             editor.start_temporary_diff_override();
@@ -163,6 +89,7 @@ impl TextDiffView {
 
         let (buffer_changes_tx, mut buffer_changes_rx) = watch::channel(());
 
+        let source_buffer = text_diff_session.source_buffer.clone();
         cx.subscribe(&source_buffer, move |this, _, event, _| match event {
             language::BufferEvent::Edited { .. }
             | language::BufferEvent::LanguageChanged(_)
@@ -173,36 +100,12 @@ impl TextDiffView {
         })
         .detach();
 
-        let editor = source_editor.read(cx);
-        let title = editor.buffer().read(cx).title(cx).to_string();
-
-        let source_buffer_snapshot = source_buffer.read(cx).snapshot();
-        let selection_location_text =
-            format_selection_range(&source_buffer_snapshot, selection_range_anchor.clone());
-        let selection_location_title = selection_location_text
-            .as_ref()
-            .map(|text| format!("{} @ {}", title, text))
-            .unwrap_or(title);
-
-        let path = editor
-            .buffer()
-            .read(cx)
-            .as_singleton()
-            .and_then(|b| {
-                b.read(cx)
-                    .file()
-                    .map(|f| f.full_path(cx).compact().to_string_lossy().into_owned())
-            })
-            .unwrap_or("untitled".into());
-
-        let selection_location_path = selection_location_text
-            .map(|text| format!("{} @ {}", path, text))
-            .unwrap_or(path);
+        let (title, path) = text_diff_session.generate_title_and_path(cx);
 
         Self {
             diff_editor,
-            title: format!("Clipboard ↔ {selection_location_title}").into(),
-            path: Some(format!("Clipboard ↔ {selection_location_path}").into()),
+            title: title.into(),
+            path: Some(path.into()),
             buffer_changes_tx,
             _recalculate_diff_task: cx.spawn(async move |_, cx| {
                 while buffer_changes_rx.recv().await.is_ok() {
@@ -220,21 +123,8 @@ impl TextDiffView {
 
                     log::trace!("start recalculating");
 
-                    let latest_text = source_buffer.read_with(cx, |buffer, _| {
-                        buffer
-                            .text_for_range(selection_range_anchor.clone())
-                            .collect::<String>()
-                    });
-                    selection_buffer.update(cx, |buffer, cx| buffer.set_text(latest_text, cx));
+                    text_diff_session.sync_and_update_diff(cx).await?;
 
-                    update_diff_buffer(
-                        &diff_buffer,
-                        &source_buffer,
-                        &selection_buffer,
-                        &clipboard_buffer,
-                        cx,
-                    )
-                    .await?;
                     log::trace!("finish recalculating");
                 }
                 Ok(())
@@ -243,58 +133,17 @@ impl TextDiffView {
     }
 }
 
-fn build_buffer_from_text(
-    text: String,
-    language: Option<Arc<Language>>,
-    cx: &mut App,
-) -> Entity<Buffer> {
-    cx.new(|cx| {
-        let mut buffer = language::Buffer::local(text, cx);
-        buffer.set_language(language, cx);
-        buffer
-    })
-}
-
-async fn update_diff_buffer(
-    diff: &Entity<BufferDiff>,
-    source_buffer: &Entity<Buffer>,
-    selection_buffer: &Entity<Buffer>,
-    clipboard_buffer: &Entity<Buffer>,
-    cx: &mut AsyncApp,
-) -> Result<()> {
-    let source_buffer_snapshot = source_buffer.read_with(cx, |buffer, _| buffer.snapshot());
-    let language = source_buffer_snapshot.language().cloned();
-    let language_registry = source_buffer.read_with(cx, |buffer, _| buffer.language_registry());
-
-    let selection_buffer_snapshot = selection_buffer.read_with(cx, |buffer, _| buffer.snapshot());
-    let base_buffer_snapshot = clipboard_buffer.read_with(cx, |buffer, _| buffer.snapshot());
-    let base_text = base_buffer_snapshot.text();
-
-    let update = diff
-        .update(cx, |diff, cx| {
-            diff.update_diff(
-                selection_buffer_snapshot.text.clone(),
-                Some(Arc::from(base_text.as_str())),
-                Some(true),
-                language.clone(),
-                cx,
-            )
-        })
-        .await;
-
-    diff.update(cx, |diff, cx| {
-        diff.language_changed(language, language_registry, cx);
-        diff.set_snapshot(update, &selection_buffer_snapshot.text, cx)
-    })
-    .await;
-    Ok(())
-}
-
 impl EventEmitter<EditorEvent> for TextDiffView {}
 
 impl Focusable for TextDiffView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.diff_editor.focus_handle(cx)
+    }
+}
+
+impl Render for TextDiffView {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.diff_editor.clone()
     }
 }
 
@@ -413,6 +262,181 @@ impl Item for TextDiffView {
     }
 }
 
+#[derive(Clone)]
+pub struct TextDiffSession {
+    source_editor: Entity<Editor>,
+    source_buffer: Entity<Buffer>,
+    selection_range: Range<Anchor>,
+    selection_buffer: Entity<Buffer>,
+    clipboard_buffer: Entity<Buffer>,
+    diff_buffer: Entity<BufferDiff>,
+}
+
+impl TextDiffSession {
+    fn new(diff_data: &DiffClipboardWithSelectionData, cx: &mut App) -> Option<Self> {
+        let source_editor = diff_data.editor.clone();
+        let selection_data = source_editor.update(cx, |editor, cx| {
+            let multibuffer = editor.buffer().read(cx);
+            let source_buffer = multibuffer.as_singleton()?;
+            let selections = editor.selections.all::<Point>(&editor.display_snapshot(cx));
+            let buffer_snapshot = source_buffer.read(cx);
+            let first_selection = selections.first()?;
+            let max_point = buffer_snapshot.max_point();
+
+            if first_selection.is_empty() {
+                let full_range = Point::new(0, 0)..max_point;
+                return Some((source_buffer, full_range));
+            }
+
+            let start = first_selection.start;
+            let end = first_selection.end;
+            Some((source_buffer, start..end))
+        });
+
+        let Some((source_buffer, selection_range)) = selection_data else {
+            log::warn!("There should always be at least one selection in Zed. This is a bug.");
+            return None;
+        };
+        let language = source_buffer.read(cx).language().cloned();
+
+        let clipboard_text = diff_data.clipboard_text.clone();
+        let clipboard_buffer = build_buffer_from_text(clipboard_text, language.clone(), cx);
+        let selection_text = source_buffer.read_with(cx, |buffer, _| {
+            buffer
+                .text_for_range(selection_range.clone())
+                .collect::<String>()
+        });
+        let selection_buffer = build_buffer_from_text(selection_text, language, cx);
+        let selection_buffer_snapshot = selection_buffer.read(cx).snapshot();
+        let diff_buffer = cx.new(|cx| BufferDiff::new(&selection_buffer_snapshot.text, cx));
+
+        let source_buffer_snapshot = source_buffer.read(cx).snapshot();
+        let selection_range_anchor = source_buffer_snapshot.anchor_before(selection_range.start)
+            ..source_buffer_snapshot.anchor_after(selection_range.end);
+
+        Some(Self {
+            source_editor,
+            source_buffer,
+            selection_range: selection_range_anchor,
+            selection_buffer,
+            clipboard_buffer,
+            diff_buffer,
+        })
+    }
+
+    async fn update_diff_buffer(&self, cx: &mut AsyncApp) -> Result<()> {
+        let source_buffer_snapshot = self
+            .source_buffer
+            .read_with(cx, |buffer, _| buffer.snapshot());
+        let language = source_buffer_snapshot.language().cloned();
+        let language_registry = self
+            .source_buffer
+            .read_with(cx, |buffer, _| buffer.language_registry());
+
+        let selection_buffer_snapshot = self
+            .selection_buffer
+            .read_with(cx, |buffer, _| buffer.snapshot());
+        let base_buffer_snapshot = self
+            .clipboard_buffer
+            .read_with(cx, |buffer, _| buffer.snapshot());
+        let base_text = base_buffer_snapshot.text();
+
+        let update = self
+            .diff_buffer
+            .update(cx, |diff, cx| {
+                diff.update_diff(
+                    selection_buffer_snapshot.text.clone(),
+                    Some(Arc::from(base_text.as_str())),
+                    Some(true),
+                    language.clone(),
+                    cx,
+                )
+            })
+            .await;
+
+        self.diff_buffer
+            .update(cx, |diff, cx| {
+                diff.language_changed(language, language_registry, cx);
+                diff.set_snapshot(update, &selection_buffer_snapshot.text, cx)
+            })
+            .await;
+        Ok(())
+    }
+
+    async fn sync_and_update_diff(&self, cx: &mut AsyncApp) -> Result<()> {
+        let latest_text = self.source_buffer.read_with(cx, |buffer, _| {
+            buffer
+                .text_for_range(self.selection_range.clone())
+                .collect::<String>()
+        });
+        self.selection_buffer
+            .update(cx, |buffer, cx| buffer.set_text(latest_text, cx));
+        self.update_diff_buffer(cx).await?;
+        Ok(())
+    }
+
+    fn build_multibuffer(&self, cx: &mut App) -> Entity<MultiBuffer> {
+        cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
+            let selection_snapshot = self.selection_buffer.read(cx).snapshot();
+            let full_range_in_selection_buffer = Point::new(0, 0)..selection_snapshot.max_point();
+            multibuffer.set_excerpts_for_buffer(
+                self.selection_buffer.clone(),
+                [full_range_in_selection_buffer],
+                0,
+                cx,
+            );
+            multibuffer.add_diff(self.diff_buffer.clone(), cx);
+            multibuffer
+        })
+    }
+
+    fn generate_title_and_path(&self, cx: &mut App) -> (String, String) {
+        let editor = self.source_editor.read(cx);
+        let title = editor.buffer().read(cx).title(cx).to_string();
+
+        let source_buffer_snapshot = self.source_buffer.read(cx).snapshot();
+        let selection_location_text =
+            format_selection_range(&source_buffer_snapshot, self.selection_range.clone());
+        let selection_location_title = selection_location_text
+            .as_ref()
+            .map(|text| format!("{} @ {}", title, text))
+            .unwrap_or(title);
+
+        let path = editor
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .and_then(|b| {
+                b.read(cx)
+                    .file()
+                    .map(|f| f.full_path(cx).compact().to_string_lossy().into_owned())
+            })
+            .unwrap_or("untitled".into());
+
+        let selection_location_path = selection_location_text
+            .map(|text| format!("{} @ {}", path, text))
+            .unwrap_or(path);
+
+        (
+            format!("Clipboard ↔ {selection_location_title}"),
+            format!("Clipboard ↔ {selection_location_path}"),
+        )
+    }
+}
+
+fn build_buffer_from_text(
+    text: String,
+    language: Option<Arc<Language>>,
+    cx: &mut App,
+) -> Entity<Buffer> {
+    cx.new(|cx| {
+        let mut buffer = language::Buffer::local(text, cx);
+        buffer.set_language(language, cx);
+        buffer
+    })
+}
+
 pub fn format_selection_range(
     buffer_snapshot: &language::BufferSnapshot,
     selection_range: Range<Anchor>,
@@ -438,12 +462,6 @@ pub fn format_selection_range(
     };
 
     Some(range_text)
-}
-
-impl Render for TextDiffView {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        self.diff_editor.clone()
-    }
 }
 
 #[cfg(test)]
