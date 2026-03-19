@@ -1232,11 +1232,17 @@ impl ContextServerStore {
         let id = id.clone();
         self.stop_server(&id, cx)?;
 
-        cx.spawn(async move |_this, cx| {
+        cx.spawn(async move |this, cx| {
             let credentials_provider = cx.update(|cx| <dyn CredentialsProvider>::global(cx));
             if let Err(err) = Self::clear_session(&credentials_provider, &server_url, &cx).await {
                 log::error!("{} failed to clear OAuth session: {}", id, err);
             }
+            // Trigger server recreation so the next start uses a fresh
+            // transport without the old (now-invalidated) token provider.
+            this.update(cx, |this, cx| {
+                this.available_context_servers_changed(cx);
+            })
+            .log_err();
         })
         .detach();
 
@@ -1408,19 +1414,12 @@ async fn resolve_start_failure(
     configuration: Arc<ContextServerConfiguration>,
     cx: &AsyncApp,
 ) -> ContextServerState {
-    let Some(TransportError::AuthRequired { www_authenticate }) =
-        err.downcast_ref::<TransportError>()
-    else {
-        log::error!("{id} context server failed to start: {err}");
-        return ContextServerState::Error {
-            configuration,
-            server,
-            error: err.to_string().into(),
-        };
-    };
+    let www_authenticate = err.downcast_ref::<TransportError>().map(|e| match e {
+        TransportError::AuthRequired { www_authenticate } => www_authenticate.clone(),
+    });
 
-    if configuration.has_static_auth_header() {
-        log::warn!("{id} received 401 with a static Authorization header configured",);
+    if www_authenticate.is_some() && configuration.has_static_auth_header() {
+        log::warn!("{id} received 401 with a static Authorization header configured");
         return ContextServerState::Error {
             configuration,
             server,
@@ -1430,9 +1429,15 @@ async fn resolve_start_failure(
     }
 
     let server_url = match configuration.as_ref() {
-        ContextServerConfiguration::Http { url, .. } => url.clone(),
+        ContextServerConfiguration::Http { url, .. } if !configuration.has_static_auth_header() => {
+            url.clone()
+        }
         _ => {
-            log::error!("{id} got OAuth 401 on a non-HTTP transport");
+            if www_authenticate.is_some() {
+                log::error!("{id} got OAuth 401 on a non-HTTP transport or with static auth");
+            } else {
+                log::error!("{id} context server failed to start: {err}");
+            }
             return ContextServerState::Error {
                 configuration,
                 server,
@@ -1441,6 +1446,39 @@ async fn resolve_start_failure(
         }
     };
 
+    // When the error is NOT a 401 but there is a cached OAuth session in the
+    // keychain, the session is likely stale/expired and caused the failure
+    // (e.g. timeout because the server rejected the token silently). Clear it
+    // so the next start attempt can get a clean 401 and trigger the auth flow.
+    if www_authenticate.is_none() {
+        let credentials_provider = cx.update(|cx| <dyn CredentialsProvider>::global(cx));
+        match ContextServerStore::load_session(&credentials_provider, &server_url, cx).await {
+            Ok(Some(_)) => {
+                log::info!("{id} start failed with a cached OAuth session present; clearing it");
+                ContextServerStore::clear_session(&credentials_provider, &server_url, cx)
+                    .await
+                    .log_err();
+            }
+            _ => {
+                log::error!("{id} context server failed to start: {err}");
+                return ContextServerState::Error {
+                    configuration,
+                    server,
+                    error: err.to_string().into(),
+                };
+            }
+        }
+    }
+
+    let default_www_authenticate = oauth::WwwAuthenticate {
+        resource_metadata: None,
+        scope: None,
+        error: None,
+        error_description: None,
+    };
+    let www_authenticate = www_authenticate
+        .as_ref()
+        .unwrap_or(&default_www_authenticate);
     let http_client = cx.update(|cx| cx.http_client());
 
     match context_server::oauth::discover(&http_client, &server_url, www_authenticate).await {
@@ -1449,19 +1487,19 @@ async fn resolve_start_failure(
                 "{id} requires OAuth authorization (auth server: {})",
                 discovery.auth_server_metadata.issuer,
             );
-            return ContextServerState::AuthRequired {
+            ContextServerState::AuthRequired {
                 server,
                 configuration,
                 discovery: Arc::new(discovery),
-            };
+            }
         }
         Err(discovery_err) => {
             log::error!("{id} OAuth discovery failed: {discovery_err}");
-            return ContextServerState::Error {
+            ContextServerState::Error {
                 configuration,
                 server,
                 error: format!("OAuth discovery failed: {discovery_err}").into(),
-            };
+            }
         }
     }
 }

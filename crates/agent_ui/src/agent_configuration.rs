@@ -950,31 +950,66 @@ impl AgentConfiguration {
             )
             .map(|parent| {
                 if let Some(error) = error {
-                    return parent.child(
-                        h_flex()
-                            .gap_2()
-                            .pr_4()
-                            .items_start()
-                            .child(
+                    return parent
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .pr_4()
+                                .items_start()
+                                .child(
+                                    h_flex()
+                                        .flex_none()
+                                        .h(window.line_height() / 1.6_f32)
+                                        .justify_center()
+                                        .child(
+                                            Icon::new(IconName::XCircle)
+                                                .size(IconSize::XSmall)
+                                                .color(Color::Error),
+                                        ),
+                                )
+                                .child(
+                                    div().w_full().child(
+                                        Label::new(error)
+                                            .buffer_font(cx)
+                                            .color(Color::Muted)
+                                            .size(LabelSize::Small),
+                                    ),
+                                ),
+                        )
+                        .when(should_show_logout_button, |parent| {
+                            parent.child(
                                 h_flex()
-                                    .flex_none()
-                                    .h(window.line_height() / 1.6_f32)
-                                    .justify_center()
+                                    .gap_2()
+                                    .pr_4()
+                                    .py_0p5()
+                                    .items_center()
+                                    .child(h_flex().flex_none().w_3().mr_2())
                                     .child(
-                                        Icon::new(IconName::XCircle)
-                                            .size(IconSize::XSmall)
-                                            .color(Color::Error),
+                                        Button::new("error-logout-server", "Log Out")
+                                            .style(ButtonStyle::Subtle)
+                                            .label_size(LabelSize::Small)
+                                            .on_click({
+                                                let context_server_store =
+                                                    context_server_store.clone();
+                                                let context_server_id =
+                                                    context_server_id.clone();
+                                                move |_event, _window, cx| {
+                                                    context_server_store.update(
+                                                        cx,
+                                                        |store, cx| {
+                                                            store
+                                                                .logout_server(
+                                                                    &context_server_id,
+                                                                    cx,
+                                                                )
+                                                                .log_err();
+                                                        },
+                                                    );
+                                                }
+                                            }),
                                     ),
                             )
-                            .child(
-                                div().w_full().child(
-                                    Label::new(error)
-                                        .buffer_font(cx)
-                                        .color(Color::Muted)
-                                        .size(LabelSize::Small),
-                                ),
-                            ),
-                    );
+                        });
                 }
                 if auth_required {
                     return parent.child(
