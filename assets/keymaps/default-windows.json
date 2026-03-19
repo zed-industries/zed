@@ -696,6 +696,7 @@
       "enter": "menu::Confirm",
       "space": "menu::Confirm",
       "ctrl-f": "agents_sidebar::FocusSidebarFilter",
+      "ctrl-g": "agents_sidebar::ToggleArchive",
       "shift-backspace": "agent::RemoveSelectedThread",
     },
   },
