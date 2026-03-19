@@ -188,7 +188,7 @@ impl SidebarThreadMetadataStore {
         })
     }
 
-    pub fn list_ids(&self, cx: &App) -> Task<Result<Vec<acp::SessionId>>> {
+    pub fn list_sidebar_ids(&self, cx: &App) -> Task<Result<Vec<acp::SessionId>>> {
         let db = self.db.clone();
         cx.background_spawn(async move {
             let s = db.list_sidebar_ids()?;
