@@ -7265,6 +7265,18 @@ impl Panel for ProjectPanel {
         });
     }
 
+    fn content_width(&self, _window: &Window, cx: &App) -> Option<Pixels> {
+        if !ProjectPanelSettings::get_global(cx).auto_resize_on_double_click {
+            return None;
+        }
+        let scroll_state = self.scroll_handle.0.borrow();
+        let item_size = scroll_state.last_item_size?;
+        let panel_chrome = self.size(_window, cx) - item_size.item.width;
+        let needed_width = item_size.longest_item_width + panel_chrome + px(8.0);
+        let default_width = ProjectPanelSettings::get_global(cx).default_width;
+        Some(needed_width.max(default_width))
+    }
+
     fn icon(&self, _: &Window, cx: &App) -> Option<IconName> {
         ProjectPanelSettings::get_global(cx)
             .button

@@ -61,6 +61,9 @@ pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn enabled(&self, _cx: &App) -> bool {
         true
     }
+    fn content_width(&self, _window: &Window, _cx: &App) -> Option<Pixels> {
+        None
+    }
 }
 
 pub trait PanelHandle: Send + Sync {
@@ -85,6 +88,7 @@ pub trait PanelHandle: Send + Sync {
     fn to_any(&self) -> AnyView;
     fn activation_priority(&self, cx: &App) -> u32;
     fn enabled(&self, cx: &App) -> bool;
+    fn content_width(&self, window: &Window, cx: &App) -> Option<Pixels>;
     fn move_to_next_position(&self, window: &mut Window, cx: &mut App) {
         let current_position = self.position(window, cx);
         let next_position = [
@@ -188,6 +192,10 @@ where
 
     fn enabled(&self, cx: &App) -> bool {
         self.read(cx).enabled(cx)
+    }
+
+    fn content_width(&self, window: &Window, cx: &App) -> Option<Pixels> {
+        self.read(cx).content_width(window, cx)
     }
 }
 
@@ -806,7 +814,10 @@ impl Render for Dock {
                         MouseButton::Left,
                         cx.listener(|dock, e: &MouseUpEvent, window, cx| {
                             if e.click_count == 2 {
-                                dock.resize_active_panel(None, window, cx);
+                                let auto_size = dock
+                                    .active_panel_entry()
+                                    .and_then(|entry| entry.panel.content_width(window, cx));
+                                dock.resize_active_panel(auto_size, window, cx);
                                 dock.workspace
                                     .update(cx, |workspace, cx| {
                                         workspace.serialize_workspace(window, cx);
