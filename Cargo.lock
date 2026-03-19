@@ -5305,6 +5305,7 @@ dependencies = [
  "client",
  "cloud_llm_client",
  "collections",
+ "db",
  "debug_adapter_extension",
  "dirs 4.0.0",
  "edit_prediction",
