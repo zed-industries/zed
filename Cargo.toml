@@ -717,7 +717,7 @@ time = { version = "0.3", features = [
     "formatting",
     "local-offset",
 ] }
-tiny_http = "0.8"
+tiny_http = "0.12"
 tokio = { version = "1" }
 tokio-socks = { version = "0.5.2", default-features = false, features = [
     "futures-io",
