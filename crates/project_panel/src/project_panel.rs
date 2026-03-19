@@ -3067,17 +3067,9 @@ impl ProjectPanel {
             .worktree_for_entry(source.entry_id, cx)?;
         let source_entry = source_worktree.read(cx).entry_for_id(source.entry_id)?;
 
-        let clipboard_entry_file_name = self
-            .project
-            .read(cx)
-            .path_for_entry(source.entry_id, cx)?
-            .path
-            .file_name()?
-            .to_string();
+        let clipboard_entry_file_name = source_entry.path.file_name()?.to_string();
         new_path.push(RelPath::unix(&clipboard_entry_file_name).unwrap());
 
-        // For files, insert the disambiguation before the extension. For directories, always append
-        // it to the end of the directory name (dots are valid characters in directory names).
         let (extension, file_name_without_extension) = if source_entry.is_file() {
             (
                 new_path.extension().map(|s| s.to_string()),
