@@ -3597,7 +3597,6 @@ async fn test_rename_item_and_check_history(cx: &mut gpui::TestAppContext) {
     });
 }
 
-
 #[gpui::test]
 async fn test_select_git_entry(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
