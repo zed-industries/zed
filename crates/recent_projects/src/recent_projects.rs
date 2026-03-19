@@ -1491,9 +1491,9 @@ impl PickerDelegate for RecentProjectsDelegate {
     fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
         let focus_handle = self.focus_handle.clone();
         let popover_style = matches!(self.style, ProjectPickerStyle::Popover);
-        let open_folder_section = matches!(
+        let is_already_open_entry = matches!(
             self.filtered_entries.get(self.selected_index),
-            Some(ProjectPickerEntry::OpenFolder { .. })
+            Some(ProjectPickerEntry::OpenFolder { .. } | ProjectPickerEntry::OpenProject(_))
         );
 
         if popover_style {
@@ -1547,7 +1547,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .map(|this| {
-                    if open_folder_section {
+                    if is_already_open_entry {
                         this.child(
                             Button::new("activate", "Activate")
                                 .key_binding(KeyBinding::for_action_in(
