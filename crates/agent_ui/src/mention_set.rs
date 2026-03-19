@@ -147,10 +147,19 @@ impl MentionSet {
                 include_errors,
                 include_warnings,
             } => self.confirm_mention_for_diagnostics(include_errors, include_warnings, cx),
+            MentionUri::GitDiff { base_ref } => {
+                self.confirm_mention_for_git_diff(base_ref.into(), cx)
+            }
+            MentionUri::Selection {
+                abs_path: Some(abs_path),
+                line_range,
+            } => self.confirm_mention_for_symbol(abs_path, line_range, cx),
+            MentionUri::Selection { abs_path: None, .. } => Task::ready(Err(anyhow!(
+                "Untitled buffer selection mentions are not supported for paste"
+            ))),
             MentionUri::PastedImage
-            | MentionUri::Selection { .. }
             | MentionUri::TerminalSelection { .. }
-            | MentionUri::GitDiff { .. } => {
+            | MentionUri::MergeConflict { .. } => {
                 Task::ready(Err(anyhow!("Unsupported mention URI type for paste")))
             }
         }
@@ -234,6 +243,8 @@ impl MentionSet {
                 mention_uri.name().into(),
                 IconName::Image.path().into(),
                 mention_uri.tooltip_text(),
+                Some(mention_uri.clone()),
+                Some(workspace.downgrade()),
                 Some(image),
                 editor.clone(),
                 window,
@@ -247,6 +258,8 @@ impl MentionSet {
                 crease_text,
                 mention_uri.icon_path(cx),
                 mention_uri.tooltip_text(),
+                Some(mention_uri.clone()),
+                Some(workspace.downgrade()),
                 None,
                 editor.clone(),
                 window,
@@ -293,9 +306,12 @@ impl MentionSet {
                 debug_panic!("unexpected terminal URI");
                 Task::ready(Err(anyhow!("unexpected terminal URI")))
             }
-            MentionUri::GitDiff { .. } => {
-                debug_panic!("unexpected git diff URI");
-                Task::ready(Err(anyhow!("unexpected git diff URI")))
+            MentionUri::GitDiff { base_ref } => {
+                self.confirm_mention_for_git_diff(base_ref.into(), cx)
+            }
+            MentionUri::MergeConflict { .. } => {
+                debug_panic!("unexpected merge conflict URI");
+                Task::ready(Err(anyhow!("unexpected merge conflict URI")))
             }
         };
         let task = cx
@@ -544,19 +560,17 @@ impl MentionSet {
             project.read(cx).fs().clone(),
             thread_store,
         ));
-        let delegate = AgentServerDelegate::new(
-            project.read(cx).agent_server_store().clone(),
-            project.clone(),
-            None,
-            None,
-        );
+        let delegate =
+            AgentServerDelegate::new(project.read(cx).agent_server_store().clone(), None);
         let connection = server.connect(delegate, cx);
         cx.spawn(async move |_, cx| {
             let agent = connection.await?;
             let agent = agent.downcast::<agent::NativeAgentConnection>().unwrap();
             let summary = agent
                 .0
-                .update(cx, |agent, cx| agent.thread_summary(id, cx))
+                .update(cx, |agent, cx| {
+                    agent.thread_summary(id, project.clone(), cx)
+                })
                 .await?;
             Ok(Mention::Text {
                 content: summary.to_string(),
@@ -593,6 +607,42 @@ impl MentionSet {
                 content,
                 tracked_buffers: Vec::new(),
             })
+        })
+    }
+
+    pub fn confirm_mention_for_git_diff(
+        &self,
+        base_ref: SharedString,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Mention>> {
+        let Some(project) = self.project.upgrade() else {
+            return Task::ready(Err(anyhow!("project not found")));
+        };
+
+        let Some(repo) = project.read(cx).active_repository(cx) else {
+            return Task::ready(Err(anyhow!("no active repository")));
+        };
+
+        let diff_receiver = repo.update(cx, |repo, cx| {
+            repo.diff(
+                git::repository::DiffType::MergeBase { base_ref: base_ref },
+                cx,
+            )
+        });
+
+        cx.spawn(async move |_, _| {
+            let diff_text = diff_receiver.await??;
+            if diff_text.is_empty() {
+                Ok(Mention::Text {
+                    content: "No changes found in branch diff.".into(),
+                    tracked_buffers: Vec::new(),
+                })
+            } else {
+                Ok(Mention::Text {
+                    content: diff_text,
+                    tracked_buffers: Vec::new(),
+                })
+            }
         })
     }
 }
@@ -644,6 +694,45 @@ mod tests {
                 .contains("Thread mentions are only supported for the native agent"),
             "Unexpected error: {error:#}"
         );
+    }
+
+    #[gpui::test]
+    async fn test_selection_mentions_supported_for_paste(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({"file.rs": "line 1\nline 2\nline 3\nline 4\n"}),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let mention_set = cx.new(|_cx| MentionSet::new(project.downgrade(), None, None));
+
+        let mention_task = mention_set.update(cx, |mention_set, cx| {
+            let http_client = project.read(cx).client().http_client();
+            mention_set.confirm_mention_for_uri(
+                MentionUri::Selection {
+                    abs_path: Some(path!("/project/file.rs").into()),
+                    line_range: 1..=2,
+                },
+                false,
+                http_client,
+                cx,
+            )
+        });
+
+        let mention = mention_task.await.unwrap();
+        match mention {
+            Mention::Text {
+                content,
+                tracked_buffers,
+            } => {
+                assert_eq!(content, "line 2\nline 3\n");
+                assert_eq!(tracked_buffers.len(), 1);
+            }
+            other => panic!("Expected selection mention to resolve as text, got {other:?}"),
+        }
     }
 }
 
@@ -699,6 +788,8 @@ pub(crate) async fn insert_images_as_context(
                 MentionUri::PastedImage.name().into(),
                 IconName::Image.path().into(),
                 None,
+                None,
+                None,
                 Some(Task::ready(Ok(image.clone())).shared()),
                 editor.clone(),
                 window,
@@ -752,6 +843,17 @@ pub(crate) fn paste_images_as_context(
     cx: &mut App,
 ) -> Option<Task<()>> {
     let clipboard = cx.read_from_clipboard()?;
+
+    // Only handle paste if the first clipboard entry is an image or file path.
+    // If text comes first, return None so the caller falls through to text paste.
+    // This respects the priority order set by the source application.
+    if matches!(
+        clipboard.entries().first(),
+        Some(ClipboardEntry::String(_)) | None
+    ) {
+        return None;
+    }
+
     Some(window.spawn(cx, async move |mut cx| {
         use itertools::Itertools;
         let (mut images, paths) = clipboard
@@ -794,12 +896,9 @@ pub(crate) fn paste_images_as_context(
             );
         }
 
-        cx.update(|_window, cx| {
-            cx.stop_propagation();
-        })
-        .ok();
-
-        insert_images_as_context(images, editor, mention_set, workspace, &mut cx).await;
+        if !images.is_empty() {
+            insert_images_as_context(images, editor, mention_set, workspace, &mut cx).await;
+        }
     }))
 }
 
@@ -810,6 +909,8 @@ pub(crate) fn insert_crease_for_mention(
     crease_label: SharedString,
     crease_icon: SharedString,
     crease_tooltip: Option<SharedString>,
+    mention_uri: Option<MentionUri>,
+    workspace: Option<WeakEntity<Workspace>>,
     image: Option<Shared<Task<Result<Arc<Image>, String>>>>,
     editor: Entity<Editor>,
     window: &mut Window,
@@ -830,6 +931,8 @@ pub(crate) fn insert_crease_for_mention(
                 crease_label.clone(),
                 crease_icon.clone(),
                 crease_tooltip,
+                mention_uri.clone(),
+                workspace.clone(),
                 start..end,
                 rx,
                 image,
@@ -1029,6 +1132,8 @@ fn render_mention_fold_button(
     label: SharedString,
     icon: SharedString,
     tooltip: Option<SharedString>,
+    mention_uri: Option<MentionUri>,
+    workspace: Option<WeakEntity<Workspace>>,
     range: Range<Anchor>,
     mut loading_finished: postage::barrier::Receiver,
     image_task: Option<Shared<Task<Result<Arc<Image>, String>>>>,
@@ -1049,6 +1154,8 @@ fn render_mention_fold_button(
             label,
             icon,
             tooltip,
+            mention_uri: mention_uri.clone(),
+            workspace: workspace.clone(),
             range,
             editor,
             loading: Some(loading),
@@ -1063,6 +1170,8 @@ struct LoadingContext {
     label: SharedString,
     icon: SharedString,
     tooltip: Option<SharedString>,
+    mention_uri: Option<MentionUri>,
+    workspace: Option<WeakEntity<Workspace>>,
     range: Range<Anchor>,
     editor: WeakEntity<Editor>,
     loading: Option<Task<()>>,
@@ -1079,6 +1188,8 @@ impl Render for LoadingContext {
         let id = ElementId::from(("loading_context", self.id));
 
         MentionCrease::new(id, self.icon.clone(), self.label.clone())
+            .mention_uri(self.mention_uri.clone())
+            .workspace(self.workspace.clone())
             .is_toggled(is_in_text_selection)
             .is_loading(self.loading.is_some())
             .when_some(self.tooltip.clone(), |this, tooltip_text| {

@@ -12,8 +12,7 @@ use feature_flags::{FeatureFlagAppExt as _, StreamingEditFileToolFeatureFlag};
 
 use agent_client_protocol as acp;
 use agent_settings::{
-    AgentProfileId, AgentProfileSettings, AgentSettings, SUMMARIZE_THREAD_DETAILED_PROMPT,
-    SUMMARIZE_THREAD_PROMPT,
+    AgentProfileId, AgentSettings, SUMMARIZE_THREAD_DETAILED_PROMPT, SUMMARIZE_THREAD_PROMPT,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -219,6 +218,7 @@ impl UserMessage {
             "<rules>\nThe user has specified the following rules that should be applied:\n";
         const OPEN_DIAGNOSTICS_TAG: &str = "<diagnostics>";
         const OPEN_DIFFS_TAG: &str = "<diffs>";
+        const MERGE_CONFLICT_TAG: &str = "<merge_conflicts>";
 
         let mut file_context = OPEN_FILES_TAG.to_string();
         let mut directory_context = OPEN_DIRECTORIES_TAG.to_string();
@@ -229,6 +229,7 @@ impl UserMessage {
         let mut rules_context = OPEN_RULES_TAG.to_string();
         let mut diagnostics_context = OPEN_DIAGNOSTICS_TAG.to_string();
         let mut diffs_context = OPEN_DIFFS_TAG.to_string();
+        let mut merge_conflict_context = MERGE_CONFLICT_TAG.to_string();
 
         for chunk in &self.content {
             let chunk = match chunk {
@@ -336,6 +337,18 @@ impl UserMessage {
                             )
                             .ok();
                         }
+                        MentionUri::MergeConflict { file_path } => {
+                            write!(
+                                &mut merge_conflict_context,
+                                "\nMerge conflict in {}:\n{}",
+                                file_path,
+                                MarkdownCodeBlock {
+                                    tag: "diff",
+                                    text: content
+                                }
+                            )
+                            .ok();
+                        }
                     }
 
                     language_model::MessageContent::Text(uri.as_link().to_string())
@@ -408,6 +421,13 @@ impl UserMessage {
             message
                 .content
                 .push(language_model::MessageContent::Text(diagnostics_context));
+        }
+
+        if merge_conflict_context.len() > MERGE_CONFLICT_TAG.len() {
+            merge_conflict_context.push_str("</merge_conflicts>\n");
+            message
+                .content
+                .push(language_model::MessageContent::Text(merge_conflict_context));
         }
 
         if message.content.len() > len_before_context {
@@ -893,14 +913,13 @@ pub struct Thread {
     pub(crate) prompt_capabilities_rx: watch::Receiver<acp::PromptCapabilities>,
     pub(crate) project: Entity<Project>,
     pub(crate) action_log: Entity<ActionLog>,
-    /// Tracks the last time files were read by the agent, to detect external modifications
-    pub(crate) file_read_times: HashMap<PathBuf, fs::MTime>,
     /// True if this thread was imported from a shared thread and can be synced.
     imported: bool,
     /// If this is a subagent thread, contains context about the parent
     subagent_context: Option<SubagentContext>,
     /// The user's unsent prompt text, persisted so it can be restored when reloading the thread.
     draft_prompt: Option<Vec<acp::ContentBlock>>,
+    ui_scroll_position: Option<gpui::ListOffset>,
     /// Weak references to running subagent threads for cancellation propagation
     running_subagents: Vec<WeakEntity<Thread>>,
 }
@@ -1013,10 +1032,10 @@ impl Thread {
             prompt_capabilities_rx,
             project,
             action_log,
-            file_read_times: HashMap::default(),
             imported: false,
             subagent_context: None,
             draft_prompt: None,
+            ui_scroll_position: None,
             running_subagents: Vec::new(),
         }
     }
@@ -1229,10 +1248,13 @@ impl Thread {
             updated_at: db_thread.updated_at,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
-            file_read_times: HashMap::default(),
             imported: db_thread.imported,
             subagent_context: db_thread.subagent_context,
             draft_prompt: db_thread.draft_prompt,
+            ui_scroll_position: db_thread.ui_scroll_position.map(|sp| gpui::ListOffset {
+                item_ix: sp.item_ix,
+                offset_in_item: gpui::px(sp.offset_in_item),
+            }),
             running_subagents: Vec::new(),
         }
     }
@@ -1258,6 +1280,12 @@ impl Thread {
             thinking_enabled: self.thinking_enabled,
             thinking_effort: self.thinking_effort.clone(),
             draft_prompt: self.draft_prompt.clone(),
+            ui_scroll_position: self.ui_scroll_position.map(|lo| {
+                crate::db::SerializedScrollPosition {
+                    item_ix: lo.item_ix,
+                    offset_in_item: lo.offset_in_item.as_f32(),
+                }
+            }),
         };
 
         cx.background_spawn(async move {
@@ -1305,6 +1333,14 @@ impl Thread {
 
     pub fn set_draft_prompt(&mut self, prompt: Option<Vec<acp::ContentBlock>>) {
         self.draft_prompt = prompt;
+    }
+
+    pub fn ui_scroll_position(&self) -> Option<gpui::ListOffset> {
+        self.ui_scroll_position
+    }
+
+    pub fn set_ui_scroll_position(&mut self, position: Option<gpui::ListOffset>) {
+        self.ui_scroll_position = position;
     }
 
     pub fn model(&self) -> Option<&Arc<dyn LanguageModel>> {
@@ -1416,6 +1452,9 @@ impl Thread {
         environment: Rc<dyn ThreadEnvironment>,
         cx: &mut Context<Self>,
     ) {
+        // Only update the agent location for the root thread, not for subagents.
+        let update_agent_location = self.parent_thread_id().is_none();
+
         let language_registry = self.project.read(cx).languages().clone();
         self.add_tool(CopyPathTool::new(self.project.clone()));
         self.add_tool(CreateDirectoryTool::new(self.project.clone()));
@@ -1433,6 +1472,7 @@ impl Thread {
         self.add_tool(StreamingEditFileTool::new(
             self.project.clone(),
             cx.weak_entity(),
+            self.action_log.clone(),
             language_registry,
         ));
         self.add_tool(FetchTool::new(self.project.read(cx).client().http_client()));
@@ -1443,9 +1483,9 @@ impl Thread {
         self.add_tool(NowTool);
         self.add_tool(OpenTool::new(self.project.clone()));
         self.add_tool(ReadFileTool::new(
-            cx.weak_entity(),
             self.project.clone(),
             self.action_log.clone(),
+            update_agent_location,
         ));
         self.add_tool(SaveFileTool::new(self.project.clone()));
         self.add_tool(RestoreFileFromDiskTool::new(self.project.clone()));
@@ -1730,11 +1770,6 @@ impl Thread {
         self.flush_pending_message(cx);
         self.cancel(cx).detach();
 
-        let model = self.model.clone().context("No language model configured")?;
-        let profile = AgentSettings::get_global(cx)
-            .profiles
-            .get(&self.profile_id)
-            .context("Profile not found")?;
         let (events_tx, events_rx) = mpsc::unbounded::<Result<ThreadEvent>>();
         let event_stream = ThreadEventStream(events_tx);
         let message_ix = self.messages.len().saturating_sub(1);
@@ -1742,20 +1777,15 @@ impl Thread {
         let (cancellation_tx, mut cancellation_rx) = watch::channel(false);
         self.running_turn = Some(RunningTurn {
             event_stream: event_stream.clone(),
-            tools: self.enabled_tools(profile, &model, cx),
+            tools: self.enabled_tools(cx),
             cancellation_tx,
             streaming_tool_inputs: HashMap::default(),
             _task: cx.spawn(async move |this, cx| {
                 log::debug!("Starting agent turn execution");
 
-                let turn_result = Self::run_turn_internal(
-                    &this,
-                    model,
-                    &event_stream,
-                    cancellation_rx.clone(),
-                    cx,
-                )
-                .await;
+                let turn_result =
+                    Self::run_turn_internal(&this, &event_stream, cancellation_rx.clone(), cx)
+                        .await;
 
                 // Check if we were cancelled - if so, cancel() already took running_turn
                 // and we shouldn't touch it (it might be a NEW turn now)
@@ -1797,7 +1827,6 @@ impl Thread {
 
     async fn run_turn_internal(
         this: &WeakEntity<Self>,
-        model: Arc<dyn LanguageModel>,
         event_stream: &ThreadEventStream,
         mut cancellation_rx: watch::Receiver<bool>,
         cx: &mut AsyncApp,
@@ -1805,8 +1834,15 @@ impl Thread {
         let mut attempt = 0;
         let mut intent = CompletionIntent::UserPrompt;
         loop {
-            let request =
-                this.update(cx, |this, cx| this.build_completion_request(intent, cx))??;
+            // Re-read the model and refresh tools on each iteration so that
+            // mid-turn changes (e.g. the user switches model, toggles tools,
+            // or changes profile) take effect between tool-call rounds.
+            let (model, request) = this.update(cx, |this, cx| {
+                let model = this.model.clone().context("No language model configured")?;
+                this.refresh_turn_tools(cx);
+                let request = this.build_completion_request(intent, cx)?;
+                anyhow::Ok((model, request))
+            })??;
 
             telemetry::event!(
                 "Agent Thread Completion",
@@ -1826,12 +1862,37 @@ impl Thread {
                 Ok(events) => (events.fuse(), None),
                 Err(err) => (stream::empty().boxed().fuse(), Some(err)),
             };
-            let mut tool_results = FuturesUnordered::new();
+            let mut tool_results: FuturesUnordered<Task<LanguageModelToolResult>> =
+                FuturesUnordered::new();
+            let mut early_tool_results: Vec<LanguageModelToolResult> = Vec::new();
             let mut cancelled = false;
             loop {
-                // Race between getting the first event and cancellation
+                // Race between getting the first event, tool completion, and cancellation.
                 let first_event = futures::select! {
                     event = events.next().fuse() => event,
+                    tool_result = futures::StreamExt::select_next_some(&mut tool_results) => {
+                        let is_error = tool_result.is_error;
+                        let is_still_streaming = this
+                            .read_with(cx, |this, _cx| {
+                                this.running_turn
+                                    .as_ref()
+                                    .and_then(|turn| turn.streaming_tool_inputs.get(&tool_result.tool_use_id))
+                                    .map_or(false, |inputs| !inputs.has_received_final())
+                            })
+                            .unwrap_or(false);
+
+                        early_tool_results.push(tool_result);
+
+                        // Only break if the tool errored and we are still
+                        // streaming the input of the tool. If the tool errored
+                        // but we are no longer streaming its input (i.e. there
+                        // are parallel tool calls) we want to continue
+                        // processing those tool inputs.
+                        if is_error && is_still_streaming {
+                            break;
+                        }
+                        continue;
+                    }
                     _ = cancellation_rx.changed().fuse() => {
                         if *cancellation_rx.borrow() {
                             cancelled = true;
@@ -1898,26 +1959,26 @@ impl Thread {
             // that need their own permits.
             drop(events);
 
-            let end_turn = tool_results.is_empty();
-            while let Some(tool_result) = tool_results.next().await {
-                log::debug!("Tool finished {:?}", tool_result);
+            // Drop streaming tool input senders that never received their final input.
+            // This prevents deadlock when the LLM stream ends (e.g. because of an error)
+            // before sending a tool use with `is_input_complete: true`.
+            this.update(cx, |this, _cx| {
+                if let Some(running_turn) = this.running_turn.as_mut() {
+                    if running_turn.streaming_tool_inputs.is_empty() {
+                        return;
+                    }
+                    log::warn!("Dropping partial tool inputs because the stream ended");
+                    running_turn.streaming_tool_inputs.drain();
+                }
+            })?;
 
-                event_stream.update_tool_call_fields(
-                    &tool_result.tool_use_id,
-                    acp::ToolCallUpdateFields::new()
-                        .status(if tool_result.is_error {
-                            acp::ToolCallStatus::Failed
-                        } else {
-                            acp::ToolCallStatus::Completed
-                        })
-                        .raw_output(tool_result.output.clone()),
-                    None,
-                );
-                this.update(cx, |this, _cx| {
-                    this.pending_message()
-                        .tool_results
-                        .insert(tool_result.tool_use_id.clone(), tool_result);
-                })?;
+            let end_turn = tool_results.is_empty() && early_tool_results.is_empty();
+
+            for tool_result in early_tool_results {
+                Self::process_tool_result(this, event_stream, cx, tool_result)?;
+            }
+            while let Some(tool_result) = tool_results.next().await {
+                Self::process_tool_result(this, event_stream, cx, tool_result)?;
             }
 
             this.update(cx, |this, cx| {
@@ -1940,7 +2001,15 @@ impl Thread {
                 })??;
                 let timer = cx.background_executor().timer(retry.duration);
                 event_stream.send_retry(retry);
-                timer.await;
+                futures::select! {
+                    _ = timer.fuse() => {}
+                    _ = cancellation_rx.changed().fuse() => {
+                        if *cancellation_rx.borrow() {
+                            log::debug!("Turn cancelled during retry delay, exiting");
+                            return Ok(());
+                        }
+                    }
+                }
                 this.update(cx, |this, _cx| {
                     if let Some(Message::Agent(message)) = this.messages.last() {
                         if message.tool_results.is_empty() {
@@ -1961,6 +2030,33 @@ impl Thread {
                 attempt = 0;
             }
         }
+    }
+
+    fn process_tool_result(
+        this: &WeakEntity<Thread>,
+        event_stream: &ThreadEventStream,
+        cx: &mut AsyncApp,
+        tool_result: LanguageModelToolResult,
+    ) -> Result<(), anyhow::Error> {
+        log::debug!("Tool finished {:?}", tool_result);
+
+        event_stream.update_tool_call_fields(
+            &tool_result.tool_use_id,
+            acp::ToolCallUpdateFields::new()
+                .status(if tool_result.is_error {
+                    acp::ToolCallStatus::Failed
+                } else {
+                    acp::ToolCallStatus::Completed
+                })
+                .raw_output(tool_result.output.clone()),
+            None,
+        );
+        this.update(cx, |this, _cx| {
+            this.pending_message()
+                .tool_results
+                .insert(tool_result.tool_use_id.clone(), tool_result);
+        })?;
+        Ok(())
     }
 
     fn handle_completion_error(
@@ -2308,20 +2404,18 @@ impl Thread {
     ) {
         // Ensure the last message ends in the current tool use
         let last_message = self.pending_message();
-        let push_new_tool_use = last_message.content.last_mut().is_none_or(|content| {
+
+        let has_tool_use = last_message.content.iter_mut().rev().any(|content| {
             if let AgentMessageContent::ToolUse(last_tool_use) = content {
                 if last_tool_use.id == tool_use.id {
                     *last_tool_use = tool_use.clone();
-                    false
-                } else {
-                    true
+                    return true;
                 }
-            } else {
-                true
             }
+            false
         });
 
-        if push_new_tool_use {
+        if !has_tool_use {
             event_stream.send_tool_call(
                 &tool_use.id,
                 &tool_use.name,
@@ -2471,6 +2565,14 @@ impl Thread {
                 .is_some()
             {
                 _ = this.update(cx, |this, cx| this.set_title(title.into(), cx));
+            } else {
+                // Emit TitleUpdated even on failure so that the propagation
+                // chain (agent::Thread → NativeAgent → AcpThread) fires and
+                // clears any provisional title that was set before the turn.
+                _ = this.update(cx, |_, cx| {
+                    cx.emit(TitleUpdated);
+                    cx.notify();
+                });
             }
             _ = this.update(cx, |this, _| this.pending_title_generation = None);
         }));
@@ -2593,12 +2695,13 @@ impl Thread {
         Ok(request)
     }
 
-    fn enabled_tools(
-        &self,
-        profile: &AgentProfileSettings,
-        model: &Arc<dyn LanguageModel>,
-        cx: &App,
-    ) -> BTreeMap<SharedString, Arc<dyn AnyAgentTool>> {
+    fn enabled_tools(&self, cx: &App) -> BTreeMap<SharedString, Arc<dyn AnyAgentTool>> {
+        let Some(model) = self.model.as_ref() else {
+            return BTreeMap::new();
+        };
+        let Some(profile) = AgentSettings::get_global(cx).profiles.get(&self.profile_id) else {
+            return BTreeMap::new();
+        };
         fn truncate(tool_name: &SharedString) -> SharedString {
             if tool_name.len() > MAX_TOOL_NAME_LENGTH {
                 let mut truncated = tool_name.to_string();
@@ -2609,7 +2712,8 @@ impl Thread {
             }
         }
 
-        let use_streaming_edit_tool = cx.has_flag::<StreamingEditFileToolFeatureFlag>();
+        let use_streaming_edit_tool =
+            cx.has_flag::<StreamingEditFileToolFeatureFlag>() && model.supports_streaming_tools();
 
         let mut tools = self
             .tools
@@ -2676,6 +2780,13 @@ impl Thread {
         }
 
         tools
+    }
+
+    fn refresh_turn_tools(&mut self, cx: &App) {
+        let tools = self.enabled_tools(cx);
+        if let Some(turn) = self.running_turn.as_mut() {
+            turn.tools = tools;
+        }
     }
 
     fn tool(&self, name: &str) -> Option<Arc<dyn AnyAgentTool>> {
@@ -2921,7 +3032,8 @@ struct RunningTurn {
     /// The current event stream for the running turn. Used to report a final
     /// cancellation event if we cancel the turn.
     event_stream: ThreadEventStream,
-    /// The tools that were enabled for this turn.
+    /// The tools that are enabled for the current iteration of the turn.
+    /// Refreshed at the start of each iteration via `refresh_turn_tools`.
     tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
     /// Sender to signal tool cancellation. When cancel is called, this is
     /// set to true so all tools can detect user-initiated cancellation.
@@ -2992,7 +3104,7 @@ impl<T: DeserializeOwned> ToolInput<T> {
         let value = self
             .final_rx
             .await
-            .map_err(|_| anyhow!("tool input sender was dropped before sending final input"))?;
+            .map_err(|_| anyhow!("tool input was not fully received"))?;
         serde_json::from_value(value).map_err(Into::into)
     }
 
@@ -3030,6 +3142,10 @@ impl ToolInputSender {
             _phantom: PhantomData,
         };
         (sender, input)
+    }
+
+    pub(crate) fn has_received_final(&self) -> bool {
+        self.final_tx.is_none()
     }
 
     pub(crate) fn send_partial(&self, value: serde_json::Value) {

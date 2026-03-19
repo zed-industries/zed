@@ -5,12 +5,16 @@ use futures::StreamExt;
 use gpui::{App, AsyncApp, Task};
 use http_client::github::latest_github_release;
 pub use language::*;
-use language::{LanguageToolchainStore, LspAdapterDelegate, LspInstaller};
+use language::{
+    LanguageName, LanguageToolchainStore, LspAdapterDelegate, LspInstaller,
+    language_settings::language_settings,
+};
 use lsp::{LanguageServerBinary, LanguageServerName};
 
 use project::lsp_store::language_server_settings;
 use regex::Regex;
 use serde_json::{Value, json};
+use settings::SemanticTokenRules;
 use smol::fs;
 use std::{
     borrow::Cow,
@@ -26,6 +30,16 @@ use std::{
 };
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
 use util::{ResultExt, fs::remove_matching, maybe, merge_json_value_into};
+
+use crate::LanguageDir;
+
+pub(crate) fn semantic_token_rules() -> SemanticTokenRules {
+    let content = LanguageDir::get("go/semantic_token_rules.json")
+        .expect("missing go/semantic_token_rules.json");
+    let json = std::str::from_utf8(&content.data).expect("invalid utf-8 in semantic_token_rules");
+    settings::parse_json_with_comments::<SemanticTokenRules>(json)
+        .expect("failed to parse go semantic_token_rules.json")
+}
 
 fn server_binary_arguments() -> Vec<OsString> {
     vec!["-mode=stdio".into()]
@@ -196,6 +210,12 @@ impl LspAdapter for GoLspAdapter {
         delegate: &Arc<dyn LspAdapterDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<Option<serde_json::Value>> {
+        let semantic_tokens_enabled = cx.update(|cx| {
+            language_settings(Some(LanguageName::new("Go")), None, cx)
+                .semantic_tokens
+                .enabled()
+        });
+
         let mut default_config = json!({
             "usePlaceholders": false,
             "hints": {
@@ -206,7 +226,8 @@ impl LspAdapter for GoLspAdapter {
                 "functionTypeParameters": true,
                 "parameterNames": true,
                 "rangeVariableTypes": true
-            }
+            },
+            "semanticTokens": semantic_tokens_enabled
         });
 
         let project_initialization_options = cx.update(|cx| {

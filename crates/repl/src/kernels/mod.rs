@@ -9,6 +9,7 @@ pub use native_kernel::*;
 
 mod remote_kernels;
 use project::{Project, ProjectPath, Toolchains, WorktreeId};
+use remote::RemoteConnectionOptions;
 pub use remote_kernels::*;
 
 mod ssh_kernel;
@@ -238,7 +239,7 @@ impl KernelSpecification {
             Self::PythonEnv(spec) => spec.name.clone().into(),
             Self::JupyterServer(spec) => spec.name.clone().into(),
             Self::SshRemote(spec) => spec.name.clone().into(),
-            Self::WslRemote(spec) => spec.name.clone().into(),
+            Self::WslRemote(spec) => spec.kernelspec.display_name.clone().into(),
         }
     }
 
@@ -262,7 +263,7 @@ impl KernelSpecification {
             Self::PythonEnv(spec) => spec.path.to_string_lossy().into_owned(),
             Self::JupyterServer(spec) => spec.url.to_string(),
             Self::SshRemote(spec) => spec.path.to_string(),
-            Self::WslRemote(_) => "WSL".to_string(),
+            Self::WslRemote(spec) => spec.distro.clone(),
         })
     }
 
@@ -348,7 +349,16 @@ pub fn python_env_kernel_specifications(
 ) -> impl Future<Output = Result<Vec<KernelSpecification>>> + use<> {
     let python_language = LanguageName::new_static("Python");
     let is_remote = project.read(cx).is_remote();
-    log::info!("python_env_kernel_specifications: is_remote: {}", is_remote);
+    let wsl_distro = project
+        .read(cx)
+        .remote_connection_options(cx)
+        .and_then(|opts| {
+            if let RemoteConnectionOptions::Wsl(wsl) = opts {
+                Some(wsl.distro_name)
+            } else {
+                None
+            }
+        });
 
     let toolchains = project.read(cx).available_toolchains(
         ProjectPath {
@@ -383,6 +393,7 @@ pub fn python_env_kernel_specifications(
             .flatten()
             .chain(toolchains.toolchains)
             .map(|toolchain| {
+                let wsl_distro = wsl_distro.clone();
                 background_executor.spawn(async move {
                     // For remote projects, we assume python is available assuming toolchain is reported.
                     // We can skip the `ipykernel` check or run it remotely.
@@ -390,10 +401,6 @@ pub fn python_env_kernel_specifications(
                     // `new_smol_command` runs locally. We need to run remotely if `is_remote`.
 
                     if is_remote {
-                        log::info!(
-                            "python_env_kernel_specifications: returning SshRemote for toolchain {}",
-                            toolchain.name
-                        );
                         let default_kernelspec = JupyterKernelspec {
                             argv: vec![
                                 toolchain.path.to_string(),
@@ -409,6 +416,22 @@ pub fn python_env_kernel_specifications(
                             env: None,
                         };
 
+                        if let Some(distro) = wsl_distro {
+                            log::debug!(
+                                "python_env_kernel_specifications: returning WslRemote for toolchain {}",
+                                toolchain.name
+                            );
+                            return Some(KernelSpecification::WslRemote(WslKernelSpecification {
+                                name: toolchain.name.to_string(),
+                                kernelspec: default_kernelspec,
+                                distro,
+                            }));
+                        }
+
+                        log::debug!(
+                            "python_env_kernel_specifications: returning SshRemote for toolchain {}",
+                            toolchain.name
+                        );
                         return Some(KernelSpecification::SshRemote(
                             SshRemoteKernelSpecification {
                                 name: format!("Remote {}", toolchain.name),
@@ -480,11 +503,11 @@ pub fn python_env_kernel_specifications(
             });
 
         #[allow(unused_mut)]
-        let mut kernel_specs: Vec<KernelSpecification> = futures::future::join_all(kernelspecs)
-            .await
-            .into_iter()
-            .flatten()
-            .collect();
+        let mut kernel_specs: Vec<KernelSpecification> = futures::stream::iter(kernelspecs)
+            .buffer_unordered(4)
+            .filter_map(|x| async move { x })
+            .collect::<Vec<_>>()
+            .await;
 
         #[cfg(target_os = "windows")]
         if kernel_specs.is_empty() && !is_remote {

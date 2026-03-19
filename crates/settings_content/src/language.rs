@@ -90,7 +90,7 @@ pub enum EditPredictionProvider {
     Experimental(&'static str),
 }
 
-pub const EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME: &str = "zeta2";
+const EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME: &str = "zeta2";
 
 impl<'de> Deserialize<'de> for EditPredictionProvider {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -157,10 +157,7 @@ impl EditPredictionProvider {
             EditPredictionProvider::Codestral => Some("Codestral"),
             EditPredictionProvider::Sweep => Some("Sweep"),
             EditPredictionProvider::Mercury => Some("Mercury"),
-            EditPredictionProvider::Experimental(
-                EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME,
-            ) => Some("Zeta2"),
-            EditPredictionProvider::None | EditPredictionProvider::Experimental(_) => None,
+            EditPredictionProvider::Experimental(_) | EditPredictionProvider::None => None,
             EditPredictionProvider::Ollama => Some("Ollama"),
             EditPredictionProvider::OpenAiCompatibleApi => Some("OpenAI-Compatible API"),
         }
@@ -387,6 +384,32 @@ pub enum EditPredictionsMode {
     strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
+pub enum AutoIndentMode {
+    /// Adjusts indentation based on syntax context when typing.
+    /// Uses tree-sitter to analyze code structure and indent accordingly.
+    SyntaxAware,
+    /// Preserve the indentation of the current line when creating new lines,
+    /// but don't adjust based on syntax context.
+    PreserveIndent,
+    /// No automatic indentation. New lines start at column 0.
+    None,
+}
+
+/// Controls the soft-wrapping behavior in the editor.
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum SoftWrap {
     /// Prefer a single line generally, unless an overly long line is encountered.
     None,
@@ -574,10 +597,14 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub linked_edits: Option<bool>,
-    /// Whether indentation should be adjusted based on the context whilst typing.
+    /// Controls automatic indentation behavior when typing.
     ///
-    /// Default: true
-    pub auto_indent: Option<bool>,
+    /// - "syntax_aware": Adjusts indentation based on syntax context (default)
+    /// - "preserve_indent": Preserves current line's indentation on new lines
+    /// - "none": No automatic indentation
+    ///
+    /// Default: syntax_aware
+    pub auto_indent: Option<AutoIndentMode>,
     /// Whether indentation of pasted content should be adjusted based on the context.
     ///
     /// Default: true
@@ -928,6 +955,8 @@ pub enum Formatter {
     /// or falling back to formatting via language server.
     #[default]
     Auto,
+    /// Do not format code.
+    None,
     /// Format code using Zed's Prettier integration.
     Prettier,
     /// Format code using an external command.
@@ -1120,6 +1149,12 @@ mod test {
         assert_eq!(
             settings.formatter,
             Some(FormatterList::Single(Formatter::Auto))
+        );
+        let raw_none = "{\"formatter\": \"none\"}";
+        let settings: LanguageSettingsContent = serde_json::from_str(raw_none).unwrap();
+        assert_eq!(
+            settings.formatter,
+            Some(FormatterList::Single(Formatter::None))
         );
         let raw = "{\"formatter\": \"language_server\"}";
         let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();

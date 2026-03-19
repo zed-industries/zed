@@ -5,17 +5,11 @@ use chrono::{DateTime, Utc};
 use collections::IndexMap;
 use gpui::{Entity, SharedString, Task};
 use language_model::LanguageModelProviderId;
-use project::Project;
+use project::{AgentId, Project};
 use serde::{Deserialize, Serialize};
-use std::{
-    any::Any,
-    error::Error,
-    fmt,
-    path::{Path, PathBuf},
-    rc::Rc,
-    sync::Arc,
-};
+use std::{any::Any, error::Error, fmt, path::PathBuf, rc::Rc, sync::Arc};
 use ui::{App, IconName};
+use util::path_list::PathList;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
@@ -28,12 +22,14 @@ impl UserMessageId {
 }
 
 pub trait AgentConnection {
+    fn agent_id(&self) -> AgentId;
+
     fn telemetry_id(&self) -> SharedString;
 
     fn new_session(
         self: Rc<Self>,
         project: Entity<Project>,
-        cwd: &Path,
+        _work_dirs: PathList,
         cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>>;
 
@@ -45,9 +41,10 @@ pub trait AgentConnection {
     /// Load an existing session by ID.
     fn load_session(
         self: Rc<Self>,
-        _session: AgentSessionInfo,
+        _session_id: acp::SessionId,
         _project: Entity<Project>,
-        _cwd: &Path,
+        _work_dirs: PathList,
+        _title: Option<SharedString>,
         _cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
         Task::ready(Err(anyhow::Error::msg("Loading sessions is not supported")))
@@ -59,7 +56,11 @@ pub trait AgentConnection {
     }
 
     /// Close an existing session. Allows the agent to free the session from memory.
-    fn close_session(&self, _session_id: &acp::SessionId, _cx: &mut App) -> Task<Result<()>> {
+    fn close_session(
+        self: Rc<Self>,
+        _session_id: &acp::SessionId,
+        _cx: &mut App,
+    ) -> Task<Result<()>> {
         Task::ready(Err(anyhow::Error::msg("Closing sessions is not supported")))
     }
 
@@ -71,9 +72,10 @@ pub trait AgentConnection {
     /// Resume an existing session by ID without replaying previous messages.
     fn resume_session(
         self: Rc<Self>,
-        _session: AgentSessionInfo,
+        _session_id: acp::SessionId,
         _project: Entity<Project>,
-        _cwd: &Path,
+        _work_dirs: PathList,
+        _title: Option<SharedString>,
         _cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
         Task::ready(Err(anyhow::Error::msg(
@@ -237,9 +239,10 @@ impl AgentSessionListResponse {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgentSessionInfo {
     pub session_id: acp::SessionId,
-    pub cwd: Option<PathBuf>,
+    pub work_dirs: Option<PathList>,
     pub title: Option<SharedString>,
     pub updated_at: Option<DateTime<Utc>>,
+    pub created_at: Option<DateTime<Utc>>,
     pub meta: Option<acp::Meta>,
 }
 
@@ -247,9 +250,10 @@ impl AgentSessionInfo {
     pub fn new(session_id: impl Into<acp::SessionId>) -> Self {
         Self {
             session_id: session_id.into(),
-            cwd: None,
+            work_dirs: None,
             title: None,
             updated_at: None,
+            created_at: None,
             meta: None,
         }
     }
@@ -496,6 +500,7 @@ mod test_support {
     //! - `create_test_png_base64` for generating test images
 
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use action_log::ActionLog;
     use collections::HashMap;
@@ -600,6 +605,10 @@ mod test_support {
     }
 
     impl AgentConnection for StubAgentConnection {
+        fn agent_id(&self) -> AgentId {
+            AgentId::new("stub")
+        }
+
         fn telemetry_id(&self) -> SharedString {
             "stub".into()
         }
@@ -618,15 +627,18 @@ mod test_support {
         fn new_session(
             self: Rc<Self>,
             project: Entity<Project>,
-            _cwd: &Path,
+            work_dirs: PathList,
             cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
-            let session_id = acp::SessionId::new(self.sessions.lock().len().to_string());
+            static NEXT_SESSION_ID: AtomicUsize = AtomicUsize::new(0);
+            let session_id =
+                acp::SessionId::new(NEXT_SESSION_ID.fetch_add(1, Ordering::SeqCst).to_string());
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
             let thread = cx.new(|cx| {
                 AcpThread::new(
                     None,
                     "Test",
+                    Some(work_dirs),
                     self.clone(),
                     project,
                     action_log,

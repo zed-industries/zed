@@ -29,14 +29,16 @@ pub fn run_perf(
     crate_name: &WorkflowInput,
 ) -> NamedJob {
     fn cargo_perf_test(ref_name: &WorkflowInput, crate_name: &WorkflowInput) -> Step<Run> {
-        named::bash(&format!(
-            "
-            if [ -n \"{crate_name}\" ]; then
-                cargo perf-test -p {crate_name} -- --json={ref_name};
+        named::bash(
+            r#"
+            if [ -n "$CRATE_NAME" ]; then
+                cargo perf-test -p "$CRATE_NAME" -- --json="$REF_NAME";
             else
-                cargo perf-test -p vim -- --json={ref_name};
-            fi"
-        ))
+                cargo perf-test -p vim -- --json="$REF_NAME";
+            fi"#,
+        )
+        .add_env(("REF_NAME", ref_name.to_string()))
+        .add_env(("CRATE_NAME", crate_name.to_string()))
     }
 
     fn install_hyperfine() -> Step<Use> {
@@ -44,9 +46,9 @@ pub fn run_perf(
     }
 
     fn compare_runs(head: &WorkflowInput, base: &WorkflowInput) -> Step<Run> {
-        named::bash(&format!(
-            "cargo perf-compare --save=results.md {base} {head}"
-        ))
+        named::bash(r#"cargo perf-compare --save=results.md "$BASE" "$HEAD""#)
+            .add_env(("BASE", base.to_string()))
+            .add_env(("HEAD", head.to_string()))
     }
 
     named::job(
