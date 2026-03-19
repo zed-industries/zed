@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     Agent, RemoveSelectedThread, agent_connection_store::AgentConnectionStore,
-    thread_history::ThreadHistory, thread_metadata_store::SidebarThreadMetadataStore,
+    thread_history::ThreadHistory,
 };
 use acp_thread::AgentSessionInfo;
 use agent::ThreadStore;
@@ -244,21 +244,11 @@ impl ThreadsArchiveView {
         let today = Local::now().naive_local().date();
 
         self._update_items_task.take();
-        let unarchived_ids_task = SidebarThreadMetadataStore::global(cx)
-            .read(cx)
-            .list_sidebar_ids(cx);
         self._update_items_task = Some(cx.spawn(async move |this, cx| {
-            let unarchived_session_ids = unarchived_ids_task.await.unwrap_or_default();
-
             let mut items = Vec::with_capacity(sessions.len() + 5);
             let mut current_bucket: Option<TimeBucket> = None;
 
             for session in sessions {
-                // Skip sessions that are shown in the sidebar
-                if unarchived_session_ids.contains(&session.session_id) {
-                    continue;
-                }
-
                 let highlight_positions = if !query.is_empty() {
                     let title = session.title.as_ref().map(|t| t.as_ref()).unwrap_or("");
                     match fuzzy_match_positions(&query, title) {
