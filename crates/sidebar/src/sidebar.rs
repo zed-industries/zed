@@ -1604,7 +1604,10 @@ impl Sidebar {
         }
 
         if let SidebarView::Archive(archive) = &self.view {
-            archive.update(cx, |view, cx| view.focus_filter_editor(window, cx));
+            let has_selection = archive.read(cx).has_selection();
+            if !has_selection {
+                archive.update(cx, |view, cx| view.focus_filter_editor(window, cx));
+            }
         } else if self.selection.is_none() {
             self.filter_editor.focus_handle(cx).focus(window, cx);
         }
@@ -1627,7 +1630,14 @@ impl Sidebar {
         cx: &mut Context<Self>,
     ) {
         self.selection = None;
-        self.filter_editor.focus_handle(cx).focus(window, cx);
+        if let SidebarView::Archive(archive) = &self.view {
+            archive.update(cx, |view, cx| {
+                view.clear_selection();
+                view.focus_filter_editor(window, cx);
+            });
+        } else {
+            self.filter_editor.focus_handle(cx).focus(window, cx);
+        }
 
         // When vim mode is active, the editor defaults to normal mode which
         // blocks text input. Switch to insert mode so the user can type

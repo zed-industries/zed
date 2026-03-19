@@ -24,6 +24,7 @@ use ui::{
     prelude::*, utils::platform_title_bar_height,
 };
 use util::ResultExt as _;
+use zed_actions::agents_sidebar::FocusSidebarFilter;
 use zed_actions::editor::{MoveDown, MoveUp};
 
 #[derive(Clone)]
@@ -162,6 +163,25 @@ impl ThreadsArchiveView {
                 }
             });
 
+        let filter_focus_handle = filter_editor.read(cx).focus_handle(cx);
+        cx.on_focus_in(
+            &filter_focus_handle,
+            window,
+            |this: &mut Self, _window, cx| {
+                if this.selection.is_some() {
+                    this.selection = None;
+                    cx.notify();
+                }
+            },
+        )
+        .detach();
+
+        cx.on_focus_out(&focus_handle, window, |this: &mut Self, _, _window, cx| {
+            this.selection = None;
+            cx.notify();
+        })
+        .detach();
+
         let mut this = Self {
             agent_connection_store,
             agent_server_store,
@@ -183,6 +203,14 @@ impl ThreadsArchiveView {
         };
         this.set_selected_agent(Agent::NativeAgent, window, cx);
         this
+    }
+
+    pub fn has_selection(&self) -> bool {
+        self.selection.is_some()
+    }
+
+    pub fn clear_selection(&mut self) {
+        self.selection = None;
     }
 
     pub fn focus_filter_editor(&self, window: &mut Window, cx: &mut App) {
@@ -351,10 +379,16 @@ impl ThreadsArchiveView {
 
     fn editor_move_down(&mut self, _: &MoveDown, window: &mut Window, cx: &mut Context<Self>) {
         self.select_next(&SelectNext, window, cx);
+        if self.selection.is_some() {
+            self.focus_handle.focus(window, cx);
+        }
     }
 
     fn editor_move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
         self.select_previous(&SelectPrevious, window, cx);
+        if self.selection.is_some() {
+            self.focus_handle.focus(window, cx);
+        }
     }
 
     fn select_next(&mut self, _: &SelectNext, _window: &mut Window, cx: &mut Context<Self>) {
@@ -369,24 +403,29 @@ impl ThreadsArchiveView {
         }
     }
 
-    fn select_previous(
-        &mut self,
-        _: &SelectPrevious,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let prev = match self.selection {
-            Some(ix) if ix > 0 => self.find_previous_selectable(ix - 1),
+    fn select_previous(&mut self, _: &SelectPrevious, window: &mut Window, cx: &mut Context<Self>) {
+        match self.selection {
+            Some(ix) => {
+                if let Some(prev) = (ix > 0)
+                    .then(|| self.find_previous_selectable(ix - 1))
+                    .flatten()
+                {
+                    self.selection = Some(prev);
+                    self.list_state.scroll_to_reveal_item(prev);
+                } else {
+                    self.selection = None;
+                    self.focus_filter_editor(window, cx);
+                }
+                cx.notify();
+            }
             None => {
                 let last = self.items.len().saturating_sub(1);
-                self.find_previous_selectable(last)
+                if let Some(prev) = self.find_previous_selectable(last) {
+                    self.selection = Some(prev);
+                    self.list_state.scroll_to_reveal_item(prev);
+                    cx.notify();
+                }
             }
-            _ => return,
-        };
-        if let Some(prev) = prev {
-            self.selection = Some(prev);
-            self.list_state.scroll_to_reveal_item(prev);
-            cx.notify();
         }
     }
 
@@ -747,6 +786,8 @@ impl ThreadsArchiveView {
         let has_query = !self.filter_editor.read(cx).text(cx).is_empty();
         let traffic_lights = cfg!(target_os = "macos") && !window.is_fullscreen();
         let header_height = platform_title_bar_height(window);
+        let show_focus_keybinding =
+            self.selection.is_some() && !self.filter_editor.focus_handle(cx).is_focused(window);
 
         h_flex()
             .h(header_height)
@@ -774,7 +815,12 @@ impl ThreadsArchiveView {
                     )
                     .child(self.filter_editor.clone()),
             )
-            .when(!has_query, |this| this.child(self.render_agent_picker(cx)))
+            .when(show_focus_keybinding, |this| {
+                this.child(KeyBinding::for_action(&FocusSidebarFilter, cx))
+            })
+            .when(!has_query && !show_focus_keybinding, |this| {
+                this.child(self.render_agent_picker(cx))
+            })
             .when(has_query, |this| {
                 this.child(
                     IconButton::new("clear_filter", IconName::Close)
