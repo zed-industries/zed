@@ -9523,7 +9523,7 @@ impl EditorRequestLayoutState {
         }
     }
 
-    fn can_prepaint(&self) -> bool {
+    fn has_remaining_prepaint_depth(&self) -> bool {
         self.prepaint_depth.get() < Self::MAX_PREPAINT_DEPTH
     }
 }
@@ -10236,10 +10236,7 @@ impl Element for EditorElement {
                                 }
                             })
                     });
-                    // Only update renderer widths if we can recurse to rebuild
-                    // line_layouts afterwards. Mutating the fold map at max depth
-                    // would leave stale state that can cause index panics.
-                    let renderer_widths_changed = request_layout.can_prepaint()
+                    let renderer_widths_changed = request_layout.has_remaining_prepaint_depth()
                         && new_renderer_widths.is_some_and(|new_renderer_widths| {
                             self.editor.update(cx, |editor, cx| {
                                 editor.update_renderer_widths(new_renderer_widths, cx)
@@ -10369,7 +10366,7 @@ impl Element for EditorElement {
                         resized_blocks,
                     } = blocks;
                     if let Some(resized_blocks) = resized_blocks {
-                        if request_layout.can_prepaint() {
+                        if request_layout.has_remaining_prepaint_depth() {
                             self.editor.update(cx, |editor, cx| {
                                 editor.resize_blocks(
                                     resized_blocks,
@@ -10386,17 +10383,10 @@ impl Element for EditorElement {
                                 cx,
                             );
                         } else {
-                            // Don't mutate the block map at max depth — doing so
-                            // would leave stale line_layouts/row_infos that don't
-                            // match the new row mapping, causing index panics
-                            // downstream (e.g. in layout_inline_diagnostics which
-                            // takes a fresh snapshot). The resize will be
-                            // re-detected on the next frame.
                             debug_panic!(
-                                "deferring block resize to next frame \
-                                 (prepaint depth limit reached)"
+                                "dropping block resize because prepaint depth \
+                                 limit was reached"
                             );
-                            self.editor.update(cx, |_, cx| cx.notify());
                         }
                     }
 
