@@ -258,12 +258,10 @@ pub fn parse_worktrees_from_str<T: AsRef<str>>(raw_worktrees: T) -> Vec<Worktree
             // Ignore other lines: detached, bare, locked, prunable, etc.
         }
 
-        // todo(git_worktree) We should add a test for detach head state
-        // a detach head will have ref_name as none so we would skip it
-        if let (Some(path), Some(sha), Some(ref_name)) = (path, sha, ref_name) {
+        if let (Some(path), Some(sha)) = (path, sha) {
             worktrees.push(Worktree {
                 path: PathBuf::from(path),
-                ref_name: Some(ref_name.into()),
+                ref_name: ref_name.map(Into::into),
                 sha: sha.into(),
             })
         }
@@ -3812,19 +3810,26 @@ mod tests {
         assert_eq!(result[1].path, PathBuf::from("/home/user/project-wt"));
         assert_eq!(result[1].ref_name, Some("refs/heads/feature".into()));
 
-        // Detached HEAD entry (should be skipped since ref_name won't parse)
+        // Detached HEAD entry (included with ref_name: None)
         let input = "worktree /home/user/project\nHEAD abc123\nbranch refs/heads/main\n\n\
                       worktree /home/user/detached\nHEAD def456\ndetached\n\n";
         let result = parse_worktrees_from_str(input);
-        assert_eq!(result.len(), 1);
+        assert_eq!(result.len(), 2);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
+        assert_eq!(result[0].ref_name, Some("refs/heads/main".into()));
+        assert_eq!(result[1].path, PathBuf::from("/home/user/detached"));
+        assert_eq!(result[1].ref_name, None);
+        assert_eq!(result[1].sha.as_ref(), "def456");
 
-        // Bare repo entry (should be skipped)
+        // Bare repo entry (included with ref_name: None)
         let input = "worktree /home/user/bare.git\nHEAD abc123\nbare\n\n\
                       worktree /home/user/project\nHEAD def456\nbranch refs/heads/main\n\n";
         let result = parse_worktrees_from_str(input);
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].path, PathBuf::from("/home/user/bare.git"));
+        assert_eq!(result[0].ref_name, None);
+        assert_eq!(result[1].path, PathBuf::from("/home/user/project"));
+        assert_eq!(result[1].ref_name, Some("refs/heads/main".into()));
 
         // Extra porcelain lines (locked, prunable) should be ignored
         let input = "worktree /home/user/project\nHEAD abc123\nbranch refs/heads/main\n\n\
