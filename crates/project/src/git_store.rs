@@ -6829,6 +6829,32 @@ pub fn worktrees_directory_for_repo(
     Ok(resolved)
 }
 
+/// Returns a short name for a linked worktree suitable for UI display
+///
+/// Uses the main worktree path to come up with a short name that disambiguates
+/// the linked worktree from the main worktree.
+pub fn linked_worktree_short_name(
+    main_worktree_path: &Path,
+    linked_worktree_path: &Path,
+) -> Option<SharedString> {
+    if main_worktree_path == linked_worktree_path {
+        return None;
+    }
+
+    let project_name = main_worktree_path.file_name()?.to_str()?;
+    let directory_name = linked_worktree_path.file_name()?.to_str()?;
+    let name = if directory_name != project_name {
+        directory_name.to_string()
+    } else {
+        linked_worktree_path
+            .parent()?
+            .file_name()?
+            .to_str()?
+            .to_string()
+    };
+    Some(name.into())
+}
+
 fn get_permalink_in_rust_registry_src(
     provider_registry: Arc<GitHostingProviderRegistry>,
     path: PathBuf,
@@ -7279,5 +7305,38 @@ fn tracked_status_to_proto(code: StatusCode) -> i32 {
         StatusCode::TypeChanged => proto::GitStatus::TypeChanged as _,
         StatusCode::Copied => proto::GitStatus::Copied as _,
         StatusCode::Unmodified => proto::GitStatus::Unmodified as _,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    #[test]
+    fn linked_worktree_short_name() {
+        let examples = [
+            (
+                "/home/bob/zed",
+                "/home/bob/worktrees/olivetti/zed",
+                Some("olivetti".into()),
+            ),
+            ("/home/bob/zed", "/home/bob/zed2", Some("zed2".into())),
+            (
+                "/home/bob/zed",
+                "/home/bob/worktrees/zed/selectric",
+                Some("selectric".into()),
+            ),
+            ("/home/bob/zed", "/home/bob/zed", None),
+        ];
+        for (main_worktree_path, linked_worktree_path, expected) in examples {
+            let short_name = super::linked_worktree_short_name(
+                Path::new(main_worktree_path),
+                Path::new(linked_worktree_path),
+            );
+            assert_eq!(
+                short_name, expected,
+                "short name for {linked_worktree_path:?}, linked worktree of {main_worktree_path:?}, should be {expected:?}"
+            );
+        }
     }
 }

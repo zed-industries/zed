@@ -16,7 +16,7 @@ use gpui::{
 use menu::{
     Cancel, Confirm, SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious,
 };
-use project::{AgentId, Event as ProjectEvent};
+use project::{AgentId, Event as ProjectEvent, linked_worktree_short_name};
 use recent_projects::RecentProjects;
 use ui::utils::platform_title_bar_height;
 
@@ -780,16 +780,16 @@ impl Sidebar {
                         if snapshot.work_directory_abs_path != snapshot.original_repo_abs_path {
                             continue;
                         }
+
+                        let main_worktree_path = snapshot.original_repo_abs_path.clone();
+
                         for git_worktree in snapshot.linked_worktrees() {
-                            let name = git_worktree
-                                .path
-                                .file_name()
-                                .unwrap_or_default()
-                                .to_string_lossy()
-                                .to_string();
+                            let worktree_name =
+                                linked_worktree_short_name(&main_worktree_path, &git_worktree.path)
+                                    .unwrap_or_default();
                             linked_worktree_queries.push((
                                 PathList::new(std::slice::from_ref(&git_worktree.path)),
-                                name.into(),
+                                worktree_name.into(),
                                 Arc::from(git_worktree.path.as_path()),
                             ));
                         }
