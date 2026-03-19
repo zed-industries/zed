@@ -2259,7 +2259,7 @@ impl Sidebar {
             thread.status,
             AgentThreadStatus::Running | AgentThreadStatus::WaitingForConfirmation
         );
-        let can_delete = thread.agent == Agent::NativeAgent;
+
         let session_id_for_delete = thread.session_info.session_id.clone();
         let focus_handle = self.focus_handle.clone();
 
@@ -2317,7 +2317,7 @@ impl Sidebar {
                         }),
                 )
             })
-            .when(is_hovered && can_delete && !is_running, |this| {
+            .when(is_hovered && !is_running, |this| {
                 this.action_slot(
                     IconButton::new("archive-thread", IconName::Archive)
                         .icon_size(IconSize::Small)
