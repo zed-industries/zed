@@ -439,6 +439,8 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::GitRemoveRemote>)
             .add_request_handler(forward_read_only_project_request::<proto::GitGetWorktrees>)
             .add_request_handler(forward_mutating_project_request::<proto::GitCreateWorktree>)
+            .add_request_handler(disallow_guest_request::<proto::GitRemoveWorktree>)
+            .add_request_handler(disallow_guest_request::<proto::GitRenameWorktree>)
             .add_request_handler(forward_mutating_project_request::<proto::CheckForPushedCommits>)
             .add_message_handler(broadcast_project_message_from_host::<proto::AdvertiseContexts>)
             .add_message_handler(update_context)
@@ -2247,6 +2249,24 @@ where
         .await?;
     let payload = session.forward_request(host_connection_id, request).await?;
     response.send(payload)?;
+    Ok(())
+}
+
+async fn disallow_guest_request<T>(
+    _request: T,
+    response: Response<T>,
+    _session: MessageContext,
+) -> Result<()>
+where
+    T: RequestMessage,
+{
+    response.peer.respond_with_error(
+        response.receipt,
+        ErrorCode::Forbidden
+            .message("request is not allowed for guests".to_string())
+            .to_proto(),
+    )?;
+    response.responded.store(true, SeqCst);
     Ok(())
 }
 

@@ -159,7 +159,6 @@ members = [
     "crates/remote_server",
     "crates/repl",
     "crates/reqwest_client",
-    "crates/rich_text",
     "crates/rope",
     "crates/rpc",
     "crates/rules_library",
@@ -476,7 +475,7 @@ ztracing_macro = { path = "crates/ztracing_macro" }
 # External crates
 #
 
-agent-client-protocol = { version = "=0.9.4", features = ["unstable"] }
+agent-client-protocol = { version = "=0.10.2", features = ["unstable"] }
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "9d9640d4" }
 any_vec = "0.14"
@@ -514,7 +513,6 @@ aws-smithy-runtime-api = { version = "1.9.2", features = ["http-1x", "client"] }
 aws-smithy-types = { version = "1.3.4", features = ["http-body-1-x"] }
 backtrace = "0.3"
 base64 = "0.22"
-bincode = "1.2.1"
 bitflags = "2.6.0"
 brotli = "8.0.2"
 bytes = "1.0"
@@ -552,17 +550,18 @@ derive_more = { version = "2.1.1", features = [
 dirs = "4.0"
 documented = "0.9.1"
 dotenvy = "0.15.0"
+dunce = "1.0"
 ec4rs = "1.1"
 emojis = "0.6.1"
 env_logger = "0.11"
 encoding_rs = "0.8"
 exec = "0.3.1"
-fancy-regex = "0.16.0"
+fancy-regex = "0.17.0"
 fork = "0.4.0"
 futures = "0.3"
 futures-concurrency = "7.7.1"
 futures-lite = "1.13"
-gh-workflow = { git = "https://github.com/zed-industries/gh-workflow", rev = "c9eac0ed361583e1072860d96776fa52775b82ac" }
+gh-workflow = { git = "https://github.com/zed-industries/gh-workflow", rev = "37f3c0575d379c218a9c455ee67585184e40d43f" }
 git2 = { version = "0.20.1", default-features = false, features = ["vendored-libgit2"] }
 globset = "0.4"
 handlebars = "4.3"
@@ -573,7 +572,6 @@ human_bytes = "0.4.1"
 html5ever = "0.27.0"
 http = "1.1"
 http-body = "1.0"
-hyper = "0.14"
 ignore = "0.4.22"
 image = "0.25.1"
 imara-diff = "0.1.8"
@@ -598,13 +596,13 @@ markup5ever_rcdom = "0.3.0"
 metal = "0.33"
 minidumper = "0.9"
 moka = { version = "0.12.10", features = ["sync"] }
-naga = { version = "28.0", features = ["wgsl-in"] }
+naga = { version = "29.0", features = ["wgsl-in"] }
 nanoid = "0.4"
 nbformat = "1.2.0"
 nix = "0.29"
 num-format = "0.4.4"
 objc = "0.2"
-objc2-foundation = { version = "=0.3.1", default-features = false, features = [
+objc2-foundation = { version = "=0.3.2", default-features = false, features = [
     "NSArray",
     "NSAttributedString",
     "NSBundle",
@@ -638,13 +636,13 @@ parse_int = "0.9"
 pciid-parser = "0.8.0"
 pathdiff = "0.2"
 percent-encoding = "2.3.2"
-pet = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "d5b5bb0c4558a51d8cc76b514bc870fd1c042f16" }
-pet-conda = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "d5b5bb0c4558a51d8cc76b514bc870fd1c042f16" }
-pet-core = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "d5b5bb0c4558a51d8cc76b514bc870fd1c042f16" }
-pet-fs = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "d5b5bb0c4558a51d8cc76b514bc870fd1c042f16" }
-pet-poetry = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "d5b5bb0c4558a51d8cc76b514bc870fd1c042f16" }
-pet-reporter = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "d5b5bb0c4558a51d8cc76b514bc870fd1c042f16" }
-pet-virtualenv = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "d5b5bb0c4558a51d8cc76b514bc870fd1c042f16" }
+pet = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "9e61a22af989fe54937bf07c9f9cff1bc53d9056" }
+pet-conda = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "9e61a22af989fe54937bf07c9f9cff1bc53d9056" }
+pet-core = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "9e61a22af989fe54937bf07c9f9cff1bc53d9056" }
+pet-fs = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "9e61a22af989fe54937bf07c9f9cff1bc53d9056" }
+pet-poetry = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "9e61a22af989fe54937bf07c9f9cff1bc53d9056" }
+pet-reporter = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "9e61a22af989fe54937bf07c9f9cff1bc53d9056" }
+pet-virtualenv = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "9e61a22af989fe54937bf07c9f9cff1bc53d9056" }
 portable-pty = "0.9.0"
 postage = { version = "0.5", features = ["futures-traits"] }
 pretty_assertions = { version = "1.3.0", features = ["unstable"] }
@@ -691,7 +689,6 @@ serde_json_lenient = { version = "0.2", features = [
     "raw_value",
 ] }
 serde_path_to_error = "0.1.17"
-serde_repr = "0.1"
 serde_urlencoded = "0.7"
 sha2 = "0.10"
 shellexpand = "2.1.0"
@@ -722,7 +719,6 @@ time = { version = "0.3", features = [
 ] }
 tiny_http = "0.8"
 tokio = { version = "1" }
-tokio-tungstenite = { version = "0.26", features = ["__rustls-tls"] }
 tokio-socks = { version = "0.5.2", default-features = false, features = [
     "futures-io",
     "tokio",
@@ -783,7 +779,7 @@ wax = "0.7"
 which = "6.0.0"
 wasm-bindgen = "0.2.113"
 web-time = "1.1.0"
-wgpu = { git = "https://github.com/zed-industries/wgpu", rev = "0343151f535c8386df3c1db014cd42f44470e4c0" }
+wgpu = "29"
 windows-core = "0.61"
 yawc = "0.2.5"
 zeroize = "1.8"
@@ -851,8 +847,8 @@ notify = { git = "https://github.com/zed-industries/notify.git", rev = "ce58c24c
 notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "ce58c24cad542c28e04ced02e20325a4ec28a31d" }
 windows-capture = { git = "https://github.com/zed-industries/windows-capture.git", rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }
 calloop = { git = "https://github.com/zed-industries/calloop" }
-livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "37835f840d0070d45ac8b31cce6a6ae7aca3f459" }
-libwebrtc = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "37835f840d0070d45ac8b31cce6a6ae7aca3f459" }
+livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "c1209aa155cbf4543383774f884a46ae7e53ee2e" }
+libwebrtc = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "c1209aa155cbf4543383774f884a46ae7e53ee2e" }
 
 [profile.dev]
 split-debuginfo = "unpacked"

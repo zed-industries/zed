@@ -26,7 +26,7 @@ use buffer_diff::{
 };
 use collections::{BTreeSet, HashMap, HashSet};
 use encoding_rs;
-use fs::FakeFs;
+use fs::{FakeFs, PathEventKind};
 use futures::{StreamExt, future};
 use git::{
     GitHostingProviderRegistry,
@@ -2069,6 +2069,97 @@ async fn test_language_server_tilde_path(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         lsp_path, expected_path,
         "Tilde path should expand to home directory"
+    );
+}
+
+#[gpui::test]
+async fn test_rescan_fs_change_is_reported_to_language_servers_as_changed(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/the-root"),
+        json!({
+            "Cargo.lock": "",
+            "src": {
+                "a.rs": "",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/the-root").as_ref()], cx).await;
+    let (language_registry, _lsp_store) = project.read_with(cx, |project, _| {
+        (project.languages().clone(), project.lsp_store())
+    });
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "the-language-server",
+            ..Default::default()
+        },
+    );
+
+    cx.executor().run_until_parked();
+
+    project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/src/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    let file_changes = Arc::new(Mutex::new(Vec::new()));
+    fake_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: Default::default(),
+                    method: "workspace/didChangeWatchedFiles".to_string(),
+                    register_options: serde_json::to_value(
+                        lsp::DidChangeWatchedFilesRegistrationOptions {
+                            watchers: vec![lsp::FileSystemWatcher {
+                                glob_pattern: lsp::GlobPattern::String(
+                                    path!("/the-root/Cargo.lock").to_string(),
+                                ),
+                                kind: None,
+                            }],
+                        },
+                    )
+                    .ok(),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    fake_server.handle_notification::<lsp::notification::DidChangeWatchedFiles, _>({
+        let file_changes = file_changes.clone();
+        move |params, _| {
+            let mut file_changes = file_changes.lock();
+            file_changes.extend(params.changes);
+        }
+    });
+
+    cx.executor().run_until_parked();
+    assert_eq!(mem::take(&mut *file_changes.lock()), &[]);
+
+    fs.emit_fs_event(path!("/the-root/Cargo.lock"), Some(PathEventKind::Rescan));
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        &*file_changes.lock(),
+        &[lsp::FileEvent {
+            uri: lsp::Uri::from_file_path(path!("/the-root/Cargo.lock")).unwrap(),
+            typ: lsp::FileChangeType::CHANGED,
+        }]
     );
 }
 
@@ -5552,7 +5643,7 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             *events.lock(),
             &[
-                language::BufferEvent::Edited,
+                language::BufferEvent::Edited { is_local: true },
                 language::BufferEvent::DirtyChanged
             ]
         );
@@ -5581,9 +5672,9 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             *events.lock(),
             &[
-                language::BufferEvent::Edited,
+                language::BufferEvent::Edited { is_local: true },
                 language::BufferEvent::DirtyChanged,
-                language::BufferEvent::Edited,
+                language::BufferEvent::Edited { is_local: true },
             ],
         );
         events.lock().clear();
@@ -5598,7 +5689,7 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         *events.lock(),
         &[
-            language::BufferEvent::Edited,
+            language::BufferEvent::Edited { is_local: true },
             language::BufferEvent::DirtyChanged
         ]
     );
@@ -5638,7 +5729,7 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         mem::take(&mut *events.lock()),
         &[
-            language::BufferEvent::Edited,
+            language::BufferEvent::Edited { is_local: true },
             language::BufferEvent::DirtyChanged
         ]
     );
@@ -5653,7 +5744,7 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         *events.lock(),
         &[
-            language::BufferEvent::Edited,
+            language::BufferEvent::Edited { is_local: true },
             language::BufferEvent::DirtyChanged
         ]
     );
@@ -5685,6 +5776,75 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
     cx.executor().run_until_parked();
     assert_eq!(*events.lock(), &[language::BufferEvent::FileHandleChanged]);
     cx.update(|cx| assert!(buffer3.read(cx).is_dirty()));
+}
+
+#[gpui::test]
+async fn test_dirty_buffer_reloads_after_undo(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "file.txt": "version 1",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer(path!("/dir/file.txt"), cx))
+        .await
+        .unwrap();
+
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "version 1");
+        assert!(!buffer.is_dirty());
+    });
+
+    // User makes an edit, making the buffer dirty.
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "user edit: ")], None, cx);
+    });
+
+    buffer.read_with(cx, |buffer, _| {
+        assert!(buffer.is_dirty());
+        assert_eq!(buffer.text(), "user edit: version 1");
+    });
+
+    // External tool writes new content while buffer is dirty.
+    // file_updated() updates the File but suppresses ReloadNeeded.
+    fs.save(
+        path!("/dir/file.txt").as_ref(),
+        &"version 2 from external tool".into(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    cx.executor().run_until_parked();
+
+    buffer.read_with(cx, |buffer, _| {
+        assert!(buffer.has_conflict());
+        assert_eq!(buffer.text(), "user edit: version 1");
+    });
+
+    // User undoes their edit. Buffer becomes clean, but disk has different
+    // content. did_edit() detects the dirty->clean transition and checks if
+    // disk changed while dirty. Since mtime differs from saved_mtime, it
+    // emits ReloadNeeded.
+    buffer.update(cx, |buffer, cx| {
+        buffer.undo(cx);
+    });
+    cx.executor().run_until_parked();
+
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(
+            buffer.text(),
+            "version 2 from external tool",
+            "buffer should reload from disk after undo makes it clean"
+        );
+        assert!(!buffer.is_dirty());
+    });
 }
 
 #[gpui::test]

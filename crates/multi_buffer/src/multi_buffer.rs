@@ -119,6 +119,7 @@ pub enum Event {
     DiffHunksToggled,
     Edited {
         edited_buffer: Option<Entity<Buffer>>,
+        is_local: bool,
     },
     TransactionUndone {
         transaction_id: TransactionId,
@@ -1912,6 +1913,7 @@ impl MultiBuffer {
 
         cx.emit(Event::Edited {
             edited_buffer: None,
+            is_local: true,
         });
         cx.emit(Event::ExcerptsAdded {
             buffer,
@@ -1974,6 +1976,7 @@ impl MultiBuffer {
         }
         cx.emit(Event::Edited {
             edited_buffer: None,
+            is_local: true,
         });
         cx.emit(Event::ExcerptsRemoved {
             ids,
@@ -1987,7 +1990,7 @@ impl MultiBuffer {
         &self,
         buffer_id: BufferId,
         cx: &App,
-    ) -> Vec<(ExcerptId, ExcerptRange<text::Anchor>)> {
+    ) -> Vec<(ExcerptId, Arc<BufferSnapshot>, ExcerptRange<text::Anchor>)> {
         let mut excerpts = Vec::new();
         let snapshot = self.read(cx);
         let mut cursor = snapshot.excerpts.cursor::<Option<&Locator>>(());
@@ -1997,7 +2000,7 @@ impl MultiBuffer {
                 if let Some(excerpt) = cursor.item()
                     && excerpt.locator == *locator
                 {
-                    excerpts.push((excerpt.id, excerpt.range.clone()));
+                    excerpts.push((excerpt.id, excerpt.buffer.clone(), excerpt.range.clone()));
                 }
             }
         }
@@ -2128,7 +2131,7 @@ impl MultiBuffer {
     ) -> Option<Anchor> {
         let mut found = None;
         let snapshot = buffer.read(cx).snapshot();
-        for (excerpt_id, range) in self.excerpts_for_buffer(snapshot.remote_id(), cx) {
+        for (excerpt_id, _, range) in self.excerpts_for_buffer(snapshot.remote_id(), cx) {
             let start = range.context.start.to_point(&snapshot);
             let end = range.context.end.to_point(&snapshot);
             if start <= point && point < end {
@@ -2138,7 +2141,7 @@ impl MultiBuffer {
             if point < start {
                 found = Some((start, excerpt_id));
             }
-            if point > end {
+            if point >= end {
                 found = Some((end, excerpt_id));
             }
         }
@@ -2157,7 +2160,7 @@ impl MultiBuffer {
         cx: &App,
     ) -> Option<Anchor> {
         let snapshot = buffer.read(cx).snapshot();
-        for (excerpt_id, range) in self.excerpts_for_buffer(snapshot.remote_id(), cx) {
+        for (excerpt_id, _, range) in self.excerpts_for_buffer(snapshot.remote_id(), cx) {
             if range.context.start.cmp(&anchor, &snapshot).is_le()
                 && range.context.end.cmp(&anchor, &snapshot).is_ge()
             {
@@ -2330,6 +2333,7 @@ impl MultiBuffer {
         }
         cx.emit(Event::Edited {
             edited_buffer: None,
+            is_local: true,
         });
         cx.emit(Event::ExcerptsRemoved {
             ids,
@@ -2394,8 +2398,9 @@ impl MultiBuffer {
         use language::BufferEvent;
         let buffer_id = buffer.read(cx).remote_id();
         cx.emit(match event {
-            BufferEvent::Edited => Event::Edited {
+            &BufferEvent::Edited { is_local } => Event::Edited {
                 edited_buffer: Some(buffer),
+                is_local,
             },
             BufferEvent::DirtyChanged => Event::DirtyChanged,
             BufferEvent::Saved => Event::Saved,
@@ -2484,6 +2489,7 @@ impl MultiBuffer {
         }
         cx.emit(Event::Edited {
             edited_buffer: None,
+            is_local: true,
         });
     }
 
@@ -2530,6 +2536,7 @@ impl MultiBuffer {
         }
         cx.emit(Event::Edited {
             edited_buffer: None,
+            is_local: true,
         });
     }
 
@@ -2769,6 +2776,7 @@ impl MultiBuffer {
         cx.emit(Event::DiffHunksToggled);
         cx.emit(Event::Edited {
             edited_buffer: None,
+            is_local: true,
         });
     }
 
@@ -2885,6 +2893,7 @@ impl MultiBuffer {
         cx.emit(Event::DiffHunksToggled);
         cx.emit(Event::Edited {
             edited_buffer: None,
+            is_local: true,
         });
     }
 
@@ -2952,6 +2961,7 @@ impl MultiBuffer {
         }
         cx.emit(Event::Edited {
             edited_buffer: None,
+            is_local: true,
         });
         cx.emit(Event::ExcerptsExpanded { ids: vec![id] });
         cx.notify();
@@ -3059,6 +3069,7 @@ impl MultiBuffer {
         }
         cx.emit(Event::Edited {
             edited_buffer: None,
+            is_local: true,
         });
         cx.emit(Event::ExcerptsExpanded { ids });
         cx.notify();
@@ -3702,6 +3713,7 @@ impl MultiBuffer {
         cx.emit(Event::DiffHunksToggled);
         cx.emit(Event::Edited {
             edited_buffer: None,
+            is_local: true,
         });
     }
 }
@@ -6334,7 +6346,7 @@ impl MultiBufferSnapshot {
     pub fn runnable_ranges(
         &self,
         range: Range<Anchor>,
-    ) -> impl Iterator<Item = (Range<MultiBufferOffset>, language::RunnableRange)> + '_ {
+    ) -> impl Iterator<Item = (Range<Anchor>, language::RunnableRange)> + '_ {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         self.lift_buffer_metadata(range, move |buffer, range| {
             Some(
@@ -6347,7 +6359,12 @@ impl MultiBufferSnapshot {
                     .map(|runnable| (runnable.run_range.clone(), runnable)),
             )
         })
-        .map(|(run_range, runnable, _)| (run_range, runnable))
+        .map(|(run_range, runnable, _)| {
+            (
+                self.anchor_after(run_range.start)..self.anchor_before(run_range.end),
+                runnable,
+            )
+        })
     }
 
     pub fn line_indents(

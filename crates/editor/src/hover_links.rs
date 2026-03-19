@@ -4,7 +4,7 @@ use crate::{
     HighlightKey, Navigated, PointForPosition, SelectPhase,
     editor_settings::GoToDefinitionFallback, scroll::ScrollAmount,
 };
-use gpui::{App, AsyncWindowContext, Context, Entity, Modifiers, Task, Window, px};
+use gpui::{App, AsyncWindowContext, Context, Entity, Modifiers, Pixels, Task, Window, px};
 use language::{Bias, ToOffset};
 use linkify::{LinkFinder, LinkKind};
 use lsp::LanguageServerId;
@@ -113,6 +113,7 @@ impl Editor {
     pub(crate) fn update_hovered_link(
         &mut self,
         point_for_position: PointForPosition,
+        mouse_position: Option<gpui::Point<Pixels>>,
         snapshot: &EditorSnapshot,
         modifiers: Modifiers,
         window: &mut Window,
@@ -138,6 +139,7 @@ impl Editor {
                 self.update_inlay_link_and_hover_points(
                     snapshot,
                     point_for_position,
+                    mouse_position,
                     hovered_link_modifier,
                     modifiers.shift,
                     window,

@@ -125,6 +125,7 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
         LanguageInfo {
             name: "cpp",
             adapters: vec![c_lsp_adapter],
+            semantic_token_rules: Some(cpp::semantic_token_rules()),
             ..Default::default()
         },
         LanguageInfo {

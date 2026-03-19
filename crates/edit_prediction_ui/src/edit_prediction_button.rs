@@ -359,10 +359,16 @@ impl Render for EditPredictionButton {
                     }
                     EditPredictionProvider::Mercury => {
                         ep_icon = if enabled { icons.base } else { icons.disabled };
+                        let mercury_has_error =
+                            edit_prediction::EditPredictionStore::try_global(cx).is_some_and(
+                                |ep_store| ep_store.read(cx).mercury_has_payment_required_error(),
+                            );
                         missing_token = edit_prediction::EditPredictionStore::try_global(cx)
                             .is_some_and(|ep_store| !ep_store.read(cx).has_mercury_api_token(cx));
                         tooltip_meta = if missing_token {
                             "Missing API key for Mercury"
+                        } else if mercury_has_error {
+                            "Mercury free tier limit reached"
                         } else {
                             "Powered by Mercury"
                         };
@@ -373,7 +379,7 @@ impl Render for EditPredictionButton {
                     }
                 };
 
-                if edit_prediction::should_show_upsell_modal() {
+                if edit_prediction::should_show_upsell_modal(cx) {
                     let tooltip_meta = if self.user_store.read(cx).current_user().is_some() {
                         "Choose a Plan"
                     } else {
@@ -414,7 +420,12 @@ impl Render for EditPredictionButton {
                 let show_editor_predictions = self.editor_show_predictions;
                 let user = self.user_store.read(cx).current_user();
 
-                let indicator_color = if missing_token {
+                let mercury_has_error = matches!(provider, EditPredictionProvider::Mercury)
+                    && edit_prediction::EditPredictionStore::try_global(cx).is_some_and(
+                        |ep_store| ep_store.read(cx).mercury_has_payment_required_error(),
+                    );
+
+                let indicator_color = if missing_token || mercury_has_error {
                     Some(Color::Error)
                 } else if enabled && (!show_editor_predictions || over_limit) {
                     Some(if over_limit {
@@ -1096,96 +1107,116 @@ impl EditPredictionButton {
                         },
                     )
                     .separator();
-            } else if let Some(usage) = self
-                .edit_prediction_provider
-                .as_ref()
-                .and_then(|provider| provider.usage(cx))
-            {
-                menu = menu.header("Usage");
-                menu = menu
-                    .custom_entry(
-                        move |_window, cx| {
-                            let used_percentage = match usage.limit {
-                                UsageLimit::Limited(limit) => {
-                                    Some((usage.amount as f32 / limit as f32) * 100.)
-                                }
-                                UsageLimit::Unlimited => None,
-                            };
+            } else {
+                let mercury_payment_required = matches!(provider, EditPredictionProvider::Mercury)
+                    && edit_prediction::EditPredictionStore::try_global(cx).is_some_and(
+                        |ep_store| ep_store.read(cx).mercury_has_payment_required_error(),
+                    );
 
-                            h_flex()
-                                .flex_1()
-                                .gap_1p5()
-                                .children(
-                                    used_percentage.map(|percent| {
+                if mercury_payment_required {
+                    menu = menu
+                        .header("Mercury")
+                        .item(ContextMenuEntry::new("Free tier limit reached").disabled(true))
+                        .item(
+                            ContextMenuEntry::new(
+                                "Upgrade to a paid plan to continue using the service",
+                            )
+                            .disabled(true),
+                        )
+                        .separator();
+                }
+
+                if let Some(usage) = self
+                    .edit_prediction_provider
+                    .as_ref()
+                    .and_then(|provider| provider.usage(cx))
+                {
+                    menu = menu.header("Usage");
+                    menu = menu
+                        .custom_entry(
+                            move |_window, cx| {
+                                let used_percentage = match usage.limit {
+                                    UsageLimit::Limited(limit) => {
+                                        Some((usage.amount as f32 / limit as f32) * 100.)
+                                    }
+                                    UsageLimit::Unlimited => None,
+                                };
+
+                                h_flex()
+                                    .flex_1()
+                                    .gap_1p5()
+                                    .children(used_percentage.map(|percent| {
                                         ProgressBar::new("usage", percent, 100., cx)
-                                    }),
-                                )
-                                .child(
-                                    Label::new(match usage.limit {
-                                        UsageLimit::Limited(limit) => {
-                                            format!("{} / {limit}", usage.amount)
-                                        }
-                                        UsageLimit::Unlimited => format!("{} / ∞", usage.amount),
-                                    })
+                                    }))
+                                    .child(
+                                        Label::new(match usage.limit {
+                                            UsageLimit::Limited(limit) => {
+                                                format!("{} / {limit}", usage.amount)
+                                            }
+                                            UsageLimit::Unlimited => {
+                                                format!("{} / ∞", usage.amount)
+                                            }
+                                        })
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                    )
+                                    .into_any_element()
+                            },
+                            move |_, cx| cx.open_url(&zed_urls::account_url(cx)),
+                        )
+                        .when(usage.over_limit(), |menu| -> ContextMenu {
+                            menu.entry("Subscribe to increase your limit", None, |_window, cx| {
+                                telemetry::event!(
+                                    "Edit Prediction Menu Action",
+                                    action = "upsell_clicked",
+                                    reason = "usage_limit",
+                                );
+                                cx.open_url(&zed_urls::account_url(cx))
+                            })
+                        })
+                        .separator();
+                } else if self.user_store.read(cx).account_too_young() {
+                    menu = menu
+                        .custom_entry(
+                            |_window, _cx| {
+                                Label::new("Your GitHub account is less than 30 days old.")
                                     .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                                )
-                                .into_any_element()
-                        },
-                        move |_, cx| cx.open_url(&zed_urls::account_url(cx)),
-                    )
-                    .when(usage.over_limit(), |menu| -> ContextMenu {
-                        menu.entry("Subscribe to increase your limit", None, |_window, cx| {
+                                    .color(Color::Warning)
+                                    .into_any_element()
+                            },
+                            |_window, cx| cx.open_url(&zed_urls::account_url(cx)),
+                        )
+                        .entry("Upgrade to Zed Pro or contact us.", None, |_window, cx| {
                             telemetry::event!(
                                 "Edit Prediction Menu Action",
                                 action = "upsell_clicked",
-                                reason = "usage_limit",
+                                reason = "account_age",
                             );
                             cx.open_url(&zed_urls::account_url(cx))
                         })
-                    })
-                    .separator();
-            } else if self.user_store.read(cx).account_too_young() {
-                menu = menu
-                    .custom_entry(
-                        |_window, _cx| {
-                            Label::new("Your GitHub account is less than 30 days old.")
-                                .size(LabelSize::Small)
-                                .color(Color::Warning)
-                                .into_any_element()
-                        },
-                        |_window, cx| cx.open_url(&zed_urls::account_url(cx)),
-                    )
-                    .entry("Upgrade to Zed Pro or contact us.", None, |_window, cx| {
-                        telemetry::event!(
-                            "Edit Prediction Menu Action",
-                            action = "upsell_clicked",
-                            reason = "account_age",
-                        );
-                        cx.open_url(&zed_urls::account_url(cx))
-                    })
-                    .separator();
-            } else if self.user_store.read(cx).has_overdue_invoices() {
-                menu = menu
-                    .custom_entry(
-                        |_window, _cx| {
-                            Label::new("You have an outstanding invoice")
-                                .size(LabelSize::Small)
-                                .color(Color::Warning)
-                                .into_any_element()
-                        },
-                        |_window, cx| {
-                            cx.open_url(&zed_urls::account_url(cx))
-                        },
-                    )
-                    .entry(
-                        "Check your payment status or contact us at billing-support@zed.dev to continue using this feature.",
-                        None,
-                        |_window, cx| {
-                            cx.open_url(&zed_urls::account_url(cx))
-                        },
-                    )
-                    .separator();
+                        .separator();
+                } else if self.user_store.read(cx).has_overdue_invoices() {
+                    menu = menu
+                        .custom_entry(
+                            |_window, _cx| {
+                                Label::new("You have an outstanding invoice")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Warning)
+                                    .into_any_element()
+                            },
+                            |_window, cx| {
+                                cx.open_url(&zed_urls::account_url(cx))
+                            },
+                        )
+                        .entry(
+                            "Check your payment status or contact us at billing-support@zed.dev to continue using this feature.",
+                            None,
+                            |_window, cx| {
+                                cx.open_url(&zed_urls::account_url(cx))
+                            },
+                        )
+                        .separator();
+                }
             }
 
             if !needs_sign_in {

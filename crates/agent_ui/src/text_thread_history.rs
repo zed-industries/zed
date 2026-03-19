@@ -116,6 +116,10 @@ impl TextThreadHistory {
         this
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.visible_items.is_empty()
+    }
+
     fn update_visible_items(&mut self, preserve_selected_item: bool, cx: &mut Context<Self>) {
         let entries = self.text_thread_store.update(cx, |store, _| {
             store.ordered_text_threads().cloned().collect::<Vec<_>>()

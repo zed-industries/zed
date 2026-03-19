@@ -55,7 +55,14 @@ pub struct ResponseFunctionCallItem {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ResponseFunctionCallOutputItem {
     pub call_id: String,
-    pub output: String,
+    pub output: ResponseFunctionCallOutputContent,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ResponseFunctionCallOutputContent {
+    List(Vec<ResponseInputContent>),
+    Text(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,6 +85,16 @@ pub enum ResponseInputContent {
 #[derive(Serialize, Debug)]
 pub struct ReasoningConfig {
     pub effort: ReasoningEffort,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<ReasoningSummaryMode>,
+}
+
+#[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningSummaryMode {
+    Auto,
+    Concise,
+    Detailed,
 }
 
 #[derive(Serialize, Debug)]
@@ -150,6 +167,30 @@ pub enum StreamEvent {
         content_index: Option<usize>,
         text: String,
     },
+    #[serde(rename = "response.reasoning_summary_part.added")]
+    ReasoningSummaryPartAdded {
+        item_id: String,
+        output_index: usize,
+        summary_index: usize,
+    },
+    #[serde(rename = "response.reasoning_summary_text.delta")]
+    ReasoningSummaryTextDelta {
+        item_id: String,
+        output_index: usize,
+        delta: String,
+    },
+    #[serde(rename = "response.reasoning_summary_text.done")]
+    ReasoningSummaryTextDone {
+        item_id: String,
+        output_index: usize,
+        text: String,
+    },
+    #[serde(rename = "response.reasoning_summary_part.done")]
+    ReasoningSummaryPartDone {
+        item_id: String,
+        output_index: usize,
+        summary_index: usize,
+    },
     #[serde(rename = "response.function_call_arguments.delta")]
     FunctionCallArgumentsDelta {
         item_id: String,
@@ -219,6 +260,25 @@ pub struct ResponseUsage {
 pub enum ResponseOutputItem {
     Message(ResponseOutputMessage),
     FunctionCall(ResponseFunctionToolCall),
+    Reasoning(ResponseReasoningItem),
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct ResponseReasoningItem {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub summary: Vec<ReasoningSummaryPart>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ReasoningSummaryPart {
+    SummaryText {
+        text: String,
+    },
     #[serde(other)]
     Unknown,
 }
@@ -354,6 +414,21 @@ pub async fn stream_response(
                                         arguments: function_call.arguments.clone(),
                                         sequence_number: None,
                                     });
+                                }
+                            }
+                            ResponseOutputItem::Reasoning(reasoning) => {
+                                if let Some(ref item_id) = reasoning.id {
+                                    for part in &reasoning.summary {
+                                        if let ReasoningSummaryPart::SummaryText { text } = part {
+                                            all_events.push(
+                                                StreamEvent::ReasoningSummaryTextDelta {
+                                                    item_id: item_id.clone(),
+                                                    output_index,
+                                                    delta: text.clone(),
+                                                },
+                                            );
+                                        }
+                                    }
                                 }
                             }
                             ResponseOutputItem::Unknown => {}

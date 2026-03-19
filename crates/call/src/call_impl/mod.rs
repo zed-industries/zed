@@ -1,3 +1,4 @@
+pub mod diagnostics;
 pub mod participant;
 pub mod room;
 

@@ -5,17 +5,11 @@ use chrono::{DateTime, Utc};
 use collections::IndexMap;
 use gpui::{Entity, SharedString, Task};
 use language_model::LanguageModelProviderId;
-use project::Project;
+use project::{AgentId, Project};
 use serde::{Deserialize, Serialize};
-use std::{
-    any::Any,
-    error::Error,
-    fmt,
-    path::{Path, PathBuf},
-    rc::Rc,
-    sync::Arc,
-};
+use std::{any::Any, error::Error, fmt, path::PathBuf, rc::Rc, sync::Arc};
 use ui::{App, IconName};
+use util::path_list::PathList;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
@@ -28,12 +22,14 @@ impl UserMessageId {
 }
 
 pub trait AgentConnection {
+    fn agent_id(&self) -> AgentId;
+
     fn telemetry_id(&self) -> SharedString;
 
     fn new_session(
         self: Rc<Self>,
         project: Entity<Project>,
-        cwd: &Path,
+        _work_dirs: PathList,
         cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>>;
 
@@ -47,7 +43,7 @@ pub trait AgentConnection {
         self: Rc<Self>,
         _session_id: acp::SessionId,
         _project: Entity<Project>,
-        _cwd: &Path,
+        _work_dirs: PathList,
         _title: Option<SharedString>,
         _cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
@@ -60,7 +56,11 @@ pub trait AgentConnection {
     }
 
     /// Close an existing session. Allows the agent to free the session from memory.
-    fn close_session(&self, _session_id: &acp::SessionId, _cx: &mut App) -> Task<Result<()>> {
+    fn close_session(
+        self: Rc<Self>,
+        _session_id: &acp::SessionId,
+        _cx: &mut App,
+    ) -> Task<Result<()>> {
         Task::ready(Err(anyhow::Error::msg("Closing sessions is not supported")))
     }
 
@@ -74,7 +74,7 @@ pub trait AgentConnection {
         self: Rc<Self>,
         _session_id: acp::SessionId,
         _project: Entity<Project>,
-        _cwd: &Path,
+        _work_dirs: PathList,
         _title: Option<SharedString>,
         _cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
@@ -239,9 +239,10 @@ impl AgentSessionListResponse {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgentSessionInfo {
     pub session_id: acp::SessionId,
-    pub cwd: Option<PathBuf>,
+    pub work_dirs: Option<PathList>,
     pub title: Option<SharedString>,
     pub updated_at: Option<DateTime<Utc>>,
+    pub created_at: Option<DateTime<Utc>>,
     pub meta: Option<acp::Meta>,
 }
 
@@ -249,9 +250,10 @@ impl AgentSessionInfo {
     pub fn new(session_id: impl Into<acp::SessionId>) -> Self {
         Self {
             session_id: session_id.into(),
-            cwd: None,
+            work_dirs: None,
             title: None,
             updated_at: None,
+            created_at: None,
             meta: None,
         }
     }
@@ -603,6 +605,10 @@ mod test_support {
     }
 
     impl AgentConnection for StubAgentConnection {
+        fn agent_id(&self) -> AgentId {
+            AgentId::new("stub")
+        }
+
         fn telemetry_id(&self) -> SharedString {
             "stub".into()
         }
@@ -621,7 +627,7 @@ mod test_support {
         fn new_session(
             self: Rc<Self>,
             project: Entity<Project>,
-            cwd: &Path,
+            work_dirs: PathList,
             cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             static NEXT_SESSION_ID: AtomicUsize = AtomicUsize::new(0);
@@ -632,7 +638,7 @@ mod test_support {
                 AcpThread::new(
                     None,
                     "Test",
-                    Some(cwd.to_path_buf()),
+                    Some(work_dirs),
                     self.clone(),
                     project,
                     action_log,

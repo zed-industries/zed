@@ -91,14 +91,15 @@ impl ThreadStore {
         let database_connection = ThreadsDatabase::connect(cx);
         cx.spawn(async move |this, cx| {
             let database = database_connection.await.map_err(|err| anyhow!(err))?;
-            let threads = database
-                .list_threads()
-                .await?
-                .into_iter()
-                .filter(|thread| thread.parent_session_id.is_none())
-                .collect::<Vec<_>>();
+            let all_threads = database.list_threads().await?;
             this.update(cx, |this, cx| {
-                this.threads = threads;
+                this.threads.clear();
+                for thread in all_threads {
+                    if thread.parent_session_id.is_some() {
+                        continue;
+                    }
+                    this.threads.push(thread);
+                }
                 cx.notify();
             })
         })
@@ -111,13 +112,6 @@ impl ThreadStore {
 
     pub fn entries(&self) -> impl Iterator<Item = DbThreadMetadata> + '_ {
         self.threads.iter().cloned()
-    }
-
-    /// Returns threads whose folder_paths match the given paths exactly.
-    pub fn threads_for_paths(&self, paths: &PathList) -> impl Iterator<Item = &DbThreadMetadata> {
-        self.threads
-            .iter()
-            .filter(move |thread| &thread.folder_paths == paths)
     }
 }
 
@@ -293,51 +287,5 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].id, first_id);
         assert_eq!(entries[1].id, second_id);
-    }
-
-    #[gpui::test]
-    async fn test_threads_for_paths_filters_correctly(cx: &mut TestAppContext) {
-        let thread_store = cx.new(|cx| ThreadStore::new(cx));
-        cx.run_until_parked();
-
-        let project_a_paths = PathList::new(&[std::path::PathBuf::from("/home/user/project-a")]);
-        let project_b_paths = PathList::new(&[std::path::PathBuf::from("/home/user/project-b")]);
-
-        let thread_a = make_thread(
-            "Thread in A",
-            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
-        );
-        let thread_b = make_thread(
-            "Thread in B",
-            Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
-        );
-        let thread_a_id = session_id("thread-a");
-        let thread_b_id = session_id("thread-b");
-
-        let save_a = thread_store.update(cx, |store, cx| {
-            store.save_thread(thread_a_id.clone(), thread_a, project_a_paths.clone(), cx)
-        });
-        save_a.await.unwrap();
-
-        let save_b = thread_store.update(cx, |store, cx| {
-            store.save_thread(thread_b_id.clone(), thread_b, project_b_paths.clone(), cx)
-        });
-        save_b.await.unwrap();
-
-        cx.run_until_parked();
-
-        thread_store.read_with(cx, |store, _cx| {
-            let a_threads: Vec<_> = store.threads_for_paths(&project_a_paths).collect();
-            assert_eq!(a_threads.len(), 1);
-            assert_eq!(a_threads[0].id, thread_a_id);
-
-            let b_threads: Vec<_> = store.threads_for_paths(&project_b_paths).collect();
-            assert_eq!(b_threads.len(), 1);
-            assert_eq!(b_threads[0].id, thread_b_id);
-
-            let nonexistent = PathList::new(&[std::path::PathBuf::from("/nonexistent")]);
-            let no_threads: Vec<_> = store.threads_for_paths(&nonexistent).collect();
-            assert!(no_threads.is_empty());
-        });
     }
 }

@@ -961,6 +961,15 @@ pub struct LanguageConfig {
     pub import_path_strip_regex: Option<Regex>,
 }
 
+impl LanguageConfig {
+    pub const FILE_NAME: &str = "config.toml";
+
+    pub fn load(config_path: impl AsRef<Path>) -> Result<Self> {
+        let config = std::fs::read_to_string(config_path.as_ref())?;
+        toml::from_str(&config).map_err(Into::into)
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Default, JsonSchema)]
 pub struct DecreaseIndentConfig {
     #[serde(default, deserialize_with = "deserialize_regex")]

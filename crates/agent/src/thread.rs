@@ -12,8 +12,7 @@ use feature_flags::{FeatureFlagAppExt as _, StreamingEditFileToolFeatureFlag};
 
 use agent_client_protocol as acp;
 use agent_settings::{
-    AgentProfileId, AgentProfileSettings, AgentSettings, SUMMARIZE_THREAD_DETAILED_PROMPT,
-    SUMMARIZE_THREAD_PROMPT,
+    AgentProfileId, AgentSettings, SUMMARIZE_THREAD_DETAILED_PROMPT, SUMMARIZE_THREAD_PROMPT,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -219,6 +218,7 @@ impl UserMessage {
             "<rules>\nThe user has specified the following rules that should be applied:\n";
         const OPEN_DIAGNOSTICS_TAG: &str = "<diagnostics>";
         const OPEN_DIFFS_TAG: &str = "<diffs>";
+        const MERGE_CONFLICT_TAG: &str = "<merge_conflicts>";
 
         let mut file_context = OPEN_FILES_TAG.to_string();
         let mut directory_context = OPEN_DIRECTORIES_TAG.to_string();
@@ -229,6 +229,7 @@ impl UserMessage {
         let mut rules_context = OPEN_RULES_TAG.to_string();
         let mut diagnostics_context = OPEN_DIAGNOSTICS_TAG.to_string();
         let mut diffs_context = OPEN_DIFFS_TAG.to_string();
+        let mut merge_conflict_context = MERGE_CONFLICT_TAG.to_string();
 
         for chunk in &self.content {
             let chunk = match chunk {
@@ -336,6 +337,18 @@ impl UserMessage {
                             )
                             .ok();
                         }
+                        MentionUri::MergeConflict { file_path } => {
+                            write!(
+                                &mut merge_conflict_context,
+                                "\nMerge conflict in {}:\n{}",
+                                file_path,
+                                MarkdownCodeBlock {
+                                    tag: "diff",
+                                    text: content
+                                }
+                            )
+                            .ok();
+                        }
                     }
 
                     language_model::MessageContent::Text(uri.as_link().to_string())
@@ -408,6 +421,13 @@ impl UserMessage {
             message
                 .content
                 .push(language_model::MessageContent::Text(diagnostics_context));
+        }
+
+        if merge_conflict_context.len() > MERGE_CONFLICT_TAG.len() {
+            merge_conflict_context.push_str("</merge_conflicts>\n");
+            message
+                .content
+                .push(language_model::MessageContent::Text(merge_conflict_context));
         }
 
         if message.content.len() > len_before_context {
@@ -1750,11 +1770,6 @@ impl Thread {
         self.flush_pending_message(cx);
         self.cancel(cx).detach();
 
-        let model = self.model.clone().context("No language model configured")?;
-        let profile = AgentSettings::get_global(cx)
-            .profiles
-            .get(&self.profile_id)
-            .context("Profile not found")?;
         let (events_tx, events_rx) = mpsc::unbounded::<Result<ThreadEvent>>();
         let event_stream = ThreadEventStream(events_tx);
         let message_ix = self.messages.len().saturating_sub(1);
@@ -1762,20 +1777,15 @@ impl Thread {
         let (cancellation_tx, mut cancellation_rx) = watch::channel(false);
         self.running_turn = Some(RunningTurn {
             event_stream: event_stream.clone(),
-            tools: self.enabled_tools(profile, &model, cx),
+            tools: self.enabled_tools(cx),
             cancellation_tx,
             streaming_tool_inputs: HashMap::default(),
             _task: cx.spawn(async move |this, cx| {
                 log::debug!("Starting agent turn execution");
 
-                let turn_result = Self::run_turn_internal(
-                    &this,
-                    model,
-                    &event_stream,
-                    cancellation_rx.clone(),
-                    cx,
-                )
-                .await;
+                let turn_result =
+                    Self::run_turn_internal(&this, &event_stream, cancellation_rx.clone(), cx)
+                        .await;
 
                 // Check if we were cancelled - if so, cancel() already took running_turn
                 // and we shouldn't touch it (it might be a NEW turn now)
@@ -1817,7 +1827,6 @@ impl Thread {
 
     async fn run_turn_internal(
         this: &WeakEntity<Self>,
-        model: Arc<dyn LanguageModel>,
         event_stream: &ThreadEventStream,
         mut cancellation_rx: watch::Receiver<bool>,
         cx: &mut AsyncApp,
@@ -1825,8 +1834,15 @@ impl Thread {
         let mut attempt = 0;
         let mut intent = CompletionIntent::UserPrompt;
         loop {
-            let request =
-                this.update(cx, |this, cx| this.build_completion_request(intent, cx))??;
+            // Re-read the model and refresh tools on each iteration so that
+            // mid-turn changes (e.g. the user switches model, toggles tools,
+            // or changes profile) take effect between tool-call rounds.
+            let (model, request) = this.update(cx, |this, cx| {
+                let model = this.model.clone().context("No language model configured")?;
+                this.refresh_turn_tools(cx);
+                let request = this.build_completion_request(intent, cx)?;
+                anyhow::Ok((model, request))
+            })??;
 
             telemetry::event!(
                 "Agent Thread Completion",
@@ -2549,6 +2565,14 @@ impl Thread {
                 .is_some()
             {
                 _ = this.update(cx, |this, cx| this.set_title(title.into(), cx));
+            } else {
+                // Emit TitleUpdated even on failure so that the propagation
+                // chain (agent::Thread → NativeAgent → AcpThread) fires and
+                // clears any provisional title that was set before the turn.
+                _ = this.update(cx, |_, cx| {
+                    cx.emit(TitleUpdated);
+                    cx.notify();
+                });
             }
             _ = this.update(cx, |this, _| this.pending_title_generation = None);
         }));
@@ -2671,12 +2695,13 @@ impl Thread {
         Ok(request)
     }
 
-    fn enabled_tools(
-        &self,
-        profile: &AgentProfileSettings,
-        model: &Arc<dyn LanguageModel>,
-        cx: &App,
-    ) -> BTreeMap<SharedString, Arc<dyn AnyAgentTool>> {
+    fn enabled_tools(&self, cx: &App) -> BTreeMap<SharedString, Arc<dyn AnyAgentTool>> {
+        let Some(model) = self.model.as_ref() else {
+            return BTreeMap::new();
+        };
+        let Some(profile) = AgentSettings::get_global(cx).profiles.get(&self.profile_id) else {
+            return BTreeMap::new();
+        };
         fn truncate(tool_name: &SharedString) -> SharedString {
             if tool_name.len() > MAX_TOOL_NAME_LENGTH {
                 let mut truncated = tool_name.to_string();
@@ -2755,6 +2780,13 @@ impl Thread {
         }
 
         tools
+    }
+
+    fn refresh_turn_tools(&mut self, cx: &App) {
+        let tools = self.enabled_tools(cx);
+        if let Some(turn) = self.running_turn.as_mut() {
+            turn.tools = tools;
+        }
     }
 
     fn tool(&self, name: &str) -> Option<Arc<dyn AnyAgentTool>> {
@@ -3000,7 +3032,8 @@ struct RunningTurn {
     /// The current event stream for the running turn. Used to report a final
     /// cancellation event if we cancel the turn.
     event_stream: ThreadEventStream,
-    /// The tools that were enabled for this turn.
+    /// The tools that are enabled for the current iteration of the turn.
+    /// Refreshed at the start of each iteration via `refresh_turn_tools`.
     tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
     /// Sender to signal tool cancellation. When cancel is called, this is
     /// set to true so all tools can detect user-initiated cancellation.

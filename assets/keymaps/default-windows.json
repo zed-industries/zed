@@ -259,6 +259,7 @@
       "shift-alt-j": "agent::ToggleNavigationMenu",
       "shift-alt-i": "agent::ToggleOptionsMenu",
       "ctrl-shift-alt-n": "agent::ToggleNewThreadMenu",
+      "ctrl-shift-t": "agent::CycleStartThreadIn",
       "shift-alt-escape": "agent::ExpandMessageEditor",
       "ctrl-shift-.": "agent::AddSelectionToThread",
       "ctrl-shift-e": "project_panel::ToggleFocus",
@@ -615,6 +616,7 @@
       "ctrl-shift-t": "pane::ReopenClosedItem",
       "ctrl-k ctrl-s": "zed::OpenKeymap",
       "ctrl-k ctrl-t": "theme_selector::Toggle",
+      "ctrl-k ctrl-shift-t": "theme::ToggleMode",
       "ctrl-alt-super-p": "settings_profile_selector::Toggle",
       "ctrl-t": "project_symbols::Toggle",
       "ctrl-p": "file_finder::Toggle",
@@ -673,13 +675,16 @@
     },
   },
   {
-    "context": "WorkspaceSidebar",
+    "context": "ThreadsSidebar",
     "use_key_equivalents": true,
     "bindings": {
-      "ctrl-n": "multi_workspace::NewWorkspaceInWindow",
-      "left": "agents_sidebar::CollapseSelectedEntry",
-      "right": "agents_sidebar::ExpandSelectedEntry",
+      "ctrl-n": "agents_sidebar::NewThreadInGroup",
+      "left": "menu::SelectParent",
+      "right": "menu::SelectChild",
       "enter": "menu::Confirm",
+      "space": "menu::Confirm",
+      "ctrl-f": "agents_sidebar::FocusSidebarFilter",
+      "shift-backspace": "agent::RemoveSelectedThread",
     },
   },
   {
@@ -767,16 +772,6 @@
     },
   },
   {
-    "context": "Editor && edit_prediction_conflict",
-    "use_key_equivalents": true,
-    "bindings": {
-      "alt-tab": "editor::AcceptEditPrediction",
-      "alt-l": "editor::AcceptEditPrediction",
-      "alt-k": "editor::AcceptNextWordEditPrediction",
-      "alt-j": "editor::AcceptNextLineEditPrediction",
-    },
-  },
-  {
     "context": "Editor && showing_code_actions",
     "use_key_equivalents": true,
     "bindings": {
@@ -820,7 +815,7 @@
     },
   },
   {
-    "context": "!ContextEditor > Editor && mode == full",
+    "context": "!ContextEditor && !AcpThread > Editor && mode == full",
     "use_key_equivalents": true,
     "bindings": {
       "alt-enter": "editor::OpenExcerpts",
@@ -892,6 +887,7 @@
       "ctrl-v": "project_panel::Paste",
       "shift-alt-c": "project_panel::CopyPath",
       "ctrl-k ctrl-shift-c": "workspace::CopyRelativePath",
+      "ctrl-z": "project_panel::Undo",
       "enter": "project_panel::Rename",
       "f2": "project_panel::Rename",
       "backspace": ["project_panel::Trash", { "skip_prompt": false }],
@@ -983,6 +979,7 @@
       "ctrl-shift-enter": "git::Amend",
       "ctrl-space": "git::StageAll",
       "ctrl-shift-space": "git::UnstageAll",
+      "ctrl-k ctrl-r": "git::RestoreAndNext",
     },
   },
   {
@@ -1259,6 +1256,8 @@
       "down": "markdown::ScrollDown",
       "alt-up": "markdown::ScrollUpByItem",
       "alt-down": "markdown::ScrollDownByItem",
+      "ctrl-home": "markdown::ScrollToTop",
+      "ctrl-end": "markdown::ScrollToBottom",
     },
   },
   {
