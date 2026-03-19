@@ -16,7 +16,7 @@ use gpui::{
 use menu::{
     Cancel, Confirm, SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious,
 };
-use project::{AgentId, Event as ProjectEvent};
+use project::{AgentId, Event as ProjectEvent, linked_worktree_short_name};
 use recent_projects::RecentProjects;
 use ui::utils::platform_title_bar_height;
 
@@ -752,14 +752,7 @@ impl Sidebar {
             let is_collapsed = self.collapsed_groups.contains(&path_list);
             let should_load_threads = !is_collapsed || !query.is_empty();
 
-            let live_infos = Self::all_thread_infos_for_workspace(workspace, cx);
-            let has_running_threads = live_infos
-                .iter()
-                .any(|info| info.status == AgentThreadStatus::Running);
-            let waiting_thread_count = live_infos
-                .iter()
-                .filter(|info| info.status == AgentThreadStatus::WaitingForConfirmation)
-                .count();
+            let mut live_infos = Self::all_thread_infos_for_workspace(workspace, cx);
 
             let mut threads: Vec<ThreadEntry> = Vec::new();
 
@@ -816,16 +809,16 @@ impl Sidebar {
                         if snapshot.work_directory_abs_path != snapshot.original_repo_abs_path {
                             continue;
                         }
+
+                        let main_worktree_path = snapshot.original_repo_abs_path.clone();
+
                         for git_worktree in snapshot.linked_worktrees() {
-                            let name = git_worktree
-                                .path
-                                .file_name()
-                                .unwrap_or_default()
-                                .to_string_lossy()
-                                .to_string();
+                            let worktree_name =
+                                linked_worktree_short_name(&main_worktree_path, &git_worktree.path)
+                                    .unwrap_or_default();
                             linked_worktree_queries.push((
                                 PathList::new(std::slice::from_ref(&git_worktree.path)),
-                                name.into(),
+                                worktree_name,
                                 Arc::from(git_worktree.path.as_path()),
                             ));
                         }
@@ -836,7 +829,13 @@ impl Sidebar {
                     {
                         let target_workspace =
                             match absorbed_workspace_by_path.get(worktree_path.as_ref()) {
-                                Some(&idx) => ThreadEntryWorkspace::Open(workspaces[idx].clone()),
+                                Some(&idx) => {
+                                    live_infos.extend(Self::all_thread_infos_for_workspace(
+                                        &workspaces[idx],
+                                        cx,
+                                    ));
+                                    ThreadEntryWorkspace::Open(workspaces[idx].clone())
+                                }
                                 None => ThreadEntryWorkspace::Closed(worktree_path_list.clone()),
                             };
 
@@ -943,6 +942,16 @@ impl Sidebar {
                     b_time.cmp(&a_time)
                 });
             }
+
+            // Compute running/waiting counts after live_infos has been
+            // extended with any absorbed worktree workspaces.
+            let has_running_threads = live_infos
+                .iter()
+                .any(|info| info.status == AgentThreadStatus::Running);
+            let waiting_thread_count = live_infos
+                .iter()
+                .filter(|info| info.status == AgentThreadStatus::WaitingForConfirmation)
+                .count();
 
             if !query.is_empty() {
                 let workspace_highlight_positions =
@@ -5299,6 +5308,127 @@ mod tests {
                 "v [project]",
                 "  [+ New Thread]",
                 "  Thread A {wt-feature-a}",
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_absorbed_worktree_running_thread_shows_live_status(cx: &mut TestAppContext) {
+        // When a worktree workspace is absorbed under the main repo, a
+        // running thread in the worktree's agent panel should still show
+        // live status (spinner + "(running)") in the sidebar.
+        agent_ui::test_support::init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(false, vec!["agent-v2".into()]);
+            ThreadStore::init_global(cx);
+            ThreadMetadataStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            prompt_store::init(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+
+        // Main repo with a linked worktree.
+        fs.insert_tree(
+            "/project",
+            serde_json::json!({
+                ".git": {
+                    "worktrees": {
+                        "feature-a": {
+                            "commondir": "../../",
+                            "HEAD": "ref: refs/heads/feature-a",
+                        },
+                    },
+                },
+                "src": {},
+            }),
+        )
+        .await;
+
+        // Worktree checkout pointing back to the main repo.
+        fs.insert_tree(
+            "/wt-feature-a",
+            serde_json::json!({
+                ".git": "gitdir: /project/.git/worktrees/feature-a",
+                "src": {},
+            }),
+        )
+        .await;
+
+        fs.with_git_state(std::path::Path::new("/project/.git"), false, |state| {
+            state.worktrees.push(git::repository::Worktree {
+                path: std::path::PathBuf::from("/wt-feature-a"),
+                ref_name: "refs/heads/feature-a".into(),
+                sha: "aaa".into(),
+            });
+        })
+        .unwrap();
+
+        cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+        let main_project = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+        let worktree_project =
+            project::Project::test(fs.clone(), ["/wt-feature-a".as_ref()], cx).await;
+
+        main_project
+            .update(cx, |p, cx| p.git_scans_complete(cx))
+            .await;
+        worktree_project
+            .update(cx, |p, cx| p.git_scans_complete(cx))
+            .await;
+
+        // Create the MultiWorkspace with both projects.
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            MultiWorkspace::test_new(main_project.clone(), window, cx)
+        });
+
+        let worktree_workspace = multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.test_add_workspace(worktree_project.clone(), window, cx)
+        });
+
+        // Add an agent panel to the worktree workspace so we can run a
+        // thread inside it.
+        let worktree_panel = add_agent_panel(&worktree_workspace, &worktree_project, cx);
+
+        // Switch back to the main workspace before setting up the sidebar.
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.activate_index(0, window, cx);
+        });
+
+        let sidebar = setup_sidebar(&multi_workspace, cx);
+
+        // Start a thread in the worktree workspace's panel and keep it
+        // generating (don't resolve it).
+        let connection = StubAgentConnection::new();
+        open_thread_with_connection(&worktree_panel, connection.clone(), cx);
+        send_message(&worktree_panel, cx);
+
+        let session_id = active_session_id(&worktree_panel, cx);
+
+        // Save metadata so the sidebar knows about this thread.
+        let wt_paths = PathList::new(&[std::path::PathBuf::from("/wt-feature-a")]);
+        save_test_thread_metadata(&session_id, wt_paths, cx).await;
+
+        // Keep the thread generating by sending a chunk without ending
+        // the turn.
+        cx.update(|_, cx| {
+            connection.send_update(
+                session_id.clone(),
+                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("working...".into())),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        // The worktree thread should be absorbed under the main project
+        // and show live running status.
+        let entries = visible_entries_as_strings(&sidebar, cx);
+        assert_eq!(
+            entries,
+            vec![
+                "v [project]",
+                "  [+ New Thread]",
+                "  Hello {wt-feature-a} * (running)",
             ]
         );
     }

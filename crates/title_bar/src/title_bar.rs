@@ -14,6 +14,7 @@ pub use platform_title_bar::{
     self, DraggedWindowTab, MergeAllWindows, MoveTabToNewWindow, PlatformTitleBar,
     ShowNextWindowTab, ShowPreviousWindowTab,
 };
+use project::linked_worktree_short_name;
 
 #[cfg(not(target_os = "macos"))]
 use crate::application_menu::{
@@ -173,21 +174,19 @@ impl Render for TitleBar {
         let mut repository = None;
         let mut linked_worktree_name = None;
         if let Some(worktree) = self.effective_active_worktree(cx) {
+            repository = self.get_repository_for_worktree(&worktree, cx);
+            let worktree = worktree.read(cx);
             project_name = worktree
-                .read(cx)
                 .root_name()
                 .file_name()
                 .map(|name| SharedString::from(name.to_string()));
-            repository = self.get_repository_for_worktree(&worktree, cx);
             linked_worktree_name = repository.as_ref().and_then(|repo| {
-                let path = repo.read(cx).linked_worktree_path()?;
-                let directory_name = path.file_name()?.to_str()?;
-                let unique_worktree_name = if directory_name != project_name.as_ref()?.as_str() {
-                    directory_name.to_string()
-                } else {
-                    path.parent()?.file_name()?.to_str()?.to_string()
-                };
-                Some(SharedString::from(unique_worktree_name))
+                let repo = repo.read(cx);
+                linked_worktree_short_name(
+                    repo.original_repo_abs_path.as_ref(),
+                    repo.work_directory_abs_path.as_ref(),
+                )
+                .filter(|name| Some(name) != project_name.as_ref())
             });
         }
 
