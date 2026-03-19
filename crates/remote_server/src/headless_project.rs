@@ -367,17 +367,26 @@ impl HeadlessProject {
         event: &BufferEvent,
         cx: &mut Context<Self>,
     ) {
-        if let BufferEvent::Operation {
-            operation,
-            is_local: true,
-        } = event
-        {
-            cx.background_spawn(self.session.request(proto::UpdateBuffer {
-                project_id: REMOTE_SERVER_PROJECT_ID,
-                buffer_id: buffer.read(cx).remote_id().to_proto(),
-                operations: vec![serialize_operation(operation)],
-            }))
-            .detach()
+        match event {
+            BufferEvent::ReloadNeeded => {
+                self.buffer_store
+                    .update(cx, |buffer_store, cx| {
+                        buffer_store.reload_buffers([buffer.clone()].into_iter().collect(), true, cx)
+                    })
+                    .detach_and_log_err(cx);
+            }
+            BufferEvent::Operation {
+                operation,
+                is_local: true,
+            } => {
+                cx.background_spawn(self.session.request(proto::UpdateBuffer {
+                    project_id: REMOTE_SERVER_PROJECT_ID,
+                    buffer_id: buffer.read(cx).remote_id().to_proto(),
+                    operations: vec![serialize_operation(operation)],
+                }))
+                .detach()
+            }
+            _ => {}
         }
     }
 
