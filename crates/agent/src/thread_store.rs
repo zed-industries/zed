@@ -328,4 +328,83 @@ mod tests {
         assert_eq!(entries[0].id, first_id);
         assert_eq!(entries[1].id, second_id);
     }
+
+    #[gpui::test]
+    async fn test_duplicate_thread_creates_copy(cx: &mut TestAppContext) {
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        cx.run_until_parked();
+
+        let original_id = session_id("thread-a");
+        let original_thread = make_thread(
+            "My Thread",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        );
+
+        let save_task = thread_store.update(cx, |store, cx| {
+            store.save_thread(original_id.clone(), original_thread, PathList::default(), cx)
+        });
+        save_task.await.unwrap();
+        cx.run_until_parked();
+
+        let (new_id, new_title) = thread_store
+            .update(cx, |store, cx| {
+                store.duplicate_thread(original_id.clone(), cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        assert_ne!(new_id, original_id);
+        assert_eq!(new_title.as_ref(), "Copy of My Thread");
+
+        let entries: Vec<_> = thread_store.read_with(cx, |store, _cx| store.entries().collect());
+        assert_eq!(entries.len(), 2);
+        // The duplicate has a newer updated_at, so it should sort first.
+        assert_eq!(entries[0].id, new_id);
+        assert_eq!(entries[0].title.as_ref(), "Copy of My Thread");
+        assert_eq!(entries[1].id, original_id);
+        assert_eq!(entries[1].title.as_ref(), "My Thread");
+    }
+
+    #[gpui::test]
+    async fn test_duplicate_thread_preserves_original(cx: &mut TestAppContext) {
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        cx.run_until_parked();
+
+        let original_id = session_id("thread-a");
+        let original_time = Utc.with_ymd_and_hms(2024, 6, 15, 12, 0, 0).unwrap();
+        let original_thread = make_thread("Important Chat", original_time);
+
+        let save_task = thread_store.update(cx, |store, cx| {
+            store.save_thread(original_id.clone(), original_thread, PathList::default(), cx)
+        });
+        save_task.await.unwrap();
+        cx.run_until_parked();
+
+        let (new_id, _) = thread_store
+            .update(cx, |store, cx| {
+                store.duplicate_thread(original_id.clone(), cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        // Load both threads from the database and verify the original is untouched.
+        let original_loaded = thread_store
+            .update(cx, |store, cx| store.load_thread(original_id.clone(), cx))
+            .await
+            .unwrap()
+            .expect("original thread should exist");
+        let duplicate_loaded = thread_store
+            .update(cx, |store, cx| store.load_thread(new_id, cx))
+            .await
+            .unwrap()
+            .expect("duplicate thread should exist");
+
+        assert_eq!(original_loaded.title.as_ref(), "Important Chat");
+        assert_eq!(original_loaded.updated_at, original_time);
+
+        assert_eq!(duplicate_loaded.title.as_ref(), "Copy of Important Chat");
+        assert!(duplicate_loaded.updated_at > original_time);
+    }
 }
