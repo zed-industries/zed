@@ -304,6 +304,9 @@ mod ios {
 
         release_channel::init(semver::Version::new(0, 1, 0), cx);
 
+        // Tokio runtime for russh SSH transport
+        gpui_tokio::init(cx);
+
         // Settings
         settings::init(cx);
 
@@ -403,6 +406,10 @@ mod ios {
 
     thread_local! {
         static APP_STATE: RefCell<Option<Arc<workspace::AppState>>> = RefCell::new(None);
+    }
+
+    pub fn app_state() -> Option<Arc<workspace::AppState>> {
+        APP_STATE.with(|cell| cell.borrow().clone())
     }
 
     pub fn ios_open_window() {

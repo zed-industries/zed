@@ -1,10 +1,12 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use editor::{Editor, actions::{Backtab, Tab}};
 use gpui::{
-    App, ClickEvent, Context, Entity, Focusable as _, IntoElement, Render, SharedString, Window,
-    WindowOptions, div, prelude::*,
+    App, AppContext as _, AsyncApp, ClickEvent, Context, Entity, Focusable as _, IntoElement,
+    Render, SharedString, Task, Window, WindowOptions, div, prelude::*,
 };
+use remote::SshConnectionOptions;
 use serde::{Deserialize, Serialize};
 use util::ResultExt;
 use theme::ActiveTheme;
@@ -152,6 +154,7 @@ pub struct ConnectionLanding {
     host_editor: Entity<Editor>,
     username_editor: Entity<Editor>,
     port_editor: Entity<Editor>,
+    _connect_task: Option<Task<()>>,
 }
 
 impl ConnectionLanding {
@@ -191,6 +194,7 @@ impl ConnectionLanding {
             host_editor,
             username_editor,
             port_editor,
+            _connect_task: None,
         }
     }
 
@@ -280,10 +284,125 @@ impl ConnectionLanding {
     }
 
     fn connect_host(&mut self, index: usize, _window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(host) = self.saved_hosts.get_mut(index) {
-            host.status = ConnectionStatus::Connecting;
-            cx.notify();
-        }
+        let Some(host) = self.saved_hosts.get_mut(index) else {
+            return;
+        };
+        host.status = ConnectionStatus::Connecting;
+        cx.notify();
+
+        let connection_options = SshConnectionOptions {
+            host: host.host.to_string().into(),
+            username: Some(host.username.to_string()),
+            port: Some(host.port),
+            ..Default::default()
+        };
+
+        let app_state = match crate::ios::app_state() {
+            Some(state) => state,
+            None => {
+                log::error!("[zed-ios] app_state not available for SSH connection");
+                if let Some(host) = self.saved_hosts.get_mut(index) {
+                    host.status =
+                        ConnectionStatus::Error("App not initialized".into());
+                    cx.notify();
+                }
+                return;
+            }
+        };
+
+        let delegate = Arc::new(IosRemoteClientDelegate);
+
+        self._connect_task = Some(cx.spawn(async move |this, cx| {
+            let result = Self::do_connect(
+                connection_options,
+                delegate.clone(),
+                app_state,
+                cx,
+            )
+            .await;
+
+            match result {
+                Ok(()) => {
+                    this.update(cx, |this, cx| {
+                        if let Some(host) = this.saved_hosts.get_mut(index) {
+                            host.status =
+                                ConnectionStatus::Connected { project_count: 0 };
+                            cx.notify();
+                        }
+                    })
+                    .log_err();
+                }
+                Err(error) => {
+                    log::error!("[zed-ios] SSH connection failed: {error:#}");
+                    this.update(cx, |this, cx| {
+                        if let Some(host) = this.saved_hosts.get_mut(index) {
+                            host.status = ConnectionStatus::Error(
+                                SharedString::from(format!("{error:#}")),
+                            );
+                            cx.notify();
+                        }
+                    })
+                    .log_err();
+                }
+            }
+        }));
+    }
+
+    async fn do_connect(
+        connection_options: SshConnectionOptions,
+        delegate: Arc<dyn remote::RemoteClientDelegate>,
+        app_state: Arc<workspace::AppState>,
+        cx: &mut AsyncApp,
+    ) -> anyhow::Result<()> {
+        use remote::RusshRemoteConnection;
+
+        let connection = RusshRemoteConnection::new(
+            connection_options.clone(),
+            delegate.clone(),
+            cx,
+        )
+        .await?;
+
+        let remote_connection: Arc<dyn remote::RemoteConnection> = Arc::new(connection);
+
+        // Open a new workspace window with the remote project
+        let (cancel_tx, cancel_rx) = futures::channel::oneshot::channel::<()>();
+        // Keep cancel_tx alive so the connection isn't cancelled
+        std::mem::forget(cancel_tx);
+
+        let window = cx.open_window(WindowOptions::default(), |window, cx| {
+            let project = project::Project::local(
+                app_state.client.clone(),
+                app_state.node_runtime.clone(),
+                app_state.user_store.clone(),
+                app_state.languages.clone(),
+                app_state.fs.clone(),
+                None,
+                project::LocalProjectFlags::default(),
+                cx,
+            );
+            let workspace_entity =
+                cx.new(|cx| workspace::Workspace::new(None, project, app_state.clone(), window, cx));
+            cx.new(|cx| workspace::MultiWorkspace::new(workspace_entity, window, cx))
+        })?;
+
+        // Open the remote project in the new window using
+        // the home directory on the remote as initial path
+        let paths = vec![PathBuf::from("~")];
+        cx.update(|cx| {
+            workspace::open_remote_project_with_new_connection(
+                window,
+                remote_connection,
+                cancel_rx,
+                delegate,
+                app_state,
+                paths,
+                cx,
+            )
+        })
+        .await?;
+
+        Ok(())
     }
 
     fn toggle_editing_hosts(
@@ -658,5 +777,47 @@ impl Render for ConnectionLanding {
 impl gpui::Focusable for ConnectionLanding {
     fn focus_handle(&self, _cx: &App) -> gpui::FocusHandle {
         self.focus_handle.clone()
+    }
+}
+
+struct IosRemoteClientDelegate;
+
+impl remote::RemoteClientDelegate for IosRemoteClientDelegate {
+    fn ask_password(
+        &self,
+        prompt: String,
+        _tx: futures::channel::oneshot::Sender<askpass::EncryptedPassword>,
+        _cx: &mut AsyncApp,
+    ) {
+        log::warn!("[zed-ios] Password prompt requested: {prompt}");
+        // TODO: Show a GPUI password modal and send the result back via tx
+    }
+
+    fn get_download_url(
+        &self,
+        _platform: remote::RemotePlatform,
+        _release_channel: release_channel::ReleaseChannel,
+        _version: Option<semver::Version>,
+        _cx: &mut AsyncApp,
+    ) -> Task<anyhow::Result<Option<String>>> {
+        Task::ready(Ok(None))
+    }
+
+    fn download_server_binary_locally(
+        &self,
+        _platform: remote::RemotePlatform,
+        _release_channel: release_channel::ReleaseChannel,
+        _version: Option<semver::Version>,
+        _cx: &mut AsyncApp,
+    ) -> Task<anyhow::Result<PathBuf>> {
+        Task::ready(Err(anyhow::anyhow!(
+            "server binary download not supported on iOS"
+        )))
+    }
+
+    fn set_status(&self, status: Option<&str>, _cx: &mut AsyncApp) {
+        if let Some(status) = status {
+            log::info!("[zed-ios] SSH status: {status}");
+        }
     }
 }

@@ -17,6 +17,8 @@ use util::command::Child;
 pub mod docker;
 #[cfg(any(test, feature = "test-support"))]
 pub mod mock;
+#[cfg(feature = "russh-transport")]
+pub mod russh_ssh;
 pub mod ssh;
 pub mod wsl;
 

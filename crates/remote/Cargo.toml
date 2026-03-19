@@ -16,6 +16,7 @@ doctest = false
 [features]
 default = []
 build-remote-server-binary = []
+russh-transport = ["dep:russh", "dep:gpui_tokio", "dep:tokio"]
 test-support = ["fs/test-support"]
 
 [dependencies]
@@ -44,6 +45,10 @@ thiserror.workspace = true
 urlencoding.workspace = true
 util.workspace = true
 which.workspace = true
+
+gpui_tokio = { workspace = true, optional = true }
+russh = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

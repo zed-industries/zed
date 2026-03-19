@@ -12,6 +12,7 @@ crate-type = ["staticlib"]
 
 [target.'cfg(target_os = "ios")'.dependencies]
 anyhow.workspace = true
+askpass.workspace = true
 assets.workspace = true
 client.workspace = true
 editor.workspace = true
@@ -20,15 +21,18 @@ fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 gpui_ios.workspace = true
+gpui_tokio.workspace = true
 http_client.workspace = true
 language.workspace = true
 log.workspace = true
 menu.workspace = true
 node_runtime.workspace = true
 paths.workspace = true
+project.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 recent_projects.workspace = true
+remote = { workspace = true, features = ["russh-transport"] }
 release_channel.workspace = true
 reqwest_client.workspace = true
 semver.workspace = true

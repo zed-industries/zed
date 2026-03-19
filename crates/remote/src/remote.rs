@@ -13,6 +13,8 @@ pub use remote_client::{
 };
 pub use transport::docker::DockerConnectionOptions;
 pub use transport::ssh::{SshConnectionOptions, SshPortForwardOption};
+#[cfg(feature = "russh-transport")]
+pub use transport::russh_ssh::RusshRemoteConnection;
 pub use transport::wsl::WslConnectionOptions;
 #[cfg(target_os = "windows")]
 pub use transport::wsl::wsl_path_to_windows_path;
