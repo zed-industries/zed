@@ -70,7 +70,6 @@ fn parse_args() -> Args {
 fn main() {
     let args = parse_args();
 
-    dbg!(&args);
     let file_contents = std::fs::read_to_string(&args.file).expect("failed to read input file");
     let file_len = file_contents.len();
     println!("Read {} ({file_len} bytes)", args.file);
@@ -140,7 +139,6 @@ fn main() {
             cx.spawn_in(
                 window,
                 async move |weak: WeakEntity<Editor>, cx: &mut AsyncWindowContext| {
-                    dbg!("A");
                     let find_task = weak.update_in(cx, |editor, window, cx| {
                         editor.find_matches(query.clone(), window, cx)
                     })?;
