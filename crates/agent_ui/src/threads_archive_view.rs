@@ -135,7 +135,6 @@ pub struct ThreadsArchiveView {
     _subscriptions: Vec<gpui::Subscription>,
     selected_agent_menu: PopoverMenuHandle<ContextMenu>,
     _refresh_history_task: Task<()>,
-    _update_items_task: Option<Task<()>>,
     is_loading: bool,
 }
 
@@ -180,7 +179,6 @@ impl ThreadsArchiveView {
             _subscriptions: vec![filter_editor_subscription],
             selected_agent_menu: PopoverMenuHandle::default(),
             _refresh_history_task: Task::ready(()),
-            _update_items_task: None,
             is_loading: true,
         };
         this.set_selected_agent(Agent::NativeAgent, window, cx);
@@ -243,50 +241,44 @@ impl ThreadsArchiveView {
         let query = self.filter_editor.read(cx).text(cx).to_lowercase();
         let today = Local::now().naive_local().date();
 
-        self._update_items_task.take();
-        self._update_items_task = Some(cx.spawn(async move |this, cx| {
-            let mut items = Vec::with_capacity(sessions.len() + 5);
-            let mut current_bucket: Option<TimeBucket> = None;
+        let mut items = Vec::with_capacity(sessions.len() + 5);
+        let mut current_bucket: Option<TimeBucket> = None;
 
-            for session in sessions {
-                let highlight_positions = if !query.is_empty() {
-                    let title = session.title.as_ref().map(|t| t.as_ref()).unwrap_or("");
-                    match fuzzy_match_positions(&query, title) {
-                        Some(positions) => positions,
-                        None => continue,
-                    }
-                } else {
-                    Vec::new()
-                };
-
-                let entry_bucket = session
-                    .updated_at
-                    .map(|timestamp| {
-                        let entry_date = timestamp.with_timezone(&Local).naive_local().date();
-                        TimeBucket::from_dates(today, entry_date)
-                    })
-                    .unwrap_or(TimeBucket::Older);
-
-                if Some(entry_bucket) != current_bucket {
-                    current_bucket = Some(entry_bucket);
-                    items.push(ArchiveListItem::BucketSeparator(entry_bucket));
+        for session in sessions {
+            let highlight_positions = if !query.is_empty() {
+                let title = session.title.as_ref().map(|t| t.as_ref()).unwrap_or("");
+                match fuzzy_match_positions(&query, title) {
+                    Some(positions) => positions,
+                    None => continue,
                 }
+            } else {
+                Vec::new()
+            };
 
-                items.push(ArchiveListItem::Entry {
-                    session,
-                    highlight_positions,
-                });
+            let entry_bucket = session
+                .updated_at
+                .map(|timestamp| {
+                    let entry_date = timestamp.with_timezone(&Local).naive_local().date();
+                    TimeBucket::from_dates(today, entry_date)
+                })
+                .unwrap_or(TimeBucket::Older);
+
+            if Some(entry_bucket) != current_bucket {
+                current_bucket = Some(entry_bucket);
+                items.push(ArchiveListItem::BucketSeparator(entry_bucket));
             }
 
-            this.update(cx, |this, cx| {
-                this.list_state.reset(items.len());
-                this.items = items;
-                this.selection = None;
-                this.hovered_index = None;
-                cx.notify();
-            })
-            .ok();
-        }));
+            items.push(ArchiveListItem::Entry {
+                session,
+                highlight_positions,
+            });
+        }
+
+        self.list_state.reset(items.len());
+        self.items = items;
+        self.selection = None;
+        self.hovered_index = None;
+        cx.notify();
     }
 
     fn reset_filter_editor_text(&mut self, window: &mut Window, cx: &mut Context<Self>) {
