@@ -1,3 +1,8 @@
+---
+title: Biome
+description: "Configure Biome language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Biome
 
 [Biome](https://biomejs.dev/) support in Zed is provided by the community-maintained [Biome extension](https://github.com/biomejs/biome-zed).
@@ -24,7 +29,7 @@ The Biome extension includes support for the following languages:
 
 By default, the `biome.json` file is required to be in the root of the workspace.
 
-```json [settings]
+```json
 {
   "$schema": "https://biomejs.dev/schemas/1.8.3/schema.json"
 }

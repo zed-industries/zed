@@ -1,23 +1,68 @@
 use anyhow::Result;
 use edit_prediction::cursor_excerpt;
-use edit_prediction_types::{EditPrediction, EditPredictionDelegate};
-use futures::AsyncReadExt;
-use gpui::{App, Context, Entity, Task};
-use http_client::HttpClient;
-use language::{
-    language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, EditPreview, ToPoint,
+use edit_prediction_types::{
+    EditPrediction, EditPredictionDelegate, EditPredictionDiscardReason, EditPredictionIconSet,
 };
-use language_models::MistralLanguageModelProvider;
-use mistral::CODESTRAL_API_URL;
+use futures::AsyncReadExt;
+use gpui::{App, AppContext as _, Context, Entity, Global, SharedString, Task};
+use http_client::HttpClient;
+use icons::IconName;
+use language::{
+    Anchor, Buffer, BufferSnapshot, EditPreview, language_settings::all_language_settings,
+};
+use language_model::{ApiKeyState, AuthenticateError, EnvVar, env_var};
 use serde::{Deserialize, Serialize};
+
 use std::{
     ops::Range,
     sync::Arc,
     time::{Duration, Instant},
 };
-use text::{OffsetRangeExt as _, ToOffset};
+use text::ToOffset;
 
+pub const CODESTRAL_API_URL: &str = "https://codestral.mistral.ai";
 pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(150);
+
+static CODESTRAL_API_KEY_ENV_VAR: std::sync::LazyLock<EnvVar> = env_var!("CODESTRAL_API_KEY");
+
+struct GlobalCodestralApiKey(Entity<ApiKeyState>);
+
+impl Global for GlobalCodestralApiKey {}
+
+pub fn codestral_api_key_state(cx: &mut App) -> Entity<ApiKeyState> {
+    if let Some(global) = cx.try_global::<GlobalCodestralApiKey>() {
+        return global.0.clone();
+    }
+    let entity =
+        cx.new(|cx| ApiKeyState::new(codestral_api_url(cx), CODESTRAL_API_KEY_ENV_VAR.clone()));
+    cx.set_global(GlobalCodestralApiKey(entity.clone()));
+    entity
+}
+
+pub fn codestral_api_key(cx: &App) -> Option<Arc<str>> {
+    let url = codestral_api_url(cx);
+    cx.try_global::<GlobalCodestralApiKey>()?
+        .0
+        .read(cx)
+        .key(&url)
+}
+
+pub fn load_codestral_api_key(cx: &mut App) -> Task<Result<(), AuthenticateError>> {
+    let api_url = codestral_api_url(cx);
+    codestral_api_key_state(cx).update(cx, |key_state, cx| {
+        key_state.load_if_needed(api_url, |s| s, cx)
+    })
+}
+
+pub fn codestral_api_url(cx: &App) -> SharedString {
+    all_language_settings(None, cx)
+        .edit_predictions
+        .codestral
+        .api_url
+        .clone()
+        .unwrap_or_else(|| CODESTRAL_API_URL.to_string())
+        .into()
+}
 
 /// Represents a completion that has been received and processed from Codestral.
 /// This struct maintains the state needed to interpolate the completion as the user types.
@@ -56,21 +101,8 @@ impl CodestralEditPredictionDelegate {
         }
     }
 
-    pub fn has_api_key(cx: &App) -> bool {
-        Self::api_key(cx).is_some()
-    }
-
-    /// This is so we can immediately show Codestral as a provider users can
-    /// switch to in the edit prediction menu, if the API has been added
-    pub fn ensure_api_key_loaded(http_client: Arc<dyn HttpClient>, cx: &mut App) {
-        MistralLanguageModelProvider::global(http_client, cx)
-            .load_codestral_api_key(cx)
-            .detach();
-    }
-
-    fn api_key(cx: &App) -> Option<Arc<str>> {
-        MistralLanguageModelProvider::try_global(cx)
-            .and_then(|provider| provider.codestral_api_key(CODESTRAL_API_URL, cx))
+    pub fn ensure_api_key_loaded(cx: &mut App) {
+        load_codestral_api_key(cx).detach();
     }
 
     /// Uses Codestral's Fill-in-the-Middle API for code completion.
@@ -172,8 +204,12 @@ impl EditPredictionDelegate for CodestralEditPredictionDelegate {
         true
     }
 
+    fn icons(&self, _cx: &App) -> EditPredictionIconSet {
+        EditPredictionIconSet::new(IconName::AiMistral)
+    }
+
     fn is_enabled(&self, _buffer: &Entity<Buffer>, _cursor_position: Anchor, cx: &App) -> bool {
-        Self::api_key(cx).is_some()
+        codestral_api_key(cx).is_some()
     }
 
     fn is_refreshing(&self, _cx: &App) -> bool {
@@ -189,7 +225,7 @@ impl EditPredictionDelegate for CodestralEditPredictionDelegate {
     ) {
         log::debug!("Codestral: Refresh called (debounce: {})", debounce);
 
-        let Some(api_key) = Self::api_key(cx) else {
+        let Some(api_key) = codestral_api_key(cx) else {
             log::warn!("Codestral: No API key configured, skipping refresh");
             return;
         };
@@ -214,12 +250,7 @@ impl EditPredictionDelegate for CodestralEditPredictionDelegate {
             .clone()
             .unwrap_or_else(|| "codestral-latest".to_string());
         let max_tokens = settings.edit_predictions.codestral.max_tokens;
-        let api_url = settings
-            .edit_predictions
-            .codestral
-            .api_url
-            .clone()
-            .unwrap_or_else(|| CODESTRAL_API_URL.to_string());
+        let api_url = codestral_api_url(cx).to_string();
 
         self.pending_request = Some(cx.spawn(async move |this, cx| {
             if debounce {
@@ -228,28 +259,31 @@ impl EditPredictionDelegate for CodestralEditPredictionDelegate {
             }
 
             let cursor_offset = cursor_position.to_offset(&snapshot);
-            let cursor_point = cursor_offset.to_point(&snapshot);
 
+            const MAX_EDITABLE_TOKENS: usize = 350;
             const MAX_CONTEXT_TOKENS: usize = 150;
-            const MAX_REWRITE_TOKENS: usize = 350;
 
-            let (_, context_range) =
-                cursor_excerpt::editable_and_context_ranges_for_cursor_position(
-                    cursor_point,
-                    &snapshot,
-                    MAX_REWRITE_TOKENS,
-                    MAX_CONTEXT_TOKENS,
-                );
-
-            let context_range = context_range.to_offset(&snapshot);
-            let excerpt_text = snapshot
-                .text_for_range(context_range.clone())
-                .collect::<String>();
-            let cursor_within_excerpt = cursor_offset
+            let (excerpt_point_range, excerpt_offset_range, cursor_offset_in_excerpt) =
+                cursor_excerpt::compute_cursor_excerpt(&snapshot, cursor_offset);
+            let syntax_ranges = cursor_excerpt::compute_syntax_ranges(
+                &snapshot,
+                cursor_offset,
+                &excerpt_offset_range,
+            );
+            let excerpt_text: String = snapshot.text_for_range(excerpt_point_range).collect();
+            let (_, context_range) = zeta_prompt::compute_editable_and_context_ranges(
+                &excerpt_text,
+                cursor_offset_in_excerpt,
+                &syntax_ranges,
+                MAX_EDITABLE_TOKENS,
+                MAX_CONTEXT_TOKENS,
+            );
+            let context_text = &excerpt_text[context_range.clone()];
+            let cursor_within_excerpt = cursor_offset_in_excerpt
                 .saturating_sub(context_range.start)
-                .min(excerpt_text.len());
-            let prompt = excerpt_text[..cursor_within_excerpt].to_string();
-            let suffix = excerpt_text[cursor_within_excerpt..].to_string();
+                .min(context_text.len());
+            let prompt = context_text[..cursor_within_excerpt].to_string();
+            let suffix = context_text[cursor_within_excerpt..].to_string();
 
             let completion_text = match Self::fetch_completion(
                 http_client,
@@ -308,7 +342,7 @@ impl EditPredictionDelegate for CodestralEditPredictionDelegate {
         self.current_completion = None;
     }
 
-    fn discard(&mut self, _cx: &mut Context<Self>) {
+    fn discard(&mut self, _reason: EditPredictionDiscardReason, _cx: &mut Context<Self>) {
         log::debug!("Codestral: Completion discarded");
         self.pending_request = None;
         self.current_completion = None;
@@ -330,6 +364,7 @@ impl EditPredictionDelegate for CodestralEditPredictionDelegate {
         Some(EditPrediction::Local {
             id: None,
             edits,
+            cursor_position: None,
             edit_preview: Some(current_completion.edit_preview.clone()),
         })
     }

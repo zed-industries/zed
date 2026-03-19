@@ -68,14 +68,17 @@ impl AddLlmProviderInput {
         let provider_name =
             single_line_input("Provider Name", provider.name(), None, 1, window, cx);
         let api_url = single_line_input("API URL", provider.api_url(), None, 2, window, cx);
-        let api_key = single_line_input(
-            "API Key",
-            "000000000000000000000000000000000000000000000000",
-            None,
-            3,
-            window,
-            cx,
-        );
+        let api_key = cx.new(|cx| {
+            InputField::new(
+                window,
+                cx,
+                "000000000000000000000000000000000000000000000000",
+            )
+            .label("API Key")
+            .tab_index(3)
+            .tab_stop(true)
+            .masked(true)
+        });
 
         Self {
             provider_name,
@@ -117,7 +120,7 @@ impl ModelInput {
 
         let model_name = single_line_input(
             "Model Name",
-            "e.g. gpt-4o, claude-opus-4, gemini-2.5-pro",
+            "e.g. gpt-5, claude-opus-4, gemini-2.5-pro",
             None,
             base_tab_index + 1,
             window,
@@ -340,10 +343,11 @@ impl AddLlmProviderModal {
                     .child(Label::new("Models").size(LabelSize::Small))
                     .child(
                         Button::new("add-model", "Add Model")
-                            .icon(IconName::Plus)
-                            .icon_position(IconPosition::Start)
-                            .icon_size(IconSize::XSmall)
-                            .icon_color(Color::Muted)
+                            .start_icon(
+                                Icon::new(IconName::Plus)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted),
+                            )
                             .label_size(LabelSize::Small)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.input.add_model(window, cx);
@@ -446,10 +450,11 @@ impl AddLlmProviderModal {
             .when(has_more_than_one_model, |this| {
                 this.child(
                     Button::new(("remove-model", ix), "Remove Model")
-                        .icon(IconName::Trash)
-                        .icon_position(IconPosition::Start)
-                        .icon_size(IconSize::XSmall)
-                        .icon_color(Color::Muted)
+                        .start_icon(
+                            Icon::new(IconName::Trash)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        )
                         .label_size(LabelSize::Small)
                         .style(ButtonStyle::Outlined)
                         .full_width()
@@ -540,6 +545,7 @@ impl Render for AddLlmProviderModal {
                                     .max_h(modal_max_height)
                                     .pl_3()
                                     .pr_4()
+                                    .pb_2()
                                     .gap_2()
                                     .overflow_y_scroll()
                                     .track_scroll(&self.scroll_handle)
@@ -599,6 +605,7 @@ mod tests {
     use project::Project;
     use settings::SettingsStore;
     use util::path;
+    use workspace::MultiWorkspace;
 
     #[gpui::test]
     async fn test_save_provider_invalid_inputs(cx: &mut TestAppContext) {
@@ -815,8 +822,9 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
         cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-        let (_, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let _workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         cx
     }

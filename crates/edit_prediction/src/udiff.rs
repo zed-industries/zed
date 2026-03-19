@@ -190,38 +190,6 @@ pub async fn refresh_worktree_entries(
     Ok(())
 }
 
-/// Extract the diff for a specific file from a multi-file diff.
-/// Returns an error if the file is not found in the diff.
-pub fn extract_file_diff(full_diff: &str, file_path: &str) -> Result<String> {
-    let mut result = String::new();
-    let mut in_target_file = false;
-    let mut found_file = false;
-
-    for line in full_diff.lines() {
-        if line.starts_with("diff --git") {
-            if in_target_file {
-                break;
-            }
-            in_target_file = line.contains(&format!("a/{}", file_path))
-                || line.contains(&format!("b/{}", file_path));
-            if in_target_file {
-                found_file = true;
-            }
-        }
-
-        if in_target_file {
-            result.push_str(line);
-            result.push('\n');
-        }
-    }
-
-    if !found_file {
-        anyhow::bail!("File '{}' not found in diff", file_path);
-    }
-
-    Ok(result)
-}
-
 pub fn strip_diff_path_prefix<'a>(diff: &'a str, prefix: &str) -> Cow<'a, str> {
     if prefix.is_empty() {
         return Cow::Borrowed(diff);
@@ -298,12 +266,72 @@ pub fn strip_diff_metadata(diff: &str) -> String {
     result
 }
 
+/// Find all byte offsets where `hunk.context` occurs as a substring of `text`.
+///
+/// If no exact matches are found and the context ends with `'\n'` but `text`
+/// does not, retries without the trailing newline, accepting only a match at
+/// the very end of `text`. When this fallback fires, the hunk's context is
+/// trimmed and its edit ranges are clamped so that downstream code doesn't
+/// index past the end of the matched region. This handles diffs that are
+/// missing a `\ No newline at end of file` marker: the parser always appends
+/// `'\n'` via `writeln!`, so the context can have a trailing newline that
+/// doesn't exist in the source text.
+fn find_context_candidates(text: &str, hunk: &mut Hunk) -> Vec<usize> {
+    let candidates: Vec<usize> = text
+        .match_indices(&hunk.context)
+        .map(|(offset, _)| offset)
+        .collect();
+
+    if !candidates.is_empty() {
+        return candidates;
+    }
+
+    if hunk.context.ends_with('\n') && !hunk.context.is_empty() {
+        let old_len = hunk.context.len();
+        hunk.context.pop();
+        let new_len = hunk.context.len();
+
+        if !hunk.context.is_empty() {
+            let candidates: Vec<usize> = text
+                .match_indices(&hunk.context)
+                .filter(|(offset, _)| offset + new_len == text.len())
+                .map(|(offset, _)| offset)
+                .collect();
+
+            if !candidates.is_empty() {
+                for edit in &mut hunk.edits {
+                    let touched_phantom = edit.range.end > new_len;
+                    edit.range.start = edit.range.start.min(new_len);
+                    edit.range.end = edit.range.end.min(new_len);
+                    if touched_phantom {
+                        // The replacement text was also written with a
+                        // trailing '\n' that corresponds to the phantom
+                        // newline we just removed from the context.
+                        if edit.text.ends_with('\n') {
+                            edit.text.pop();
+                        }
+                    }
+                }
+                return candidates;
+            }
+
+            // Restore if fallback didn't help either.
+            hunk.context.push('\n');
+            debug_assert_eq!(hunk.context.len(), old_len);
+        } else {
+            hunk.context.push('\n');
+        }
+    }
+
+    Vec::new()
+}
+
 /// Given multiple candidate offsets where context matches, use line numbers to disambiguate.
 /// Returns the offset that matches the expected line, or None if no match or no line number available.
 fn disambiguate_by_line_number(
     candidates: &[usize],
     expected_line: Option<u32>,
-    offset_to_line: impl Fn(usize) -> u32,
+    offset_to_line: &dyn Fn(usize) -> u32,
 ) -> Option<usize> {
     match candidates.len() {
         0 => None,
@@ -319,28 +347,39 @@ fn disambiguate_by_line_number(
 }
 
 pub fn apply_diff_to_string(diff_str: &str, text: &str) -> Result<String> {
+    apply_diff_to_string_with_hunk_offset(diff_str, text).map(|(text, _)| text)
+}
+
+/// Applies a diff to a string and returns the result along with the offset where
+/// the first hunk's context matched in the original text. This offset can be used
+/// to adjust cursor positions that are relative to the hunk's content.
+pub fn apply_diff_to_string_with_hunk_offset(
+    diff_str: &str,
+    text: &str,
+) -> Result<(String, Option<usize>)> {
     let mut diff = DiffParser::new(diff_str);
 
     let mut text = text.to_string();
+    let mut first_hunk_offset = None;
 
     while let Some(event) = diff.next().context("Failed to parse diff")? {
         match event {
             DiffEvent::Hunk {
-                hunk,
+                mut hunk,
                 path: _,
                 status: _,
             } => {
-                // Find all matches of the context in the text
-                let candidates: Vec<usize> = text
-                    .match_indices(&hunk.context)
-                    .map(|(offset, _)| offset)
-                    .collect();
+                let candidates = find_context_candidates(&text, &mut hunk);
 
                 let hunk_offset =
-                    disambiguate_by_line_number(&candidates, hunk.start_line, |offset| {
+                    disambiguate_by_line_number(&candidates, hunk.start_line, &|offset| {
                         text[..offset].matches('\n').count() as u32
                     })
                     .ok_or_else(|| anyhow!("couldn't resolve hunk"))?;
+
+                if first_hunk_offset.is_none() {
+                    first_hunk_offset = Some(hunk_offset);
+                }
 
                 for edit in hunk.edits.iter().rev() {
                     let range = (hunk_offset + edit.range.start)..(hunk_offset + edit.range.end);
@@ -351,7 +390,7 @@ pub fn apply_diff_to_string(diff_str: &str, text: &str) -> Result<String> {
         }
     }
 
-    Ok(text)
+    Ok((text, first_hunk_offset))
 }
 
 /// Returns the individual edits that would be applied by a diff to the given content.
@@ -365,7 +404,7 @@ pub fn edits_for_diff(content: &str, diff_str: &str) -> Result<Vec<(Range<usize>
     while let Some(event) = diff.next()? {
         match event {
             DiffEvent::Hunk {
-                hunk,
+                mut hunk,
                 path: _,
                 status: _,
             } => {
@@ -373,14 +412,10 @@ pub fn edits_for_diff(content: &str, diff_str: &str) -> Result<Vec<(Range<usize>
                     return Ok(Vec::new());
                 }
 
-                // Find all matches of the context in the content
-                let candidates: Vec<usize> = content
-                    .match_indices(&hunk.context)
-                    .map(|(offset, _)| offset)
-                    .collect();
+                let candidates = find_context_candidates(content, &mut hunk);
 
                 let Some(context_offset) =
-                    disambiguate_by_line_number(&candidates, hunk.start_line, |offset| {
+                    disambiguate_by_line_number(&candidates, hunk.start_line, &|offset| {
                         content[..offset].matches('\n').count() as u32
                     })
                 else {
@@ -628,7 +663,7 @@ impl<'a> DiffParser<'a> {
 }
 
 fn resolve_hunk_edits_in_buffer(
-    hunk: Hunk,
+    mut hunk: Hunk,
     buffer: &TextBufferSnapshot,
     ranges: &[Range<Anchor>],
     status: FileStatus,
@@ -640,12 +675,12 @@ fn resolve_hunk_edits_in_buffer(
         for range in ranges {
             let range = range.to_offset(buffer);
             let text = buffer.text_for_range(range.clone()).collect::<String>();
-            for (ix, _) in text.match_indices(&hunk.context) {
+            for ix in find_context_candidates(&text, &mut hunk) {
                 candidates.push(range.start + ix);
             }
         }
 
-        disambiguate_by_line_number(&candidates, hunk.start_line, |offset| {
+        disambiguate_by_line_number(&candidates, hunk.start_line, &|offset| {
             buffer.offset_to_point(offset).row
         })
         .ok_or_else(|| {
@@ -693,9 +728,9 @@ pub enum DiffLine<'a> {
 
 #[derive(Debug, PartialEq)]
 pub struct HunkLocation {
-    start_line_old: u32,
+    pub start_line_old: u32,
     count_old: u32,
-    start_line_new: u32,
+    pub start_line_new: u32,
     count_new: u32,
 }
 
@@ -1458,63 +1493,6 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_file_diff() {
-        let multi_file_diff = indoc! {r#"
-            diff --git a/file1.txt b/file1.txt
-            index 1234567..abcdefg 100644
-            --- a/file1.txt
-            +++ b/file1.txt
-            @@ -1,3 +1,4 @@
-             line1
-            +added line
-             line2
-             line3
-            diff --git a/file2.txt b/file2.txt
-            index 2345678..bcdefgh 100644
-            --- a/file2.txt
-            +++ b/file2.txt
-            @@ -1,2 +1,2 @@
-            -old line
-            +new line
-             unchanged
-        "#};
-
-        let file1_diff = extract_file_diff(multi_file_diff, "file1.txt").unwrap();
-        assert_eq!(
-            file1_diff,
-            indoc! {r#"
-                diff --git a/file1.txt b/file1.txt
-                index 1234567..abcdefg 100644
-                --- a/file1.txt
-                +++ b/file1.txt
-                @@ -1,3 +1,4 @@
-                 line1
-                +added line
-                 line2
-                 line3
-            "#}
-        );
-
-        let file2_diff = extract_file_diff(multi_file_diff, "file2.txt").unwrap();
-        assert_eq!(
-            file2_diff,
-            indoc! {r#"
-                diff --git a/file2.txt b/file2.txt
-                index 2345678..bcdefgh 100644
-                --- a/file2.txt
-                +++ b/file2.txt
-                @@ -1,2 +1,2 @@
-                -old line
-                +new line
-                 unchanged
-            "#}
-        );
-
-        let result = extract_file_diff(multi_file_diff, "nonexistent.txt");
-        assert!(result.is_err());
-    }
-
-    #[test]
     fn test_edits_for_diff() {
         let content = indoc! {"
             fn main() {
@@ -1586,5 +1564,186 @@ mod tests {
                  more context
             "#}
         );
+    }
+
+    #[test]
+    fn test_apply_diff_to_string_no_trailing_newline() {
+        // Text without trailing newline; diff generated without
+        // `\ No newline at end of file` marker.
+        let text = "line1\nline2\nline3";
+        let diff = indoc! {"
+            --- a/file.txt
+            +++ b/file.txt
+            @@ -1,3 +1,3 @@
+             line1
+            -line2
+            +replaced
+             line3
+        "};
+
+        let result = apply_diff_to_string(diff, text).unwrap();
+        assert_eq!(result, "line1\nreplaced\nline3");
+    }
+
+    #[test]
+    fn test_apply_diff_to_string_trailing_newline_present() {
+        // When text has a trailing newline, exact matching still works and
+        // the fallback is never needed.
+        let text = "line1\nline2\nline3\n";
+        let diff = indoc! {"
+            --- a/file.txt
+            +++ b/file.txt
+            @@ -1,3 +1,3 @@
+             line1
+            -line2
+            +replaced
+             line3
+        "};
+
+        let result = apply_diff_to_string(diff, text).unwrap();
+        assert_eq!(result, "line1\nreplaced\nline3\n");
+    }
+
+    #[test]
+    fn test_apply_diff_to_string_deletion_at_end_no_trailing_newline() {
+        // Deletion of the last line when text has no trailing newline.
+        // The edit range must be clamped so it doesn't index past the
+        // end of the text.
+        let text = "line1\nline2\nline3";
+        let diff = indoc! {"
+            --- a/file.txt
+            +++ b/file.txt
+            @@ -1,3 +1,2 @@
+             line1
+             line2
+            -line3
+        "};
+
+        let result = apply_diff_to_string(diff, text).unwrap();
+        assert_eq!(result, "line1\nline2\n");
+    }
+
+    #[test]
+    fn test_apply_diff_to_string_replace_last_line_no_trailing_newline() {
+        // Replace the last line when text has no trailing newline.
+        let text = "aaa\nbbb\nccc";
+        let diff = indoc! {"
+            --- a/file.txt
+            +++ b/file.txt
+            @@ -1,3 +1,3 @@
+             aaa
+             bbb
+            -ccc
+            +ddd
+        "};
+
+        let result = apply_diff_to_string(diff, text).unwrap();
+        assert_eq!(result, "aaa\nbbb\nddd");
+    }
+
+    #[test]
+    fn test_apply_diff_to_string_multibyte_no_trailing_newline() {
+        // Multi-byte UTF-8 characters near the end; ensures char boundary
+        // safety when the fallback clamps edit ranges.
+        let text = "hello\n세계";
+        let diff = indoc! {"
+            --- a/file.txt
+            +++ b/file.txt
+            @@ -1,2 +1,2 @@
+             hello
+            -세계
+            +world
+        "};
+
+        let result = apply_diff_to_string(diff, text).unwrap();
+        assert_eq!(result, "hello\nworld");
+    }
+
+    #[test]
+    fn test_find_context_candidates_no_false_positive_mid_text() {
+        // The stripped fallback must only match at the end of text, not in
+        // the middle where a real newline exists.
+        let text = "aaa\nbbb\nccc\n";
+        let mut hunk = Hunk {
+            context: "bbb\n".into(),
+            edits: vec![],
+            start_line: None,
+        };
+
+        let candidates = find_context_candidates(text, &mut hunk);
+        // Exact match at offset 4 — the fallback is not used.
+        assert_eq!(candidates, vec![4]);
+    }
+
+    #[test]
+    fn test_find_context_candidates_fallback_at_end() {
+        let text = "aaa\nbbb";
+        let mut hunk = Hunk {
+            context: "bbb\n".into(),
+            edits: vec![],
+            start_line: None,
+        };
+
+        let candidates = find_context_candidates(text, &mut hunk);
+        assert_eq!(candidates, vec![4]);
+        // Context should be stripped.
+        assert_eq!(hunk.context, "bbb");
+    }
+
+    #[test]
+    fn test_find_context_candidates_no_fallback_mid_text() {
+        // "bbb" appears mid-text followed by a newline, so the exact
+        // match succeeds. Verify the stripped fallback doesn't produce a
+        // second, spurious candidate.
+        let text = "aaa\nbbb\nccc";
+        let mut hunk = Hunk {
+            context: "bbb\nccc\n".into(),
+            edits: vec![],
+            start_line: None,
+        };
+
+        let candidates = find_context_candidates(text, &mut hunk);
+        // No exact match (text ends without newline after "ccc"), but the
+        // stripped context "bbb\nccc" matches at offset 4, which is the end.
+        assert_eq!(candidates, vec![4]);
+        assert_eq!(hunk.context, "bbb\nccc");
+    }
+
+    #[test]
+    fn test_find_context_candidates_clamps_edit_ranges() {
+        let text = "aaa\nbbb";
+        let mut hunk = Hunk {
+            context: "aaa\nbbb\n".into(),
+            edits: vec![Edit {
+                range: 4..8, // "bbb\n" — end points at the trailing \n
+                text: "ccc\n".into(),
+            }],
+            start_line: None,
+        };
+
+        let candidates = find_context_candidates(text, &mut hunk);
+        assert_eq!(candidates, vec![0]);
+        // Edit range end should be clamped to 7 (new context length).
+        assert_eq!(hunk.edits[0].range, 4..7);
+    }
+
+    #[test]
+    fn test_edits_for_diff_no_trailing_newline() {
+        let content = "foo\nbar\nbaz";
+        let diff = indoc! {"
+            --- a/file.txt
+            +++ b/file.txt
+            @@ -1,3 +1,3 @@
+             foo
+            -bar
+            +qux
+             baz
+        "};
+
+        let result = edits_for_diff(content, diff).unwrap();
+        assert_eq!(result.len(), 1);
+        let (range, text) = &result[0];
+        assert_eq!(&content[range.clone()], "bar");
+        assert_eq!(text, "qux");
     }
 }

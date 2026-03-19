@@ -36,9 +36,9 @@ pub(crate) fn set_edit_prediction_provider(provider: EditPredictionProvider, cx:
         settings
             .project
             .all_languages
-            .features
+            .edit_predictions
             .get_or_insert(Default::default())
-            .edit_prediction_provider = Some(provider);
+            .provider = Some(provider);
     });
 }
 

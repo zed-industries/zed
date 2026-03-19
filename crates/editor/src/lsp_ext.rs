@@ -162,7 +162,7 @@ pub fn lsp_tasks(
             lsp_tasks.into_iter().collect()
         })
         .race({
-            // `lsp::LSP_REQUEST_TIMEOUT` is larger than we want for the modal to open fast
+            // `lsp::DEFAULT_LSP_REQUEST_TIMEOUT` is larger than we want for the modal to open fast
             let timer = cx.background_executor().timer(Duration::from_millis(200));
             async move {
                 timer.await;

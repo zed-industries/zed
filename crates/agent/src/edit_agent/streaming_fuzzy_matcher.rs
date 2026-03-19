@@ -44,10 +44,6 @@ impl StreamingFuzzyMatcher {
     /// Returns `Some(range)` if a match has been found with the accumulated
     /// query so far, or `None` if no suitable match exists yet.
     pub fn push(&mut self, chunk: &str, line_hint: Option<u32>) -> Option<Range<usize>> {
-        if line_hint.is_some() {
-            self.line_hint = line_hint;
-        }
-
         // Add the chunk to our incomplete line buffer
         self.incomplete_line.push_str(chunk);
         self.line_hint = line_hint;
@@ -320,7 +316,7 @@ mod tests {
         );
         let snapshot = buffer.snapshot();
 
-        let mut finder = StreamingFuzzyMatcher::new(snapshot);
+        let mut finder = StreamingFuzzyMatcher::new(snapshot.clone());
         assert_eq!(push(&mut finder, ""), None);
         assert_eq!(finish(finder), None);
     }
@@ -334,7 +330,7 @@ mod tests {
         );
         let snapshot = buffer.snapshot();
 
-        let mut finder = StreamingFuzzyMatcher::new(snapshot);
+        let mut finder = StreamingFuzzyMatcher::new(snapshot.clone());
 
         // Push partial query
         assert_eq!(push(&mut finder, "This"), None);
@@ -366,7 +362,7 @@ mod tests {
         );
         let snapshot = buffer.snapshot();
 
-        let mut finder = StreamingFuzzyMatcher::new(snapshot);
+        let mut finder = StreamingFuzzyMatcher::new(snapshot.clone());
 
         // Push a fuzzy query that should match the first function
         assert_eq!(
@@ -392,7 +388,7 @@ mod tests {
         );
         let snapshot = buffer.snapshot();
 
-        let mut finder = StreamingFuzzyMatcher::new(snapshot);
+        let mut finder = StreamingFuzzyMatcher::new(snapshot.clone());
 
         // No match initially
         assert_eq!(push(&mut finder, "Lin"), None);
@@ -421,7 +417,7 @@ mod tests {
         );
         let snapshot = buffer.snapshot();
 
-        let mut finder = StreamingFuzzyMatcher::new(snapshot);
+        let mut finder = StreamingFuzzyMatcher::new(snapshot.clone());
 
         // Push text in small chunks across line boundaries
         assert_eq!(push(&mut finder, "jumps "), None); // No newline yet
@@ -459,7 +455,7 @@ mod tests {
         );
         let snapshot = buffer.snapshot();
 
-        let mut finder = StreamingFuzzyMatcher::new(snapshot);
+        let mut finder = StreamingFuzzyMatcher::new(snapshot.clone());
 
         assert_eq!(
             push(&mut finder, "impl Debug for User {\n"),
@@ -716,7 +712,7 @@ mod tests {
             "Expected to match `second_function` based on the line hint"
         );
 
-        let mut matcher = StreamingFuzzyMatcher::new(snapshot);
+        let mut matcher = StreamingFuzzyMatcher::new(snapshot.clone());
         matcher.push(query, None);
         matcher.finish();
         let best_match = matcher.select_best_match();
@@ -732,7 +728,7 @@ mod tests {
         let buffer = TextBuffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), text.clone());
         let snapshot = buffer.snapshot();
 
-        let mut matcher = StreamingFuzzyMatcher::new(snapshot);
+        let mut matcher = StreamingFuzzyMatcher::new(snapshot.clone());
 
         // Split query into random chunks
         let chunks = to_random_chunks(rng, query);

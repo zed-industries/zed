@@ -32,6 +32,7 @@ fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 edit_prediction_types.workspace = true
+icons.workspace = true
 language.workspace = true
 log.workspace = true
 lsp.workspace = true
@@ -51,18 +52,15 @@ workspace.workspace = true
 async-std = { version = "1.12.0", features = ["unstable"] }
 
 [dev-dependencies]
-client = { workspace = true, features = ["test-support"] }
-clock = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
-ctor.workspace = true
 editor = { workspace = true, features = ["test-support"] }
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
-http_client = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
 node_runtime = { workspace = true, features = ["test-support"] }
+pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 rpc = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true

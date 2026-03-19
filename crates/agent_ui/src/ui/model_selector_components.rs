@@ -1,5 +1,5 @@
 use gpui::{Action, ClickEvent, FocusHandle, prelude::*};
-use ui::{ElevationIndex, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
+use ui::{Chip, ElevationIndex, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use zed_actions::agent::ToggleModelSelector;
 
 use crate::CycleFavoriteModels;
@@ -50,8 +50,10 @@ pub struct ModelSelectorListItem {
     icon: Option<ModelIcon>,
     is_selected: bool,
     is_focused: bool,
+    is_latest: bool,
     is_favorite: bool,
     on_toggle_favorite: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+    cost_info: Option<SharedString>,
 }
 
 impl ModelSelectorListItem {
@@ -62,8 +64,10 @@ impl ModelSelectorListItem {
             icon: None,
             is_selected: false,
             is_focused: false,
+            is_latest: false,
             is_favorite: false,
             on_toggle_favorite: None,
+            cost_info: None,
         }
     }
 
@@ -87,6 +91,11 @@ impl ModelSelectorListItem {
         self
     }
 
+    pub fn is_latest(mut self, is_latest: bool) -> Self {
+        self.is_latest = is_latest;
+        self
+    }
+
     pub fn is_favorite(mut self, is_favorite: bool) -> Self {
         self.is_favorite = is_favorite;
         self
@@ -97,6 +106,11 @@ impl ModelSelectorListItem {
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_toggle_favorite = Some(Box::new(handler));
+        self
+    }
+
+    pub fn cost_info(mut self, cost_info: Option<SharedString>) -> Self {
+        self.cost_info = cost_info;
         self
     }
 }
@@ -129,7 +143,19 @@ impl RenderOnce for ModelSelectorListItem {
                             .size(IconSize::Small),
                         )
                     })
-                    .child(Label::new(self.title).truncate()),
+                    .child(Label::new(self.title).truncate())
+                    .when(self.is_latest, |parent| parent.child(Chip::new("Latest")))
+                    .when_some(self.cost_info, |this, cost_info| {
+                        let tooltip_text = if cost_info.ends_with('×') {
+                            format!("Cost Multiplier: {}", cost_info)
+                        } else if cost_info.contains('$') {
+                            format!("Cost per Million Tokens: {}", cost_info)
+                        } else {
+                            format!("Cost: {}", cost_info)
+                        };
+
+                        this.child(Chip::new(cost_info).tooltip(Tooltip::text(tooltip_text)))
+                    }),
             )
             .end_slot(div().pr_2().when(self.is_selected, |this| {
                 this.child(Icon::new(IconName::Check).color(Color::Accent))
@@ -196,14 +222,12 @@ impl RenderOnce for ModelSelectorFooter {
 
 #[derive(IntoElement)]
 pub struct ModelSelectorTooltip {
-    focus_handle: FocusHandle,
     show_cycle_row: bool,
 }
 
 impl ModelSelectorTooltip {
-    pub fn new(focus_handle: FocusHandle) -> Self {
+    pub fn new() -> Self {
         Self {
-            focus_handle,
             show_cycle_row: true,
         }
     }
@@ -223,11 +247,7 @@ impl RenderOnce for ModelSelectorTooltip {
                     .gap_2()
                     .justify_between()
                     .child(Label::new("Change Model"))
-                    .child(KeyBinding::for_action_in(
-                        &ToggleModelSelector,
-                        &self.focus_handle,
-                        cx,
-                    )),
+                    .child(KeyBinding::for_action(&ToggleModelSelector, cx)),
             )
             .when(self.show_cycle_row, |this| {
                 this.child(
@@ -238,11 +258,7 @@ impl RenderOnce for ModelSelectorTooltip {
                         .border_color(cx.theme().colors().border_variant)
                         .justify_between()
                         .child(Label::new("Cycle Favorited Models"))
-                        .child(KeyBinding::for_action_in(
-                            &CycleFavoriteModels,
-                            &self.focus_handle,
-                            cx,
-                        )),
+                        .child(KeyBinding::for_action(&CycleFavoriteModels, cx)),
                 )
             })
     }

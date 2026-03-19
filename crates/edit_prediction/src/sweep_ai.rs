@@ -11,6 +11,7 @@ use gpui::{
     App, AppContext as _, Entity, Global, SharedString, Task,
     http_client::{self, AsyncBody, Method},
 };
+use language::language_settings::all_language_settings;
 use language::{Anchor, Buffer, BufferSnapshot, Point, ToOffset as _};
 use language_model::{ApiKeyState, EnvVar, env_var};
 use lsp::DiagnosticSeverity;
@@ -20,7 +21,6 @@ use std::{
     ops::Range,
     path::Path,
     sync::Arc,
-    time::Instant,
 };
 
 const SWEEP_API_URL: &str = "https://autocomplete.sweep.dev/backend/next_edit_autocomplete";
@@ -44,7 +44,12 @@ impl SweepAi {
         inputs: EditPredictionModelInput,
         cx: &mut App,
     ) -> Task<Result<Option<EditPredictionResult>>> {
+        let privacy_mode_enabled = all_language_settings(None, cx)
+            .edit_predictions
+            .sweep
+            .privacy_mode;
         let debug_info = self.debug_info.clone();
+        let request_start = cx.background_executor().now();
         self.api_token.update(cx, |key_state, cx| {
             _ = key_state.load_if_needed(SWEEP_CREDENTIALS_URL, |s| s, cx);
         });
@@ -85,8 +90,6 @@ impl SweepAi {
             .take(3)
             .collect::<Vec<_>>();
 
-        let buffer_snapshotted_at = Instant::now();
-
         let result = cx.background_spawn(async move {
             let text = inputs.snapshot.text();
 
@@ -95,7 +98,7 @@ impl SweepAi {
                 write_event(event.as_ref(), &mut recent_changes).unwrap();
             }
 
-            let mut file_chunks = recent_buffer_snapshots
+            let file_chunks = recent_buffer_snapshots
                 .into_iter()
                 .map(|snapshot| {
                     let end_point = Point::new(30, 0).min(snapshot.max_point());
@@ -120,7 +123,7 @@ impl SweepAi {
                 })
                 .collect::<Vec<_>>();
 
-            let retrieval_chunks = inputs
+            let mut retrieval_chunks: Vec<FileChunk> = inputs
                 .related_files
                 .iter()
                 .flat_map(|related_file| {
@@ -155,17 +158,19 @@ impl SweepAi {
 
                 writeln!(
                     &mut diagnostic_content,
-                    "{} at line {}: {}",
-                    severity,
+                    "{}:{}:{}: {}: {}",
+                    full_path.display(),
                     start_point.row + 1,
+                    start_point.column + 1,
+                    severity,
                     entry.diagnostic.message
                 )?;
             }
 
             if !diagnostic_content.is_empty() {
-                file_chunks.push(FileChunk {
-                    file_path: format!("Diagnostics for {}", full_path.display()),
-                    start_line: 0,
+                retrieval_chunks.push(FileChunk {
+                    file_path: "diagnostics".to_string(),
+                    start_line: 1,
                     end_line: diagnostic_count,
                     content: diagnostic_content,
                     timestamp: None,
@@ -195,23 +200,36 @@ impl SweepAi {
                 retrieval_chunks,
                 recent_user_actions,
                 use_bytes: true,
-                // TODO
-                privacy_mode_enabled: false,
+                privacy_mode_enabled,
             };
 
             let mut buf: Vec<u8> = Vec::new();
-            let writer = brotli::CompressorWriter::new(&mut buf, 4096, 11, 22);
+            let writer = brotli::CompressorWriter::new(&mut buf, 4096, 1, 22);
             serde_json::to_writer(writer, &request_body)?;
             let body: AsyncBody = buf.into();
 
             let ep_inputs = zeta_prompt::ZetaPromptInput {
                 events: inputs.events,
-                related_files: inputs.related_files.clone(),
+                related_files: Some(inputs.related_files.clone()),
+                active_buffer_diagnostics: vec![],
                 cursor_path: full_path.clone(),
                 cursor_excerpt: request_body.file_contents.clone().into(),
-                // we actually don't know
-                editable_range_in_excerpt: 0..inputs.snapshot.len(),
                 cursor_offset_in_excerpt: request_body.cursor_position,
+                excerpt_start_row: Some(0),
+                excerpt_ranges: zeta_prompt::ExcerptRanges {
+                    editable_150: 0..inputs.snapshot.len(),
+                    editable_180: 0..inputs.snapshot.len(),
+                    editable_350: 0..inputs.snapshot.len(),
+                    editable_150_context_350: 0..inputs.snapshot.len(),
+                    editable_180_context_350: 0..inputs.snapshot.len(),
+                    editable_350_context_150: 0..inputs.snapshot.len(),
+                    ..Default::default()
+                },
+                syntax_ranges: None,
+                experiment: None,
+                in_open_source_repo: false,
+                can_collect_data: false,
+                repo_url: None,
             };
 
             send_started_event(
@@ -235,7 +253,6 @@ impl SweepAi {
             let mut body = String::new();
             response.body_mut().read_to_string(&mut body).await?;
 
-            let response_received_at = Instant::now();
             if !response.status().is_success() {
                 let message = format!(
                     "Request failed with status: {:?}\nBody: {}",
@@ -269,28 +286,23 @@ impl SweepAi {
                 })
                 .collect::<Vec<_>>();
 
-            anyhow::Ok((
-                response.autocomplete_id,
-                edits,
-                inputs.snapshot,
-                response_received_at,
-                ep_inputs,
-            ))
+            anyhow::Ok((response.autocomplete_id, edits, inputs.snapshot, ep_inputs))
         });
 
         let buffer = inputs.buffer.clone();
 
         cx.spawn(async move |cx| {
-            let (id, edits, old_snapshot, response_received_at, inputs) = result.await?;
+            let (id, edits, old_snapshot, inputs) = result.await?;
             anyhow::Ok(Some(
                 EditPredictionResult::new(
                     EditPredictionId(id.into()),
                     &buffer,
                     &old_snapshot,
                     edits.into(),
-                    buffer_snapshotted_at,
-                    response_received_at,
+                    None,
                     inputs,
+                    None,
+                    cx.background_executor().now() - request_start,
                     cx,
                 )
                 .await,

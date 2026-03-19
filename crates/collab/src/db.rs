@@ -4,13 +4,13 @@ mod tables;
 
 use crate::{Error, Result};
 use anyhow::{Context as _, anyhow};
+use cloud_api_types::{ExtensionMetadata, ExtensionProvides};
 use collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use dashmap::DashMap;
 use futures::StreamExt;
 use project_repository_statuses::StatusKind;
-use rpc::ExtensionProvides;
 use rpc::{
-    ConnectionId, ExtensionMetadata,
+    ConnectionId,
     proto::{self},
 };
 use sea_orm::{
@@ -732,6 +732,8 @@ fn db_status_to_proto(
         status: Some(proto::GitFileStatus {
             variant: Some(variant),
         }),
+        diff_stat_added: entry.lines_added.map(|v| v as u32),
+        diff_stat_deleted: entry.lines_deleted.map(|v| v as u32),
     })
 }
 

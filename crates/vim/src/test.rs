@@ -29,7 +29,7 @@ use project::FakeFs;
 use search::BufferSearchBar;
 use search::{ProjectSearchView, project_search};
 use serde_json::json;
-use workspace::DeploySearch;
+use workspace::{DeploySearch, MultiWorkspace};
 
 use crate::{PushSneak, PushSneakBackward, VimAddon, insert::NormalBefore, motion, state::Mode};
 
@@ -91,6 +91,117 @@ async fn test_toggle_through_settings(cx: &mut gpui::TestAppContext) {
     cx.disable_vim();
     cx.enable_vim();
     assert_eq!(cx.mode(), Mode::Normal);
+}
+
+#[perf]
+#[gpui::test]
+async fn test_vim_linked_edits_delete_x(app_cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new_html(app_cx).await;
+
+    cx.set_state("<diˇv></div>", Mode::Normal);
+    cx.update_editor(|editor, _window, cx| {
+        editor
+            .set_linked_edit_ranges_for_testing(
+                vec![(
+                    Point::new(0, 1)..Point::new(0, 4),
+                    vec![Point::new(0, 7)..Point::new(0, 10)],
+                )],
+                cx,
+            )
+            .expect("linked edit ranges should be set");
+    });
+
+    cx.simulate_keystrokes("x");
+    cx.assert_editor_state("<diˇ></di>");
+}
+
+#[perf]
+#[gpui::test]
+async fn test_vim_linked_edits_change_iw(app_cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new_html(app_cx).await;
+
+    cx.set_state("<diˇv></div>", Mode::Normal);
+    cx.update_editor(|editor, _window, cx| {
+        editor
+            .set_linked_edit_ranges_for_testing(
+                vec![(
+                    Point::new(0, 1)..Point::new(0, 4),
+                    vec![Point::new(0, 7)..Point::new(0, 10)],
+                )],
+                cx,
+            )
+            .expect("linked edit ranges should be set");
+    });
+
+    cx.simulate_keystrokes("c i w s p a n escape");
+    cx.assert_editor_state("<spaˇn></span>");
+}
+
+#[perf]
+#[gpui::test]
+async fn test_vim_linked_edits_substitute_s(app_cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new_html(app_cx).await;
+
+    cx.set_state("<diˇv></div>", Mode::Normal);
+    cx.update_editor(|editor, _window, cx| {
+        editor
+            .set_linked_edit_ranges_for_testing(
+                vec![(
+                    Point::new(0, 1)..Point::new(0, 4),
+                    vec![Point::new(0, 7)..Point::new(0, 10)],
+                )],
+                cx,
+            )
+            .expect("linked edit ranges should be set");
+    });
+
+    cx.simulate_keystrokes("s s p a n escape");
+    cx.assert_editor_state("<dispaˇn></dispan>");
+}
+
+#[perf]
+#[gpui::test]
+async fn test_vim_linked_edits_visual_change(app_cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new_html(app_cx).await;
+
+    cx.set_state("<diˇv></div>", Mode::Normal);
+    cx.update_editor(|editor, _window, cx| {
+        editor
+            .set_linked_edit_ranges_for_testing(
+                vec![(
+                    Point::new(0, 1)..Point::new(0, 4),
+                    vec![Point::new(0, 7)..Point::new(0, 10)],
+                )],
+                cx,
+            )
+            .expect("linked edit ranges should be set");
+    });
+
+    // Visual change routes through substitute; visual `s` shares this path.
+    cx.simulate_keystrokes("v i w c s p a n escape");
+    cx.assert_editor_state("<spaˇn></span>");
+}
+
+#[perf]
+#[gpui::test]
+async fn test_vim_linked_edits_visual_substitute_s(app_cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new_html(app_cx).await;
+
+    cx.set_state("<diˇv></div>", Mode::Normal);
+    cx.update_editor(|editor, _window, cx| {
+        editor
+            .set_linked_edit_ranges_for_testing(
+                vec![(
+                    Point::new(0, 1)..Point::new(0, 4),
+                    vec![Point::new(0, 7)..Point::new(0, 10)],
+                )],
+                cx,
+            )
+            .expect("linked edit ranges should be set");
+    });
+
+    cx.simulate_keystrokes("v i w s s p a n escape");
+    cx.assert_editor_state("<spaˇn></span>");
 }
 
 #[perf]
@@ -902,7 +1013,7 @@ fn assert_pending_input(cx: &mut VimTestContext, expected: &str) {
     cx.update_editor(|editor, window, cx| {
         let snapshot = editor.snapshot(window, cx);
         let highlights = editor
-            .text_highlights::<editor::PendingInput>(cx)
+            .text_highlights(editor::HighlightKey::PendingInput, cx)
             .unwrap()
             .1;
         let (_, ranges) = marked_text_ranges(expected, false);
@@ -966,7 +1077,7 @@ async fn test_jk_delay(cx: &mut gpui::TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         let snapshot = editor.snapshot(window, cx);
         let highlights = editor
-            .text_highlights::<editor::PendingInput>(cx)
+            .text_highlights(editor::HighlightKey::PendingInput, cx)
             .unwrap()
             .1;
 
@@ -2674,31 +2785,30 @@ async fn test_project_search_opens_in_normal_mode(cx: &mut gpui::TestAppContext)
     .await;
 
     let project = project::Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-    let workspace =
-        cx.add_window(|window, cx| workspace::Workspace::test_new(project.clone(), window, cx));
+    let window_handle =
+        cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window_handle
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
 
     cx.update(|cx| {
         VimTestContext::init_keybindings(true, cx);
     });
 
-    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
 
-    workspace
-        .update(cx, |workspace, window, cx| {
-            ProjectSearchView::deploy_search(workspace, &DeploySearch::default(), window, cx)
-        })
-        .unwrap();
+    workspace.update_in(cx, |workspace, window, cx| {
+        ProjectSearchView::deploy_search(workspace, &DeploySearch::default(), window, cx)
+    });
 
-    let search_view = workspace
-        .update(cx, |workspace, _, cx| {
-            workspace
-                .active_pane()
-                .read(cx)
-                .items()
-                .find_map(|item| item.downcast::<ProjectSearchView>())
-                .expect("Project search view should be active")
-        })
-        .unwrap();
+    let search_view = workspace.update_in(cx, |workspace, _, cx| {
+        workspace
+            .active_pane()
+            .read(cx)
+            .items()
+            .find_map(|item| item.downcast::<ProjectSearchView>())
+            .expect("Project search view should be active")
+    });
 
     project_search::perform_project_search(&search_view, "File A", cx);
 

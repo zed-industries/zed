@@ -3,7 +3,7 @@ mod edit_prediction_context_view;
 mod rate_prediction_modal;
 
 use command_palette_hooks::CommandPaletteFilter;
-use edit_prediction::{EditPredictionStore, ResetOnboarding, Zeta2FeatureFlag, capture_example};
+use edit_prediction::{EditPredictionStore, ResetOnboarding, capture_example};
 use edit_prediction_context_view::EditPredictionContextView;
 use editor::Editor;
 use feature_flags::FeatureFlagAppExt as _;
@@ -16,7 +16,9 @@ use std::any::{Any as _, TypeId};
 use ui::{App, prelude::*};
 use workspace::{SplitDirection, Workspace};
 
-pub use edit_prediction_button::{EditPredictionButton, ToggleMenu};
+pub use edit_prediction_button::{
+    EditPredictionButton, ToggleMenu, get_available_providers, set_completion_provider,
+};
 
 use crate::rate_prediction_modal::PredictEditsRatePredictionsFeatureFlag;
 
@@ -52,28 +54,25 @@ pub fn init(cx: &mut App) {
             capture_example_as_markdown(workspace, window, cx);
         });
         workspace.register_action_renderer(|div, _, _, cx| {
-            let has_flag = cx.has_flag::<Zeta2FeatureFlag>();
-            div.when(has_flag, |div| {
-                div.on_action(cx.listener(
-                    move |workspace, _: &OpenEditPredictionContextView, window, cx| {
-                        let project = workspace.project();
-                        workspace.split_item(
-                            SplitDirection::Right,
-                            Box::new(cx.new(|cx| {
-                                EditPredictionContextView::new(
-                                    project.clone(),
-                                    workspace.client(),
-                                    workspace.user_store(),
-                                    window,
-                                    cx,
-                                )
-                            })),
-                            window,
-                            cx,
-                        );
-                    },
-                ))
-            })
+            div.on_action(cx.listener(
+                move |workspace, _: &OpenEditPredictionContextView, window, cx| {
+                    let project = workspace.project();
+                    workspace.split_item(
+                        SplitDirection::Right,
+                        Box::new(cx.new(|cx| {
+                            EditPredictionContextView::new(
+                                project.clone(),
+                                workspace.client(),
+                                workspace.user_store(),
+                                window,
+                                cx,
+                            )
+                        })),
+                        window,
+                        cx,
+                    );
+                },
+            ))
         });
     })
     .detach();
@@ -151,18 +150,8 @@ fn capture_example_as_markdown(
         .read(cx)
         .text_anchor_for_position(editor.selections.newest_anchor().head(), cx)?;
     let ep_store = EditPredictionStore::try_global(cx)?;
-    let events = ep_store.update(cx, |store, cx| {
-        store.edit_history_for_project_with_pause_split_last_event(&project, cx)
-    });
-    let example = capture_example(
-        project.clone(),
-        buffer,
-        cursor_anchor,
-        events,
-        Vec::new(),
-        true,
-        cx,
-    )?;
+    let events = ep_store.update(cx, |store, cx| store.edit_history_for_project(&project, cx));
+    let example = capture_example(project.clone(), buffer, cursor_anchor, events, true, cx)?;
 
     let examples_dir = AllLanguageSettings::get_global(cx)
         .edit_predictions

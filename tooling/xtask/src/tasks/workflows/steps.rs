@@ -1,8 +1,16 @@
 use gh_workflow::*;
+use serde_json::Value;
 
 use crate::tasks::workflows::{runners::Platform, vars, vars::StepOutput};
 
-pub const BASH_SHELL: &str = "bash -euxo pipefail {0}";
+pub(crate) fn use_clang(job: Job) -> Job {
+    job.add_env(Env::new("CC", "clang"))
+        .add_env(Env::new("CXX", "clang++"))
+}
+
+const SCCACHE_R2_BUCKET: &str = "sccache-zed";
+
+pub(crate) const BASH_SHELL: &str = "bash -euxo pipefail {0}";
 // https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell
 pub const PWSH_SHELL: &str = "pwsh";
 
@@ -11,16 +19,26 @@ pub(crate) struct Nextest(Step<Run>);
 pub(crate) fn cargo_nextest(platform: Platform) -> Nextest {
     Nextest(named::run(
         platform,
-        "cargo nextest run --workspace --no-fail-fast",
+        "cargo nextest run --workspace --no-fail-fast --no-tests=warn",
     ))
 }
 
 impl Nextest {
-    pub(crate) fn with_target(mut self, target: &str) -> Step<Run> {
+    #[allow(dead_code)]
+    pub(crate) fn with_filter_expr(mut self, filter_expr: &str) -> Self {
         if let Some(nextest_command) = self.0.value.run.as_mut() {
-            nextest_command.push_str(&format!(r#" --target "{target}""#));
+            nextest_command.push_str(&format!(r#" -E "{filter_expr}""#));
         }
-        self.into()
+        self
+    }
+
+    pub(crate) fn with_changed_packages_filter(mut self, orchestrate_job: &str) -> Self {
+        if let Some(nextest_command) = self.0.value.run.as_mut() {
+            nextest_command.push_str(&format!(
+                r#"${{{{ needs.{orchestrate_job}.outputs.changed_packages && format(' -E "{{0}}"', needs.{orchestrate_job}.outputs.changed_packages) || '' }}}}"#
+            ));
+        }
+        self
     }
 }
 
@@ -30,25 +48,93 @@ impl From<Nextest> for Step<Run> {
     }
 }
 
-pub fn checkout_repo() -> Step<Use> {
-    named::uses(
-        "actions",
-        "checkout",
-        "11bd71901bbe5b1630ceea73d27597364c9af683", // v4
-    )
-    // prevent checkout action from running `git clean -ffdx` which
-    // would delete the target directory
-    .add_with(("clean", false))
+#[derive(Default)]
+enum FetchDepth {
+    #[default]
+    Shallow,
+    Full,
+    Custom(serde_json::Value),
 }
 
-pub fn checkout_repo_with_token(token: &StepOutput) -> Step<Use> {
-    named::uses(
-        "actions",
-        "checkout",
-        "11bd71901bbe5b1630ceea73d27597364c9af683", // v4
-    )
-    .add_with(("clean", false))
-    .add_with(("token", token.to_string()))
+#[derive(Default)]
+pub(crate) struct CheckoutStep {
+    fetch_depth: FetchDepth,
+    name: Option<String>,
+    token: Option<String>,
+    path: Option<String>,
+    repository: Option<String>,
+    ref_: Option<String>,
+}
+
+impl CheckoutStep {
+    pub fn with_full_history(mut self) -> Self {
+        self.fetch_depth = FetchDepth::Full;
+        self
+    }
+
+    pub fn with_custom_name(mut self, name: &str) -> Self {
+        self.name = Some(name.to_string());
+        self
+    }
+
+    pub fn with_custom_fetch_depth(mut self, fetch_depth: impl Into<Value>) -> Self {
+        self.fetch_depth = FetchDepth::Custom(fetch_depth.into());
+        self
+    }
+
+    /// Sets `fetch-depth` to `2` on the main branch and `350` on all other branches.
+    pub fn with_deep_history_on_non_main(self) -> Self {
+        self.with_custom_fetch_depth("${{ github.ref == 'refs/heads/main' && 2 || 350 }}")
+    }
+
+    pub fn with_token(mut self, token: &StepOutput) -> Self {
+        self.token = Some(token.to_string());
+        self
+    }
+
+    pub fn with_path(mut self, path: &str) -> Self {
+        self.path = Some(path.to_string());
+        self
+    }
+
+    pub fn with_repository(mut self, repository: &str) -> Self {
+        self.repository = Some(repository.to_string());
+        self
+    }
+
+    pub fn with_ref(mut self, ref_: impl ToString) -> Self {
+        self.ref_ = Some(ref_.to_string());
+        self
+    }
+}
+
+impl From<CheckoutStep> for Step<Use> {
+    fn from(value: CheckoutStep) -> Self {
+        Step::new(value.name.unwrap_or("steps::checkout_repo".to_string()))
+            .uses(
+                "actions",
+                "checkout",
+                "11bd71901bbe5b1630ceea73d27597364c9af683", // v4
+            )
+            // prevent checkout action from running `git clean -ffdx` which
+            // would delete the target directory
+            .add_with(("clean", false))
+            .map(|step| match value.fetch_depth {
+                FetchDepth::Shallow => step,
+                FetchDepth::Full => step.add_with(("fetch-depth", 0)),
+                FetchDepth::Custom(depth) => step.add_with(("fetch-depth", depth)),
+            })
+            .when_some(value.path, |step, path| step.add_with(("path", path)))
+            .when_some(value.repository, |step, repository| {
+                step.add_with(("repository", repository))
+            })
+            .when_some(value.ref_, |step, ref_| step.add_with(("ref", ref_)))
+            .when_some(value.token, |step, token| step.add_with(("token", token)))
+    }
+}
+
+pub fn checkout_repo() -> CheckoutStep {
+    CheckoutStep::default()
 }
 
 pub fn setup_pnpm() -> Step<Use> {
@@ -138,12 +224,42 @@ pub fn cache_rust_dependencies_namespace() -> Step<Use> {
         .add_with(("path", "~/.rustup"))
 }
 
-pub fn setup_linux() -> Step<Run> {
-    named::bash("./script/linux")
+pub fn setup_sccache(platform: Platform) -> Step<Run> {
+    let step = match platform {
+        Platform::Windows => named::pwsh("./script/setup-sccache.ps1"),
+        Platform::Linux | Platform::Mac => named::bash("./script/setup-sccache"),
+    };
+    step.add_env(("R2_ACCOUNT_ID", vars::R2_ACCOUNT_ID))
+        .add_env(("R2_ACCESS_KEY_ID", vars::R2_ACCESS_KEY_ID))
+        .add_env(("R2_SECRET_ACCESS_KEY", vars::R2_SECRET_ACCESS_KEY))
+        .add_env(("SCCACHE_BUCKET", SCCACHE_R2_BUCKET))
 }
 
-fn install_mold() -> Step<Run> {
-    named::bash("./script/install-mold")
+pub fn show_sccache_stats(platform: Platform) -> Step<Run> {
+    match platform {
+        // Use $env:RUSTC_WRAPPER (absolute path) because GITHUB_PATH changes
+        // don't take effect until the next step in PowerShell.
+        // Check if RUSTC_WRAPPER is set first (it won't be for fork PRs without secrets).
+        Platform::Windows => {
+            named::pwsh("if ($env:RUSTC_WRAPPER) { & $env:RUSTC_WRAPPER --show-stats }; exit 0")
+        }
+        Platform::Linux | Platform::Mac => named::bash("sccache --show-stats || true"),
+    }
+}
+
+pub fn cache_nix_dependencies_namespace() -> Step<Use> {
+    named::uses("namespacelabs", "nscloud-cache-action", "v1").add_with(("cache", "nix"))
+}
+
+pub fn cache_nix_store_macos() -> Step<Use> {
+    // On macOS, `/nix` is on a read-only root filesystem so nscloud's `cache: nix`
+    // cannot mount or symlink there. Instead we cache a user-writable directory and
+    // use nix-store --import/--export in separate steps to transfer store paths.
+    named::uses("namespacelabs", "nscloud-cache-action", "v1").add_with(("path", "~/nix-cache"))
+}
+
+pub fn setup_linux() -> Step<Run> {
+    named::bash("./script/linux")
 }
 
 fn download_wasi_sdk() -> Step<Run> {
@@ -151,16 +267,14 @@ fn download_wasi_sdk() -> Step<Run> {
 }
 
 pub(crate) fn install_linux_dependencies(job: Job) -> Job {
-    job.add_step(setup_linux())
-        .add_step(install_mold())
-        .add_step(download_wasi_sdk())
+    job.add_step(setup_linux()).add_step(download_wasi_sdk())
 }
 
 pub fn script(name: &str) -> Step<Run> {
     if name.ends_with(".ps1") {
         Step::new(name).run(name).shell(PWSH_SHELL)
     } else {
-        Step::new(name).run(name).shell(BASH_SHELL)
+        Step::new(name).run(name)
     }
 }
 
@@ -217,6 +331,7 @@ pub(crate) fn dependant_job(deps: &[&NamedJob]) -> Job {
 impl FluentBuilder for Job {}
 impl FluentBuilder for Workflow {}
 impl FluentBuilder for Input {}
+impl<T> FluentBuilder for Step<T> {}
 
 /// A helper trait for building complex objects with imperative conditionals in a fluent style.
 /// Copied from GPUI to avoid adding GPUI as dependency
@@ -290,9 +405,7 @@ pub mod named {
     /// (You shouldn't inline this function into the workflow definition, you must
     /// wrap it in a new function.)
     pub fn bash(script: impl AsRef<str>) -> Step<Run> {
-        Step::new(function_name(1))
-            .run(script.as_ref())
-            .shell(BASH_SHELL)
+        Step::new(function_name(1)).run(script.as_ref())
     }
 
     /// Returns a pwsh-script step with the same name as the enclosing function.
@@ -308,25 +421,26 @@ pub mod named {
     pub fn run(platform: Platform, script: &str) -> Step<Run> {
         match platform {
             Platform::Windows => Step::new(function_name(1)).run(script).shell(PWSH_SHELL),
-            Platform::Linux | Platform::Mac => {
-                Step::new(function_name(1)).run(script).shell(BASH_SHELL)
-            }
+            Platform::Linux | Platform::Mac => Step::new(function_name(1)).run(script),
         }
     }
 
-    /// Returns a Workflow with the same name as the enclosing module.
+    /// Returns a Workflow with the same name as the enclosing module with default
+    /// set for the running shell.
     pub fn workflow() -> Workflow {
-        Workflow::default().name(
-            named::function_name(1)
-                .split("::")
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .skip(1)
-                .rev()
-                .collect::<Vec<_>>()
-                .join("::"),
-        )
+        Workflow::default()
+            .name(
+                named::function_name(1)
+                    .split("::")
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .skip(1)
+                    .rev()
+                    .collect::<Vec<_>>()
+                    .join("::"),
+            )
+            .defaults(Defaults::default().run(RunDefaults::default().shell(BASH_SHELL)))
     }
 
     /// Returns a Job with the same name as the enclosing function.
@@ -366,9 +480,8 @@ pub mod named {
 }
 
 pub fn git_checkout(ref_name: &dyn std::fmt::Display) -> Step<Run> {
-    named::bash(&format!(
-        "git fetch origin {ref_name} && git checkout {ref_name}"
-    ))
+    named::bash(r#"git fetch origin "$REF_NAME" && git checkout "$REF_NAME""#)
+        .add_env(("REF_NAME", ref_name.to_string()))
 }
 
 pub fn authenticate_as_zippy() -> (Step<Use>, StepOutput) {

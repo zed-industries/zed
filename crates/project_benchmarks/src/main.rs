@@ -5,7 +5,7 @@ use askpass::EncryptedPassword;
 use clap::Parser;
 use client::{Client, UserStore};
 use futures::channel::oneshot;
-use gpui::{AppContext as _, Application};
+use gpui::AppContext as _;
 use http_client::FakeHttpClient;
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
@@ -125,7 +125,7 @@ fn main() -> Result<(), anyhow::Error> {
             None,
         )
     }?;
-    Application::headless().run(|cx| {
+    gpui_platform::headless().run(|cx| {
         release_channel::init_test(semver::Version::new(0, 0, 0), ReleaseChannel::Dev, cx);
         settings::init(cx);
         let client = Client::production(cx);

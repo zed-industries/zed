@@ -66,7 +66,7 @@ pub struct IconDefinition {
 }
 
 const FILE_STEMS_BY_ICON_KEY: &[(&str, &[&str])] = &[
-    ("docker", &["Dockerfile"]),
+    ("docker", &["Containerfile", "Dockerfile"]),
     ("ruby", &["Podfile"]),
     ("heroku", &["Procfile"]),
 ];
@@ -89,7 +89,7 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
     (
         "cpp",
         &[
-            "c++", "h++", "cc", "cpp", "cxx", "hh", "hpp", "hxx", "inl", "ixx",
+            "c++", "h++", "cc", "cpp", "cppm", "cxx", "hh", "hpp", "hxx", "inl", "ixx",
         ],
     ),
     ("crystal", &["cr", "ecr"]),
@@ -99,6 +99,15 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
     ("cue", &["cue"]),
     ("dart", &["dart"]),
     ("diff", &["diff"]),
+    (
+        "docker",
+        &[
+            "docker-compose.yml",
+            "docker-compose.yaml",
+            "compose.yml",
+            "compose.yaml",
+        ],
+    ),
     (
         "document",
         &[
@@ -138,12 +147,27 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
     ("font", &["otf", "ttf", "woff", "woff2"]),
     ("fsharp", &["fs"]),
     ("fsproj", &["fsproj"]),
-    ("gitlab", &["gitlab-ci.yml"]),
+    ("gitlab", &["gitlab-ci.yml", "gitlab-ci.yaml"]),
     ("gleam", &["gleam"]),
     ("go", &["go", "mod", "work"]),
     ("graphql", &["gql", "graphql", "graphqls"]),
     ("haskell", &["hs"]),
     ("hcl", &["hcl"]),
+    (
+        "helm",
+        &[
+            "helmfile.yaml",
+            "helmfile.yml",
+            "Chart.yaml",
+            "Chart.yml",
+            "Chart.lock",
+            "values.yaml",
+            "values.yml",
+            "requirements.yaml",
+            "requirements.yml",
+            "tpl",
+        ],
+    ),
     ("html", &["htm", "html"]),
     (
         "image",
@@ -152,6 +176,7 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
             "jxl", "png", "psd", "qoi", "svg", "tiff", "webp",
         ],
     ),
+    ("ipynb", &["ipynb"]),
     ("java", &["java"]),
     ("javascript", &["cjs", "js", "mjs"]),
     ("json", &["json", "jsonc"]),
@@ -197,7 +222,7 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
     ("rust", &["rs"]),
     ("sass", &["sass", "scss"]),
     ("scala", &["scala", "sc"]),
-    ("settings", &["conf", "ini", "yaml", "yml"]),
+    ("settings", &["conf", "ini"]),
     ("solidity", &["sol"]),
     (
         "storage",
@@ -278,6 +303,7 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
     ("vue", &["vue"]),
     ("vyper", &["vy", "vyi"]),
     ("wgsl", &["wgsl"]),
+    ("yaml", &["yaml", "yml"]),
     ("zig", &["zig"]),
 ];
 
@@ -309,15 +335,17 @@ const FILE_ICONS: &[(&str, &str)] = &[
     ("font", "icons/file_icons/font.svg"),
     ("fsharp", "icons/file_icons/fsharp.svg"),
     ("fsproj", "icons/file_icons/file.svg"),
-    ("gitlab", "icons/file_icons/settings.svg"),
+    ("gitlab", "icons/file_icons/gitlab.svg"),
     ("gleam", "icons/file_icons/gleam.svg"),
     ("go", "icons/file_icons/go.svg"),
     ("graphql", "icons/file_icons/graphql.svg"),
     ("haskell", "icons/file_icons/haskell.svg"),
     ("hcl", "icons/file_icons/hcl.svg"),
+    ("helm", "icons/file_icons/helm.svg"),
     ("heroku", "icons/file_icons/heroku.svg"),
     ("html", "icons/file_icons/html.svg"),
     ("image", "icons/file_icons/image.svg"),
+    ("ipynb", "icons/file_icons/jupyter.svg"),
     ("java", "icons/file_icons/java.svg"),
     ("javascript", "icons/file_icons/javascript.svg"),
     ("json", "icons/file_icons/code.svg"),
@@ -369,6 +397,7 @@ const FILE_ICONS: &[(&str, &str)] = &[
     ("vue", "icons/file_icons/vue.svg"),
     ("vyper", "icons/file_icons/vyper.svg"),
     ("wgsl", "icons/file_icons/wgsl.svg"),
+    ("yaml", "icons/file_icons/yaml.svg"),
     ("zig", "icons/file_icons/zig.svg"),
 ];
 

@@ -1,5 +1,9 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::{
+    str::FromStr,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
+use cpal::DeviceId;
 use gpui::App;
 use settings::{RegisterSetting, Settings, SettingsStore};
 
@@ -38,6 +42,10 @@ pub struct AudioSettings {
     ///
     /// You need to rejoin a call for this setting to apply
     pub legacy_audio_compatible: bool,
+    /// Select specific output audio device.
+    pub output_audio_device: Option<DeviceId>,
+    /// Select specific input audio device.
+    pub input_audio_device: Option<DeviceId>,
 }
 
 /// Configuration of audio in Zed
@@ -50,13 +58,21 @@ impl Settings for AudioSettings {
             auto_speaker_volume: audio.auto_speaker_volume.unwrap(),
             denoise: audio.denoise.unwrap(),
             legacy_audio_compatible: audio.legacy_audio_compatible.unwrap(),
+            output_audio_device: audio
+                .output_audio_device
+                .as_ref()
+                .and_then(|x| x.0.as_ref().and_then(|id| DeviceId::from_str(&id).ok())),
+            input_audio_device: audio
+                .input_audio_device
+                .as_ref()
+                .and_then(|x| x.0.as_ref().and_then(|id| DeviceId::from_str(&id).ok())),
         }
     }
 }
 
 /// See docs on [LIVE_SETTINGS]
-pub(crate) struct LiveSettings {
-    pub(crate) auto_microphone_volume: AtomicBool,
+pub struct LiveSettings {
+    pub auto_microphone_volume: AtomicBool,
     pub(crate) auto_speaker_volume: AtomicBool,
     pub(crate) denoise: AtomicBool,
 }
@@ -112,7 +128,7 @@ impl LiveSettings {
 /// observer of SettingsStore. Needed because audio playback and recording are
 /// real time and must each run in a dedicated OS thread, therefore we can not
 /// use the background executor.
-pub(crate) static LIVE_SETTINGS: LiveSettings = LiveSettings {
+pub static LIVE_SETTINGS: LiveSettings = LiveSettings {
     auto_microphone_volume: AtomicBool::new(true),
     auto_speaker_volume: AtomicBool::new(true),
     denoise: AtomicBool::new(true),

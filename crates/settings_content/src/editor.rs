@@ -221,6 +221,11 @@ pub struct EditorSettingsContent {
     ///
     /// Default: left
     pub completion_detail_alignment: Option<CompletionDetailAlignment>,
+
+    /// How to display diffs in the editor.
+    ///
+    /// Default: split
+    pub diff_view_style: Option<DiffViewStyle>,
 }
 
 #[derive(
@@ -777,6 +782,34 @@ pub enum SnippetSortOrder {
     Bottom,
     /// Do not show snippets in the completion list
     None,
+}
+
+/// How to display diffs in the editor.
+///
+/// Default: unified
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::Display,
+    strum::EnumIter,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum DiffViewStyle {
+    /// Show diffs in a single unified view.
+    Unified,
+    /// Show diffs in a split view.
+    #[default]
+    Split,
 }
 
 /// Default options for buffer and project search items.

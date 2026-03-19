@@ -25,7 +25,7 @@ use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
 
-use crate::{branch_picker, git_panel::show_error_toast};
+use crate::{branch_picker, git_panel::show_error_toast, resolve_active_repository};
 
 actions!(
     branch_picker,
@@ -62,33 +62,7 @@ pub fn open(
     cx: &mut Context<Workspace>,
 ) {
     let workspace_handle = workspace.weak_handle();
-    let project = workspace.project().clone();
-
-    // Check if there's a worktree override from the project dropdown.
-    // This ensures the branch picker shows branches for the project the user
-    // explicitly selected in the title bar, not just the focused file's project.
-    // This is only relevant if for multi-projects workspaces.
-    let repository = workspace
-        .active_worktree_override()
-        .and_then(|override_id| {
-            let project_ref = project.read(cx);
-            project_ref
-                .worktree_for_id(override_id, cx)
-                .and_then(|worktree| {
-                    let worktree_abs_path = worktree.read(cx).abs_path();
-                    let git_store = project_ref.git_store().read(cx);
-                    git_store
-                        .repositories()
-                        .values()
-                        .find(|repo| {
-                            let repo_path = &repo.read(cx).work_directory_abs_path;
-                            *repo_path == worktree_abs_path
-                                || worktree_abs_path.starts_with(repo_path.as_ref())
-                        })
-                        .cloned()
-                })
-        })
-        .or_else(|| project.read(cx).active_repository(cx));
+    let repository = resolve_active_repository(workspace, cx);
 
     workspace.toggle_modal(window, cx, |window, cx| {
         BranchList::new(
@@ -512,28 +486,24 @@ impl BranchListDelegate {
         let workspace = self.workspace.clone();
 
         cx.spawn_in(window, async move |picker, cx| {
-            let mut is_remote = false;
+            let is_remote;
             let result = match &entry {
-                Entry::Branch { branch, .. } => match branch.remote_name() {
-                    Some(remote_name) => {
-                        is_remote = true;
-                        repo.update(cx, |repo, _| repo.remove_remote(remote_name.to_string()))
-                            .await?
-                    }
-                    None => {
-                        repo.update(cx, |repo, _| repo.delete_branch(branch.name().to_string()))
-                            .await?
-                    }
-                },
+                Entry::Branch { branch, .. } => {
+                    is_remote = branch.is_remote();
+                    repo.update(cx, |repo, _| {
+                        repo.delete_branch(is_remote, branch.name().to_string())
+                    })
+                    .await?
+                }
                 _ => {
-                    log::error!("Failed to delete remote: wrong entry to delete");
+                    log::error!("Failed to delete entry: wrong entry to delete");
                     return Ok(());
                 }
             };
 
             if let Err(e) = result {
                 if is_remote {
-                    log::error!("Failed to delete remote: {}", e);
+                    log::error!("Failed to delete remote branch: {}", e);
                 } else {
                     log::error!("Failed to delete branch: {}", e);
                 }
@@ -543,7 +513,7 @@ impl BranchListDelegate {
                         if is_remote {
                             show_error_toast(
                                 workspace,
-                                format!("remote remove {}", entry.name()),
+                                format!("branch -dr {}", entry.name()),
                                 e,
                                 cx,
                             )
@@ -1321,6 +1291,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
+    use workspace::MultiWorkspace;
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -1373,13 +1344,17 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
 
-        let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
 
-        let branch_list = workspace
-            .update(cx, |workspace, window, cx| {
+        let branch_list = window_handle
+            .update(cx, |_multi_workspace, window, cx| {
                 cx.new(|cx| {
                     let mut delegate = BranchListDelegate::new(
-                        workspace.weak_handle(),
+                        workspace.downgrade(),
                         repository,
                         BranchListStyle::Modal,
                         cx,
@@ -1406,12 +1381,14 @@ mod tests {
             })
             .unwrap();
 
-        let cx = VisualTestContext::from_window(*workspace, cx);
+        let cx = VisualTestContext::from_window(window_handle.into(), cx);
 
         (branch_list, cx)
     }
 
-    async fn init_fake_repository(cx: &mut TestAppContext) -> Entity<Repository> {
+    async fn init_fake_repository(
+        cx: &mut TestAppContext,
+    ) -> (Entity<Project>, Entity<Repository>) {
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             path!("/dir"),
@@ -1434,7 +1411,7 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
         let repository = cx.read(|cx| project.read(cx).active_repository(cx));
 
-        repository.unwrap()
+        (project, repository.unwrap())
     }
 
     #[gpui::test]
@@ -1497,7 +1474,7 @@ mod tests {
     #[gpui::test]
     async fn test_delete_branch(cx: &mut TestAppContext) {
         init_test(cx);
-        let repository = init_fake_repository(cx).await;
+        let (_project, repository) = init_fake_repository(cx).await;
 
         let branches = create_test_branches();
 
@@ -1532,6 +1509,30 @@ mod tests {
         });
         cx.run_until_parked();
 
+        let expected_branches = ["main", "feature-auth", "feature-ui", "develop"]
+            .into_iter()
+            .filter(|name| name != &branch_to_delete)
+            .collect::<HashSet<_>>();
+        let repo_branches = branch_list
+            .update(cx, |branch_list, cx| {
+                branch_list.picker.update(cx, |picker, cx| {
+                    picker
+                        .delegate
+                        .repo
+                        .as_ref()
+                        .unwrap()
+                        .update(cx, |repo, _cx| repo.branches())
+                })
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        let repo_branches = repo_branches
+            .iter()
+            .map(|b| b.name())
+            .collect::<HashSet<_>>();
+        assert_eq!(&repo_branches, &expected_branches);
+
         branch_list.update(cx, move |branch_list, cx| {
             branch_list.picker.update(cx, move |picker, _cx| {
                 assert_eq!(picker.delegate.matches.len(), 3);
@@ -1541,21 +1542,15 @@ mod tests {
                     .iter()
                     .map(|be| be.name())
                     .collect::<HashSet<_>>();
-                assert_eq!(
-                    branches,
-                    ["main", "feature-auth", "feature-ui", "develop"]
-                        .into_iter()
-                        .filter(|name| name != &branch_to_delete)
-                        .collect::<HashSet<_>>()
-                );
+                assert_eq!(branches, expected_branches);
             })
         });
     }
 
     #[gpui::test]
-    async fn test_delete_remote(cx: &mut TestAppContext) {
+    async fn test_delete_remote_branch(cx: &mut TestAppContext) {
         init_test(cx);
-        let repository = init_fake_repository(cx).await;
+        let (_project, repository) = init_fake_repository(cx).await;
         let branches = vec![
             create_test_branch("main", true, Some("origin"), Some(1000)),
             create_test_branch("feature-auth", false, Some("origin"), Some(900)),
@@ -1563,19 +1558,17 @@ mod tests {
             create_test_branch("develop", false, Some("private"), Some(700)),
         ];
 
-        let remote_names = branches
+        let branch_names = branches
             .iter()
-            .filter_map(|branch| branch.remote_name().map(|r| r.to_string()))
+            .map(|branch| branch.name().to_string())
             .collect::<Vec<String>>();
         let repo = repository.clone();
         cx.spawn(async move |mut cx| {
-            for branch in remote_names {
-                repo.update(&mut cx, |repo, _| {
-                    repo.create_remote(branch, String::from("test"))
-                })
-                .await
-                .unwrap()
-                .unwrap();
+            for branch in branch_names {
+                repo.update(&mut cx, |repo, _| repo.create_branch(branch, None))
+                    .await
+                    .unwrap()
+                    .unwrap();
             }
         })
         .await;
@@ -1602,6 +1595,35 @@ mod tests {
         });
         cx.run_until_parked();
 
+        let expected_branches = [
+            "origin/main",
+            "origin/feature-auth",
+            "fork/feature-ui",
+            "private/develop",
+        ]
+        .into_iter()
+        .filter(|name| name != &branch_to_delete)
+        .collect::<HashSet<_>>();
+        let repo_branches = branch_list
+            .update(cx, |branch_list, cx| {
+                branch_list.picker.update(cx, |picker, cx| {
+                    picker
+                        .delegate
+                        .repo
+                        .as_ref()
+                        .unwrap()
+                        .update(cx, |repo, _cx| repo.branches())
+                })
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        let repo_branches = repo_branches
+            .iter()
+            .map(|b| b.name())
+            .collect::<HashSet<_>>();
+        assert_eq!(&repo_branches, &expected_branches);
+
         // Check matches, it should match one less branch than before
         branch_list.update(cx, move |branch_list, cx| {
             branch_list.picker.update(cx, move |picker, _cx| {
@@ -1612,18 +1634,7 @@ mod tests {
                     .iter()
                     .map(|be| be.name())
                     .collect::<HashSet<_>>();
-                assert_eq!(
-                    branches,
-                    [
-                        "origin/main",
-                        "origin/feature-auth",
-                        "fork/feature-ui",
-                        "private/develop"
-                    ]
-                    .into_iter()
-                    .filter(|name| name != &branch_to_delete)
-                    .collect::<HashSet<_>>()
-                );
+                assert_eq!(branches, expected_branches);
             })
         });
     }
@@ -1742,7 +1753,7 @@ mod tests {
         const NEW_BRANCH: &str = "new-feature-branch";
 
         init_test(test_cx);
-        let repository = init_fake_repository(test_cx).await;
+        let (_project, repository) = init_fake_repository(test_cx).await;
 
         let branches = vec![
             create_test_branch(MAIN_BRANCH, true, None, Some(1000)),
@@ -1806,7 +1817,7 @@ mod tests {
     #[gpui::test]
     async fn test_remote_url_detection_https(cx: &mut TestAppContext) {
         init_test(cx);
-        let repository = init_fake_repository(cx).await;
+        let (_project, repository) = init_fake_repository(cx).await;
         let branches = vec![create_test_branch("main", true, None, Some(1000))];
 
         let (branch_list, mut ctx) = init_branch_list_test(repository.into(), branches, cx).await;

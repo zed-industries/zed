@@ -1,3 +1,8 @@
+---
+title: Uninstall
+description: "This guide covers how to uninstall Zed on different operating systems."
+---
+
 # Uninstall
 
 This guide covers how to uninstall Zed on different operating systems.

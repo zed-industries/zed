@@ -8,10 +8,11 @@ use project::context_server_store::*;
 use project::project_settings::ContextServerSettings;
 use project::worktree_store::WorktreeStore;
 use project::{
-    FakeFs, Project, context_server_store::registry::ContextServerDescriptor,
+    DisableAiSettings, FakeFs, Project, context_server_store::registry::ContextServerDescriptor,
     project_settings::ProjectSettings,
 };
 use serde_json::json;
+use settings::settings_content::SaturatingBool;
 use settings::{ContextServerCommand, Settings, SettingsStore};
 use std::sync::Arc;
 use std::{cell::RefCell, path::PathBuf, rc::Rc};
@@ -553,6 +554,202 @@ async fn test_context_server_enabled_disabled(cx: &mut TestAppContext) {
     }
 }
 
+#[gpui::test]
+async fn test_context_server_respects_disable_ai(cx: &mut TestAppContext) {
+    const SERVER_1_ID: &str = "mcp-1";
+
+    let server_1_id = ContextServerId(SERVER_1_ID.into());
+
+    // Set up SettingsStore with disable_ai: true in user settings BEFORE creating project
+    cx.update(|cx| {
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
+        DisableAiSettings::register(cx);
+        // Set disable_ai via user settings (not override_global) so it persists through recompute_values
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |content| {
+                content.project.disable_ai = Some(SaturatingBool(true));
+            });
+        });
+    });
+
+    // Now create the project (ContextServerStore will see disable_ai = true)
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({"code.rs": ""})).await;
+    let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+
+    let executor = cx.executor();
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+    store.update(cx, |store, _| {
+        store.set_context_server_factory(Box::new(move |id, _| {
+            Arc::new(ContextServer::new(
+                id.clone(),
+                Arc::new(create_fake_transport(id.0.to_string(), executor.clone())),
+            ))
+        }));
+    });
+
+    set_context_server_configuration(
+        vec![(
+            server_1_id.0.clone(),
+            settings::ContextServerSettingsContent::Stdio {
+                enabled: true,
+                remote: false,
+                command: ContextServerCommand {
+                    path: "somebinary".into(),
+                    args: vec!["arg".to_string()],
+                    env: None,
+                    timeout: None,
+                },
+            },
+        )],
+        cx,
+    );
+
+    cx.run_until_parked();
+
+    // Verify that no server started because AI is disabled
+    cx.update(|cx| {
+        assert_eq!(
+            store.read(cx).status_for_server(&server_1_id),
+            None,
+            "Server should not start when disable_ai is true"
+        );
+    });
+
+    // Enable AI and verify server starts
+    {
+        let _server_events = assert_server_events(
+            &store,
+            vec![
+                (server_1_id.clone(), ContextServerStatus::Starting),
+                (server_1_id.clone(), ContextServerStatus::Running),
+            ],
+            cx,
+        );
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |content| {
+                    content.project.disable_ai = Some(SaturatingBool(false));
+                });
+            });
+        });
+        cx.run_until_parked();
+    }
+
+    // Disable AI again and verify server stops
+    {
+        let _server_events = assert_server_events(
+            &store,
+            vec![(server_1_id.clone(), ContextServerStatus::Stopped)],
+            cx,
+        );
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |content| {
+                    content.project.disable_ai = Some(SaturatingBool(true));
+                });
+            });
+        });
+        cx.run_until_parked();
+    }
+
+    // Verify server is stopped
+    cx.update(|cx| {
+        assert_eq!(
+            store.read(cx).status_for_server(&server_1_id),
+            Some(ContextServerStatus::Stopped),
+            "Server should be stopped when disable_ai is true"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_server_ids_includes_disabled_servers(cx: &mut TestAppContext) {
+    const ENABLED_SERVER_ID: &str = "enabled-server";
+    const DISABLED_SERVER_ID: &str = "disabled-server";
+
+    let enabled_server_id = ContextServerId(ENABLED_SERVER_ID.into());
+    let disabled_server_id = ContextServerId(DISABLED_SERVER_ID.into());
+
+    let (_fs, project) = setup_context_server_test(cx, json!({"code.rs": ""}), vec![]).await;
+
+    let executor = cx.executor();
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+    store.update(cx, |store, _| {
+        store.set_context_server_factory(Box::new(move |id, _| {
+            Arc::new(ContextServer::new(
+                id.clone(),
+                Arc::new(create_fake_transport(id.0.to_string(), executor.clone())),
+            ))
+        }));
+    });
+
+    // Configure one enabled and one disabled server
+    set_context_server_configuration(
+        vec![
+            (
+                enabled_server_id.0.clone(),
+                settings::ContextServerSettingsContent::Stdio {
+                    enabled: true,
+                    remote: false,
+                    command: ContextServerCommand {
+                        path: "somebinary".into(),
+                        args: vec![],
+                        env: None,
+                        timeout: None,
+                    },
+                },
+            ),
+            (
+                disabled_server_id.0.clone(),
+                settings::ContextServerSettingsContent::Stdio {
+                    enabled: false,
+                    remote: false,
+                    command: ContextServerCommand {
+                        path: "somebinary".into(),
+                        args: vec![],
+                        env: None,
+                        timeout: None,
+                    },
+                },
+            ),
+        ],
+        cx,
+    );
+
+    cx.run_until_parked();
+
+    // Verify that server_ids includes both enabled and disabled servers
+    cx.update(|cx| {
+        let server_ids = store.read(cx).server_ids().to_vec();
+        assert!(
+            server_ids.contains(&enabled_server_id),
+            "server_ids should include enabled server"
+        );
+        assert!(
+            server_ids.contains(&disabled_server_id),
+            "server_ids should include disabled server"
+        );
+    });
+
+    // Verify that the enabled server is running and the disabled server is not
+    cx.read(|cx| {
+        assert_eq!(
+            store.read(cx).status_for_server(&enabled_server_id),
+            Some(ContextServerStatus::Running),
+            "enabled server should be running"
+        );
+        // Disabled server should not be in the servers map (status returns None)
+        // but should still be in server_ids
+        assert_eq!(
+            store.read(cx).status_for_server(&disabled_server_id),
+            None,
+            "disabled server should not have a status (not in servers map)"
+        );
+    });
+}
+
 fn set_context_server_configuration(
     context_servers: Vec<(Arc<str>, settings::ContextServerSettingsContent)>,
     cx: &mut TestAppContext,
@@ -796,26 +993,25 @@ fn assert_server_events(
         let expected_event_count = expected_events.len();
         let subscription = cx.subscribe(store, {
             let received_event_count = received_event_count.clone();
-            move |_, event, _| match event {
-                Event::ServerStatusChanged {
+            move |_, event, _| {
+                let ServerStatusChangedEvent {
                     server_id: actual_server_id,
                     status: actual_status,
-                } => {
-                    let (expected_server_id, expected_status) = &expected_events[ix];
+                } = event;
+                let (expected_server_id, expected_status) = &expected_events[ix];
 
-                    assert_eq!(
-                        actual_server_id, expected_server_id,
-                        "Expected different server id at index {}",
-                        ix
-                    );
-                    assert_eq!(
-                        actual_status, expected_status,
-                        "Expected different status at index {}",
-                        ix
-                    );
-                    ix += 1;
-                    *received_event_count.borrow_mut() += 1;
-                }
+                assert_eq!(
+                    actual_server_id, expected_server_id,
+                    "Expected different server id at index {}",
+                    ix
+                );
+                assert_eq!(
+                    actual_status, expected_status,
+                    "Expected different status at index {}",
+                    ix
+                );
+                ix += 1;
+                *received_event_count.borrow_mut() += 1;
             }
         });
         ServerEvents {
