@@ -140,6 +140,10 @@ impl ThreadMetadata {
     }
 }
 
+/// The store holds all metadata needed to show threads in the sidebar.
+/// Effectively, all threads stored in here are "non-archived".
+///
+/// Automatically listens to AcpThread events and updates metadata if it has changed.
 pub struct ThreadMetadataStore {
     db: ThreadMetadataDb,
     session_subscriptions: HashMap<acp::SessionId, Subscription>,
