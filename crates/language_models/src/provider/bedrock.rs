@@ -48,7 +48,7 @@ use ui_input::InputField;
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
-use crate::provider::util::parse_tool_arguments;
+use crate::provider::util::{fix_streamed_json, parse_tool_arguments};
 
 actions!(bedrock, [Tab, TabPrev]);
 
@@ -1244,7 +1244,7 @@ pub fn map_to_language_model_completion_events(
                                 {
                                     tool_use.input_json.push_str(tool_output.input());
                                     if let Ok(input) = serde_json::from_str::<serde_json::Value>(
-                                        &partial_json_fixer::fix_json(&tool_use.input_json),
+                                        &fix_streamed_json(&tool_use.input_json),
                                     ) {
                                         Some(Ok(LanguageModelCompletionEvent::ToolUse(
                                             LanguageModelToolUse {
