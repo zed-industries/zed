@@ -91,7 +91,7 @@ pub enum PickerEditorPosition {
 
 pub trait PickerDelegate: Sized + 'static {
     type ListItem: IntoElement;
-    type StableId: Clone + Eq + std::hash::Hash + std::fmt::Debug + Send + 'static;
+    type StableId;
 
     fn match_count(&self) -> usize;
     fn selected_index(&self) -> usize;
