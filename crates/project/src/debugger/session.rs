@@ -2617,6 +2617,45 @@ impl Session {
         })
     }
 
+    pub fn evaluate_hover_expression(
+        &self,
+        stack_frame_id: StackFrameId,
+        expression: String,
+        cx: &mut Context<Self>,
+    ) -> Task<Option<dap::EvaluateResponse>> {
+        let session = cx.entity();
+        cx.spawn(async move |_, cx| {
+            let hover_eval_task = session.read_with(cx, |session, _| {
+                session.state.request_dap(EvaluateCommand {
+                    expression: expression.clone(),
+                    frame_id: Some(stack_frame_id),
+                    source: None,
+                    context: Some(EvaluateArgumentsContext::Hover),
+                })
+            });
+
+            match hover_eval_task.await {
+                Ok(response) => Some(response),
+                Err(error) => {
+                    log::debug!(
+                        "Falling back to EvaluateArgumentsContext::Variables after hover evaluation failed: {error:#}"
+                    );
+
+                    let variables_eval_task = session.read_with(cx, |session, _| {
+                        session.state.request_dap(EvaluateCommand {
+                            expression,
+                            frame_id: Some(stack_frame_id),
+                            source: None,
+                            context: Some(EvaluateArgumentsContext::Variables),
+                        })
+                    });
+
+                    variables_eval_task.await.log_err()
+                }
+            }
+        })
+    }
+
     pub fn refresh_watchers(&mut self, frame_id: u64, cx: &mut Context<Self>) {
         let watches = self.watchers.clone();
         for (_, watch) in watches.into_iter() {

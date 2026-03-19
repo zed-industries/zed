@@ -247,6 +247,238 @@ mod python_locator {
     }
 }
 
+mod hover {
+    use std::{path::Path, sync::Arc};
+
+    use dap::{
+        DapRegistry, EvaluateArgumentsContext,
+        adapters::{DebugAdapterName, DebugTaskDefinition},
+        client::DebugAdapterClient,
+        requests::Evaluate,
+    };
+    use fs::FakeFs;
+    use futures::StreamExt as _;
+    use gpui::{BackgroundExecutor, Entity, TestAppContext};
+    use language::{Buffer, FakeLspAdapter, ToPointUtf16, rust_lang};
+    use parking_lot::Mutex;
+    use project::{
+        Project,
+        debugger::{
+            breakpoint_store::ActiveStackFrame,
+            session::{Session, SessionQuirks, ThreadId},
+        },
+    };
+    use serde_json::json;
+    use task::SharedTaskContext;
+    use util::path;
+
+    use crate::init_test;
+
+    const SOURCE: &str = "fn main() {
+    let value = 42;
+    let x = value + 1;
+    println!(\"{}\", x);
+}
+";
+
+    async fn init_project(
+        executor: BackgroundExecutor,
+        cx: &mut TestAppContext,
+    ) -> Entity<Project> {
+        init_test(cx);
+        cx.executor().allow_parking();
+        cx.update(|cx| DapRegistry::global(cx).add_adapter(Arc::new(dap::FakeAdapter::new())));
+        let fs = FakeFs::new(executor);
+        fs.insert_tree(path!("/project"), json!({ "main.rs": SOURCE }))
+            .await;
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        project
+            .read_with(cx, |project, _| project.languages().clone())
+            .add(rust_lang());
+        project
+    }
+
+    async fn boot_session<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
+        project: &Entity<Project>,
+        configure: T,
+        cx: &mut TestAppContext,
+    ) -> Entity<Session> {
+        let worktree = project.update(cx, |project, cx| {
+            project
+                .worktrees(cx)
+                .next()
+                .expect("test project should have one worktree")
+        });
+        let _subscription = project::debugger::test::intercept_debug_sessions(cx, configure);
+        let dap_store = project.read_with(cx, |project, _| project.dap_store());
+        let (session, boot_task) = dap_store.update(cx, |dap_store, cx| {
+            let session = dap_store.new_session(
+                None,
+                DebugAdapterName(dap::FakeAdapter::ADAPTER_NAME.into()),
+                SharedTaskContext::default(),
+                None,
+                SessionQuirks::default(),
+                cx,
+            );
+            let boot_task = dap_store.boot_session(
+                session.clone(),
+                DebugTaskDefinition {
+                    adapter: dap::FakeAdapter::ADAPTER_NAME.into(),
+                    label: "test".into(),
+                    config: json!({ "request": "launch" }),
+                    tcp_connection: None,
+                },
+                worktree,
+                cx,
+            );
+            (session, boot_task)
+        });
+        boot_task.await.expect("session should boot");
+        cx.run_until_parked();
+        session
+    }
+
+    fn set_active_stack_frame(
+        project: &Entity<Project>,
+        session: &Entity<Session>,
+        buffer: &Entity<Buffer>,
+        cx: &mut TestAppContext,
+    ) {
+        let session_id = session.read_with(cx, |session, _| session.session_id());
+        let position = buffer.read_with(cx, |buffer, _| buffer.snapshot().anchor_before(0));
+        project.update(cx, |project, cx| {
+            project.breakpoint_store().update(cx, |store, cx| {
+                store.set_active_position(
+                    ActiveStackFrame {
+                        session_id,
+                        thread_id: ThreadId(1),
+                        stack_frame_id: 1,
+                        path: Arc::<Path>::from(Path::new(path!("/project/main.rs"))),
+                        position,
+                    },
+                    cx,
+                );
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_hover_merges_debug_content_before_lsp_hover(
+        executor: BackgroundExecutor,
+        cx: &mut TestAppContext,
+    ) {
+        let project = init_project(executor, cx).await;
+        let evaluation_contexts = Arc::new(Mutex::new(Vec::new()));
+        let languages = project.read_with(cx, |project, _| project.languages().clone());
+        let mut fake_servers = languages.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                ..FakeLspAdapter::default()
+            },
+        );
+        let session = boot_session(
+            &project,
+            {
+                let evaluation_contexts = evaluation_contexts.clone();
+                move |client| {
+                    let evaluation_contexts = evaluation_contexts.clone();
+                    client.on_request::<Evaluate, _>(move |_, args| {
+                        let context = args.context.clone();
+                        evaluation_contexts
+                            .lock()
+                            .push((args.expression.clone(), context.clone()));
+
+                        match context {
+                            Some(EvaluateArgumentsContext::Hover) => Err(dap::ErrorResponse {
+                                error: Some(dap::Message {
+                                    id: 1,
+                                    format: "hover unsupported".into(),
+                                    variables: None,
+                                    send_telemetry: None,
+                                    show_user: None,
+                                    url: None,
+                                    url_label: None,
+                                }),
+                            }),
+                            Some(EvaluateArgumentsContext::Variables) => {
+                                Ok(dap::EvaluateResponse {
+                                    result: "42".into(),
+                                    type_: Some("i32".into()),
+                                    presentation_hint: None,
+                                    variables_reference: 0,
+                                    named_variables: None,
+                                    indexed_variables: None,
+                                    memory_reference: None,
+                                    value_location_reference: None,
+                                })
+                            }
+                            other => panic!("unexpected evaluate context: {other:?}"),
+                        }
+                    });
+                }
+            },
+            cx,
+        )
+        .await;
+
+        let (buffer, _handle) = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer_with_lsp(path!("/project/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        fake_servers
+            .next()
+            .await
+            .expect("failed to get language server")
+            .set_request_handler::<lsp::request::HoverRequest, _, _>(move |_, _| async move {
+                Ok(Some(lsp::Hover {
+                    contents: lsp::HoverContents::Scalar(lsp::MarkedString::String(
+                        "lsp hover".to_string(),
+                    )),
+                    range: None,
+                }))
+            });
+
+        set_active_stack_frame(&project, &session, &buffer, cx);
+        let hover_offset = SOURCE.find("value + 1").unwrap();
+        let hover_position = buffer.read_with(cx, |buffer, _| hover_offset.to_point_utf16(buffer));
+        let hover = project
+            .update(cx, |project, cx| project.hover(&buffer, hover_position, cx))
+            .await
+            .and_then(|mut hovers| hovers.pop())
+            .expect("expected merged hover");
+
+        assert_eq!(
+            hover
+                .contents
+                .into_iter()
+                .map(|block| block.text)
+                .collect::<Vec<_>>(),
+            vec![
+                "42".to_string(),
+                "type: i32".to_string(),
+                "lsp hover".to_string()
+            ]
+        );
+        assert_eq!(
+            *evaluation_contexts.lock(),
+            vec![
+                ("value".to_string(), Some(EvaluateArgumentsContext::Hover),),
+                (
+                    "value".to_string(),
+                    Some(EvaluateArgumentsContext::Variables),
+                ),
+            ]
+        );
+    }
+}
+
 mod memory {
     use project::debugger::{
         MemoryCell,

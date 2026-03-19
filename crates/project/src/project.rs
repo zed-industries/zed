@@ -4168,8 +4168,62 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Option<Vec<Hover>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.lsp_store
-            .update(cx, |lsp_store, cx| lsp_store.hover(buffer, position, cx))
+        let lsp_hover = self
+            .lsp_store
+            .update(cx, |lsp_store, cx| lsp_store.hover(buffer, position, cx));
+
+        let debug_hover =
+            self.active_debug_session(cx)
+                .and_then(|(session, active_stack_frame)| {
+                    let buffer_path = BreakpointStore::abs_path_from_buffer(buffer, cx)?;
+                    if buffer_path.as_ref() != active_stack_frame.path.as_ref() {
+                        return None;
+                    }
+
+                    let snapshot = buffer.read(cx).snapshot();
+                    let (expression, range) = hovered_debug_expression(&snapshot, position)?;
+                    let stack_frame_id = active_stack_frame.stack_frame_id;
+                    let evaluate = session.update(cx, |session, cx| {
+                        session.evaluate_hover_expression(stack_frame_id, expression, cx)
+                    });
+
+                    Some((evaluate, range))
+                });
+
+        match debug_hover {
+            Some((evaluate, range)) => cx.background_spawn(async move {
+                let mut hovers = lsp_hover.await.unwrap_or_default();
+                if let Some(response) = evaluate.await {
+                    let mut debug_contents = vec![HoverBlock {
+                        text: response.result,
+                        kind: HoverBlockKind::PlainText,
+                    }];
+
+                    if let Some(type_) = response.type_.filter(|type_| !type_.is_empty()) {
+                        debug_contents.push(HoverBlock {
+                            text: format!("type: {type_}"),
+                            kind: HoverBlockKind::PlainText,
+                        });
+                    }
+
+                    if let Some(existing_hover) = hovers.first_mut() {
+                        let mut merged_contents = debug_contents;
+                        merged_contents.append(&mut existing_hover.contents);
+                        existing_hover.contents = merged_contents;
+                        existing_hover.range.get_or_insert(range);
+                    } else {
+                        hovers.push(Hover {
+                            contents: debug_contents,
+                            range: Some(range),
+                            language: None,
+                        });
+                    }
+                }
+
+                Some(hovers)
+            }),
+            None => lsp_hover,
+        }
     }
 
     pub fn linked_edits(
@@ -6196,6 +6250,84 @@ fn proto_to_prompt(level: proto::language_server_prompt_request::Level) -> gpui:
         proto::language_server_prompt_request::Level::Warning(_) => gpui::PromptLevel::Warning,
         proto::language_server_prompt_request::Level::Critical(_) => gpui::PromptLevel::Critical,
     }
+}
+
+fn hovered_debug_expression(
+    snapshot: &language::BufferSnapshot,
+    position: PointUtf16,
+) -> Option<(String, Range<Anchor>)> {
+    hovered_debug_variable_expression(snapshot, position)
+        .or_else(|| hovered_debug_member_expression(snapshot, position))
+}
+
+fn hovered_debug_variable_expression(
+    snapshot: &language::BufferSnapshot,
+    position: PointUtf16,
+) -> Option<(String, Range<Anchor>)> {
+    let offset = snapshot.point_utf16_to_offset(position);
+
+    snapshot
+        .debug_variables_query(offset..offset)
+        .filter_map(|(range, capture_kind)| {
+            (capture_kind == language::DebuggerTextObject::Variable
+                && range.start <= offset
+                && offset <= range.end)
+                .then(|| {
+                    let expression = snapshot.text_for_range(range.clone()).collect::<String>();
+                    let anchor_range =
+                        snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end);
+                    (expression, anchor_range, range.end - range.start)
+                })
+        })
+        .min_by_key(|(_, _, len)| *len)
+        .map(|(expression, range, _)| (expression, range))
+}
+
+fn hovered_debug_member_expression(
+    snapshot: &language::BufferSnapshot,
+    position: PointUtf16,
+) -> Option<(String, Range<Anchor>)> {
+    let offset = snapshot.point_utf16_to_offset(position);
+    let mut node = snapshot.syntax_ancestor(offset..offset)?;
+    let mut best_match = None;
+
+    loop {
+        let byte_range = node.byte_range();
+        if byte_range.start > offset || offset > byte_range.end {
+            break;
+        }
+
+        let expression = snapshot
+            .text_for_range(byte_range.clone())
+            .collect::<String>();
+        if looks_like_debug_hover_member_expression(&expression) {
+            best_match = Some((
+                expression,
+                snapshot.anchor_before(byte_range.start)..snapshot.anchor_after(byte_range.end),
+            ));
+        }
+
+        let Some(parent) = node.parent() else {
+            break;
+        };
+        node = parent;
+    }
+
+    best_match
+}
+
+fn looks_like_debug_hover_member_expression(expression: &str) -> bool {
+    !expression.is_empty()
+        && expression.len() <= 128
+        && !expression.contains(char::is_whitespace)
+        && (expression.contains('.') || expression.contains('[') || expression.contains("->"))
+        && expression.chars().all(|char| {
+            char.is_alphanumeric()
+                || matches!(
+                    char,
+                    '_' | '.' | '[' | ']' | '(' | ')' | '"' | '\'' | '-' | '>'
+                )
+        })
 }
 
 fn provide_inline_values(
