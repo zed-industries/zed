@@ -485,7 +485,6 @@ mod tests {
     use project::Project;
     use std::path::Path;
     use std::rc::Rc;
-    use util::path_list::PathList;
 
     fn make_db_thread(title: &str, updated_at: DateTime<Utc>) -> DbThread {
         DbThread {
@@ -506,6 +505,207 @@ mod tests {
             draft_prompt: None,
             ui_scroll_position: None,
         }
+    }
+
+    fn make_metadata(
+        session_id: &str,
+        title: &str,
+        updated_at: DateTime<Utc>,
+        folder_paths: PathList,
+    ) -> ThreadMetadata {
+        ThreadMetadata {
+            session_id: acp::SessionId::new(session_id),
+            agent_id: None,
+            title: title.to_string().into(),
+            updated_at,
+            created_at: Some(updated_at),
+            folder_paths,
+        }
+    }
+
+    #[gpui::test]
+    async fn test_store_initializes_cache_from_database(cx: &mut TestAppContext) {
+        let first_paths = PathList::new(&[Path::new("/project-a")]);
+        let second_paths = PathList::new(&[Path::new("/project-b")]);
+        let now = Utc::now();
+        let older = now - chrono::Duration::seconds(1);
+
+        let thread = std::thread::current();
+        let test_name = thread.name().unwrap_or("unknown_test");
+        let db_name = format!("THREAD_METADATA_DB_{}", test_name);
+        let db = ThreadMetadataDb(smol::block_on(db::open_test_db::<ThreadMetadataDb>(
+            &db_name,
+        )));
+
+        db.save(make_metadata(
+            "session-1",
+            "First Thread",
+            now,
+            first_paths.clone(),
+        ))
+        .await
+        .unwrap();
+        db.save(make_metadata(
+            "session-2",
+            "Second Thread",
+            older,
+            second_paths.clone(),
+        ))
+        .await
+        .unwrap();
+
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            SidebarThreadMetadataStore::init_global(cx);
+        });
+
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let store = SidebarThreadMetadataStore::global(cx);
+            let store = store.read(cx);
+
+            let entry_ids = store
+                .entry_ids()
+                .map(|session_id| session_id.0.to_string())
+                .collect::<Vec<_>>();
+            assert_eq!(entry_ids, vec!["session-1", "session-2"]);
+
+            let first_path_entries = store
+                .entries_for_path(&first_paths)
+                .map(|entry| entry.session_id.0.to_string())
+                .collect::<Vec<_>>();
+            assert_eq!(first_path_entries, vec!["session-1"]);
+
+            let second_path_entries = store
+                .entries_for_path(&second_paths)
+                .map(|entry| entry.session_id.0.to_string())
+                .collect::<Vec<_>>();
+            assert_eq!(second_path_entries, vec!["session-2"]);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_store_cache_updates_after_save_and_delete(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            SidebarThreadMetadataStore::init_global(cx);
+        });
+
+        let first_paths = PathList::new(&[Path::new("/project-a")]);
+        let second_paths = PathList::new(&[Path::new("/project-b")]);
+        let initial_time = Utc::now();
+        let updated_time = initial_time + chrono::Duration::seconds(1);
+
+        let initial_metadata = make_metadata(
+            "session-1",
+            "First Thread",
+            initial_time,
+            first_paths.clone(),
+        );
+
+        let second_metadata = make_metadata(
+            "session-2",
+            "Second Thread",
+            initial_time,
+            second_paths.clone(),
+        );
+
+        cx.update(|cx| {
+            let store = SidebarThreadMetadataStore::global(cx);
+            store.update(cx, |store, cx| {
+                store.save(initial_metadata, cx).detach();
+                store.save(second_metadata, cx).detach();
+            });
+        });
+
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let store = SidebarThreadMetadataStore::global(cx);
+            let store = store.read(cx);
+
+            let first_path_entries = store
+                .entries_for_path(&first_paths)
+                .map(|entry| entry.session_id.0.to_string())
+                .collect::<Vec<_>>();
+            assert_eq!(first_path_entries, vec!["session-1"]);
+
+            let second_path_entries = store
+                .entries_for_path(&second_paths)
+                .map(|entry| entry.session_id.0.to_string())
+                .collect::<Vec<_>>();
+            assert_eq!(second_path_entries, vec!["session-2"]);
+        });
+
+        let moved_metadata = make_metadata(
+            "session-1",
+            "First Thread",
+            updated_time,
+            second_paths.clone(),
+        );
+
+        cx.update(|cx| {
+            let store = SidebarThreadMetadataStore::global(cx);
+            store.update(cx, |store, cx| {
+                store.save(moved_metadata, cx).detach();
+            });
+        });
+
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let store = SidebarThreadMetadataStore::global(cx);
+            let store = store.read(cx);
+
+            let entry_ids = store
+                .entry_ids()
+                .map(|session_id| session_id.0.to_string())
+                .collect::<Vec<_>>();
+            assert_eq!(entry_ids, vec!["session-1", "session-2"]);
+
+            let first_path_entries = store
+                .entries_for_path(&first_paths)
+                .map(|entry| entry.session_id.0.to_string())
+                .collect::<Vec<_>>();
+            assert!(first_path_entries.is_empty());
+
+            let second_path_entries = store
+                .entries_for_path(&second_paths)
+                .map(|entry| entry.session_id.0.to_string())
+                .collect::<Vec<_>>();
+            assert_eq!(second_path_entries, vec!["session-1", "session-2"]);
+        });
+
+        cx.update(|cx| {
+            let store = SidebarThreadMetadataStore::global(cx);
+            store.update(cx, |store, cx| {
+                store.delete(acp::SessionId::new("session-2"), cx).detach();
+            });
+        });
+
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let store = SidebarThreadMetadataStore::global(cx);
+            let store = store.read(cx);
+
+            let entry_ids = store
+                .entry_ids()
+                .map(|session_id| session_id.0.to_string())
+                .collect::<Vec<_>>();
+            assert_eq!(entry_ids, vec!["session-1"]);
+
+            let second_path_entries = store
+                .entries_for_path(&second_paths)
+                .map(|entry| entry.session_id.0.to_string())
+                .collect::<Vec<_>>();
+            assert_eq!(second_path_entries, vec!["session-1"]);
+        });
     }
 
     #[gpui::test]
