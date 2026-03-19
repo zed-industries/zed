@@ -135,7 +135,6 @@ pub struct ThreadsArchiveView {
     _subscriptions: Vec<gpui::Subscription>,
     selected_agent_menu: PopoverMenuHandle<ContextMenu>,
     _refresh_history_task: Task<()>,
-    _update_items_task: Option<Task<()>>,
     is_loading: bool,
     has_open_project: bool,
 }
@@ -164,6 +163,10 @@ impl ThreadsArchiveView {
                     this.update_items(cx);
                 }
             });
+        let metadata_store_subscription =
+            cx.observe(&SidebarThreadMetadataStore::global(cx), |this, _, cx| {
+                this.update_items(cx);
+            });
 
         let mut this = Self {
             agent_connection_store,
@@ -179,10 +182,9 @@ impl ThreadsArchiveView {
             selection: None,
             hovered_index: None,
             filter_editor,
-            _subscriptions: vec![filter_editor_subscription],
+            _subscriptions: vec![filter_editor_subscription, metadata_store_subscription],
             selected_agent_menu: PopoverMenuHandle::default(),
             _refresh_history_task: Task::ready(()),
-            _update_items_task: None,
             is_loading: true,
             has_open_project,
         };
@@ -246,60 +248,54 @@ impl ThreadsArchiveView {
         let query = self.filter_editor.read(cx).text(cx).to_lowercase();
         let today = Local::now().naive_local().date();
 
-        self._update_items_task.take();
         let unarchived_session_ids: collections::HashSet<_> =
             SidebarThreadMetadataStore::global(cx)
                 .read(cx)
                 .entry_ids()
                 .collect();
-        self._update_items_task = Some(cx.spawn(async move |this, cx| {
-            let mut items = Vec::with_capacity(sessions.len() + 5);
-            let mut current_bucket: Option<TimeBucket> = None;
+        let mut items = Vec::with_capacity(sessions.len() + 5);
+        let mut current_bucket: Option<TimeBucket> = None;
 
-            for session in sessions {
-                // Skip sessions that are shown in the sidebar
-                if unarchived_session_ids.contains(&session.session_id) {
-                    continue;
-                }
-
-                let highlight_positions = if !query.is_empty() {
-                    let title = session.title.as_ref().map(|t| t.as_ref()).unwrap_or("");
-                    match fuzzy_match_positions(&query, title) {
-                        Some(positions) => positions,
-                        None => continue,
-                    }
-                } else {
-                    Vec::new()
-                };
-
-                let entry_bucket = session
-                    .updated_at
-                    .map(|timestamp| {
-                        let entry_date = timestamp.with_timezone(&Local).naive_local().date();
-                        TimeBucket::from_dates(today, entry_date)
-                    })
-                    .unwrap_or(TimeBucket::Older);
-
-                if Some(entry_bucket) != current_bucket {
-                    current_bucket = Some(entry_bucket);
-                    items.push(ArchiveListItem::BucketSeparator(entry_bucket));
-                }
-
-                items.push(ArchiveListItem::Entry {
-                    session,
-                    highlight_positions,
-                });
+        for session in sessions {
+            // Skip sessions that are shown in the sidebar
+            if unarchived_session_ids.contains(&session.session_id) {
+                continue;
             }
 
-            this.update(cx, |this, cx| {
-                this.list_state.reset(items.len());
-                this.items = items;
-                this.selection = None;
-                this.hovered_index = None;
-                cx.notify();
-            })
-            .ok();
-        }));
+            let highlight_positions = if !query.is_empty() {
+                let title = session.title.as_ref().map(|t| t.as_ref()).unwrap_or("");
+                match fuzzy_match_positions(&query, title) {
+                    Some(positions) => positions,
+                    None => continue,
+                }
+            } else {
+                Vec::new()
+            };
+
+            let entry_bucket = session
+                .updated_at
+                .map(|timestamp| {
+                    let entry_date = timestamp.with_timezone(&Local).naive_local().date();
+                    TimeBucket::from_dates(today, entry_date)
+                })
+                .unwrap_or(TimeBucket::Older);
+
+            if Some(entry_bucket) != current_bucket {
+                current_bucket = Some(entry_bucket);
+                items.push(ArchiveListItem::BucketSeparator(entry_bucket));
+            }
+
+            items.push(ArchiveListItem::Entry {
+                session,
+                highlight_positions,
+            });
+        }
+
+        self.list_state.reset(items.len());
+        self.items = items;
+        self.selection = None;
+        self.hovered_index = None;
+        cx.notify();
     }
 
     fn reset_filter_editor_text(&mut self, window: &mut Window, cx: &mut Context<Self>) {

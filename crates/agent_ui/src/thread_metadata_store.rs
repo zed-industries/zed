@@ -47,13 +47,14 @@ fn migrate_thread_metadata(cx: &mut App) {
             reload_task.await;
         }
 
-        let should_migrate = store.read_with(cx, |store, _cx| store.is_empty());
+        let should_migrate = store.read_with(cx, |store, _app| store.is_empty());
         if !should_migrate {
-            return Ok::<(), anyhow::Error>(());
+            return anyhow::Ok(());
         }
 
-        let metadata = store.read_with(cx, |_store, app| {
-            ThreadStore::global(app)
+        let (db, metadata) = store.read_with(cx, |store, app| {
+            let db = store.db.clone();
+            let metadata = ThreadStore::global(app)
                 .read(app)
                 .entries()
                 .map(|entry| ThreadMetadata {
@@ -64,13 +65,17 @@ fn migrate_thread_metadata(cx: &mut App) {
                     created_at: entry.created_at,
                     folder_paths: entry.folder_paths,
                 })
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            (db, metadata)
         });
 
+        // Manually save each entry to the database and call reload, otherwise
+        // we'll end up triggering lots of reloads after each save
+        for entry in metadata {
+            db.save(entry).await?;
+        }
         store.update(cx, |store, cx| {
-            for entry in metadata {
-                store.save(entry, cx).detach_and_log_err(cx);
-            }
+            store.reload(cx);
         });
 
         Ok(())
@@ -219,15 +224,16 @@ impl SidebarThreadMetadataStore {
     fn reload(&mut self, cx: &mut Context<Self>) {
         let db = self.db.clone();
         self.reload_task.take();
+
+        let list_task = cx
+            .background_spawn(async move { db.list().context("Failed to fetch sidebar metadata") });
+
         let reload_task = cx
             .spawn(async move |this, cx| {
-                let Some(rows) = db
-                    .list()
-                    .context("Failed to fetch sidebar metadata")
-                    .log_err()
-                else {
+                let Some(rows) = list_task.await.log_err() else {
                     return;
                 };
+
                 this.update(cx, |this, cx| {
                     this.threads.clear();
                     this.threads_by_paths.clear();

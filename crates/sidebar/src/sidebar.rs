@@ -1006,8 +1006,6 @@ impl Sidebar {
     }
 
     /// Rebuilds the sidebar's visible entries from already-cached state.
-    /// Data fetching happens elsewhere (e.g. `list_threads`); this just
-    /// re-derives the entry list, list state, and notifications.
     fn update_entries(&mut self, cx: &mut Context<Self>) {
         let Some(multi_workspace) = self.multi_workspace.upgrade() else {
             return;
