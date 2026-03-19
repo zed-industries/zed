@@ -75,7 +75,7 @@ use crate::agent_diff::AgentDiff;
 use crate::entry_view_state::{EntryViewEvent, ViewEvent};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
-use crate::thread_metadata_store::ThreadMetadataStore;
+use crate::thread_metadata_store::SidebarThreadMetadataStore;
 use crate::ui::{AgentNotification, AgentNotificationEvent};
 use crate::{
     Agent, AgentDiffPane, AgentInitialContent, AgentPanel, AllowAlways, AllowOnce,
@@ -2615,7 +2615,7 @@ impl ConversationView {
         let task = history.update(cx, |history, cx| history.delete_session(&session_id, cx));
         task.detach_and_log_err(cx);
 
-        if let Some(store) = ThreadMetadataStore::try_global(cx) {
+        if let Some(store) = SidebarThreadMetadataStore::try_global(cx) {
             store
                 .update(cx, |store, cx| store.delete(session_id.clone(), cx))
                 .detach_and_log_err(cx);
@@ -4291,7 +4291,7 @@ pub(crate) mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            ThreadMetadataStore::init_global(cx);
+            SidebarThreadMetadataStore::init_global(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
             agent_panel::init(cx);

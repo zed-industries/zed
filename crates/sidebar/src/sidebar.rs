@@ -1,7 +1,7 @@
 use acp_thread::ThreadStatus;
 use action_log::DiffStats;
 use agent_client_protocol::{self as acp};
-use agent_ui::thread_metadata_store::{ThreadMetadata, ThreadMetadataStore};
+use agent_ui::thread_metadata_store::{SidebarThreadMetadataStore, ThreadMetadata};
 use agent_ui::threads_archive_view::{
     ThreadsArchiveView, ThreadsArchiveViewEvent, format_history_entry_timestamp,
 };
@@ -300,9 +300,12 @@ impl Sidebar {
         })
         .detach();
 
-        cx.observe(&ThreadMetadataStore::global(cx), |this, _store, cx| {
-            this.list_threads(cx);
-        })
+        cx.observe(
+            &SidebarThreadMetadataStore::global(cx),
+            |this, _store, cx| {
+                this.list_threads(cx);
+            },
+        )
         .detach();
 
         cx.observe_flag::<AgentV2FeatureFlag, _>(window, |_is_enabled, this, _window, cx| {
@@ -1006,7 +1009,7 @@ impl Sidebar {
     }
 
     fn list_threads(&mut self, cx: &mut Context<Self>) {
-        let list_task = ThreadMetadataStore::global(cx).read(cx).list(cx);
+        let list_task = SidebarThreadMetadataStore::global(cx).read(cx).list(cx);
         self._list_threads_task = Some(cx.spawn(async move |this, cx| {
             let Some(thread_entries) = list_task.await.log_err() else {
                 return;
@@ -1835,7 +1838,7 @@ impl Sidebar {
         cx: &mut Context<Self>,
     ) {
         // Eagerly save thread metadata so that the sidebar is updated immediately
-        ThreadMetadataStore::global(cx)
+        SidebarThreadMetadataStore::global(cx)
             .update(cx, |store, cx| {
                 store.save(
                     ThreadMetadata::from_session_info(agent.id(), &session_info),
@@ -2107,7 +2110,7 @@ impl Sidebar {
             }
         }
 
-        ThreadMetadataStore::global(cx)
+        SidebarThreadMetadataStore::global(cx)
             .update(cx, |store, cx| store.delete(session_id.clone(), cx))
             .detach_and_log_err(cx);
     }
@@ -2840,7 +2843,7 @@ mod tests {
             editor::init(cx);
             cx.update_flags(false, vec!["agent-v2".into()]);
             ThreadStore::init_global(cx);
-            ThreadMetadataStore::init_global(cx);
+            SidebarThreadMetadataStore::init_global(cx);
             language_model::LanguageModelRegistry::test(cx);
             prompt_store::init(cx);
         });
@@ -2944,7 +2947,7 @@ mod tests {
             folder_paths: path_list,
         };
         let task = cx.update(|cx| {
-            ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(metadata, cx))
+            SidebarThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(metadata, cx))
         });
         task.await.unwrap();
     }
@@ -3901,7 +3904,7 @@ mod tests {
         cx.update(|cx| {
             cx.update_flags(false, vec!["agent-v2".into()]);
             ThreadStore::init_global(cx);
-            ThreadMetadataStore::init_global(cx);
+            SidebarThreadMetadataStore::init_global(cx);
             language_model::LanguageModelRegistry::test(cx);
             prompt_store::init(cx);
         });
@@ -5200,7 +5203,7 @@ mod tests {
         cx.update(|cx| {
             cx.update_flags(false, vec!["agent-v2".into()]);
             ThreadStore::init_global(cx);
-            ThreadMetadataStore::init_global(cx);
+            SidebarThreadMetadataStore::init_global(cx);
             language_model::LanguageModelRegistry::test(cx);
             prompt_store::init(cx);
         });

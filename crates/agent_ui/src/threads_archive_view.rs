@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     Agent, RemoveSelectedThread, agent_connection_store::AgentConnectionStore,
-    thread_history::ThreadHistory, thread_metadata_store::ThreadMetadataStore,
+    thread_history::ThreadHistory, thread_metadata_store::SidebarThreadMetadataStore,
 };
 use acp_thread::AgentSessionInfo;
 use agent::ThreadStore;
@@ -247,9 +247,7 @@ impl ThreadsArchiveView {
         let today = Local::now().naive_local().date();
 
         self._update_items_task.take();
-        let unarchived_ids_task = ThreadMetadataStore::global(cx)
-            .read(cx)
-            .list_sidebar_ids(cx);
+        let unarchived_ids_task = SidebarThreadMetadataStore::global(cx).read(cx).list_ids(cx);
         self._update_items_task = Some(cx.spawn(async move |this, cx| {
             let unarchived_session_ids = unarchived_ids_task.await.unwrap_or_default();
 
