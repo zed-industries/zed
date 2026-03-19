@@ -1,10 +1,8 @@
 mod head;
 pub mod highlighted_match_with_paths;
 pub mod popover_menu;
-pub mod stable_id;
 
 use anyhow::Result;
-use stable_id::StableId;
 
 use gpui::{
     Action, AnyElement, App, Bounds, ClickEvent, Context, DismissEvent, EventEmitter, FocusHandle,
@@ -93,7 +91,7 @@ pub enum PickerEditorPosition {
 
 pub trait PickerDelegate: Sized + 'static {
     type ListItem: IntoElement;
-    type StableId: StableId;
+    type StableId: Clone + Eq + std::hash::Hash + std::fmt::Debug + Send + 'static;
 
     fn match_count(&self) -> usize;
     fn selected_index(&self) -> usize;

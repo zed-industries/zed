@@ -10,7 +10,7 @@ use gpui::{
     InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, Render,
     SharedString, Styled, Subscription, Task, WeakEntity, Window, actions, rems,
 };
-use picker::{Picker, PickerDelegate, PickerEditorPosition, stable_id::StableId};
+use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::git_store::Repository;
 use project::project_settings::ProjectSettings;
 use settings::Settings;
@@ -371,8 +371,6 @@ pub enum BranchStableId {
     NewBranch(String),
     NewRemoteName { name: String, url: SharedString },
 }
-
-impl StableId for BranchStableId {}
 
 #[derive(Clone, Copy, PartialEq)]
 enum BranchFilter {

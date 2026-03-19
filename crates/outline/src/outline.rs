@@ -15,7 +15,7 @@ use gpui::{
 };
 use language::{Outline, OutlineItem};
 use ordered_float::OrderedFloat;
-use picker::{Picker, PickerDelegate, stable_id::StableId};
+use picker::{Picker, PickerDelegate};
 use settings::Settings;
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{ListItem, ListItemSpacing, prelude::*};
@@ -38,8 +38,6 @@ impl OutlineStableId {
         }
     }
 }
-
-impl StableId for OutlineStableId {}
 
 pub fn init(cx: &mut App) {
     cx.observe_new(OutlineView::register).detach();

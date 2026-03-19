@@ -30,7 +30,6 @@ use gpui::{
 use picker::{
     Picker, PickerDelegate,
     highlighted_match_with_paths::{HighlightedMatch, HighlightedMatchWithPaths},
-    stable_id::StableId,
 };
 use project::{Worktree, git_store::Repository};
 pub use remote_connections::RemoteSettings;
@@ -699,8 +698,6 @@ pub enum RecentProjectsStableId {
     OpenFolder(WorktreeId),
     RecentProject(WorkspaceId),
 }
-
-impl StableId for RecentProjectsStableId {}
 
 impl PickerDelegate for RecentProjectsDelegate {
     type ListItem = AnyElement;

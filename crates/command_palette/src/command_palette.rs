@@ -19,7 +19,7 @@ use gpui::{
     ParentElement, Render, Styled, Task, WeakEntity, Window,
 };
 use persistence::COMMAND_PALETTE_HISTORY;
-use picker::{Direction, stable_id::StableId};
+use picker::Direction;
 use picker::{Picker, PickerDelegate};
 use postage::{sink::Sink, stream::Stream};
 use settings::Settings;
@@ -368,7 +368,6 @@ impl CommandPaletteDelegate {
 
 #[derive(Clone, Eq, PartialEq, Hash, Debug)]
 pub struct CommandPaletteStableId(SharedString);
-impl StableId for CommandPaletteStableId {}
 
 impl PickerDelegate for CommandPaletteDelegate {
     type ListItem = ListItem;
