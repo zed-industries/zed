@@ -141,9 +141,9 @@ impl Chunk {
         self.newlines = slice.newlines | (self.newlines << shift);
         self.tabs = slice.tabs | (self.tabs << shift);
 
-        let mut new_text = ArrayString::<MAX_BASE>::new();
-        new_text.push_str(slice.text);
-        new_text.push_str(&self.text);
+        let mut new_text = ArrayString::<MAX_BASE, u8>::new();
+        new_text.push_str(slice.text).unwrap();
+        new_text.push_str(&self.text).unwrap();
         self.text = new_text;
     }
 

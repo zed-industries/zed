@@ -4,6 +4,7 @@ use editor::actions::OpenExcerpts;
 
 use crate::StartThreadIn;
 use gpui::{Corner, List};
+use heapless::Vec as ArrayVec;
 use language_model::{LanguageModelEffortLevel, Speed};
 use settings::update_settings_file;
 use ui::{ButtonLike, SplitButton, SplitButtonStyle, Tab};
@@ -6005,7 +6006,7 @@ impl ThreadView {
         focus_handle: &FocusHandle,
         cx: &Context<Self>,
     ) -> Div {
-        let mut seen_kinds: ArrayVec<acp::PermissionOptionKind, 3> = ArrayVec::new();
+        let mut seen_kinds: ArrayVec<acp::PermissionOptionKind, 3, u8> = ArrayVec::new();
 
         div()
             .p_1()
@@ -6055,7 +6056,7 @@ impl ThreadView {
                             return this;
                         }
 
-                        seen_kinds.push(option.kind);
+                        seen_kinds.push(option.kind).unwrap();
 
                         this.key_binding(
                             KeyBinding::for_action_in(action, focus_handle, cx)

@@ -13,7 +13,6 @@ use agent_servers::AgentServer;
 use agent_servers::AgentServerDelegate;
 use agent_settings::{AgentProfileId, AgentSettings};
 use anyhow::{Result, anyhow};
-use arrayvec::ArrayVec;
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
 use client::zed_urls;
