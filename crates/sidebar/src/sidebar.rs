@@ -47,6 +47,8 @@ gpui::actions!(
     [
         /// Creates a new thread in the currently selected or active project group.
         NewThreadInGroup,
+        /// Toggles between the thread list and the archive view.
+        ToggleArchive,
     ]
 );
 
@@ -143,6 +145,7 @@ struct SidebarContents {
     entries: Vec<ListEntry>,
     notified_threads: HashSet<acp::SessionId>,
     project_header_indices: Vec<usize>,
+    has_open_projects: bool,
 }
 
 impl SidebarContents {
@@ -676,6 +679,10 @@ impl Sidebar {
             }
         }
 
+        let has_open_projects = workspaces
+            .iter()
+            .any(|ws| !workspace_path_list(ws, cx).paths().is_empty());
+
         for (ws_index, workspace) in workspaces.iter().enumerate() {
             if absorbed.contains_key(&ws_index) {
                 continue;
@@ -1024,6 +1031,7 @@ impl Sidebar {
             entries,
             notified_threads,
             project_header_indices,
+            has_open_projects,
         };
     }
 
@@ -1185,9 +1193,9 @@ impl Sidebar {
             .child(
                 h_flex()
                     .relative()
+                    .h(Tab::container_height(cx))
                     .min_w_0()
                     .w_full()
-                    .py_1()
                     .gap_1p5()
                     .child(
                         h_flex().size_4().flex_none().justify_center().child(
@@ -2485,6 +2493,27 @@ impl Sidebar {
             .into_any_element()
     }
 
+    fn render_no_results(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let has_query = self.has_filter_query(cx);
+        let message = if has_query {
+            "No threads match your search."
+        } else {
+            "No threads yet"
+        };
+
+        v_flex()
+            .id("sidebar-no-results")
+            .p_4()
+            .size_full()
+            .items_center()
+            .justify_center()
+            .child(
+                Label::new(message)
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            )
+    }
+
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .id("sidebar-empty-state")
@@ -2527,7 +2556,7 @@ impl Sidebar {
 
     fn render_sidebar_header(
         &self,
-        empty_state: bool,
+        no_open_projects: bool,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -2535,69 +2564,47 @@ impl Sidebar {
         let traffic_lights = cfg!(target_os = "macos") && !window.is_fullscreen();
         let header_height = platform_title_bar_height(window);
 
-        v_flex()
-            .child(
-                h_flex()
-                    .h(header_height)
-                    .mt_px()
-                    .pb_px()
-                    .when(traffic_lights, |this| {
-                        this.pl(px(ui::utils::TRAFFIC_LIGHT_PADDING))
-                    })
-                    .pr_1p5()
-                    .gap_1()
-                    .border_b_1()
+        h_flex()
+            .h(header_height)
+            .mt_px()
+            .pb_px()
+            .when(traffic_lights, |this| {
+                this.pl(px(ui::utils::TRAFFIC_LIGHT_PADDING))
+            })
+            .pr_1p5()
+            .gap_1()
+            .when(!no_open_projects, |this| {
+                this.border_b_1()
                     .border_color(cx.theme().colors().border)
-                    .justify_end()
+                    .child(Divider::vertical().color(ui::DividerColor::Border))
                     .child(
-                        IconButton::new("archive", IconName::Archive)
-                            .icon_size(IconSize::Small)
-                            .tooltip(Tooltip::text("View Archived Threads"))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.show_archive(window, cx);
-                            })),
-                    )
-                    .child(self.render_recent_projects_button(cx)),
-            )
-            .when(!empty_state, |this| {
-                this.child(
-                    h_flex()
-                        .h(Tab::container_height(cx))
-                        .px_1p5()
-                        .gap_1p5()
-                        .border_b_1()
-                        .border_color(cx.theme().colors().border)
-                        .child(
-                            h_flex().size_4().flex_none().justify_center().child(
-                                Icon::new(IconName::MagnifyingGlass)
-                                    .size(IconSize::Small)
-                                    .color(Color::Muted),
-                            ),
-                        )
-                        .child(self.render_filter_input(cx))
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .when(
-                                    self.selection.is_some()
-                                        && !self.filter_editor.focus_handle(cx).is_focused(window),
-                                    |this| {
-                                        this.child(KeyBinding::for_action(&FocusSidebarFilter, cx))
-                                    },
-                                )
-                                .when(has_query, |this| {
-                                    this.child(
-                                        IconButton::new("clear_filter", IconName::Close)
-                                            .icon_size(IconSize::Small)
-                                            .tooltip(Tooltip::text("Clear Search"))
-                                            .on_click(cx.listener(|this, _, window, cx| {
-                                                this.reset_filter_editor_text(window, cx);
-                                                this.update_entries(cx);
-                                            })),
-                                    )
-                                }),
+                        div().ml_1().child(
+                            Icon::new(IconName::MagnifyingGlass)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
                         ),
-                )
+                    )
+                    .child(self.render_filter_input(cx))
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .when(
+                                self.selection.is_some()
+                                    && !self.filter_editor.focus_handle(cx).is_focused(window),
+                                |this| this.child(KeyBinding::for_action(&FocusSidebarFilter, cx)),
+                            )
+                            .when(has_query, |this| {
+                                this.child(
+                                    IconButton::new("clear_filter", IconName::Close)
+                                        .icon_size(IconSize::Small)
+                                        .tooltip(Tooltip::text("Clear Search"))
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.reset_filter_editor_text(window, cx);
+                                            this.update_entries(cx);
+                                        })),
+                                )
+                            }),
+                    )
             })
     }
 
@@ -2633,6 +2640,13 @@ impl Sidebar {
 }
 
 impl Sidebar {
+    fn toggle_archive(&mut self, _: &ToggleArchive, window: &mut Window, cx: &mut Context<Self>) {
+        match &self.view {
+            SidebarView::ThreadList => self.show_archive(window, cx),
+            SidebarView::Archive(_) => self.show_thread_list(window, cx),
+        }
+    }
+
     fn show_archive(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(active_workspace) = self.multi_workspace.upgrade().and_then(|w| {
             w.read(cx)
@@ -2685,14 +2699,16 @@ impl Sidebar {
         );
 
         self._subscriptions.push(subscription);
-        self.view = SidebarView::Archive(archive_view);
+        self.view = SidebarView::Archive(archive_view.clone());
+        archive_view.update(cx, |view, cx| view.focus_filter_editor(window, cx));
         cx.notify();
     }
 
     fn show_thread_list(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.view = SidebarView::ThreadList;
         self._subscriptions.clear();
-        window.focus(&self.focus_handle, cx);
+        let handle = self.filter_editor.read(cx).focus_handle(cx);
+        handle.focus(window, cx);
         cx.notify();
     }
 }
@@ -2746,7 +2762,8 @@ impl Render for Sidebar {
             .title_bar_background
             .blend(cx.theme().colors().panel_background.opacity(0.8));
 
-        let empty_state = self.contents.entries.is_empty();
+        let no_open_projects = !self.contents.has_open_projects;
+        let no_search_results = self.contents.entries.is_empty();
 
         v_flex()
             .id("workspace-sidebar")
@@ -2767,7 +2784,9 @@ impl Render for Sidebar {
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::remove_selected_thread))
             .on_action(cx.listener(Self::new_thread_in_group))
+            .on_action(cx.listener(Self::toggle_archive))
             .on_action(cx.listener(Self::focus_sidebar_filter))
+            .on_action(cx.listener(Self::toggle_archive))
             .font(ui_font)
             .h_full()
             .w(self.width)
@@ -2776,9 +2795,9 @@ impl Render for Sidebar {
             .border_color(cx.theme().colors().border)
             .map(|this| match &self.view {
                 SidebarView::ThreadList => this
-                    .child(self.render_sidebar_header(empty_state, window, cx))
+                    .child(self.render_sidebar_header(no_open_projects, window, cx))
                     .map(|this| {
-                        if empty_state {
+                        if no_open_projects {
                             this.child(self.render_empty_state(cx))
                         } else {
                             this.child(
@@ -2794,6 +2813,9 @@ impl Render for Sidebar {
                                         .flex_1()
                                         .size_full(),
                                     )
+                                    .when(no_search_results, |this| {
+                                        this.child(self.render_no_results(cx))
+                                    })
                                     .when_some(sticky_header, |this, header| this.child(header))
                                     .vertical_scrollbar_for(&self.list_state, window, cx),
                             )
@@ -2804,9 +2826,31 @@ impl Render for Sidebar {
             .child(
                 h_flex()
                     .p_1()
+                    .gap_1()
+                    .justify_between()
                     .border_t_1()
                     .border_color(cx.theme().colors().border)
-                    .child(self.render_sidebar_toggle_button(cx)),
+                    .child(self.render_sidebar_toggle_button(cx))
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                IconButton::new("archive", IconName::Archive)
+                                    .icon_size(IconSize::Small)
+                                    .toggle_state(matches!(self.view, SidebarView::Archive(..)))
+                                    .tooltip(move |_, cx| {
+                                        Tooltip::for_action(
+                                            "Toggle Archived Threads",
+                                            &ToggleArchive,
+                                            cx,
+                                        )
+                                    })
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.toggle_archive(&ToggleArchive, window, cx);
+                                    })),
+                            )
+                            .child(self.render_recent_projects_button(cx)),
+                    ),
             )
     }
 }
