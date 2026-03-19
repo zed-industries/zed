@@ -72,8 +72,6 @@ To disable word diff for specific languages only, add this to your settings.json
 
 ### Diff View Styles
 
-> **Changed in Preview (v0.225).** See [release notes](/releases#0.225).
-
 Zed displays diffs in two modes: **split** (side-by-side comparison) or **unified** (inline changes). Split view is the default.
 
 #### Changing the diff view
@@ -101,11 +99,11 @@ You can switch between modes at any time. Your preference applies to [Project Di
 
 File History shows the commit history for an individual file. Each entry displays the commit's author, timestamp, and message. Selecting a commit opens a diff view filtered to show only the changes made to that file in that commit.
 
-To open File History:
+To view File History:
 
-- Right-click on a file in the Project Panel and select "Open File History"
-- Right-click on a file in the Git Panel and select "Open File History"
-- Right-click on an editor tab and select "Open File History"
+- Right-click on a file in the Project Panel and select "View File History"
+- Right-click on a file in the Git Panel and select "View File History"
+- Right-click on an editor tab and select "View File History"
 - Use the Command Palette and search for "file history"
 
 ## Fetch, Push, and Pull

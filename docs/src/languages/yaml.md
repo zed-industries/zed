@@ -12,8 +12,6 @@ YAML support is available natively in Zed.
 
 ## Configuration
 
-> **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
-
 You can configure various [yaml-language-server settings](https://github.com/redhat-developer/yaml-language-server?tab=readme-ov-file#language-server-settings) by adding them to your Zed settings.json in a `yaml-language-server` block under the `lsp` key.
 
 You can configure custom YAML schemas using relative paths. Zed resolves paths relative to your project root:

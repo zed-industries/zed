@@ -50,7 +50,12 @@ Zed supports ways to spawn (and rerun) commands using its integrated [terminal](
     // Whether to show the task line in the output of the spawned task, defaults to `true`.
     "show_summary": true,
     // Whether to show the command line in the output of the spawned task, defaults to `true`.
-    "show_command": true
+    "show_command": true,
+    // Which edited buffers to save before running the task:
+    // * `all` — save all edited buffers
+    // * `current` — save current buffer only
+    // * `none` — don't save any buffers
+    "save": "all"
     // Represents the tags for inline runnable indicators, or spawning multiple tasks at once.
     // "tags": []
   }
@@ -89,6 +94,7 @@ These variables allow you to pull information from the current editor and use it
 - `ZED_STEM`: stem (filename without extension) of the currently opened file (e.g. `main`)
 - `ZED_SYMBOL`: currently selected symbol; should match the last symbol shown in a symbol breadcrumb (e.g. `mod tests > fn test_task_contexts`)
 - `ZED_SELECTED_TEXT`: currently selected text
+- `ZED_LANGUAGE`: language of the currently opened buffer (e.g. `Rust`, `Python`, `Shell Script`)
 - `ZED_WORKTREE_ROOT`: absolute path to the root of the current worktree. (e.g. `/Users/my-user/path/to/project`)
 - `ZED_CUSTOM_RUST_PACKAGE`: (Rust-specific) name of the parent package of $ZED_FILE source file.
 
@@ -223,6 +229,35 @@ This could be useful for launching a terminal application that you want to use i
 }
 ```
 
+## VS Code Task Format
+
+When importing VS Code tasks from `.vscode/tasks.json`, you can omit the `label` field. Zed automatically generates labels based on the task type:
+
+- **npm tasks**: `npm: <script>` (e.g., `npm: start`)
+- **gulp tasks**: `gulp: <task>` (e.g., `gulp: build`)
+- **shell tasks**: Uses the `command` string directly (e.g., `echo hello`), or `shell` if the command is empty
+- **Tasks without type**: `Untitled Task`
+
+Example task file with auto-generated labels:
+
+```json
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "type": "npm",
+      "script": "start"
+    },
+    {
+      "type": "shell",
+      "command": "cargo build --release"
+    }
+  ]
+}
+```
+
+These tasks appear in the task picker as "npm: start" and "cargo build --release". You can override the generated label by providing an explicit `label` field.
+
 ## Binding runnable tags to task templates
 
 Zed supports overriding the default action for inline runnable indicators via workspace-local and global `tasks.json` file with the following precedence hierarchy:
@@ -249,8 +284,6 @@ When you have a task definition that is bound to the runnable, you can quickly r
 
 ## Running Bash Scripts
 
-> **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
-
 You can run bash scripts directly from Zed. When you open a `.sh` or `.bash` file, Zed automatically detects the script as runnable and makes it available in the task picker.
 
 To run a bash script:
@@ -275,8 +308,6 @@ If you need to pass arguments or customize the execution environment, add a task
 ```
 
 ## Shell Initialization
-
-> **Changed in Preview (v0.225).** See [release notes](/releases#0.225).
 
 When Zed runs a task, it launches the command in a login shell. This ensures your shell's initialization files (`.bash_profile`, `.zshrc`, etc.) are sourced before the task executes.
 

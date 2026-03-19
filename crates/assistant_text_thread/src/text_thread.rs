@@ -1219,7 +1219,7 @@ impl TextThread {
             } => cx.emit(TextThreadEvent::Operation(
                 TextThreadOperation::BufferOperation(operation.clone()),
             )),
-            language::BufferEvent::Edited => {
+            language::BufferEvent::Edited { .. } => {
                 self.count_remaining_tokens(cx);
                 self.reparse(cx);
                 cx.emit(TextThreadEvent::MessagesEdited);
@@ -2275,6 +2275,7 @@ impl TextThread {
             temperature: model.and_then(|model| AgentSettings::temperature_for_model(model, cx)),
             thinking_allowed: true,
             thinking_effort: None,
+            speed: None,
         };
         for message in self.messages(cx) {
             if message.status != MessageStatus::Done {

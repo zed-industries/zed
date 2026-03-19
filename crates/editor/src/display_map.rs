@@ -107,12 +107,13 @@ use project::{InlayId, lsp_store::LspFoldingRange, lsp_store::TokenType};
 use serde::Deserialize;
 use smallvec::SmallVec;
 use sum_tree::{Bias, TreeMap};
-use text::{BufferId, LineIndent, Patch, ToOffset as _};
+use text::{BufferId, LineIndent, Patch};
 use ui::{SharedString, px};
 use unicode_segmentation::UnicodeSegmentation;
 use ztracing::instrument;
 
 use std::cell::RefCell;
+use std::collections::hash_map::Entry;
 use std::{
     any::TypeId,
     borrow::Cow,
@@ -175,9 +176,9 @@ pub trait ToDisplayPoint {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint;
 }
 
-type TextHighlights = TreeMap<HighlightKey, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
+type TextHighlights = Arc<HashMap<HighlightKey, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>>;
 type SemanticTokensHighlights =
-    TreeMap<BufferId, (Arc<[SemanticTokenHighlight]>, Arc<HighlightStyleInterner>)>;
+    Arc<HashMap<BufferId, (Arc<[SemanticTokenHighlight]>, Arc<HighlightStyleInterner>)>>;
 type InlayHighlights = TreeMap<HighlightKey, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>>;
 
 #[derive(Debug)]
@@ -478,7 +479,7 @@ impl DisplayMap {
             diagnostics_max_severity,
             text_highlights: Default::default(),
             inlay_highlights: Default::default(),
-            semantic_token_highlights: TreeMap::default(),
+            semantic_token_highlights: Default::default(),
             clip_at_line_ends: false,
             masked: false,
             companion: None,
@@ -788,6 +789,9 @@ impl DisplayMap {
                 .collect(),
             cx,
         );
+        for buffer_id in &other.block_snapshot.buffers_with_disabled_headers {
+            self.disable_header_for_buffer(*buffer_id, cx);
+        }
     }
 
     /// Creates folds for the given creases.
@@ -1226,22 +1230,25 @@ impl DisplayMap {
         cx: &App,
     ) {
         let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
-        let to_insert = match self.text_highlights.remove(&key) {
-            Some(mut previous) if merge => match Arc::get_mut(&mut previous) {
-                Some((_, previous_ranges)) => {
+        match Arc::make_mut(&mut self.text_highlights).entry(key) {
+            Entry::Occupied(mut slot) => match Arc::get_mut(slot.get_mut()) {
+                Some((_, previous_ranges)) if merge => {
                     previous_ranges.extend(ranges);
                     previous_ranges.sort_by(|a, b| a.start.cmp(&b.start, &multi_buffer_snapshot));
-                    previous
                 }
-                None => Arc::new((style, {
-                    ranges.extend(previous.1.iter().cloned());
+                Some((previous_style, previous_ranges)) => {
+                    *previous_style = style;
+                    *previous_ranges = ranges;
+                }
+                None if merge => {
+                    ranges.extend(slot.get().1.iter().cloned());
                     ranges.sort_by(|a, b| a.start.cmp(&b.start, &multi_buffer_snapshot));
-                    ranges
-                })),
+                    slot.insert(Arc::new((style, ranges)));
+                }
+                None => _ = slot.insert(Arc::new((style, ranges))),
             },
-            _ => Arc::new((style, ranges)),
-        };
-        self.text_highlights.insert(key, to_insert);
+            Entry::Vacant(slot) => _ = slot.insert(Arc::new((style, ranges))),
+        }
     }
 
     #[instrument(skip_all)]
@@ -1288,14 +1295,16 @@ impl DisplayMap {
     }
 
     pub fn clear_highlights(&mut self, key: HighlightKey) -> bool {
-        let mut cleared = self.text_highlights.remove(&key).is_some();
+        let mut cleared = Arc::make_mut(&mut self.text_highlights)
+            .remove(&key)
+            .is_some();
         cleared |= self.inlay_highlights.remove(&key).is_some();
         cleared
     }
 
     pub fn clear_highlights_with(&mut self, f: &mut dyn FnMut(&HighlightKey) -> bool) -> bool {
         let mut cleared = false;
-        self.text_highlights.retain(|k, _| {
+        Arc::make_mut(&mut self.text_highlights).retain(|k, _| {
             let b = !f(k);
             cleared |= b;
             b
@@ -1349,7 +1358,7 @@ impl DisplayMap {
         widths_changed
     }
 
-    pub(crate) fn current_inlays(&self) -> impl Iterator<Item = &Inlay> {
+    pub(crate) fn current_inlays(&self) -> impl Iterator<Item = &Inlay> + Default {
         self.inlay_map.current_inlays()
     }
 
@@ -1448,7 +1457,7 @@ impl DisplayMap {
     }
 
     pub fn invalidate_semantic_highlights(&mut self, buffer_id: BufferId) {
-        self.semantic_token_highlights.remove(&buffer_id);
+        Arc::make_mut(&mut self.semantic_token_highlights).remove(&buffer_id);
     }
 }
 
@@ -1492,7 +1501,7 @@ impl<'a> HighlightedChunk<'a> {
         self,
         editor_style: &'a EditorStyle,
     ) -> impl Iterator<Item = Self> + 'a {
-        let mut chars = self.text.chars().peekable();
+        let mut chunks = self.text.graphemes(true).peekable();
         let mut text = self.text;
         let style = self.style;
         let is_tab = self.is_tab;
@@ -1500,10 +1509,12 @@ impl<'a> HighlightedChunk<'a> {
         let is_inlay = self.is_inlay;
         iter::from_fn(move || {
             let mut prefix_len = 0;
-            while let Some(&ch) = chars.peek() {
-                if !is_invisible(ch) {
-                    prefix_len += ch.len_utf8();
-                    chars.next();
+            while let Some(&chunk) = chunks.peek() {
+                let mut chars = chunk.chars();
+                let Some(ch) = chars.next() else { break };
+                if chunk.len() != ch.len_utf8() || !is_invisible(ch) {
+                    prefix_len += chunk.len();
+                    chunks.next();
                     continue;
                 }
                 if prefix_len > 0 {
@@ -1517,8 +1528,8 @@ impl<'a> HighlightedChunk<'a> {
                         replacement: renderer.clone(),
                     });
                 }
-                chars.next();
-                let (prefix, suffix) = text.split_at(ch.len_utf8());
+                chunks.next();
+                let (prefix, suffix) = text.split_at(chunk.len());
                 text = suffix;
                 if let Some(replacement) = replacement(ch) {
                     let invisible_highlight = HighlightStyle {
@@ -1908,6 +1919,9 @@ impl DisplaySnapshot {
                             color
                         }
                     }),
+                    underline: chunk_highlight
+                        .underline
+                        .filter(|_| editor_style.show_underlines),
                     ..chunk_highlight
                 }
             });
@@ -1963,56 +1977,10 @@ impl DisplaySnapshot {
     /// Returned ranges are 0-based relative to `buffer_range.start`.
     pub(super) fn combined_highlights(
         &self,
-        buffer_id: BufferId,
-        buffer_range: Range<usize>,
+        multibuffer_range: Range<MultiBufferOffset>,
         syntax_theme: &theme::SyntaxTheme,
     ) -> Vec<(Range<usize>, HighlightStyle)> {
         let multibuffer = self.buffer_snapshot();
-
-        let multibuffer_range = multibuffer
-            .excerpts()
-            .find_map(|(excerpt_id, buffer, range)| {
-                if buffer.remote_id() != buffer_id {
-                    return None;
-                }
-                let context_start = range.context.start.to_offset(buffer);
-                let context_end = range.context.end.to_offset(buffer);
-                if buffer_range.start < context_start || buffer_range.end > context_end {
-                    return None;
-                }
-                let start_anchor = buffer.anchor_before(buffer_range.start);
-                let end_anchor = buffer.anchor_after(buffer_range.end);
-                let mb_range =
-                    multibuffer.anchor_range_in_excerpt(excerpt_id, start_anchor..end_anchor)?;
-                Some(mb_range.start.to_offset(multibuffer)..mb_range.end.to_offset(multibuffer))
-            });
-
-        let Some(multibuffer_range) = multibuffer_range else {
-            // Range is outside all excerpts (e.g. symbol name not in a
-            // multi-buffer excerpt). Fall back to buffer-level syntax highlights.
-            let buffer_snapshot = multibuffer.excerpts().find_map(|(_, buffer, _)| {
-                (buffer.remote_id() == buffer_id).then(|| buffer.clone())
-            });
-            let Some(buffer_snapshot) = buffer_snapshot else {
-                return Vec::new();
-            };
-            let mut highlights = Vec::new();
-            let mut offset = 0usize;
-            for chunk in buffer_snapshot.chunks(buffer_range, true) {
-                let chunk_len = chunk.text.len();
-                if chunk_len == 0 {
-                    continue;
-                }
-                if let Some(style) = chunk
-                    .syntax_highlight_id
-                    .and_then(|id| id.style(syntax_theme))
-                {
-                    highlights.push((offset..offset + chunk_len, style));
-                }
-                offset += chunk_len;
-            }
-            return highlights;
-        };
 
         let chunks = custom_highlights::CustomHighlightsChunks::new(
             multibuffer_range,
@@ -2352,6 +2320,19 @@ impl DisplaySnapshot {
                 if !line_indent.is_line_blank()
                     && line_indent.raw_len() <= start_line_indent.raw_len()
                 {
+                    if self
+                        .buffer_snapshot()
+                        .language_scope_at(Point::new(row, 0))
+                        .is_some_and(|scope| {
+                            matches!(
+                                scope.override_name(),
+                                Some("string") | Some("comment") | Some("comment.inclusive")
+                            )
+                        })
+                    {
+                        continue;
+                    }
+
                     let prev_row = row - 1;
                     end = Some(Point::new(
                         prev_row,
@@ -4117,5 +4098,36 @@ pub mod tests {
         assert_eq!(ranges.len(), 1);
         assert_eq!(ranges[0].start, DisplayPoint::new(DisplayRow(0), 10));
         assert_eq!(ranges[0].end, DisplayPoint::new(DisplayRow(0), 14));
+    }
+
+    #[test]
+    fn test_highlight_invisibles_preserves_compound_emojis() {
+        let editor_style = EditorStyle::default();
+
+        let pilot_emoji = "🧑\u{200d}✈\u{fe0f}";
+        let chunk = HighlightedChunk {
+            text: pilot_emoji,
+            style: None,
+            is_tab: false,
+            is_inlay: false,
+            replacement: None,
+        };
+
+        let chunks: Vec<_> = chunk
+            .highlight_invisibles(&editor_style)
+            .map(|chunk| chunk.text.to_string())
+            .collect();
+
+        assert_eq!(
+            chunks.concat(),
+            pilot_emoji,
+            "all text bytes must be preserved"
+        );
+        assert_eq!(
+            chunks.len(),
+            1,
+            "compound emoji should not be split into multiple chunks, got: {:?}",
+            chunks,
+        );
     }
 }

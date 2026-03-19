@@ -35,6 +35,7 @@ use tree_sitter::{Query, StreamingIterator as _};
 use ui::{
     ContextMenu, Divider, PopoverMenu, PopoverMenuHandle, SplitButton, Tab, Tooltip, prelude::*,
 };
+use util::redact::redact_command;
 use util::rel_path::RelPath;
 use util::{ResultExt, debug_panic, maybe};
 use workspace::SplitDirection;
@@ -43,7 +44,7 @@ use workspace::{
     Item, Pane, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
 };
-use zed_actions::ToggleFocus;
+use zed_actions::debug_panel::ToggleFocus;
 
 pub struct DebuggerHistoryFeatureFlag;
 
@@ -275,12 +276,13 @@ impl DebugPanel {
 
             async move |_, cx| {
                 if let Err(error) = task.await {
-                    log::error!("{error:#}");
+                    let redacted_error = redact_command(&format!("{error:#}"));
+                    log::error!("{redacted_error}");
                     session
                         .update(cx, |session, cx| {
                             session
                                 .console_output(cx)
-                                .unbounded_send(format!("error: {:#}", error))
+                                .unbounded_send(format!("error: {:#}", redacted_error))
                                 .ok();
                             session.shutdown(cx)
                         })
@@ -1459,7 +1461,12 @@ async fn register_session_inner(
         .detach();
     })
     .ok();
-    let serialized_layout = persistence::get_serialized_layout(adapter_name).await;
+    let serialized_layout = this
+        .update(cx, |_, cx| {
+            persistence::get_serialized_layout(&adapter_name, &db::kvp::KeyValueStore::global(cx))
+        })
+        .ok()
+        .flatten();
     let debug_session = this.update_in(cx, |this, window, cx| {
         let parent_session = this
             .sessions_with_children
@@ -1819,20 +1826,22 @@ impl Render for DebugPanel {
                         .gap_2()
                         .child(
                             Button::new("spawn-new-session-empty-state", "New Session")
-                                .icon(IconName::Plus)
-                                .icon_size(IconSize::Small)
-                                .icon_color(Color::Muted)
-                                .icon_position(IconPosition::Start)
+                                .start_icon(
+                                    Icon::new(IconName::Plus)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
                                 .on_click(|_, window, cx| {
                                     window.dispatch_action(crate::Start.boxed_clone(), cx);
                                 }),
                         )
                         .child(
                             Button::new("edit-debug-settings", "Edit debug.json")
-                                .icon(IconName::Code)
-                                .icon_size(IconSize::Small)
-                                .icon_color(Color::Muted)
-                                .icon_position(IconPosition::Start)
+                                .start_icon(
+                                    Icon::new(IconName::Code)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
                                 .on_click(|_, window, cx| {
                                     window.dispatch_action(
                                         zed_actions::OpenProjectDebugTasks.boxed_clone(),
@@ -1842,10 +1851,11 @@ impl Render for DebugPanel {
                         )
                         .child(
                             Button::new("open-debugger-docs", "Debugger Docs")
-                                .icon(IconName::Book)
-                                .icon_size(IconSize::Small)
-                                .icon_color(Color::Muted)
-                                .icon_position(IconPosition::Start)
+                                .start_icon(
+                                    Icon::new(IconName::Book)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
                                 .on_click(|_, _, cx| cx.open_url("https://zed.dev/docs/debugger")),
                         )
                         .child(
@@ -1853,10 +1863,11 @@ impl Render for DebugPanel {
                                 "spawn-new-session-install-extensions",
                                 "Debugger Extensions",
                             )
-                            .icon(IconName::Blocks)
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .icon_position(IconPosition::Start)
+                            .start_icon(
+                                Icon::new(IconName::Blocks)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            )
                             .on_click(|_, window, cx| {
                                 window.dispatch_action(
                                     zed_actions::Extensions {

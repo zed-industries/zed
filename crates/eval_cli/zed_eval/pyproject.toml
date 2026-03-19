@@ -1,0 +1,10 @@
+[project]
+name = "zed-eval"
+version = "0.1.0"
+description = "Harbor agent wrapper for Zed's eval-cli"
+requires-python = ">=3.12"
+dependencies = ["harbor"]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"

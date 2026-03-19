@@ -248,10 +248,6 @@ Below, you'll find tables listing the commands you can use in the command palett
 
 ### File and window management
 
-> **Changed in Preview (v0.225).** See [release notes](/releases#0.225).
->
-> The `:bd[elete]` command now closes the active file across all panes. Previously, it only closed the file in the active pane.
-
 This table shows commands for managing windows, tabs, and panes. As commands don't support arguments currently, you cannot specify a filename when saving or creating a new file.
 
 | Command         | Description                                          |

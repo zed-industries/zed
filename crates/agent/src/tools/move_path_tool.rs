@@ -2,7 +2,9 @@ use super::tool_permissions::{
     SensitiveSettingsKind, authorize_symlink_escapes, canonicalize_worktree_roots,
     collect_symlink_escapes, sensitive_settings_kind,
 };
-use crate::{AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_for_paths};
+use crate::{
+    AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision, decide_permission_for_paths,
+};
 use agent_client_protocol::ToolKind;
 use agent_settings::AgentSettings;
 use futures::FutureExt as _;
@@ -92,19 +94,24 @@ impl AgentTool for MovePathTool {
 
     fn run(
         self: Arc<Self>,
-        input: Self::Input,
+        input: ToolInput<Self::Input>,
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>> {
-        let settings = AgentSettings::get_global(cx);
-        let paths = vec![input.source_path.clone(), input.destination_path.clone()];
-        let decision = decide_permission_for_paths(Self::NAME, &paths, settings);
-        if let ToolPermissionDecision::Deny(reason) = decision {
-            return Task::ready(Err(reason));
-        }
-
         let project = self.project.clone();
         cx.spawn(async move |cx| {
+            let input = input
+                .recv()
+                .await
+                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+            let paths = vec![input.source_path.clone(), input.destination_path.clone()];
+            let decision = cx.update(|cx| {
+                decide_permission_for_paths(Self::NAME, &paths, AgentSettings::get_global(cx))
+            });
+            if let ToolPermissionDecision::Deny(reason) = decision {
+                return Err(reason);
+            }
+
             let fs = project.read_with(cx, |project, _cx| project.fs().clone());
             let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
 
@@ -255,7 +262,7 @@ mod tests {
         };
 
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
-        let task = cx.update(|cx| tool.run(input, event_stream, cx));
+        let task = cx.update(|cx| tool.run(ToolInput::resolved(input), event_stream, cx));
 
         let auth = event_rx.expect_authorization().await;
         let title = auth.tool_call.fields.title.as_deref().unwrap_or("");
@@ -309,7 +316,7 @@ mod tests {
         };
 
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
-        let task = cx.update(|cx| tool.run(input, event_stream, cx));
+        let task = cx.update(|cx| tool.run(ToolInput::resolved(input), event_stream, cx));
 
         let auth = event_rx.expect_authorization().await;
         drop(auth);
@@ -361,7 +368,7 @@ mod tests {
         };
 
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
-        let task = cx.update(|cx| tool.run(input, event_stream, cx));
+        let task = cx.update(|cx| tool.run(ToolInput::resolved(input), event_stream, cx));
 
         let auth = event_rx.expect_authorization().await;
         let title = auth.tool_call.fields.title.as_deref().unwrap_or("");
@@ -437,7 +444,9 @@ mod tests {
         };
 
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
-        let result = cx.update(|cx| tool.run(input, event_stream, cx)).await;
+        let result = cx
+            .update(|cx| tool.run(ToolInput::resolved(input), event_stream, cx))
+            .await;
 
         assert!(result.is_err(), "Tool should fail when policy denies");
         assert!(

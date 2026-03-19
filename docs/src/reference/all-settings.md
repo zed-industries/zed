@@ -519,8 +519,6 @@ Note: Dirty files (files with unsaved changes) will not be automatically closed 
 - `"unified"`: Show changes inline with added and deleted lines stacked vertically
 - `"split"`: Display old and new versions side by side in separate panes (default)
 
-> **Changed in Preview (v0.225).** Values renamed from `"stacked"`/`"side_by_side"` to `"unified"`/`"split"`.
-
 See [Git documentation](../git.md#diff-view-styles) for more details.
 
 ## Disable AI
@@ -1802,17 +1800,7 @@ While other options may be changed at a runtime and should be placed under `sett
 }
 ```
 
-3. Use Supermaven as the edit prediction provider:
-
-```json [settings]
-{
-  "edit_predictions": {
-    "provider": "supermaven"
-  }
-}
-```
-
-4. Turn off edit predictions across all providers
+3. Turn off edit predictions across all providers
 
 ```json [settings]
 {
@@ -1919,6 +1907,14 @@ WARNING: `{buffer_path}` should not be used to direct your formatter to read fro
 
 Here `rust-analyzer` will be used first to format the code, followed by a call of sed.
 If any of the formatters fails, the subsequent ones will still be executed.
+
+6. To disable the formatter, use `"none"`. This setting disables the configured formatter, but any actions in `code_actions_on_format` will still be executed:
+
+```json [settings]
+{
+  "formatter": "none"
+}
+```
 
 ## Auto close
 
@@ -2773,8 +2769,6 @@ The following settings can be overridden for each specific language:
 These values take in the same options as the root-level settings with the same name.
 
 ### Document Symbols
-
-> **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
 
 - Description: Controls the source of document symbols used for outlines and breadcrumbs.
 - Setting: `document_symbols`
@@ -4711,7 +4705,8 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
     "bold_folder_labels": false,
     "drag_and_drop": true,
     "scrollbar": {
-      "show": null
+      "show": null,
+      "horizontal_scroll": true
     },
     "sticky_scroll": true,
     "show_diagnostics": "all",
@@ -4957,9 +4952,9 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 }
 ```
 
-### Scrollbar: Show
+### Scrollbar
 
-- Description: Whether to show a scrollbar in the project panel. Possible values: null, "auto", "system", "always", "never". Inherits editor settings when absent, see its description for more details.
+- Description: Scrollbar-related settings for the project panel.
 - Setting: `scrollbar`
 - Default:
 
@@ -4967,7 +4962,8 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 {
   "project_panel": {
     "scrollbar": {
-      "show": null
+      "show": null,
+      "horizontal_scroll": true
     }
   }
 }
@@ -4975,29 +4971,8 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 **Options**
 
-1. Show scrollbar in the project panel
-
-```json [settings]
-{
-  "project_panel": {
-    "scrollbar": {
-      "show": "always"
-    }
-  }
-}
-```
-
-2. Hide scrollbar in the project panel
-
-```json [settings]
-{
-  "project_panel": {
-    "scrollbar": {
-      "show": "never"
-    }
-  }
-}
-```
+- `show`: Whether to show a scrollbar in the project panel. Possible values: null, "auto", "system", "always", "never". Inherits editor settings when absent, see its description for more details.
+- `horizontal_scroll`: Whether to allow horizontal scrolling in the project panel. When `false`, the view is locked to the leftmost position and long file names are clipped.
 
 ### Sort Mode
 
@@ -5124,7 +5099,8 @@ See the [debugger page](../debugger.md) for more information about debugging sup
     "collapse_untracked_diff": false,
     "scrollbar": {
       "show": null
-    }
+    },
+    "starts_open": false
   }
 }
 ```
@@ -5139,10 +5115,9 @@ See the [debugger page](../debugger.md) for more information about debugging sup
 - `sort_by_path`: Whether to sort entries in the panel by path or by status (the default)
 - `collapse_untracked_diff`: Whether to collapse untracked files in the diff panel
 - `scrollbar`: When to show the scrollbar in the git panel
+- `starts_open`: Whether the git panel should open on startup
 
 ## Git Worktree Directory
-
-> **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
 
 - Description: Directory where git worktrees are created, relative to the repository working directory.
 - Setting: `git.worktree_directory`

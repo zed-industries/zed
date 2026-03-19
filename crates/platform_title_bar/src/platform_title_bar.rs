@@ -7,6 +7,8 @@ use gpui::{
     MouseButton, ParentElement, StatefulInteractiveElement, Styled, Window, WindowButtonLayout,
     WindowControlArea, div, px,
 };
+use project::DisableAiSettings;
+use settings::Settings;
 use smallvec::SmallVec;
 use std::mem;
 use ui::{
@@ -31,7 +33,6 @@ pub struct PlatformTitleBar {
     system_window_tabs: Entity<SystemWindowTabs>,
     button_layout: Option<WindowButtonLayout>,
     workspace_sidebar_open: bool,
-    sidebar_has_notifications: bool,
 }
 
 impl PlatformTitleBar {
@@ -47,7 +48,6 @@ impl PlatformTitleBar {
             system_window_tabs,
             button_layout: None,
             workspace_sidebar_open: false,
-            sidebar_has_notifications: false,
         }
     }
 
@@ -87,21 +87,8 @@ impl PlatformTitleBar {
         cx.notify();
     }
 
-    pub fn sidebar_has_notifications(&self) -> bool {
-        self.sidebar_has_notifications
-    }
-
-    pub fn set_sidebar_has_notifications(
-        &mut self,
-        has_notifications: bool,
-        cx: &mut Context<Self>,
-    ) {
-        self.sidebar_has_notifications = has_notifications;
-        cx.notify();
-    }
-
     pub fn is_multi_workspace_enabled(cx: &App) -> bool {
-        cx.has_flag::<AgentV2FeatureFlag>()
+        cx.has_flag::<AgentV2FeatureFlag>() && !DisableAiSettings::get_global(cx).disable_ai
     }
 }
 

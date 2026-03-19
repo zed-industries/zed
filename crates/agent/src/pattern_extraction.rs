@@ -1,4 +1,4 @@
-use shell_command_parser::extract_commands;
+use shell_command_parser::extract_terminal_command_prefix;
 use std::path::{Path, PathBuf};
 use url::Url;
 
@@ -18,8 +18,8 @@ fn is_plain_command_token(token: &str) -> bool {
 }
 
 struct CommandPrefix {
-    command: String,
-    subcommand: Option<String>,
+    normalized_tokens: Vec<String>,
+    display: String,
 }
 
 /// Extracts the command name and optional subcommand from a shell command using
@@ -30,29 +30,15 @@ struct CommandPrefix {
 /// syntax correctly. Returns `None` if parsing fails or if the command name
 /// contains path separators (for security reasons).
 fn extract_command_prefix(command: &str) -> Option<CommandPrefix> {
-    let commands = extract_commands(command)?;
-    let first_command = commands.first()?;
+    let prefix = extract_terminal_command_prefix(command)?;
 
-    let mut tokens = first_command.split_whitespace();
-    let first_token = tokens.next()?;
-
-    // Only allow alphanumeric commands with hyphens/underscores.
-    // Reject paths like "./script.sh" or "/usr/bin/python" to prevent
-    // users from accidentally allowing arbitrary script execution.
-    if !is_plain_command_token(first_token) {
+    if !is_plain_command_token(&prefix.command) {
         return None;
     }
 
-    // Include the subcommand (second non-flag token) when present, to produce
-    // more specific patterns like "cargo test" instead of just "cargo".
-    let subcommand = tokens
-        .next()
-        .filter(|second_token| is_plain_command_token(second_token))
-        .map(|second_token| second_token.to_string());
-
     Some(CommandPrefix {
-        command: first_token.to_string(),
-        subcommand,
+        normalized_tokens: prefix.tokens,
+        display: prefix.display,
     })
 }
 
@@ -64,25 +50,25 @@ fn extract_command_prefix(command: &str) -> Option<CommandPrefix> {
 /// scripts or absolute paths which could be manipulated by an attacker.
 pub fn extract_terminal_pattern(command: &str) -> Option<String> {
     let prefix = extract_command_prefix(command)?;
-    let escaped_command = regex::escape(&prefix.command);
-    Some(match &prefix.subcommand {
-        Some(subcommand) => {
-            format!(
-                "^{}\\s+{}(\\s|$)",
-                escaped_command,
-                regex::escape(subcommand)
-            )
-        }
-        None => format!("^{}\\b", escaped_command),
-    })
+    let tokens = prefix.normalized_tokens;
+
+    match tokens.as_slice() {
+        [] => None,
+        [single] => Some(format!("^{}\\b", regex::escape(single))),
+        [rest @ .., last] => Some(format!(
+            "^{}\\s+{}(\\s|$)",
+            rest.iter()
+                .map(|token| regex::escape(token))
+                .collect::<Vec<_>>()
+                .join("\\s+"),
+            regex::escape(last)
+        )),
+    }
 }
 
 pub fn extract_terminal_pattern_display(command: &str) -> Option<String> {
     let prefix = extract_command_prefix(command)?;
-    match prefix.subcommand {
-        Some(subcommand) => Some(format!("{} {}", prefix.command, subcommand)),
-        None => Some(prefix.command),
-    }
+    Some(prefix.display)
 }
 
 pub fn extract_path_pattern(path: &str) -> Option<String> {
@@ -208,9 +194,24 @@ mod tests {
         assert!(!pattern.is_match("cargo build-foo"));
         assert!(!pattern.is_match("cargo builder"));
 
+        // Env-var prefixes are included in generated patterns
+        assert_eq!(
+            extract_terminal_pattern("PAGER=blah git log --oneline"),
+            Some("^PAGER=blah\\s+git\\s+log(\\s|$)".to_string())
+        );
+        assert_eq!(
+            extract_terminal_pattern("A=1 B=2 git log"),
+            Some("^A=1\\s+B=2\\s+git\\s+log(\\s|$)".to_string())
+        );
+        assert_eq!(
+            extract_terminal_pattern("PAGER='less -R' git log"),
+            Some("^PAGER='less \\-R'\\s+git\\s+log(\\s|$)".to_string())
+        );
+
         // Path-like commands are rejected
         assert_eq!(extract_terminal_pattern("./script.sh arg"), None);
         assert_eq!(extract_terminal_pattern("/usr/bin/python arg"), None);
+        assert_eq!(extract_terminal_pattern("PAGER=blah ./script.sh arg"), None);
     }
 
     #[test]
@@ -234,6 +235,41 @@ mod tests {
         assert_eq!(
             extract_terminal_pattern_display("ls"),
             Some("ls".to_string())
+        );
+        assert_eq!(
+            extract_terminal_pattern_display("PAGER=blah   git   log --oneline"),
+            Some("PAGER=blah   git   log".to_string())
+        );
+        assert_eq!(
+            extract_terminal_pattern_display("PAGER='less -R' git log"),
+            Some("PAGER='less -R' git log".to_string())
+        );
+    }
+
+    #[test]
+    fn test_terminal_pattern_regex_normalizes_whitespace() {
+        let pattern = extract_terminal_pattern("PAGER=blah   git   log --oneline")
+            .expect("expected terminal pattern");
+        let regex = regex::Regex::new(&pattern).expect("expected valid regex");
+
+        assert!(regex.is_match("PAGER=blah git log"));
+        assert!(regex.is_match("PAGER=blah    git    log --stat"));
+    }
+
+    #[test]
+    fn test_extract_terminal_pattern_skips_redirects_before_subcommand() {
+        assert_eq!(
+            extract_terminal_pattern("git 2>/dev/null log --oneline"),
+            Some("^git\\s+log(\\s|$)".to_string())
+        );
+        assert_eq!(
+            extract_terminal_pattern_display("git 2>/dev/null log --oneline"),
+            Some("git 2>/dev/null log".to_string())
+        );
+
+        assert_eq!(
+            extract_terminal_pattern("rm --force foo"),
+            Some("^rm\\b".to_string())
         );
     }
 

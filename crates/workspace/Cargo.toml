@@ -14,7 +14,6 @@ doctest = false
 
 [features]
 test-support = [
-    "call/test-support",
     "client/test-support",
     "http_client/test-support",
     "db/test-support",
@@ -66,15 +65,14 @@ theme.workspace = true
 ui.workspace = true
 util.workspace = true
 uuid.workspace = true
+vim_mode_setting.workspace = true
 zed_actions.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true
 
 [dev-dependencies]
-call = { workspace = true, features = ["test-support"] }
 client = { workspace = true, features = ["test-support"] }
-dap = { workspace = true, features = ["test-support"] }
 db = { workspace = true, features = ["test-support"] }
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
