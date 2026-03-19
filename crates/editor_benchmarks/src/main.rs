@@ -1,9 +1,7 @@
 use std::sync::Arc;
 
 use editor::Editor;
-use gpui::{
-    AppContext as _, AsyncApp, AsyncWindowContext, WeakEntity, WindowBounds, WindowOptions,
-};
+use gpui::{AppContext as _, AsyncWindowContext, WeakEntity, WindowBounds, WindowOptions};
 use language::Buffer;
 use multi_buffer::Anchor;
 use project::search::SearchQuery;
@@ -135,42 +133,47 @@ fn main() {
             )
             .expect("failed to open window");
 
-        window_handle.update(cx, move |this, window, cx| {
-            cx.spawn_in(
-                window,
-                async move |weak: WeakEntity<Editor>, cx: &mut AsyncWindowContext| {
-                    let find_task = weak.update_in(cx, |editor, window, cx| {
-                        editor.find_matches(query.clone(), window, cx)
-                    })?;
-
-                    println!("Finding matches...");
-                    let timer = std::time::Instant::now();
-                    let matches: Vec<std::ops::Range<Anchor>> = find_task.await;
-                    let find_elapsed = timer.elapsed();
-                    println!("Found {} matches in {find_elapsed:?}", matches.len());
-
-                    if has_replacement && !matches.is_empty() {
-                        window_handle.update(cx, |editor: &mut Editor, window, cx| {
-                            let mut match_iter = matches.iter();
-                            println!("Replacing all matches...");
-                            let timer = std::time::Instant::now();
-                            editor.replace_all(
-                                &mut match_iter,
-                                &query,
-                                Default::default(),
-                                window,
-                                cx,
-                            );
-                            let replace_elapsed = timer.elapsed();
-                            println!("Replaced {} matches in {replace_elapsed:?}", matches.len());
+        window_handle
+            .update(cx, move |_, window, cx| {
+                cx.spawn_in(
+                    window,
+                    async move |weak: WeakEntity<Editor>, cx: &mut AsyncWindowContext| {
+                        let find_task = weak.update_in(cx, |editor, window, cx| {
+                            editor.find_matches(query.clone(), window, cx)
                         })?;
-                    }
 
-                    cx.update(|_, cx: &mut gpui::App| cx.quit());
-                    anyhow::Ok(())
-                },
-            )
-            .detach();
-        });
+                        println!("Finding matches...");
+                        let timer = std::time::Instant::now();
+                        let matches: Vec<std::ops::Range<Anchor>> = find_task.await;
+                        let find_elapsed = timer.elapsed();
+                        println!("Found {} matches in {find_elapsed:?}", matches.len());
+
+                        if has_replacement && !matches.is_empty() {
+                            window_handle.update(cx, |editor: &mut Editor, window, cx| {
+                                let mut match_iter = matches.iter();
+                                println!("Replacing all matches...");
+                                let timer = std::time::Instant::now();
+                                editor.replace_all(
+                                    &mut match_iter,
+                                    &query,
+                                    Default::default(),
+                                    window,
+                                    cx,
+                                );
+                                let replace_elapsed = timer.elapsed();
+                                println!(
+                                    "Replaced {} matches in {replace_elapsed:?}",
+                                    matches.len()
+                                );
+                            })?;
+                        }
+
+                        std::process::exit(0);
+                        anyhow::Ok(())
+                    },
+                )
+                .detach();
+            })
+            .unwrap();
     });
 }
