@@ -2861,7 +2861,7 @@ impl FragmentBuilder {
         if self.fragments.len() > 1024 {
             SumTree::from_par_iter(self.fragments, cx)
         } else {
-            SumTree::from_iter(self.fragments.into_iter(), cx)
+            SumTree::from_iter(self.fragments, cx)
         }
     }
     fn summary(&self) -> &FragmentSummary {
