@@ -527,7 +527,7 @@ pub fn add_wsl_distro(
 pub struct RecentProjects {
     pub picker: Entity<Picker<RecentProjectsDelegate>>,
     rem_width: f32,
-    _subscription: Subscription,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl ModalView for RecentProjects {
@@ -551,6 +551,7 @@ impl RecentProjects {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let style = delegate.style;
         let picker = cx.new(|cx| {
             Picker::list(delegate, window, cx)
                 .list_measure_all()
@@ -562,7 +563,21 @@ impl RecentProjects {
             picker.delegate.focus_handle = picker_focus_handle;
         });
 
-        let _subscription = cx.subscribe(&picker, |_, _, _, cx| cx.emit(DismissEvent));
+        let mut subscriptions = vec![cx.subscribe(&picker, |_, _, _, cx| cx.emit(DismissEvent))];
+
+        if style == ProjectPickerStyle::Popover {
+            let picker_focus = picker.focus_handle(cx);
+            subscriptions.push(
+                cx.on_focus_out(&picker_focus, window, |this, _, window, cx| {
+                    let submenu_focused = this.picker.update(cx, |picker, cx| {
+                        picker.delegate.actions_menu_handle.is_focused(window, cx)
+                    });
+                    if !submenu_focused {
+                        cx.emit(DismissEvent);
+                    }
+                }),
+            );
+        }
         // We do not want to block the UI on a potentially lengthy call to DB, so we're gonna swap
         // out workspace locations once the future runs to completion.
         let db = WorkspaceDb::global(cx);
@@ -586,7 +601,7 @@ impl RecentProjects {
         Self {
             picker,
             rem_width,
-            _subscription,
+            _subscriptions: subscriptions,
         }
     }
 
