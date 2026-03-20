@@ -335,8 +335,16 @@ impl SidebarThreadMetadataStore {
 
         match event {
             acp_thread::AcpThreadEvent::NewEntry
+            | acp_thread::AcpThreadEvent::TitleUpdated
             | acp_thread::AcpThreadEvent::EntryUpdated(_)
-            | acp_thread::AcpThreadEvent::TitleUpdated => {
+            | acp_thread::AcpThreadEvent::EntriesRemoved(_)
+            | acp_thread::AcpThreadEvent::ToolAuthorizationRequested(_)
+            | acp_thread::AcpThreadEvent::ToolAuthorizationReceived(_)
+            | acp_thread::AcpThreadEvent::Retry(_)
+            | acp_thread::AcpThreadEvent::Stopped(_)
+            | acp_thread::AcpThreadEvent::Error
+            | acp_thread::AcpThreadEvent::LoadError(_)
+            | acp_thread::AcpThreadEvent::Refusal => {
                 let metadata = ThreadMetadata::from_thread(&thread, cx);
                 self.save(metadata, cx).detach_and_log_err(cx);
             }
