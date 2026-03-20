@@ -126,6 +126,63 @@ async fn test_block_via_smol(cx: &mut gpui::TestAppContext) {
     task.await;
 }
 
+#[gpui::test]
+async fn test_default_session_work_dirs_prefers_directory_worktrees_over_single_file_parents(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "dir-project": {
+                "src": {
+                    "main.rs": "fn main() {}"
+                }
+            },
+            "single-file.rs": "fn helper() {}"
+        }),
+    )
+    .await;
+
+    let project = Project::test(
+        fs,
+        [
+            Path::new(path!("/root/single-file.rs")),
+            Path::new(path!("/root/dir-project")),
+        ],
+        cx,
+    )
+    .await;
+
+    let work_dirs = project.read_with(cx, |project, cx| project.default_path_list(cx));
+    let ordered_paths = work_dirs.ordered_paths().cloned().collect::<Vec<_>>();
+
+    assert_eq!(
+        ordered_paths,
+        vec![
+            PathBuf::from(path!("/root/dir-project")),
+            PathBuf::from(path!("/root")),
+        ]
+    );
+}
+
+#[gpui::test]
+async fn test_default_session_work_dirs_falls_back_to_home_for_empty_project(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, [], cx).await;
+
+    let work_dirs = project.read_with(cx, |project, cx| project.default_path_list(cx));
+    let ordered_paths = work_dirs.ordered_paths().cloned().collect::<Vec<_>>();
+
+    assert_eq!(ordered_paths, vec![paths::home_dir().to_path_buf()]);
+}
+
 // NOTE:
 // While POSIX symbolic links are somewhat supported on Windows, they are an opt in by the user, and thus
 // we assume that they are not supported out of the box.

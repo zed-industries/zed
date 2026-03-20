@@ -3,6 +3,7 @@ use agent_client_protocol as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use gpui::{Entity, Task, TestAppContext, VisualTestContext};
 use project::AgentId;
+use project::Project;
 use settings::SettingsStore;
 use std::any::Any;
 use std::rc::Rc;
@@ -45,6 +46,7 @@ where
     fn connect(
         &self,
         _delegate: AgentServerDelegate,
+        _project: Entity<Project>,
         _cx: &mut gpui::App,
     ) -> Task<gpui::Result<Rc<dyn AgentConnection>>> {
         Task::ready(Ok(Rc::new(self.connection.clone())))

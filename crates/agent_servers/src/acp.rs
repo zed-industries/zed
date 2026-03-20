@@ -166,6 +166,7 @@ impl AgentSessionList for AcpSessionList {
 
 pub async fn connect(
     agent_id: AgentId,
+    project: Entity<Project>,
     display_name: SharedString,
     command: AgentServerCommand,
     default_mode: Option<acp::SessionModeId>,
@@ -175,6 +176,7 @@ pub async fn connect(
 ) -> Result<Rc<dyn AgentConnection>> {
     let conn = AcpConnection::stdio(
         agent_id,
+        project,
         display_name,
         command.clone(),
         default_mode,
@@ -191,6 +193,7 @@ const MINIMUM_SUPPORTED_VERSION: acp::ProtocolVersion = acp::ProtocolVersion::V1
 impl AcpConnection {
     pub async fn stdio(
         agent_id: AgentId,
+        project: Entity<Project>,
         display_name: SharedString,
         command: AgentServerCommand,
         default_mode: Option<acp::SessionModeId>,
@@ -203,6 +206,15 @@ impl AcpConnection {
         let mut child =
             builder.build_std_command(Some(command.path.display().to_string()), &command.args);
         child.envs(command.env.iter().flatten());
+        if let Some(cwd) = project.update(cx, |project, cx| {
+            project
+                .default_path_list(cx)
+                .ordered_paths()
+                .next()
+                .cloned()
+        }) {
+            child.current_dir(cwd);
+        }
         let mut child = Child::spawn(child, Stdio::piped(), Stdio::piped(), Stdio::piped())?;
 
         let stdout = child.stdout.take().context("Failed to take stdout")?;

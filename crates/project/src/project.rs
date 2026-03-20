@@ -33,7 +33,7 @@ pub mod search_history;
 pub mod yarn;
 
 use dap::inline_value::{InlineValueLocation, VariableLookupKind, VariableScope};
-use itertools::Either;
+use itertools::{Either, Itertools};
 
 use crate::{
     git_store::GitStore,
@@ -134,6 +134,7 @@ use text::{Anchor, BufferId, OffsetRangeExt, Point, Rope};
 use toolchain_store::EmptyToolchainStore;
 use util::{
     ResultExt as _, maybe,
+    path_list::PathList,
     paths::{PathStyle, SanitizedPath, is_absolute},
     rel_path::RelPath,
 };
@@ -2284,6 +2285,32 @@ impl Project {
         cx: &'a App,
     ) -> impl 'a + DoubleEndedIterator<Item = Entity<Worktree>> {
         self.worktree_store.read(cx).visible_worktrees(cx)
+    }
+
+    pub fn default_path_list(&self, cx: &App) -> PathList {
+        let worktree_roots = self
+            .visible_worktrees(cx)
+            .sorted_by(|left, right| {
+                left.read(cx)
+                    .is_single_file()
+                    .cmp(&right.read(cx).is_single_file())
+            })
+            .filter_map(|worktree| {
+                let worktree = worktree.read(cx);
+                let path = worktree.abs_path();
+                if worktree.is_single_file() {
+                    Some(path.parent()?.to_path_buf())
+                } else {
+                    Some(path.to_path_buf())
+                }
+            })
+            .collect::<Vec<_>>();
+
+        if worktree_roots.is_empty() {
+            PathList::new(&[paths::home_dir().as_path()])
+        } else {
+            PathList::new(&worktree_roots)
+        }
     }
 
     #[inline]

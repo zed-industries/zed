@@ -619,32 +619,7 @@ impl ConversationView {
                 session_id: resume_session_id.clone(),
             };
         }
-        let mut worktrees = project.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
-        // Pick the first non-single-file worktree for the root directory if there are any,
-        // and otherwise the parent of a single-file worktree, falling back to $HOME if there are no visible worktrees.
-        worktrees.sort_by(|l, r| {
-            l.read(cx)
-                .is_single_file()
-                .cmp(&r.read(cx).is_single_file())
-        });
-        let worktree_roots: Vec<Arc<Path>> = worktrees
-            .iter()
-            .filter_map(|worktree| {
-                let worktree = worktree.read(cx);
-                if worktree.is_single_file() {
-                    Some(worktree.abs_path().parent()?.into())
-                } else {
-                    Some(worktree.abs_path())
-                }
-            })
-            .collect();
-        let session_work_dirs = work_dirs.unwrap_or_else(|| {
-            if worktree_roots.is_empty() {
-                PathList::new(&[paths::home_dir().as_path()])
-            } else {
-                PathList::new(&worktree_roots)
-            }
-        });
+        let session_work_dirs = work_dirs.unwrap_or_else(|| project.read(cx).default_path_list(cx));
 
         let connection_entry = connection_store.update(cx, |store, cx| {
             store.request_connection(connection_key, agent.clone(), cx)
@@ -1624,7 +1599,7 @@ impl ConversationView {
             .read(cx)
             .work_dirs()
             .cloned()
-            .unwrap_or_else(|| PathList::new(&[paths::home_dir().as_path()]));
+            .unwrap_or_else(|| self.project.read(cx).default_path_list(cx));
 
         let subagent_thread_task = connected.connection.clone().load_session(
             subagent_id.clone(),
@@ -3651,6 +3626,7 @@ pub(crate) mod tests {
         fn connect(
             &self,
             _delegate: AgentServerDelegate,
+            _project: Entity<Project>,
             _cx: &mut App,
         ) -> Task<gpui::Result<Rc<dyn AgentConnection>>> {
             Task::ready(Ok(Rc::new(self.connection.clone())))
@@ -3675,6 +3651,7 @@ pub(crate) mod tests {
         fn connect(
             &self,
             _delegate: AgentServerDelegate,
+            _project: Entity<Project>,
             _cx: &mut App,
         ) -> Task<gpui::Result<Rc<dyn AgentConnection>>> {
             Task::ready(Err(anyhow!(
