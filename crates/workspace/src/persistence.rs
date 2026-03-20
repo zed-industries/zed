@@ -4725,9 +4725,8 @@ mod tests {
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         // Read the session_id the Workspace was constructed with.
-        let session_id = multi_workspace.read_with(cx, |mw, cx| {
-            mw.workspace().read(cx).session_id()
-        });
+        let session_id =
+            multi_workspace.read_with(cx, |mw, cx| mw.workspace().read(cx).session_id());
         let session_id = session_id.expect("workspace should have a session_id from Session::test");
 
         let db = cx.update(|_, cx| WorkspaceDb::global(cx));
@@ -4759,9 +4758,7 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            locations
-                .iter()
-                .any(|sw| sw.workspace_id == workspace_id),
+            locations.iter().any(|sw| sw.workspace_id == workspace_id),
             "session_id must not be cleared by DetachFromSession when not explicitly detached; \
              workspace must remain findable for session restoration"
         );
@@ -4773,11 +4770,9 @@ mod tests {
     /// not persisted before the window was removed. The fix: await `flush_serialization` for
     /// all workspaces before `remove_window`.
     #[gpui::test]
-    async fn test_close_window_flushes_serialization_before_removal(
-        cx: &mut gpui::TestAppContext,
-    ) {
-        use crate::multi_workspace::MultiWorkspace;
+    async fn test_close_window_flushes_serialization_before_removal(cx: &mut gpui::TestAppContext) {
         use crate::CloseWindow;
+        use crate::multi_workspace::MultiWorkspace;
         use feature_flags::FeatureFlagAppExt;
         use project::Project;
 
