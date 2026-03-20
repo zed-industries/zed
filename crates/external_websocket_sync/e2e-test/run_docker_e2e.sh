@@ -69,9 +69,11 @@ SCREENSHOTS_DIR="$SCRIPT_DIR/screenshots"
 mkdir -p "$SCREENSHOTS_DIR"
 
 # Run E2E test
-echo "=== Running E2E test ==="
+E2E_AGENTS="${E2E_AGENTS:-zed-agent}"
+echo "=== Running E2E test (agents: $E2E_AGENTS) ==="
 docker run --rm \
     -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
+    -e E2E_AGENTS="$E2E_AGENTS" \
     -v "$SCREENSHOTS_DIR:/test/screenshots" \
     zed-ws-e2e
 

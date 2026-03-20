@@ -55,3 +55,4 @@ crates/docs_preprocessor/actions.json
 /docs/december-2025-documentation-gaps.md
 /target-ubuntu22
 /target-ubuntu25
+crates/external_websocket_sync/e2e-test/helix-ws-test-server/zed-ws-test-server

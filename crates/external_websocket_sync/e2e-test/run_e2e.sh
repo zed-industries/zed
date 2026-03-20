@@ -20,7 +20,10 @@ echo "============================================"
 echo ""
 
 ZED_BINARY="${ZED_BINARY:-/usr/local/bin/zed}"
-TEST_TIMEOUT="${TEST_TIMEOUT:-240}"
+# Default timeout scales with number of agent rounds (each round takes ~120s)
+AGENT_COUNT=$(echo "${E2E_AGENTS:-zed-agent}" | tr ',' '\n' | wc -l)
+DEFAULT_TIMEOUT=$((240 * AGENT_COUNT))
+TEST_TIMEOUT="${TEST_TIMEOUT:-$DEFAULT_TIMEOUT}"
 MOCK_SERVER="${HELIX_WS_TEST_SERVER:-/usr/local/bin/helix-ws-test-server}"
 PROJECT_DIR="/test/project"
 MOCK_PORT_FILE="/tmp/mock_helix_port"
