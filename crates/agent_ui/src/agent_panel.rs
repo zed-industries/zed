@@ -132,6 +132,8 @@ fn read_legacy_serialized_panel(kvp: &KeyValueStore) -> Option<SerializedAgentPa
 #[derive(Serialize, Deserialize, Debug)]
 struct SerializedAgentPanel {
     width: Option<Pixels>,
+    #[serde(default)]
+    flexible_width_ratio: Option<f32>,
     selected_agent: Option<AgentType>,
     #[serde(default)]
     last_active_thread: Option<SerializedActiveThread>,
@@ -744,6 +746,7 @@ pub struct AgentPanel {
     agent_navigation_menu: Option<Entity<ContextMenu>>,
     _extension_subscription: Option<Subscription>,
     width: Option<Pixels>,
+    flexible_width_ratio: Option<f32>,
     height: Option<Pixels>,
     zoomed: bool,
     pending_serialization: Option<Task<Result<()>>>,
@@ -767,6 +770,7 @@ impl AgentPanel {
         };
 
         let width = self.width;
+        let flexible_width_ratio = self.flexible_width_ratio;
         let selected_agent_type = self.selected_agent_type.clone();
         let start_thread_in = Some(self.start_thread_in);
 
@@ -788,6 +792,7 @@ impl AgentPanel {
                 workspace_id,
                 SerializedAgentPanel {
                     width,
+                    flexible_width_ratio,
                     selected_agent: Some(selected_agent_type),
                     last_active_thread,
                     start_thread_in,
@@ -877,6 +882,7 @@ impl AgentPanel {
                 if let Some(serialized_panel) = &serialized_panel {
                     panel.update(cx, |panel, cx| {
                         panel.width = serialized_panel.width.map(|w| w.round());
+                        panel.flexible_width_ratio = serialized_panel.flexible_width_ratio;
                         if let Some(selected_agent) = serialized_panel.selected_agent.clone() {
                             panel.selected_agent_type = selected_agent;
                         }
@@ -1080,6 +1086,7 @@ impl AgentPanel {
             agent_navigation_menu: None,
             _extension_subscription: extension_subscription,
             width: None,
+            flexible_width_ratio: None,
             height: None,
             zoomed: false,
             pending_serialization: None,
@@ -3172,6 +3179,25 @@ impl Panel for AgentPanel {
             DockPosition::Left | DockPosition::Right => self.width = size,
             DockPosition::Bottom => self.height = size,
         }
+        self.serialize(cx);
+        cx.notify();
+    }
+
+    fn supports_flexible_size(&self, window: &Window, cx: &App) -> bool {
+        true
+    }
+
+    fn flexible_size_ratio(&self, _window: &Window, _cx: &App) -> Option<f32> {
+        self.flexible_width_ratio
+    }
+
+    fn set_flexible_size_ratio(
+        &mut self,
+        ratio: Option<f32>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.flexible_width_ratio = ratio;
         self.serialize(cx);
         cx.notify();
     }

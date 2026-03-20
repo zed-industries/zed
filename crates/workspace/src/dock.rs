@@ -37,6 +37,19 @@ pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn set_position(&mut self, position: DockPosition, window: &mut Window, cx: &mut Context<Self>);
     fn size(&self, window: &Window, cx: &App) -> Pixels;
     fn set_size(&mut self, size: Option<Pixels>, window: &mut Window, cx: &mut Context<Self>);
+    fn supports_flexible_size(&self, _window: &Window, _cx: &App) -> bool {
+        false
+    }
+    fn flexible_size_ratio(&self, _window: &Window, _cx: &App) -> Option<f32> {
+        None
+    }
+    fn set_flexible_size_ratio(
+        &mut self,
+        _ratio: Option<f32>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+    }
     fn icon(&self, window: &Window, cx: &App) -> Option<ui::IconName>;
     fn icon_tooltip(&self, window: &Window, cx: &App) -> Option<&'static str>;
     fn toggle_action(&self) -> Box<dyn Action>;
@@ -77,6 +90,9 @@ pub trait PanelHandle: Send + Sync {
     fn pane(&self, cx: &App) -> Option<Entity<Pane>>;
     fn size(&self, window: &Window, cx: &App) -> Pixels;
     fn set_size(&self, size: Option<Pixels>, window: &mut Window, cx: &mut App);
+    fn supports_flexible_size(&self, window: &Window, cx: &App) -> bool;
+    fn flexible_size_ratio(&self, window: &Window, cx: &App) -> Option<f32>;
+    fn set_flexible_size_ratio(&self, ratio: Option<f32>, window: &mut Window, cx: &mut App);
     fn icon(&self, window: &Window, cx: &App) -> Option<ui::IconName>;
     fn icon_tooltip(&self, window: &Window, cx: &App) -> Option<&'static str>;
     fn toggle_action(&self, window: &Window, cx: &App) -> Box<dyn Action>;
@@ -156,6 +172,20 @@ where
 
     fn set_size(&self, size: Option<Pixels>, window: &mut Window, cx: &mut App) {
         self.update(cx, |this, cx| this.set_size(size, window, cx))
+    }
+
+    fn supports_flexible_size(&self, window: &Window, cx: &App) -> bool {
+        self.read(cx).supports_flexible_size(window, cx)
+    }
+
+    fn flexible_size_ratio(&self, window: &Window, cx: &App) -> Option<f32> {
+        self.read(cx).flexible_size_ratio(window, cx)
+    }
+
+    fn set_flexible_size_ratio(&self, ratio: Option<f32>, window: &mut Window, cx: &mut App) {
+        self.update(cx, |this, cx| {
+            this.set_flexible_size_ratio(ratio, window, cx)
+        })
     }
 
     fn icon(&self, window: &Window, cx: &App) -> Option<ui::IconName> {
@@ -718,10 +748,31 @@ impl Dock {
         self.panel_entries
             .iter()
             .find(|entry| entry.panel.panel_id() == panel.panel_id())
-            .map(|entry| entry.panel.size(window, cx))
+            .map(|entry| self.resolved_panel_size(entry.panel.as_ref(), window, cx))
     }
 
     pub fn active_panel_size(&self, window: &Window, cx: &App) -> Option<Pixels> {
+        if self.is_open {
+            self.active_panel_entry()
+                .map(|entry| self.resolved_panel_size(entry.panel.as_ref(), window, cx))
+        } else {
+            None
+        }
+    }
+
+    pub fn stored_panel_size(
+        &self,
+        panel: &dyn PanelHandle,
+        window: &Window,
+        cx: &App,
+    ) -> Option<Pixels> {
+        self.panel_entries
+            .iter()
+            .find(|entry| entry.panel.panel_id() == panel.panel_id())
+            .map(|entry| entry.panel.size(window, cx))
+    }
+
+    pub fn stored_active_panel_size(&self, window: &Window, cx: &App) -> Option<Pixels> {
         if self.is_open {
             self.active_panel_entry()
                 .map(|entry| entry.panel.size(window, cx))
@@ -736,10 +787,25 @@ impl Dock {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let ratio = size.and_then(|size| self.flexible_size_ratio_for_pixels(size, window, cx));
+        self.resize_active_panel_with_ratio(size, ratio, window, cx);
+    }
+
+    pub fn resize_active_panel_with_ratio(
+        &mut self,
+        size: Option<Pixels>,
+        ratio: Option<f32>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(entry) = self.active_panel_entry() {
             let size = size.map(|size| size.max(RESIZE_HANDLE_SIZE).round());
 
-            entry.panel.set_size(size, window, cx);
+            if entry.panel.supports_flexible_size(window, cx) {
+                entry.panel.set_flexible_size_ratio(ratio, window, cx);
+            } else {
+                entry.panel.set_size(size, window, cx);
+            }
             cx.notify();
         }
     }
@@ -750,9 +816,24 @@ impl Dock {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let ratio = size.and_then(|size| self.flexible_size_ratio_for_pixels(size, window, cx));
+        self.resize_all_panels_with_ratio(size, ratio, window, cx);
+    }
+
+    pub fn resize_all_panels_with_ratio(
+        &mut self,
+        size: Option<Pixels>,
+        ratio: Option<f32>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         for entry in &mut self.panel_entries {
             let size = size.map(|size| size.max(RESIZE_HANDLE_SIZE).round());
-            entry.panel.set_size(size, window, cx);
+            if entry.panel.supports_flexible_size(window, cx) {
+                entry.panel.set_flexible_size_ratio(ratio, window, cx);
+            } else {
+                entry.panel.set_size(size, window, cx);
+            }
         }
         cx.notify();
     }
@@ -775,10 +856,43 @@ impl Dock {
     pub fn clamp_panel_size(&mut self, max_size: Pixels, window: &mut Window, cx: &mut App) {
         let max_size = (max_size - RESIZE_HANDLE_SIZE).abs();
         for panel in self.panel_entries.iter().map(|entry| &entry.panel) {
-            if panel.size(window, cx) > max_size {
+            if panel.supports_flexible_size(window, cx) {
+                continue;
+            } else if panel.size(window, cx) > max_size {
                 panel.set_size(Some(max_size.max(RESIZE_HANDLE_SIZE)), window, cx);
             }
         }
+    }
+
+    fn resolved_panel_size(&self, panel: &dyn PanelHandle, window: &Window, cx: &App) -> Pixels {
+        if self.position.axis() == Axis::Horizontal && panel.supports_flexible_size(window, cx) {
+            if let Some(workspace) = self.workspace.upgrade() {
+                let workspace = workspace.read(cx);
+                let ratio = panel
+                    .flexible_size_ratio(window, cx)
+                    .or_else(|| workspace.default_flexible_dock_ratio(self.position, cx));
+
+                if let Some(ratio) = ratio {
+                    return workspace
+                        .flexible_dock_size(self.position, ratio, window, cx)
+                        .unwrap_or_else(|| panel.size(window, cx));
+                }
+            }
+        }
+
+        panel.size(window, cx)
+    }
+
+    fn flexible_size_ratio_for_pixels(
+        &self,
+        size: Pixels,
+        window: &Window,
+        cx: &App,
+    ) -> Option<f32> {
+        let workspace = self.workspace.upgrade()?;
+        workspace
+            .read(cx)
+            .flexible_dock_ratio_for_size(self.position, size, window, cx)
     }
 }
 
@@ -786,7 +900,7 @@ impl Render for Dock {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let dispatch_context = Self::dispatch_context();
         if let Some(entry) = self.visible_entry() {
-            let size = entry.panel.size(window, cx);
+            let size = self.resolved_panel_size(entry.panel.as_ref(), window, cx);
 
             let position = self.position;
             let create_resize_handle = || {
@@ -1047,6 +1161,8 @@ pub mod test {
         pub active: bool,
         pub focus_handle: FocusHandle,
         pub size: Pixels,
+        pub flexible: bool,
+        pub flexible_size_ratio: Option<f32>,
         pub activation_priority: u32,
     }
     actions!(test_only, [ToggleTestPanel]);
@@ -1061,7 +1177,20 @@ pub mod test {
                 active: false,
                 focus_handle: cx.focus_handle(),
                 size: px(300.),
+                flexible: false,
+                flexible_size_ratio: None,
                 activation_priority,
+            }
+        }
+
+        pub fn new_flexible(
+            position: DockPosition,
+            activation_priority: u32,
+            cx: &mut App,
+        ) -> Self {
+            Self {
+                flexible: true,
+                ..Self::new(position, activation_priority, cx)
             }
         }
     }
@@ -1100,6 +1229,23 @@ pub mod test {
 
         fn set_size(&mut self, size: Option<Pixels>, _window: &mut Window, _: &mut Context<Self>) {
             self.size = size.unwrap_or(px(300.));
+        }
+
+        fn supports_flexible_size(&self, _window: &Window, _: &App) -> bool {
+            self.flexible
+        }
+
+        fn flexible_size_ratio(&self, _window: &Window, _: &App) -> Option<f32> {
+            self.flexible_size_ratio
+        }
+
+        fn set_flexible_size_ratio(
+            &mut self,
+            ratio: Option<f32>,
+            _window: &mut Window,
+            _: &mut Context<Self>,
+        ) {
+            self.flexible_size_ratio = ratio;
         }
 
         fn icon(&self, _window: &Window, _: &App) -> Option<ui::IconName> {

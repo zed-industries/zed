@@ -51,8 +51,8 @@ use futures::{
     future::{Shared, try_join_all},
 };
 use gpui::{
-    Action, AnyEntity, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Bounds, Context,
-    CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
+    Action, AnyEntity, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Axis, Bounds,
+    Context, CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke, ManagedView, MouseButton,
     PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription,
     SystemWindowTabController, Task, Tiling, WeakEntity, WindowBounds, WindowHandle, WindowId,
@@ -2125,6 +2125,104 @@ impl Workspace {
             DockPosition::Bottom => &self.bottom_dock,
             DockPosition::Right => &self.right_dock,
         }
+    }
+
+    pub fn flexible_dock_size(
+        &self,
+        position: DockPosition,
+        ratio: f32,
+        window: &Window,
+        cx: &App,
+    ) -> Option<Pixels> {
+        if position.axis() != Axis::Horizontal {
+            return None;
+        }
+
+        let available_width = self.available_width_for_horizontal_dock(position, window, cx)?;
+        Some((available_width * ratio.clamp(0.0, 1.0)).max(RESIZE_HANDLE_SIZE))
+    }
+
+    pub fn resolved_dock_panel_size(
+        &self,
+        dock: &Dock,
+        panel: &dyn PanelHandle,
+        window: &Window,
+        cx: &App,
+    ) -> Pixels {
+        if dock.position().axis() == Axis::Horizontal && panel.supports_flexible_size(window, cx) {
+            let ratio = panel
+                .flexible_size_ratio(window, cx)
+                .or_else(|| self.default_flexible_dock_ratio(dock.position(), cx));
+
+            if let Some(ratio) = ratio {
+                return self
+                    .flexible_dock_size(dock.position(), ratio, window, cx)
+                    .unwrap_or_else(|| panel.size(window, cx));
+            }
+        }
+
+        panel.size(window, cx)
+    }
+
+    pub fn flexible_dock_ratio_for_size(
+        &self,
+        position: DockPosition,
+        size: Pixels,
+        window: &Window,
+        cx: &App,
+    ) -> Option<f32> {
+        if position.axis() != Axis::Horizontal {
+            return None;
+        }
+
+        let available_width = self.available_width_for_horizontal_dock(position, window, cx)?;
+        let available_width = available_width.max(RESIZE_HANDLE_SIZE);
+        Some((size / available_width).clamp(0.0, 1.0))
+    }
+
+    fn available_width_for_horizontal_dock(
+        &self,
+        position: DockPosition,
+        window: &Window,
+        cx: &App,
+    ) -> Option<Pixels> {
+        let workspace_width = self.bounds.size.width;
+        if workspace_width <= Pixels::ZERO {
+            return None;
+        }
+
+        let opposite_position = match position {
+            DockPosition::Left => DockPosition::Right,
+            DockPosition::Right => DockPosition::Left,
+            DockPosition::Bottom => return None,
+        };
+
+        let opposite_width = self
+            .dock_at_position(opposite_position)
+            .read(cx)
+            .stored_active_panel_size(window, cx)
+            .unwrap_or(Pixels::ZERO);
+
+        Some((workspace_width - opposite_width).max(RESIZE_HANDLE_SIZE))
+    }
+
+    pub fn default_flexible_dock_ratio(&self, position: DockPosition, cx: &App) -> Option<f32> {
+        if position.axis() != Axis::Horizontal {
+            return None;
+        }
+
+        if self
+            .center
+            .panes()
+            .iter()
+            .all(|pane| pane.read(cx).items_len() == 0)
+        {
+            return Some(1.0);
+        }
+
+        let pane = self.last_active_center_pane.clone()?.upgrade()?;
+        let pane_fraction = self.center.width_fraction_for_pane(&pane).unwrap_or(1.0);
+        Some((pane_fraction / (1.0 + pane_fraction)).clamp(0.0, 1.0))
     }
 
     pub fn is_edited(&self) -> bool {
@@ -4730,11 +4828,15 @@ impl Workspace {
             .into_iter()
             .find(|dock| dock.focus_handle(cx).contains_focused(window, cx));
 
-        if let Some(dock) = active_dock {
-            let Some(panel_size) = dock.read(cx).active_panel_size(window, cx) else {
+        if let Some(dock_entity) = active_dock {
+            let dock = dock_entity.read(cx);
+            let Some(panel_size) = dock
+                .active_panel()
+                .map(|panel| self.resolved_dock_panel_size(&dock, panel.as_ref(), window, cx))
+            else {
                 return;
             };
-            match dock.read(cx).position() {
+            match dock.position() {
                 DockPosition::Left => self.resize_left_dock(panel_size + amount, window, cx),
                 DockPosition::Bottom => self.resize_bottom_dock(panel_size + amount, window, cx),
                 DockPosition::Right => self.resize_right_dock(panel_size + amount, window, cx),
@@ -7183,21 +7285,22 @@ impl Workspace {
 
         self.right_dock.read_with(cx, |right_dock, cx| {
             let right_dock_size = right_dock
-                .active_panel_size(window, cx)
+                .stored_active_panel_size(window, cx)
                 .unwrap_or(Pixels::ZERO);
             if right_dock_size + size > workspace_width {
                 size = workspace_width - right_dock_size
             }
         });
 
+        let ratio = self.flexible_dock_ratio_for_size(DockPosition::Left, size, window, cx);
         self.left_dock.update(cx, |left_dock, cx| {
             if WorkspaceSettings::get_global(cx)
                 .resize_all_panels_in_dock
                 .contains(&DockPosition::Left)
             {
-                left_dock.resize_all_panels(Some(size), window, cx);
+                left_dock.resize_all_panels_with_ratio(Some(size), ratio, window, cx);
             } else {
-                left_dock.resize_active_panel(Some(size), window, cx);
+                left_dock.resize_active_panel_with_ratio(Some(size), ratio, window, cx);
             }
         });
     }
@@ -7207,20 +7310,21 @@ impl Workspace {
         let mut size = new_size.min(workspace_width - RESIZE_HANDLE_SIZE);
         self.left_dock.read_with(cx, |left_dock, cx| {
             let left_dock_size = left_dock
-                .active_panel_size(window, cx)
+                .stored_active_panel_size(window, cx)
                 .unwrap_or(Pixels::ZERO);
             if left_dock_size + size > workspace_width {
                 size = workspace_width - left_dock_size
             }
         });
+        let ratio = self.flexible_dock_ratio_for_size(DockPosition::Right, size, window, cx);
         self.right_dock.update(cx, |right_dock, cx| {
             if WorkspaceSettings::get_global(cx)
                 .resize_all_panels_in_dock
                 .contains(&DockPosition::Right)
             {
-                right_dock.resize_all_panels(Some(size), window, cx);
+                right_dock.resize_all_panels_with_ratio(Some(size), ratio, window, cx);
             } else {
-                right_dock.resize_active_panel(Some(size), window, cx);
+                right_dock.resize_active_panel_with_ratio(Some(size), ratio, window, cx);
             }
         });
     }
@@ -7615,7 +7719,10 @@ fn adjust_active_dock_size_by_px(
         return;
     };
     let dock = active_dock.read(cx);
-    let Some(panel_size) = dock.active_panel_size(window, cx) else {
+    let Some(panel_size) = dock
+        .active_panel()
+        .map(|panel| workspace.resolved_dock_panel_size(&dock, panel.as_ref(), window, cx))
+    else {
         return;
     };
     let dock_pos = dock.position();
@@ -7631,10 +7738,12 @@ fn adjust_open_docks_size_by_px(
     let docks = workspace
         .all_docks()
         .into_iter()
-        .filter_map(|dock| {
-            if dock.read(cx).is_open() {
-                let dock = dock.read(cx);
-                let panel_size = dock.active_panel_size(window, cx)?;
+        .filter_map(|dock_entity| {
+            let dock = dock_entity.read(cx);
+            if dock.is_open() {
+                let panel_size = dock.active_panel().map(|panel| {
+                    workspace.resolved_dock_panel_size(&dock, panel.as_ref(), window, cx)
+                })?;
                 let dock_pos = dock.position();
                 Some((panel_size, dock_pos, px))
             } else {
@@ -11884,6 +11993,132 @@ mod tests {
             assert_eq!(active_item.item_id(), last_item.item_id());
         });
     }
+
+    #[gpui::test]
+    async fn test_flexible_dock_sizing(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        workspace.update(cx, |workspace, _cx| {
+            workspace.bounds.size.width = px(800.);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new_flexible(DockPosition::Right, 100, cx));
+            workspace.add_panel(panel, window, cx);
+            workspace.toggle_dock(DockPosition::Right, window, cx);
+
+            let dock = workspace.right_dock().read(cx);
+            let workspace_width = workspace.bounds.size.width;
+            let expanded_width = dock
+                .active_panel()
+                .map(|panel| workspace.resolved_dock_panel_size(&dock, panel.as_ref(), window, cx))
+                .expect("flexible dock should fill the center when there are no tabs");
+
+            assert_eq!(expanded_width, workspace_width);
+        });
+
+        let (panel, resized_width, ratio_basis_width) =
+            workspace.update_in(cx, |workspace, window, cx| {
+                let item = cx.new(|cx| {
+                    TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "one.txt", cx)])
+                });
+                workspace.add_item_to_active_pane(Box::new(item), None, true, window, cx);
+
+                let dock = workspace.right_dock().read(cx);
+                let workspace_width = workspace.bounds.size.width;
+                let initial_width = dock
+                    .active_panel()
+                    .map(|panel| {
+                        workspace.resolved_dock_panel_size(&dock, panel.as_ref(), window, cx)
+                    })
+                    .expect("flexible dock should have an initial width");
+
+                assert_eq!(initial_width, workspace_width / 2.);
+
+                workspace.resize_right_dock(px(300.), window, cx);
+
+                let dock = workspace.right_dock().read(cx);
+                let resized_width = dock
+                    .active_panel()
+                    .map(|panel| {
+                        workspace.resolved_dock_panel_size(&dock, panel.as_ref(), window, cx)
+                    })
+                    .expect("flexible dock should keep its resized width");
+
+                assert_eq!(resized_width, px(300.));
+
+                let panel = workspace
+                    .right_dock()
+                    .read(cx)
+                    .visible_panel()
+                    .expect("flexible dock should have a visible panel")
+                    .panel_id();
+
+                (panel, resized_width, workspace_width)
+            });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_dock(DockPosition::Right, window, cx);
+            workspace.toggle_dock(DockPosition::Right, window, cx);
+
+            let dock = workspace.right_dock().read(cx);
+            let reopened_width = dock
+                .active_panel()
+                .map(|panel| workspace.resolved_dock_panel_size(&dock, panel.as_ref(), window, cx))
+                .expect("flexible dock should restore when reopened");
+
+            assert_eq!(reopened_width, resized_width);
+
+            let flexible_ratio = workspace
+                .right_dock()
+                .read(cx)
+                .visible_panel()
+                .expect("flexible dock should still have a visible panel");
+            assert_eq!(flexible_ratio.panel_id(), panel);
+            assert_eq!(
+                flexible_ratio.flexible_size_ratio(window, cx),
+                Some(resized_width.to_f64() as f32 / workspace.bounds.size.width.to_f64() as f32)
+            );
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.split_pane(
+                workspace.active_pane().clone(),
+                SplitDirection::Right,
+                window,
+                cx,
+            );
+
+            let dock = workspace.right_dock().read(cx);
+            let split_width = dock
+                .active_panel()
+                .map(|panel| workspace.resolved_dock_panel_size(&dock, panel.as_ref(), window, cx))
+                .expect("flexible dock should keep its user-resized proportion");
+
+            assert_eq!(split_width, px(300.));
+
+            workspace.bounds.size.width = px(1600.);
+
+            let dock = workspace.right_dock().read(cx);
+            let resized_window_width = dock
+                .active_panel()
+                .map(|panel| workspace.resolved_dock_panel_size(&dock, panel.as_ref(), window, cx))
+                .expect("flexible dock should preserve proportional size on window resize");
+
+            assert_eq!(
+                resized_window_width,
+                workspace.bounds.size.width
+                    * (resized_width.to_f64() as f32 / ratio_basis_width.to_f64() as f32)
+            );
+        });
+    }
+
     struct TestModal(FocusHandle);
 
     impl TestModal {
