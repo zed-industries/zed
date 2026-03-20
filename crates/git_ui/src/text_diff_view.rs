@@ -91,16 +91,10 @@ impl TextDiffView {
             let multibuffer = source_editor.buffer();
             let mb_range = {
                 let mb = multibuffer.read(cx);
-                let start_anchor = mb.buffer_point_to_anchor(
-                    &source_buffer,
-                    expanded_selection_range.start,
-                    cx,
-                );
-                let end_anchor = mb.buffer_point_to_anchor(
-                    &source_buffer,
-                    expanded_selection_range.end,
-                    cx,
-                );
+                let start_anchor =
+                    mb.buffer_point_to_anchor(&source_buffer, expanded_selection_range.start, cx);
+                let end_anchor =
+                    mb.buffer_point_to_anchor(&source_buffer, expanded_selection_range.end, cx);
                 start_anchor.zip(end_anchor).map(|(s, e)| {
                     let snapshot = mb.snapshot(cx);
                     s.to_point(&snapshot)..e.to_point(&snapshot)
@@ -468,9 +462,7 @@ impl Render for TextDiffView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use editor::{
-        MultiBufferOffset, PathKey, test::editor_test_context::assert_state_with_diff,
-    };
+    use editor::{MultiBufferOffset, PathKey, test::editor_test_context::assert_state_with_diff};
     use gpui::{TestAppContext, VisualContext};
     use language::Point;
     use project::{FakeFs, Project};
@@ -728,7 +720,8 @@ mod tests {
                 mb
             });
 
-            let mut editor = Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx);
+            let mut editor =
+                Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx);
             // Select "beta" inside the first excerpt
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.select_ranges([MultiBufferOffset(6)..MultiBufferOffset(10)]);
@@ -816,7 +809,8 @@ mod tests {
                 mb
             });
 
-            let mut editor = Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx);
+            let mut editor =
+                Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx);
             // Cursor inside the first excerpt (no selection)
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.select_ranges([MultiBufferOffset(6)..MultiBufferOffset(6)]);
