@@ -33,6 +33,8 @@ use terminal::terminal_settings::{AlternateScroll, CursorShape, TerminalSettings
 
 use crate::GEMINI_ID;
 
+pub const GEMINI_TERMINAL_AUTH_METHOD_ID: &str = "spawn-gemini-cli";
+
 #[derive(Debug, Error)]
 #[error("Unsupported version")]
 pub struct UnsupportedVersion;
@@ -337,7 +339,7 @@ impl AcpConnection {
             });
             let meta = acp::Meta::from_iter([("terminal-auth".to_string(), value)]);
             vec![acp::AuthMethod::Agent(
-                acp::AuthMethodAgent::new("spawn-gemini-cli", "Login")
+                acp::AuthMethodAgent::new(GEMINI_TERMINAL_AUTH_METHOD_ID, "Login")
                     .description("Login with your Google or Vertex AI account")
                     .meta(meta),
             )]

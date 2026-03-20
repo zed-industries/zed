@@ -8,9 +8,9 @@ use acp_thread::{AgentConnection, Plan};
 use action_log::{ActionLog, ActionLogTelemetry, DiffStats};
 use agent::{NativeAgentServer, NativeAgentSessionList, SharedThread, ThreadStore};
 use agent_client_protocol as acp;
-use agent_servers::AgentServer;
 #[cfg(test)]
 use agent_servers::AgentServerDelegate;
+use agent_servers::{AgentServer, GEMINI_TERMINAL_AUTH_METHOD_ID};
 use agent_settings::{AgentProfileId, AgentSettings};
 use anyhow::{Result, anyhow};
 use arrayvec::ArrayVec;
@@ -1683,17 +1683,14 @@ impl ConversationView {
             if let Some(cmd) = &task.command {
                 // Have "node" command use Zed's managed Node runtime by default
                 if cmd == "node" {
-                    let resolved_node_runtime = project
-                        .update(cx, |project, cx| {
-                            let agent_server_store = project.agent_server_store().clone();
-                            agent_server_store.update(cx, |store, cx| {
-                                store.node_runtime().map(|node_runtime| {
-                                    cx.background_spawn(async move {
-                                        node_runtime.binary_path().await
-                                    })
-                                })
+                    let resolved_node_runtime = project.update(cx, |project, cx| {
+                        let agent_server_store = project.agent_server_store().clone();
+                        agent_server_store.update(cx, |store, cx| {
+                            store.node_runtime().map(|node_runtime| {
+                                cx.background_spawn(async move { node_runtime.binary_path().await })
                             })
-                        });
+                        })
+                    });
 
                     if let Some(resolve_task) = resolved_node_runtime {
                         if let Ok(node_path) = resolve_task.await {
@@ -1705,7 +1702,7 @@ impl ConversationView {
             task.shell = task::Shell::WithArguments {
                 program: task.command.take().expect("login command should be set"),
                 args: std::mem::take(&mut task.args),
-                title_override: None
+                title_override: None,
             };
 
             let terminal = terminal_panel
@@ -1715,7 +1712,7 @@ impl ConversationView {
                 .await?;
 
             let success_patterns = match method.0.as_ref() {
-                "claude-login" | "spawn-gemini-cli" => vec![
+                "claude-login" | GEMINI_TERMINAL_AUTH_METHOD_ID => vec![
                     "Login successful".to_string(),
                     "Type your message".to_string(),
                 ],
@@ -1749,7 +1746,9 @@ impl ConversationView {
                                 cx.background_executor().timer(Duration::from_secs(1)).await;
                                 let content =
                                     terminal.update(cx, |terminal, _cx| terminal.get_content())?;
-                                if success_patterns.iter().any(|pattern| content.contains(pattern))
+                                if success_patterns
+                                    .iter()
+                                    .any(|pattern| content.contains(pattern))
                                 {
                                     return anyhow::Ok(());
                                 }
@@ -1766,8 +1765,23 @@ impl ConversationView {
                         }
                     }
                     _ = exit_status => {
-                        if !previous_attempt && project.read_with(cx, |project, _| project.is_via_remote_server()) && login.label.contains("gemini") {
-                            return cx.update(|window, cx| Self::spawn_external_agent_login(login, workspace, project.clone(), method, true, window, cx))?.await
+                        if !previous_attempt
+                            && project.read_with(cx, |project, _| project.is_via_remote_server())
+                            && method.0.as_ref() == GEMINI_TERMINAL_AUTH_METHOD_ID
+                        {
+                            return cx
+                                .update(|window, cx| {
+                                    Self::spawn_external_agent_login(
+                                        login,
+                                        workspace,
+                                        project.clone(),
+                                        method,
+                                        true,
+                                        window,
+                                        cx,
+                                    )
+                                })?
+                                .await;
                         }
                         return Err(anyhow!("exited before logging in"));
                     }

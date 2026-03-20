@@ -17,7 +17,7 @@ use gpui::{App, AppContext, Entity, Task};
 use settings::SettingsStore;
 use std::{any::Any, rc::Rc, sync::Arc};
 
-pub use acp::AcpConnection;
+pub use acp::{AcpConnection, GEMINI_TERMINAL_AUTH_METHOD_ID};
 
 pub struct AgentServerDelegate {
     store: Entity<AgentServerStore>,
