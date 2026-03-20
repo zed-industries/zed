@@ -1145,6 +1145,14 @@ impl BufferStore {
         cx: &mut Context<Self>,
     ) {
         match event {
+            BufferEvent::ReloadNeeded => {
+                if let Some((downstream_client, _)) = self.downstream_client.as_ref()
+                    && !downstream_client.is_via_collab()
+                {
+                    self.reload_buffers([buffer.clone()].into_iter().collect(), true, cx)
+                        .detach_and_log_err(cx);
+                }
+            }
             BufferEvent::FileHandleChanged => {
                 self.buffer_changed_file(buffer, cx);
             }

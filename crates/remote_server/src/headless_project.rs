@@ -368,13 +368,6 @@ impl HeadlessProject {
         cx: &mut Context<Self>,
     ) {
         match event {
-            BufferEvent::ReloadNeeded => {
-                self.buffer_store
-                    .update(cx, |buffer_store, cx| {
-                        buffer_store.reload_buffers([buffer.clone()].into_iter().collect(), true, cx)
-                    })
-                    .detach_and_log_err(cx);
-            }
             BufferEvent::Operation {
                 operation,
                 is_local: true,
