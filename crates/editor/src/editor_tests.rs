@@ -7462,6 +7462,48 @@ async fn test_rewrap(cx: &mut TestAppContext) {
               also very long and should not merge
               with the numbered item.ˇ»
         "},
+        markdown_language.clone(),
+        &mut cx,
+    );
+
+    // Test that empty selection rewrap on a numbered list item does not merge adjacent items
+    assert_rewrap(
+        indoc! {"
+            1. This is the first numbered list item that is very long and needs to be wrapped properly.
+            2. ˇThis is the second numbered list item that is also very long and needs to be wrapped.
+            3. This is the third numbered list item, shorter.
+        "},
+        indoc! {"
+            1. This is the first numbered list item
+               that is very long and needs to be
+               wrapped properly.
+            2. ˇThis is the second numbered list item
+               that is also very long and needs to
+               be wrapped.
+            3. This is the third numbered list item,
+               shorter.
+        "},
+        markdown_language.clone(),
+        &mut cx,
+    );
+
+    // Test that empty selection rewrap on a bullet list item does not merge adjacent items
+    assert_rewrap(
+        indoc! {"
+            - This is the first bullet item that is very long and needs wrapping properly here.
+            - ˇThis is the second bullet item that is also very long and needs to be wrapped.
+            - This is the third bullet item, shorter.
+        "},
+        indoc! {"
+            - This is the first bullet item that is
+              very long and needs wrapping properly
+              here.
+            - ˇThis is the second bullet item that is
+              also very long and needs to be
+              wrapped.
+            - This is the third bullet item,
+              shorter.
+        "},
         markdown_language,
         &mut cx,
     );

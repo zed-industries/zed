@@ -111,7 +111,8 @@ pub struct PredictEditsBody {
     pub trigger: PredictEditsRequestTrigger,
 }
 
-#[derive(Default, Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Copy, Serialize, Deserialize, strum::AsRefStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum PredictEditsRequestTrigger {
     Testing,
     Diagnostics,
@@ -170,7 +171,10 @@ pub struct EditPredictionRejection {
     pub e2e_latency_ms: Option<u128>,
 }
 
-#[derive(Default, Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(
+    Default, Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, strum::AsRefStr,
+)]
+#[strum(serialize_all = "snake_case")]
 pub enum EditPredictionRejectReason {
     /// New requests were triggered before this one completed
     Canceled,

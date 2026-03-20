@@ -2883,7 +2883,7 @@ impl SettingsWindow {
     }
 
     fn render_sub_page_breadcrumbs(&self) -> impl IntoElement {
-        h_flex().gap_1().children(
+        h_flex().min_w_0().gap_1().overflow_x_hidden().children(
             itertools::intersperse(
                 std::iter::once(self.current_page().title.into()).chain(
                     self.sub_page_stack
@@ -3113,9 +3113,11 @@ impl SettingsWindow {
         if let Some(current_sub_page) = self.sub_page_stack.last() {
             page_header = h_flex()
                 .w_full()
+                .min_w_0()
                 .justify_between()
                 .child(
                     h_flex()
+                        .min_w_0()
                         .ml_neg_1p5()
                         .gap_1()
                         .child(
@@ -3130,17 +3132,19 @@ impl SettingsWindow {
                 )
                 .when(current_sub_page.link.in_json, |this| {
                     this.child(
-                        Button::new("open-in-settings-file", "Edit in settings.json")
-                            .tab_index(0_isize)
-                            .style(ButtonStyle::OutlinedGhost)
-                            .tooltip(Tooltip::for_action_title_in(
-                                "Edit in settings.json",
-                                &OpenCurrentFile,
-                                &self.focus_handle,
-                            ))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.open_current_settings_file(window, cx);
-                            })),
+                        div().flex_shrink_0().child(
+                            Button::new("open-in-settings-file", "Edit in settings.json")
+                                .tab_index(0_isize)
+                                .style(ButtonStyle::OutlinedGhost)
+                                .tooltip(Tooltip::for_action_title_in(
+                                    "Edit in settings.json",
+                                    &OpenCurrentFile,
+                                    &self.focus_handle,
+                                ))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.open_current_settings_file(window, cx);
+                                })),
+                        ),
                     )
                 })
                 .into_any_element();
@@ -3310,6 +3314,7 @@ impl SettingsWindow {
             .pt_6()
             .gap_4()
             .flex_1()
+            .min_w_0()
             .bg(cx.theme().colors().editor_background)
             .child(
                 v_flex()

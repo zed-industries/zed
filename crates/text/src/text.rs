@@ -1234,15 +1234,18 @@ impl Buffer {
                 let fragment_end = old_fragments.end().0.full_offset();
                 let mut intersection = fragment.clone();
                 let intersection_end = cmp::min(range.end, fragment_end);
-                if fragment.was_visible(version, &self.undo_map) {
+                if version.observed(fragment.timestamp) {
                     intersection.len = (intersection_end.0 - fragment_start.0) as u32;
                     intersection.insertion_offset +=
                         (fragment_start - old_fragments.start().0.full_offset()) as u32;
                     intersection.id =
                         Locator::between(&new_fragments.summary().max_id, &intersection.id);
-                    intersection.deletions.push(timestamp);
-                    intersection.visible = false;
-                    insertion_slices.push(InsertionSlice::from_fragment(timestamp, &intersection));
+                    if fragment.was_visible(version, &self.undo_map) {
+                        intersection.deletions.push(timestamp);
+                        intersection.visible = false;
+                        insertion_slices
+                            .push(InsertionSlice::from_fragment(timestamp, &intersection));
+                    }
                 }
                 if intersection.len > 0 {
                     if fragment.visible && !intersection.visible {
