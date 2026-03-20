@@ -1341,10 +1341,11 @@ impl WorkspaceDb {
                 };
 
                 // Clear out panes and pane_groups.
-                // We must delete center_panes explicitly before deleting panes because
-                // SQLite recycles pane_ids (no AUTOINCREMENT), causing a UNIQUE constraint
-                // failure on center_panes when the same id is reused after deletion.
-                // FK cascade from panes -> center_panes is not reliably triggered.
+                // Delete center_panes explicitly before panes as a defensive measure:
+                // pane_id is INTEGER PRIMARY KEY without AUTOINCREMENT, so SQLite may
+                // reuse deleted rowids within the same transaction. The schema has
+                // ON DELETE CASCADE, but the explicit delete ensures no UNIQUE constraint
+                // failure on center_panes if a recycled pane_id collides.
                 conn.exec_bound(sql!(
                     DELETE FROM center_panes WHERE pane_id IN (SELECT pane_id FROM panes WHERE workspace_id = ?1);
                     DELETE FROM pane_groups WHERE workspace_id = ?1;
