@@ -317,6 +317,7 @@
 ] @keyword.import
 
 [
+  "await"
   "break"
   "case"
   "catch"
@@ -332,7 +333,6 @@
   "try"
   "while"
   "yield"
-  "await"
 ] @keyword.control
 
 (switch_default
