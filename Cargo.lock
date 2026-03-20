@@ -9797,7 +9797,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
- "webrtc-sys 0.3.23 (git+https://github.com/zed-industries/livekit-rust-sdks?rev=37835f840d0070d45ac8b31cce6a6ae7aca3f459)",
+ "webrtc-sys",
 ]
 
 [[package]]
@@ -10004,7 +10004,7 @@ dependencies = [
  "tokio",
  "ui",
  "util",
- "webrtc-sys 0.3.23 (git+https://github.com/zed-industries/livekit-rust-sdks?rev=c1209aa155cbf4543383774f884a46ae7e53ee2e)",
+ "webrtc-sys",
  "zed-scap",
 ]
 
@@ -20070,35 +20070,7 @@ dependencies = [
  "glob",
  "log",
  "pkg-config",
- "webrtc-sys-build 0.3.13 (git+https://github.com/zed-industries/livekit-rust-sdks?rev=37835f840d0070d45ac8b31cce6a6ae7aca3f459)",
-]
-
-[[package]]
-name = "webrtc-sys"
-version = "0.3.23"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=c1209aa155cbf4543383774f884a46ae7e53ee2e#c1209aa155cbf4543383774f884a46ae7e53ee2e"
-dependencies = [
- "cc",
- "cxx",
- "cxx-build",
- "glob",
- "log",
- "pkg-config",
- "webrtc-sys-build 0.3.13 (git+https://github.com/zed-industries/livekit-rust-sdks?rev=c1209aa155cbf4543383774f884a46ae7e53ee2e)",
-]
-
-[[package]]
-name = "webrtc-sys-build"
-version = "0.3.13"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=c1209aa155cbf4543383774f884a46ae7e53ee2e#c1209aa155cbf4543383774f884a46ae7e53ee2e"
-dependencies = [
- "anyhow",
- "fs2",
- "regex",
- "reqwest 0.12.24",
- "scratch",
- "semver",
- "zip 0.6.6",
+ "webrtc-sys-build",
 ]
 
 [[package]]
