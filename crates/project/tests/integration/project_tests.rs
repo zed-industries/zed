@@ -5848,6 +5848,116 @@ async fn test_dirty_buffer_reloads_after_undo(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_clean_buffer_reloads_on_unchanged_metadata(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "file.txt": "content_a",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer(path!("/dir/file.txt"), cx))
+        .await
+        .unwrap();
+
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "content_a");
+        assert!(!buffer.is_dirty());
+    });
+
+    // Freeze mtime so the next write produces the same file metadata.
+    let metadata = fs
+        .metadata(path!("/dir/file.txt").as_ref())
+        .await
+        .unwrap()
+        .unwrap();
+    fs.set_next_mtime(metadata.mtime.timestamp_for_user());
+
+    // External tool writes new content with the same byte length.
+    // atomic_write changes the inode (so the worktree detects the entry
+    // changed and emits PathChange::Updated), but because we froze mtime
+    // and the size is identical, the File comparison yields equal — exactly
+    // the scenario that occurs on filesystems with coarse mtime granularity.
+    fs.atomic_write(
+        PathBuf::from(path!("/dir/file.txt")),
+        "content_b".to_string(),
+    )
+    .await
+    .unwrap();
+    cx.executor().run_until_parked();
+
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(
+            buffer.text(),
+            "content_b",
+            "clean buffer should reload even when file metadata is unchanged"
+        );
+        assert!(!buffer.is_dirty());
+    });
+}
+
+#[gpui::test]
+async fn test_dirty_buffer_skips_reload_on_unchanged_metadata(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "file.txt": "content_a",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer(path!("/dir/file.txt"), cx))
+        .await
+        .unwrap();
+
+    // User makes an edit, making the buffer dirty.
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "user: ")], None, cx);
+    });
+
+    buffer.read_with(cx, |buffer, _| {
+        assert!(buffer.is_dirty());
+        assert_eq!(buffer.text(), "user: content_a");
+    });
+
+    // Freeze mtime and write externally with same byte length.
+    let metadata = fs
+        .metadata(path!("/dir/file.txt").as_ref())
+        .await
+        .unwrap()
+        .unwrap();
+    fs.set_next_mtime(metadata.mtime.timestamp_for_user());
+
+    fs.atomic_write(
+        PathBuf::from(path!("/dir/file.txt")),
+        "content_b".to_string(),
+    )
+    .await
+    .unwrap();
+    cx.executor().run_until_parked();
+
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(
+            buffer.text(),
+            "user: content_a",
+            "dirty buffer should not reload when file metadata is unchanged"
+        );
+        assert!(buffer.is_dirty());
+    });
+}
+
+#[gpui::test]
 async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
