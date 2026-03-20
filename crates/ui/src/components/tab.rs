@@ -164,6 +164,10 @@ impl RenderOnce for Tab {
                 TabPosition::Middle(Ordering::Less) => this.border_l_1().pr_px().border_b_1(),
                 TabPosition::Middle(Ordering::Greater) => this.border_r_1().pl_px().border_b_1(),
             })
+            .when(self.selected, |this| {
+                this.border_b_2()
+                    .border_color(cx.theme().colors().border_focused)
+            })
             .cursor_pointer()
             .child(
                 h_flex()
