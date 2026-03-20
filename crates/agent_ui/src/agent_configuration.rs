@@ -601,7 +601,7 @@ impl AgentConfiguration {
                         } else {
                             parent.children(itertools::intersperse_with(
                                 context_server_ids.iter().cloned().map(|context_server_id| {
-                                    self.render_context_server(context_server_id, window, cx)
+                                    self.render_context_server(context_server_id, cx)
                                         .into_any_element()
                                 }),
                                 || {
@@ -618,7 +618,6 @@ impl AgentConfiguration {
     fn render_context_server(
         &self,
         context_server_id: ContextServerId,
-        window: &mut Window,
         cx: &Context<Self>,
     ) -> impl use<> + IntoElement {
         let server_status = self
@@ -708,14 +707,17 @@ impl AgentConfiguration {
                 "Waiting for authorization...",
             ),
         };
+
         let is_remote = server_configuration
             .as_ref()
             .map(|config| matches!(config.as_ref(), ContextServerConfiguration::Http { .. }))
             .unwrap_or(false);
+
         let should_show_logout_button = server_configuration.as_ref().is_some_and(|config| {
             matches!(config.as_ref(), ContextServerConfiguration::Http { .. })
                 && !config.has_static_auth_header()
         });
+
         let context_server_configuration_menu = PopoverMenu::new("context-server-config-menu")
             .trigger_with_tooltip(
                 IconButton::new("context-server-config-menu", IconName::Settings)
@@ -844,6 +846,9 @@ impl AgentConfiguration {
                 }
             });
 
+        let feedback_base_container =
+            || h_flex().py_1().min_w_0().w_full().gap_1().justify_between();
+
         v_flex()
             .min_w_0()
             .id(item_id.clone())
@@ -952,41 +957,30 @@ impl AgentConfiguration {
                 if let Some(error) = error {
                     return parent
                         .child(
-                            h_flex()
-                                .gap_2()
-                                .pr_4()
-                                .items_start()
+                            feedback_base_container()
                                 .child(
                                     h_flex()
-                                        .flex_none()
-                                        .h(window.line_height() / 1.6_f32)
-                                        .justify_center()
+                                        .pr_4()
+                                        .min_w_0()
+                                        .w_full()
+                                        .gap_2()
                                         .child(
                                             Icon::new(IconName::XCircle)
                                                 .size(IconSize::XSmall)
                                                 .color(Color::Error),
+                                        )
+                                        .child(
+                                            div().min_w_0().flex_1().child(
+                                                Label::new(error)
+                                                    .color(Color::Muted)
+                                                    .size(LabelSize::Small),
+                                            ),
                                         ),
                                 )
-                                .child(
-                                    div().w_full().child(
-                                        Label::new(error)
-                                            .buffer_font(cx)
-                                            .color(Color::Muted)
-                                            .size(LabelSize::Small),
-                                    ),
-                                ),
-                        )
-                        .when(should_show_logout_button, |parent| {
-                            parent.child(
-                                h_flex()
-                                    .gap_2()
-                                    .pr_4()
-                                    .py_0p5()
-                                    .items_center()
-                                    .child(h_flex().flex_none().w_3().mr_2())
-                                    .child(
+                                .when(should_show_logout_button, |this| {
+                                    this.child(
                                         Button::new("error-logout-server", "Log Out")
-                                            .style(ButtonStyle::Subtle)
+                                            .style(ButtonStyle::Outlined)
                                             .label_size(LabelSize::Small)
                                             .on_click({
                                                 let context_server_store =
@@ -1007,26 +1001,33 @@ impl AgentConfiguration {
                                                     );
                                                 }
                                             }),
-                                    ),
-                            )
-                        });
+                                    )
+                                }),
+                        );
                 }
                 if auth_required {
                     return parent.child(
-                        h_flex()
-                            .gap_2()
-                            .pr_4()
-                            .py_0p5()
-                            .items_center()
-                            .child(h_flex().flex_none().w_3().mr_2())
+                        feedback_base_container()
                             .child(
-                                Label::new("Authentication required.")
-                                    .color(Color::Muted)
-                                    .size(LabelSize::Small),
+                                h_flex()
+                                    .pr_4()
+                                    .min_w_0()
+                                    .w_full()
+                                    .gap_2()
+                                    .child(
+                                        Icon::new(IconName::Info)
+                                            .size(IconSize::XSmall)
+                                            .color(Color::Muted),
+                                    )
+                                    .child(
+                                        Label::new("Authenticate to connect this server")
+                                            .color(Color::Muted)
+                                            .size(LabelSize::Small),
+                                    ),
                             )
                             .child(
-                                Button::new("authenticate-server", "Authenticate")
-                                    .style(ButtonStyle::Filled)
+                                Button::new("error-logout-server", "Authenticate")
+                                    .style(ButtonStyle::Outlined)
                                     .label_size(LabelSize::Small)
                                     .on_click({
                                         let context_server_store = context_server_store.clone();
@@ -1045,16 +1046,20 @@ impl AgentConfiguration {
                 if authenticating {
                     return parent.child(
                         h_flex()
-                            .gap_2()
+                            .mt_1()
                             .pr_4()
-                            .py_0p5()
-                            .items_center()
-                            .child(h_flex().flex_none().w_3().mr_2())
+                            .min_w_0()
+                            .w_full()
+                            .gap_2()
                             .child(
-                                Label::new("Waiting for authorization...")
+                                div().size_3().flex_shrink_0(), // Alignment Div
+                            )
+                            .child(
+                                Label::new("Authenticating…")
                                     .color(Color::Muted)
                                     .size(LabelSize::Small),
                             ),
+
                     );
                 }
                 parent
