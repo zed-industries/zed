@@ -113,7 +113,11 @@ pub trait AgentConnection {
 
     fn auth_methods(&self) -> &[acp::AuthMethod];
 
-    fn terminal_auth_task(&self, _method: &acp::AuthMethodId) -> Option<SpawnInTerminal> {
+    fn terminal_auth_task(
+        &self,
+        _method: &acp::AuthMethodId,
+        _cx: &App,
+    ) -> Option<SpawnInTerminal> {
         None
     }
 

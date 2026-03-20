@@ -7,6 +7,7 @@ use action_log::ActionLog;
 use agent_client_protocol::{self as acp, Agent as _, ErrorCode};
 use anyhow::anyhow;
 use collections::HashMap;
+use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use futures::AsyncBufReadExt as _;
 use futures::io::BufReader;
 use project::agent_server_store::AgentServerCommand;
@@ -876,14 +877,18 @@ impl AgentConnection for AcpConnection {
         &self.auth_methods
     }
 
-    fn terminal_auth_task(&self, method_id: &acp::AuthMethodId) -> Option<SpawnInTerminal> {
+    fn terminal_auth_task(
+        &self,
+        method_id: &acp::AuthMethodId,
+        cx: &App,
+    ) -> Option<SpawnInTerminal> {
         let method = self
             .auth_methods
             .iter()
             .find(|method| method.id() == method_id)?;
 
         match method {
-            acp::AuthMethod::Terminal(terminal) => {
+            acp::AuthMethod::Terminal(terminal) if cx.has_flag::<AcpBetaFeatureFlag>() => {
                 Some(terminal_auth_task(&self.command, &self.id, terminal))
             }
             _ => meta_terminal_auth_task(&self.id, method_id, method),
