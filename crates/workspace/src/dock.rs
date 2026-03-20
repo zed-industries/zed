@@ -1293,8 +1293,8 @@ impl Render for PanelButtons {
                                 .on_click({
                                     let action = action.boxed_clone();
                                     move |_, window, cx| {
-                                        // The project panel overlay keeps the underlying dock out of
-                                        // the rendered tree, so dispatch from the current focus
+                                        // Overlay-mode docks keep the underlying dock out of the
+                                        // normal layout tree, so dispatch from the current focus
                                         // instead of forcing focus onto the dock first.
                                         window.dispatch_action(action.boxed_clone(), cx)
                                     }
