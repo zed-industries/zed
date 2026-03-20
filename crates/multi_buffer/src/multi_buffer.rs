@@ -6462,8 +6462,7 @@ impl MultiBufferSnapshot {
         // If the current row is at the end of an indented block (a closing line like `}` or `},`),
         // we want to return the inner block as the enclosing indent, not the parent block.
         if !target_indent.is_line_empty() && target_row.0 > 0 {
-            let prev_line_indent =
-                self.line_indent_for_row(MultiBufferRow(target_row.0 - 1));
+            let prev_line_indent = self.line_indent_for_row(MultiBufferRow(target_row.0 - 1));
             if !prev_line_indent.is_line_empty()
                 && target_indent.raw_len() < prev_line_indent.raw_len()
             {
