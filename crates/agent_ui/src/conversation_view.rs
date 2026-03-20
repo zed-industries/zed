@@ -2630,7 +2630,8 @@ impl ConversationView {
         }
     }
 
-    pub fn set_updated_at_for_tests(&mut self, updated_at: Instant, cx: &mut Context<Self>) {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_updated_at(&mut self, updated_at: Instant, cx: &mut Context<Self>) {
         let Some(connected) = self.as_connected_mut() else {
             return;
         };

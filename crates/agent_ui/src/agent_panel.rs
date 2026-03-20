@@ -2006,8 +2006,10 @@ impl AgentPanel {
         self.cleanup_background_threads(cx);
     }
 
-    /// We keep at most 5 idle background threads.
-    /// We keep threads who have had the most recent events, or don't support reloading the full session.
+    /// We keep threads that are:
+    /// - Still running
+    /// - Do not support reloading the full session
+    /// - Have had the most recent events (up to 5 idle threads)
     fn cleanup_background_threads(&mut self, cx: &App) {
         let mut potential_removals = self
             .background_threads
@@ -5693,10 +5695,7 @@ mod tests {
                     .expect("background thread should exist")
                     .clone();
                 conversation_view.update(cx, |view, cx| {
-                    view.set_updated_at_for_tests(
-                        base_time + Duration::from_secs(index as u64),
-                        cx,
-                    );
+                    view.set_updated_at(base_time + Duration::from_secs(index as u64), cx);
                 });
             }
             panel.cleanup_background_threads(cx);
@@ -5767,10 +5766,7 @@ mod tests {
                     .expect("background thread should exist")
                     .clone();
                 conversation_view.update(cx, |view, cx| {
-                    view.set_updated_at_for_tests(
-                        base_time + Duration::from_secs(index as u64),
-                        cx,
-                    );
+                    view.set_updated_at(base_time + Duration::from_secs(index as u64), cx);
                 });
             }
             panel.cleanup_background_threads(cx);
