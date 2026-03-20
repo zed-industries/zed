@@ -1056,12 +1056,14 @@ impl WgpuRenderer {
         let frame = match self.resources().surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+                // Textures must be destroyed before the surface can be reconfigured.
+                drop(frame);
                 let surface_config = self.surface_config.clone();
                 let resources = self.resources_mut();
                 resources
                     .surface
                     .configure(&resources.device, &surface_config);
-                frame
+                return;
             }
             wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
                 let surface_config = self.surface_config.clone();

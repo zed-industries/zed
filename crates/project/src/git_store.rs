@@ -7018,7 +7018,11 @@ fn branch_to_proto(branch: &git::repository::Branch) -> proto::Branch {
 fn worktree_to_proto(worktree: &git::repository::Worktree) -> proto::Worktree {
     proto::Worktree {
         path: worktree.path.to_string_lossy().to_string(),
-        ref_name: worktree.ref_name.to_string(),
+        ref_name: worktree
+            .ref_name
+            .as_ref()
+            .map(|s| s.to_string())
+            .unwrap_or_default(),
         sha: worktree.sha.to_string(),
     }
 }
@@ -7026,7 +7030,7 @@ fn worktree_to_proto(worktree: &git::repository::Worktree) -> proto::Worktree {
 fn proto_to_worktree(proto: &proto::Worktree) -> git::repository::Worktree {
     git::repository::Worktree {
         path: PathBuf::from(proto.path.clone()),
-        ref_name: proto.ref_name.clone().into(),
+        ref_name: Some(SharedString::from(&proto.ref_name)),
         sha: proto.sha.clone().into(),
     }
 }

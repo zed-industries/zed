@@ -760,6 +760,7 @@
       "enter": "menu::Confirm",
       "space": "menu::Confirm",
       "cmd-f": "agents_sidebar::FocusSidebarFilter",
+      "cmd-g": "agents_sidebar::ToggleArchive",
       "shift-backspace": "agent::RemoveSelectedThread",
     },
   },

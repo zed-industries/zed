@@ -36,7 +36,10 @@ async fn test_fake_worktree_lifecycle(cx: &mut TestAppContext) {
     assert_eq!(worktrees.len(), 2);
     assert_eq!(worktrees[0].path, PathBuf::from("/project"));
     assert_eq!(worktrees[1].path, worktree_1_dir);
-    assert_eq!(worktrees[1].ref_name.as_ref(), "refs/heads/feature-branch");
+    assert_eq!(
+        worktrees[1].ref_name,
+        Some("refs/heads/feature-branch".into())
+    );
     assert_eq!(worktrees[1].sha.as_ref(), "abc123");
 
     // Directory should exist in FakeFs after create

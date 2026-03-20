@@ -26,6 +26,8 @@ actions!(
     [
         /// Toggles the workspace switcher sidebar.
         ToggleWorkspaceSidebar,
+        /// Closes the workspace sidebar.
+        CloseWorkspaceSidebar,
         /// Moves focus to or from the workspace sidebar without closing it.
         FocusWorkspaceSidebar,
     ]
@@ -41,8 +43,7 @@ pub trait Sidebar: Focusable + Render + Sized {
     fn width(&self, cx: &App) -> Pixels;
     fn set_width(&mut self, width: Option<Pixels>, cx: &mut Context<Self>);
     fn has_notifications(&self, cx: &App) -> bool;
-    fn toggle_recent_projects_popover(&self, window: &mut Window, cx: &mut App);
-    fn is_recent_projects_popover_deployed(&self) -> bool;
+
     fn is_threads_list_view_active(&self) -> bool {
         true
     }
@@ -59,8 +60,7 @@ pub trait SidebarHandle: 'static + Send + Sync {
     fn has_notifications(&self, cx: &App) -> bool;
     fn to_any(&self) -> AnyView;
     fn entity_id(&self) -> EntityId;
-    fn toggle_recent_projects_popover(&self, window: &mut Window, cx: &mut App);
-    fn is_recent_projects_popover_deployed(&self, cx: &App) -> bool;
+
     fn is_threads_list_view_active(&self, cx: &App) -> bool;
 }
 
@@ -105,16 +105,6 @@ impl<T: Sidebar> SidebarHandle for Entity<T> {
 
     fn entity_id(&self) -> EntityId {
         Entity::entity_id(self)
-    }
-
-    fn toggle_recent_projects_popover(&self, window: &mut Window, cx: &mut App) {
-        self.update(cx, |this, cx| {
-            this.toggle_recent_projects_popover(window, cx);
-        });
-    }
-
-    fn is_recent_projects_popover_deployed(&self, cx: &App) -> bool {
-        self.read(cx).is_recent_projects_popover_deployed()
     }
 
     fn is_threads_list_view_active(&self, cx: &App) -> bool {
@@ -203,18 +193,6 @@ impl MultiWorkspace {
             .map_or(false, |s| s.has_notifications(cx))
     }
 
-    pub fn toggle_recent_projects_popover(&self, window: &mut Window, cx: &mut App) {
-        if let Some(sidebar) = &self.sidebar {
-            sidebar.toggle_recent_projects_popover(window, cx);
-        }
-    }
-
-    pub fn is_recent_projects_popover_deployed(&self, cx: &App) -> bool {
-        self.sidebar
-            .as_ref()
-            .map_or(false, |s| s.is_recent_projects_popover_deployed(cx))
-    }
-
     pub fn is_threads_list_view_active(&self, cx: &App) -> bool {
         self.sidebar
             .as_ref()
@@ -238,6 +216,16 @@ impl MultiWorkspace {
                 sidebar.prepare_for_focus(window, cx);
                 sidebar.focus(window, cx);
             }
+        }
+    }
+
+    pub fn close_sidebar_action(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.multi_workspace_enabled(cx) {
+            return;
+        }
+
+        if self.sidebar_open {
+            self.close_sidebar(window, cx);
         }
     }
 
@@ -760,6 +748,11 @@ impl Render for MultiWorkspace {
                     this.on_action(cx.listener(
                         |this: &mut Self, _: &ToggleWorkspaceSidebar, window, cx| {
                             this.toggle_sidebar(window, cx);
+                        },
+                    ))
+                    .on_action(cx.listener(
+                        |this: &mut Self, _: &CloseWorkspaceSidebar, window, cx| {
+                            this.close_sidebar_action(window, cx);
                         },
                     ))
                     .on_action(cx.listener(
