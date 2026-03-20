@@ -1978,13 +1978,13 @@ impl AgentPanel {
         let mut views = Vec::new();
 
         if let Some(server_view) = self.active_conversation_view() {
-            if let Some(thread_view) = server_view.read(cx).parent_thread(cx) {
+            if let Some(thread_view) = server_view.read(cx).root_thread(cx) {
                 views.push(thread_view);
             }
         }
 
         for server_view in self.background_threads.values() {
-            if let Some(thread_view) = server_view.read(cx).parent_thread(cx) {
+            if let Some(thread_view) = server_view.read(cx).root_thread(cx) {
                 views.push(thread_view);
             }
         }
@@ -1997,22 +1997,44 @@ impl AgentPanel {
             return;
         };
 
-        let Some(thread_view) = conversation_view.read(cx).parent_thread(cx) else {
+        let Some(thread_view) = conversation_view.read(cx).root_thread(cx) else {
             return;
         };
-
-        let thread = &thread_view.read(cx).thread;
-        let (status, session_id) = {
-            let thread = thread.read(cx);
-            (thread.status(), thread.session_id().clone())
-        };
-
-        if status != ThreadStatus::Generating {
-            return;
-        }
 
         self.background_threads
-            .insert(session_id, conversation_view);
+            .insert(thread_view.read(cx).id.clone(), conversation_view);
+        self.cleanup_background_threads(cx);
+    }
+
+    /// We keep at most 5 idle background threads.
+    /// We keep threads who have had the most recent events, or don't support reloading the full session.
+    fn cleanup_background_threads(&mut self, cx: &App) {
+        let mut potential_removals = self
+            .background_threads
+            .iter()
+            .filter(|(_id, view)| {
+                let Some(thread_view) = view.read(cx).root_thread(cx) else {
+                    return true;
+                };
+                let thread = thread_view.read(cx).thread.read(cx);
+                thread.connection().supports_load_session() && thread.status() == ThreadStatus::Idle
+            })
+            .collect::<Vec<_>>();
+
+        const MAX_IDLE_BACKGROUND_THREADS: usize = 5;
+
+        potential_removals.sort_unstable_by_key(|(_, view)| view.read(cx).updated_at(cx));
+        let n = potential_removals
+            .len()
+            .saturating_sub(MAX_IDLE_BACKGROUND_THREADS);
+        let to_remove = potential_removals
+            .into_iter()
+            .map(|(id, _)| id.clone())
+            .take(n)
+            .collect::<Vec<_>>();
+        for id in to_remove {
+            self.background_threads.remove(&id);
+        }
     }
 
     pub(crate) fn active_native_agent_thread(&self, cx: &App) -> Option<Entity<agent::Thread>> {
@@ -3186,12 +3208,12 @@ impl AgentPanel {
             ActiveView::AgentThread { conversation_view } => {
                 let server_view_ref = conversation_view.read(cx);
                 let is_generating_title = server_view_ref.as_native_thread(cx).is_some()
-                    && server_view_ref.parent_thread(cx).map_or(false, |tv| {
+                    && server_view_ref.root_thread(cx).map_or(false, |tv| {
                         tv.read(cx).thread.read(cx).has_provisional_title()
                     });
 
                 if let Some(title_editor) = server_view_ref
-                    .parent_thread(cx)
+                    .root_thread(cx)
                     .map(|r| r.read(cx).title_editor.clone())
                 {
                     if is_generating_title {

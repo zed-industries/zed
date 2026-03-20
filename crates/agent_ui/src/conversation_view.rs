@@ -167,41 +167,45 @@ pub(crate) struct Conversation {
     /// Tracks the selected granularity index for each tool call's permission dropdown.
     /// The index corresponds to the position in the allow_options list.
     selected_permission_granularity: HashMap<acp::SessionId, HashMap<acp::ToolCallId, usize>>,
+    updated_at: Option<Instant>,
 }
 
 impl Conversation {
     pub fn register_thread(&mut self, thread: Entity<AcpThread>, cx: &mut Context<Self>) {
         let session_id = thread.read(cx).session_id().clone();
-        let subscription = cx.subscribe(&thread, move |this, _thread, event, _cx| match event {
-            AcpThreadEvent::ToolAuthorizationRequested(id) => {
-                this.permission_requests
-                    .entry(session_id.clone())
-                    .or_default()
-                    .push(id.clone());
-            }
-            AcpThreadEvent::ToolAuthorizationReceived(id) => {
-                if let Some(tool_calls) = this.permission_requests.get_mut(&session_id) {
-                    tool_calls.retain(|tool_call_id| tool_call_id != id);
-                    if tool_calls.is_empty() {
-                        this.permission_requests.shift_remove(&session_id);
+        let subscription = cx.subscribe(&thread, move |this, _thread, event, _cx| {
+            this.updated_at = Some(Instant::now());
+            match event {
+                AcpThreadEvent::ToolAuthorizationRequested(id) => {
+                    this.permission_requests
+                        .entry(session_id.clone())
+                        .or_default()
+                        .push(id.clone());
+                }
+                AcpThreadEvent::ToolAuthorizationReceived(id) => {
+                    if let Some(tool_calls) = this.permission_requests.get_mut(&session_id) {
+                        tool_calls.retain(|tool_call_id| tool_call_id != id);
+                        if tool_calls.is_empty() {
+                            this.permission_requests.shift_remove(&session_id);
+                        }
                     }
                 }
+                AcpThreadEvent::NewEntry
+                | AcpThreadEvent::TitleUpdated
+                | AcpThreadEvent::TokenUsageUpdated
+                | AcpThreadEvent::EntryUpdated(_)
+                | AcpThreadEvent::EntriesRemoved(_)
+                | AcpThreadEvent::Retry(_)
+                | AcpThreadEvent::SubagentSpawned(_)
+                | AcpThreadEvent::Stopped(_)
+                | AcpThreadEvent::Error
+                | AcpThreadEvent::LoadError(_)
+                | AcpThreadEvent::PromptCapabilitiesUpdated
+                | AcpThreadEvent::Refusal
+                | AcpThreadEvent::AvailableCommandsUpdated(_)
+                | AcpThreadEvent::ModeUpdated(_)
+                | AcpThreadEvent::ConfigOptionsUpdated(_) => {}
             }
-            AcpThreadEvent::NewEntry
-            | AcpThreadEvent::TitleUpdated
-            | AcpThreadEvent::TokenUsageUpdated
-            | AcpThreadEvent::EntryUpdated(_)
-            | AcpThreadEvent::EntriesRemoved(_)
-            | AcpThreadEvent::Retry(_)
-            | AcpThreadEvent::SubagentSpawned(_)
-            | AcpThreadEvent::Stopped(_)
-            | AcpThreadEvent::Error
-            | AcpThreadEvent::LoadError(_)
-            | AcpThreadEvent::PromptCapabilitiesUpdated
-            | AcpThreadEvent::Refusal
-            | AcpThreadEvent::AvailableCommandsUpdated(_)
-            | AcpThreadEvent::ModeUpdated(_)
-            | AcpThreadEvent::ConfigOptionsUpdated(_) => {}
         });
         self.subscriptions.push(subscription);
         self.threads
@@ -352,7 +356,7 @@ impl ConversationView {
             .pending_tool_call(id, cx)
     }
 
-    pub fn parent_thread(&self, cx: &App) -> Option<Entity<ThreadView>> {
+    pub fn root_thread(&self, cx: &App) -> Option<Entity<ThreadView>> {
         match &self.server_state {
             ServerState::Connected(connected) => {
                 let mut current = connected.active_view()?;
@@ -386,6 +390,11 @@ impl ConversationView {
             ServerState::Connected(connected) => Some(connected),
             _ => None,
         }
+    }
+
+    pub fn updated_at(&self, cx: &App) -> Option<Instant> {
+        self.as_connected()
+            .and_then(|connected| connected.conversation.read(cx).updated_at)
     }
 
     pub fn navigate_to_session(
@@ -1177,7 +1186,7 @@ impl ConversationView {
     pub fn parent_id(&self, cx: &App) -> Option<acp::SessionId> {
         match &self.server_state {
             ServerState::Connected(_) => self
-                .parent_thread(cx)
+                .root_thread(cx)
                 .map(|thread| thread.read(cx).id.clone()),
             ServerState::Loading(loading) => loading.read(cx).session_id.clone(),
             ServerState::LoadError { session_id, .. } => session_id.clone(),
