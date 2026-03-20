@@ -58,6 +58,13 @@ if [ "${1:-}" != "--no-build" ]; then
     echo ""
 fi
 
+# Print binary versions so it's obvious what we're testing
+echo "=== Binary versions ==="
+echo "  zed-binary:          $(stat -c '%y' "$SCRIPT_DIR/zed-binary" 2>/dev/null | cut -d. -f1)  $(md5sum "$SCRIPT_DIR/zed-binary" 2>/dev/null | cut -c1-12)"
+echo "  helix-ws-test-server: $(stat -c '%y' "$SCRIPT_DIR/helix-ws-test-server/helix-ws-test-server" 2>/dev/null | cut -d. -f1)  $(md5sum "$SCRIPT_DIR/helix-ws-test-server/helix-ws-test-server" 2>/dev/null | cut -c1-12)"
+echo "  slow-mcp-server:     $(stat -c '%y' "$SCRIPT_DIR/slow-mcp-server/slow-mcp-server" 2>/dev/null | cut -d. -f1)  $(md5sum "$SCRIPT_DIR/slow-mcp-server/slow-mcp-server" 2>/dev/null | cut -c1-12)"
+echo ""
+
 # Build Docker image
 echo "=== Building Docker image ==="
 cd "$SCRIPT_DIR"
