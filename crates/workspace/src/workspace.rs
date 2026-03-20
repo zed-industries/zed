@@ -6110,8 +6110,11 @@ impl Workspace {
         self.custom_name = name.clone();
         self.update_window_title(window, cx);
         if let Some(database_id) = self.database_id {
-            cx.background_spawn(persistence::DB.set_custom_name(database_id, name))
-                .detach_and_log_err(cx);
+            let db = WorkspaceDb::global(cx);
+            cx.background_spawn(async move {
+                db.set_custom_name(database_id, name).await.log_err();
+            })
+            .detach();
         }
         cx.notify();
     }

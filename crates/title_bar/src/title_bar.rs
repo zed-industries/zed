@@ -724,19 +724,13 @@ impl TitleBar {
     ) -> impl IntoElement {
         let workspace = self.workspace.clone();
 
-        let custom_name = self
-            .workspace
-            .upgrade()
-            .and_then(|w| w.read(cx).custom_name().map(|n| n.to_string()));
+        let custom_name = self.workspace.upgrade().and_then(|w| {
+            w.read(cx)
+                .custom_name()
+                .map(|n| SharedString::from(n.to_string()))
+        });
 
-        let name = if custom_name.is_some() {
-            custom_name.map(SharedString::from)
-        } else {
-            self.effective_active_worktree(cx).map(|worktree| {
-                let worktree = worktree.read(cx);
-                SharedString::from(worktree.root_name().as_unix_str().to_string())
-            })
-        };
+        let name = custom_name.or(name);
 
         let is_project_selected = name.is_some();
 

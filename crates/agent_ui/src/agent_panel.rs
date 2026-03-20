@@ -80,10 +80,9 @@ use ui::{
 };
 use util::{ResultExt as _, debug_panic};
 use workspace::{
-    AgentActivityStatus, AgentStatusProvider, CollaboratorId, DraggedSelection, DraggedSidebar,
-    DraggedTab, FocusWorkspaceSidebar, MultiWorkspace, OpenResult, PathList, SerializedPathList,
-    SIDEBAR_RESIZE_HANDLE_SIZE,
-    ToggleWorkspaceSidebar, ToggleZoom, ToolbarItemView, Workspace, WorkspaceId,
+    AgentActivityStatus, AgentStatusProvider, CollaboratorId, DraggedSelection, DraggedTab,
+    OpenResult, PathList, SerializedPathList, ToggleWorkspaceSidebar, ToggleZoom, ToolbarItemView,
+    Workspace, WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
 };
 
