@@ -222,7 +222,7 @@ pub fn clippy(platform: Platform, target: Option<&str>) -> Step<Run> {
 }
 
 pub fn install_rustup_target(target: &str) -> Step<Run> {
-    Step::new(format!("rustup target add {target}")).run(format!("rustup target add {target}"))
+    named::bash(format!("rustup target add {target}"))
 }
 
 pub fn cache_rust_dependencies_namespace() -> Step<Use> {
