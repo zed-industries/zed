@@ -1179,20 +1179,24 @@ impl Render for PanelButtons {
                 let workspace_for_menu = workspace.clone();
 
                 let is_active_button = Some(i) == active_index && is_open;
+                let is_project_panel_button = entry.panel.panel_key() == super::PROJECT_PANEL_KEY;
                 let (action, tooltip) = if is_active_button {
-                    let action = dock.toggle_action();
+                    if is_project_panel_button {
+                        let action = entry.panel.toggle_action(window, cx);
+                        (action, icon_tooltip.into())
+                    } else {
+                        let action = dock.toggle_action();
 
-                    let tooltip: SharedString =
-                        format!("Close {} Dock", dock.position.label()).into();
+                        let tooltip: SharedString =
+                            format!("Close {} Dock", dock.position.label()).into();
 
-                    (action, tooltip)
+                        (action, tooltip)
+                    }
                 } else {
                     let action = entry.panel.toggle_action(window, cx);
 
                     (action, icon_tooltip.into())
                 };
-
-                let focus_handle = dock.focus_handle(cx);
                 let icon_label = entry.panel.icon_label(window, cx);
 
                 Some(
@@ -1289,7 +1293,9 @@ impl Render for PanelButtons {
                                 .on_click({
                                     let action = action.boxed_clone();
                                     move |_, window, cx| {
-                                        window.focus(&focus_handle, cx);
+                                        // The project panel overlay keeps the underlying dock out of
+                                        // the rendered tree, so dispatch from the current focus
+                                        // instead of forcing focus onto the dock first.
                                         window.dispatch_action(action.boxed_clone(), cx)
                                     }
                                 })

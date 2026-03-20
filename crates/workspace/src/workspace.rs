@@ -12331,6 +12331,70 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn switching_panels_while_project_panel_overlay_open_works(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |multi_workspace, _| {
+            multi_workspace.workspace().clone()
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.register_action(|workspace, _: &dock::test::ToggleTestPanel, window, cx| {
+                workspace.toggle_panel_focus::<TestPanel>(window, cx);
+            });
+
+            let project_panel = cx.new(|cx| TestProjectPanel::new(DockPosition::Left, cx));
+            workspace.add_panel(project_panel, window, cx);
+
+            let other_panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 50, cx));
+            workspace.add_panel(other_panel, window, cx);
+
+            workspace.toggle_panel_visibility::<TestProjectPanel>(window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(workspace.project_panel_overlay_visible(cx));
+            window.dispatch_action(Box::new(dock::test::ToggleTestPanel), cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let visible_panel_key = workspace
+                .left_dock()
+                .read(cx)
+                .visible_panel()
+                .map(|panel| panel.panel_key().to_string());
+            let active_panel_key = workspace
+                .left_dock()
+                .read(cx)
+                .active_panel()
+                .map(|panel| panel.panel_key().to_string());
+            assert!(
+                !workspace.project_panel_overlay_visible(cx),
+                "Project overlay should close when another left-dock panel is activated. visible={visible_panel_key:?} active={active_panel_key:?}"
+            );
+
+            let visible_panel = workspace
+                .left_dock()
+                .read(cx)
+                .visible_panel()
+                .expect("left dock should have a visible panel");
+            assert_eq!(visible_panel.panel_key(), TestPanel::panel_key());
+            assert!(workspace.left_dock().read(cx).is_open());
+
+            let other_panel = workspace.panel::<TestPanel>(cx).expect("test panel exists");
+            assert!(other_panel.read(cx).focus_handle(cx).contains_focused(window, cx));
+        });
+    }
+
+    #[gpui::test]
     async fn test_close_panel_on_toggle(cx: &mut gpui::TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
