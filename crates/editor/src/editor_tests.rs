@@ -1414,13 +1414,13 @@ async fn test_fold_with_unindented_multiline_raw_string(cx: &mut TestAppContext)
 
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
     cx.set_state(indoc! {"
-        fn main() {
+        ˇfn main() {
             let s = r#\"
         a
         b
         c
         \"#;
-        }ˇ
+        }
     "});
 
     cx.update_editor(|editor, window, cx| {
@@ -1428,8 +1428,7 @@ async fn test_fold_with_unindented_multiline_raw_string(cx: &mut TestAppContext)
         assert_eq!(
             editor.display_text(cx),
             indoc! {"
-                fn main() {⋯
-                }
+                fn main() {⋯}
             "},
         );
     });
@@ -1464,12 +1463,12 @@ async fn test_fold_with_unindented_multiline_block_comment(cx: &mut TestAppConte
 
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
     cx.set_state(indoc! {"
-        fn main() {
+        ˇfn main() {
             let x = 1;
             /*
         unindented comment line
             */
-        }ˇ
+        }
     "});
 
     cx.update_editor(|editor, window, cx| {
@@ -1477,8 +1476,7 @@ async fn test_fold_with_unindented_multiline_block_comment(cx: &mut TestAppConte
         assert_eq!(
             editor.display_text(cx),
             indoc! {"
-                fn main() {⋯
-                }
+                fn main() {⋯}
             "},
         );
     });
