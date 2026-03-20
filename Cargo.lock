@@ -9944,6 +9944,7 @@ dependencies = [
  "smallvec",
  "ui",
  "util",
+ "webrtc-sys",
  "zed-scap",
 ]
 

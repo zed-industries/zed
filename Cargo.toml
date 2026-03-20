@@ -780,6 +780,7 @@ which = "6.0.0"
 wasm-bindgen = "0.2.113"
 web-time = "1.1.0"
 wgpu = { git = "https://github.com/zed-industries/wgpu", rev = "9459e95113c5bd116b2cc2c87e8424b28059e17c" }
+webrtc-sys = "0.3.23"
 windows-core = "0.61"
 yawc = "0.2.5"
 zeroize = "1.8"
@@ -849,6 +850,7 @@ windows-capture = { git = "https://github.com/zed-industries/windows-capture.git
 calloop = { git = "https://github.com/zed-industries/calloop" }
 livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "37835f840d0070d45ac8b31cce6a6ae7aca3f459" }
 libwebrtc = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "37835f840d0070d45ac8b31cce6a6ae7aca3f459" }
+webrtc-sys = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "c1209aa155cbf4543383774f884a46ae7e53ee2e" }
 
 [profile.dev]
 split-debuginfo = "unpacked"
