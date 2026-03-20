@@ -137,7 +137,6 @@ pub struct WgpuRenderer {
     max_texture_size: u32,
     last_error: Arc<Mutex<Option<String>>>,
     failed_frame_count: u32,
-    needs_reconfigure: bool,
     device_lost: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -468,7 +467,6 @@ impl WgpuRenderer {
             max_texture_size,
             last_error,
             failed_frame_count: 0,
-            needs_reconfigure: false,
             device_lost: context.device_lost_flag(),
         })
     }
@@ -1055,22 +1053,17 @@ impl WgpuRenderer {
 
         self.atlas.before_frame();
 
-        // deferred reconfigure from previous Suboptimal frame, to avoid
-        // configuring while the old surface texture was still alive
-        if self.needs_reconfigure {
-            self.needs_reconfigure = false;
-            let surface_config = self.surface_config.clone();
-            let resources = self.resources_mut();
-            resources
-                .surface
-                .configure(&resources.device, &surface_config);
-        }
-
         let frame = match self.resources().surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
-                self.needs_reconfigure = true;
-                frame
+                // Textures must be destroyed before the surface can be reconfigured.
+                drop(frame);
+                let surface_config = self.surface_config.clone();
+                let resources = self.resources_mut();
+                resources
+                    .surface
+                    .configure(&resources.device, &surface_config);
+                return;
             }
             wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
                 let surface_config = self.surface_config.clone();
