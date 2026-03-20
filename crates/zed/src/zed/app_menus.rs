@@ -31,6 +31,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
         MenuItem::action("Toggle All Docks", workspace::ToggleAllDocks),
         MenuItem::submenu(Menu {
             name: "Editor Layout".into(),
+            disabled: false,
             items: vec![
                 MenuItem::action("Split Up", workspace::SplitUp::default()),
                 MenuItem::action("Split Down", workspace::SplitDown::default()),
