@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
 
 use crate::{
-    CenteredPaddingSettings, DelayMs, DockPosition, DockSide, InactiveOpacity,
-    ScrollbarSettingsContent, ShowIndentGuides, serialize_optional_f32_with_two_decimal_places,
+    CenteredPaddingSettings, DelayMs, DockPosition, DockSide, InactiveOpacity, ShowIndentGuides,
+    ShowScrollbar, serialize_optional_f32_with_two_decimal_places,
 };
 
 #[with_fallible_options]
@@ -113,6 +113,12 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: true
     pub zoomed_padding: Option<bool>,
+    /// Whether toggling a panel (e.g. with its keyboard shortcut) also closes
+    /// the panel when it is already focused, instead of just moving focus back
+    /// to the editor.
+    ///
+    /// Default: false
+    pub close_panel_on_toggle: Option<bool>,
     /// What draws window decorations/titlebar, the client application (Zed) or display server
     /// Default: client
     pub window_decorations: Option<WindowDecorations>,
@@ -704,7 +710,7 @@ pub struct ProjectPanelSettingsContent {
     /// Default: true
     pub starts_open: Option<bool>,
     /// Scrollbar-related settings
-    pub scrollbar: Option<ScrollbarSettingsContent>,
+    pub scrollbar: Option<ProjectPanelScrollbarSettingsContent>,
     /// Which files containing diagnostic errors/warnings to mark in the project panel.
     ///
     /// Default: all
@@ -733,6 +739,10 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: directories_first
     pub sort_mode: Option<ProjectPanelSortMode>,
+    /// Whether to show error and warning count badges next to file names in the project panel.
+    ///
+    /// Default: true
+    pub diagnostic_badges: Option<bool>,
 }
 
 #[derive(
@@ -781,6 +791,23 @@ pub enum ProjectPanelSortMode {
     Mixed,
     /// Show files first, then directories
     FilesFirst,
+}
+
+#[with_fallible_options]
+#[derive(
+    Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq, Default,
+)]
+pub struct ProjectPanelScrollbarSettingsContent {
+    /// When to show the scrollbar in the project panel.
+    ///
+    /// Default: inherits editor scrollbar settings
+    pub show: Option<ShowScrollbar>,
+    /// Whether to allow horizontal scrolling in the project panel.
+    /// When false, the view is locked to the leftmost position and
+    /// long file names are clipped.
+    ///
+    /// Default: true
+    pub horizontal_scroll: Option<bool>,
 }
 
 #[with_fallible_options]

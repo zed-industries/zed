@@ -4,6 +4,7 @@ use context_server::ContextServerCommand;
 use dap::adapters::DebugAdapterName;
 use fs::Fs;
 use futures::StreamExt as _;
+use git::repository::DEFAULT_WORKTREE_DIRECTORY;
 use gpui::{AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Subscription, Task};
 use lsp::{DEFAULT_LSP_REQUEST_TIMEOUT_SECS, LanguageServerName};
 use paths::{
@@ -421,7 +422,7 @@ impl GoToDiagnosticSeverityFilter {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct GitSettings {
     /// Whether or not git integration is enabled.
     ///
@@ -454,6 +455,13 @@ pub struct GitSettings {
     ///
     /// Default: file_name_first
     pub path_style: GitPathStyle,
+    /// Directory where git worktrees are created, relative to the repository
+    /// working directory. When the resolved directory is outside the project
+    /// root, the project's directory name is automatically appended so that
+    /// sibling repos don't collide.
+    ///
+    /// Default: ../worktrees
+    pub worktree_directory: String,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -643,6 +651,10 @@ impl Settings for ProjectSettings {
             },
             hunk_style: git.hunk_style.unwrap(),
             path_style: git.path_style.unwrap().into(),
+            worktree_directory: git
+                .worktree_directory
+                .clone()
+                .unwrap_or_else(|| DEFAULT_WORKTREE_DIRECTORY.to_string()),
         };
         Self {
             context_servers: project
@@ -1395,35 +1407,38 @@ impl SettingsObserver {
         let (mut user_tasks_file_rx, watcher_task) =
             watch_config_file(cx.background_executor(), fs, file_path.clone());
         let user_tasks_content = cx.foreground_executor().block_on(user_tasks_file_rx.next());
-        let weak_entry = cx.weak_entity();
         cx.spawn(async move |settings_observer, cx| {
             let _watcher_task = watcher_task;
             let Ok(task_store) = settings_observer.read_with(cx, |settings_observer, _| {
-                settings_observer.task_store.clone()
+                settings_observer.task_store.downgrade()
             }) else {
                 return;
             };
             if let Some(user_tasks_content) = user_tasks_content {
-                task_store.update(cx, |task_store, cx| {
-                    task_store
-                        .update_user_tasks(
-                            TaskSettingsLocation::Global(&file_path),
-                            Some(&user_tasks_content),
-                            cx,
-                        )
-                        .log_err();
-                });
+                task_store
+                    .update(cx, |task_store, cx| {
+                        task_store
+                            .update_user_tasks(
+                                TaskSettingsLocation::Global(&file_path),
+                                Some(&user_tasks_content),
+                                cx,
+                            )
+                            .log_err();
+                    })
+                    .ok();
             }
             while let Some(user_tasks_content) = user_tasks_file_rx.next().await {
-                let result = task_store.update(cx, |task_store, cx| {
+                let Ok(result) = task_store.update(cx, |task_store, cx| {
                     task_store.update_user_tasks(
                         TaskSettingsLocation::Global(&file_path),
                         Some(&user_tasks_content),
                         cx,
                     )
-                });
+                }) else {
+                    continue;
+                };
 
-                weak_entry
+                settings_observer
                     .update(cx, |_, cx| match result {
                         Ok(()) => cx.emit(SettingsObserverEvent::LocalTasksUpdated(Ok(
                             file_path.clone()
@@ -1447,35 +1462,38 @@ impl SettingsObserver {
         let (mut user_tasks_file_rx, watcher_task) =
             watch_config_file(cx.background_executor(), fs, file_path.clone());
         let user_tasks_content = cx.foreground_executor().block_on(user_tasks_file_rx.next());
-        let weak_entry = cx.weak_entity();
         cx.spawn(async move |settings_observer, cx| {
             let _watcher_task = watcher_task;
             let Ok(task_store) = settings_observer.read_with(cx, |settings_observer, _| {
-                settings_observer.task_store.clone()
+                settings_observer.task_store.downgrade()
             }) else {
                 return;
             };
             if let Some(user_tasks_content) = user_tasks_content {
-                task_store.update(cx, |task_store, cx| {
-                    task_store
-                        .update_user_debug_scenarios(
-                            TaskSettingsLocation::Global(&file_path),
-                            Some(&user_tasks_content),
-                            cx,
-                        )
-                        .log_err();
-                });
+                task_store
+                    .update(cx, |task_store, cx| {
+                        task_store
+                            .update_user_debug_scenarios(
+                                TaskSettingsLocation::Global(&file_path),
+                                Some(&user_tasks_content),
+                                cx,
+                            )
+                            .log_err();
+                    })
+                    .ok();
             }
             while let Some(user_tasks_content) = user_tasks_file_rx.next().await {
-                let result = task_store.update(cx, |task_store, cx| {
+                let Ok(result) = task_store.update(cx, |task_store, cx| {
                     task_store.update_user_debug_scenarios(
                         TaskSettingsLocation::Global(&file_path),
                         Some(&user_tasks_content),
                         cx,
                     )
-                });
+                }) else {
+                    continue;
+                };
 
-                weak_entry
+                settings_observer
                     .update(cx, |_, cx| match result {
                         Ok(()) => cx.emit(SettingsObserverEvent::LocalDebugScenariosUpdated(Ok(
                             file_path.clone(),

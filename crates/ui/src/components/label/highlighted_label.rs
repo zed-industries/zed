@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use gpui::{FontWeight, HighlightStyle, StyledText};
+use gpui::{FontWeight, HighlightStyle, StyleRefinement, StyledText};
 
 use crate::{LabelCommon, LabelLike, LabelSize, LineHeightStyle, prelude::*};
 
@@ -35,6 +35,40 @@ impl HighlightedLabel {
 
     pub fn highlight_indices(&self) -> &[usize] {
         &self.highlight_indices
+    }
+}
+
+impl HighlightedLabel {
+    fn style(&mut self) -> &mut StyleRefinement {
+        self.base.base.style()
+    }
+
+    pub fn flex_1(mut self) -> Self {
+        self.style().flex_grow = Some(1.);
+        self.style().flex_shrink = Some(1.);
+        self.style().flex_basis = Some(gpui::relative(0.).into());
+        self
+    }
+
+    pub fn flex_none(mut self) -> Self {
+        self.style().flex_grow = Some(0.);
+        self.style().flex_shrink = Some(0.);
+        self
+    }
+
+    pub fn flex_grow(mut self) -> Self {
+        self.style().flex_grow = Some(1.);
+        self
+    }
+
+    pub fn flex_shrink(mut self) -> Self {
+        self.style().flex_shrink = Some(1.);
+        self
+    }
+
+    pub fn flex_shrink_0(mut self) -> Self {
+        self.style().flex_shrink = Some(0.);
+        self
     }
 }
 

@@ -323,7 +323,7 @@ impl ExampleInstance {
                 };
 
                 thread.update(cx, |thread, cx| {
-                    thread.add_default_tools(None, Rc::new(EvalThreadEnvironment {
+                    thread.add_default_tools(Rc::new(EvalThreadEnvironment {
                         project: project.clone(),
                     }), cx);
                     thread.set_profile(meta.profile_id.clone(), cx);
@@ -564,6 +564,7 @@ impl ExampleInstance {
                 stop: Vec::new(),
                 thinking_allowed: true,
                 thinking_effort: None,
+                speed: None,
             };
 
             let model = model.clone();
@@ -682,11 +683,7 @@ impl agent::ThreadEnvironment for EvalThreadEnvironment {
 
     fn create_subagent(
         &self,
-        _parent_thread: Entity<agent::Thread>,
         _label: String,
-        _initial_prompt: String,
-        _timeout_ms: Option<Duration>,
-        _allowed_tools: Option<Vec<String>>,
         _cx: &mut App,
     ) -> Result<Rc<dyn agent::SubagentHandle>> {
         unimplemented!()

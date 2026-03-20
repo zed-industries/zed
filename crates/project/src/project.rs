@@ -43,12 +43,11 @@ use crate::{
     worktree_store::WorktreeIdCounter,
 };
 pub use agent_registry_store::{AgentRegistryStore, RegistryAgent};
-pub use agent_server_store::{
-    AgentServerStore, AgentServersUpdated, ExternalAgentServerName, ExternalAgentSource,
-};
+pub use agent_server_store::{AgentId, AgentServerStore, AgentServersUpdated, ExternalAgentSource};
 pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
+    linked_worktree_short_name, worktrees_directory_for_repo,
 };
 pub use manifest_tree::ManifestTree;
 pub use project_search::{Search, SearchResults};
@@ -1943,6 +1942,11 @@ impl Project {
     }
 
     #[cfg(feature = "test-support")]
+    pub fn client_subscriptions(&self) -> &Vec<client::Subscription> {
+        &self.client_subscriptions
+    }
+
+    #[cfg(feature = "test-support")]
     pub async fn example(
         root_paths: impl IntoIterator<Item = &Path>,
         cx: &mut AsyncApp,
@@ -2343,14 +2347,12 @@ impl Project {
     pub fn visibility_for_paths(
         &self,
         paths: &[PathBuf],
-        metadatas: &[Metadata],
         exclude_sub_dirs: bool,
         cx: &App,
     ) -> Option<bool> {
         paths
             .iter()
-            .zip(metadatas)
-            .map(|(path, metadata)| self.visibility_for_path(path, metadata, exclude_sub_dirs, cx))
+            .map(|path| self.visibility_for_path(path, exclude_sub_dirs, cx))
             .max()
             .flatten()
     }
@@ -2358,17 +2360,26 @@ impl Project {
     pub fn visibility_for_path(
         &self,
         path: &Path,
-        metadata: &Metadata,
         exclude_sub_dirs: bool,
         cx: &App,
     ) -> Option<bool> {
         let path = SanitizedPath::new(path).as_path();
+        let path_style = self.path_style(cx);
         self.worktrees(cx)
             .filter_map(|worktree| {
                 let worktree = worktree.read(cx);
-                let abs_path = worktree.as_local()?.abs_path();
-                let contains = path == abs_path.as_ref()
-                    || (path.starts_with(abs_path) && (!exclude_sub_dirs || !metadata.is_dir));
+                let abs_path = worktree.abs_path();
+                let relative_path = path_style.strip_prefix(path, abs_path.as_ref());
+                let is_dir = relative_path
+                    .as_ref()
+                    .and_then(|p| worktree.entry_for_path(p))
+                    .is_some_and(|e| e.is_dir());
+                // Don't exclude the worktree root itself, only actual subdirectories
+                let is_subdir = relative_path
+                    .as_ref()
+                    .is_some_and(|p| !p.as_ref().as_unix_str().is_empty());
+                let contains =
+                    relative_path.is_some() && (!exclude_sub_dirs || !is_dir || !is_subdir);
                 contains.then(|| worktree.is_visible())
             })
             .max()
@@ -2734,6 +2745,7 @@ impl Project {
         } = &mut self.client_state
         {
             *sharing_has_stopped = true;
+            self.client_subscriptions.clear();
             self.collaborators.clear();
             self.worktree_store.update(cx, |store, cx| {
                 store.disconnected_from_host(cx);
@@ -3623,11 +3635,11 @@ impl Project {
         event: &BufferEvent,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        if matches!(event, BufferEvent::Edited | BufferEvent::Reloaded) {
+        if matches!(event, BufferEvent::Edited { .. } | BufferEvent::Reloaded) {
             self.request_buffer_diff_recalculation(&buffer, cx);
         }
 
-        if matches!(event, BufferEvent::Edited) {
+        if matches!(event, BufferEvent::Edited { .. }) {
             cx.emit(Event::BufferEdited);
         }
 
@@ -5486,25 +5498,51 @@ impl Project {
                     let key = (worktree_id, path);
                     log::debug!("handle_create_file_for_peer: looking up key={:?}", key);
 
-                    let mut files = downloading_files.lock();
-                    log::trace!(
-                        "handle_create_file_for_peer: current downloading_files keys: {:?}",
-                        files.keys().collect::<Vec<_>>()
-                    );
+                    let empty_file_destination: Option<PathBuf> = {
+                        let mut files = downloading_files.lock();
+                        log::trace!(
+                            "handle_create_file_for_peer: current downloading_files keys: {:?}",
+                            files.keys().collect::<Vec<_>>()
+                        );
 
-                    if let Some(file_entry) = files.get_mut(&key) {
-                        file_entry.total_size = state.content_size;
-                        file_entry.file_id = Some(state.id);
+                        if let Some(file_entry) = files.get_mut(&key) {
+                            file_entry.total_size = state.content_size;
+                            file_entry.file_id = Some(state.id);
+                            log::debug!(
+                                "handle_create_file_for_peer: updated file entry: total_size={}, file_id={}",
+                                state.content_size,
+                                state.id
+                            );
+                        } else {
+                            log::warn!(
+                                "handle_create_file_for_peer: key={:?} not found in downloading_files",
+                                key
+                            );
+                        }
+
+                        if state.content_size == 0 {
+                            // No chunks will arrive for an empty file; write it now.
+                            files.remove(&key).map(|entry| entry.destination_path)
+                        } else {
+                            None
+                        }
+                    };
+
+                    if let Some(destination) = empty_file_destination {
                         log::debug!(
-                            "handle_create_file_for_peer: updated file entry: total_size={}, file_id={}",
-                            state.content_size,
-                            state.id
+                            "handle_create_file_for_peer: writing empty file to {:?}",
+                            destination
                         );
-                    } else {
-                        log::warn!(
-                            "handle_create_file_for_peer: key={:?} not found in downloading_files",
-                            key
-                        );
+                        match smol::fs::write(&destination, &[] as &[u8]).await {
+                            Ok(_) => log::info!(
+                                "handle_create_file_for_peer: successfully wrote file to {:?}",
+                                destination
+                            ),
+                            Err(e) => log::error!(
+                                "handle_create_file_for_peer: failed to write empty file: {:?}",
+                                e
+                            ),
+                        }
                     }
                 } else {
                     log::warn!("handle_create_file_for_peer: State has no file field");

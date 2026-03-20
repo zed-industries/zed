@@ -11,9 +11,9 @@ You can use custom keybindings, multiple cursors, and all the standard editing f
 ## Text Threads vs. Threads
 
 Text Threads were Zed's original AI interface.
-In May 2025, Zed introduced the current [Agent Panel](./agent-panel.md), optimized for agentic workflows.
+In May 2025, Zed introduced the current [Agent Panel](./agent-panel.md), designed for agentic workflows.
 
-The key difference: text threads don't support tool calls and many other more moden agentic features.
+The key difference: text threads don't support tool calls and many other more modern agentic features.
 They can't autonomously read files, write code, or run commands on your behalf.
 Text Threads are for simpler conversational interactions where you send text and receive text responses back.
 
@@ -203,7 +203,7 @@ Title: Zed-Flavored Rust
 
 _The text in parentheses above are comments and are not part of the rule._
 
-> **Note:** While you technically _can_ nest a rule within itself, we wouldn't recommend it (in the strongest of terms.) Use at your own risk!
+> **Note:** You can technically nest a rule within itself, but we don't recommend doing so.
 
 By using nested rules, you can create modular and reusable rule components that can be combined in various ways to suit different scenarios.
 

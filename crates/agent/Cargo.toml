@@ -100,9 +100,9 @@ rand.workspace = true
 reqwest_client.workspace = true
 settings = { workspace = true, "features" = ["test-support"] }
 tempfile.workspace = true
-terminal = { workspace = true, "features" = ["test-support"] }
+
 theme = { workspace = true, "features" = ["test-support"] }
-tree-sitter-rust.workspace = true
+
 unindent = { workspace = true }
-worktree = { workspace = true, "features" = ["test-support"] }
+
 zlog.workspace = true

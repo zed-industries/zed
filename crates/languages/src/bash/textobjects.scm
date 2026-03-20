@@ -2,6 +2,6 @@
   body: (_
     "{"
     (_)* @function.inside
-    "}" )) @function.around
+    "}")) @function.around
 
 (comment) @comment.around

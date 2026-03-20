@@ -1,7 +1,24 @@
 use brush_parser::ast;
+use brush_parser::ast::SourceLocation;
 use brush_parser::word::WordPiece;
 use brush_parser::{Parser, ParserOptions, SourceInfo};
 use std::io::BufReader;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalCommandPrefix {
+    pub normalized: String,
+    pub display: String,
+    pub tokens: Vec<String>,
+    pub command: String,
+    pub subcommand: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TerminalCommandValidation {
+    Safe,
+    Unsafe,
+    Unsupported,
+}
 
 pub fn extract_commands(command: &str) -> Option<Vec<String>> {
     let reader = BufReader::new(command.as_bytes());
@@ -15,6 +32,444 @@ pub fn extract_commands(command: &str) -> Option<Vec<String>> {
     extract_commands_from_program(&program, &mut commands)?;
 
     Some(commands)
+}
+
+pub fn extract_terminal_command_prefix(command: &str) -> Option<TerminalCommandPrefix> {
+    let reader = BufReader::new(command.as_bytes());
+    let options = ParserOptions::default();
+    let source_info = SourceInfo::default();
+    let mut parser = Parser::new(reader, &options, &source_info);
+
+    let program = parser.parse_program().ok()?;
+    let simple_command = first_simple_command(&program)?;
+
+    let mut normalized_tokens = Vec::new();
+    let mut display_start = None;
+    let mut display_end = None;
+
+    if let Some(prefix) = &simple_command.prefix {
+        for item in &prefix.0 {
+            if let ast::CommandPrefixOrSuffixItem::AssignmentWord(assignment, word) = item {
+                match normalize_assignment_for_command_prefix(assignment, word)? {
+                    NormalizedAssignment::Included(normalized_assignment) => {
+                        normalized_tokens.push(normalized_assignment);
+                        update_display_bounds(&mut display_start, &mut display_end, word);
+                    }
+                    NormalizedAssignment::Skipped => {}
+                }
+            }
+        }
+    }
+
+    let command_word = simple_command.word_or_name.as_ref()?;
+    let command_name = normalize_word(command_word)?;
+    normalized_tokens.push(command_name.clone());
+    update_display_bounds(&mut display_start, &mut display_end, command_word);
+
+    let mut subcommand = None;
+    if let Some(suffix) = &simple_command.suffix {
+        for item in &suffix.0 {
+            match item {
+                ast::CommandPrefixOrSuffixItem::IoRedirect(_) => continue,
+                ast::CommandPrefixOrSuffixItem::Word(word) => {
+                    let normalized_word = normalize_word(word)?;
+                    if !normalized_word.starts_with('-') {
+                        subcommand = Some(normalized_word.clone());
+                        normalized_tokens.push(normalized_word);
+                        update_display_bounds(&mut display_start, &mut display_end, word);
+                    }
+                    break;
+                }
+                _ => break,
+            }
+        }
+    }
+
+    let start = display_start?;
+    let end = display_end?;
+    let display = command.get(start..end)?.to_string();
+
+    Some(TerminalCommandPrefix {
+        normalized: normalized_tokens.join(" "),
+        display,
+        tokens: normalized_tokens,
+        command: command_name,
+        subcommand,
+    })
+}
+
+pub fn validate_terminal_command(command: &str) -> TerminalCommandValidation {
+    let reader = BufReader::new(command.as_bytes());
+    let options = ParserOptions::default();
+    let source_info = SourceInfo::default();
+    let mut parser = Parser::new(reader, &options, &source_info);
+
+    let program = match parser.parse_program() {
+        Ok(program) => program,
+        Err(_) => return TerminalCommandValidation::Unsupported,
+    };
+
+    match program_validation(&program) {
+        TerminalProgramValidation::Safe => TerminalCommandValidation::Safe,
+        TerminalProgramValidation::Unsafe => TerminalCommandValidation::Unsafe,
+        TerminalProgramValidation::Unsupported => TerminalCommandValidation::Unsupported,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TerminalProgramValidation {
+    Safe,
+    Unsafe,
+    Unsupported,
+}
+
+fn first_simple_command(program: &ast::Program) -> Option<&ast::SimpleCommand> {
+    let complete_command = program.complete_commands.first()?;
+    let compound_list_item = complete_command.0.first()?;
+    let command = compound_list_item.0.first.seq.first()?;
+
+    match command {
+        ast::Command::Simple(simple_command) => Some(simple_command),
+        _ => None,
+    }
+}
+
+fn update_display_bounds(start: &mut Option<usize>, end: &mut Option<usize>, word: &ast::Word) {
+    if let Some(location) = word.location() {
+        let word_start = location.start.index;
+        let word_end = location.end.index;
+        *start = Some(start.map_or(word_start, |current| current.min(word_start)));
+        *end = Some(end.map_or(word_end, |current| current.max(word_end)));
+    }
+}
+
+enum NormalizedAssignment {
+    Included(String),
+    Skipped,
+}
+
+fn normalize_assignment_for_command_prefix(
+    assignment: &ast::Assignment,
+    word: &ast::Word,
+) -> Option<NormalizedAssignment> {
+    let operator = if assignment.append { "+=" } else { "=" };
+    let assignment_prefix = format!("{}{}", assignment.name, operator);
+
+    match &assignment.value {
+        ast::AssignmentValue::Scalar(value) => {
+            let normalized_value = normalize_word(value)?;
+            let raw_value = word.value.strip_prefix(&assignment_prefix)?;
+            let rendered_value = if shell_value_requires_quoting(&normalized_value) {
+                raw_value.to_string()
+            } else {
+                normalized_value
+            };
+
+            Some(NormalizedAssignment::Included(format!(
+                "{assignment_prefix}{rendered_value}"
+            )))
+        }
+        ast::AssignmentValue::Array(_) => Some(NormalizedAssignment::Skipped),
+    }
+}
+
+fn shell_value_requires_quoting(value: &str) -> bool {
+    value.chars().any(|character| {
+        character.is_whitespace()
+            || !matches!(
+                character,
+                'a'..='z'
+                    | 'A'..='Z'
+                    | '0'..='9'
+                    | '_'
+                    | '@'
+                    | '%'
+                    | '+'
+                    | '='
+                    | ':'
+                    | ','
+                    | '.'
+                    | '/'
+                    | '-'
+            )
+    })
+}
+
+fn program_validation(program: &ast::Program) -> TerminalProgramValidation {
+    combine_validations(
+        program
+            .complete_commands
+            .iter()
+            .map(compound_list_validation),
+    )
+}
+
+fn compound_list_validation(compound_list: &ast::CompoundList) -> TerminalProgramValidation {
+    combine_validations(
+        compound_list
+            .0
+            .iter()
+            .map(|item| and_or_list_validation(&item.0)),
+    )
+}
+
+fn and_or_list_validation(and_or_list: &ast::AndOrList) -> TerminalProgramValidation {
+    combine_validations(
+        std::iter::once(pipeline_validation(&and_or_list.first)).chain(
+            and_or_list.additional.iter().map(|and_or| match and_or {
+                ast::AndOr::And(pipeline) | ast::AndOr::Or(pipeline) => {
+                    pipeline_validation(pipeline)
+                }
+            }),
+        ),
+    )
+}
+
+fn pipeline_validation(pipeline: &ast::Pipeline) -> TerminalProgramValidation {
+    combine_validations(pipeline.seq.iter().map(command_validation))
+}
+
+fn command_validation(command: &ast::Command) -> TerminalProgramValidation {
+    match command {
+        ast::Command::Simple(simple_command) => simple_command_validation(simple_command),
+        ast::Command::Compound(compound_command, redirect_list) => combine_validations(
+            std::iter::once(compound_command_validation(compound_command))
+                .chain(redirect_list.iter().map(redirect_list_validation)),
+        ),
+        ast::Command::Function(function_definition) => {
+            function_body_validation(&function_definition.body)
+        }
+        ast::Command::ExtendedTest(test_expr) => extended_test_expr_validation(test_expr),
+    }
+}
+
+fn simple_command_validation(simple_command: &ast::SimpleCommand) -> TerminalProgramValidation {
+    combine_validations(
+        simple_command
+            .prefix
+            .iter()
+            .map(command_prefix_validation)
+            .chain(simple_command.word_or_name.iter().map(word_validation))
+            .chain(simple_command.suffix.iter().map(command_suffix_validation)),
+    )
+}
+
+fn command_prefix_validation(prefix: &ast::CommandPrefix) -> TerminalProgramValidation {
+    combine_validations(prefix.0.iter().map(prefix_or_suffix_item_validation))
+}
+
+fn command_suffix_validation(suffix: &ast::CommandSuffix) -> TerminalProgramValidation {
+    combine_validations(suffix.0.iter().map(prefix_or_suffix_item_validation))
+}
+
+fn prefix_or_suffix_item_validation(
+    item: &ast::CommandPrefixOrSuffixItem,
+) -> TerminalProgramValidation {
+    match item {
+        ast::CommandPrefixOrSuffixItem::IoRedirect(redirect) => io_redirect_validation(redirect),
+        ast::CommandPrefixOrSuffixItem::Word(word) => word_validation(word),
+        ast::CommandPrefixOrSuffixItem::AssignmentWord(assignment, word) => {
+            combine_validations([assignment_validation(assignment), word_validation(word)])
+        }
+        ast::CommandPrefixOrSuffixItem::ProcessSubstitution(_, _) => {
+            TerminalProgramValidation::Unsafe
+        }
+    }
+}
+
+fn io_redirect_validation(redirect: &ast::IoRedirect) -> TerminalProgramValidation {
+    match redirect {
+        ast::IoRedirect::File(_, _, target) => match target {
+            ast::IoFileRedirectTarget::Filename(word) => word_validation(word),
+            ast::IoFileRedirectTarget::ProcessSubstitution(_, _) => {
+                TerminalProgramValidation::Unsafe
+            }
+            _ => TerminalProgramValidation::Safe,
+        },
+        ast::IoRedirect::HereDocument(_, here_doc) => {
+            if here_doc.requires_expansion {
+                word_validation(&here_doc.doc)
+            } else {
+                TerminalProgramValidation::Safe
+            }
+        }
+        ast::IoRedirect::HereString(_, word) | ast::IoRedirect::OutputAndError(word, _) => {
+            word_validation(word)
+        }
+    }
+}
+
+fn assignment_validation(assignment: &ast::Assignment) -> TerminalProgramValidation {
+    match &assignment.value {
+        ast::AssignmentValue::Scalar(word) => word_validation(word),
+        ast::AssignmentValue::Array(words) => {
+            combine_validations(words.iter().flat_map(|(key, value)| {
+                key.iter()
+                    .map(word_validation)
+                    .chain(std::iter::once(word_validation(value)))
+            }))
+        }
+    }
+}
+
+fn word_validation(word: &ast::Word) -> TerminalProgramValidation {
+    let options = ParserOptions::default();
+    let pieces = match brush_parser::word::parse(&word.value, &options) {
+        Ok(pieces) => pieces,
+        Err(_) => return TerminalProgramValidation::Unsupported,
+    };
+
+    combine_validations(
+        pieces
+            .iter()
+            .map(|piece_with_source| word_piece_validation(&piece_with_source.piece)),
+    )
+}
+
+fn word_piece_validation(piece: &WordPiece) -> TerminalProgramValidation {
+    match piece {
+        WordPiece::Text(_)
+        | WordPiece::SingleQuotedText(_)
+        | WordPiece::AnsiCQuotedText(_)
+        | WordPiece::EscapeSequence(_)
+        | WordPiece::TildePrefix(_) => TerminalProgramValidation::Safe,
+        WordPiece::DoubleQuotedSequence(pieces)
+        | WordPiece::GettextDoubleQuotedSequence(pieces) => combine_validations(
+            pieces
+                .iter()
+                .map(|inner| word_piece_validation(&inner.piece)),
+        ),
+        WordPiece::ParameterExpansion(_) | WordPiece::ArithmeticExpression(_) => {
+            TerminalProgramValidation::Unsafe
+        }
+        WordPiece::CommandSubstitution(command)
+        | WordPiece::BackquotedCommandSubstitution(command) => {
+            let reader = BufReader::new(command.as_bytes());
+            let options = ParserOptions::default();
+            let source_info = SourceInfo::default();
+            let mut parser = Parser::new(reader, &options, &source_info);
+
+            match parser.parse_program() {
+                Ok(_) => TerminalProgramValidation::Unsafe,
+                Err(_) => TerminalProgramValidation::Unsupported,
+            }
+        }
+    }
+}
+
+fn compound_command_validation(
+    compound_command: &ast::CompoundCommand,
+) -> TerminalProgramValidation {
+    match compound_command {
+        ast::CompoundCommand::BraceGroup(brace_group) => {
+            compound_list_validation(&brace_group.list)
+        }
+        ast::CompoundCommand::Subshell(subshell) => compound_list_validation(&subshell.list),
+        ast::CompoundCommand::ForClause(for_clause) => combine_validations(
+            for_clause
+                .values
+                .iter()
+                .flat_map(|values| values.iter().map(word_validation))
+                .chain(std::iter::once(do_group_validation(&for_clause.body))),
+        ),
+        ast::CompoundCommand::CaseClause(case_clause) => combine_validations(
+            std::iter::once(word_validation(&case_clause.value))
+                .chain(
+                    case_clause
+                        .cases
+                        .iter()
+                        .flat_map(|item| item.cmd.iter().map(compound_list_validation)),
+                )
+                .chain(
+                    case_clause
+                        .cases
+                        .iter()
+                        .flat_map(|item| item.patterns.iter().map(word_validation)),
+                ),
+        ),
+        ast::CompoundCommand::IfClause(if_clause) => combine_validations(
+            std::iter::once(compound_list_validation(&if_clause.condition))
+                .chain(std::iter::once(compound_list_validation(&if_clause.then)))
+                .chain(if_clause.elses.iter().flat_map(|elses| {
+                    elses.iter().flat_map(|else_item| {
+                        else_item
+                            .condition
+                            .iter()
+                            .map(compound_list_validation)
+                            .chain(std::iter::once(compound_list_validation(&else_item.body)))
+                    })
+                })),
+        ),
+        ast::CompoundCommand::WhileClause(while_clause)
+        | ast::CompoundCommand::UntilClause(while_clause) => combine_validations([
+            compound_list_validation(&while_clause.0),
+            do_group_validation(&while_clause.1),
+        ]),
+        ast::CompoundCommand::ArithmeticForClause(_) => TerminalProgramValidation::Unsafe,
+        ast::CompoundCommand::Arithmetic(_) => TerminalProgramValidation::Unsafe,
+    }
+}
+
+fn do_group_validation(do_group: &ast::DoGroupCommand) -> TerminalProgramValidation {
+    compound_list_validation(&do_group.list)
+}
+
+fn function_body_validation(function_body: &ast::FunctionBody) -> TerminalProgramValidation {
+    combine_validations(
+        std::iter::once(compound_command_validation(&function_body.0))
+            .chain(function_body.1.iter().map(redirect_list_validation)),
+    )
+}
+
+fn redirect_list_validation(redirect_list: &ast::RedirectList) -> TerminalProgramValidation {
+    combine_validations(redirect_list.0.iter().map(io_redirect_validation))
+}
+
+fn extended_test_expr_validation(
+    test_expr: &ast::ExtendedTestExprCommand,
+) -> TerminalProgramValidation {
+    extended_test_expr_inner_validation(&test_expr.expr)
+}
+
+fn extended_test_expr_inner_validation(expr: &ast::ExtendedTestExpr) -> TerminalProgramValidation {
+    match expr {
+        ast::ExtendedTestExpr::Not(inner) | ast::ExtendedTestExpr::Parenthesized(inner) => {
+            extended_test_expr_inner_validation(inner)
+        }
+        ast::ExtendedTestExpr::And(left, right) | ast::ExtendedTestExpr::Or(left, right) => {
+            combine_validations([
+                extended_test_expr_inner_validation(left),
+                extended_test_expr_inner_validation(right),
+            ])
+        }
+        ast::ExtendedTestExpr::UnaryTest(_, word) => word_validation(word),
+        ast::ExtendedTestExpr::BinaryTest(_, left, right) => {
+            combine_validations([word_validation(left), word_validation(right)])
+        }
+    }
+}
+
+fn combine_validations(
+    validations: impl IntoIterator<Item = TerminalProgramValidation>,
+) -> TerminalProgramValidation {
+    let mut saw_unsafe = false;
+    let mut saw_unsupported = false;
+
+    for validation in validations {
+        match validation {
+            TerminalProgramValidation::Unsupported => saw_unsupported = true,
+            TerminalProgramValidation::Unsafe => saw_unsafe = true,
+            TerminalProgramValidation::Safe => {}
+        }
+    }
+
+    if saw_unsafe {
+        TerminalProgramValidation::Unsafe
+    } else if saw_unsupported {
+        TerminalProgramValidation::Unsupported
+    } else {
+        TerminalProgramValidation::Safe
+    }
 }
 
 fn extract_commands_from_program(program: &ast::Program, commands: &mut Vec<String>) -> Option<()> {
@@ -117,12 +572,26 @@ fn extract_commands_from_simple_command(
 
     if let Some(prefix) = &simple_command.prefix {
         for item in &prefix.0 {
-            if let ast::CommandPrefixOrSuffixItem::IoRedirect(redirect) = item {
-                match normalize_io_redirect(redirect) {
-                    Some(RedirectNormalization::Normalized(s)) => redirects.push(s),
-                    Some(RedirectNormalization::Skip) => {}
-                    None => return None,
+            match item {
+                ast::CommandPrefixOrSuffixItem::IoRedirect(redirect) => {
+                    match normalize_io_redirect(redirect) {
+                        Some(RedirectNormalization::Normalized(s)) => redirects.push(s),
+                        Some(RedirectNormalization::Skip) => {}
+                        None => return None,
+                    }
                 }
+                ast::CommandPrefixOrSuffixItem::AssignmentWord(assignment, word) => {
+                    match normalize_assignment_for_command_prefix(assignment, word)? {
+                        NormalizedAssignment::Included(normalized_assignment) => {
+                            words.push(normalized_assignment);
+                        }
+                        NormalizedAssignment::Skipped => {}
+                    }
+                }
+                ast::CommandPrefixOrSuffixItem::Word(word) => {
+                    words.push(normalize_word(word)?);
+                }
+                ast::CommandPrefixOrSuffixItem::ProcessSubstitution(_, _) => return None,
             }
         }
     }
@@ -142,7 +611,15 @@ fn extract_commands_from_simple_command(
                         None => return None,
                     }
                 }
-                _ => {}
+                ast::CommandPrefixOrSuffixItem::AssignmentWord(assignment, word) => {
+                    match normalize_assignment_for_command_prefix(assignment, word)? {
+                        NormalizedAssignment::Included(normalized_assignment) => {
+                            words.push(normalized_assignment);
+                        }
+                        NormalizedAssignment::Skipped => {}
+                    }
+                }
+                ast::CommandPrefixOrSuffixItem::ProcessSubstitution(_, _) => {}
             }
         }
     }
@@ -232,6 +709,10 @@ fn normalize_word_piece_into(
     Some(())
 }
 
+fn is_known_safe_redirect_target(normalized_target: &str) -> bool {
+    normalized_target == "/dev/null"
+}
+
 fn normalize_io_redirect(redirect: &ast::IoRedirect) -> Option<RedirectNormalization> {
     match redirect {
         ast::IoRedirect::File(fd, kind, target) => {
@@ -257,6 +738,9 @@ fn normalize_io_redirect(redirect: &ast::IoRedirect) -> Option<RedirectNormaliza
                 None => String::new(),
             };
             let normalized = normalize_word(target_word)?;
+            if is_known_safe_redirect_target(&normalized) {
+                return Some(RedirectNormalization::Skip);
+            }
             Some(RedirectNormalization::Normalized(format!(
                 "{}{} {}",
                 fd_prefix, operator, normalized
@@ -265,6 +749,9 @@ fn normalize_io_redirect(redirect: &ast::IoRedirect) -> Option<RedirectNormaliza
         ast::IoRedirect::OutputAndError(word, append) => {
             let operator = if *append { "&>>" } else { "&>" };
             let normalized = normalize_word(word)?;
+            if is_known_safe_redirect_target(&normalized) {
+                return Some(RedirectNormalization::Skip);
+            }
             Some(RedirectNormalization::Normalized(format!(
                 "{} {}",
                 operator, normalized
@@ -896,7 +1383,7 @@ mod tests {
     #[test]
     fn test_pipe_with_stderr_redirect_on_first_command() {
         let commands = extract_commands("ls 2>/dev/null | grep foo").expect("parse failed");
-        assert_eq!(commands, vec!["ls", "2> /dev/null", "grep foo"]);
+        assert_eq!(commands, vec!["ls", "grep foo"]);
     }
 
     #[test]
@@ -989,5 +1476,282 @@ mod tests {
         let commands = extract_commands("{ cat; } > >(tee /tmp/log)").expect("parse failed");
         assert!(commands.contains(&"cat".to_string()));
         assert!(commands.contains(&"tee /tmp/log".to_string()));
+    }
+
+    #[test]
+    fn test_redirect_to_dev_null_skipped() {
+        let commands = extract_commands("cmd > /dev/null").expect("parse failed");
+        assert_eq!(commands, vec!["cmd"]);
+    }
+
+    #[test]
+    fn test_stderr_redirect_to_dev_null_skipped() {
+        let commands = extract_commands("cmd 2>/dev/null").expect("parse failed");
+        assert_eq!(commands, vec!["cmd"]);
+    }
+
+    #[test]
+    fn test_stderr_redirect_to_dev_null_with_space_skipped() {
+        let commands = extract_commands("cmd 2> /dev/null").expect("parse failed");
+        assert_eq!(commands, vec!["cmd"]);
+    }
+
+    #[test]
+    fn test_append_redirect_to_dev_null_skipped() {
+        let commands = extract_commands("cmd >> /dev/null").expect("parse failed");
+        assert_eq!(commands, vec!["cmd"]);
+    }
+
+    #[test]
+    fn test_output_and_error_redirect_to_dev_null_skipped() {
+        let commands = extract_commands("cmd &>/dev/null").expect("parse failed");
+        assert_eq!(commands, vec!["cmd"]);
+    }
+
+    #[test]
+    fn test_append_output_and_error_redirect_to_dev_null_skipped() {
+        let commands = extract_commands("cmd &>>/dev/null").expect("parse failed");
+        assert_eq!(commands, vec!["cmd"]);
+    }
+
+    #[test]
+    fn test_quoted_dev_null_redirect_skipped() {
+        let commands = extract_commands("cmd 2>'/dev/null'").expect("parse failed");
+        assert_eq!(commands, vec!["cmd"]);
+    }
+
+    #[test]
+    fn test_redirect_to_real_file_still_included() {
+        let commands = extract_commands("echo hello > /etc/passwd").expect("parse failed");
+        assert_eq!(commands, vec!["echo hello", "> /etc/passwd"]);
+    }
+
+    #[test]
+    fn test_dev_null_redirect_in_chained_command() {
+        let commands =
+            extract_commands("git log 2>/dev/null || echo fallback").expect("parse failed");
+        assert_eq!(commands, vec!["git log", "echo fallback"]);
+    }
+
+    #[test]
+    fn test_mixed_safe_and_unsafe_redirects() {
+        let commands = extract_commands("cmd > /tmp/out 2>/dev/null").expect("parse failed");
+        assert_eq!(commands, vec!["cmd", "> /tmp/out"]);
+    }
+
+    #[test]
+    fn test_scalar_env_var_prefix_included_in_extracted_command() {
+        let commands = extract_commands("PAGER=blah git status").expect("parse failed");
+        assert_eq!(commands, vec!["PAGER=blah git status"]);
+    }
+
+    #[test]
+    fn test_multiple_scalar_assignments_preserved_in_order() {
+        let commands = extract_commands("A=1 B=2 git log").expect("parse failed");
+        assert_eq!(commands, vec!["A=1 B=2 git log"]);
+    }
+
+    #[test]
+    fn test_assignment_quoting_dropped_when_safe() {
+        let commands = extract_commands("PAGER='curl' git log").expect("parse failed");
+        assert_eq!(commands, vec!["PAGER=curl git log"]);
+    }
+
+    #[test]
+    fn test_assignment_quoting_preserved_for_whitespace() {
+        let commands = extract_commands("PAGER='less -R' git log").expect("parse failed");
+        assert_eq!(commands, vec!["PAGER='less -R' git log"]);
+    }
+
+    #[test]
+    fn test_assignment_quoting_preserved_for_semicolon() {
+        let commands = extract_commands("PAGER='a;b' git log").expect("parse failed");
+        assert_eq!(commands, vec!["PAGER='a;b' git log"]);
+    }
+
+    #[test]
+    fn test_array_assignments_ignored_for_prefix_matching_output() {
+        let commands = extract_commands("FOO=(a b) git status").expect("parse failed");
+        assert_eq!(commands, vec!["git status"]);
+    }
+
+    #[test]
+    fn test_extract_terminal_command_prefix_includes_env_var_prefix_and_subcommand() {
+        let prefix = extract_terminal_command_prefix("PAGER=blah git log --oneline")
+            .expect("expected terminal command prefix");
+
+        assert_eq!(
+            prefix,
+            TerminalCommandPrefix {
+                normalized: "PAGER=blah git log".to_string(),
+                display: "PAGER=blah git log".to_string(),
+                tokens: vec![
+                    "PAGER=blah".to_string(),
+                    "git".to_string(),
+                    "log".to_string(),
+                ],
+                command: "git".to_string(),
+                subcommand: Some("log".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn test_extract_terminal_command_prefix_preserves_required_assignment_quotes_in_display_and_normalized()
+     {
+        let prefix = extract_terminal_command_prefix("PAGER='less -R' git log")
+            .expect("expected terminal command prefix");
+
+        assert_eq!(
+            prefix,
+            TerminalCommandPrefix {
+                normalized: "PAGER='less -R' git log".to_string(),
+                display: "PAGER='less -R' git log".to_string(),
+                tokens: vec![
+                    "PAGER='less -R'".to_string(),
+                    "git".to_string(),
+                    "log".to_string(),
+                ],
+                command: "git".to_string(),
+                subcommand: Some("log".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn test_extract_terminal_command_prefix_skips_redirects_before_subcommand() {
+        let prefix = extract_terminal_command_prefix("git 2>/dev/null log --oneline")
+            .expect("expected terminal command prefix");
+
+        assert_eq!(
+            prefix,
+            TerminalCommandPrefix {
+                normalized: "git log".to_string(),
+                display: "git 2>/dev/null log".to_string(),
+                tokens: vec!["git".to_string(), "log".to_string()],
+                command: "git".to_string(),
+                subcommand: Some("log".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn test_validate_terminal_command_rejects_parameter_expansion() {
+        assert_eq!(
+            validate_terminal_command("echo $HOME"),
+            TerminalCommandValidation::Unsafe
+        );
+    }
+
+    #[test]
+    fn test_validate_terminal_command_rejects_braced_parameter_expansion() {
+        assert_eq!(
+            validate_terminal_command("echo ${HOME}"),
+            TerminalCommandValidation::Unsafe
+        );
+    }
+
+    #[test]
+    fn test_validate_terminal_command_rejects_special_parameters() {
+        assert_eq!(
+            validate_terminal_command("echo $?"),
+            TerminalCommandValidation::Unsafe
+        );
+        assert_eq!(
+            validate_terminal_command("echo $$"),
+            TerminalCommandValidation::Unsafe
+        );
+        assert_eq!(
+            validate_terminal_command("echo $@"),
+            TerminalCommandValidation::Unsafe
+        );
+    }
+
+    #[test]
+    fn test_validate_terminal_command_rejects_command_substitution() {
+        assert_eq!(
+            validate_terminal_command("echo $(whoami)"),
+            TerminalCommandValidation::Unsafe
+        );
+    }
+
+    #[test]
+    fn test_validate_terminal_command_rejects_backticks() {
+        assert_eq!(
+            validate_terminal_command("echo `whoami`"),
+            TerminalCommandValidation::Unsafe
+        );
+    }
+
+    #[test]
+    fn test_validate_terminal_command_rejects_arithmetic_expansion() {
+        assert_eq!(
+            validate_terminal_command("echo $((1 + 1))"),
+            TerminalCommandValidation::Unsafe
+        );
+    }
+
+    #[test]
+    fn test_validate_terminal_command_rejects_process_substitution() {
+        assert_eq!(
+            validate_terminal_command("cat <(ls)"),
+            TerminalCommandValidation::Unsafe
+        );
+        assert_eq!(
+            validate_terminal_command("ls >(cat)"),
+            TerminalCommandValidation::Unsafe
+        );
+    }
+
+    #[test]
+    fn test_validate_terminal_command_rejects_forbidden_constructs_in_env_var_assignments() {
+        assert_eq!(
+            validate_terminal_command("PAGER=$HOME git log"),
+            TerminalCommandValidation::Unsafe
+        );
+        assert_eq!(
+            validate_terminal_command("PAGER=$(whoami) git log"),
+            TerminalCommandValidation::Unsafe
+        );
+    }
+
+    #[test]
+    fn test_validate_terminal_command_returns_unsupported_for_parse_failure() {
+        assert_eq!(
+            validate_terminal_command("echo $(ls &&)"),
+            TerminalCommandValidation::Unsupported
+        );
+    }
+
+    #[test]
+    fn test_validate_terminal_command_rejects_substitution_in_case_pattern() {
+        assert_ne!(
+            validate_terminal_command("case x in $(echo y)) echo z;; esac"),
+            TerminalCommandValidation::Safe
+        );
+    }
+
+    #[test]
+    fn test_validate_terminal_command_safe_case_clause_without_substitutions() {
+        assert_eq!(
+            validate_terminal_command("case x in foo) echo hello;; esac"),
+            TerminalCommandValidation::Safe
+        );
+    }
+
+    #[test]
+    fn test_validate_terminal_command_rejects_substitution_in_arithmetic_for_clause() {
+        assert_ne!(
+            validate_terminal_command("for ((i=$(echo 0); i<3; i++)); do echo hello; done"),
+            TerminalCommandValidation::Safe
+        );
+    }
+
+    #[test]
+    fn test_validate_terminal_command_rejects_arithmetic_for_clause_unconditionally() {
+        assert_eq!(
+            validate_terminal_command("for ((i=0; i<3; i++)); do echo hello; done"),
+            TerminalCommandValidation::Unsafe
+        );
     }
 }
