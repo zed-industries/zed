@@ -3956,4 +3956,30 @@ mod tests {
             }
         }
     }
+
+    #[gpui::test]
+    async fn test_word_diff_no_trailing_newline(cx: &mut gpui::TestAppContext) {
+        let diff_base = "one\ntwo".to_string();
+        let buffer_text = "one\nTWO";
+
+        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
+        let diff = BufferDiffSnapshot::new_sync(&buffer, diff_base.clone(), cx);
+
+        let hunks: Vec<_> = diff
+            .hunks_intersecting_range(
+                Anchor::min_max_range_for_buffer(buffer.remote_id()),
+                &buffer,
+            )
+            .collect();
+
+        assert_eq!(hunks.len(), 1, "Expected 1 hunk, found {}", hunks.len());
+        let hunk = &hunks[0];
+        assert_eq!(hunk.range.start.row, 1, "Hunk should start at row 1");
+        assert_eq!(hunk.range.end.row, 1, "Hunk should end at row 1 (exclusive of next row)");
+        assert_eq!(hunk.status().kind, DiffHunkStatusKind::Modified);
+
+        // Verify that word diffs are present
+        assert!(!hunk.buffer_word_diffs.is_empty(), "Buffer word diff should not be empty for 'two' -> 'TWO' change at EOF without newline");
+        assert!(!hunk.base_word_diffs.is_empty(), "Base word diff should not be empty for 'two' -> 'TWO' change at EOF without newline");
+    }
 }
