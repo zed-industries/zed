@@ -301,6 +301,7 @@ type JobId = u64;
 pub struct JobInfo {
     pub start: Instant,
     pub message: SharedString,
+    pub is_remote_operation: bool,
 }
 
 struct GraphCommitDataHandler {
@@ -3933,6 +3934,7 @@ impl Repository {
         let _ = self.send_keyed_job(
             Some(GitJobKey::ReloadBufferDiffBases),
             None,
+            false,
             |state, mut cx| async move {
                 let RepositoryState::Local(LocalRepositoryState { backend, .. }) = state else {
                     log::error!("tried to recompute diffs for a non-local repository");
@@ -4097,13 +4099,27 @@ impl Repository {
         Fut: Future<Output = R> + 'static,
         R: Send + 'static,
     {
-        self.send_keyed_job(None, status, job)
+        self.send_keyed_job(None, status, false, job)
+    }
+
+    fn send_remote_job<F, Fut, R>(
+        &mut self,
+        status: Option<SharedString>,
+        job: F,
+    ) -> oneshot::Receiver<R>
+    where
+        F: FnOnce(RepositoryState, AsyncApp) -> Fut + 'static,
+        Fut: Future<Output = R> + 'static,
+        R: Send + 'static,
+    {
+        self.send_keyed_job(None, status, true, job)
     }
 
     fn send_keyed_job<F, Fut, R>(
         &mut self,
         key: Option<GitJobKey>,
         status: Option<SharedString>,
+        is_remote_operation: bool,
         job: F,
     ) -> oneshot::Receiver<R>
     where
@@ -4127,6 +4143,7 @@ impl Repository {
                                     JobInfo {
                                         start: Instant::now(),
                                         message: s.clone(),
+                                        is_remote_operation,
                                     },
                                 );
 
@@ -4823,6 +4840,7 @@ impl Repository {
                     this.send_keyed_job(
                         Some(job_key),
                         Some(status.into()),
+                        false,
                         move |git_repo, mut cx| async move {
                             let hunk_staging_operation_counts = weak_this
                                 .update(&mut cx, |this, cx| {
@@ -5263,7 +5281,7 @@ impl Repository {
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
         let id = self.id;
 
-        self.send_job(Some("git fetch".into()), move |git_repo, cx| async move {
+        self.send_remote_job(Some("git fetch".into()), move |git_repo, cx| async move {
             match git_repo {
                 RepositoryState::Local(LocalRepositoryState {
                     backend,
@@ -5325,7 +5343,7 @@ impl Repository {
             });
 
         let this = cx.weak_entity();
-        self.send_job(
+        self.send_remote_job(
             Some(format!("git push {} {} {}:{}", args, remote, branch, remote_branch).into()),
             move |git_repo, mut cx| async move {
                 match git_repo {
@@ -5418,7 +5436,7 @@ impl Repository {
             status.push_str(&format!(" {}", b));
         }
 
-        self.send_job(Some(status.into()), move |git_repo, cx| async move {
+        self.send_remote_job(Some(status.into()), move |git_repo, cx| async move {
             match git_repo {
                 RepositoryState::Local(LocalRepositoryState {
                     backend,
@@ -5476,6 +5494,7 @@ impl Repository {
         self.send_keyed_job(
             Some(GitJobKey::WriteIndex(vec![path.clone()])),
             None,
+            false,
             move |git_repo, mut cx| async move {
                 log::debug!(
                     "start updating index text for buffer {}",
@@ -6166,6 +6185,7 @@ impl Repository {
         let _ = self.send_keyed_job(
             Some(GitJobKey::ReloadGitState),
             None,
+            false,
             |state, mut cx| async move {
                 log::debug!("run scheduled git status scan");
 
@@ -6391,6 +6411,7 @@ impl Repository {
         let _ = self.send_keyed_job(
             Some(GitJobKey::RefreshStatuses),
             None,
+            false,
             |state, mut cx| async move {
                 let (prev_snapshot, changed_paths) = this.update(&mut cx, |this, _| {
                     (
@@ -6492,7 +6513,7 @@ impl Repository {
 
     /// currently running git command and when it started
     pub fn current_job(&self) -> Option<JobInfo> {
-        self.active_jobs.values().next().cloned()
+        current_job(&self.active_jobs)
     }
 
     pub fn barrier(&mut self) -> oneshot::Receiver<()> {
@@ -6881,6 +6902,14 @@ async fn compute_snapshot(
     Ok((snapshot, events))
 }
 
+fn current_job(active_jobs: &HashMap<JobId, JobInfo>) -> Option<JobInfo> {
+    active_jobs
+        .values()
+        .find(|job_info| job_info.is_remote_operation)
+        .cloned()
+        .or_else(|| active_jobs.values().next().cloned())
+}
+
 fn status_from_proto(
     simple_status: i32,
     status: Option<proto::GitFileStatus>,
@@ -7010,5 +7039,36 @@ fn tracked_status_to_proto(code: StatusCode) -> i32 {
         StatusCode::TypeChanged => proto::GitStatus::TypeChanged as _,
         StatusCode::Copied => proto::GitStatus::Copied as _,
         StatusCode::Unmodified => proto::GitStatus::Unmodified as _,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Instant;
+
+    #[test]
+    fn current_job_prefers_remote_operations() {
+        let mut active_jobs = HashMap::default();
+        active_jobs.insert(
+            1,
+            JobInfo {
+                start: Instant::now(),
+                message: "local".into(),
+                is_remote_operation: false,
+            },
+        );
+        active_jobs.insert(
+            2,
+            JobInfo {
+                start: Instant::now(),
+                message: "remote".into(),
+                is_remote_operation: true,
+            },
+        );
+
+        let current_job = current_job(&active_jobs).unwrap();
+        assert!(current_job.is_remote_operation);
+        assert_eq!(current_job.message, "remote");
     }
 }

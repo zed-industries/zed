@@ -653,7 +653,6 @@ pub struct GitPanel {
     local_committer_task: Option<Task<()>>,
     bulk_staging: Option<BulkStaging>,
     stash_entries: GitStash,
-    pending_remote_operation: Option<Task<()>>,
     _settings_subscription: Subscription,
 }
 
@@ -773,6 +772,9 @@ impl GitPanel {
                     | GitStoreEvent::ActiveRepositoryChanged(_) => {
                         this.schedule_update(window, cx);
                     }
+                    GitStoreEvent::JobsUpdated => {
+                        cx.notify();
+                    }
                     GitStoreEvent::IndexWriteError(error) => {
                         this.workspace
                             .update(cx, |workspace, cx| {
@@ -781,7 +783,7 @@ impl GitPanel {
                             .ok();
                     }
                     GitStoreEvent::RepositoryUpdated(_, _, _) => {}
-                    GitStoreEvent::JobsUpdated | GitStoreEvent::ConflictsUpdated => {}
+                    GitStoreEvent::ConflictsUpdated => {}
                 },
             )
             .detach();
@@ -826,7 +828,6 @@ impl GitPanel {
                 entry_count: 0,
                 bulk_staging: None,
                 stash_entries: Default::default(),
-                pending_remote_operation: None,
                 _settings_subscription,
             };
 
@@ -2837,7 +2838,7 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.can_push_and_pull(cx) || self.pending_remote_operation.is_some() {
+        if !self.can_push_and_pull(cx) || self.remote_operation_in_progress(cx) {
             return;
         }
 
@@ -2853,7 +2854,7 @@ impl GitPanel {
             self.get_fetch_options(window, cx)
         };
 
-        self.pending_remote_operation = Some(cx.spawn(async move |this, cx| {
+        cx.spawn(async move |this, cx| {
             let result: anyhow::Result<()> = async {
                 let Some(fetch_options) = fetch_options.await else {
                     return Ok(());
@@ -2869,9 +2870,7 @@ impl GitPanel {
                         FetchOptions::Remote(remote) => RemoteAction::Fetch(Some(remote)),
                     };
                     match remote_message {
-                        Ok(remote_message) => {
-                            this.show_remote_output(action, remote_message, cx)
-                        }
+                        Ok(remote_message) => this.show_remote_output(action, remote_message, cx),
                         Err(e) => {
                             log::error!("Error while fetching {:?}", e);
                             this.show_error_toast(action.name(), e, cx)
@@ -2886,12 +2885,8 @@ impl GitPanel {
             if let Err(e) = &result {
                 log::error!("{e:?}");
             }
-            this.update(cx, |this, cx| {
-                this.pending_remote_operation = None;
-                cx.notify();
-            })
-            .ok();
-        }));
+        })
+        .detach();
         cx.notify();
     }
 
@@ -2990,7 +2985,7 @@ impl GitPanel {
     }
 
     pub(crate) fn pull(&mut self, rebase: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.can_push_and_pull(cx) || self.pending_remote_operation.is_some() {
+        if !self.can_push_and_pull(cx) || self.remote_operation_in_progress(cx) {
             return;
         }
         let Some(repo) = self.active_repository.clone() else {
@@ -3002,7 +2997,7 @@ impl GitPanel {
         telemetry::event!("Git Pulled");
         let branch = branch.clone();
         let remote = self.get_remote(false, false, window, cx);
-        self.pending_remote_operation = Some(cx.spawn_in(window, async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let result: anyhow::Result<()> = async {
                 let remote = match remote.await {
                     Ok(Some(remote)) => remote,
@@ -3049,12 +3044,8 @@ impl GitPanel {
             if let Err(e) = &result {
                 log::error!("{e:?}");
             }
-            this.update(cx, |this, cx| {
-                this.pending_remote_operation = None;
-                cx.notify();
-            })
-            .ok();
-        }));
+        })
+        .detach();
         cx.notify();
     }
 
@@ -3065,7 +3056,7 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.can_push_and_pull(cx) || self.pending_remote_operation.is_some() {
+        if !self.can_push_and_pull(cx) || self.remote_operation_in_progress(cx) {
             return;
         }
         let Some(repo) = self.active_repository.clone() else {
@@ -3091,7 +3082,7 @@ impl GitPanel {
         };
         let remote = self.get_remote(select_remote, true, window, cx);
 
-        self.pending_remote_operation = Some(cx.spawn_in(window, async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let result: anyhow::Result<()> = async {
                 let remote = match remote.await {
                     Ok(Some(remote)) => remote,
@@ -3146,12 +3137,8 @@ impl GitPanel {
             if let Err(e) = &result {
                 log::error!("{e:?}");
             }
-            this.update(cx, |this, cx| {
-                this.pending_remote_operation = None;
-                cx.notify();
-            })
-            .ok();
-        }));
+        })
+        .detach();
         cx.notify();
     }
 
@@ -3241,6 +3228,14 @@ impl GitPanel {
 
     fn can_push_and_pull(&self, cx: &App) -> bool {
         !self.project.read(cx).is_via_collab()
+    }
+
+    fn remote_operation_in_progress(&self, cx: &App) -> bool {
+        let Some(repository) = self.active_repository.as_ref() else {
+            return false;
+        };
+
+        crate::remote_operation_in_progress(&repository.read(cx))
     }
 
     fn get_remote(
@@ -4284,20 +4279,20 @@ impl GitPanel {
         if !self.can_push_and_pull(cx) {
             return None;
         }
+        let in_progress = self.remote_operation_in_progress(cx);
         Some(
             h_flex()
                 .gap_1()
                 .flex_shrink_0()
                 .when_some(branch, |this, branch| {
                     let focus_handle = Some(self.focus_handle(cx));
-                    let disabled = self.pending_remote_operation.is_some();
 
                     this.children(render_remote_button(
                         "remote-button",
                         &branch,
                         focus_handle,
                         true,
-                        disabled,
+                        in_progress,
                     ))
                 })
                 .into_any_element(),

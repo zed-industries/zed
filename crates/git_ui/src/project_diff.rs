@@ -31,7 +31,7 @@ use multi_buffer::{MultiBuffer, PathKey};
 use project::{
     Project, ProjectPath,
     git_store::{
-        Repository,
+        GitStoreEvent, Repository,
         branch_diff::{self, BranchDiffEvent, DiffBase},
     },
 };
@@ -344,6 +344,7 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let git_store = project.read(cx).git_store().clone();
         let focus_handle = cx.focus_handle();
         let multibuffer = cx.new(|cx| {
             let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
@@ -410,6 +411,15 @@ impl ProjectDiff {
                 }
             },
         );
+        let git_store_subscription = cx.subscribe_in(
+            &git_store,
+            window,
+            move |_this, _git_store, event, _window, cx| {
+                if matches!(event, GitStoreEvent::JobsUpdated) {
+                    cx.notify();
+                }
+            },
+        );
 
         let mut was_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
         let mut was_collapse_untracked_diff =
@@ -450,8 +460,11 @@ impl ProjectDiff {
             review_comment_count: 0,
             _task: task,
             _subscription: Subscription::join(
-                branch_diff_subscription,
-                Subscription::join(editor_subscription, review_comment_subscription),
+                git_store_subscription,
+                Subscription::join(
+                    branch_diff_subscription,
+                    Subscription::join(editor_subscription, review_comment_subscription),
+                ),
             ),
         }
     }
@@ -1804,9 +1817,11 @@ impl RenderOnce for ProjectDiffEmptyState {
                                         .color(Color::Muted),
                                 ),
                         )
-                        .child(
-                            div().child(render_publish_button(self.focus_handle, "publish".into(), false)),
-                        )
+                        .child(div().child(render_publish_button(
+                            self.focus_handle,
+                            "publish".into(),
+                            false,
+                        )))
                     } else {
                         this.child(Label::new("Remote status unknown").color(Color::Muted))
                     }
