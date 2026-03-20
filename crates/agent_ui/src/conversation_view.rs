@@ -1475,6 +1475,9 @@ impl ConversationView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
         let Some(connected) = self.as_connected_mut() else {
             return;
         };
@@ -1491,119 +1494,65 @@ impl ConversationView {
 
         let agent_telemetry_id = connection.telemetry_id();
 
-        // Check for the experimental "terminal-auth" _meta field
-        let auth_method = connection.auth_methods().iter().find(|m| m.id() == &method);
+        if let Some(login) = connection.terminal_auth_task(&method) {
+            configuration_view.take();
+            pending_auth_method.replace(method.clone());
 
-        if let Some(terminal_auth) = auth_method
-            .and_then(|a| match a {
-                acp::AuthMethod::EnvVar(env_var) => env_var.meta.as_ref(),
-                acp::AuthMethod::Terminal(terminal) => terminal.meta.as_ref(),
-                acp::AuthMethod::Agent(agent) => agent.meta.as_ref(),
-                _ => None,
-            })
-            .and_then(|m| m.get("terminal-auth"))
-        {
-            // Extract terminal auth details from meta
-            if let (Some(command), Some(label)) = (
-                terminal_auth.get("command").and_then(|v| v.as_str()),
-                terminal_auth.get("label").and_then(|v| v.as_str()),
-            ) {
-                let args = terminal_auth
-                    .get("args")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(String::from))
-                            .collect()
-                    })
-                    .unwrap_or_default();
+            let project = self.project.clone();
+            let authenticate = Self::spawn_external_agent_login(
+                login,
+                workspace,
+                project,
+                method.clone(),
+                false,
+                window,
+                cx,
+            );
+            cx.notify();
+            self.auth_task = Some(cx.spawn_in(window, {
+                async move |this, cx| {
+                    let result = authenticate.await;
 
-                let env = terminal_auth
-                    .get("env")
-                    .and_then(|v| v.as_object())
-                    .map(|obj| {
-                        obj.iter()
-                            .filter_map(|(k, v)| v.as_str().map(|val| (k.clone(), val.to_string())))
-                            .collect::<HashMap<String, String>>()
-                    })
-                    .unwrap_or_default();
-
-                // Build SpawnInTerminal from _meta
-                let login = task::SpawnInTerminal {
-                    id: task::TaskId(format!("external-agent-{}-login", label)),
-                    full_label: label.to_string(),
-                    label: label.to_string(),
-                    command: Some(command.to_string()),
-                    args,
-                    command_label: label.to_string(),
-                    env,
-                    use_new_terminal: true,
-                    allow_concurrent_runs: true,
-                    hide: task::HideStrategy::Always,
-                    ..Default::default()
-                };
-
-                configuration_view.take();
-                pending_auth_method.replace(method.clone());
-
-                if let Some(workspace) = self.workspace.upgrade() {
-                    let project = self.project.clone();
-                    let authenticate = Self::spawn_external_agent_login(
-                        login,
-                        workspace,
-                        project,
-                        method.clone(),
-                        false,
-                        window,
-                        cx,
-                    );
-                    cx.notify();
-                    self.auth_task = Some(cx.spawn_in(window, {
-                        async move |this, cx| {
-                            let result = authenticate.await;
-
-                            match &result {
-                                Ok(_) => telemetry::event!(
-                                    "Authenticate Agent Succeeded",
-                                    agent = agent_telemetry_id
-                                ),
-                                Err(_) => {
-                                    telemetry::event!(
-                                        "Authenticate Agent Failed",
-                                        agent = agent_telemetry_id,
-                                    )
-                                }
-                            }
-
-                            this.update_in(cx, |this, window, cx| {
-                                if let Err(err) = result {
-                                    if let Some(ConnectedServerState {
-                                        auth_state:
-                                            AuthState::Unauthenticated {
-                                                pending_auth_method,
-                                                ..
-                                            },
-                                        ..
-                                    }) = this.as_connected_mut()
-                                    {
-                                        pending_auth_method.take();
-                                    }
-                                    if let Some(active) = this.active_thread() {
-                                        active.update(cx, |active, cx| {
-                                            active.handle_thread_error(err, cx);
-                                        })
-                                    }
-                                } else {
-                                    this.reset(window, cx);
-                                }
-                                this.auth_task.take()
-                            })
-                            .ok();
+                    match &result {
+                        Ok(_) => telemetry::event!(
+                            "Authenticate Agent Succeeded",
+                            agent = agent_telemetry_id
+                        ),
+                        Err(_) => {
+                            telemetry::event!(
+                                "Authenticate Agent Failed",
+                                agent = agent_telemetry_id,
+                            )
                         }
-                    }));
+                    }
+
+                    this.update_in(cx, |this, window, cx| {
+                        if let Err(err) = result {
+                            if let Some(ConnectedServerState {
+                                auth_state:
+                                    AuthState::Unauthenticated {
+                                        pending_auth_method,
+                                        ..
+                                    },
+                                ..
+                            }) = this.as_connected_mut()
+                            {
+                                pending_auth_method.take();
+                            }
+                            if let Some(active) = this.active_thread() {
+                                active.update(cx, |active, cx| {
+                                    active.handle_thread_error(err, cx);
+                                })
+                            }
+                        } else {
+                            this.reset(window, cx);
+                        }
+                        this.auth_task.take()
+                    })
+                    .ok();
                 }
-                return;
-            }
+            }));
+            return;
         }
 
         configuration_view.take();
@@ -1726,7 +1675,7 @@ impl ConversationView {
         cx: &mut App,
     ) -> Task<Result<()>> {
         let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
-            return Task::ready(Ok(()));
+            return Task::ready(Err(anyhow!("Terminal panel is unavailable")));
         };
 
         window.spawn(cx, async move |cx| {
@@ -1758,12 +1707,6 @@ impl ConversationView {
                 args: std::mem::take(&mut task.args),
                 title_override: None
             };
-            task.full_label = task.label.clone();
-            task.id = task::TaskId(format!("external-agent-{}-login", task.label));
-            task.command_label = task.label.clone();
-            task.use_new_terminal = true;
-            task.allow_concurrent_runs = true;
-            task.hide = task::HideStrategy::Always;
 
             let terminal = terminal_panel
                 .update_in(cx, |terminal_panel, window, cx| {
