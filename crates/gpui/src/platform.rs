@@ -427,7 +427,7 @@ impl WindowButton {
     pub fn id(&self) -> &'static str {
         match self {
             WindowButton::Minimize => "minimize",
-            WindowButton::Maximize => "maximize-or-restore",
+            WindowButton::Maximize => "maximize",
             WindowButton::Close => "close",
         }
     }
@@ -488,6 +488,25 @@ impl WindowButtonLayout {
             left: parse_side(left_str),
             right: parse_side(right_str),
         }
+    }
+
+    /// Formats the layout into a GNOME-style button-layout string.
+    /// Format: "button1,button2:button3,button4"
+    pub fn format(&self) -> String {
+        fn format_side(buttons: &[Option<WindowButton>; MAX_BUTTONS_PER_SIDE]) -> String {
+            buttons
+                .iter()
+                .flatten()
+                .map(|button| match button {
+                    WindowButton::Minimize => "minimize",
+                    WindowButton::Maximize => "maximize",
+                    WindowButton::Close => "close",
+                })
+                .collect::<Vec<_>>()
+                .join(",")
+        }
+
+        format!("{}:{}", format_side(&self.left), format_side(&self.right))
     }
 }
 
@@ -2201,6 +2220,23 @@ mod tests {
         let layout = WindowButtonLayout::parse("close:maximize");
         assert_eq!(layout.left, [Some(WindowButton::Close), None, None]);
         assert_eq!(layout.right, [Some(WindowButton::Maximize), None, None]);
+    }
+
+    #[test]
+    fn test_window_button_layout_round_trip() {
+        let cases = [
+            "close:minimize,maximize",
+            "minimize,maximize,close:",
+            ":close",
+            "close:",
+            "close:maximize",
+            ":",
+        ];
+
+        for case in cases {
+            let layout = WindowButtonLayout::parse(case);
+            assert_eq!(layout.format(), case, "Round-trip failed for: {}", case);
+        }
     }
 
     #[test]

@@ -28,8 +28,8 @@ impl Settings for TitleBarSettings {
             show_menus: content.show_menus.unwrap(),
             button_layout: content
                 .button_layout
-                .filter(|layout| layout != "auto")
-                .map(|layout| WindowButtonLayout::parse(&layout)),
+                .unwrap_or_default()
+                .into_layout(),
         }
     }
 }
