@@ -165,9 +165,6 @@ pub(crate) struct Conversation {
     threads: HashMap<acp::SessionId, Entity<AcpThread>>,
     permission_requests: IndexMap<acp::SessionId, Vec<acp::ToolCallId>>,
     subscriptions: Vec<Subscription>,
-    /// Tracks the selected granularity index for each tool call's permission dropdown.
-    /// The index corresponds to the position in the allow_options list.
-    selected_permission_granularity: HashMap<acp::SessionId, HashMap<acp::ToolCallId, usize>>,
     updated_at: Option<Instant>,
 }
 
