@@ -23,6 +23,8 @@ use livekit::webrtc::{
 use log::info;
 use parking_lot::Mutex;
 use rodio::Source;
+use rodio::conversions::SampleTypeConverter;
+use rodio::source::{AutomaticGainControlSettings, LimitSettings};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::cell::RefCell;
@@ -380,6 +382,14 @@ impl AudioStack {
                         let ten_ms_buffer_size =
                             (config.channels() as u32 * config.sample_rate() / 100) as usize;
                         let mut buf: Vec<i16> = Vec::with_capacity(ten_ms_buffer_size);
+                        let mut rodio_effects = RodioEffectsAdaptor::new(buf.len())
+                            .automatic_gain_control(AutomaticGainControlSettings {
+                                target_level: 0.50,
+                                attack_time: Duration::from_secs(1),
+                                release_time: Duration::from_secs(0),
+                                absolute_max_gain: 5.0,
+                            })
+                            .limit(LimitSettings::live_performance());
 
                         let stream = device
                             .build_input_stream_raw(
@@ -411,6 +421,21 @@ impl AudioStack {
                                                     sample_rate,
                                                 )
                                                 .to_owned();
+
+                                            if audio::LIVE_SETTINGS
+                                                .auto_microphone_volume
+                                                .load(Ordering::Relaxed)
+                                            {
+                                                rodio_effects
+                                                    .inner_mut()
+                                                    .inner_mut()
+                                                    .fill_buffer_with(&sampled);
+                                                sampled.clear();
+                                                sampled.extend(SampleTypeConverter::<_, i16>::new(
+                                                    rodio_effects.by_ref(),
+                                                ));
+                                            }
+
                                             apm.lock()
                                                 .process_stream(
                                                     &mut sampled,
@@ -419,6 +444,7 @@ impl AudioStack {
                                                 )
                                                 .log_err();
                                             buf.clear();
+
                                             frame_tx
                                                 .try_send(TimestampedFrame {
                                                     frame: AudioFrame {
@@ -450,6 +476,69 @@ impl AudioStack {
             device_change_listener.next().await;
             drop(end_on_drop_tx)
         }
+    }
+}
+
+/// This allows using of Rodio's effects library within our home brewn audio
+/// pipeline. The alternative would be inlining Rodio's effects which is
+/// problematic from a legal stance. We would then have to make clear that code
+/// is not owned by zed-industries while the code would be surrounded by
+/// zed-industries owned code.
+///
+/// This adaptor does incur a slight performance penalty (copying into a
+/// pre-allocated vec and back) however the impact will be immeasurably low.
+///
+/// There is no latency impact.
+pub struct RodioEffectsAdaptor {
+    input: Vec<rodio::Sample>,
+    pos: usize,
+}
+
+impl RodioEffectsAdaptor {
+    // This implementation incorrect terminology confusing everyone. A normal
+    // audio frame consists of all samples for one moment in time (one for mono,
+    // two for stereo). Here a frame of audio refers to a 10ms buffer of samples.
+    fn new(samples_per_frame: usize) -> Self {
+        Self {
+            input: Vec::with_capacity(samples_per_frame),
+            pos: 0,
+        }
+    }
+
+    fn fill_buffer_with(&mut self, integer_samples: &[i16]) {
+        self.input.clear();
+        self.input.extend(SampleTypeConverter::<_, f32>::new(
+            integer_samples.iter().copied(),
+        ));
+        self.pos = 0;
+    }
+}
+
+impl Iterator for RodioEffectsAdaptor {
+    type Item = rodio::Sample;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let sample = self.input.get(self.pos)?;
+        self.pos += 1;
+        Some(*sample)
+    }
+}
+
+impl rodio::Source for RodioEffectsAdaptor {
+    fn current_span_len(&self) -> Option<usize> {
+        None
+    }
+
+    fn channels(&self) -> rodio::ChannelCount {
+        rodio::nz!(2)
+    }
+
+    fn sample_rate(&self) -> rodio::SampleRate {
+        rodio::nz!(48000)
+    }
+
+    fn total_duration(&self) -> Option<Duration> {
+        None
     }
 }
 

@@ -9,6 +9,8 @@ use playback::capture_local_video_track;
 use settings::Settings;
 use std::sync::{Arc, atomic::AtomicU64};
 
+#[cfg(target_os = "linux")]
+mod linux;
 mod playback;
 
 use crate::{
@@ -230,6 +232,33 @@ impl LocalParticipant {
             .await?
             .map(LocalTrackPublication)
             .context("unpublishing a track")
+    }
+
+    #[cfg(target_os = "linux")]
+    pub async fn publish_screenshare_track_wayland(
+        &self,
+        cx: &mut AsyncApp,
+    ) -> Result<(
+        LocalTrackPublication,
+        Box<dyn ScreenCaptureStream>,
+        futures::channel::oneshot::Receiver<()>,
+    )> {
+        let (track, stop_flag, feed_task, failure_rx) =
+            linux::start_wayland_desktop_capture(cx).await?;
+        let options = livekit::options::TrackPublishOptions {
+            source: livekit::track::TrackSource::Screenshare,
+            video_codec: livekit::options::VideoCodec::VP8,
+            ..Default::default()
+        };
+        let publication = self
+            .publish_track(livekit::track::LocalTrack::Video(track.0), options, cx)
+            .await?;
+
+        Ok((
+            publication,
+            Box::new(linux::WaylandScreenCaptureStream::new(stop_flag, feed_task)),
+            failure_rx,
+        ))
     }
 }
 

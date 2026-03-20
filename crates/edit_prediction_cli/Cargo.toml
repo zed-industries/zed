@@ -21,6 +21,7 @@ clap = "4"
 client.workspace = true
 cloud_llm_client.workspace= true
 collections.workspace = true
+db.workspace = true
 debug_adapter_extension.workspace = true
 dirs.workspace = true
 extension.workspace = true

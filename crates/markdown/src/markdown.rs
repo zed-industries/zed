@@ -1272,17 +1272,22 @@ impl Element for MarkdownElement {
 
                             let column_count = alignments.len();
                             builder.push_div(
+                                div().flex().flex_col().items_start(),
+                                range,
+                                markdown_end,
+                            );
+                            builder.push_div(
                                 div()
                                     .id(("table", range.start))
+                                    .min_w_0()
                                     .grid()
                                     .grid_cols(column_count as u16)
                                     .when(self.style.table_columns_min_size, |this| {
                                         this.grid_cols_min_content(column_count as u16)
                                     })
                                     .when(!self.style.table_columns_min_size, |this| {
-                                        this.grid_cols(column_count as u16)
+                                        this.grid_cols_max_content(column_count as u16)
                                     })
-                                    .w_full()
                                     .mb_2()
                                     .border(px(1.5))
                                     .border_color(cx.theme().colors().border)
@@ -1431,6 +1436,7 @@ impl Element for MarkdownElement {
                     }
                     MarkdownTagEnd::Table => {
                         builder.pop_div();
+                        builder.pop_div();
                         builder.table.end();
                     }
                     MarkdownTagEnd::TableHead => {
@@ -1441,6 +1447,7 @@ impl Element for MarkdownElement {
                         builder.table.end_row();
                     }
                     MarkdownTagEnd::TableCell => {
+                        builder.replace_pending_checkbox(range);
                         builder.pop_div();
                         builder.table.end_cell();
                     }
@@ -1923,6 +1930,28 @@ impl MarkdownElementBuilder {
                 .truncate(self.pending_line.text.len() - 1);
             self.pending_line.runs.last_mut().unwrap().len -= 1;
             self.current_source_index -= 1;
+        }
+    }
+
+    fn replace_pending_checkbox(&mut self, source_range: &Range<usize>) {
+        let trimmed = self.pending_line.text.trim();
+        if trimmed == "[x]" || trimmed == "[X]" || trimmed == "[ ]" {
+            let checked = trimmed != "[ ]";
+            self.pending_line = PendingLine::default();
+            let checkbox = Checkbox::new(
+                ElementId::Name(
+                    format!("table_checkbox_{}_{}", source_range.start, source_range.end).into(),
+                ),
+                if checked {
+                    ToggleState::Selected
+                } else {
+                    ToggleState::Unselected
+                },
+            )
+            .fill()
+            .visualization_only(true)
+            .into_any_element();
+            self.div_stack.last_mut().unwrap().extend([checkbox]);
         }
     }
 
@@ -2491,6 +2520,48 @@ mod tests {
 
         assert_eq!(first_word, "a");
         assert_eq!(second_word, "b");
+    }
+
+    #[test]
+    fn test_table_checkbox_detection() {
+        let md = "| Done |\n|------|\n| [x] |\n| [ ] |";
+        let (events, _, _) = crate::parser::parse_markdown(md);
+
+        let mut in_table = false;
+        let mut cell_texts: Vec<String> = Vec::new();
+        let mut current_cell = String::new();
+
+        for (range, event) in &events {
+            match event {
+                MarkdownEvent::Start(MarkdownTag::Table(_)) => in_table = true,
+                MarkdownEvent::End(MarkdownTagEnd::Table) => in_table = false,
+                MarkdownEvent::Start(MarkdownTag::TableCell) => current_cell.clear(),
+                MarkdownEvent::End(MarkdownTagEnd::TableCell) => {
+                    if in_table {
+                        cell_texts.push(current_cell.clone());
+                    }
+                }
+                MarkdownEvent::Text if in_table => {
+                    current_cell.push_str(&md[range.clone()]);
+                }
+                _ => {}
+            }
+        }
+
+        let checkbox_cells: Vec<&String> = cell_texts
+            .iter()
+            .filter(|t| {
+                let trimmed = t.trim();
+                trimmed == "[x]" || trimmed == "[X]" || trimmed == "[ ]"
+            })
+            .collect();
+        assert_eq!(
+            checkbox_cells.len(),
+            2,
+            "Expected 2 checkbox cells, got: {cell_texts:?}"
+        );
+        assert_eq!(checkbox_cells[0].trim(), "[x]");
+        assert_eq!(checkbox_cells[1].trim(), "[ ]");
     }
 
     #[gpui::test]

@@ -5,9 +5,12 @@ use anyhow::{Context as _, Result};
 use collections::HashSet;
 use credentials_provider::CredentialsProvider;
 use fs::Fs;
-use gpui::{App, AppContext as _, Task};
+use gpui::{App, AppContext as _, Entity, Task};
 use language_model::{ApiKey, EnvVar};
-use project::agent_server_store::{AgentId, AllAgentServersSettings};
+use project::{
+    Project,
+    agent_server_store::{AgentId, AllAgentServersSettings},
+};
 use settings::{SettingsStore, update_settings_file};
 use std::{rc::Rc, sync::Arc};
 use ui::IconName;
@@ -289,6 +292,7 @@ impl AgentServer for CustomAgentServer {
     fn connect(
         &self,
         delegate: AgentServerDelegate,
+        project: Entity<Project>,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn AgentConnection>>> {
         let agent_id = self.agent_id();
@@ -371,6 +375,7 @@ impl AgentServer for CustomAgentServer {
                 .await?;
             let connection = crate::acp::connect(
                 agent_id,
+                project,
                 display_name,
                 command,
                 default_mode,

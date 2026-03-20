@@ -2,12 +2,13 @@ use crate::AcpThread;
 use agent_client_protocol::{self as acp};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use collections::IndexMap;
+use collections::{HashMap, IndexMap};
 use gpui::{Entity, SharedString, Task};
 use language_model::LanguageModelProviderId;
 use project::{AgentId, Project};
 use serde::{Deserialize, Serialize};
 use std::{any::Any, error::Error, fmt, path::PathBuf, rc::Rc, sync::Arc};
+use task::{HideStrategy, SpawnInTerminal, TaskId};
 use ui::{App, IconName};
 use util::path_list::PathList;
 use uuid::Uuid;
@@ -18,6 +19,28 @@ pub struct UserMessageId(Arc<str>);
 impl UserMessageId {
     pub fn new() -> Self {
         Self(Uuid::new_v4().to_string().into())
+    }
+}
+
+pub fn build_terminal_auth_task(
+    id: String,
+    label: String,
+    command: String,
+    args: Vec<String>,
+    env: HashMap<String, String>,
+) -> SpawnInTerminal {
+    SpawnInTerminal {
+        id: TaskId(id),
+        full_label: label.clone(),
+        label: label.clone(),
+        command: Some(command),
+        args,
+        command_label: label,
+        env,
+        use_new_terminal: true,
+        allow_concurrent_runs: true,
+        hide: HideStrategy::Always,
+        ..Default::default()
     }
 }
 
@@ -89,6 +112,14 @@ pub trait AgentConnection {
     }
 
     fn auth_methods(&self) -> &[acp::AuthMethod];
+
+    fn terminal_auth_task(
+        &self,
+        _method: &acp::AuthMethodId,
+        _cx: &App,
+    ) -> Option<SpawnInTerminal> {
+        None
+    }
 
     fn authenticate(&self, method: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>>;
 

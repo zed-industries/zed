@@ -26,6 +26,8 @@ actions!(
     [
         /// Toggles the workspace switcher sidebar.
         ToggleWorkspaceSidebar,
+        /// Closes the workspace sidebar.
+        CloseWorkspaceSidebar,
         /// Moves focus to or from the workspace sidebar without closing it.
         FocusWorkspaceSidebar,
     ]
@@ -41,8 +43,10 @@ pub trait Sidebar: Focusable + Render + Sized {
     fn width(&self, cx: &App) -> Pixels;
     fn set_width(&mut self, width: Option<Pixels>, cx: &mut Context<Self>);
     fn has_notifications(&self, cx: &App) -> bool;
-    fn toggle_recent_projects_popover(&self, window: &mut Window, cx: &mut App);
-    fn is_recent_projects_popover_deployed(&self) -> bool;
+
+    fn is_threads_list_view_active(&self) -> bool {
+        true
+    }
     /// Makes focus reset bac to the search editor upon toggling the sidebar from outside
     fn prepare_for_focus(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
 }
@@ -56,8 +60,8 @@ pub trait SidebarHandle: 'static + Send + Sync {
     fn has_notifications(&self, cx: &App) -> bool;
     fn to_any(&self) -> AnyView;
     fn entity_id(&self) -> EntityId;
-    fn toggle_recent_projects_popover(&self, window: &mut Window, cx: &mut App);
-    fn is_recent_projects_popover_deployed(&self, cx: &App) -> bool;
+
+    fn is_threads_list_view_active(&self, cx: &App) -> bool;
 }
 
 #[derive(Clone)]
@@ -103,14 +107,8 @@ impl<T: Sidebar> SidebarHandle for Entity<T> {
         Entity::entity_id(self)
     }
 
-    fn toggle_recent_projects_popover(&self, window: &mut Window, cx: &mut App) {
-        self.update(cx, |this, cx| {
-            this.toggle_recent_projects_popover(window, cx);
-        });
-    }
-
-    fn is_recent_projects_popover_deployed(&self, cx: &App) -> bool {
-        self.read(cx).is_recent_projects_popover_deployed()
+    fn is_threads_list_view_active(&self, cx: &App) -> bool {
+        self.read(cx).is_threads_list_view_active()
     }
 }
 
@@ -161,7 +159,23 @@ impl MultiWorkspace {
         }
     }
 
-    pub fn register_sidebar<T: Sidebar>(&mut self, sidebar: Entity<T>) {
+    pub fn register_sidebar<T: Sidebar>(&mut self, sidebar: Entity<T>, cx: &mut Context<Self>) {
+        self._subscriptions
+            .push(cx.observe(&sidebar, |this, _, cx| {
+                let has_notifications = this.sidebar_has_notifications(cx);
+                let is_open = this.sidebar_open;
+                let show_toggle = this.multi_workspace_enabled(cx);
+                for workspace in &this.workspaces {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.set_workspace_sidebar_open(
+                            is_open,
+                            has_notifications,
+                            show_toggle,
+                            cx,
+                        );
+                    });
+                }
+            }));
         self.sidebar = Some(Box::new(sidebar));
     }
 
@@ -179,16 +193,10 @@ impl MultiWorkspace {
             .map_or(false, |s| s.has_notifications(cx))
     }
 
-    pub fn toggle_recent_projects_popover(&self, window: &mut Window, cx: &mut App) {
-        if let Some(sidebar) = &self.sidebar {
-            sidebar.toggle_recent_projects_popover(window, cx);
-        }
-    }
-
-    pub fn is_recent_projects_popover_deployed(&self, cx: &App) -> bool {
+    pub fn is_threads_list_view_active(&self, cx: &App) -> bool {
         self.sidebar
             .as_ref()
-            .map_or(false, |s| s.is_recent_projects_popover_deployed(cx))
+            .map_or(false, |s| s.is_threads_list_view_active(cx))
     }
 
     pub fn multi_workspace_enabled(&self, cx: &App) -> bool {
@@ -208,6 +216,16 @@ impl MultiWorkspace {
                 sidebar.prepare_for_focus(window, cx);
                 sidebar.focus(window, cx);
             }
+        }
+    }
+
+    pub fn close_sidebar_action(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.multi_workspace_enabled(cx) {
+            return;
+        }
+
+        if self.sidebar_open {
+            self.close_sidebar(window, cx);
         }
     }
 
@@ -242,9 +260,11 @@ impl MultiWorkspace {
     pub fn open_sidebar(&mut self, cx: &mut Context<Self>) {
         self.sidebar_open = true;
         let sidebar_focus_handle = self.sidebar.as_ref().map(|s| s.focus_handle(cx));
+        let has_notifications = self.sidebar_has_notifications(cx);
+        let show_toggle = self.multi_workspace_enabled(cx);
         for workspace in &self.workspaces {
             workspace.update(cx, |workspace, cx| {
-                workspace.set_workspace_sidebar_open(true, cx);
+                workspace.set_workspace_sidebar_open(true, has_notifications, show_toggle, cx);
                 workspace.set_sidebar_focus_handle(sidebar_focus_handle.clone());
             });
         }
@@ -254,9 +274,11 @@ impl MultiWorkspace {
 
     fn close_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sidebar_open = false;
+        let has_notifications = self.sidebar_has_notifications(cx);
+        let show_toggle = self.multi_workspace_enabled(cx);
         for workspace in &self.workspaces {
             workspace.update(cx, |workspace, cx| {
-                workspace.set_workspace_sidebar_open(false, cx);
+                workspace.set_workspace_sidebar_open(false, has_notifications, show_toggle, cx);
                 workspace.set_sidebar_focus_handle(None);
             });
         }
@@ -353,8 +375,10 @@ impl MultiWorkspace {
         } else {
             if self.sidebar_open {
                 let sidebar_focus_handle = self.sidebar.as_ref().map(|s| s.focus_handle(cx));
+                let has_notifications = self.sidebar_has_notifications(cx);
+                let show_toggle = self.multi_workspace_enabled(cx);
                 workspace.update(cx, |workspace, cx| {
-                    workspace.set_workspace_sidebar_open(true, cx);
+                    workspace.set_workspace_sidebar_open(true, has_notifications, show_toggle, cx);
                     workspace.set_sidebar_focus_handle(sidebar_focus_handle);
                 });
             }
@@ -724,6 +748,11 @@ impl Render for MultiWorkspace {
                     this.on_action(cx.listener(
                         |this: &mut Self, _: &ToggleWorkspaceSidebar, window, cx| {
                             this.toggle_sidebar(window, cx);
+                        },
+                    ))
+                    .on_action(cx.listener(
+                        |this: &mut Self, _: &CloseWorkspaceSidebar, window, cx| {
+                            this.close_sidebar_action(window, cx);
                         },
                     ))
                     .on_action(cx.listener(

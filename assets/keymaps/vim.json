@@ -511,8 +511,8 @@
       "g shift-u": "git::UnstageAndNext", // Zed specific
 
       // Window mode
-      "space w v": "pane::SplitDown",
-      "space w s": "pane::SplitRight",
+      "space w v": "pane::SplitRight",
+      "space w s": "pane::SplitDown",
       "space w h": "workspace::ActivatePaneLeft",
       "space w j": "workspace::ActivatePaneDown",
       "space w k": "workspace::ActivatePaneUp",
