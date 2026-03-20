@@ -8,7 +8,7 @@ use gpui::{
     AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
     Focusable, IntoElement, Render, Task, Window,
 };
-use language::{self, Anchor, Buffer, Language, Point, ToPoint};
+use language::{self, Anchor, Buffer, Point, ToPoint};
 use project::Project;
 use std::{
     any::{Any, TypeId},
@@ -22,7 +22,7 @@ use util::paths::PathExt;
 
 use workspace::{
     Item, ItemHandle as _, ItemNavHistory, Workspace,
-    item::{ItemEvent, SaveOptions, TabContentParams},
+    item::{ItemEvent, TabContentParams},
     searchable::SearchableItemHandle,
 };
 
@@ -77,6 +77,7 @@ impl TextDiffView {
 
         let diff_editor = cx.new(|cx| {
             let mut editor = Editor::for_multibuffer(multibuffer, Some(project), window, cx);
+            editor.set_read_only(true);
             editor.start_temporary_diff_override();
             editor.disable_diagnostics(cx);
             editor.set_expand_all_diff_hunks(cx);
@@ -244,21 +245,12 @@ impl Item for TextDiffView {
         });
     }
 
-    fn can_save(&self, cx: &App) -> bool {
-        // The editor handles the new buffer, so delegate to it
-        self.diff_editor.read(cx).can_save(cx)
+    fn is_dirty(&self, _: &App) -> bool {
+        false
     }
 
-    fn save(
-        &mut self,
-        options: SaveOptions,
-        project: Entity<Project>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        // Delegate saving to the editor, which manages the new buffer
-        self.diff_editor
-            .update(cx, |editor, cx| editor.save(options, project, window, cx))
+    fn can_save(&self, _: &App) -> bool {
+        false
     }
 }
 
@@ -268,7 +260,7 @@ pub struct TextDiffSession {
     source_buffer: Entity<Buffer>,
     selection_range: Range<Anchor>,
     selection_buffer: Entity<Buffer>,
-    clipboard_buffer: Entity<Buffer>,
+    clipboard_text: Arc<str>,
     diff_buffer: Entity<BufferDiff>,
 }
 
@@ -284,12 +276,13 @@ impl TextDiffSession {
             let max_point = buffer_snapshot.max_point();
 
             if first_selection.is_empty() {
-                let full_range = Point::new(0, 0)..max_point;
-                return Some((source_buffer, full_range));
+                let start = buffer_snapshot.anchor_before(Point::new(0, 0));
+                let end = buffer_snapshot.anchor_after(max_point);
+                return Some((source_buffer, start..end));
             }
 
-            let start = first_selection.start;
-            let end = first_selection.end;
+            let start = buffer_snapshot.anchor_before(first_selection.start);
+            let end = buffer_snapshot.anchor_after(first_selection.end);
             Some((source_buffer, start..end))
         });
 
@@ -297,56 +290,50 @@ impl TextDiffSession {
             log::warn!("There should always be at least one selection in Zed. This is a bug.");
             return None;
         };
-        let language = source_buffer.read(cx).language().cloned();
 
-        let clipboard_text = diff_data.clipboard_text.clone();
-        let clipboard_buffer = build_buffer_from_text(clipboard_text, language.clone(), cx);
-        let selection_text = source_buffer.read_with(cx, |buffer, _| {
+        let selection_buffer = cx.new(|cx| {
+            let selection_text = source_buffer.read_with(cx, |buffer, _| {
+                buffer
+                    .text_for_range(selection_range.clone())
+                    .collect::<String>()
+            });
+            let mut buffer = language::Buffer::local(selection_text, cx);
+            buffer.set_language(source_buffer.read(cx).language().cloned(), cx);
             buffer
-                .text_for_range(selection_range.clone())
-                .collect::<String>()
         });
-        let selection_buffer = build_buffer_from_text(selection_text, language, cx);
-        let selection_buffer_snapshot = selection_buffer.read(cx).snapshot();
-        let diff_buffer = cx.new(|cx| BufferDiff::new(&selection_buffer_snapshot.text, cx));
 
-        let source_buffer_snapshot = source_buffer.read(cx).snapshot();
-        let selection_range_anchor = source_buffer_snapshot.anchor_before(selection_range.start)
-            ..source_buffer_snapshot.anchor_after(selection_range.end);
+        let diff_buffer = cx.new(|cx| {
+            let selection_buffer_snapshot = selection_buffer.read(cx).snapshot();
+            BufferDiff::new(&selection_buffer_snapshot.text, cx)
+        });
+
+        let clipboard_text = Arc::from(diff_data.clipboard_text.clone().as_str());
 
         Some(Self {
             source_editor,
             source_buffer,
-            selection_range: selection_range_anchor,
+            selection_range,
             selection_buffer,
-            clipboard_buffer,
+            clipboard_text,
             diff_buffer,
         })
     }
 
     async fn update_diff_buffer(&self, cx: &mut AsyncApp) -> Result<()> {
-        let source_buffer_snapshot = self
-            .source_buffer
-            .read_with(cx, |buffer, _| buffer.snapshot());
-        let language = source_buffer_snapshot.language().cloned();
-        let language_registry = self
-            .source_buffer
-            .read_with(cx, |buffer, _| buffer.language_registry());
+        let (language, language_registry) = self.source_buffer.read_with(cx, |buffer, _| {
+            (buffer.language().cloned(), buffer.language_registry())
+        });
 
         let selection_buffer_snapshot = self
             .selection_buffer
             .read_with(cx, |buffer, _| buffer.snapshot());
-        let base_buffer_snapshot = self
-            .clipboard_buffer
-            .read_with(cx, |buffer, _| buffer.snapshot());
-        let base_text = base_buffer_snapshot.text();
 
         let update = self
             .diff_buffer
             .update(cx, |diff, cx| {
                 diff.update_diff(
                     selection_buffer_snapshot.text.clone(),
-                    Some(Arc::from(base_text.as_str())),
+                    Some(self.clipboard_text.clone()),
                     Some(true),
                     language.clone(),
                     cx,
@@ -364,13 +351,13 @@ impl TextDiffSession {
     }
 
     async fn sync_and_update_diff(&self, cx: &mut AsyncApp) -> Result<()> {
-        let latest_text = self.source_buffer.read_with(cx, |buffer, _| {
+        let latest_selection_text = self.source_buffer.read_with(cx, |buffer, _| {
             buffer
                 .text_for_range(self.selection_range.clone())
                 .collect::<String>()
         });
         self.selection_buffer
-            .update(cx, |buffer, cx| buffer.set_text(latest_text, cx));
+            .update(cx, |buffer, cx| buffer.set_text(latest_selection_text, cx));
         self.update_diff_buffer(cx).await?;
         Ok(())
     }
@@ -393,54 +380,32 @@ impl TextDiffSession {
 
     fn generate_title_and_path(&self, cx: &mut App) -> (String, String) {
         let editor = self.source_editor.read(cx);
-        let title = editor.buffer().read(cx).title(cx).to_string();
-
-        let source_buffer_snapshot = self.source_buffer.read(cx).snapshot();
-        let selection_location_text =
-            format_selection_range(&source_buffer_snapshot, self.selection_range.clone());
-        let selection_location_title = selection_location_text
-            .as_ref()
-            .map(|text| format!("{} @ {}", title, text))
-            .unwrap_or(title);
-
-        let path = editor
-            .buffer()
-            .read(cx)
+        let buffer = editor.buffer().read(cx);
+        let title = buffer.title(cx).to_string();
+        let path = buffer
             .as_singleton()
             .and_then(|b| {
                 b.read(cx)
                     .file()
                     .map(|f| f.full_path(cx).compact().to_string_lossy().into_owned())
             })
-            .unwrap_or("untitled".into());
+            .unwrap_or_else(|| "untitled".to_string());
 
-        let selection_location_path = selection_location_text
-            .map(|text| format!("{} @ {}", path, text))
-            .unwrap_or(path);
+        let source_buffer_snapshot = self.source_buffer.read(cx).snapshot();
+        let location =
+            format_selection_range(&source_buffer_snapshot, self.selection_range.clone());
 
         (
-            format!("Clipboard ↔ {selection_location_title}"),
-            format!("Clipboard ↔ {selection_location_path}"),
+            format!("Clipboard ↔ {title} @ {location}"),
+            format!("Clipboard ↔ {path} @ {location}"),
         )
     }
-}
-
-fn build_buffer_from_text(
-    text: String,
-    language: Option<Arc<Language>>,
-    cx: &mut App,
-) -> Entity<Buffer> {
-    cx.new(|cx| {
-        let mut buffer = language::Buffer::local(text, cx);
-        buffer.set_language(language, cx);
-        buffer
-    })
 }
 
 pub fn format_selection_range(
     buffer_snapshot: &language::BufferSnapshot,
     selection_range: Range<Anchor>,
-) -> Option<String> {
+) -> String {
     let selection_start = selection_range.start.to_point(buffer_snapshot);
     let selection_end = selection_range.end.to_point(buffer_snapshot);
 
@@ -461,7 +426,7 @@ pub fn format_selection_range(
         )
     };
 
-    Some(range_text)
+    range_text
 }
 
 #[cfg(test)]
