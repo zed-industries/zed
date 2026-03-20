@@ -55,7 +55,7 @@ impl Connection {
     /// instead.
     pub fn open_file(uri: &str) -> Self {
         Self::open(uri, true).unwrap_or_else(|err| {
-            log::error!(
+            log::info!(
                 "open_file: failed to open '{}': {}. Falling back to in-memory DB!",
                 uri,
                 err
