@@ -2930,6 +2930,36 @@ impl Workspace {
                 }
             }
 
+            let running_processes = this.update(cx, |this, cx| {
+                let mut processes = Vec::new();
+                for pane in &this.panes {
+                    for item in pane.read(cx).items() {
+                        if let Some(name) = item.running_process_name(cx) {
+                            processes.push(name);
+                        }
+                    }
+                }
+                processes
+            })?;
+
+            if !running_processes.is_empty() {
+                this.update(cx, |_, cx| cx.emit(Event::Activate))?;
+                let process_list = running_processes.join("\n");
+                let answer = cx.update(|window, cx| {
+                    window.prompt(
+                        PromptLevel::Warning,
+                        "Terminals have running processes. Close anyway?",
+                        Some(&process_list),
+                        &["Force Close", "Cancel"],
+                        cx,
+                    )
+                })?;
+
+                if answer.await.log_err() == Some(1) {
+                    return anyhow::Ok(false);
+                }
+            }
+
             let save_result = this
                 .update_in(cx, |this, window, cx| {
                     this.save_all_internal(SaveIntent::Close, window, cx)

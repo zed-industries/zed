@@ -1624,10 +1624,19 @@ impl Item for TerminalView {
     }
 
     fn is_dirty(&self, cx: &App) -> bool {
-        match self.terminal.read(cx).task() {
+        let terminal = self.terminal.read(cx);
+        match terminal.task() {
             Some(task) => task.status == TaskStatus::Running,
-            None => self.has_bell(),
+            None => terminal.foreground_process_name().is_some() || self.has_bell(),
         }
+    }
+
+    fn running_process_name(&self, cx: &App) -> Option<String> {
+        let terminal = self.terminal.read(cx);
+        if terminal.task().is_some() {
+            return None;
+        }
+        terminal.foreground_process_name()
     }
 
     fn has_conflict(&self, _cx: &App) -> bool {
