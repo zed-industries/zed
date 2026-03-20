@@ -2289,15 +2289,14 @@ impl DisplaySnapshot {
         }
 
         if let Some(scope) = snapshot.language_scope_at(Point::new(row, 0)) {
-            scope
-                .brackets()
-                .any(|(pair, _)| line_text.starts_with(&pair.end))
-        } else {
-            // Fallback when no language is available
-            line_text.starts_with('}')
-                || line_text.starts_with(')')
-                || line_text.starts_with(']')
+            let mut brackets = scope.brackets().peekable();
+            if brackets.peek().is_some() {
+                return brackets.any(|(pair, _)| line_text.starts_with(&pair.end));
+            }
         }
+
+        // Fallback when no language is available or brackets are not configured
+        line_text.starts_with('}') || line_text.starts_with(')') || line_text.starts_with(']')
     }
 
     #[instrument(skip_all)]
@@ -2371,17 +2370,10 @@ impl DisplaySnapshot {
 
             let last_non_blank_row = |from_row: u32| -> Point {
                 let mut row = from_row;
-                while row > start.row
-                    && self
-                        .buffer_snapshot()
-                        .is_line_blank(MultiBufferRow(row))
-                {
+                while row > start.row && self.buffer_snapshot().is_line_blank(MultiBufferRow(row)) {
                     row -= 1;
                 }
-                Point::new(
-                    row,
-                    self.buffer_snapshot().line_len(MultiBufferRow(row)),
-                )
+                Point::new(row, self.buffer_snapshot().line_len(MultiBufferRow(row)))
             };
 
             let end = if let Some(row) = closing_row {
