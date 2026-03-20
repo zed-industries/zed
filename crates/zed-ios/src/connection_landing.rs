@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use askpass::EncryptedPassword;
 use editor::{Editor, actions::{Backtab, Tab}};
 use gpui::{
     App, AppContext as _, AsyncApp, ClickEvent, Context, Entity, Focusable as _, IntoElement,
@@ -24,6 +25,8 @@ struct SavedHostEntry {
     username: String,
     #[serde(default = "default_port")]
     port: u16,
+    #[serde(default)]
+    password: Option<String>,
 }
 
 fn default_port() -> u16 {
@@ -71,6 +74,7 @@ struct SavedHost {
     host: SharedString,
     username: SharedString,
     port: u16,
+    password: Option<String>,
     status: ConnectionStatus,
 }
 
@@ -81,6 +85,7 @@ impl SavedHost {
             host: SharedString::from(entry.host),
             username: SharedString::from(entry.username),
             port: entry.port,
+            password: entry.password,
             status: ConnectionStatus::Disconnected,
         }
     }
@@ -91,6 +96,7 @@ impl SavedHost {
             host: self.host.to_string(),
             username: self.username.to_string(),
             port: self.port,
+            password: self.password.clone(),
         }
     }
 
@@ -154,6 +160,7 @@ pub struct ConnectionLanding {
     host_editor: Entity<Editor>,
     username_editor: Entity<Editor>,
     port_editor: Entity<Editor>,
+    password_editor: Entity<Editor>,
     _connect_task: Option<Task<()>>,
 }
 
@@ -179,6 +186,12 @@ impl ConnectionLanding {
             editor.set_placeholder_text("22", window, cx);
             editor
         });
+        let password_editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text("leave blank for key auth", window, cx);
+            editor.set_masked(true, cx);
+            editor
+        });
 
         let saved_hosts = load_saved_host_entries()
             .into_iter()
@@ -194,6 +207,7 @@ impl ConnectionLanding {
             host_editor,
             username_editor,
             port_editor,
+            password_editor,
             _connect_task: None,
         }
     }
@@ -232,6 +246,9 @@ impl ConnectionLanding {
         self.port_editor.update(cx, |editor, cx| {
             editor.set_text("", window, cx);
         });
+        self.password_editor.update(cx, |editor, cx| {
+            editor.set_text("", window, cx);
+        });
         self.name_editor.focus_handle(cx).focus(window, cx);
         cx.notify();
     }
@@ -258,6 +275,12 @@ impl ConnectionLanding {
         let username = self.username_editor.read(cx).text(cx);
         let port_text = self.port_editor.read(cx).text(cx);
         let port: u16 = port_text.parse().unwrap_or(22);
+        let password_text = self.password_editor.read(cx).text(cx);
+        let password = if password_text.is_empty() {
+            None
+        } else {
+            Some(password_text.to_string())
+        };
 
         if host.is_empty() || username.is_empty() {
             return;
@@ -274,6 +297,7 @@ impl ConnectionLanding {
             host: SharedString::from(host),
             username: SharedString::from(username),
             port,
+            password,
             status: ConnectionStatus::Disconnected,
         });
         self.persist_hosts();
@@ -294,6 +318,7 @@ impl ConnectionLanding {
             host: host.host.to_string().into(),
             username: Some(host.username.to_string()),
             port: Some(host.port),
+            password: host.password.clone(),
             ..Default::default()
         };
 
@@ -612,6 +637,7 @@ impl ConnectionLanding {
         let host_focus = self.host_editor.focus_handle(cx).tab_index(1).tab_stop(true);
         let username_focus = self.username_editor.focus_handle(cx).tab_index(2).tab_stop(true);
         let port_focus = self.port_editor.focus_handle(cx).tab_index(3).tab_stop(true);
+        let password_focus = self.password_editor.focus_handle(cx).tab_index(4).tab_stop(true);
 
         v_flex()
             .id("add-host-form")
@@ -717,6 +743,27 @@ impl ConnectionLanding {
                                     .py_1()
                                     .child(self.port_editor.clone()),
                             ),
+                    )
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(
+                                Label::new("Password")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                div()
+                                    .id("password-field")
+                                    .track_focus(&password_focus)
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(colors.border)
+                                    .bg(colors.editor_background)
+                                    .px_2()
+                                    .py_1()
+                                    .child(self.password_editor.clone()),
+                            ),
                     ),
             )
             .child(
@@ -725,13 +772,13 @@ impl ConnectionLanding {
                     .justify_end()
                     .child(
                         ui::Button::new("cancel-btn", "Cancel")
-                            .tab_index(4_isize)
+                            .tab_index(5_isize)
                             .style(ButtonStyle::Subtle)
                             .on_click(cx.listener(Self::cancel_add_host)),
                     )
                     .child(
                         ui::Button::new("connect-btn", "Connect")
-                            .tab_index(5_isize)
+                            .tab_index(6_isize)
                             .style(ButtonStyle::Filled)
                             .on_click(cx.listener(Self::confirm_add_host)),
                     ),
@@ -780,17 +827,138 @@ impl gpui::Focusable for ConnectionLanding {
     }
 }
 
+/// A simple password prompt that opens in its own window.
+/// Used by the SSH delegate when key auth fails and no saved password exists.
+struct PasswordPromptView {
+    prompt_text: SharedString,
+    editor: Entity<Editor>,
+    focus_handle: gpui::FocusHandle,
+    tx: Option<futures::channel::oneshot::Sender<EncryptedPassword>>,
+}
+
+impl PasswordPromptView {
+    fn open(
+        prompt: String,
+        tx: futures::channel::oneshot::Sender<EncryptedPassword>,
+        cx: &mut App,
+    ) -> anyhow::Result<()> {
+        cx.open_window(WindowOptions::default(), |window, cx| {
+            let view = cx.new(|cx| {
+                let editor = cx.new(|cx| {
+                    let mut editor = Editor::single_line(window, cx);
+                    editor.set_placeholder_text("enter password", window, cx);
+                    editor.set_masked(true, cx);
+                    editor
+                });
+
+                let focus_handle = cx.focus_handle();
+                editor.focus_handle(cx).focus(window, cx);
+
+                Self {
+                    prompt_text: SharedString::from(prompt),
+                    editor,
+                    focus_handle,
+                    tx: Some(tx),
+                }
+            });
+            view
+        })?;
+        Ok(())
+    }
+
+    fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(tx) = self.tx.take() {
+            let password_text = self.editor.read(cx).text(cx);
+            match EncryptedPassword::try_from(password_text.as_ref()) {
+                Ok(encrypted) => {
+                    tx.send(encrypted).ok();
+                }
+                Err(error) => {
+                    log::error!("[zed-ios] Failed to encrypt password: {error}");
+                }
+            }
+        }
+        window.remove_window();
+    }
+
+    fn cancel(&mut self, window: &mut Window, _cx: &mut Context<Self>) {
+        self.tx.take();
+        window.remove_window();
+    }
+}
+
+impl Render for PasswordPromptView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = cx.theme().colors();
+        let _editor_focus = self.editor.focus_handle(cx);
+
+        div()
+            .id("password-prompt")
+            .track_focus(&self.focus_handle)
+            .size_full()
+            .bg(colors.background)
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap_4()
+            .child(
+                Label::new(self.prompt_text.clone()).color(Color::Default),
+            )
+            .child(
+                div()
+                    .w_80()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(colors.border)
+                    .bg(colors.editor_background)
+                    .px_2()
+                    .py_1()
+                    .child(self.editor.clone()),
+            )
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        ui::Button::new("pw-cancel", "Cancel")
+                            .style(ButtonStyle::Subtle)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.cancel(window, cx);
+                            })),
+                    )
+                    .child(
+                        ui::Button::new("pw-submit", "Submit")
+                            .style(ButtonStyle::Filled)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.submit(window, cx);
+                            })),
+                    ),
+            )
+    }
+}
+
+impl gpui::Focusable for PasswordPromptView {
+    fn focus_handle(&self, _cx: &App) -> gpui::FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
 struct IosRemoteClientDelegate;
 
 impl remote::RemoteClientDelegate for IosRemoteClientDelegate {
     fn ask_password(
         &self,
         prompt: String,
-        _tx: futures::channel::oneshot::Sender<askpass::EncryptedPassword>,
-        _cx: &mut AsyncApp,
+        tx: futures::channel::oneshot::Sender<askpass::EncryptedPassword>,
+        cx: &mut AsyncApp,
     ) {
-        log::warn!("[zed-ios] Password prompt requested: {prompt}");
-        // TODO: Show a GPUI password modal and send the result back via tx
+        log::info!("[zed-ios] Password prompt requested: {prompt}");
+        let result = cx.update(|cx| {
+            PasswordPromptView::open(prompt, tx, cx)
+        });
+        if let Err(error) = result {
+            log::error!("[zed-ios] Failed to show password prompt: {error:#}");
+        }
     }
 
     fn get_download_url(

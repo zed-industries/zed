@@ -15,6 +15,7 @@ use gpui::{App, AsyncApp, Task};
 use gpui_tokio::Tokio;
 use prost::Message as _;
 use rpc::proto::Envelope;
+use russh::keys::PrivateKeyWithHashAlg;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -70,6 +71,95 @@ async fn exec_remote_command(
     Ok(String::from_utf8_lossy(&output).to_string())
 }
 
+/// Standard SSH key file names to try, in order of preference.
+const KEY_FILE_NAMES: &[&str] = &[
+    "id_ed25519",
+    "id_ecdsa",
+    "id_rsa",
+];
+
+/// Try to authenticate using SSH keys from `~/.ssh/`.
+/// Returns `true` if authentication succeeded with any key.
+async fn try_key_auth(
+    session: &Arc<tokio::sync::Mutex<SessionHandle>>,
+    username: &str,
+    cx: &mut AsyncApp,
+) -> bool {
+    let home = match std::env::var("HOME") {
+        Ok(home) => std::path::PathBuf::from(home),
+        Err(_) => {
+            log::info!("[russh] could not determine home directory for key auth");
+            return false;
+        }
+    };
+
+    let ssh_dir = home.join(".ssh");
+    for key_name in KEY_FILE_NAMES {
+        let key_path = ssh_dir.join(key_name);
+        if !key_path.exists() {
+            continue;
+        }
+
+        log::info!("[russh] trying key: {}", key_path.display());
+
+        let key = match russh::keys::load_secret_key(&key_path, None) {
+            Ok(key) => key,
+            Err(error) => {
+                log::info!(
+                    "[russh] skipping {} (load error: {error})",
+                    key_path.display()
+                );
+                continue;
+            }
+        };
+
+        let key = Arc::new(key);
+
+        let result = Tokio::spawn_result(cx, {
+            let session = session.clone();
+            let username = username.to_string();
+            let key = key.clone();
+            async move {
+                let mut handle = session.lock().await;
+                // Query the server for the best RSA hash algorithm.
+                // For non-RSA keys this is harmless — PrivateKeyWithHashAlg
+                // ignores the hash_alg for Ed25519/ECDSA.
+                let hash_alg = handle
+                    .best_supported_rsa_hash()
+                    .await
+                    .ok()
+                    .flatten()
+                    .flatten();
+
+                let key_with_hash = PrivateKeyWithHashAlg::new(key, hash_alg);
+                handle
+                    .authenticate_publickey(&username, key_with_hash)
+                    .await
+                    .map_err(anyhow::Error::from)
+            }
+        })
+        .await;
+
+        match result {
+            Ok(russh::client::AuthResult::Success) => {
+                log::info!("[russh] authenticated with key: {}", key_path.display());
+                return true;
+            }
+            Ok(_) => {
+                log::info!("[russh] key rejected: {}", key_path.display());
+            }
+            Err(error) => {
+                log::info!(
+                    "[russh] key auth error for {}: {error}",
+                    key_path.display()
+                );
+            }
+        }
+    }
+
+    false
+}
+
 impl RusshRemoteConnection {
     pub async fn new(
         connection_options: SshConnectionOptions,
@@ -107,24 +197,28 @@ impl RusshRemoteConnection {
 
         delegate.set_status(Some("Authenticating"), cx);
 
-        // Try password if one was provided with the connection options
-        let mut authenticated = false;
-        if let Some(password) = &connection_options.password {
-            let result = Tokio::spawn_result(cx, {
-                let session = session.clone();
-                let username = username.clone();
-                let password = password.clone();
-                async move {
-                    let mut handle = session.lock().await;
-                    handle
-                        .authenticate_password(&username, &password)
-                        .await
-                        .map_err(anyhow::Error::from)
-                }
-            })
-            .await?;
+        // Try SSH key authentication first
+        let mut authenticated = try_key_auth(&session, &username, cx).await;
 
-            authenticated = matches!(result, russh::client::AuthResult::Success);
+        // Try password if one was provided with the connection options
+        if !authenticated {
+            if let Some(password) = &connection_options.password {
+                let result = Tokio::spawn_result(cx, {
+                    let session = session.clone();
+                    let username = username.clone();
+                    let password = password.clone();
+                    async move {
+                        let mut handle = session.lock().await;
+                        handle
+                            .authenticate_password(&username, &password)
+                            .await
+                            .map_err(anyhow::Error::from)
+                    }
+                })
+                .await?;
+
+                authenticated = matches!(result, russh::client::AuthResult::Success);
+            }
         }
 
         if !authenticated {
