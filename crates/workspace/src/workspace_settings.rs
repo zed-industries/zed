@@ -4,7 +4,7 @@ use crate::DockPosition;
 use collections::HashMap;
 use serde::Deserialize;
 pub use settings::{
-    AutosaveSetting, BottomDockLayout, EncodingDisplayOptions, InactiveOpacity,
+    AutosaveSetting, BottomDockLayout, DockPanelMode, EncodingDisplayOptions, InactiveOpacity,
     PaneSplitDirectionHorizontal, PaneSplitDirectionVertical, RegisterSetting,
     RestoreOnStartupBehavior, Settings,
 };
@@ -13,6 +13,7 @@ pub use settings::{
 pub struct WorkspaceSettings {
     pub active_pane_modifiers: ActivePanelModifiers,
     pub bottom_dock_layout: settings::BottomDockLayout,
+    pub dock_panel_mode: settings::DockPanelMode,
     pub pane_split_direction_horizontal: settings::PaneSplitDirectionHorizontal,
     pub pane_split_direction_vertical: settings::PaneSplitDirectionVertical,
     pub centered_layout: settings::CenteredLayoutSettings,
@@ -92,6 +93,7 @@ impl Settings for WorkspaceSettings {
                 ),
             },
             bottom_dock_layout: workspace.bottom_dock_layout.unwrap(),
+            dock_panel_mode: workspace.dock_panel_mode.unwrap(),
             pane_split_direction_horizontal: workspace.pane_split_direction_horizontal.unwrap(),
             pane_split_direction_vertical: workspace.pane_split_direction_vertical.unwrap(),
             centered_layout: workspace.centered_layout.unwrap(),

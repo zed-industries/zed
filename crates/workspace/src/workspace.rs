@@ -150,7 +150,8 @@ use util::{
 };
 use uuid::Uuid;
 pub use workspace_settings::{
-    AutosaveSetting, BottomDockLayout, FocusFollowsMouse, RestoreOnStartupBehavior,
+    AutosaveSetting, BottomDockLayout, DockPanelMode, FocusFollowsMouse,
+    RestoreOnStartupBehavior,
     StatusBarSettings, TabBarSettings, WorkspaceSettings,
 };
 use zed_actions::{Spawn, feedback::FileBugReport, theme::ToggleMode};
@@ -7584,6 +7585,10 @@ impl Workspace {
         }
 
         Some(container)
+    }
+
+    fn dock_panel_mode(&self, cx: &App) -> DockPanelMode {
+        WorkspaceSettings::get_global(cx).dock_panel_mode
     }
 
     fn render_project_panel_overlay(

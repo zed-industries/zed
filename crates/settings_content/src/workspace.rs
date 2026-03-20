@@ -23,6 +23,10 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: contained
     pub bottom_dock_layout: Option<BottomDockLayout>,
+    /// How dock-backed panels are rendered.
+    ///
+    /// Default: push
+    pub dock_panel_mode: Option<DockPanelMode>,
     /// Direction to split horizontally.
     ///
     /// Default: "up"
@@ -321,6 +325,29 @@ pub enum BottomDockLayout {
     LeftAligned,
     /// Extends under the right dock while snapping to the left dock
     RightAligned,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum DockPanelMode {
+    /// Docks participate in workspace layout and reflow the center panes.
+    #[default]
+    Push,
+    /// Docks render above the workspace instead of participating in layout.
+    Overlay,
 }
 
 #[derive(
