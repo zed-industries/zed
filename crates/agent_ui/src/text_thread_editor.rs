@@ -1,5 +1,6 @@
 use crate::{
     language_model_selector::{LanguageModelSelector, language_model_selector},
+    resolve_external_paths_to_project_paths,
     ui::ModelSelectorTooltip,
 };
 use anyhow::Result;
@@ -1411,27 +1412,7 @@ impl TextThreadEditor {
         let paths = match action {
             InsertDraggedFiles::ProjectPaths(paths) => Task::ready((paths.clone(), vec![])),
             InsertDraggedFiles::ExternalFiles(paths) => {
-                let tasks = paths
-                    .clone()
-                    .into_iter()
-                    .map(|path| Workspace::project_path_for_path(project.clone(), &path, false, cx))
-                    .collect::<Vec<_>>();
-
-                cx.background_spawn(async move {
-                    let mut paths = vec![];
-                    let mut worktrees = vec![];
-
-                    let opened_paths = futures::future::join_all(tasks).await;
-
-                    for entry in opened_paths {
-                        if let Some((worktree, project_path)) = entry.log_err() {
-                            worktrees.push(worktree);
-                            paths.push(project_path);
-                        }
-                    }
-
-                    (paths, worktrees)
-                })
+                resolve_external_paths_to_project_paths(project.clone(), paths.clone(), cx)
             }
         };
 

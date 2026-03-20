@@ -10,6 +10,7 @@ use crate::{
     mention_set::{
         Mention, MentionImage, MentionSet, insert_crease_for_mention, paste_images_as_context,
     },
+    resolve_external_paths_to_project_paths,
 };
 use acp_thread::MentionUri;
 use agent::ThreadStore;
@@ -1025,21 +1026,10 @@ impl MessageEditor {
 
         cx.stop_propagation();
 
-        let tasks = paths
-            .into_iter()
-            .map(|path| Workspace::project_path_for_path(project.clone(), &path, false, cx))
-            .collect::<Vec<_>>();
+        let resolved_paths = resolve_external_paths_to_project_paths(project, paths, cx);
 
         cx.spawn_in(window, async move |this, cx| {
-            let mut project_paths = Vec::new();
-            let mut added_worktrees = Vec::new();
-
-            for entry in futures::future::join_all(tasks).await {
-                if let Some((worktree, project_path)) = entry.log_err() {
-                    added_worktrees.push(worktree);
-                    project_paths.push(project_path);
-                }
-            }
+            let (project_paths, added_worktrees) = resolved_paths.await;
 
             this.update_in(cx, |this, window, cx| {
                 this.insert_dragged_files(project_paths, added_worktrees, window, cx);

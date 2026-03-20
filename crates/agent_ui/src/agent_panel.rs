@@ -33,6 +33,7 @@ use crate::{
     StartThreadIn, ToggleNavigationMenu, ToggleNewThreadMenu, ToggleOptionsMenu,
     agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
     conversation_view::{AcpThreadViewEvent, ThreadView},
+    resolve_external_paths_to_project_paths,
     slash_command::SlashCommandCompletionProvider,
     text_thread_editor::{AgentPanelDelegate, TextThreadEditor, make_lsp_adapter_delegate},
     ui::EndTrialUpsell,
@@ -4489,23 +4490,13 @@ impl AgentPanel {
                 }),
             )
             .on_drop(cx.listener(move |this, paths: &ExternalPaths, window, cx| {
-                let tasks = paths
-                    .paths()
-                    .iter()
-                    .map(|path| {
-                        Workspace::project_path_for_path(this.project.clone(), path, false, cx)
-                    })
-                    .collect::<Vec<_>>();
+                let resolved_paths = resolve_external_paths_to_project_paths(
+                    this.project.clone(),
+                    paths.paths().to_vec(),
+                    cx,
+                );
                 cx.spawn_in(window, async move |this, cx| {
-                    let mut paths = vec![];
-                    let mut added_worktrees = vec![];
-                    let opened_paths = futures::future::join_all(tasks).await;
-                    for entry in opened_paths {
-                        if let Some((worktree, project_path)) = entry.log_err() {
-                            added_worktrees.push(worktree);
-                            paths.push(project_path);
-                        }
-                    }
+                    let (paths, added_worktrees) = resolved_paths.await;
                     this.update_in(cx, |this, window, cx| {
                         this.handle_drop(paths, added_worktrees, window, cx);
                     })
