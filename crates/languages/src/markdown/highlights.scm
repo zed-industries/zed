@@ -21,7 +21,10 @@
   (list_marker_parenthesis)
 ] @punctuation.list_marker.markup
 
-(block_quote_marker) @punctuation.markup
+[
+  (block_quote_marker)
+  (block_continuation)
+] @punctuation.markup
 
 (pipe_table_header
   "|" @punctuation.markup)

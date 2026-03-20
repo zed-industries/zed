@@ -57,7 +57,7 @@ pub(crate) trait LinuxClient {
 
     #[cfg(feature = "screen-capture")]
     fn is_screen_capture_supported(&self) -> bool {
-        false
+        true
     }
 
     #[cfg(feature = "screen-capture")]
@@ -633,28 +633,42 @@ pub(super) fn open_uri_internal(
     if let Some(uri) = ashpd::Uri::parse(uri).log_err() {
         executor
             .spawn(async move {
-                match ashpd::desktop::open_uri::OpenFileRequest::default()
-                    .activation_token(activation_token.clone().map(ashpd::ActivationToken::from))
-                    .send_uri(&uri)
-                    .await
-                    .and_then(|e| e.response())
-                {
-                    Ok(()) => return,
-                    Err(e) => log::error!("Failed to open with dbus: {}", e),
-                }
-
+                let mut xdg_open_failed = false;
                 for mut command in open::commands(uri.to_string()) {
                     if let Some(token) = activation_token.as_ref() {
                         command.env("XDG_ACTIVATION_TOKEN", token);
                     }
                     let program = format!("{:?}", command.get_program());
                     match smol::process::Command::from(command).spawn() {
-                        Ok(mut cmd) => {
-                            cmd.status().await.log_err();
-                            return;
-                        }
+                        Ok(mut cmd) => match cmd.status().await {
+                            Ok(status) if status.success() => return,
+                            Ok(status) => {
+                                log::error!("Command {} exited with status: {}", program, status);
+                                xdg_open_failed = true;
+                            }
+                            Err(e) => {
+                                log::error!("Failed to get status from {}: {}", program, e);
+                                xdg_open_failed = true;
+                            }
+                        },
                         Err(e) => {
-                            log::error!("Failed to open with {}: {}", program, e)
+                            log::error!("Failed to open with {}: {}", program, e);
+                            xdg_open_failed = true;
+                        }
+                    }
+                }
+
+                if xdg_open_failed {
+                    match ashpd::desktop::open_uri::OpenFileRequest::default()
+                        .activation_token(activation_token.map(ashpd::ActivationToken::from))
+                        .send_uri(&uri)
+                        .await
+                        .and_then(|e| e.response())
+                    {
+                        Ok(()) => {}
+                        Err(ashpd::Error::Response(ashpd::desktop::ResponseError::Cancelled)) => {}
+                        Err(e) => {
+                            log::error!("Failed to open with dbus: {}", e);
                         }
                     }
                 }

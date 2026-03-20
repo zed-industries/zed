@@ -1,3 +1,4 @@
+use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{Action as _, App};
 use itertools::Itertools as _;
 use settings::{
@@ -74,7 +75,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
         terminal_page(),
         version_control_page(),
         collaboration_page(),
-        ai_page(),
+        ai_page(cx),
         network_page(),
     ]
 }
@@ -4238,7 +4239,7 @@ fn window_and_layout_page() -> SettingsPage {
 }
 
 fn panels_page() -> SettingsPage {
-    fn project_panel_section() -> [SettingsPageItem; 22] {
+    fn project_panel_section() -> [SettingsPageItem; 23] {
         [
             SettingsPageItem::SectionHeader("Project Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -4511,6 +4512,32 @@ fn panels_page() -> SettingsPage {
                             .scrollbar
                             .get_or_insert_default()
                             .show = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Horizontal Scroll",
+                description: "Whether to allow horizontal scrolling in the project panel. When disabled, the view is always locked to the leftmost position and long file names are clipped.",
+                field: Box::new(SettingField {
+                    json_path: Some("project_panel.scrollbar.horizontal_scroll"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .scrollbar
+                            .as_ref()?
+                            .horizontal_scroll
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .scrollbar
+                            .get_or_insert_default()
+                            .horizontal_scroll = value;
                     },
                 }),
                 metadata: None,
@@ -4793,7 +4820,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn terminal_panel_section() -> [SettingsPageItem; 2] {
+    fn terminal_panel_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SectionHeader("Terminal Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -4804,6 +4831,28 @@ fn panels_page() -> SettingsPage {
                     pick: |settings_content| settings_content.terminal.as_ref()?.dock.as_ref(),
                     write: |settings_content, value| {
                         settings_content.terminal.get_or_insert_default().dock = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Count Badge",
+                description: "Show a badge on the terminal panel icon with the count of open terminals.",
+                field: Box::new(SettingField {
+                    json_path: Some("terminal.show_count_badge"),
+                    pick: |settings_content| {
+                        settings_content
+                            .terminal
+                            .as_ref()?
+                            .show_count_badge
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .terminal
+                            .get_or_insert_default()
+                            .show_count_badge = value;
                     },
                 }),
                 metadata: None,
@@ -5021,7 +5070,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn git_panel_section() -> [SettingsPageItem; 11] {
+    fn git_panel_section() -> [SettingsPageItem; 14] {
         [
             SettingsPageItem::SectionHeader("Git Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5164,6 +5213,42 @@ fn panels_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
+                title: "File Icons",
+                description: "Show file icons next to the Git status icon.",
+                field: Box::new(SettingField {
+                    json_path: Some("git_panel.file_icons"),
+                    pick: |settings_content| {
+                        settings_content.git_panel.as_ref()?.file_icons.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .git_panel
+                            .get_or_insert_default()
+                            .file_icons = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Folder Icons",
+                description: "Whether to show folder icons or chevrons for directories in the git panel.",
+                field: Box::new(SettingField {
+                    json_path: Some("git_panel.folder_icons"),
+                    pick: |settings_content| {
+                        settings_content.git_panel.as_ref()?.folder_icons.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .git_panel
+                            .get_or_insert_default()
+                            .folder_icons = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
                 title: "Diff Stats",
                 description: "Whether to show the addition/deletion change count next to each file in the Git panel.",
                 field: Box::new(SettingField {
@@ -5176,6 +5261,28 @@ fn panels_page() -> SettingsPage {
                             .git_panel
                             .get_or_insert_default()
                             .diff_stats = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Count Badge",
+                description: "Whether to show a badge on the git panel icon with the count of uncommitted changes.",
+                field: Box::new(SettingField {
+                    json_path: Some("git_panel.show_count_badge"),
+                    pick: |settings_content| {
+                        settings_content
+                            .git_panel
+                            .as_ref()?
+                            .show_count_badge
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .git_panel
+                            .get_or_insert_default()
+                            .show_count_badge = value;
                     },
                 }),
                 metadata: None,
@@ -5231,7 +5338,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn notification_panel_section() -> [SettingsPageItem; 4] {
+    fn notification_panel_section() -> [SettingsPageItem; 5] {
         [
             SettingsPageItem::SectionHeader("Notification Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5291,6 +5398,28 @@ fn panels_page() -> SettingsPage {
                             .notification_panel
                             .get_or_insert_default()
                             .default_width = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Count Badge",
+                description: "Show a badge on the notification panel icon with the count of unread notifications.",
+                field: Box::new(SettingField {
+                    json_path: Some("notification_panel.show_count_badge"),
+                    pick: |settings_content| {
+                        settings_content
+                            .notification_panel
+                            .as_ref()?
+                            .show_count_badge
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .notification_panel
+                            .get_or_insert_default()
+                            .show_count_badge = value;
                     },
                 }),
                 metadata: None,
@@ -6952,7 +7081,7 @@ fn collaboration_page() -> SettingsPage {
     }
 }
 
-fn ai_page() -> SettingsPage {
+fn ai_page(cx: &App) -> SettingsPage {
     fn general_section() -> [SettingsPageItem; 2] {
         [
             SettingsPageItem::SectionHeader("General"),
@@ -6972,8 +7101,8 @@ fn ai_page() -> SettingsPage {
         ]
     }
 
-    fn agent_configuration_section() -> [SettingsPageItem; 12] {
-        [
+    fn agent_configuration_section(cx: &App) -> Box<[SettingsPageItem]> {
+        let mut items = vec![
             SettingsPageItem::SectionHeader("Agent Configuration"),
             SettingsPageItem::SubPageLink(SubPageLink {
                 title: "Tool Permissions".into(),
@@ -6984,6 +7113,34 @@ fn ai_page() -> SettingsPage {
                 files: USER,
                 render: render_tool_permissions_setup_page,
             }),
+        ];
+
+        if cx.has_flag::<AgentV2FeatureFlag>() {
+            items.push(SettingsPageItem::SettingItem(SettingItem {
+                title: "New Thread Location",
+                description: "Whether to start a new thread in the current local project or in a new Git worktree.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.new_thread_location"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()?
+                            .new_thread_location
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .new_thread_location = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }));
+        }
+
+        items.extend([
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Single File Review",
                 description: "When enabled, agent edits will also be displayed in single-file buffers for review.",
@@ -7188,7 +7345,9 @@ fn ai_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
-        ]
+        ]);
+
+        items.into_boxed_slice()
     }
 
     fn context_servers_section() -> [SettingsPageItem; 2] {
@@ -7273,7 +7432,7 @@ fn ai_page() -> SettingsPage {
         title: "AI",
         items: concat_sections![
             general_section(),
-            agent_configuration_section(),
+            agent_configuration_section(cx),
             context_servers_section(),
             edit_prediction_language_settings_section(),
             edit_prediction_display_sub_section()

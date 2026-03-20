@@ -156,6 +156,10 @@ impl ChannelStore {
         cx.global::<GlobalChannelStore>().0.clone()
     }
 
+    pub fn try_global(cx: &App) -> Option<Entity<Self>> {
+        cx.try_global::<GlobalChannelStore>().map(|g| g.0.clone())
+    }
+
     pub fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
         let rpc_subscriptions = [
             client.add_message_handler(cx.weak_entity(), Self::handle_update_channels),

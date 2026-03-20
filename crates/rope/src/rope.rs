@@ -693,18 +693,31 @@ impl<'a> Cursor<'a> {
     }
 
     pub fn seek_forward(&mut self, end_offset: usize) {
-        debug_assert!(end_offset >= self.offset);
+        assert!(
+            end_offset >= self.offset,
+            "cannot seek backward from {} to {}",
+            self.offset,
+            end_offset
+        );
+        assert!(
+            end_offset <= self.rope.len(),
+            "cannot summarize past end of rope"
+        );
 
         self.chunks.seek_forward(&end_offset, Bias::Right);
         self.offset = end_offset;
     }
 
     pub fn slice(&mut self, end_offset: usize) -> Rope {
-        debug_assert!(
+        assert!(
             end_offset >= self.offset,
-            "cannot slice backwards from {} to {}",
+            "cannot slice backward from {} to {}",
             self.offset,
             end_offset
+        );
+        assert!(
+            end_offset <= self.rope.len(),
+            "cannot summarize past end of rope"
         );
 
         let mut slice = Rope::new();
@@ -730,7 +743,16 @@ impl<'a> Cursor<'a> {
     }
 
     pub fn summary<D: TextDimension>(&mut self, end_offset: usize) -> D {
-        debug_assert!(end_offset >= self.offset);
+        assert!(
+            end_offset >= self.offset,
+            "cannot summarize backward from {} to {}",
+            self.offset,
+            end_offset
+        );
+        assert!(
+            end_offset <= self.rope.len(),
+            "cannot summarize past end of rope"
+        );
 
         let mut summary = D::zero(());
         if let Some(start_chunk) = self.chunks.item() {

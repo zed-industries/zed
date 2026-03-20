@@ -768,6 +768,9 @@
       // 5. Never show the scrollbar:
       //    "never"
       "show": null,
+      // Whether to allow horizontal scrolling in the project panel.
+      // When false, the view is locked to the leftmost position and long file names are clipped.
+      "horizontal_scroll": true,
     },
     // Which files containing diagnostic errors/warnings to mark in the project panel.
     // This setting can take the following three values:
@@ -895,6 +898,14 @@
     // Choices: label_color, icon
     // Default: icon
     "status_style": "icon",
+    // Whether to show file icons in the git panel.
+    //
+    // Default: false
+    "file_icons": false,
+    // Whether to show folder icons or chevrons for directories in the git panel.
+    //
+    // Default: true
+    "folder_icons": true,
     // What branch name to use if `init.defaultBranch` is not set
     //
     // Default: main
@@ -911,6 +922,14 @@
     ///
     /// Default: false
     "tree_view": false,
+    // Whether the git panel should open on startup.
+    //
+    // Default: false
+    "starts_open": false,
+    // Whether to show a badge on the git panel icon with the count of uncommitted changes.
+    //
+    // Default: false
+    "show_count_badge": false,
     "scrollbar": {
       // When to show the scrollbar in the git panel.
       //
@@ -920,8 +939,8 @@
     },
     // Whether to show the addition/deletion change count next to each file in the Git panel.
     //
-    // Default: false
-    "diff_stats": false,
+    // Default: true
+    "diff_stats": true,
   },
   "message_editor": {
     // Whether to automatically replace emoji shortcodes with emoji characters.
@@ -935,6 +954,8 @@
     "dock": "right",
     // Default width of the notification panel.
     "default_width": 380,
+    // Whether to show a badge on the notification panel icon with the count of unread notifications.
+    "show_count_badge": false,
   },
   "agent": {
     // Whether the inline assistant should use streaming tools, when available
@@ -1080,6 +1101,10 @@
         "tools": {},
       },
     },
+    // Whether to start a new thread in the current local project or in a new Git worktree.
+    //
+    // Default: local_project
+    "new_thread_location": "local_project",
     // Where to show notifications when the agent has either completed
     // its response, or else needs confirmation before it can run a
     // tool action.
@@ -1282,6 +1307,8 @@
     //   * "indexed": Use only the files Zed had indexed
     //   * "smart": Be smart and search for ignored when called from a gitignored worktree
     "include_ignored": "smart",
+    // Whether to include text channels in file finder results.
+    "include_channels": false,
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
@@ -1850,6 +1877,8 @@
     // Timeout for hover and Cmd-click path hyperlink discovery in milliseconds. Specifying a
     // timeout of `0` will disable path hyperlinking in terminal.
     "path_hyperlink_timeout_ms": 1,
+    // Whether to show a badge on the terminal panel icon with the count of open terminals.
+    "show_count_badge": false,
   },
   "code_actions_on_format": {},
   // Settings related to running tasks.
@@ -2143,7 +2172,7 @@
       },
     },
     "Starlark": {
-      "language_servers": ["starpls", "!buck2-lsp", "..."],
+      "language_servers": ["starpls", "!buck2-lsp", "!tilt", "..."],
     },
     "Svelte": {
       "language_servers": ["svelte-language-server", "..."],
