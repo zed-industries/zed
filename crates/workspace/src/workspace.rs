@@ -4328,6 +4328,14 @@ impl Workspace {
             .any(|(position, dock)| self.dock_renders_as_overlay(position, &dock, cx))
     }
 
+    pub fn panel_is_overlay_visible<T: Panel>(&self, cx: &App) -> bool {
+        self.visible_overlay_docks(cx).into_iter().any(|(_, dock)| {
+            dock.read(cx)
+                .visible_panel()
+                .is_some_and(|panel| panel.panel_key() == T::panel_key())
+        })
+    }
+
     pub fn dismiss_overlay_docks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let overlay_docks = self.visible_overlay_docks(cx);
         if overlay_docks.is_empty() {
@@ -4338,6 +4346,19 @@ impl Workspace {
             dock.update(cx, |dock, cx| dock.set_open(false, window, cx));
         }
         self.restore_overlay_focus(window, cx);
+        self.serialize_workspace(window, cx);
+        cx.notify();
+    }
+
+    pub fn dismiss_panel_overlay<T: Panel>(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.panel_is_overlay_visible::<T>(cx) {
+            return;
+        }
+
+        self.close_panel::<T>(window, cx);
+        if !self.overlay_docks_visible(cx) {
+            self.restore_overlay_focus(window, cx);
+        }
         self.serialize_workspace(window, cx);
         cx.notify();
     }
@@ -12569,6 +12590,53 @@ mod tests {
 
             let pane_focus = workspace.active_pane().read(cx).focus_handle(cx);
             assert!(pane_focus.contains_focused(window, cx));
+        });
+    }
+
+    #[gpui::test]
+    async fn dismiss_panel_overlay_closes_only_target_overlay(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+        enable_overlay_dock_panel_mode(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let item = cx.new(TestItem::new);
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+
+            let project_panel = cx.new(|cx| TestProjectPanel::new(DockPosition::Left, cx));
+            workspace.add_panel(project_panel, window, cx);
+
+            let bottom_panel = cx.new(|cx| TestPanel::new(DockPosition::Bottom, 50, cx));
+            workspace.add_panel(bottom_panel, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let pane_focus = workspace.active_pane().read(cx).focus_handle(cx);
+            window.focus(&pane_focus, cx);
+            workspace.toggle_panel_visibility::<TestProjectPanel>(window, cx);
+            workspace.toggle_dock(DockPosition::Bottom, window, cx);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(workspace.panel_is_overlay_visible::<TestProjectPanel>(cx));
+            assert!(workspace.bottom_dock().read(cx).is_open());
+
+            workspace.dismiss_panel_overlay::<TestProjectPanel>(window, cx);
+        });
+
+        workspace.update_in(cx, |workspace, _window, cx| {
+            assert!(!workspace.panel_is_overlay_visible::<TestProjectPanel>(cx));
+            assert!(!workspace.left_dock().read(cx).is_open());
+            assert!(workspace.bottom_dock().read(cx).is_open());
+            assert!(workspace.overlay_docks_visible(cx));
         });
     }
 

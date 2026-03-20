@@ -2011,10 +2011,10 @@ impl ProjectPanel {
         }
 
         if let Some(workspace) = self.workspace.upgrade()
-            && workspace.read(cx).project_panel_overlay_visible(cx)
+            && workspace.read(cx).panel_is_overlay_visible::<ProjectPanel>(cx)
         {
             workspace.update(cx, |workspace, cx| {
-                workspace.dismiss_project_panel_overlay(window, cx);
+                workspace.dismiss_panel_overlay::<ProjectPanel>(window, cx);
             });
             return;
         }
