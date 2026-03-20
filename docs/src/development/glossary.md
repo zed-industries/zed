@@ -1,5 +1,5 @@
 ---
-title: Zed Development: Glossary
+title: "Zed Development: Glossary"
 description: "Guide to zed development: glossary for Zed development."
 ---
 

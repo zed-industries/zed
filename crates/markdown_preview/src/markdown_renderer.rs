@@ -9,7 +9,6 @@ use crate::{
     markdown_preview_view::MarkdownPreviewView,
 };
 use collections::HashMap;
-use fs::normalize_path;
 use gpui::{
     AbsoluteLength, Animation, AnimationExt, AnyElement, App, AppContext as _, Context, Div,
     Element, ElementId, Entity, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement,
@@ -25,6 +24,7 @@ use std::{
 };
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
 use ui::{CopyButton, LinkPreview, ToggleState, prelude::*, tooltip_container};
+use util::normalize_path;
 use workspace::{OpenOptions, OpenVisible, Workspace};
 
 pub struct CheckboxClickedEvent {
@@ -698,16 +698,15 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
         .when_some(parsed.caption.as_ref(), |this, caption| {
             this.children(render_markdown_text(caption, cx))
         })
-        .border_1()
-        .border_color(cx.border_color)
-        .rounded_sm()
-        .overflow_hidden()
         .child(
             div()
+                .rounded_sm()
+                .overflow_hidden()
+                .border_1()
+                .border_color(cx.border_color)
                 .min_w_0()
-                .w_full()
                 .grid()
-                .grid_cols(max_column_count as u16)
+                .grid_cols_max_content(max_column_count as u16)
                 .children(cells),
         )
         .into_any()
@@ -891,6 +890,24 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
     for parsed_region in parsed_new {
         match parsed_region {
             MarkdownParagraphChunk::Text(parsed) => {
+                let trimmed = parsed.contents.trim();
+                if trimmed == "[x]" || trimmed == "[X]" || trimmed == "[ ]" {
+                    let checked = trimmed != "[ ]";
+                    let element = div()
+                        .child(MarkdownCheckbox::new(
+                            cx.next_id(&parsed.source_range),
+                            if checked {
+                                ToggleState::Selected
+                            } else {
+                                ToggleState::Unselected
+                            },
+                            cx.clone(),
+                        ))
+                        .into_any();
+                    any_element.push(element);
+                    continue;
+                }
+
                 let element_id = cx.next_id(&parsed.source_range);
 
                 let highlights = gpui::combine_highlights(

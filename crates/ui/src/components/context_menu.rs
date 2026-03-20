@@ -692,10 +692,20 @@ impl ContextMenu {
     }
 
     pub fn action_checked(
+        self,
+        label: impl Into<SharedString>,
+        action: Box<dyn Action>,
+        checked: bool,
+    ) -> Self {
+        self.action_checked_with_disabled(label, action, checked, false)
+    }
+
+    pub fn action_checked_with_disabled(
         mut self,
         label: impl Into<SharedString>,
         action: Box<dyn Action>,
         checked: bool,
+        disabled: bool,
     ) -> Self {
         self.items.push(ContextMenuItem::Entry(ContextMenuEntry {
             toggle: if checked {
@@ -718,7 +728,7 @@ impl ContextMenu {
             icon_position: IconPosition::End,
             icon_size: IconSize::Small,
             icon_color: None,
-            disabled: false,
+            disabled,
             documentation_aside: None,
             end_slot_icon: None,
             end_slot_title: None,

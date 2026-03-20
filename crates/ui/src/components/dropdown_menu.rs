@@ -163,11 +163,10 @@ impl RenderOnce for DropdownMenu {
                 Some(
                     Button::new(self.id.clone(), text)
                         .style(button_style)
-                        .when(self.chevron, |this| {
-                            this.icon(self.trigger_icon)
-                                .icon_position(IconPosition::End)
-                                .icon_size(IconSize::XSmall)
-                                .icon_color(Color::Muted)
+                        .when_some(self.trigger_icon.filter(|_| self.chevron), |this, icon| {
+                            this.end_icon(
+                                Icon::new(icon).size(IconSize::XSmall).color(Color::Muted),
+                            )
                         })
                         .when(full_width, |this| this.full_width())
                         .size(trigger_size)

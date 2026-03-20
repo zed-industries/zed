@@ -1041,7 +1041,18 @@ impl ScrollbarLayout {
 
 impl PartialEq for ScrollbarLayout {
     fn eq(&self, other: &Self) -> bool {
-        self.axis == other.axis && self.thumb_bounds == other.thumb_bounds
+        if self.axis != other.axis {
+            return false;
+        }
+
+        let axis = self.axis;
+        let thumb_offset =
+            self.thumb_bounds.origin.along(axis) - self.track_bounds.origin.along(axis);
+        let other_thumb_offset =
+            other.thumb_bounds.origin.along(axis) - other.track_bounds.origin.along(axis);
+
+        thumb_offset == other_thumb_offset
+            && self.thumb_bounds.size.along(axis) == other.thumb_bounds.size.along(axis)
     }
 }
 
