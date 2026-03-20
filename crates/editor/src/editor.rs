@@ -2891,14 +2891,23 @@ impl Editor {
         }
 
         let disjoint = self.selections.disjoint_anchors();
-        let snapshot = self.snapshot(window, cx);
-        let snapshot = snapshot.buffer_snapshot();
-        if self.mode == EditorMode::SingleLine
-            && let [selection] = disjoint
+        if matches!(
+            &self.mode,
+            EditorMode::SingleLine | EditorMode::AutoHeight { .. }
+        ) && let [selection] = disjoint
             && selection.start == selection.end
-            && selection.end.to_offset(snapshot) == snapshot.len()
         {
-            key_context.add("end_of_input");
+            let snapshot = self.snapshot(window, cx);
+            let snapshot = snapshot.buffer_snapshot();
+            let caret_offset = selection.end.to_offset(snapshot);
+
+            if caret_offset == MultiBufferOffset(0) {
+                key_context.add("start_of_input");
+            }
+
+            if caret_offset == snapshot.len() {
+                key_context.add("end_of_input");
+            }
         }
 
         if self.has_any_expanded_diff_hunks(cx) {
@@ -13383,16 +13392,6 @@ impl Editor {
 
         // Split selections to respect paragraph, indent, and comment prefix boundaries.
         let wrap_ranges = selections.into_iter().flat_map(|selection| {
-            let mut non_blank_rows_iter = (selection.start.row..=selection.end.row)
-                .filter(|row| !buffer.is_line_blank(MultiBufferRow(*row)))
-                .peekable();
-
-            let first_row = if let Some(&row) = non_blank_rows_iter.peek() {
-                row
-            } else {
-                return Vec::new();
-            };
-
             let language_settings = buffer.language_settings_at(selection.head(), cx);
             let language_scope = buffer.language_scope_at(selection.head());
 
@@ -13469,8 +13468,70 @@ impl Editor {
                     (indent, comment_prefix, rewrap_prefix)
                 };
 
+            let mut start_row = selection.start.row;
+            let mut end_row = selection.end.row;
+
+            if selection.is_empty() {
+                let cursor_row = selection.start.row;
+
+                let (mut indent_size, comment_prefix, _) = indent_and_prefix_for_row(cursor_row);
+                let line_prefix = match &comment_prefix {
+                    Some(CommentFormat::Line(prefix) | CommentFormat::BlockLine(prefix)) => {
+                        Some(prefix.as_str())
+                    }
+                    Some(CommentFormat::BlockCommentWithEnd(BlockCommentConfig {
+                        prefix, ..
+                    })) => Some(prefix.as_ref()),
+                    Some(CommentFormat::BlockCommentWithStart(BlockCommentConfig {
+                        start: _,
+                        end: _,
+                        prefix,
+                        tab_size,
+                    })) => {
+                        indent_size.len += tab_size;
+                        Some(prefix.as_ref())
+                    }
+                    None => None,
+                };
+                let indent_prefix = indent_size.chars().collect::<String>();
+                let line_prefix = format!("{indent_prefix}{}", line_prefix.unwrap_or(""));
+
+                'expand_upwards: while start_row > 0 {
+                    let prev_row = start_row - 1;
+                    if buffer.contains_str_at(Point::new(prev_row, 0), &line_prefix)
+                        && buffer.line_len(MultiBufferRow(prev_row)) as usize > line_prefix.len()
+                        && !buffer.is_line_blank(MultiBufferRow(prev_row))
+                    {
+                        start_row = prev_row;
+                    } else {
+                        break 'expand_upwards;
+                    }
+                }
+
+                'expand_downwards: while end_row < buffer.max_point().row {
+                    let next_row = end_row + 1;
+                    if buffer.contains_str_at(Point::new(next_row, 0), &line_prefix)
+                        && buffer.line_len(MultiBufferRow(next_row)) as usize > line_prefix.len()
+                        && !buffer.is_line_blank(MultiBufferRow(next_row))
+                    {
+                        end_row = next_row;
+                    } else {
+                        break 'expand_downwards;
+                    }
+                }
+            }
+
+            let mut non_blank_rows_iter = (start_row..=end_row)
+                .filter(|row| !buffer.is_line_blank(MultiBufferRow(*row)))
+                .peekable();
+
+            let first_row = if let Some(&row) = non_blank_rows_iter.peek() {
+                row
+            } else {
+                return Vec::new();
+            };
+
             let mut ranges = Vec::new();
-            let from_empty_selection = selection.is_empty();
 
             let mut current_range_start = first_row;
             let mut prev_row = first_row;
@@ -13501,7 +13562,6 @@ impl Editor {
                         current_range_indent,
                         current_range_comment_delimiters.clone(),
                         current_range_rewrap_prefix.clone(),
-                        from_empty_selection,
                     ));
                     current_range_start = row;
                     current_range_indent = row_indent;
@@ -13518,7 +13578,6 @@ impl Editor {
                 current_range_indent,
                 current_range_comment_delimiters,
                 current_range_rewrap_prefix,
-                from_empty_selection,
             ));
 
             ranges
@@ -13527,17 +13586,11 @@ impl Editor {
         let mut edits = Vec::new();
         let mut rewrapped_row_ranges = Vec::<RangeInclusive<u32>>::new();
 
-        for (
-            language_settings,
-            wrap_range,
-            mut indent_size,
-            comment_prefix,
-            rewrap_prefix,
-            from_empty_selection,
-        ) in wrap_ranges
+        for (language_settings, wrap_range, mut indent_size, comment_prefix, rewrap_prefix) in
+            wrap_ranges
         {
-            let mut start_row = wrap_range.start.row;
-            let mut end_row = wrap_range.end.row;
+            let start_row = wrap_range.start.row;
+            let end_row = wrap_range.end.row;
 
             // Skip selections that overlap with a range that has already been rewrapped.
             let selection_range = start_row..end_row;
@@ -13582,32 +13635,6 @@ impl Editor {
                 || self.hard_wrap.is_some();
             if !should_rewrap {
                 continue;
-            }
-
-            if from_empty_selection {
-                'expand_upwards: while start_row > 0 {
-                    let prev_row = start_row - 1;
-                    if buffer.contains_str_at(Point::new(prev_row, 0), &line_prefix)
-                        && buffer.line_len(MultiBufferRow(prev_row)) as usize > line_prefix.len()
-                        && !buffer.is_line_blank(MultiBufferRow(prev_row))
-                    {
-                        start_row = prev_row;
-                    } else {
-                        break 'expand_upwards;
-                    }
-                }
-
-                'expand_downwards: while end_row < buffer.max_point().row {
-                    let next_row = end_row + 1;
-                    if buffer.contains_str_at(Point::new(next_row, 0), &line_prefix)
-                        && buffer.line_len(MultiBufferRow(next_row)) as usize > line_prefix.len()
-                        && !buffer.is_line_blank(MultiBufferRow(next_row))
-                    {
-                        end_row = next_row;
-                    } else {
-                        break 'expand_downwards;
-                    }
-                }
             }
 
             let start = Point::new(start_row, 0);
@@ -15687,11 +15714,10 @@ impl Editor {
             display_map.max_point().row()
         };
 
-        // When `skip_soft_wrap` is true, we use buffer columns instead of pixel
+        // When `skip_soft_wrap` is true, we use UTF-16 columns instead of pixel
         // positions to place new selections, so we need to keep track of the
         // column range of the oldest selection in each group, because
         // intermediate selections may have been clamped to shorter lines.
-        // selections may have been clamped to shorter lines.
         let mut goal_columns_by_selection_id = if skip_soft_wrap {
             let mut map = HashMap::default();
             for group in state.groups.iter() {
@@ -15699,8 +15725,10 @@ impl Editor {
                     if let Some(oldest_selection) =
                         columnar_selections.iter().find(|s| s.id == *oldest_id)
                     {
-                        let start_col = oldest_selection.start.column;
-                        let end_col = oldest_selection.end.column;
+                        let snapshot = display_map.buffer_snapshot();
+                        let start_col =
+                            snapshot.point_to_point_utf16(oldest_selection.start).column;
+                        let end_col = snapshot.point_to_point_utf16(oldest_selection.end).column;
                         let goal_columns = start_col.min(end_col)..start_col.max(end_col);
                         for id in &group.stack {
                             map.insert(*id, goal_columns.clone());
@@ -15741,8 +15769,10 @@ impl Editor {
                         let goal_columns = goal_columns_by_selection_id
                             .remove(&selection.id)
                             .unwrap_or_else(|| {
-                                let start_col = selection.start.column;
-                                let end_col = selection.end.column;
+                                let snapshot = display_map.buffer_snapshot();
+                                let start_col =
+                                    snapshot.point_to_point_utf16(selection.start).column;
+                                let end_col = snapshot.point_to_point_utf16(selection.end).column;
                                 start_col.min(end_col)..start_col.max(end_col)
                             });
                         self.selections.find_next_columnar_selection_by_buffer_row(
@@ -18119,6 +18149,7 @@ impl Editor {
 
         let workspace = self.workspace();
 
+        let excerpt_context_lines = multi_buffer::excerpt_context_lines(cx);
         cx.spawn_in(window, async move |editor, cx| {
             let locations: Vec<Location> = future::join_all(definitions)
                 .await
@@ -18139,7 +18170,11 @@ impl Editor {
             for ranges in locations.values_mut() {
                 ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
                 ranges.dedup();
-                num_locations += ranges.len();
+                let fits_in_one_excerpt = ranges
+                    .iter()
+                    .tuple_windows()
+                    .all(|(a, b)| b.start.row - a.end.row <= 2 * excerpt_context_lines);
+                num_locations += if fits_in_one_excerpt { 1 } else { ranges.len() };
             }
 
             if num_locations > 1 {
@@ -18244,16 +18279,43 @@ impl Editor {
                 }
             } else {
                 let (target_buffer, target_ranges) = locations.into_iter().next().unwrap();
-                let target_range = target_ranges.first().unwrap().clone();
 
                 editor.update_in(cx, |editor, window, cx| {
-                    let range = editor.range_for_match(&target_range);
-                    let range = collapse_multiline_range(range);
-
+                    let target_ranges = target_ranges
+                        .into_iter()
+                        .map(|r| editor.range_for_match(&r))
+                        .map(collapse_multiline_range)
+                        .collect::<Vec<_>>();
                     if !split
                         && Some(&target_buffer) == editor.buffer.read(cx).as_singleton().as_ref()
                     {
-                        editor.go_to_singleton_buffer_range(range, window, cx);
+                        let multibuffer = editor.buffer.read(cx);
+                        let target_ranges = target_ranges
+                            .into_iter()
+                            .filter_map(|r| {
+                                let start = multibuffer.buffer_point_to_anchor(
+                                    &target_buffer,
+                                    r.start,
+                                    cx,
+                                )?;
+                                let end = multibuffer.buffer_point_to_anchor(
+                                    &target_buffer,
+                                    r.end,
+                                    cx,
+                                )?;
+                                Some(start..end)
+                            })
+                            .collect::<Vec<_>>();
+                        if target_ranges.is_empty() {
+                            return Navigated::No;
+                        }
+
+                        editor.change_selections(
+                            SelectionEffects::default().nav_history(true),
+                            window,
+                            cx,
+                            |s| s.select_anchor_ranges(target_ranges),
+                        );
 
                         let target =
                             editor.navigation_entry(editor.selections.newest_anchor().head(), cx);
@@ -18302,7 +18364,37 @@ impl Editor {
                                 // When selecting a definition in a different buffer, disable the nav history
                                 // to avoid creating a history entry at the previous cursor location.
                                 pane.update(cx, |pane, _| pane.disable_history());
-                                target_editor.go_to_singleton_buffer_range(range, window, cx);
+
+                                let multibuffer = target_editor.buffer.read(cx);
+                                let Some(target_buffer) = multibuffer.as_singleton() else {
+                                    return Navigated::No;
+                                };
+                                let target_ranges = target_ranges
+                                    .into_iter()
+                                    .filter_map(|r| {
+                                        let start = multibuffer.buffer_point_to_anchor(
+                                            &target_buffer,
+                                            r.start,
+                                            cx,
+                                        )?;
+                                        let end = multibuffer.buffer_point_to_anchor(
+                                            &target_buffer,
+                                            r.end,
+                                            cx,
+                                        )?;
+                                        Some(start..end)
+                                    })
+                                    .collect::<Vec<_>>();
+                                if target_ranges.is_empty() {
+                                    return Navigated::No;
+                                }
+
+                                target_editor.change_selections(
+                                    SelectionEffects::default().nav_history(true),
+                                    window,
+                                    cx,
+                                    |s| s.select_anchor_ranges(target_ranges),
+                                );
 
                                 let nav_data = target_editor.navigation_data(
                                     target_editor.selections.newest_anchor().head(),
@@ -18314,6 +18406,7 @@ impl Editor {
                                     )));
                                 nav_history.push_tag(origin, target);
                                 pane.update(cx, |pane, _| pane.enable_history());
+                                Navigated::Yes
                             });
                         });
                     }
@@ -28202,9 +28295,29 @@ impl EntityInputHandler for Editor {
 
         self.transact(window, cx, |this, window, cx| {
             let new_selected_ranges = if let Some(range_utf16) = range_utf16 {
-                let range_utf16 = MultiBufferOffsetUtf16(OffsetUtf16(range_utf16.start))
-                    ..MultiBufferOffsetUtf16(OffsetUtf16(range_utf16.end));
-                Some(this.selection_replacement_ranges(range_utf16, cx))
+                if let Some(marked_ranges) = this.marked_text_ranges(cx) {
+                    // During IME composition, macOS reports the replacement range
+                    // relative to the first marked region (the only one visible via
+                    // marked_text_range). The correct targets for replacement are the
+                    // marked ranges themselves — one per cursor — so use them directly.
+                    Some(marked_ranges)
+                } else if range_utf16.start == range_utf16.end {
+                    // An empty replacement range means "insert at cursor" with no text
+                    // to replace. macOS reports the cursor position from its own
+                    // (single-cursor) view of the buffer, which diverges from our actual
+                    // cursor positions after multi-cursor edits have shifted offsets.
+                    // Treating this as range_utf16=None lets each cursor insert in place.
+                    None
+                } else {
+                    // Outside of IME composition (e.g. Accessibility Keyboard word
+                    // completion), the range is an absolute document offset for the
+                    // newest cursor. Fan it out to all cursors via
+                    // selection_replacement_ranges, which applies the delta relative
+                    // to the newest selection to every cursor.
+                    let range_utf16 = MultiBufferOffsetUtf16(OffsetUtf16(range_utf16.start))
+                        ..MultiBufferOffsetUtf16(OffsetUtf16(range_utf16.end));
+                    Some(this.selection_replacement_ranges(range_utf16, cx))
+                }
             } else {
                 this.marked_text_ranges(cx)
             };
@@ -28233,10 +28346,17 @@ impl EntityInputHandler for Editor {
             });
 
             if let Some(new_selected_ranges) = new_selected_ranges {
+                // Only backspace if at least one range covers actual text. When all
+                // ranges are empty (e.g. a trailing-space insertion from Accessibility
+                // Keyboard sends replacementRange=cursor..cursor), backspace would
+                // incorrectly delete the character just before the cursor.
+                let should_backspace = new_selected_ranges.iter().any(|r| r.start != r.end);
                 this.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
                     selections.select_ranges(new_selected_ranges)
                 });
-                this.backspace(&Default::default(), window, cx);
+                if should_backspace {
+                    this.backspace(&Default::default(), window, cx);
+                }
             }
 
             this.handle_input(text, window, cx);

@@ -171,6 +171,7 @@ pub fn init(cx: &mut App) {
                 });
             });
         });
+        // TODO(jk): Is this action ever triggered?
         workspace.register_action(|_, _: &ScreenShare, window, cx| {
             let room = ActiveCall::global(cx).read(cx).room().cloned();
             if let Some(room) = room {
@@ -179,19 +180,32 @@ pub fn init(cx: &mut App) {
                         if room.is_sharing_screen() {
                             room.unshare_screen(true, cx).ok();
                         } else {
-                            let sources = cx.screen_capture_sources();
+                            #[cfg(target_os = "linux")]
+                            let is_wayland = gpui::guess_compositor() == "Wayland";
+                            #[cfg(not(target_os = "linux"))]
+                            let is_wayland = false;
 
-                            cx.spawn(async move |room, cx| {
-                                let sources = sources.await??;
-                                let first = sources.into_iter().next();
-                                if let Some(first) = first {
-                                    room.update(cx, |room, cx| room.share_screen(first, cx))?
-                                        .await
-                                } else {
-                                    Ok(())
+                            #[cfg(target_os = "linux")]
+                            {
+                                if is_wayland {
+                                    room.share_screen_wayland(cx).detach_and_log_err(cx);
                                 }
-                            })
-                            .detach_and_log_err(cx);
+                            }
+                            if !is_wayland {
+                                let sources = cx.screen_capture_sources();
+
+                                cx.spawn(async move |room, cx| {
+                                    let sources = sources.await??;
+                                    let first = sources.into_iter().next();
+                                    if let Some(first) = first {
+                                        room.update(cx, |room, cx| room.share_screen(first, cx))?
+                                            .await
+                                    } else {
+                                        Ok(())
+                                    }
+                                })
+                                .detach_and_log_err(cx);
+                            }
                         };
                     });
                 });

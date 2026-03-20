@@ -31,6 +31,7 @@ use task::{Shell, ShellBuilder};
 pub use terminal::*;
 use text::Bias;
 use ui::App;
+use util::markdown::MarkdownEscaped;
 use util::path_list::PathList;
 use util::{ResultExt, get_default_system_shell_preferring_bash, paths::PathStyle};
 use uuid::Uuid;
@@ -246,6 +247,8 @@ impl ToolCall {
     ) -> Result<Self> {
         let title = if tool_call.kind == acp::ToolKind::Execute {
             tool_call.title
+        } else if tool_call.kind == acp::ToolKind::Edit {
+            MarkdownEscaped(tool_call.title.as_str()).to_string()
         } else if let Some((first_line, _)) = tool_call.title.split_once("\n") {
             first_line.to_owned() + "…"
         } else {
@@ -334,6 +337,8 @@ impl ToolCall {
             self.label.update(cx, |label, cx| {
                 if self.kind == acp::ToolKind::Execute {
                     label.replace(title, cx);
+                } else if self.kind == acp::ToolKind::Edit {
+                    label.replace(MarkdownEscaped(&title).to_string(), cx)
                 } else if let Some((first_line, _)) = title.split_once("\n") {
                     label.replace(first_line.to_owned() + "…", cx);
                 } else {

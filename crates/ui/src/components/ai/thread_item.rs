@@ -40,6 +40,7 @@ pub struct ThreadItem {
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_hover: Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>,
     title_label_color: Option<Color>,
+    title_label_size: Option<LabelSize>,
     action_slot: Option<AnyElement>,
     tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
 }
@@ -67,6 +68,7 @@ impl ThreadItem {
             on_click: None,
             on_hover: Box::new(|_, _, _| {}),
             title_label_color: None,
+            title_label_size: None,
             action_slot: None,
             tooltip: None,
         }
@@ -165,6 +167,11 @@ impl ThreadItem {
         self
     }
 
+    pub fn title_label_size(mut self, size: LabelSize) -> Self {
+        self.title_label_size = Some(size);
+        self
+    }
+
     pub fn action_slot(mut self, element: impl IntoElement) -> Self {
         self.action_slot = Some(element.into_any_element());
         self
@@ -257,8 +264,10 @@ impl RenderOnce for ThreadItem {
 
         let title = self.title;
         let highlight_positions = self.highlight_positions;
+        let title_label_size = self.title_label_size.unwrap_or(LabelSize::Default);
         let title_label = if self.generating_title {
             Label::new(title)
+                .size(title_label_size)
                 .color(Color::Muted)
                 .with_animation(
                     "generating-title",
@@ -269,7 +278,7 @@ impl RenderOnce for ThreadItem {
                 )
                 .into_any_element()
         } else if highlight_positions.is_empty() {
-            let label = Label::new(title);
+            let label = Label::new(title).size(title_label_size);
             let label = if let Some(color) = self.title_label_color {
                 label.color(color)
             } else {
@@ -277,7 +286,7 @@ impl RenderOnce for ThreadItem {
             };
             label.into_any_element()
         } else {
-            let label = HighlightedLabel::new(title, highlight_positions);
+            let label = HighlightedLabel::new(title, highlight_positions).size(title_label_size);
             let label = if let Some(color) = self.title_label_color {
                 label.color(color)
             } else {

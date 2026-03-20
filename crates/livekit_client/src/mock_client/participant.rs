@@ -99,6 +99,31 @@ impl LocalParticipant {
             Box::new(TestScreenCaptureStream {}),
         ))
     }
+
+    #[cfg(target_os = "linux")]
+    pub async fn publish_screenshare_track_wayland(
+        &self,
+        _cx: &mut AsyncApp,
+    ) -> Result<(
+        LocalTrackPublication,
+        Box<dyn ScreenCaptureStream>,
+        futures::channel::oneshot::Receiver<()>,
+    )> {
+        let (_failure_tx, failure_rx) = futures::channel::oneshot::channel();
+        let this = self.clone();
+        let server = this.room.test_server();
+        let sid = server
+            .publish_video_track(this.room.token(), LocalVideoTrack {})
+            .await?;
+        Ok((
+            LocalTrackPublication {
+                room: self.room.downgrade(),
+                sid,
+            },
+            Box::new(TestWaylandScreenCaptureStream::new()),
+            failure_rx,
+        ))
+    }
 }
 
 impl RemoteParticipant {
@@ -160,6 +185,35 @@ impl ScreenCaptureStream for TestScreenCaptureStream {
     fn metadata(&self) -> Result<SourceMetadata> {
         Ok(SourceMetadata {
             id: 0,
+            is_main: None,
+            label: None,
+            resolution: size(DevicePixels(1), DevicePixels(1)),
+        })
+    }
+}
+
+#[cfg(target_os = "linux")]
+static NEXT_TEST_WAYLAND_SHARE_ID: AtomicU64 = AtomicU64::new(1);
+
+#[cfg(target_os = "linux")]
+struct TestWaylandScreenCaptureStream {
+    id: u64,
+}
+
+#[cfg(target_os = "linux")]
+impl TestWaylandScreenCaptureStream {
+    fn new() -> Self {
+        Self {
+            id: NEXT_TEST_WAYLAND_SHARE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl ScreenCaptureStream for TestWaylandScreenCaptureStream {
+    fn metadata(&self) -> Result<SourceMetadata> {
+        Ok(SourceMetadata {
+            id: self.id,
             is_main: None,
             label: None,
             resolution: size(DevicePixels(1), DevicePixels(1)),

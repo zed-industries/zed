@@ -427,7 +427,7 @@ impl GitRepository for FakeGitRepository {
                 .unwrap_or_else(|| "refs/heads/main".to_string());
             let main_worktree = Worktree {
                 path: work_dir,
-                ref_name: branch_ref.into(),
+                ref_name: Some(branch_ref.into()),
                 sha: head_sha.into(),
             };
             let mut all = vec![main_worktree];
@@ -468,7 +468,7 @@ impl GitRepository for FakeGitRepository {
                     state.refs.insert(ref_name.clone(), sha.clone());
                     state.worktrees.push(Worktree {
                         path,
-                        ref_name: ref_name.into(),
+                        ref_name: Some(ref_name.into()),
                         sha: sha.into(),
                     });
                     state.branches.insert(branch_name);

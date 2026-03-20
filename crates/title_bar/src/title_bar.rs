@@ -512,14 +512,15 @@ impl TitleBar {
         let git_store = project.git_store().read(cx);
         let worktree_path = worktree.read(cx).abs_path();
 
-        for repo in git_store.repositories().values() {
-            let repo_path = &repo.read(cx).work_directory_abs_path;
-            if worktree_path == *repo_path || worktree_path.starts_with(repo_path.as_ref()) {
-                return Some(repo.clone());
-            }
-        }
-
-        None
+        git_store
+            .repositories()
+            .values()
+            .filter(|repo| {
+                let repo_path = &repo.read(cx).work_directory_abs_path;
+                worktree_path == *repo_path || worktree_path.starts_with(repo_path.as_ref())
+            })
+            .max_by_key(|repo| repo.read(cx).work_directory_abs_path.as_os_str().len())
+            .cloned()
     }
 
     fn render_remote_project_connection(&self, cx: &mut Context<Self>) -> Option<AnyElement> {

@@ -201,17 +201,19 @@ fn get_branch_for_worktree(
     cx: &App,
 ) -> Option<SharedString> {
     let worktree_abs_path = worktree.abs_path();
-    for repo in repositories {
-        let repo = repo.read(cx);
-        if repo.work_directory_abs_path == worktree_abs_path
-            || worktree_abs_path.starts_with(&*repo.work_directory_abs_path)
-        {
-            if let Some(branch) = &repo.branch {
-                return Some(SharedString::from(branch.name().to_string()));
-            }
-        }
-    }
-    None
+    repositories
+        .iter()
+        .filter(|repo| {
+            let repo_path = &repo.read(cx).work_directory_abs_path;
+            *repo_path == worktree_abs_path || worktree_abs_path.starts_with(repo_path.as_ref())
+        })
+        .max_by_key(|repo| repo.read(cx).work_directory_abs_path.as_os_str().len())
+        .and_then(|repo| {
+            repo.read(cx)
+                .branch
+                .as_ref()
+                .map(|branch| SharedString::from(branch.name().to_string()))
+        })
 }
 
 pub fn init(cx: &mut App) {
@@ -928,7 +930,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         };
 
         if has_siblings_to_show {
-            entries.push(ProjectPickerEntry::Header("Open on This Window".into()));
+            entries.push(ProjectPickerEntry::Header("This Window".into()));
 
             if is_empty_query {
                 for (id, (workspace_id, _, _, _)) in self.workspaces.iter().enumerate() {
