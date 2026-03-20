@@ -399,6 +399,13 @@
     "context": "BufferSearchBar && !in_replace > Editor",
     "use_key_equivalents": true,
     "bindings": {
+      "ctrl-enter": "editor::Newline",
+      "shift-enter": "search::SelectPreviousMatch",
+    },
+  },
+  {
+    "context": "BufferSearchBar && !in_replace > Editor",
+    "bindings": {
       "up": "search::PreviousHistoryQuery",
       "down": "search::NextHistoryQuery",
     },
@@ -415,7 +422,6 @@
   },
   {
     "context": "ProjectSearchBar > Editor",
-    "use_key_equivalents": true,
     "bindings": {
       "up": "search::PreviousHistoryQuery",
       "down": "search::NextHistoryQuery",
@@ -427,6 +433,12 @@
     "bindings": {
       "enter": "search::ReplaceNext",
       "ctrl-alt-enter": "search::ReplaceAll",
+    },
+  },
+  {
+    "context": "ProjectSearchBar && !in_replace > Editor",
+    "bindings": {
+      "ctrl-enter": "editor::Newline",
     },
   },
   {
@@ -684,6 +696,7 @@
       "enter": "menu::Confirm",
       "space": "menu::Confirm",
       "ctrl-f": "agents_sidebar::FocusSidebarFilter",
+      "ctrl-g": "agents_sidebar::ToggleArchive",
       "shift-backspace": "agent::RemoveSelectedThread",
     },
   },
@@ -887,6 +900,7 @@
       "ctrl-v": "project_panel::Paste",
       "shift-alt-c": "project_panel::CopyPath",
       "ctrl-k ctrl-shift-c": "workspace::CopyRelativePath",
+      "ctrl-z": "project_panel::Undo",
       "enter": "project_panel::Rename",
       "f2": "project_panel::Rename",
       "backspace": ["project_panel::Trash", { "skip_prompt": false }],

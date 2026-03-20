@@ -1,9 +1,9 @@
 use crate::{
     self as gpui, AbsoluteLength, AlignContent, AlignItems, AlignSelf, BorderStyle, CursorStyle,
     DefiniteLength, Display, Fill, FlexDirection, FlexWrap, Font, FontFeatures, FontStyle,
-    FontWeight, GridPlacement, Hsla, JustifyContent, Length, SharedString, StrikethroughStyle,
-    StyleRefinement, TextAlign, TextOverflow, TextStyleRefinement, UnderlineStyle, WhiteSpace, px,
-    relative, rems,
+    FontWeight, GridPlacement, GridTemplate, Hsla, JustifyContent, Length, SharedString,
+    StrikethroughStyle, StyleRefinement, TemplateColumnMinSize, TextAlign, TextOverflow,
+    TextStyleRefinement, UnderlineStyle, WhiteSpace, px, relative, rems,
 };
 pub use gpui_macros::{
     border_style_methods, box_shadow_style_methods, cursor_style_methods, margin_style_methods,
@@ -711,20 +711,38 @@ pub trait Styled: Sized {
 
     /// Sets the grid columns of this element.
     fn grid_cols(mut self, cols: u16) -> Self {
-        self.style().grid_cols = Some(cols);
+        self.style().grid_cols = Some(GridTemplate {
+            repeat: cols,
+            min_size: TemplateColumnMinSize::Zero,
+        });
         self
     }
 
     /// Sets the grid columns with min-content minimum sizing.
     /// Unlike grid_cols, it won't shrink to width 0 in AvailableSpace::MinContent constraints.
     fn grid_cols_min_content(mut self, cols: u16) -> Self {
-        self.style().grid_cols_min_content = Some(cols);
+        self.style().grid_cols = Some(GridTemplate {
+            repeat: cols,
+            min_size: TemplateColumnMinSize::MinContent,
+        });
+        self
+    }
+
+    /// Sets the grid columns with max-content maximum sizing for content-based column widths.
+    fn grid_cols_max_content(mut self, cols: u16) -> Self {
+        self.style().grid_cols = Some(GridTemplate {
+            repeat: cols,
+            min_size: TemplateColumnMinSize::MaxContent,
+        });
         self
     }
 
     /// Sets the grid rows of this element.
     fn grid_rows(mut self, rows: u16) -> Self {
-        self.style().grid_rows = Some(rows);
+        self.style().grid_rows = Some(GridTemplate {
+            repeat: rows,
+            min_size: TemplateColumnMinSize::Zero,
+        });
         self
     }
 

@@ -1529,6 +1529,84 @@ impl Room {
         })
     }
 
+    #[cfg(target_os = "linux")]
+    pub fn share_screen_wayland(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        log::info!("will screenshare on wayland");
+        if self.status.is_offline() {
+            return Task::ready(Err(anyhow!("room is offline")));
+        }
+        if self.is_sharing_screen() {
+            return Task::ready(Err(anyhow!("screen was already shared")));
+        }
+
+        let (participant, publish_id) = if let Some(live_kit) = self.live_kit.as_mut() {
+            let publish_id = post_inc(&mut live_kit.next_publish_id);
+            live_kit.screen_track = LocalTrack::Pending { publish_id };
+            cx.notify();
+            (live_kit.room.local_participant(), publish_id)
+        } else {
+            return Task::ready(Err(anyhow!("live-kit was not initialized")));
+        };
+
+        cx.spawn(async move |this, cx| {
+            let publication = participant.publish_screenshare_track_wayland(cx).await;
+
+            this.update(cx, |this, cx| {
+                let live_kit = this
+                    .live_kit
+                    .as_mut()
+                    .context("live-kit was not initialized")?;
+
+                let canceled = if let LocalTrack::Pending {
+                    publish_id: cur_publish_id,
+                } = &live_kit.screen_track
+                {
+                    *cur_publish_id != publish_id
+                } else {
+                    true
+                };
+
+                match publication {
+                    Ok((publication, stream, failure_rx)) => {
+                        if canceled {
+                            cx.spawn(async move |_, cx| {
+                                participant.unpublish_track(publication.sid(), cx).await
+                            })
+                            .detach()
+                        } else {
+                            cx.spawn(async move |this, cx| {
+                                if failure_rx.await.is_ok() {
+                                    log::warn!("Wayland capture died, auto-unsharing screen");
+                                    let _ =
+                                        this.update(cx, |this, cx| this.unshare_screen(false, cx));
+                                }
+                            })
+                            .detach();
+
+                            live_kit.screen_track = LocalTrack::Published {
+                                track_publication: publication,
+                                _stream: stream,
+                            };
+                            cx.notify();
+                        }
+
+                        Audio::play_sound(Sound::StartScreenshare, cx);
+                        Ok(())
+                    }
+                    Err(error) => {
+                        if canceled {
+                            Ok(())
+                        } else {
+                            live_kit.screen_track = LocalTrack::None;
+                            cx.notify();
+                            Err(error)
+                        }
+                    }
+                }
+            })?
+        })
+    }
+
     pub fn toggle_mute(&mut self, cx: &mut Context<Self>) {
         if let Some(live_kit) = self.live_kit.as_mut() {
             // When unmuting, undeafen if the user was deafened before.

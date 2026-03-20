@@ -57,7 +57,7 @@ pub(crate) trait LinuxClient {
 
     #[cfg(feature = "screen-capture")]
     fn is_screen_capture_supported(&self) -> bool {
-        false
+        true
     }
 
     #[cfg(feature = "screen-capture")]

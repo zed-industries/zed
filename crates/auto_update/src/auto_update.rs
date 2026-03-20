@@ -30,8 +30,63 @@ use util::command::new_command;
 use workspace::Workspace;
 
 const SHOULD_SHOW_UPDATE_NOTIFICATION_KEY: &str = "auto-updater-should-show-updated-notification";
+
+#[derive(Debug)]
+struct MissingDependencyError(String);
+
+impl std::fmt::Display for MissingDependencyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for MissingDependencyError {}
 const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60);
 const REMOTE_SERVER_CACHE_LIMIT: usize = 5;
+
+#[cfg(target_os = "linux")]
+fn linux_rsync_install_hint() -> &'static str {
+    let os_release = match std::fs::read_to_string("/etc/os-release") {
+        Ok(os_release) => os_release,
+        Err(_) => return "Please install rsync using your package manager",
+    };
+
+    let mut distribution_ids = Vec::new();
+    for line in os_release.lines() {
+        let trimmed = line.trim();
+        if let Some(value) = trimmed.strip_prefix("ID=") {
+            distribution_ids.push(value.trim_matches('"').to_ascii_lowercase());
+        } else if let Some(value) = trimmed.strip_prefix("ID_LIKE=") {
+            for id in value.trim_matches('"').split_whitespace() {
+                distribution_ids.push(id.to_ascii_lowercase());
+            }
+        }
+    }
+
+    let package_manager_hint = if distribution_ids
+        .iter()
+        .any(|distribution_id| distribution_id == "arch")
+    {
+        Some("Install it with: sudo pacman -S rsync")
+    } else if distribution_ids
+        .iter()
+        .any(|distribution_id| distribution_id == "debian" || distribution_id == "ubuntu")
+    {
+        Some("Install it with: sudo apt install rsync")
+    } else if distribution_ids.iter().any(|distribution_id| {
+        distribution_id == "fedora"
+            || distribution_id == "rhel"
+            || distribution_id == "centos"
+            || distribution_id == "rocky"
+            || distribution_id == "almalinux"
+    }) {
+        Some("Install it with: sudo dnf install rsync")
+    } else {
+        None
+    };
+
+    package_manager_hint.unwrap_or("Please install rsync using your package manager")
+}
 
 actions!(
     auto_update,
@@ -397,7 +452,15 @@ impl AutoUpdater {
             this.update(cx, |this, cx| {
                 this.pending_poll = None;
                 if let Err(error) = result {
+                    let is_missing_dependency =
+                        error.downcast_ref::<MissingDependencyError>().is_some();
                     this.status = match check_type {
+                        UpdateCheckType::Automatic if is_missing_dependency => {
+                            log::warn!("auto-update: {}", error);
+                            AutoUpdateStatus::Errored {
+                                error: Arc::new(error),
+                            }
+                        }
                         // Be quiet if the check was automated (e.g. when offline)
                         UpdateCheckType::Automatic => {
                             log::info!("auto-update check failed: error:{:?}", error);
@@ -715,11 +778,21 @@ impl AutoUpdater {
     }
 
     fn check_dependencies() -> Result<()> {
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
+        if which::which("rsync").is_err() {
+            let install_hint = linux_rsync_install_hint();
+            return Err(MissingDependencyError(format!(
+                "rsync is required for auto-updates but is not installed. {install_hint}"
+            ))
+            .into());
+        }
+
+        #[cfg(target_os = "macos")]
         anyhow::ensure!(
             which::which("rsync").is_ok(),
             "Could not auto-update because the required rsync utility was not found."
         );
+
         Ok(())
     }
 

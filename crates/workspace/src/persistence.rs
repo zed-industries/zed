@@ -2359,6 +2359,86 @@ VALUES {placeholders};"#
     }
 }
 
+type WorkspaceEntry = (
+    WorkspaceId,
+    SerializedWorkspaceLocation,
+    PathList,
+    DateTime<Utc>,
+);
+
+/// Resolves workspace entries whose paths are git linked worktree checkouts
+/// to their main repository paths.
+///
+/// For each workspace entry:
+/// - If any path is a linked worktree checkout, all worktree paths in that
+///   entry are resolved to their main repository paths, producing a new
+///   `PathList`.
+/// - The resolved entry is then deduplicated against existing entries: if a
+///   workspace with the same paths already exists, the entry with the most
+///   recent timestamp is kept.
+pub async fn resolve_worktree_workspaces(
+    workspaces: impl IntoIterator<Item = WorkspaceEntry>,
+    fs: &dyn Fs,
+) -> Vec<WorkspaceEntry> {
+    // First pass: resolve worktree paths to main repo paths concurrently.
+    let resolved = futures::future::join_all(workspaces.into_iter().map(|entry| async move {
+        let paths = entry.2.paths();
+        if paths.is_empty() {
+            return entry;
+        }
+
+        // Resolve each path concurrently
+        let resolved_paths = futures::future::join_all(
+            paths
+                .iter()
+                .map(|path| project::git_store::resolve_git_worktree_to_main_repo(fs, path)),
+        )
+        .await;
+
+        // If no paths were resolved, this entry is not a worktree — keep as-is
+        if resolved_paths.iter().all(|r| r.is_none()) {
+            return entry;
+        }
+
+        // Build new path list, substituting resolved paths
+        let new_paths: Vec<PathBuf> = paths
+            .iter()
+            .zip(resolved_paths.iter())
+            .map(|(original, resolved)| {
+                resolved
+                    .as_ref()
+                    .cloned()
+                    .unwrap_or_else(|| original.clone())
+            })
+            .collect();
+
+        let new_path_refs: Vec<&Path> = new_paths.iter().map(|p| p.as_path()).collect();
+        (entry.0, entry.1, PathList::new(&new_path_refs), entry.3)
+    }))
+    .await;
+
+    // Second pass: deduplicate by PathList.
+    // When two entries resolve to the same paths, keep the one with the
+    // more recent timestamp.
+    let mut seen: collections::HashMap<Vec<PathBuf>, usize> = collections::HashMap::default();
+    let mut result: Vec<WorkspaceEntry> = Vec::new();
+
+    for entry in resolved {
+        let key: Vec<PathBuf> = entry.2.paths().to_vec();
+        if let Some(&existing_idx) = seen.get(&key) {
+            // Keep the entry with the more recent timestamp
+            if entry.3 > result[existing_idx].3 {
+                result[existing_idx] = entry;
+            }
+        } else {
+            seen.insert(key, result.len());
+            result.push(entry);
+        }
+    }
+
+    result
+}
+
 pub fn delete_unloaded_items(
     alive_items: Vec<ItemId>,
     workspace_id: WorkspaceId,
@@ -4488,5 +4568,117 @@ mod tests {
             "flush_serialization should ensure window bounds are persisted to the DB \
              before the process exits."
         );
+    }
+
+    #[gpui::test]
+    async fn test_resolve_worktree_workspaces(cx: &mut gpui::TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
+
+        // Main repo with a linked worktree entry
+        fs.insert_tree(
+            "/repo",
+            json!({
+                ".git": {
+                    "worktrees": {
+                        "feature": {
+                            "commondir": "../../",
+                            "HEAD": "ref: refs/heads/feature"
+                        }
+                    }
+                },
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+
+        // Linked worktree checkout pointing back to /repo
+        fs.insert_tree(
+            "/worktree",
+            json!({
+                ".git": "gitdir: /repo/.git/worktrees/feature",
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+
+        // A plain non-git project
+        fs.insert_tree(
+            "/plain-project",
+            json!({
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+
+        // Another normal git repo (used in mixed-path entry)
+        fs.insert_tree(
+            "/other-repo",
+            json!({
+                ".git": {},
+                "src": { "lib.rs": "" }
+            }),
+        )
+        .await;
+
+        let t0 = Utc::now() - chrono::Duration::hours(4);
+        let t1 = Utc::now() - chrono::Duration::hours(3);
+        let t2 = Utc::now() - chrono::Duration::hours(2);
+        let t3 = Utc::now() - chrono::Duration::hours(1);
+
+        let workspaces = vec![
+            // 1: Main checkout of /repo (opened earlier)
+            (
+                WorkspaceId(1),
+                SerializedWorkspaceLocation::Local,
+                PathList::new(&["/repo"]),
+                t0,
+            ),
+            // 2: Linked worktree of /repo (opened more recently)
+            //    Should dedup with #1; more recent timestamp wins.
+            (
+                WorkspaceId(2),
+                SerializedWorkspaceLocation::Local,
+                PathList::new(&["/worktree"]),
+                t1,
+            ),
+            // 3: Mixed-path workspace: one root is a linked worktree,
+            //    the other is a normal repo. The worktree path should be
+            //    resolved; the normal path kept as-is.
+            (
+                WorkspaceId(3),
+                SerializedWorkspaceLocation::Local,
+                PathList::new(&["/other-repo", "/worktree"]),
+                t2,
+            ),
+            // 4: Non-git project — passed through unchanged.
+            (
+                WorkspaceId(4),
+                SerializedWorkspaceLocation::Local,
+                PathList::new(&["/plain-project"]),
+                t3,
+            ),
+        ];
+
+        let result = resolve_worktree_workspaces(workspaces, fs.as_ref()).await;
+
+        // Should have 3 entries: #1 and #2 deduped into one, plus #3 and #4.
+        assert_eq!(result.len(), 3);
+
+        // First entry: /repo — deduplicated from #1 and #2.
+        // Keeps the position of #1 (first seen), but with #2's later timestamp.
+        assert_eq!(result[0].2.paths(), &[PathBuf::from("/repo")]);
+        assert_eq!(result[0].3, t1);
+
+        // Second entry: mixed-path workspace with worktree resolved.
+        // /worktree → /repo, so paths become [/other-repo, /repo] (sorted).
+        assert_eq!(
+            result[1].2.paths(),
+            &[PathBuf::from("/other-repo"), PathBuf::from("/repo")]
+        );
+        assert_eq!(result[1].0, WorkspaceId(3));
+
+        // Third entry: non-git project, unchanged.
+        assert_eq!(result[2].2.paths(), &[PathBuf::from("/plain-project")]);
+        assert_eq!(result[2].0, WorkspaceId(4));
     }
 }
