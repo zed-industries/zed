@@ -3695,6 +3695,8 @@ impl Workspace {
                         focus_center = true;
                     }
                 } else {
+                    let focus_handle = &active_panel.panel_focus_handle(cx);
+                    window.focus(focus_handle, cx);
                     reveal_dock = true;
                 }
             }
@@ -11094,8 +11096,7 @@ mod tests {
         workspace.update_in(cx, |workspace, window, cx| {
             assert!(workspace.right_dock().read(cx).is_open());
             assert!(!panel.is_zoomed(window, cx));
-            assert!(!panel.read(cx).focus_handle(cx).contains_focused(window, cx));
-            assert!(pane.read(cx).focus_handle(cx).contains_focused(window, cx));
+            assert!(panel.read(cx).focus_handle(cx).contains_focused(window, cx));
         });
 
         // Focus and zoom panel
@@ -11153,8 +11154,7 @@ mod tests {
             assert!(workspace.right_dock().read(cx).is_open());
             assert!(panel.is_zoomed(window, cx));
             assert!(workspace.zoomed.is_some());
-            assert!(!panel.read(cx).focus_handle(cx).contains_focused(window, cx));
-            assert!(pane.read(cx).focus_handle(cx).contains_focused(window, cx));
+            assert!(panel.read(cx).focus_handle(cx).contains_focused(window, cx));
         });
 
         // Unzoom and close the panel, zoom the active pane.
