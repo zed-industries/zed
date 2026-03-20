@@ -1726,7 +1726,17 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         )
         .range(wrap_count),
         VimCommand::new(("j", "oin"), JoinLines).range(select_range),
-        VimCommand::new(("reflow", ""), Rewrap).range(select_range),
+        VimCommand::new(("reflow", ""), Rewrap { line_length: None })
+            .range(select_range)
+            .args(|_action, args| {
+                if let Ok(length) = args.parse::<usize>() {
+                    Some(Box::new(Rewrap {
+                        line_length: Some(length),
+                    }))
+                } else {
+                    Some(Box::new(Rewrap { line_length: None }))
+                }
+            }),
         VimCommand::new(("fo", "ld"), editor::actions::FoldSelectedRanges).range(act_on_range),
         VimCommand::new(("foldo", "pen"), editor::actions::UnfoldLines)
             .bang(editor::actions::UnfoldRecursive)
@@ -3550,7 +3560,7 @@ mod test {
 
         cx.set_state(
             indoc! {"
-                ˇ0123456789 0123456789 0123456789 0123456789
+                ˇ0123456789 0123456789
             "},
             Mode::Normal,
         );
@@ -3560,8 +3570,6 @@ mod test {
 
         cx.assert_state(
             indoc! {"
-                0123456789
-                0123456789
                 0123456789
                 ˇ0123456789
             "},
@@ -3570,20 +3578,38 @@ mod test {
 
         cx.set_state(
             indoc! {"
-                «0123456789 0123456789ˇ»
-                0123456789 0123456789
+                ˇ0123456789 0123456789
             "},
             Mode::VisualLine,
         );
 
-        cx.simulate_keystrokes(": reflow");
+        cx.simulate_keystrokes("shift-v : reflow");
         cx.simulate_keystrokes("enter");
 
         cx.assert_state(
             indoc! {"
-                ˇ0123456789
                 0123456789
-                0123456789 0123456789
+                ˇ0123456789
+            "},
+            Mode::Normal,
+        );
+
+        cx.set_state(
+            indoc! {"
+                ˇ0123 4567 0123 4567
+            "},
+            Mode::VisualLine,
+        );
+
+        cx.simulate_keystrokes(": reflow space 7");
+        cx.simulate_keystrokes("enter");
+
+        cx.assert_state(
+            indoc! {"
+                ˇ0123
+                4567
+                0123
+                4567
             "},
             Mode::Normal,
         );

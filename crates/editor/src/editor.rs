@@ -1869,6 +1869,9 @@ pub enum MultibufferSelectionMode {
 pub struct RewrapOptions {
     pub override_language_settings: bool,
     pub preserve_existing_whitespace: bool,
+    // TODO!: Better name to make it obvious this is meant to be an optional
+    // override?
+    pub line_length: Option<usize>,
 }
 
 impl Editor {
@@ -5119,6 +5122,7 @@ impl Editor {
                         RewrapOptions {
                             override_language_settings: true,
                             preserve_existing_whitespace: true,
+                            line_length: None,
                         },
                         cx,
                     )
@@ -13704,7 +13708,7 @@ impl Editor {
                 continue;
             };
 
-            let wrap_column = self.hard_wrap.unwrap_or_else(|| {
+            let wrap_column = options.line_length.or(self.hard_wrap).unwrap_or_else(|| {
                 buffer
                     .language_settings_at(Point::new(start_row, 0), cx)
                     .preferred_line_length as usize
