@@ -652,28 +652,9 @@ impl MultiWorkspace {
     ) -> Task<Result<Entity<Workspace>>> {
         let workspace = self.workspace().clone();
 
-        if self.multi_workspace_enabled(cx) {
-            workspace.update(cx, |workspace, cx| {
-                workspace.open_workspace_for_paths(true, paths, window, cx)
-            })
-        } else {
-            cx.spawn_in(window, async move |_this, cx| {
-                let should_continue = workspace
-                    .update_in(cx, |workspace, window, cx| {
-                        workspace.prepare_to_close(crate::CloseIntent::ReplaceWindow, window, cx)
-                    })?
-                    .await?;
-                if should_continue {
-                    workspace
-                        .update_in(cx, |workspace, window, cx| {
-                            workspace.open_workspace_for_paths(true, paths, window, cx)
-                        })?
-                        .await
-                } else {
-                    Ok(workspace)
-                }
-            })
-        }
+        workspace.update(cx, |workspace, cx| {
+            workspace.open_workspace_for_paths(false, paths, window, cx)
+        })
     }
 }
 
