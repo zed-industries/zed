@@ -1011,8 +1011,15 @@ fn test_jsdoc_injection_preserved_after_edit_deep_in_comment(cx: &mut App) {
     // Edit deep inside the comment, far from the `/**` opening on line 0.
     // This is the scenario that triggers the bug: the changed range doesn't
     // cover the comment node's start byte, so the injection query misses it.
-    let edit_target = buffer.as_rope().to_string().find("The age").expect("text not found");
-    buffer.edit([(edit_target..edit_target + "The age".len(), "The person's age")]);
+    let edit_target = buffer
+        .as_rope()
+        .to_string()
+        .find("The age")
+        .expect("text not found");
+    buffer.edit([(
+        edit_target..edit_target + "The age".len(),
+        "The person's age",
+    )]);
     syntax_map.interpolate(&buffer);
     syntax_map.reparse(javascript.clone(), &buffer);
 
