@@ -1041,7 +1041,7 @@ impl OAuthCallback {
 
 /// How long to wait for the browser to complete the OAuth flow before giving
 /// up and releasing the loopback port.
-const CALLBACK_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const CALLBACK_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 
 /// The preferred fixed port for the OAuth callback server. This port is listed
 /// in Zed's hosted CIMD (Client ID Metadata Document) at `zed.dev`, so using
@@ -1085,7 +1085,12 @@ pub async fn start_callback_server() -> Result<(
             tiny_http::Server::http("127.0.0.1:0")
         })
         .map_err(|e| anyhow!(e).context("Failed to bind loopback listener for OAuth callback"))?;
-    let port = server.server_addr().port();
+    let port = server
+        .server_addr()
+        .to_ip()
+        .context("server not bound to a TCP address")?
+        .port();
+
     let redirect_uri = format!("http://127.0.0.1:{}/callback", port);
 
     let (tx, rx) = futures::channel::oneshot::channel();
