@@ -1331,6 +1331,18 @@ impl AcpThread {
             acp::SessionUpdate::Plan(plan) => {
                 self.update_plan(plan, cx);
             }
+            acp::SessionUpdate::SessionInfoUpdate(info_update) => {
+                if let acp::MaybeUndefined::Value(title) = info_update.title {
+                    let had_provisional = self.provisional_title.take().is_some();
+                    let title: SharedString = title.into();
+                    if title != self.title {
+                        self.title = title;
+                        cx.emit(AcpThreadEvent::TitleUpdated);
+                    } else if had_provisional {
+                        cx.emit(AcpThreadEvent::TitleUpdated);
+                    }
+                }
+            }
             acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate {
                 available_commands,
                 ..
@@ -4968,6 +4980,79 @@ mod tests {
             set_title_calls.borrow().as_slice(),
             &[SharedString::from("Helping with Rust question")],
             "real title should propagate to the connection"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_session_info_update_replaces_provisional_title_and_emits_event(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+
+        let thread = cx
+            .update(|cx| {
+                connection.clone().new_session(
+                    project,
+                    PathList::new(&[Path::new(path!("/test"))]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        let title_updated_events = Rc::new(RefCell::new(0usize));
+        let title_updated_events_for_subscription = title_updated_events.clone();
+        thread.update(cx, |_thread, cx| {
+            cx.subscribe(
+                &thread,
+                move |_thread, _event_thread, event: &AcpThreadEvent, _cx| {
+                    if matches!(event, AcpThreadEvent::TitleUpdated) {
+                        *title_updated_events_for_subscription.borrow_mut() += 1;
+                    }
+                },
+            )
+            .detach();
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.set_provisional_title("Hello, can you help…".into(), cx);
+        });
+        assert_eq!(
+            *title_updated_events.borrow(),
+            1,
+            "setting a provisional title should emit TitleUpdated"
+        );
+
+        let result = thread.update(cx, |thread, cx| {
+            thread.handle_session_update(
+                acp::SessionUpdate::SessionInfoUpdate(
+                    acp::SessionInfoUpdate::new().title("Helping with Rust question"),
+                ),
+                cx,
+            )
+        });
+        result.expect("session info update should succeed");
+
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.title().as_ref(), "Helping with Rust question");
+            assert!(
+                !thread.has_provisional_title(),
+                "session info title update should clear provisional title"
+            );
+        });
+
+        assert_eq!(
+            *title_updated_events.borrow(),
+            2,
+            "session info title update should emit TitleUpdated"
+        );
+        assert!(
+            connection.set_title_calls.borrow().is_empty(),
+            "session info title update should not propagate back to the connection"
         );
     }
 }
