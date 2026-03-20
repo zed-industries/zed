@@ -1,9 +1,12 @@
 use crate::{
     CommonAnimationExt, DecoratedIcon, DiffStat, GradientFade, HighlightedLabel, IconDecoration,
-    IconDecorationKind, prelude::*,
+    IconDecorationKind, Tooltip, prelude::*,
 };
 
-use gpui::{Animation, AnimationExt, AnyView, ClickEvent, Hsla, SharedString, pulsating_between};
+use gpui::{
+    Animation, AnimationExt, AnyView, ClickEvent, Hsla, MouseButton, SharedString,
+    pulsating_between,
+};
 use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -36,6 +39,8 @@ pub struct ThreadItem {
     worktree_highlight_positions: Vec<usize>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_hover: Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>,
+    title_label_color: Option<Color>,
+    title_label_size: Option<LabelSize>,
     action_slot: Option<AnyElement>,
     tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
 }
@@ -62,6 +67,8 @@ impl ThreadItem {
             worktree_highlight_positions: Vec::new(),
             on_click: None,
             on_hover: Box::new(|_, _, _| {}),
+            title_label_color: None,
+            title_label_size: None,
             action_slot: None,
             tooltip: None,
         }
@@ -155,6 +162,16 @@ impl ThreadItem {
         self
     }
 
+    pub fn title_label_color(mut self, color: Color) -> Self {
+        self.title_label_color = Some(color);
+        self
+    }
+
+    pub fn title_label_size(mut self, size: LabelSize) -> Self {
+        self.title_label_size = Some(size);
+        self
+    }
+
     pub fn action_slot(mut self, element: impl IntoElement) -> Self {
         self.action_slot = Some(element.into_any_element());
         self
@@ -176,7 +193,14 @@ impl RenderOnce for ThreadItem {
                 .alpha(0.5)
         };
 
-        let icon_container = || h_flex().size_4().flex_none().justify_center();
+        let icon_id = format!("icon-{}", self.id);
+        let icon_container = || {
+            h_flex()
+                .id(icon_id.clone())
+                .size_4()
+                .flex_none()
+                .justify_center()
+        };
         let agent_icon = if let Some(custom_svg) = self.custom_icon_from_external_svg {
             Icon::from_external_svg(custom_svg)
                 .color(Color::Muted)
@@ -196,41 +220,54 @@ impl RenderOnce for ThreadItem {
                 })
         };
 
-        let decoration = if self.status == AgentThreadStatus::WaitingForConfirmation {
-            Some(decoration(
-                IconDecorationKind::Triangle,
-                cx.theme().status().warning,
-            ))
-        } else if self.status == AgentThreadStatus::Error {
-            Some(decoration(IconDecorationKind::X, cx.theme().status().error))
+        let (decoration, icon_tooltip) = if self.status == AgentThreadStatus::Error {
+            (
+                Some(decoration(IconDecorationKind::X, cx.theme().status().error)),
+                Some("Thread has an Error"),
+            )
+        } else if self.status == AgentThreadStatus::WaitingForConfirmation {
+            (
+                Some(decoration(
+                    IconDecorationKind::Triangle,
+                    cx.theme().status().warning,
+                )),
+                Some("Thread is Waiting for Confirmation"),
+            )
         } else if self.notified {
-            Some(decoration(IconDecorationKind::Dot, color.text_accent))
+            (
+                Some(decoration(IconDecorationKind::Dot, color.text_accent)),
+                Some("Thread's Generation is Complete"),
+            )
         } else {
-            None
+            (None, None)
         };
 
-        let is_running = matches!(
-            self.status,
-            AgentThreadStatus::Running | AgentThreadStatus::WaitingForConfirmation
-        );
-
-        let icon = if is_running {
-            icon_container().child(
-                Icon::new(IconName::LoadCircle)
-                    .size(IconSize::Small)
-                    .color(Color::Muted)
-                    .with_rotate_animation(2),
-            )
+        let icon = if self.status == AgentThreadStatus::Running {
+            icon_container()
+                .child(
+                    Icon::new(IconName::LoadCircle)
+                        .size(IconSize::Small)
+                        .color(Color::Muted)
+                        .with_rotate_animation(2),
+                )
+                .into_any_element()
         } else if let Some(decoration) = decoration {
-            icon_container().child(DecoratedIcon::new(agent_icon, Some(decoration)))
+            icon_container()
+                .child(DecoratedIcon::new(agent_icon, Some(decoration)))
+                .when_some(icon_tooltip, |icon, tooltip| {
+                    icon.tooltip(Tooltip::text(tooltip))
+                })
+                .into_any_element()
         } else {
-            icon_container().child(agent_icon)
+            icon_container().child(agent_icon).into_any_element()
         };
 
         let title = self.title;
         let highlight_positions = self.highlight_positions;
+        let title_label_size = self.title_label_size.unwrap_or(LabelSize::Default);
         let title_label = if self.generating_title {
-            Label::new("New Thread…")
+            Label::new(title)
+                .size(title_label_size)
                 .color(Color::Muted)
                 .with_animation(
                     "generating-title",
@@ -241,15 +278,31 @@ impl RenderOnce for ThreadItem {
                 )
                 .into_any_element()
         } else if highlight_positions.is_empty() {
-            Label::new(title).into_any_element()
+            let label = Label::new(title).size(title_label_size);
+            let label = if let Some(color) = self.title_label_color {
+                label.color(color)
+            } else {
+                label
+            };
+            label.into_any_element()
         } else {
-            HighlightedLabel::new(title, highlight_positions).into_any_element()
+            let label = HighlightedLabel::new(title, highlight_positions).size(title_label_size);
+            let label = if let Some(color) = self.title_label_color {
+                label.color(color)
+            } else {
+                label
+            };
+            label.into_any_element()
         };
+
+        let b_bg = color
+            .title_bar_background
+            .blend(color.panel_background.opacity(0.8));
 
         let base_bg = if self.selected {
             color.element_active
         } else {
-            color.panel_background
+            b_bg
         };
 
         let gradient_overlay =
@@ -274,7 +327,8 @@ impl RenderOnce for ThreadItem {
             .overflow_hidden()
             .cursor_pointer()
             .w_full()
-            .p_1()
+            .py_1()
+            .px_1p5()
             .when(self.selected, |s| s.bg(color.element_active))
             .border_1()
             .border_color(gpui::transparent_black())
@@ -314,7 +368,15 @@ impl RenderOnce for ThreadItem {
                             .gradient_stop(0.75)
                             .group_name("thread-item");
 
-                            this.child(h_flex().relative().child(overlay).child(slot))
+                            this.child(
+                                h_flex()
+                                    .relative()
+                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                        cx.stop_propagation()
+                                    })
+                                    .child(overlay)
+                                    .child(slot),
+                            )
                         })
                     }),
             )

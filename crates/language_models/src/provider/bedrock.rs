@@ -642,10 +642,36 @@ impl LanguageModel for BedrockModel {
     }
 
     fn supports_thinking(&self) -> bool {
-        matches!(
-            self.model.mode(),
-            BedrockModelMode::Thinking { .. } | BedrockModelMode::AdaptiveThinking { .. }
-        )
+        self.model.supports_thinking()
+    }
+
+    fn supported_effort_levels(&self) -> Vec<language_model::LanguageModelEffortLevel> {
+        if self.model.supports_adaptive_thinking() {
+            vec![
+                language_model::LanguageModelEffortLevel {
+                    name: "Low".into(),
+                    value: "low".into(),
+                    is_default: false,
+                },
+                language_model::LanguageModelEffortLevel {
+                    name: "Medium".into(),
+                    value: "medium".into(),
+                    is_default: false,
+                },
+                language_model::LanguageModelEffortLevel {
+                    name: "High".into(),
+                    value: "high".into(),
+                    is_default: true,
+                },
+                language_model::LanguageModelEffortLevel {
+                    name: "Max".into(),
+                    value: "max".into(),
+                    is_default: false,
+                },
+            ]
+        } else {
+            Vec::new()
+        }
     }
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
@@ -718,7 +744,7 @@ impl LanguageModel for BedrockModel {
             model_id,
             self.model.default_temperature(),
             self.model.max_output_tokens(),
-            self.model.mode(),
+            self.model.thinking_mode(),
             self.model.supports_caching(),
             self.model.supports_tool_use(),
             use_extended_context,
@@ -811,7 +837,7 @@ pub fn into_bedrock(
     model: String,
     default_temperature: f32,
     max_output_tokens: u64,
-    mode: BedrockModelMode,
+    thinking_mode: BedrockModelMode,
     supports_caching: bool,
     supports_tool_use: bool,
     allow_extended_context: bool,
@@ -1085,11 +1111,24 @@ pub fn into_bedrock(
         system: Some(system_message),
         tools: tool_config,
         thinking: if request.thinking_allowed {
-            match mode {
+            match thinking_mode {
                 BedrockModelMode::Thinking { budget_tokens } => {
                     Some(bedrock::Thinking::Enabled { budget_tokens })
                 }
-                BedrockModelMode::AdaptiveThinking { effort } => {
+                BedrockModelMode::AdaptiveThinking {
+                    effort: default_effort,
+                } => {
+                    let effort = request
+                        .thinking_effort
+                        .as_deref()
+                        .and_then(|e| match e {
+                            "low" => Some(bedrock::BedrockAdaptiveThinkingEffort::Low),
+                            "medium" => Some(bedrock::BedrockAdaptiveThinkingEffort::Medium),
+                            "high" => Some(bedrock::BedrockAdaptiveThinkingEffort::High),
+                            "max" => Some(bedrock::BedrockAdaptiveThinkingEffort::Max),
+                            _ => None,
+                        })
+                        .unwrap_or(default_effort);
                     Some(bedrock::Thinking::Adaptive { effort })
                 }
                 BedrockModelMode::Default => None,

@@ -234,6 +234,14 @@ impl Workspace {
         self.suppressed_notifications.insert(id.clone());
     }
 
+    pub fn is_notification_suppressed(&self, notification_id: NotificationId) -> bool {
+        self.suppressed_notifications.contains(&notification_id)
+    }
+
+    pub fn unsuppress(&mut self, notification_id: NotificationId) {
+        self.suppressed_notifications.remove(&notification_id);
+    }
+
     pub fn show_initial_notifications(&mut self, cx: &mut Context<Self>) {
         // Allow absence of the global so that tests don't need to initialize it.
         let app_notifications = GLOBAL_APP_NOTIFICATIONS

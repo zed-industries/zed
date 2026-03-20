@@ -1805,7 +1805,7 @@ mod tests {
     use settings::SettingsStore;
     use std::{path::Path, rc::Rc};
     use util::path;
-    use workspace::MultiWorkspace;
+    use workspace::{MultiWorkspace, PathList};
 
     #[gpui::test]
     async fn test_multibuffer_agent_diff(cx: &mut TestAppContext) {
@@ -1833,9 +1833,11 @@ mod tests {
         let connection = Rc::new(acp_thread::StubAgentConnection::new());
         let thread = cx
             .update(|cx| {
-                connection
-                    .clone()
-                    .new_session(project.clone(), Path::new(path!("/test")), cx)
+                connection.clone().new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new(path!("/test"))]),
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -2024,9 +2026,11 @@ mod tests {
         let connection = Rc::new(acp_thread::StubAgentConnection::new());
         let thread = cx
             .update(|_, cx| {
-                connection
-                    .clone()
-                    .new_session(project.clone(), Path::new(path!("/test")), cx)
+                connection.clone().new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new(path!("/test"))]),
+                    cx,
+                )
             })
             .await
             .unwrap();

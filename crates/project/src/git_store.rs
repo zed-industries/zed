@@ -2543,11 +2543,12 @@ impl GitStore {
     ) -> Result<proto::Ack> {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let is_remote = envelope.payload.is_remote;
         let branch_name = envelope.payload.branch_name;
 
         repository_handle
             .update(&mut cx, |repository_handle, _| {
-                repository_handle.delete_branch(branch_name)
+                repository_handle.delete_branch(is_remote, branch_name)
             })
             .await??;
 
@@ -5022,43 +5023,69 @@ impl Repository {
     }
 
     pub fn stage_all(&mut self, cx: &mut Context<Self>) -> Task<anyhow::Result<()>> {
-        let to_stage = self
-            .cached_status()
-            .filter_map(|entry| {
-                if let Some(ops) = self.pending_ops_for_path(&entry.repo_path) {
-                    if ops.staging() || ops.staged() {
+        let snapshot = self.snapshot.clone();
+        let pending_ops = self.pending_ops.clone();
+        let to_stage = cx.background_spawn(async move {
+            snapshot
+                .status()
+                .filter_map(|entry| {
+                    if let Some(ops) =
+                        pending_ops.get(&PathKey(entry.repo_path.as_ref().clone()), ())
+                    {
+                        if ops.staging() || ops.staged() {
+                            None
+                        } else {
+                            Some(entry.repo_path)
+                        }
+                    } else if entry.status.staging().is_fully_staged() {
                         None
                     } else {
                         Some(entry.repo_path)
                     }
-                } else if entry.status.staging().is_fully_staged() {
-                    None
-                } else {
-                    Some(entry.repo_path)
-                }
-            })
-            .collect();
-        self.stage_or_unstage_entries(true, to_stage, cx)
+                })
+                .collect()
+        });
+
+        cx.spawn(async move |this, cx| {
+            let to_stage = to_stage.await;
+            this.update(cx, |this, cx| {
+                this.stage_or_unstage_entries(true, to_stage, cx)
+            })?
+            .await
+        })
     }
 
     pub fn unstage_all(&mut self, cx: &mut Context<Self>) -> Task<anyhow::Result<()>> {
-        let to_unstage = self
-            .cached_status()
-            .filter_map(|entry| {
-                if let Some(ops) = self.pending_ops_for_path(&entry.repo_path) {
-                    if !ops.staging() && !ops.staged() {
+        let snapshot = self.snapshot.clone();
+        let pending_ops = self.pending_ops.clone();
+        let to_unstage = cx.background_spawn(async move {
+            snapshot
+                .status()
+                .filter_map(|entry| {
+                    if let Some(ops) =
+                        pending_ops.get(&PathKey(entry.repo_path.as_ref().clone()), ())
+                    {
+                        if !ops.staging() && !ops.staged() {
+                            None
+                        } else {
+                            Some(entry.repo_path)
+                        }
+                    } else if entry.status.staging().is_fully_unstaged() {
                         None
                     } else {
                         Some(entry.repo_path)
                     }
-                } else if entry.status.staging().is_fully_unstaged() {
-                    None
-                } else {
-                    Some(entry.repo_path)
-                }
-            })
-            .collect();
-        self.stage_or_unstage_entries(false, to_unstage, cx)
+                })
+                .collect()
+        });
+
+        cx.spawn(async move |this, cx| {
+            let to_unstage = to_unstage.await;
+            this.update(cx, |this, cx| {
+                this.stage_or_unstage_entries(false, to_unstage, cx)
+            })?
+            .await
+        })
     }
 
     pub fn stash_all(&mut self, cx: &mut Context<Self>) -> Task<anyhow::Result<()>> {
@@ -5728,6 +5755,31 @@ impl Repository {
         })
     }
 
+    /// If this is a linked worktree (*NOT* the main checkout of a repository),
+    /// returns the pathed for the linked worktree.
+    ///
+    /// Returns None if this is the main checkout.
+    pub fn linked_worktree_path(&self) -> Option<&Arc<Path>> {
+        if self.work_directory_abs_path != self.original_repo_abs_path {
+            Some(&self.work_directory_abs_path)
+        } else {
+            None
+        }
+    }
+
+    pub fn path_for_new_linked_worktree(
+        &self,
+        branch_name: &str,
+        worktree_directory_setting: &str,
+    ) -> Result<PathBuf> {
+        let original_repo = self.original_repo_abs_path.clone();
+        let project_name = original_repo
+            .file_name()
+            .ok_or_else(|| anyhow!("git repo must have a directory name"))?;
+        let directory = worktrees_directory_for_repo(&original_repo, worktree_directory_setting)?;
+        Ok(directory.join(branch_name).join(project_name))
+    }
+
     pub fn worktrees(&mut self) -> oneshot::Receiver<Result<Vec<GitWorktree>>> {
         let id = self.id;
         self.send_job(None, move |repo, _| async move {
@@ -5757,25 +5809,25 @@ impl Repository {
 
     pub fn create_worktree(
         &mut self,
-        name: String,
-        directory: PathBuf,
+        branch_name: String,
+        path: PathBuf,
         commit: Option<String>,
     ) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
         self.send_job(
-            Some("git worktree add".into()),
+            Some(format!("git worktree add: {}", branch_name).into()),
             move |repo, _cx| async move {
                 match repo {
                     RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                        backend.create_worktree(name, directory, commit).await
+                        backend.create_worktree(branch_name, path, commit).await
                     }
                     RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
                         client
                             .request(proto::GitCreateWorktree {
                                 project_id: project_id.0,
                                 repository_id: id.to_proto(),
-                                name,
-                                directory: directory.to_string_lossy().to_string(),
+                                name: branch_name,
+                                directory: path.to_string_lossy().to_string(),
                                 commit,
                             })
                             .await?;
@@ -6018,18 +6070,32 @@ impl Repository {
         )
     }
 
-    pub fn delete_branch(&mut self, branch_name: String) -> oneshot::Receiver<Result<()>> {
+    pub fn delete_branch(
+        &mut self,
+        is_remote: bool,
+        branch_name: String,
+    ) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
         self.send_job(
-            Some(format!("git branch -d {branch_name}").into()),
+            Some(
+                format!(
+                    "git branch {} {}",
+                    if is_remote { "-dr" } else { "-d" },
+                    branch_name
+                )
+                .into(),
+            ),
             move |repo, _cx| async move {
                 match repo {
-                    RepositoryState::Local(state) => state.backend.delete_branch(branch_name).await,
+                    RepositoryState::Local(state) => {
+                        state.backend.delete_branch(is_remote, branch_name).await
+                    }
                     RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
                         client
                             .request(proto::GitDeleteBranch {
                                 project_id: project_id.0,
                                 repository_id: id.to_proto(),
+                                is_remote,
                                 branch_name,
                             })
                             .await?;
@@ -6675,6 +6741,120 @@ impl Repository {
     }
 }
 
+/// If `path` is a git linked worktree checkout, resolves it to the main
+/// repository's working directory path. Returns `None` if `path` is a normal
+/// repository, not a git repo, or if resolution fails.
+///
+/// Resolution works by:
+/// 1. Reading the `.git` file to get the `gitdir:` pointer
+/// 2. Following that to the worktree-specific git directory
+/// 3. Reading the `commondir` file to find the shared `.git` directory
+/// 4. Deriving the main repo's working directory from the common dir
+pub async fn resolve_git_worktree_to_main_repo(fs: &dyn Fs, path: &Path) -> Option<PathBuf> {
+    let dot_git = path.join(".git");
+    let metadata = fs.metadata(&dot_git).await.ok()??;
+    if metadata.is_dir {
+        return None; // Normal repo, not a linked worktree
+    }
+    // It's a .git file — parse the gitdir: pointer
+    let content = fs.load(&dot_git).await.ok()?;
+    let gitdir_rel = content.strip_prefix("gitdir:")?.trim();
+    let gitdir_abs = fs.canonicalize(&path.join(gitdir_rel)).await.ok()?;
+    // Read commondir to find the main .git directory
+    let commondir_content = fs.load(&gitdir_abs.join("commondir")).await.ok()?;
+    let common_dir = fs
+        .canonicalize(&gitdir_abs.join(commondir_content.trim()))
+        .await
+        .ok()?;
+    Some(git::repository::original_repo_path_from_common_dir(
+        &common_dir,
+    ))
+}
+
+/// Validates that the resolved worktree directory is acceptable:
+/// - The setting must not be an absolute path.
+/// - The resolved path must be either a subdirectory of the working
+///   directory or a subdirectory of its parent (i.e., a sibling).
+///
+/// Returns `Ok(resolved_path)` or an error with a user-facing message.
+pub fn worktrees_directory_for_repo(
+    original_repo_abs_path: &Path,
+    worktree_directory_setting: &str,
+) -> Result<PathBuf> {
+    // Check the original setting before trimming, since a path like "///"
+    // is absolute but becomes "" after stripping trailing separators.
+    // Also check for leading `/` or `\` explicitly, because on Windows
+    // `Path::is_absolute()` requires a drive letter — so `/tmp/worktrees`
+    // would slip through even though it's clearly not a relative path.
+    if Path::new(worktree_directory_setting).is_absolute()
+        || worktree_directory_setting.starts_with('/')
+        || worktree_directory_setting.starts_with('\\')
+    {
+        anyhow::bail!(
+            "git.worktree_directory must be a relative path, got: {worktree_directory_setting:?}"
+        );
+    }
+
+    if worktree_directory_setting.is_empty() {
+        anyhow::bail!("git.worktree_directory must not be empty");
+    }
+
+    let trimmed = worktree_directory_setting.trim_end_matches(['/', '\\']);
+    if trimmed == ".." {
+        anyhow::bail!("git.worktree_directory must not be \"..\" (use \"../some-name\" instead)");
+    }
+
+    let joined = original_repo_abs_path.join(trimmed);
+    let resolved = util::normalize_path(&joined);
+    let resolved = if resolved.starts_with(original_repo_abs_path) {
+        resolved
+    } else if let Some(repo_dir_name) = original_repo_abs_path.file_name() {
+        resolved.join(repo_dir_name)
+    } else {
+        resolved
+    };
+
+    let parent = original_repo_abs_path
+        .parent()
+        .unwrap_or(original_repo_abs_path);
+
+    if !resolved.starts_with(parent) {
+        anyhow::bail!(
+            "git.worktree_directory resolved to {resolved:?}, which is outside \
+             the project root and its parent directory. It must resolve to a \
+             subdirectory of {original_repo_abs_path:?} or a sibling of it."
+        );
+    }
+
+    Ok(resolved)
+}
+
+/// Returns a short name for a linked worktree suitable for UI display
+///
+/// Uses the main worktree path to come up with a short name that disambiguates
+/// the linked worktree from the main worktree.
+pub fn linked_worktree_short_name(
+    main_worktree_path: &Path,
+    linked_worktree_path: &Path,
+) -> Option<SharedString> {
+    if main_worktree_path == linked_worktree_path {
+        return None;
+    }
+
+    let project_name = main_worktree_path.file_name()?.to_str()?;
+    let directory_name = linked_worktree_path.file_name()?.to_str()?;
+    let name = if directory_name != project_name {
+        directory_name.to_string()
+    } else {
+        linked_worktree_path
+            .parent()?
+            .file_name()?
+            .to_str()?
+            .to_string()
+    };
+    Some(name.into())
+}
+
 fn get_permalink_in_rust_registry_src(
     provider_registry: Arc<GitHostingProviderRegistry>,
     path: PathBuf,
@@ -6838,7 +7018,11 @@ fn branch_to_proto(branch: &git::repository::Branch) -> proto::Branch {
 fn worktree_to_proto(worktree: &git::repository::Worktree) -> proto::Worktree {
     proto::Worktree {
         path: worktree.path.to_string_lossy().to_string(),
-        ref_name: worktree.ref_name.to_string(),
+        ref_name: worktree
+            .ref_name
+            .as_ref()
+            .map(|s| s.to_string())
+            .unwrap_or_default(),
         sha: worktree.sha.to_string(),
     }
 }
@@ -6846,7 +7030,7 @@ fn worktree_to_proto(worktree: &git::repository::Worktree) -> proto::Worktree {
 fn proto_to_worktree(proto: &proto::Worktree) -> git::repository::Worktree {
     git::repository::Worktree {
         path: PathBuf::from(proto.path.clone()),
-        ref_name: proto.ref_name.clone().into(),
+        ref_name: Some(SharedString::from(&proto.ref_name)),
         sha: proto.sha.clone().into(),
     }
 }

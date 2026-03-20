@@ -7,7 +7,7 @@ use crate::{
 use acp_thread::AgentSessionInfo;
 use agent::ThreadStore;
 use agent_client_protocol as acp;
-use chrono::{Datelike as _, Local, NaiveDate, TimeDelta, Utc};
+use chrono::{DateTime, Datelike as _, Local, NaiveDate, TimeDelta, Utc};
 use editor::Editor;
 use fs::Fs;
 use gpui::{
@@ -16,13 +16,15 @@ use gpui::{
 };
 use itertools::Itertools as _;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
-use project::{AgentServerStore, ExternalAgentServerName};
+use project::{AgentId, AgentServerStore};
 use theme::ActiveTheme;
 use ui::{
-    ButtonLike, CommonAnimationExt, ContextMenu, ContextMenuEntry, HighlightedLabel, ListItem,
-    PopoverMenu, PopoverMenuHandle, Tab, TintColor, Tooltip, WithScrollbar, prelude::*,
+    ButtonLike, CommonAnimationExt, ContextMenu, ContextMenuEntry, Divider, HighlightedLabel,
+    KeyBinding, PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, WithScrollbar, prelude::*,
+    utils::platform_title_bar_height,
 };
 use util::ResultExt as _;
+use zed_actions::agents_sidebar::FocusSidebarFilter;
 use zed_actions::editor::{MoveDown, MoveUp};
 
 #[derive(Clone)]
@@ -91,9 +93,25 @@ fn fuzzy_match_positions(query: &str, text: &str) -> Option<Vec<usize>> {
     }
 }
 
+fn archive_empty_state_message(
+    has_history: bool,
+    is_empty: bool,
+    has_query: bool,
+) -> Option<&'static str> {
+    if !is_empty {
+        None
+    } else if !has_history {
+        Some("This agent does not support viewing archived threads.")
+    } else if has_query {
+        Some("No threads match your search.")
+    } else {
+        Some("No archived threads yet.")
+    }
+}
+
 pub enum ThreadsArchiveViewEvent {
     Close,
-    OpenThread {
+    Unarchive {
         agent: Agent,
         session_info: AgentSessionInfo,
     },
@@ -145,6 +163,25 @@ impl ThreadsArchiveView {
                 }
             });
 
+        let filter_focus_handle = filter_editor.read(cx).focus_handle(cx);
+        cx.on_focus_in(
+            &filter_focus_handle,
+            window,
+            |this: &mut Self, _window, cx| {
+                if this.selection.is_some() {
+                    this.selection = None;
+                    cx.notify();
+                }
+            },
+        )
+        .detach();
+
+        cx.on_focus_out(&focus_handle, window, |this: &mut Self, _, _window, cx| {
+            this.selection = None;
+            cx.notify();
+        })
+        .detach();
+
         let mut this = Self {
             agent_connection_store,
             agent_server_store,
@@ -168,9 +205,23 @@ impl ThreadsArchiveView {
         this
     }
 
+    pub fn has_selection(&self) -> bool {
+        self.selection.is_some()
+    }
+
+    pub fn clear_selection(&mut self) {
+        self.selection = None;
+    }
+
+    pub fn focus_filter_editor(&self, window: &mut Window, cx: &mut App) {
+        let handle = self.filter_editor.read(cx).focus_handle(cx);
+        handle.focus(window, cx);
+    }
+
     fn set_selected_agent(&mut self, agent: Agent, window: &mut Window, cx: &mut Context<Self>) {
         self.selected_agent = agent.clone();
         self.is_loading = true;
+        self.reset_history_subscription();
         self.history = None;
         self.items.clear();
         self.selection = None;
@@ -193,25 +244,33 @@ impl ThreadsArchiveView {
         cx.notify();
     }
 
-    fn set_history(&mut self, history: Entity<ThreadHistory>, cx: &mut Context<Self>) {
-        self._history_subscription = cx.observe(&history, |this, _, cx| {
-            this.update_items(cx);
-        });
-        history.update(cx, |history, cx| {
-            history.refresh_full_history(cx);
-        });
-        self.history = Some(history);
+    fn reset_history_subscription(&mut self) {
+        self._history_subscription = Subscription::new(|| {});
+    }
+
+    fn set_history(&mut self, history: Option<Entity<ThreadHistory>>, cx: &mut Context<Self>) {
+        self.reset_history_subscription();
+
+        if let Some(history) = &history {
+            self._history_subscription = cx.observe(history, |this, _, cx| {
+                this.update_items(cx);
+            });
+            history.update(cx, |history, cx| {
+                history.refresh_full_history(cx);
+            });
+        }
+        self.history = history;
         self.is_loading = false;
         self.update_items(cx);
         cx.notify();
     }
 
     fn update_items(&mut self, cx: &mut Context<Self>) {
-        let Some(history) = self.history.as_ref() else {
-            return;
-        };
-
-        let sessions = history.read(cx).sessions().to_vec();
+        let sessions = self
+            .history
+            .as_ref()
+            .map(|h| h.read(cx).sessions().to_vec())
+            .unwrap_or_default();
         let query = self.filter_editor.read(cx).text(cx).to_lowercase();
         let today = Local::now().naive_local().date();
 
@@ -250,6 +309,8 @@ impl ThreadsArchiveView {
 
         self.list_state.reset(items.len());
         self.items = items;
+        self.selection = None;
+        self.hovered_index = None;
         cx.notify();
     }
 
@@ -259,12 +320,7 @@ impl ThreadsArchiveView {
         });
     }
 
-    fn go_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.reset_filter_editor_text(window, cx);
-        cx.emit(ThreadsArchiveViewEvent::Close);
-    }
-
-    fn open_thread(
+    fn unarchive_thread(
         &mut self,
         session_info: AgentSessionInfo,
         window: &mut Window,
@@ -272,7 +328,7 @@ impl ThreadsArchiveView {
     ) {
         self.selection = None;
         self.reset_filter_editor_text(window, cx);
-        cx.emit(ThreadsArchiveViewEvent::OpenThread {
+        cx.emit(ThreadsArchiveViewEvent::Unarchive {
             agent: self.selected_agent.clone(),
             session_info,
         });
@@ -323,10 +379,16 @@ impl ThreadsArchiveView {
 
     fn editor_move_down(&mut self, _: &MoveDown, window: &mut Window, cx: &mut Context<Self>) {
         self.select_next(&SelectNext, window, cx);
+        if self.selection.is_some() {
+            self.focus_handle.focus(window, cx);
+        }
     }
 
     fn editor_move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
         self.select_previous(&SelectPrevious, window, cx);
+        if self.selection.is_some() {
+            self.focus_handle.focus(window, cx);
+        }
     }
 
     fn select_next(&mut self, _: &SelectNext, _window: &mut Window, cx: &mut Context<Self>) {
@@ -341,24 +403,29 @@ impl ThreadsArchiveView {
         }
     }
 
-    fn select_previous(
-        &mut self,
-        _: &SelectPrevious,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let prev = match self.selection {
-            Some(ix) if ix > 0 => self.find_previous_selectable(ix - 1),
+    fn select_previous(&mut self, _: &SelectPrevious, window: &mut Window, cx: &mut Context<Self>) {
+        match self.selection {
+            Some(ix) => {
+                if let Some(prev) = (ix > 0)
+                    .then(|| self.find_previous_selectable(ix - 1))
+                    .flatten()
+                {
+                    self.selection = Some(prev);
+                    self.list_state.scroll_to_reveal_item(prev);
+                } else {
+                    self.selection = None;
+                    self.focus_filter_editor(window, cx);
+                }
+                cx.notify();
+            }
             None => {
                 let last = self.items.len().saturating_sub(1);
-                self.find_previous_selectable(last)
+                if let Some(prev) = self.find_previous_selectable(last) {
+                    self.selection = Some(prev);
+                    self.list_state.scroll_to_reveal_item(prev);
+                    cx.notify();
+                }
             }
-            _ => return,
-        };
-        if let Some(prev) = prev {
-            self.selection = Some(prev);
-            self.list_state.scroll_to_reveal_item(prev);
-            cx.notify();
         }
     }
 
@@ -384,7 +451,13 @@ impl ThreadsArchiveView {
         let Some(ArchiveListItem::Entry { session, .. }) = self.items.get(ix) else {
             return;
         };
-        self.open_thread(session.clone(), window, cx);
+
+        let can_unarchive = session.work_dirs.as_ref().is_some_and(|p| !p.is_empty());
+        if !can_unarchive {
+            return;
+        }
+
+        self.unarchive_thread(session.clone(), window, cx);
     }
 
     fn render_list_entry(
@@ -400,7 +473,7 @@ impl ThreadsArchiveView {
         match item {
             ArchiveListItem::BucketSeparator(bucket) => div()
                 .w_full()
-                .px_2()
+                .px_2p5()
                 .pt_3()
                 .pb_1()
                 .child(
@@ -413,75 +486,68 @@ impl ThreadsArchiveView {
                 session,
                 highlight_positions,
             } => {
-                let is_selected = self.selection == Some(ix);
+                let id = SharedString::from(format!("archive-entry-{}", ix));
+
+                let is_focused = self.selection == Some(ix);
                 let hovered = self.hovered_index == Some(ix);
+
+                let project_names = session.work_dirs.as_ref().and_then(|paths| {
+                    let paths_str = paths
+                        .paths()
+                        .iter()
+                        .filter_map(|p| p.file_name())
+                        .filter_map(|name| name.to_str())
+                        .join(", ");
+                    if paths_str.is_empty() {
+                        None
+                    } else {
+                        Some(paths_str)
+                    }
+                });
+
+                let can_unarchive = session.work_dirs.as_ref().is_some_and(|p| !p.is_empty());
+
                 let supports_delete = self
                     .history
                     .as_ref()
                     .map(|h| h.read(cx).supports_delete())
                     .unwrap_or(false);
+
                 let title: SharedString =
                     session.title.clone().unwrap_or_else(|| "Untitled".into());
+
                 let session_info = session.clone();
                 let session_id_for_delete = session.session_id.clone();
                 let focus_handle = self.focus_handle.clone();
+
+                let timestamp = session
+                    .created_at
+                    .or(session.updated_at)
+                    .map(format_history_entry_timestamp);
+
                 let highlight_positions = highlight_positions.clone();
-
-                let timestamp = session.created_at.or(session.updated_at).map(|entry_time| {
-                    let now = Utc::now();
-                    let duration = now.signed_duration_since(entry_time);
-
-                    let minutes = duration.num_minutes();
-                    let hours = duration.num_hours();
-                    let days = duration.num_days();
-                    let weeks = days / 7;
-                    let months = days / 30;
-
-                    if minutes < 60 {
-                        format!("{}m", minutes.max(1))
-                    } else if hours < 24 {
-                        format!("{}h", hours)
-                    } else if weeks < 4 {
-                        format!("{}w", weeks.max(1))
-                    } else {
-                        format!("{}mo", months.max(1))
-                    }
-                });
-
-                let id = SharedString::from(format!("archive-entry-{}", ix));
-
                 let title_label = if highlight_positions.is_empty() {
-                    Label::new(title)
-                        .size(LabelSize::Small)
-                        .truncate()
-                        .into_any_element()
+                    Label::new(title).truncate().flex_1().into_any_element()
                 } else {
                     HighlightedLabel::new(title, highlight_positions)
-                        .size(LabelSize::Small)
                         .truncate()
+                        .flex_1()
                         .into_any_element()
                 };
 
-                ListItem::new(id)
-                    .toggle_state(is_selected)
-                    .child(
-                        h_flex()
-                            .min_w_0()
-                            .w_full()
-                            .py_1()
-                            .pl_0p5()
-                            .pr_1p5()
-                            .gap_2()
-                            .justify_between()
-                            .child(title_label)
-                            .when(!(hovered && supports_delete), |this| {
-                                this.when_some(timestamp, |this, ts| {
-                                    this.child(
-                                        Label::new(ts).size(LabelSize::Small).color(Color::Muted),
-                                    )
-                                })
-                            }),
-                    )
+                h_flex()
+                    .id(id)
+                    .min_w_0()
+                    .w_full()
+                    .px(DynamicSpacing::Base06.rems(cx))
+                    .border_1()
+                    .map(|this| {
+                        if is_focused {
+                            this.border_color(cx.theme().colors().border_focused)
+                        } else {
+                            this.border_color(gpui::transparent_black())
+                        }
+                    })
                     .on_hover(cx.listener(move |this, is_hovered, _window, cx| {
                         if *is_hovered {
                             this.hovered_index = Some(ix);
@@ -490,32 +556,107 @@ impl ThreadsArchiveView {
                         }
                         cx.notify();
                     }))
-                    .end_slot::<IconButton>(if hovered && supports_delete {
-                        Some(
-                            IconButton::new("delete-thread", IconName::Trash)
-                                .icon_size(IconSize::Small)
-                                .icon_color(Color::Muted)
-                                .tooltip({
-                                    move |_window, cx| {
-                                        Tooltip::for_action_in(
-                                            "Delete Thread",
-                                            &RemoveSelectedThread,
-                                            &focus_handle,
-                                            cx,
+                    .child(
+                        v_flex()
+                            .min_w_0()
+                            .w_full()
+                            .p_1()
+                            .child(
+                                h_flex()
+                                    .min_w_0()
+                                    .w_full()
+                                    .gap_1()
+                                    .justify_between()
+                                    .child(title_label)
+                                    .when(hovered || is_focused, |this| {
+                                        this.child(
+                                            h_flex()
+                                                .gap_0p5()
+                                                .when(can_unarchive, |this| {
+                                                    this.child(
+                                                        Button::new("unarchive-thread", "Restore")
+                                                            .style(ButtonStyle::OutlinedGhost)
+                                                            .label_size(LabelSize::Small)
+                                                            .when(is_focused, |this| {
+                                                                this.key_binding(
+                                                                    KeyBinding::for_action_in(
+                                                                        &menu::Confirm,
+                                                                        &focus_handle,
+                                                                        cx,
+                                                                    )
+                                                                    .map(|kb| {
+                                                                        kb.size(rems_from_px(12.))
+                                                                    }),
+                                                                )
+                                                            })
+                                                            .on_click(cx.listener(
+                                                                move |this, _, window, cx| {
+                                                                    this.unarchive_thread(
+                                                                        session_info.clone(),
+                                                                        window,
+                                                                        cx,
+                                                                    );
+                                                                },
+                                                            )),
+                                                    )
+                                                })
+                                                .when(supports_delete, |this| {
+                                                    this.child(
+                                                        IconButton::new(
+                                                            "delete-thread",
+                                                            IconName::Trash,
+                                                        )
+                                                        .icon_size(IconSize::Small)
+                                                        .icon_color(Color::Muted)
+                                                        .tooltip({
+                                                            move |_window, cx| {
+                                                                Tooltip::for_action_in(
+                                                                    "Delete Thread",
+                                                                    &RemoveSelectedThread,
+                                                                    &focus_handle,
+                                                                    cx,
+                                                                )
+                                                            }
+                                                        })
+                                                        .on_click(cx.listener(
+                                                            move |this, _, _, cx| {
+                                                                this.delete_thread(
+                                                                    &session_id_for_delete,
+                                                                    cx,
+                                                                );
+                                                                cx.stop_propagation();
+                                                            },
+                                                        )),
+                                                    )
+                                                }),
                                         )
-                                    }
-                                })
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.delete_thread(&session_id_for_delete, cx);
-                                    cx.stop_propagation();
-                                })),
-                        )
-                    } else {
-                        None
-                    })
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.open_thread(session_info.clone(), window, cx);
-                    }))
+                                    }),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .when_some(timestamp, |this, ts| {
+                                        this.child(
+                                            Label::new(ts)
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                        )
+                                    })
+                                    .when_some(project_names, |this, project| {
+                                        this.child(
+                                            Label::new("•")
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted)
+                                                .alpha(0.5),
+                                        )
+                                        .child(
+                                            Label::new(project)
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                        )
+                                    }),
+                            ),
+                    )
                     .into_any_element()
             }
         }
@@ -530,9 +671,9 @@ impl ThreadsArchiveView {
             (IconName::ChevronDown, Color::Muted)
         };
 
-        let selected_agent_icon = if let Agent::Custom { name } = &self.selected_agent {
+        let selected_agent_icon = if let Agent::Custom { id } = &self.selected_agent {
             let store = agent_server_store.read(cx);
-            let icon = store.agent_icon(&ExternalAgentServerName(name.clone()));
+            let icon = store.agent_icon(&id);
 
             if let Some(icon) = icon {
                 Icon::from_external_svg(icon)
@@ -584,24 +725,24 @@ impl ThreadsArchiveView {
                         let registry_store_ref = registry_store.as_ref().map(|s| s.read(cx));
 
                         struct AgentMenuItem {
-                            id: ExternalAgentServerName,
+                            id: AgentId,
                             display_name: SharedString,
                         }
 
                         let agent_items = agent_server_store
                             .external_agents()
-                            .map(|name| {
+                            .map(|agent_id| {
                                 let display_name = agent_server_store
-                                    .agent_display_name(name)
+                                    .agent_display_name(agent_id)
                                     .or_else(|| {
                                         registry_store_ref
                                             .as_ref()
-                                            .and_then(|store| store.agent(name.0.as_ref()))
+                                            .and_then(|store| store.agent(agent_id))
                                             .map(|a| a.name().clone())
                                     })
-                                    .unwrap_or_else(|| name.0.clone());
+                                    .unwrap_or_else(|| agent_id.0.clone());
                                 AgentMenuItem {
-                                    id: name.clone(),
+                                    id: agent_id.clone(),
                                     display_name,
                                 }
                             })
@@ -614,7 +755,7 @@ impl ThreadsArchiveView {
                             let icon_path = agent_server_store.agent_icon(&item.id).or_else(|| {
                                 registry_store_ref
                                     .as_ref()
-                                    .and_then(|store| store.agent(item.id.0.as_str()))
+                                    .and_then(|store| store.agent(&item.id))
                                     .and_then(|a| a.icon_path().cloned())
                             });
 
@@ -627,7 +768,7 @@ impl ThreadsArchiveView {
                             entry = entry.icon_color(Color::Muted).handler({
                                 let this = this.clone();
                                 let agent = Agent::Custom {
-                                    name: item.id.0.clone(),
+                                    id: item.id.clone(),
                                 };
                                 move |window, cx| {
                                     this.update(cx, |this, cx| {
@@ -651,48 +792,91 @@ impl ThreadsArchiveView {
             })
     }
 
-    fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_header(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_query = !self.filter_editor.read(cx).text(cx).is_empty();
+        let traffic_lights = cfg!(target_os = "macos") && !window.is_fullscreen();
+        let header_height = platform_title_bar_height(window);
+        let show_focus_keybinding =
+            self.selection.is_some() && !self.filter_editor.focus_handle(cx).is_focused(window);
 
         h_flex()
-            .h(Tab::container_height(cx))
-            .px_1()
+            .h(header_height)
+            .mt_px()
+            .pb_px()
+            .when(traffic_lights, |this| {
+                this.pl(px(ui::utils::TRAFFIC_LIGHT_PADDING))
+            })
+            .pr_1p5()
+            .gap_1()
             .justify_between()
             .border_b_1()
             .border_color(cx.theme().colors().border)
+            .child(Divider::vertical().color(ui::DividerColor::Border))
             .child(
                 h_flex()
-                    .flex_1()
+                    .ml_1()
+                    .min_w_0()
                     .w_full()
-                    .gap_1p5()
+                    .gap_1()
                     .child(
-                        IconButton::new("back", IconName::ArrowLeft)
-                            .icon_size(IconSize::Small)
-                            .tooltip(Tooltip::text("Back to Sidebar"))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.go_back(window, cx);
-                            })),
+                        Icon::new(IconName::MagnifyingGlass)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
                     )
-                    .child(self.filter_editor.clone())
-                    .when(has_query, |this| {
-                        this.border_r_1().child(
-                            IconButton::new("clear_archive_filter", IconName::Close)
-                                .icon_size(IconSize::Small)
-                                .tooltip(Tooltip::text("Clear Search"))
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.reset_filter_editor_text(window, cx);
-                                    this.update_items(cx);
-                                })),
-                        )
-                    }),
+                    .child(self.filter_editor.clone()),
             )
-            .child(self.render_agent_picker(cx))
+            .when(show_focus_keybinding, |this| {
+                this.child(KeyBinding::for_action(&FocusSidebarFilter, cx))
+            })
+            .when(!has_query && !show_focus_keybinding, |this| {
+                this.child(self.render_agent_picker(cx))
+            })
+            .when(has_query, |this| {
+                this.child(
+                    IconButton::new("clear_filter", IconName::Close)
+                        .icon_size(IconSize::Small)
+                        .tooltip(Tooltip::text("Clear Search"))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.reset_filter_editor_text(window, cx);
+                            this.update_items(cx);
+                        })),
+                )
+            })
+    }
+}
+
+pub fn format_history_entry_timestamp(entry_time: DateTime<Utc>) -> String {
+    let now = Utc::now();
+    let duration = now.signed_duration_since(entry_time);
+
+    let minutes = duration.num_minutes();
+    let hours = duration.num_hours();
+    let days = duration.num_days();
+    let weeks = days / 7;
+    let months = days / 30;
+
+    if minutes < 60 {
+        format!("{}m", minutes.max(1))
+    } else if hours < 24 {
+        format!("{}h", hours.max(1))
+    } else if days < 7 {
+        format!("{}d", days.max(1))
+    } else if weeks < 4 {
+        format!("{}w", weeks.max(1))
+    } else {
+        format!("{}mo", months.max(1))
     }
 }
 
 impl Focusable for ThreadsArchiveView {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
+    }
+}
+
+impl ThreadsArchiveView {
+    fn empty_state_message(&self, is_empty: bool, has_query: bool) -> Option<&'static str> {
+        archive_empty_state_message(self.history.is_some(), is_empty, has_query)
     }
 }
 
@@ -713,24 +897,13 @@ impl Render for ThreadsArchiveView {
                         .with_rotate_animation(2),
                 )
                 .into_any_element()
-        } else if is_empty && has_query {
+        } else if let Some(message) = self.empty_state_message(is_empty, has_query) {
             v_flex()
                 .flex_1()
                 .justify_center()
                 .items_center()
                 .child(
-                    Label::new("No threads match your search.")
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                )
-                .into_any_element()
-        } else if is_empty {
-            v_flex()
-                .flex_1()
-                .justify_center()
-                .items_center()
-                .child(
-                    Label::new("No archived threads yet.")
+                    Label::new(message)
                         .size(LabelSize::Small)
                         .color(Color::Muted),
                 )
@@ -763,8 +936,42 @@ impl Render for ThreadsArchiveView {
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::remove_selected_thread))
             .size_full()
-            .bg(cx.theme().colors().surface_background)
-            .child(self.render_header(cx))
+            .child(self.render_header(window, cx))
             .child(content)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::archive_empty_state_message;
+
+    #[test]
+    fn empty_state_message_returns_none_when_archive_has_items() {
+        assert_eq!(archive_empty_state_message(false, false, false), None);
+        assert_eq!(archive_empty_state_message(true, false, true), None);
+    }
+
+    #[test]
+    fn empty_state_message_distinguishes_unsupported_history() {
+        assert_eq!(
+            archive_empty_state_message(false, true, false),
+            Some("This agent does not support viewing archived threads.")
+        );
+        assert_eq!(
+            archive_empty_state_message(false, true, true),
+            Some("This agent does not support viewing archived threads.")
+        );
+    }
+
+    #[test]
+    fn empty_state_message_distinguishes_empty_history_and_search_results() {
+        assert_eq!(
+            archive_empty_state_message(true, true, false),
+            Some("No archived threads yet.")
+        );
+        assert_eq!(
+            archive_empty_state_message(true, true, true),
+            Some("No threads match your search.")
+        );
     }
 }

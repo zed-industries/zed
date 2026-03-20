@@ -1,8 +1,11 @@
+use std::cell::RefCell;
+
 use acp_thread::ContentBlock;
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
 
 use crate::StartThreadIn;
+use crate::message_editor::SharedSessionCapabilities;
 use gpui::{Corner, List};
 use language_model::{LanguageModelEffortLevel, Speed};
 use settings::update_settings_file;
@@ -167,10 +170,10 @@ pub struct ThreadView {
     pub parent_id: Option<acp::SessionId>,
     pub thread: Entity<AcpThread>,
     pub(crate) conversation: Entity<super::Conversation>,
-    pub server_view: WeakEntity<ConnectionView>,
+    pub server_view: WeakEntity<ConversationView>,
     pub agent_icon: IconName,
     pub agent_icon_from_external_svg: Option<SharedString>,
-    pub agent_name: SharedString,
+    pub agent_id: AgentId,
     pub focus_handle: FocusHandle,
     pub workspace: WeakEntity<Workspace>,
     pub entry_view_state: Entity<EntryViewState>,
@@ -187,8 +190,7 @@ pub struct ThreadView {
     pub last_token_limit_telemetry: Option<acp_thread::TokenUsageRatio>,
     thread_feedback: ThreadFeedbackState,
     pub list_state: ListState,
-    pub prompt_capabilities: Rc<RefCell<PromptCapabilities>>,
-    pub available_commands: Rc<RefCell<Vec<agent_client_protocol::AvailableCommand>>>,
+    pub session_capabilities: SharedSessionCapabilities,
     /// Tracks which tool calls have their content/output expanded.
     /// Used for showing/hiding tool call results, terminal output, etc.
     pub expanded_tool_calls: HashSet<agent_client_protocol::ToolCallId>,
@@ -228,8 +230,8 @@ pub struct ThreadView {
     pub hovered_recent_history_item: Option<usize>,
     pub show_external_source_prompt_warning: bool,
     pub show_codex_windows_warning: bool,
-    pub history: Entity<ThreadHistory>,
-    pub _history_subscription: Subscription,
+    pub history: Option<Entity<ThreadHistory>>,
+    pub _history_subscription: Option<Subscription>,
 }
 impl Focusable for ThreadView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
@@ -256,10 +258,10 @@ impl ThreadView {
         parent_id: Option<acp::SessionId>,
         thread: Entity<AcpThread>,
         conversation: Entity<super::Conversation>,
-        server_view: WeakEntity<ConnectionView>,
+        server_view: WeakEntity<ConversationView>,
         agent_icon: IconName,
         agent_icon_from_external_svg: Option<SharedString>,
-        agent_name: SharedString,
+        agent_id: AgentId,
         agent_display_name: SharedString,
         workspace: WeakEntity<Workspace>,
         entry_view_state: Entity<EntryViewState>,
@@ -268,12 +270,11 @@ impl ThreadView {
         model_selector: Option<Entity<ModelSelectorPopover>>,
         profile_selector: Option<Entity<ProfileSelector>>,
         list_state: ListState,
-        prompt_capabilities: Rc<RefCell<PromptCapabilities>>,
-        available_commands: Rc<RefCell<Vec<agent_client_protocol::AvailableCommand>>>,
+        session_capabilities: SharedSessionCapabilities,
         resumed_without_history: bool,
         project: WeakEntity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
-        history: Entity<ThreadHistory>,
+        history: Option<Entity<ThreadHistory>>,
         prompt_store: Option<Entity<PromptStore>>,
         initial_content: Option<AgentInitialContent>,
         mut subscriptions: Vec<Subscription>,
@@ -284,8 +285,10 @@ impl ThreadView {
 
         let placeholder = placeholder_text(agent_display_name.as_ref(), false);
 
-        let history_subscription = cx.observe(&history, |this, history, cx| {
-            this.update_recent_history_from_cache(&history, cx);
+        let history_subscription = history.as_ref().map(|h| {
+            cx.observe(h, |this, history, cx| {
+                this.update_recent_history_from_cache(&history, cx);
+            })
         });
 
         let mut should_auto_submit = false;
@@ -296,11 +299,10 @@ impl ThreadView {
                 workspace.clone(),
                 project.clone(),
                 thread_store,
-                history.downgrade(),
+                history.as_ref().map(|h| h.downgrade()),
                 prompt_store,
-                prompt_capabilities.clone(),
-                available_commands.clone(),
-                agent_name.clone(),
+                session_capabilities.clone(),
+                agent_id.clone(),
                 &placeholder,
                 editor::EditorMode::AutoHeight {
                     min_lines: AgentSettings::get_global(cx).message_editor_min_lines,
@@ -342,7 +344,7 @@ impl ThreadView {
 
         let show_codex_windows_warning = cfg!(windows)
             && project.upgrade().is_some_and(|p| p.read(cx).is_local())
-            && agent_name == "Codex";
+            && agent_id.as_ref() == "Codex";
 
         let title_editor = {
             let can_edit = thread.update(cx, |thread, cx| thread.can_set_title(cx));
@@ -392,7 +394,10 @@ impl ThreadView {
             }));
         }));
 
-        let recent_history_entries = history.read(cx).get_recent_sessions(3);
+        let recent_history_entries = history
+            .as_ref()
+            .map(|h| h.read(cx).get_recent_sessions(3))
+            .unwrap_or_default();
 
         let mut this = Self {
             id,
@@ -403,7 +408,7 @@ impl ThreadView {
             server_view,
             agent_icon,
             agent_icon_from_external_svg,
-            agent_name,
+            agent_id,
             workspace,
             entry_view_state,
             title_editor,
@@ -412,8 +417,7 @@ impl ThreadView {
             model_selector,
             profile_selector,
             list_state,
-            prompt_capabilities,
-            available_commands,
+            session_capabilities,
             resumed_without_history,
             _subscriptions: subscriptions,
             permission_dropdown_handle: PopoverMenuHandle::default(),
@@ -532,7 +536,7 @@ impl ThreadView {
         acp_thread.connection().clone().downcast()
     }
 
-    pub(crate) fn as_native_thread(&self, cx: &App) -> Option<Entity<agent::Thread>> {
+    pub fn as_native_thread(&self, cx: &App) -> Option<Entity<agent::Thread>> {
         let acp_thread = self.thread.read(cx);
         self.as_native_connection(cx)?
             .thread(acp_thread.session_id(), cx)
@@ -630,6 +634,7 @@ impl ThreadView {
                 if let Some(AgentThreadEntry::UserMessage(user_message)) =
                     self.thread.read(cx).entries().get(event.entry_index)
                     && user_message.id.is_some()
+                    && !self.is_subagent()
                 {
                     self.editing_message = Some(event.entry_index);
                     cx.notify();
@@ -639,6 +644,7 @@ impl ThreadView {
                 if let Some(AgentThreadEntry::UserMessage(user_message)) =
                     self.thread.read(cx).entries().get(event.entry_index)
                     && user_message.id.is_some()
+                    && !self.is_subagent()
                 {
                     if editor.read(cx).text(cx).as_str() == user_message.content.to_markdown(cx) {
                         self.editing_message = None;
@@ -648,7 +654,9 @@ impl ThreadView {
             }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::SendImmediately) => {}
             ViewEvent::MessageEditorEvent(editor, MessageEditorEvent::Send) => {
-                self.regenerate(event.entry_index, editor.clone(), window, cx);
+                if !self.is_subagent() {
+                    self.regenerate(event.entry_index, editor.clone(), window, cx);
+                }
             }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Cancel) => {
                 self.cancel_editing(&Default::default(), window, cx);
@@ -735,10 +743,13 @@ impl ThreadView {
                 }
             }
         }));
+        if self.parent_id.is_none() {
+            self.suppress_merge_conflict_notification(cx);
+        }
         generation
     }
 
-    pub fn stop_turn(&mut self, generation: usize) {
+    pub fn stop_turn(&mut self, generation: usize, cx: &mut Context<Self>) {
         if self.turn_fields.turn_generation != generation {
             return;
         }
@@ -749,6 +760,25 @@ impl ThreadView {
             .map(|started| started.elapsed());
         self.turn_fields.last_turn_tokens = self.turn_fields.turn_tokens.take();
         self.turn_fields._turn_timer_task = None;
+        if self.parent_id.is_none() {
+            self.unsuppress_merge_conflict_notification(cx);
+        }
+    }
+
+    fn suppress_merge_conflict_notification(&self, cx: &mut Context<Self>) {
+        self.workspace
+            .update(cx, |workspace, cx| {
+                workspace.suppress_notification(&workspace::merge_conflict_notification_id(), cx);
+            })
+            .ok();
+    }
+
+    fn unsuppress_merge_conflict_notification(&self, cx: &mut Context<Self>) {
+        self.workspace
+            .update(cx, |workspace, _cx| {
+                workspace.unsuppress(workspace::merge_conflict_notification_id());
+            })
+            .ok();
     }
 
     pub fn update_turn_tokens(&mut self, cx: &App) {
@@ -843,8 +873,9 @@ impl ThreadView {
             // Does the agent have a specific logout command? Prefer that in case they need to reset internal state.
             let logout_supported = text == "/logout"
                 && self
-                    .available_commands
-                    .borrow()
+                    .session_capabilities
+                    .read()
+                    .available_commands()
                     .iter()
                     .any(|command| command.name == "logout");
             if can_login && !logout_supported {
@@ -853,13 +884,13 @@ impl ThreadView {
 
                 let connection = self.thread.read(cx).connection().clone();
                 window.defer(cx, {
-                    let agent_name = self.agent_name.clone();
+                    let agent_id = self.agent_id.clone();
                     let server_view = self.server_view.clone();
                     move |window, cx| {
-                        ConnectionView::handle_auth_required(
+                        ConversationView::handle_auth_required(
                             server_view.clone(),
                             AuthRequired::new(),
-                            agent_name,
+                            agent_id,
                             connection,
                             window,
                             cx,
@@ -958,7 +989,7 @@ impl ThreadView {
                 let mut cx = cx.clone();
                 move || {
                     this.update(&mut cx, |this, cx| {
-                        this.stop_turn(generation);
+                        this.stop_turn(generation, cx);
                         cx.notify();
                     })
                     .ok();
@@ -968,7 +999,10 @@ impl ThreadView {
                 let text: String = contents
                     .iter()
                     .filter_map(|block| match block {
-                        acp::ContentBlock::Text(text_content) => Some(text_content.text.as_str()),
+                        acp::ContentBlock::Text(text_content) => Some(text_content.text.clone()),
+                        acp::ContentBlock::ResourceLink(resource_link) => {
+                            Some(format!("@{}", resource_link.name))
+                        }
                         _ => None,
                     })
                     .collect::<Vec<_>>()
@@ -1729,7 +1763,7 @@ impl ThreadView {
     pub fn sync_thread(
         &mut self,
         project: Entity<Project>,
-        server_view: Entity<ConnectionView>,
+        server_view: Entity<ConversationView>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2676,14 +2710,6 @@ impl ThreadView {
             return div().into_any_element();
         }
 
-        let is_generating = self.thread.read(cx).status() != ThreadStatus::Idle;
-        if let Some(model_selector) = &self.model_selector {
-            model_selector.update(cx, |selector, _| selector.set_disabled(is_generating));
-        }
-        if let Some(profile_selector) = &self.profile_selector {
-            profile_selector.update(cx, |selector, _| selector.set_disabled(is_generating));
-        }
-
         let focus_handle = self.message_editor.focus_handle(cx);
         let editor_bg_color = cx.theme().colors().editor_background;
         let editor_expanded = self.editor_expanded;
@@ -3233,7 +3259,6 @@ impl ThreadView {
             return None;
         }
 
-        let is_generating = self.thread.read(cx).status() != ThreadStatus::Idle;
         let thinking = thread.thinking_enabled();
 
         let (tooltip_label, icon, color) = if thinking {
@@ -3255,13 +3280,8 @@ impl ThreadView {
         let thinking_toggle = IconButton::new("thinking-mode", icon)
             .icon_size(IconSize::Small)
             .icon_color(color)
-            .disabled(is_generating)
-            .tooltip(move |window, cx| {
-                if is_generating {
-                    Tooltip::text("Disabled until generation is done")(window, cx)
-                } else {
-                    Tooltip::for_action_in(tooltip_label, &ToggleThinkingMode, &focus_handle, cx)
-                }
+            .tooltip(move |_, cx| {
+                Tooltip::for_action_in(tooltip_label, &ToggleThinkingMode, &focus_handle, cx)
             })
             .on_click(cx.listener(move |this, _, _window, cx| {
                 if let Some(thread) = this.as_native_thread(cx) {
@@ -3293,7 +3313,6 @@ impl ThreadView {
         let right_btn = self.render_effort_selector(
             model.supported_effort_levels(),
             thread.thinking_effort().cloned(),
-            is_generating,
             cx,
         );
 
@@ -3308,7 +3327,6 @@ impl ThreadView {
         &self,
         supported_effort_levels: Vec<LanguageModelEffortLevel>,
         selected_effort: Option<String>,
-        disabled: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let weak_self = cx.weak_entity();
@@ -3377,7 +3395,6 @@ impl ThreadView {
         PopoverMenu::new("effort-selector")
             .trigger_with_tooltip(
                 ButtonLike::new_rounded_right("effort-selector-trigger")
-                    .disabled(disabled)
                     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                     .child(Label::new(label).size(LabelSize::Small).color(label_color))
                     .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted)),
@@ -3558,8 +3575,9 @@ impl ThreadView {
     ) -> Entity<ContextMenu> {
         let message_editor = self.message_editor.clone();
         let workspace = self.workspace.clone();
-        let supports_images = self.prompt_capabilities.borrow().image;
-        let supports_embedded_context = self.prompt_capabilities.borrow().embedded_context;
+        let session_capabilities = self.session_capabilities.read();
+        let supports_images = session_capabilities.supports_images();
+        let supports_embedded_context = session_capabilities.supports_embedded_context();
 
         let has_editor_selection = workspace
             .upgrade()
@@ -3696,16 +3714,16 @@ impl ThreadView {
         let following = self.is_following(cx);
 
         let tooltip_label = if following {
-            if self.agent_name == "Zed Agent" {
-                format!("Stop Following the {}", self.agent_name)
+            if self.agent_id.as_ref() == agent::ZED_AGENT_ID.as_ref() {
+                format!("Stop Following the {}", self.agent_id)
             } else {
-                format!("Stop Following {}", self.agent_name)
+                format!("Stop Following {}", self.agent_id)
             }
         } else {
-            if self.agent_name == "Zed Agent" {
-                format!("Follow the {}", self.agent_name)
+            if self.agent_id.as_ref() == agent::ZED_AGENT_ID.as_ref() {
+                format!("Follow the {}", self.agent_id)
             } else {
-                format!("Follow {}", self.agent_name)
+                format!("Follow {}", self.agent_id)
             }
         };
 
@@ -3792,14 +3810,12 @@ impl ThreadView {
                     .as_ref()
                     .is_some_and(|checkpoint| checkpoint.show);
 
-                let agent_name = self.agent_name.clone();
                 let is_subagent = self.is_subagent();
-
-                let non_editable_icon = || {
-                    IconButton::new("non_editable", IconName::PencilUnavailable)
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Muted)
-                        .style(ButtonStyle::Transparent)
+                let is_editable = message.id.is_some() && !is_subagent;
+                let agent_name = if is_subagent {
+                    "subagents".into()
+                } else {
+                    self.agent_id.clone()
                 };
 
                 v_flex()
@@ -3820,8 +3836,8 @@ impl ThreadView {
                     .gap_1p5()
                     .w_full()
                     .children(rules_item)
-                    .children(message.id.clone().and_then(|message_id| {
-                        message.checkpoint.as_ref()?.show.then(|| {
+                    .when(is_editable && has_checkpoint_button, |this| {
+                        this.children(message.id.clone().map(|message_id| {
                             h_flex()
                                 .px_3()
                                 .gap_2()
@@ -3837,8 +3853,8 @@ impl ThreadView {
                                         }))
                                 )
                                 .child(Divider::horizontal())
-                        })
-                    }))
+                        }))
+                    })
                     .child(
                         div()
                             .relative()
@@ -3854,8 +3870,11 @@ impl ThreadView {
                                     })
                                     .border_color(cx.theme().colors().border)
                                     .map(|this| {
-                                        if is_subagent {
-                                            return this.border_dashed();
+                                        if !is_editable {
+                                            if is_subagent {
+                                                return this.border_dashed();
+                                            }
+                                            return this;
                                         }
                                         if editing && editor_focus {
                                             return this.border_color(focus_border);
@@ -3863,12 +3882,9 @@ impl ThreadView {
                                         if editing && !editor_focus {
                                             return this.border_dashed()
                                         }
-                                        if message.id.is_some() {
-                                            return this.shadow_md().hover(|s| {
-                                                s.border_color(focus_border.opacity(0.8))
-                                            });
-                                        }
-                                        this
+                                        this.shadow_md().hover(|s| {
+                                            s.border_color(focus_border.opacity(0.8))
+                                        })
                                     })
                                     .text_xs()
                                     .child(editor.clone().into_any_element())
@@ -3886,20 +3902,7 @@ impl ThreadView {
                                     .overflow_hidden();
 
                                 let is_loading_contents = self.is_loading_contents;
-                                if is_subagent {
-                                    this.child(
-                                        base_container.border_dashed().child(
-                                            non_editable_icon().tooltip(move |_, cx| {
-                                                Tooltip::with_meta(
-                                                    "Unavailable Editing",
-                                                    None,
-                                                    "Editing subagent messages is currently not supported.",
-                                                    cx,
-                                                )
-                                            }),
-                                        ),
-                                    )
-                                } else if message.id.is_some() {
+                                if is_editable {
                                     this.child(
                                         base_container
                                             .child(
@@ -3938,26 +3941,29 @@ impl ThreadView {
                                     this.child(
                                         base_container
                                             .border_dashed()
-                                            .child(
-                                                non_editable_icon()
-                                                    .tooltip(Tooltip::element({
-                                                        move |_, _| {
-                                                            v_flex()
-                                                                .gap_1()
-                                                                .child(Label::new("Unavailable Editing")).child(
-                                                                    div().max_w_64().child(
-                                                                        Label::new(format!(
-                                                                            "Editing previous messages is not available for {} yet.",
-                                                                            agent_name.clone()
-                                                                        ))
-                                                                        .size(LabelSize::Small)
-                                                                        .color(Color::Muted),
-                                                                    ),
-                                                                )
-                                                                .into_any_element()
-                                                        }
-                                                    }))
-                                            )
+                                            .child(IconButton::new("non_editable", IconName::PencilUnavailable)
+                                                .icon_size(IconSize::Small)
+                                                .icon_color(Color::Muted)
+                                                .style(ButtonStyle::Transparent)
+                                                .tooltip(Tooltip::element({
+                                                    let agent_name = agent_name.clone();
+                                                    move |_, _| {
+                                                        v_flex()
+                                                            .gap_1()
+                                                            .child(Label::new("Unavailable Editing"))
+                                                            .child(
+                                                                div().max_w_64().child(
+                                                                    Label::new(format!(
+                                                                        "Editing previous messages is not available for {} yet.",
+                                                                        agent_name
+                                                                    ))
+                                                                    .size(LabelSize::Small)
+                                                                    .color(Color::Muted),
+                                                                ),
+                                                            )
+                                                            .into_any_element()
+                                                    }
+                                                }))),
                                     )
                                 }
                             }),
@@ -4025,6 +4031,13 @@ impl ThreadView {
                         .w_full()
                         .text_ui(cx)
                         .child(self.render_message_context_menu(entry_ix, message_body, cx))
+                        .when_some(
+                            self.entry_view_state
+                                .read(cx)
+                                .entry(entry_ix)
+                                .and_then(|entry| entry.focus_handle(cx)),
+                            |this, handle| this.track_focus(&handle),
+                        )
                         .into_any()
                 }
             }
@@ -7294,7 +7307,7 @@ impl ThreadView {
             .on_click(cx.listener({
                 move |this, _, window, cx| {
                     let server_view = this.server_view.clone();
-                    let agent_name = this.agent_name.clone();
+                    let agent_name = this.agent_id.clone();
 
                     this.clear_thread_error(cx);
                     if let Some(message) = this.in_flight_prompt.take() {
@@ -7304,7 +7317,7 @@ impl ThreadView {
                     }
                     let connection = this.thread.read(cx).connection().clone();
                     window.defer(cx, |window, cx| {
-                        ConnectionView::handle_auth_required(
+                        ConversationView::handle_auth_required(
                             server_view,
                             AuthRequired::new(),
                             agent_name,
@@ -7329,7 +7342,7 @@ impl ThreadView {
                 .unwrap_or_else(|| SharedString::from("The model"))
         } else {
             // ACP agent - use the agent name (e.g., "Claude Agent", "Gemini CLI")
-            self.agent_name.clone()
+            self.agent_id.0.clone()
         }
     }
 
@@ -7488,7 +7501,10 @@ impl ThreadView {
                             ),
                         )
                         .child(v_flex().p_1().pr_1p5().gap_1().children({
-                            let supports_delete = self.history.read(cx).supports_delete();
+                            let supports_delete = self
+                                .history
+                                .as_ref()
+                                .map_or(false, |h| h.read(cx).supports_delete());
                             recent_history
                                 .into_iter()
                                 .enumerate()

@@ -898,6 +898,14 @@
     // Choices: label_color, icon
     // Default: icon
     "status_style": "icon",
+    // Whether to show file icons in the git panel.
+    //
+    // Default: false
+    "file_icons": false,
+    // Whether to show folder icons or chevrons for directories in the git panel.
+    //
+    // Default: true
+    "folder_icons": true,
     // What branch name to use if `init.defaultBranch` is not set
     //
     // Default: main
@@ -914,6 +922,14 @@
     ///
     /// Default: false
     "tree_view": false,
+    // Whether the git panel should open on startup.
+    //
+    // Default: false
+    "starts_open": false,
+    // Whether to show a badge on the git panel icon with the count of uncommitted changes.
+    //
+    // Default: false
+    "show_count_badge": false,
     "scrollbar": {
       // When to show the scrollbar in the git panel.
       //
@@ -938,6 +954,8 @@
     "dock": "right",
     // Default width of the notification panel.
     "default_width": 380,
+    // Whether to show a badge on the notification panel icon with the count of unread notifications.
+    "show_count_badge": false,
   },
   "agent": {
     // Whether the inline assistant should use streaming tools, when available
@@ -1859,6 +1877,8 @@
     // Timeout for hover and Cmd-click path hyperlink discovery in milliseconds. Specifying a
     // timeout of `0` will disable path hyperlinking in terminal.
     "path_hyperlink_timeout_ms": 1,
+    // Whether to show a badge on the terminal panel icon with the count of open terminals.
+    "show_count_badge": false,
   },
   "code_actions_on_format": {},
   // Settings related to running tasks.
@@ -2152,7 +2172,7 @@
       },
     },
     "Starlark": {
-      "language_servers": ["starpls", "!buck2-lsp", "..."],
+      "language_servers": ["starpls", "!buck2-lsp", "!tilt", "..."],
     },
     "Svelte": {
       "language_servers": ["svelte-language-server", "..."],

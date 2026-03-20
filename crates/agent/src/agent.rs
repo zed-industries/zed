@@ -41,7 +41,7 @@ use gpui::{
     WeakEntity,
 };
 use language_model::{IconOrSvg, LanguageModel, LanguageModelProvider, LanguageModelRegistry};
-use project::{Project, ProjectItem, ProjectPath, Worktree};
+use project::{AgentId, Project, ProjectItem, ProjectPath, Worktree};
 use prompt_store::{
     ProjectContext, PromptStore, RULES_FILE_NAMES, RulesFileContext, UserRulesContext,
     WorktreeContext,
@@ -49,9 +49,9 @@ use prompt_store::{
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, update_settings_file};
 use std::any::Any;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use util::ResultExt;
 use util::path_list::PathList;
 use util::rel_path::RelPath;
@@ -493,8 +493,12 @@ impl NativeAgent {
                 })??
                 .await;
             this.update(cx, |this, cx| {
-                if let Some(state) = this.projects.get_mut(&project_id) {
-                    state.project_context = cx.new(|_| project_context);
+                if let Some(state) = this.projects.get(&project_id) {
+                    state
+                        .project_context
+                        .update(cx, |current_project_context, _cx| {
+                            *current_project_context = project_context;
+                        });
                 }
             })?;
         }
@@ -1381,7 +1385,13 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
     }
 }
 
+pub static ZED_AGENT_ID: LazyLock<AgentId> = LazyLock::new(|| AgentId::new("Zed Agent"));
+
 impl acp_thread::AgentConnection for NativeAgentConnection {
+    fn agent_id(&self) -> AgentId {
+        ZED_AGENT_ID.clone()
+    }
+
     fn telemetry_id(&self) -> SharedString {
         "zed".into()
     }
@@ -1389,10 +1399,10 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
     fn new_session(
         self: Rc<Self>,
         project: Entity<Project>,
-        cwd: &Path,
+        work_dirs: PathList,
         cx: &mut App,
     ) -> Task<Result<Entity<acp_thread::AcpThread>>> {
-        log::debug!("Creating new thread for project at: {cwd:?}");
+        log::debug!("Creating new thread for project at: {work_dirs:?}");
         Task::ready(Ok(self
             .0
             .update(cx, |agent, cx| agent.new_session(project, cx))))
@@ -1406,7 +1416,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         self: Rc<Self>,
         session_id: acp::SessionId,
         project: Entity<Project>,
-        _cwd: &Path,
+        _work_dirs: PathList,
         _title: Option<SharedString>,
         cx: &mut App,
     ) -> Task<Result<Entity<acp_thread::AcpThread>>> {
@@ -1423,15 +1433,16 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         session_id: &acp::SessionId,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        self.0.update(cx, |agent, _cx| {
-            let project_id = agent.sessions.get(session_id).map(|s| s.project_id);
-            agent.sessions.remove(session_id);
+        self.0.update(cx, |agent, cx| {
+            let Some(session) = agent.sessions.remove(session_id) else {
+                return;
+            };
+            let project_id = session.project_id;
+            agent.save_thread(session.thread, cx);
 
-            if let Some(project_id) = project_id {
-                let has_remaining = agent.sessions.values().any(|s| s.project_id == project_id);
-                if !has_remaining {
-                    agent.projects.remove(&project_id);
-                }
+            let has_remaining = agent.sessions.values().any(|s| s.project_id == project_id);
+            if !has_remaining {
+                agent.projects.remove(&project_id);
             }
         });
         Task::ready(Ok(()))
@@ -2079,6 +2090,8 @@ impl TerminalHandle for AcpTerminalHandle {
 
 #[cfg(test)]
 mod internal_tests {
+    use std::path::Path;
+
     use super::*;
     use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelInfo, MentionUri};
     use fs::FakeFs;
@@ -2111,15 +2124,26 @@ mod internal_tests {
         // Creating a session registers the project and triggers context building.
         let connection = NativeAgentConnection(agent.clone());
         let _acp_thread = cx
-            .update(|cx| Rc::new(connection).new_session(project.clone(), Path::new("/"), cx))
+            .update(|cx| {
+                Rc::new(connection).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/")]),
+                    cx,
+                )
+            })
             .await
             .unwrap();
         cx.run_until_parked();
 
+        let thread = agent.read_with(cx, |agent, _cx| {
+            agent.sessions.values().next().unwrap().thread.clone()
+        });
+
         agent.read_with(cx, |agent, cx| {
             let project_id = project.entity_id();
             let state = agent.projects.get(&project_id).unwrap();
-            assert_eq!(state.project_context.read(cx).worktrees, vec![])
+            assert_eq!(state.project_context.read(cx).worktrees, vec![]);
+            assert_eq!(thread.read(cx).project_context().read(cx).worktrees, vec![]);
         });
 
         let worktree = project
@@ -2130,14 +2154,16 @@ mod internal_tests {
         agent.read_with(cx, |agent, cx| {
             let project_id = project.entity_id();
             let state = agent.projects.get(&project_id).unwrap();
+            let expected_worktrees = vec![WorktreeContext {
+                root_name: "a".into(),
+                abs_path: Path::new("/a").into(),
+                rules_file: None,
+            }];
+            assert_eq!(state.project_context.read(cx).worktrees, expected_worktrees);
             assert_eq!(
-                state.project_context.read(cx).worktrees,
-                vec![WorktreeContext {
-                    root_name: "a".into(),
-                    abs_path: Path::new("/a").into(),
-                    rules_file: None
-                }]
-            )
+                thread.read(cx).project_context().read(cx).worktrees,
+                expected_worktrees
+            );
         });
 
         // Creating `/a/.rules` updates the project context.
@@ -2150,18 +2176,20 @@ mod internal_tests {
                 .read(cx)
                 .entry_for_path(rel_path(".rules"))
                 .unwrap();
+            let expected_worktrees = vec![WorktreeContext {
+                root_name: "a".into(),
+                abs_path: Path::new("/a").into(),
+                rules_file: Some(RulesFileContext {
+                    path_in_worktree: rel_path(".rules").into(),
+                    text: "".into(),
+                    project_entry_id: rules_entry.id.to_usize(),
+                }),
+            }];
+            assert_eq!(state.project_context.read(cx).worktrees, expected_worktrees);
             assert_eq!(
-                state.project_context.read(cx).worktrees,
-                vec![WorktreeContext {
-                    root_name: "a".into(),
-                    abs_path: Path::new("/a").into(),
-                    rules_file: Some(RulesFileContext {
-                        path_in_worktree: rel_path(".rules").into(),
-                        text: "".into(),
-                        project_entry_id: rules_entry.id.to_usize()
-                    })
-                }]
-            )
+                thread.read(cx).project_context().read(cx).worktrees,
+                expected_worktrees
+            );
         });
     }
 
@@ -2180,7 +2208,11 @@ mod internal_tests {
         // Create a thread/session
         let acp_thread = cx
             .update(|cx| {
-                Rc::new(connection.clone()).new_session(project.clone(), Path::new("/a"), cx)
+                Rc::new(connection.clone()).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -2251,7 +2283,11 @@ mod internal_tests {
         // Create a thread/session
         let acp_thread = cx
             .update(|cx| {
-                Rc::new(connection.clone()).new_session(project.clone(), Path::new("/a"), cx)
+                Rc::new(connection.clone()).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -2343,7 +2379,11 @@ mod internal_tests {
 
         let acp_thread = cx
             .update(|cx| {
-                Rc::new(connection.clone()).new_session(project.clone(), Path::new("/a"), cx)
+                Rc::new(connection.clone()).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -2450,9 +2490,11 @@ mod internal_tests {
         // Create a thread and select the thinking model.
         let acp_thread = cx
             .update(|cx| {
-                connection
-                    .clone()
-                    .new_session(project.clone(), Path::new("/a"), cx)
+                connection.clone().new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -2552,9 +2594,11 @@ mod internal_tests {
         // Create a thread and select the model.
         let acp_thread = cx
             .update(|cx| {
-                connection
-                    .clone()
-                    .new_session(project.clone(), Path::new("/a"), cx)
+                connection.clone().new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -2645,7 +2689,7 @@ mod internal_tests {
             .update(|cx| {
                 connection
                     .clone()
-                    .new_session(project.clone(), Path::new(""), cx)
+                    .new_session(project.clone(), PathList::new(&[Path::new("")]), cx)
             })
             .await
             .unwrap();

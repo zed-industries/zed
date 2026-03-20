@@ -9,18 +9,19 @@ use anyhow::anyhow;
 use collections::HashMap;
 use futures::AsyncBufReadExt as _;
 use futures::io::BufReader;
-use project::Project;
-use project::agent_server_store::{AgentServerCommand, GEMINI_NAME};
+use project::agent_server_store::AgentServerCommand;
+use project::{AgentId, Project};
 use serde::Deserialize;
 use settings::Settings as _;
 use task::ShellBuilder;
 use util::ResultExt as _;
+use util::path_list::PathList;
 use util::process::Child;
 
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::rc::Rc;
 use std::{any::Any, cell::RefCell};
-use std::{path::Path, rc::Rc};
 use thiserror::Error;
 
 use anyhow::{Context as _, Result};
@@ -30,12 +31,14 @@ use acp_thread::{AcpThread, AuthRequired, LoadError, TerminalProviderEvent};
 use terminal::TerminalBuilder;
 use terminal::terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
 
+use crate::GEMINI_ID;
+
 #[derive(Debug, Error)]
 #[error("Unsupported version")]
 pub struct UnsupportedVersion;
 
 pub struct AcpConnection {
-    server_name: SharedString,
+    id: AgentId,
     display_name: SharedString,
     telemetry_id: SharedString,
     connection: Rc<acp::ClientSideConnection>,
@@ -124,7 +127,7 @@ impl AgentSessionList for AcpSessionList {
                     .into_iter()
                     .map(|s| AgentSessionInfo {
                         session_id: s.session_id,
-                        cwd: Some(s.cwd),
+                        work_dirs: Some(PathList::new(&[s.cwd])),
                         title: s.title.map(Into::into),
                         updated_at: s.updated_at.and_then(|date_str| {
                             chrono::DateTime::parse_from_rfc3339(&date_str)
@@ -158,7 +161,7 @@ impl AgentSessionList for AcpSessionList {
 }
 
 pub async fn connect(
-    server_name: SharedString,
+    agent_id: AgentId,
     display_name: SharedString,
     command: AgentServerCommand,
     default_mode: Option<acp::SessionModeId>,
@@ -167,7 +170,7 @@ pub async fn connect(
     cx: &mut AsyncApp,
 ) -> Result<Rc<dyn AgentConnection>> {
     let conn = AcpConnection::stdio(
-        server_name,
+        agent_id,
         display_name,
         command.clone(),
         default_mode,
@@ -183,7 +186,7 @@ const MINIMUM_SUPPORTED_VERSION: acp::ProtocolVersion = acp::ProtocolVersion::V1
 
 impl AcpConnection {
     pub async fn stdio(
-        server_name: SharedString,
+        agent_id: AgentId,
         display_name: SharedString,
         command: AgentServerCommand,
         default_mode: Option<acp::SessionModeId>,
@@ -270,7 +273,7 @@ impl AcpConnection {
 
         cx.update(|cx| {
             AcpConnectionRegistry::default_global(cx).update(cx, |registry, cx| {
-                registry.set_active_connection(server_name.clone(), &connection, cx)
+                registry.set_active_connection(agent_id.clone(), &connection, cx)
             });
         });
 
@@ -305,7 +308,7 @@ impl AcpConnection {
             // Use the one the agent provides if we have one
             .map(|info| info.name.into())
             // Otherwise, just use the name
-            .unwrap_or_else(|| server_name.clone());
+            .unwrap_or_else(|| agent_id.0.to_string().into());
 
         let session_list = if response
             .agent_capabilities
@@ -321,9 +324,9 @@ impl AcpConnection {
         };
 
         // TODO: Remove this override once Google team releases their official auth methods
-        let auth_methods = if server_name == GEMINI_NAME {
+        let auth_methods = if agent_id.0.as_ref() == GEMINI_ID {
             let mut args = command.args.clone();
-            args.retain(|a| a != "--experimental-acp");
+            args.retain(|a| a != "--experimental-acp" && a != "--acp");
             let value = serde_json::json!({
                 "label": "gemini /auth",
                 "command": command.path.to_string_lossy().into_owned(),
@@ -340,9 +343,9 @@ impl AcpConnection {
             response.auth_methods
         };
         Ok(Self {
+            id: agent_id,
             auth_methods,
             connection,
-            server_name,
             display_name,
             telemetry_id,
             sessions,
@@ -361,6 +364,102 @@ impl AcpConnection {
     pub fn prompt_capabilities(&self) -> &acp::PromptCapabilities {
         &self.agent_capabilities.prompt_capabilities
     }
+
+    fn apply_default_config_options(
+        &self,
+        session_id: &acp::SessionId,
+        config_options: &Rc<RefCell<Vec<acp::SessionConfigOption>>>,
+        cx: &mut AsyncApp,
+    ) {
+        let id = self.id.clone();
+        let defaults_to_apply: Vec<_> = {
+            let config_opts_ref = config_options.borrow();
+            config_opts_ref
+                .iter()
+                .filter_map(|config_option| {
+                    let default_value = self.default_config_options.get(&*config_option.id.0)?;
+
+                    let is_valid = match &config_option.kind {
+                        acp::SessionConfigKind::Select(select) => match &select.options {
+                            acp::SessionConfigSelectOptions::Ungrouped(options) => options
+                                .iter()
+                                .any(|opt| &*opt.value.0 == default_value.as_str()),
+                            acp::SessionConfigSelectOptions::Grouped(groups) => {
+                                groups.iter().any(|g| {
+                                    g.options
+                                        .iter()
+                                        .any(|opt| &*opt.value.0 == default_value.as_str())
+                                })
+                            }
+                            _ => false,
+                        },
+                        _ => false,
+                    };
+
+                    if is_valid {
+                        let initial_value = match &config_option.kind {
+                            acp::SessionConfigKind::Select(select) => {
+                                Some(select.current_value.clone())
+                            }
+                            _ => None,
+                        };
+                        Some((
+                            config_option.id.clone(),
+                            default_value.clone(),
+                            initial_value,
+                        ))
+                    } else {
+                        log::warn!(
+                            "`{}` is not a valid value for config option `{}` in {}",
+                            default_value,
+                            config_option.id.0,
+                            id
+                        );
+                        None
+                    }
+                })
+                .collect()
+        };
+
+        for (config_id, default_value, initial_value) in defaults_to_apply {
+            cx.spawn({
+                let default_value_id = acp::SessionConfigValueId::new(default_value.clone());
+                let session_id = session_id.clone();
+                let config_id_clone = config_id.clone();
+                let config_opts = config_options.clone();
+                let conn = self.connection.clone();
+                async move |_| {
+                    let result = conn
+                        .set_session_config_option(acp::SetSessionConfigOptionRequest::new(
+                            session_id,
+                            config_id_clone.clone(),
+                            default_value_id,
+                        ))
+                        .await
+                        .log_err();
+
+                    if result.is_none() {
+                        if let Some(initial) = initial_value {
+                            let mut opts = config_opts.borrow_mut();
+                            if let Some(opt) = opts.iter_mut().find(|o| o.id == config_id_clone) {
+                                if let acp::SessionConfigKind::Select(select) = &mut opt.kind {
+                                    select.current_value = initial;
+                                }
+                            }
+                        }
+                    }
+                }
+            })
+            .detach();
+
+            let mut opts = config_options.borrow_mut();
+            if let Some(opt) = opts.iter_mut().find(|o| o.id == config_id) {
+                if let acp::SessionConfigKind::Select(select) = &mut opt.kind {
+                    select.current_value = acp::SessionConfigValueId::new(default_value);
+                }
+            }
+        }
+    }
 }
 
 impl Drop for AcpConnection {
@@ -370,6 +469,10 @@ impl Drop for AcpConnection {
 }
 
 impl AgentConnection for AcpConnection {
+    fn agent_id(&self) -> AgentId {
+        self.id.clone()
+    }
+
     fn telemetry_id(&self) -> SharedString {
         self.telemetry_id.clone()
     }
@@ -377,11 +480,14 @@ impl AgentConnection for AcpConnection {
     fn new_session(
         self: Rc<Self>,
         project: Entity<Project>,
-        cwd: &Path,
+        work_dirs: PathList,
         cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
-        let name = self.server_name.clone();
-        let cwd = cwd.to_path_buf();
+        // TODO: remove this once ACP supports multiple working directories
+        let Some(cwd) = work_dirs.ordered_paths().next().cloned() else {
+            return Task::ready(Err(anyhow!("Working directory cannot be empty")));
+        };
+        let name = self.id.0.clone();
         let mcp_servers = mcp_servers_for_project(&project, cx);
 
         cx.spawn(async move |cx| {
@@ -471,89 +577,7 @@ impl AgentConnection for AcpConnection {
             }
 
             if let Some(config_opts) = config_options.as_ref() {
-                let defaults_to_apply: Vec<_> = {
-                    let config_opts_ref = config_opts.borrow();
-                    config_opts_ref
-                        .iter()
-                        .filter_map(|config_option| {
-                            let default_value = self.default_config_options.get(&*config_option.id.0)?;
-
-                            let is_valid = match &config_option.kind {
-                                acp::SessionConfigKind::Select(select) => match &select.options {
-                                    acp::SessionConfigSelectOptions::Ungrouped(options) => {
-                                        options.iter().any(|opt| &*opt.value.0 == default_value.as_str())
-                                    }
-                                    acp::SessionConfigSelectOptions::Grouped(groups) => groups
-                                        .iter()
-                                        .any(|g| g.options.iter().any(|opt| &*opt.value.0 == default_value.as_str())),
-                                    _ => false,
-                                },
-                                _ => false,
-                            };
-
-                            if is_valid {
-                                let initial_value = match &config_option.kind {
-                                    acp::SessionConfigKind::Select(select) => {
-                                        Some(select.current_value.clone())
-                                    }
-                                    _ => None,
-                                };
-                                Some((config_option.id.clone(), default_value.clone(), initial_value))
-                            } else {
-                                log::warn!(
-                                    "`{}` is not a valid value for config option `{}` in {}",
-                                    default_value,
-                                    config_option.id.0,
-                                    name
-                                );
-                                None
-                            }
-                        })
-                        .collect()
-                };
-
-                for (config_id, default_value, initial_value) in defaults_to_apply {
-                    cx.spawn({
-                        let default_value_id = acp::SessionConfigValueId::new(default_value.clone());
-                        let session_id = response.session_id.clone();
-                        let config_id_clone = config_id.clone();
-                        let config_opts = config_opts.clone();
-                        let conn = self.connection.clone();
-                        async move |_| {
-                            let result = conn
-                                .set_session_config_option(
-                                    acp::SetSessionConfigOptionRequest::new(
-                                        session_id,
-                                        config_id_clone.clone(),
-                                        default_value_id,
-                                    ),
-                                )
-                                .await
-                                .log_err();
-
-                            if result.is_none() {
-                                if let Some(initial) = initial_value {
-                                    let mut opts = config_opts.borrow_mut();
-                                    if let Some(opt) = opts.iter_mut().find(|o| o.id == config_id_clone) {
-                                        if let acp::SessionConfigKind::Select(select) =
-                                            &mut opt.kind
-                                        {
-                                            select.current_value = initial;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    })
-                    .detach();
-
-                    let mut opts = config_opts.borrow_mut();
-                    if let Some(opt) = opts.iter_mut().find(|o| o.id == config_id) {
-                        if let acp::SessionConfigKind::Select(select) = &mut opt.kind {
-                            select.current_value = acp::SessionConfigValueId::new(default_value);
-                        }
-                    }
-                }
+                self.apply_default_config_options(&response.session_id, config_opts, cx);
             }
 
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
@@ -561,7 +585,7 @@ impl AgentConnection for AcpConnection {
                 AcpThread::new(
                     None,
                     self.display_name.clone(),
-                    Some(cwd),
+                    Some(work_dirs),
                     self.clone(),
                     project,
                     action_log,
@@ -602,7 +626,7 @@ impl AgentConnection for AcpConnection {
         self: Rc<Self>,
         session_id: acp::SessionId,
         project: Entity<Project>,
-        cwd: &Path,
+        work_dirs: PathList,
         title: Option<SharedString>,
         cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
@@ -611,8 +635,11 @@ impl AgentConnection for AcpConnection {
                 "Loading sessions is not supported by this agent.".into()
             ))));
         }
+        // TODO: remove this once ACP supports multiple working directories
+        let Some(cwd) = work_dirs.ordered_paths().next().cloned() else {
+            return Task::ready(Err(anyhow!("Working directory cannot be empty")));
+        };
 
-        let cwd = cwd.to_path_buf();
         let mcp_servers = mcp_servers_for_project(&project, cx);
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let title = title.unwrap_or_else(|| self.display_name.clone());
@@ -620,7 +647,7 @@ impl AgentConnection for AcpConnection {
             AcpThread::new(
                 None,
                 title,
-                Some(cwd.clone()),
+                Some(work_dirs.clone()),
                 self.clone(),
                 project,
                 action_log,
@@ -641,7 +668,7 @@ impl AgentConnection for AcpConnection {
             },
         );
 
-        cx.spawn(async move |_| {
+        cx.spawn(async move |cx| {
             let response = match self
                 .connection
                 .load_session(
@@ -658,6 +685,11 @@ impl AgentConnection for AcpConnection {
 
             let (modes, models, config_options) =
                 config_state(response.modes, response.models, response.config_options);
+
+            if let Some(config_opts) = config_options.as_ref() {
+                self.apply_default_config_options(&session_id, config_opts, cx);
+            }
+
             if let Some(session) = self.sessions.borrow_mut().get_mut(&session_id) {
                 session.session_modes = modes;
                 session.models = models;
@@ -672,7 +704,7 @@ impl AgentConnection for AcpConnection {
         self: Rc<Self>,
         session_id: acp::SessionId,
         project: Entity<Project>,
-        cwd: &Path,
+        work_dirs: PathList,
         title: Option<SharedString>,
         cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
@@ -686,8 +718,11 @@ impl AgentConnection for AcpConnection {
                 "Resuming sessions is not supported by this agent.".into()
             ))));
         }
+        // TODO: remove this once ACP supports multiple working directories
+        let Some(cwd) = work_dirs.ordered_paths().next().cloned() else {
+            return Task::ready(Err(anyhow!("Working directory cannot be empty")));
+        };
 
-        let cwd = cwd.to_path_buf();
         let mcp_servers = mcp_servers_for_project(&project, cx);
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let title = title.unwrap_or_else(|| self.display_name.clone());
@@ -695,7 +730,7 @@ impl AgentConnection for AcpConnection {
             AcpThread::new(
                 None,
                 title,
-                Some(cwd.clone()),
+                Some(work_dirs),
                 self.clone(),
                 project,
                 action_log,
@@ -716,7 +751,7 @@ impl AgentConnection for AcpConnection {
             },
         );
 
-        cx.spawn(async move |_| {
+        cx.spawn(async move |cx| {
             let response = match self
                 .connection
                 .resume_session(
@@ -734,6 +769,11 @@ impl AgentConnection for AcpConnection {
 
             let (modes, models, config_options) =
                 config_state(response.modes, response.models, response.config_options);
+
+            if let Some(config_opts) = config_options.as_ref() {
+                self.apply_default_config_options(&session_id, config_opts, cx);
+            }
+
             if let Some(session) = self.sessions.borrow_mut().get_mut(&session_id) {
                 session.session_modes = modes;
                 session.models = models;

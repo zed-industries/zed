@@ -3,7 +3,7 @@ use anyhow::Result;
 use channel::ChannelStore;
 use client::{ChannelId, Client, Notification, User, UserStore};
 use collections::HashMap;
-use db::kvp::KEY_VALUE_STORE;
+use db::kvp::KeyValueStore;
 use futures::StreamExt;
 use gpui::{
     AnyElement, App, AsyncWindowContext, ClickEvent, Context, DismissEvent, Element, Entity,
@@ -186,16 +186,13 @@ impl NotificationPanel {
         cx: AsyncWindowContext,
     ) -> Task<Result<Entity<Self>>> {
         cx.spawn(async move |cx| {
-            let serialized_panel = if let Some(panel) = cx
-                .background_spawn(async move { KEY_VALUE_STORE.read_kvp(NOTIFICATION_PANEL_KEY) })
-                .await
-                .log_err()
-                .flatten()
-            {
-                Some(serde_json::from_str::<SerializedNotificationPanel>(&panel)?)
-            } else {
-                None
-            };
+            let kvp = cx.update(|_, cx| KeyValueStore::global(cx))?;
+            let serialized_panel =
+                if let Some(panel) = kvp.read_kvp(NOTIFICATION_PANEL_KEY).log_err().flatten() {
+                    Some(serde_json::from_str::<SerializedNotificationPanel>(&panel)?)
+                } else {
+                    None
+                };
 
             workspace.update_in(cx, |workspace, window, cx| {
                 let panel = Self::new(workspace, window, cx);
@@ -212,14 +209,14 @@ impl NotificationPanel {
 
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let width = self.width;
+        let kvp = KeyValueStore::global(cx);
         self.pending_serialization = cx.background_spawn(
             async move {
-                KEY_VALUE_STORE
-                    .write_kvp(
-                        NOTIFICATION_PANEL_KEY.into(),
-                        serde_json::to_string(&SerializedNotificationPanel { width })?,
-                    )
-                    .await?;
+                kvp.write_kvp(
+                    NOTIFICATION_PANEL_KEY.into(),
+                    serde_json::to_string(&SerializedNotificationPanel { width })?,
+                )
+                .await?;
                 anyhow::Ok(())
             }
             .log_err(),
@@ -677,6 +674,9 @@ impl Panel for NotificationPanel {
     }
 
     fn icon_label(&self, _window: &Window, cx: &App) -> Option<String> {
+        if !NotificationPanelSettings::get_global(cx).show_count_badge {
+            return None;
+        }
         let count = self.notification_store.read(cx).unread_notification_count();
         if count == 0 {
             None

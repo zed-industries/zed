@@ -223,7 +223,7 @@ pub struct PromptCompletionProvider<T: PromptCompletionProviderDelegate> {
     source: Arc<T>,
     editor: WeakEntity<Editor>,
     mention_set: Entity<MentionSet>,
-    history: WeakEntity<ThreadHistory>,
+    history: Option<WeakEntity<ThreadHistory>>,
     prompt_store: Option<Entity<PromptStore>>,
     workspace: WeakEntity<Workspace>,
 }
@@ -233,7 +233,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         source: T,
         editor: WeakEntity<Editor>,
         mention_set: Entity<MentionSet>,
-        history: WeakEntity<ThreadHistory>,
+        history: Option<WeakEntity<ThreadHistory>>,
         prompt_store: Option<Entity<PromptStore>>,
         workspace: WeakEntity<Workspace>,
     ) -> Self {
@@ -920,7 +920,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             }
 
             Some(PromptContextType::Thread) => {
-                if let Some(history) = self.history.upgrade() {
+                if let Some(history) = self.history.as_ref().and_then(|h| h.upgrade()) {
                     let sessions = history
                         .read(cx)
                         .sessions()
@@ -1146,7 +1146,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             return Task::ready(recent);
         }
 
-        if let Some(history) = self.history.upgrade() {
+        if let Some(history) = self.history.as_ref().and_then(|h| h.upgrade()) {
             const RECENT_COUNT: usize = 2;
             recent.extend(
                 history
@@ -1691,26 +1691,33 @@ impl MentionCompletion {
         offset_to_line: usize,
         supported_modes: &[PromptContextType],
     ) -> Option<Self> {
-        let last_mention_start = line.rfind('@')?;
-
-        // No whitespace immediately after '@'
-        if line[last_mention_start + 1..]
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_whitespace())
-        {
-            return None;
-        }
-
-        //  Must be a word boundary before '@'
-        if last_mention_start > 0
-            && line[..last_mention_start]
+        // Find the rightmost '@' that has a word boundary before it and no whitespace immediately after
+        let mut last_mention_start = None;
+        for (idx, _) in line.rmatch_indices('@') {
+            // No whitespace immediately after '@'
+            if line[idx + 1..]
                 .chars()
-                .last()
-                .is_some_and(|c| !c.is_whitespace())
-        {
-            return None;
+                .next()
+                .is_some_and(|c| c.is_whitespace())
+            {
+                continue;
+            }
+
+            // Must be a word boundary before '@'
+            if idx > 0
+                && line[..idx]
+                    .chars()
+                    .last()
+                    .is_some_and(|c| !c.is_whitespace())
+            {
+                continue;
+            }
+
+            last_mention_start = Some(idx);
+            break;
         }
+
+        let last_mention_start = last_mention_start?;
 
         let rest_of_line = &line[last_mention_start + 1..];
 
@@ -2487,6 +2494,48 @@ mod tests {
             MentionCompletion::try_parse("@ file", 0, &supported_modes),
             None,
             "Should not parse with a space after @ at the start of the line"
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse(
+                "@fetch https://www.npmjs.com/package/@matterport/sdk",
+                0,
+                &[PromptContextType::Fetch]
+            ),
+            Some(MentionCompletion {
+                source_range: 0..52,
+                mode: Some(PromptContextType::Fetch),
+                argument: Some("https://www.npmjs.com/package/@matterport/sdk".to_string()),
+            }),
+            "Should handle URLs with @ in the path"
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse(
+                "@fetch https://example.com/@org/@repo/file",
+                0,
+                &[PromptContextType::Fetch]
+            ),
+            Some(MentionCompletion {
+                source_range: 0..42,
+                mode: Some(PromptContextType::Fetch),
+                argument: Some("https://example.com/@org/@repo/file".to_string()),
+            }),
+            "Should handle URLs with multiple @ characters"
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse(
+                "@fetch https://example.com/@",
+                0,
+                &[PromptContextType::Fetch]
+            ),
+            Some(MentionCompletion {
+                source_range: 0..28,
+                mode: Some(PromptContextType::Fetch),
+                argument: Some("https://example.com/@".to_string()),
+            }),
+            "Should parse URL ending with @ (even if URL is incomplete)"
         );
     }
 

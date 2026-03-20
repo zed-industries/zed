@@ -43,12 +43,11 @@ use crate::{
     worktree_store::WorktreeIdCounter,
 };
 pub use agent_registry_store::{AgentRegistryStore, RegistryAgent};
-pub use agent_server_store::{
-    AgentServerStore, AgentServersUpdated, ExternalAgentServerName, ExternalAgentSource,
-};
+pub use agent_server_store::{AgentId, AgentServerStore, AgentServersUpdated, ExternalAgentSource};
 pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
+    linked_worktree_short_name, worktrees_directory_for_repo,
 };
 pub use manifest_tree::ManifestTree;
 pub use project_search::{Search, SearchResults};
@@ -5499,25 +5498,51 @@ impl Project {
                     let key = (worktree_id, path);
                     log::debug!("handle_create_file_for_peer: looking up key={:?}", key);
 
-                    let mut files = downloading_files.lock();
-                    log::trace!(
-                        "handle_create_file_for_peer: current downloading_files keys: {:?}",
-                        files.keys().collect::<Vec<_>>()
-                    );
+                    let empty_file_destination: Option<PathBuf> = {
+                        let mut files = downloading_files.lock();
+                        log::trace!(
+                            "handle_create_file_for_peer: current downloading_files keys: {:?}",
+                            files.keys().collect::<Vec<_>>()
+                        );
 
-                    if let Some(file_entry) = files.get_mut(&key) {
-                        file_entry.total_size = state.content_size;
-                        file_entry.file_id = Some(state.id);
+                        if let Some(file_entry) = files.get_mut(&key) {
+                            file_entry.total_size = state.content_size;
+                            file_entry.file_id = Some(state.id);
+                            log::debug!(
+                                "handle_create_file_for_peer: updated file entry: total_size={}, file_id={}",
+                                state.content_size,
+                                state.id
+                            );
+                        } else {
+                            log::warn!(
+                                "handle_create_file_for_peer: key={:?} not found in downloading_files",
+                                key
+                            );
+                        }
+
+                        if state.content_size == 0 {
+                            // No chunks will arrive for an empty file; write it now.
+                            files.remove(&key).map(|entry| entry.destination_path)
+                        } else {
+                            None
+                        }
+                    };
+
+                    if let Some(destination) = empty_file_destination {
                         log::debug!(
-                            "handle_create_file_for_peer: updated file entry: total_size={}, file_id={}",
-                            state.content_size,
-                            state.id
+                            "handle_create_file_for_peer: writing empty file to {:?}",
+                            destination
                         );
-                    } else {
-                        log::warn!(
-                            "handle_create_file_for_peer: key={:?} not found in downloading_files",
-                            key
-                        );
+                        match smol::fs::write(&destination, &[] as &[u8]).await {
+                            Ok(_) => log::info!(
+                                "handle_create_file_for_peer: successfully wrote file to {:?}",
+                                destination
+                            ),
+                            Err(e) => log::error!(
+                                "handle_create_file_for_peer: failed to write empty file: {:?}",
+                                e
+                            ),
+                        }
                     }
                 } else {
                     log::warn!("handle_create_file_for_peer: State has no file field");

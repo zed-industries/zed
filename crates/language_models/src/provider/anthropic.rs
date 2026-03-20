@@ -140,13 +140,10 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
     }
 
     fn recommended_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        [
-            anthropic::Model::ClaudeSonnet4_6,
-            anthropic::Model::ClaudeSonnet4_6Thinking,
-        ]
-        .into_iter()
-        .map(|model| self.create_language_model(model))
-        .collect()
+        [anthropic::Model::ClaudeSonnet4_6]
+            .into_iter()
+            .map(|model| self.create_language_model(model))
+            .collect()
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -178,7 +175,12 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
                     max_output_tokens: model.max_output_tokens,
                     default_temperature: model.default_temperature,
                     extra_beta_headers: model.extra_beta_headers.clone(),
-                    mode: model.mode.unwrap_or_default().into(),
+                    mode: match model.mode.unwrap_or_default() {
+                        settings::ModelMode::Default => AnthropicModelMode::Default,
+                        settings::ModelMode::Thinking { budget_tokens } => {
+                            AnthropicModelMode::Thinking { budget_tokens }
+                        }
+                    },
                 },
             );
         }
@@ -356,10 +358,14 @@ pub fn into_anthropic_count_tokens_request(
         } else {
             Some(anthropic::StringOrContents::String(system_message))
         },
-        thinking: if request.thinking_allowed
-            && let AnthropicModelMode::Thinking { budget_tokens } = mode
-        {
-            Some(anthropic::Thinking::Enabled { budget_tokens })
+        thinking: if request.thinking_allowed {
+            match mode {
+                AnthropicModelMode::Thinking { budget_tokens } => {
+                    Some(anthropic::Thinking::Enabled { budget_tokens })
+                }
+                AnthropicModelMode::AdaptiveThinking => Some(anthropic::Thinking::Adaptive),
+                AnthropicModelMode::Default => None,
+            }
         } else {
             None
         },
@@ -517,7 +523,36 @@ impl LanguageModel for AnthropicModel {
     }
 
     fn supports_thinking(&self) -> bool {
-        matches!(self.model.mode(), AnthropicModelMode::Thinking { .. })
+        self.model.supports_thinking()
+    }
+
+    fn supported_effort_levels(&self) -> Vec<language_model::LanguageModelEffortLevel> {
+        if self.model.supports_adaptive_thinking() {
+            vec![
+                language_model::LanguageModelEffortLevel {
+                    name: "Low".into(),
+                    value: "low".into(),
+                    is_default: false,
+                },
+                language_model::LanguageModelEffortLevel {
+                    name: "Medium".into(),
+                    value: "medium".into(),
+                    is_default: false,
+                },
+                language_model::LanguageModelEffortLevel {
+                    name: "High".into(),
+                    value: "high".into(),
+                    is_default: true,
+                },
+                language_model::LanguageModelEffortLevel {
+                    name: "Max".into(),
+                    value: "max".into(),
+                    is_default: false,
+                },
+            ]
+        } else {
+            Vec::new()
+        }
     }
 
     fn telemetry_id(&self) -> String {
@@ -700,10 +735,14 @@ pub fn into_anthropic(
         } else {
             Some(anthropic::StringOrContents::String(system_message))
         },
-        thinking: if request.thinking_allowed
-            && let AnthropicModelMode::Thinking { budget_tokens } = mode
-        {
-            Some(anthropic::Thinking::Enabled { budget_tokens })
+        thinking: if request.thinking_allowed {
+            match mode {
+                AnthropicModelMode::Thinking { budget_tokens } => {
+                    Some(anthropic::Thinking::Enabled { budget_tokens })
+                }
+                AnthropicModelMode::AdaptiveThinking => Some(anthropic::Thinking::Adaptive),
+                AnthropicModelMode::Default => None,
+            }
         } else {
             None
         },
@@ -723,7 +762,24 @@ pub fn into_anthropic(
             LanguageModelToolChoice::None => anthropic::ToolChoice::None,
         }),
         metadata: None,
-        output_config: None,
+        output_config: if request.thinking_allowed
+            && matches!(mode, AnthropicModelMode::AdaptiveThinking)
+        {
+            request.thinking_effort.as_deref().and_then(|effort| {
+                let effort = match effort {
+                    "low" => Some(anthropic::Effort::Low),
+                    "medium" => Some(anthropic::Effort::Medium),
+                    "high" => Some(anthropic::Effort::High),
+                    "max" => Some(anthropic::Effort::Max),
+                    _ => None,
+                };
+                effort.map(|effort| anthropic::OutputConfig {
+                    effort: Some(effort),
+                })
+            })
+        } else {
+            None
+        },
         stop_sequences: Vec::new(),
         speed: request.speed.map(From::from),
         temperature: request.temperature.or(Some(default_temperature)),

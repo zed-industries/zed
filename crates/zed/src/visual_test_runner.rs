@@ -103,10 +103,11 @@ use {
     feature_flags::FeatureFlagAppExt as _,
     git_ui::project_diff::ProjectDiff,
     gpui::{
-        Action as _, App, AppContext as _, Bounds, KeyBinding, Modifiers, SharedString,
-        VisualTestAppContext, WindowBounds, WindowHandle, WindowOptions, point, px, size,
+        App, AppContext as _, Bounds, KeyBinding, Modifiers, VisualTestAppContext, WindowBounds,
+        WindowHandle, WindowOptions, point, px, size,
     },
     image::RgbaImage,
+    project::AgentId,
     project_panel::ProjectPanel,
     settings::{NotifyWhenAgentWaiting, Settings as _},
     settings_ui::SettingsWindow,
@@ -1958,7 +1959,7 @@ impl AgentServer for StubAgentServer {
         ui::IconName::ZedAssistant
     }
 
-    fn name(&self) -> SharedString {
+    fn agent_id(&self) -> AgentId {
         "Visual Test Agent".into()
     }
 
@@ -2649,6 +2650,22 @@ fn run_multi_workspace_sidebar_visual_tests(
 
     cx.run_until_parked();
 
+    // Create the sidebar and register it on the MultiWorkspace
+    let sidebar = multi_workspace_window
+        .update(cx, |_multi_workspace, window, cx| {
+            let multi_workspace_handle = cx.entity();
+            cx.new(|cx| sidebar::Sidebar::new(multi_workspace_handle, window, cx))
+        })
+        .context("Failed to create sidebar")?;
+
+    multi_workspace_window
+        .update(cx, |multi_workspace, _window, cx| {
+            multi_workspace.register_sidebar(sidebar.clone(), cx);
+        })
+        .context("Failed to register sidebar")?;
+
+    cx.run_until_parked();
+
     // Save test threads to the ThreadStore for each workspace
     let save_tasks = multi_workspace_window
         .update(cx, |multi_workspace, _window, cx| {
@@ -2726,8 +2743,8 @@ fn run_multi_workspace_sidebar_visual_tests(
 
     // Open the sidebar
     multi_workspace_window
-        .update(cx, |_multi_workspace, window, cx| {
-            window.dispatch_action(workspace::ToggleWorkspaceSidebar.boxed_clone(), cx);
+        .update(cx, |multi_workspace, window, cx| {
+            multi_workspace.toggle_sidebar(window, cx);
         })
         .context("Failed to toggle sidebar")?;
 
@@ -3165,10 +3182,24 @@ edition = "2021"
 
     cx.run_until_parked();
 
+    // Create and register the workspace sidebar
+    let sidebar = workspace_window
+        .update(cx, |_multi_workspace, window, cx| {
+            let multi_workspace_handle = cx.entity();
+            cx.new(|cx| sidebar::Sidebar::new(multi_workspace_handle, window, cx))
+        })
+        .context("Failed to create sidebar")?;
+
+    workspace_window
+        .update(cx, |multi_workspace, _window, cx| {
+            multi_workspace.register_sidebar(sidebar.clone(), cx);
+        })
+        .context("Failed to register sidebar")?;
+
     // Open the sidebar
     workspace_window
-        .update(cx, |_multi_workspace, window, cx| {
-            window.dispatch_action(workspace::ToggleWorkspaceSidebar.boxed_clone(), cx);
+        .update(cx, |multi_workspace, window, cx| {
+            multi_workspace.toggle_sidebar(window, cx);
         })
         .context("Failed to toggle sidebar")?;
 
@@ -3458,7 +3489,7 @@ edition = "2021"
 
     // Insert a message into the active thread's message editor and submit.
     let thread_view = cx
-        .read(|cx| panel.read(cx).as_active_thread_view(cx))
+        .read(|cx| panel.read(cx).active_thread_view(cx))
         .ok_or_else(|| anyhow::anyhow!("No active thread view"))?;
 
     cx.update_window(workspace_window.into(), |_, window, cx| {
@@ -3527,7 +3558,7 @@ edition = "2021"
         new_workspace.read(cx).panel::<AgentPanel>(cx)
     })?;
     if let Some(new_panel) = new_panel {
-        let new_thread_view = cx.read(|cx| new_panel.read(cx).as_active_thread_view(cx));
+        let new_thread_view = cx.read(|cx| new_panel.read(cx).active_thread_view(cx));
         if let Some(new_thread_view) = new_thread_view {
             cx.update_window(workspace_window.into(), |_, window, cx| {
                 let message_editor = new_thread_view.read(cx).message_editor.clone();
