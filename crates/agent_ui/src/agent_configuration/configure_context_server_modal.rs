@@ -2,6 +2,7 @@ use anyhow::{Context as _, Result};
 use collections::HashMap;
 use context_server::{ContextServerCommand, ContextServerId};
 use editor::{Editor, EditorElement, EditorStyle};
+
 use gpui::{
     AsyncWindowContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, ScrollHandle,
     Subscription, Task, TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, prelude::*,
@@ -238,6 +239,8 @@ fn context_server_input(existing: Option<(ContextServerId, ContextServerCommand)
 
     format!(
         r#"{{
+  /// Configure an MCP server that runs locally via stdin/stdout
+  ///
   /// The name of your MCP server
   "{name}": {{
     /// The command which runs the MCP server
@@ -281,6 +284,8 @@ fn context_server_http_input(
 
     format!(
         r#"{{
+  /// Configure an MCP server that you connect to over HTTP
+  ///
   /// The name of your remote MCP server
   "{name}": {{
     /// The URL of the remote MCP server
@@ -675,7 +680,8 @@ impl ConfigureContextServerModal {
     }
 
     fn render_modal_description(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        const MODAL_DESCRIPTION: &str = "Visit the MCP server configuration docs to find all necessary arguments and environment variables.";
+        const MODAL_DESCRIPTION: &str =
+            "Check the server docs for required arguments and environment variables.";
 
         if let ConfigurationSource::Extension {
             installation_instructions: Some(installation_instructions),
@@ -695,6 +701,67 @@ impl ConfigureContextServerModal {
                 .color(Color::Muted)
                 .into_any_element()
         }
+    }
+
+    fn render_tab_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let is_http = match &self.source {
+            ConfigurationSource::New { is_http, .. } => *is_http,
+            _ => return None,
+        };
+
+        let tab = |label: &'static str, active: bool| {
+            div()
+                .id(label)
+                .cursor_pointer()
+                .p_1()
+                .text_sm()
+                .border_b_1()
+                .when(active, |this| {
+                    this.border_color(cx.theme().colors().border_focused)
+                })
+                .when(!active, |this| {
+                    this.border_color(gpui::transparent_black())
+                        .text_color(cx.theme().colors().text_muted)
+                        .hover(|s| s.text_color(cx.theme().colors().text))
+                })
+                .child(label)
+        };
+
+        Some(
+            h_flex()
+                .pt_1()
+                .mb_2p5()
+                .gap_1()
+                .border_b_1()
+                .border_color(cx.theme().colors().border.opacity(0.5))
+                .child(
+                    tab("Local", !is_http).on_click(cx.listener(|this, _, window, cx| {
+                        if let ConfigurationSource::New { editor, is_http } = &mut this.source {
+                            if *is_http {
+                                *is_http = false;
+                                let new_text = context_server_input(None);
+                                editor.update(cx, |editor, cx| {
+                                    editor.set_text(new_text, window, cx);
+                                });
+                            }
+                        }
+                    })),
+                )
+                .child(
+                    tab("Remote", is_http).on_click(cx.listener(|this, _, window, cx| {
+                        if let ConfigurationSource::New { editor, is_http } = &mut this.source {
+                            if !*is_http {
+                                *is_http = true;
+                                let new_text = context_server_http_input(None);
+                                editor.update(cx, |editor, cx| {
+                                    editor.set_text(new_text, window, cx);
+                                });
+                            }
+                        }
+                    })),
+                )
+                .into_any_element(),
+        )
     }
 
     fn render_modal_content(&self, cx: &App) -> AnyElement {
@@ -777,36 +844,6 @@ impl ConfigureContextServerModal {
                                 move |_, _, cx| cx.open_url(&repository_url)
                             }),
                     )
-                } else if let ConfigurationSource::New { is_http, .. } = &self.source {
-                    let label = if *is_http {
-                        "Configure Local"
-                    } else {
-                        "Configure Remote"
-                    };
-                    let tooltip = if *is_http {
-                        "Configure an MCP server that runs on stdin/stdout."
-                    } else {
-                        "Configure an MCP server that you connect to over HTTP"
-                    };
-
-                    Some(
-                        Button::new("toggle-kind", label)
-                            .tooltip(Tooltip::text(tooltip))
-                            .on_click(cx.listener(|this, _, window, cx| match &mut this.source {
-                                ConfigurationSource::New { editor, is_http } => {
-                                    *is_http = !*is_http;
-                                    let new_text = if *is_http {
-                                        context_server_http_input(None)
-                                    } else {
-                                        context_server_input(None)
-                                    };
-                                    editor.update(cx, |editor, cx| {
-                                        editor.set_text(new_text, window, cx);
-                                    })
-                                }
-                                _ => {}
-                            })),
-                    )
                 } else {
                     None
                 },
@@ -854,43 +891,44 @@ impl ConfigureContextServerModal {
             )
     }
 
-    fn render_waiting_for_context_server() -> Div {
+    fn render_loading(&self, label: impl Into<SharedString>) -> Div {
         h_flex()
-            .gap_2()
+            .h_8()
+            .gap_1p5()
+            .justify_center()
             .child(
-                Icon::new(IconName::ArrowCircle)
+                Icon::new(IconName::LoadCircle)
                     .size(IconSize::XSmall)
-                    .color(Color::Info)
-                    .with_rotate_animation(2)
-                    .into_any_element(),
+                    .color(Color::Muted)
+                    .with_rotate_animation(3),
             )
-            .child(
-                Label::new("Waiting for Context Server")
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-            )
+            .child(Label::new(label).size(LabelSize::Small).color(Color::Muted))
     }
 
     fn render_auth_required(&self, server_id: &ContextServerId, cx: &mut Context<Self>) -> Div {
-        v_flex()
-            .gap_3()
+        h_flex()
+            .h_8()
+            .min_w_0()
+            .w_full()
+            .gap_2()
+            .justify_center()
             .child(
                 h_flex()
-                    .gap_2()
+                    .gap_1p5()
                     .child(
-                        Icon::new(IconName::LockOutlined)
-                            .size(IconSize::XSmall)
-                            .color(Color::Warning),
+                        Icon::new(IconName::Info)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
                     )
                     .child(
-                        Label::new("This server requires authentication.")
+                        Label::new("Authenticate to connect this server")
                             .size(LabelSize::Small)
                             .color(Color::Muted),
                     ),
             )
             .child(
                 Button::new("authenticate-server", "Authenticate")
-                    .style(ButtonStyle::Filled)
+                    .style(ButtonStyle::Outlined)
                     .label_size(LabelSize::Small)
                     .on_click({
                         let server_id = server_id.clone();
@@ -901,29 +939,14 @@ impl ConfigureContextServerModal {
             )
     }
 
-    fn render_authenticating() -> Div {
-        h_flex()
-            .gap_2()
-            .child(
-                Icon::new(IconName::ArrowCircle)
-                    .size(IconSize::XSmall)
-                    .color(Color::Accent)
-                    .with_rotate_animation(3)
-                    .into_any_element(),
-            )
-            .child(
-                Label::new("Waiting for authorization...")
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-            )
-    }
-
     fn render_modal_error(error: SharedString) -> Div {
         h_flex()
-            .gap_2()
+            .h_8()
+            .gap_1p5()
+            .justify_center()
             .child(
                 Icon::new(IconName::Warning)
-                    .size(IconSize::XSmall)
+                    .size(IconSize::Small)
                     .color(Color::Warning),
             )
             .child(
@@ -938,7 +961,7 @@ impl Render for ConfigureContextServerModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .elevation_3(cx)
-            .w(rems(34.))
+            .w(rems(40.))
             .key_context("ConfigureContextServerModal")
             .on_action(
                 cx.listener(|this, _: &menu::Cancel, _window, cx| this.cancel(&menu::Cancel, cx)),
@@ -965,17 +988,18 @@ impl Render for ConfigureContextServerModal {
                                         .overflow_y_scroll()
                                         .track_scroll(&self.scroll_handle)
                                         .child(self.render_modal_description(window, cx))
+                                        .children(self.render_tab_bar(cx))
                                         .child(self.render_modal_content(cx))
                                         .child(match &self.state {
                                             State::Idle => div(),
                                             State::Waiting => {
-                                                Self::render_waiting_for_context_server()
+                                                self.render_loading("Connecting Server…")
                                             }
                                             State::AuthRequired { server_id } => {
                                                 self.render_auth_required(&server_id.clone(), cx)
                                             }
                                             State::Authenticating { .. } => {
-                                                Self::render_authenticating()
+                                                self.render_loading("Authenticating…")
                                             }
                                             State::Error(error) => {
                                                 Self::render_modal_error(error.clone())
