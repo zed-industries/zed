@@ -60,7 +60,8 @@ use gpui::{
     Context, CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke, ManagedView, MouseButton,
     PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription,
-    SystemWindowTabController, Task, Tiling, WeakEntity, WindowBounds, WindowHandle, WindowId,
+    StyleRefinement, SystemWindowTabController, Task, Tiling, WeakEntity, WindowBounds,
+    WindowHandle, WindowId,
     WindowOptions, actions, canvas, point, relative, size, transparent_black,
 };
 pub use history_manager::*;
@@ -164,6 +165,7 @@ use crate::{
 };
 
 pub const SERIALIZATION_THROTTLE_TIME: Duration = Duration::from_millis(200);
+const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 
 static ZED_WINDOW_SIZE: LazyLock<Option<Size<Pixels>>> = LazyLock::new(|| {
     env::var("ZED_WINDOW_SIZE")
@@ -1370,6 +1372,7 @@ pub struct Workspace {
     open_in_dev_container: bool,
     _dev_container_task: Option<Task<Result<()>>>,
     _panels_task: Option<Task<Result<()>>>,
+    project_panel_previous_focus: Option<FocusHandle>,
     sidebar_focus_handle: Option<FocusHandle>,
     multi_workspace: Option<WeakEntity<MultiWorkspace>>,
 }
@@ -1799,6 +1802,7 @@ impl Workspace {
             scheduled_tasks: Vec::new(),
             last_open_dock_positions: Vec::new(),
             removing: false,
+            project_panel_previous_focus: None,
             sidebar_focus_handle: None,
             multi_workspace,
             open_in_dev_container: false,
@@ -4135,6 +4139,37 @@ impl Workspace {
         did_focus_panel
     }
 
+    pub fn is_panel_visible<T: Panel>(&self, cx: &App) -> bool {
+        self.all_docks().iter().any(|dock| {
+            let dock = dock.read(cx);
+            dock.is_open()
+                && dock
+                    .visible_panel()
+                    .is_some_and(|panel| panel.panel_key() == T::panel_key())
+        })
+    }
+
+    pub fn toggle_panel_visibility<T: Panel>(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.is_panel_visible::<T>(cx) {
+            self.close_panel::<T>(window, cx);
+            if T::panel_key() == PROJECT_PANEL_KEY {
+                self.restore_project_panel_focus(window, cx);
+            }
+            false
+        } else {
+            if T::panel_key() == PROJECT_PANEL_KEY {
+                self.project_panel_previous_focus = window.focused(cx);
+            }
+            self.open_panel::<T>(window, cx);
+            self.focus_panel::<T>(window, cx);
+            true
+        }
+    }
+
     pub fn focus_center_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(item) = self.active_item(cx) {
             item.item_focus_handle(cx).focus(window, cx);
@@ -4248,10 +4283,52 @@ impl Workspace {
         }
     }
 
+    pub fn project_panel_overlay_visible(&self, cx: &App) -> bool {
+        self.project_panel_overlay_dock(cx).is_some()
+    }
+
+    pub fn dismiss_project_panel_overlay(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((_, dock)) = self.project_panel_overlay_dock(cx) else {
+            return;
+        };
+
+        dock.update(cx, |dock, cx| dock.set_open(false, window, cx));
+        self.restore_project_panel_focus(window, cx);
+        self.serialize_workspace(window, cx);
+        cx.notify();
+    }
+
     pub fn panel<T: Panel>(&self, cx: &App) -> Option<Entity<T>> {
         self.all_docks()
             .iter()
             .find_map(|dock| dock.read(cx).panel::<T>())
+    }
+
+    fn project_panel_overlay_dock(&self, cx: &App) -> Option<(DockPosition, Entity<Dock>)> {
+        [
+            (DockPosition::Left, self.left_dock.clone()),
+            (DockPosition::Right, self.right_dock.clone()),
+        ]
+        .into_iter()
+        .find(|(_, dock)| {
+            let dock = dock.read(cx);
+            dock.is_open()
+                && dock
+                    .visible_panel()
+                    .is_some_and(|panel| panel.panel_key() == PROJECT_PANEL_KEY)
+        })
+    }
+
+    fn restore_project_panel_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(previous_focus) = self.project_panel_previous_focus.take() {
+            previous_focus.focus(window, cx);
+            if previous_focus.contains_focused(window, cx) {
+                return;
+            }
+        }
+
+        self.active_pane
+            .update(cx, |pane, cx| window.focus(&pane.focus_handle(cx), cx));
     }
 
     fn dismiss_zoomed_items_to_reveal(
@@ -7449,6 +7526,15 @@ impl Workspace {
             return None;
         }
 
+        if dock.read(cx).is_open()
+            && dock
+                .read(cx)
+                .visible_panel()
+                .is_some_and(|panel| panel.panel_key() == PROJECT_PANEL_KEY)
+        {
+            return None;
+        }
+
         let leader_border = dock.read(cx).active_panel().and_then(|panel| {
             let pane = panel.pane(cx)?;
             let follower_states = &self.follower_states;
@@ -7498,6 +7584,63 @@ impl Workspace {
         }
 
         Some(container)
+    }
+
+    fn render_project_panel_overlay(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Div> {
+        let (position, dock) = self.project_panel_overlay_dock(cx)?;
+        let (panel, size) = {
+            let dock = dock.read(cx);
+            (dock.visible_panel()?.clone(), dock.active_panel_size(window, cx)?)
+        };
+
+        let panel = div()
+            .id("project-panel-overlay")
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .w(size)
+            .overflow_hidden()
+            .bg(cx.theme().colors().panel_background)
+            .border_color(cx.theme().colors().border)
+            .child(
+                panel
+                    .to_any()
+                    .cached(StyleRefinement::default().v_flex().size_full()),
+            )
+            .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                cx.stop_propagation();
+            })
+            .map(|this| match position {
+                DockPosition::Left => this.left_0().border_r_1(),
+                DockPosition::Right => this.right_0().border_l_1(),
+                DockPosition::Bottom => this,
+            });
+
+        Some(
+            div()
+                .absolute()
+                .size_full()
+                .inset_0()
+                .child(
+                    div()
+                        .absolute()
+                        .size_full()
+                        .inset_0()
+                        .occlude()
+                        .bg(transparent_black())
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|workspace, _, window, cx| {
+                                workspace.dismiss_project_panel_overlay(window, cx);
+                            }),
+                        ),
+                )
+                .child(panel),
+        )
     }
 
     pub fn for_window(window: &Window, cx: &App) -> Option<Entity<Workspace>> {
@@ -8260,6 +8403,9 @@ impl Render for Workspace {
                                                             .overflow_hidden()
                                                             .child(
                                                                 h_flex()
+                                                                    .debug_selector(|| {
+                                                                        "workspace-center".into()
+                                                                    })
                                                                     .flex_1()
                                                                     .when_some(
                                                                         paddings.0,
@@ -8333,6 +8479,9 @@ impl Render for Workspace {
                                                                     .overflow_hidden()
                                                                     .child(
                                                                         h_flex()
+                                                                            .debug_selector(|| {
+                                                                                "workspace-center".into()
+                                                                            })
                                                                             .flex_1()
                                                                             .when_some(paddings.0, |this, p| this.child(p.border_r_1()))
                                                                             .child(self.center.render(
@@ -8396,6 +8545,9 @@ impl Render for Workspace {
                                                                     .overflow_hidden()
                                                                     .child(
                                                                         h_flex()
+                                                                            .debug_selector(|| {
+                                                                                "workspace-center".into()
+                                                                            })
                                                                             .flex_1()
                                                                             .when_some(paddings.0, |this, p| this.child(p.border_r_1()))
                                                                             .child(self.center.render(
@@ -8443,6 +8595,9 @@ impl Render for Workspace {
                                                     .overflow_hidden()
                                                     .child(
                                                         h_flex()
+                                                            .debug_selector(|| {
+                                                                "workspace-center".into()
+                                                            })
                                                             .flex_1()
                                                             .when_some(paddings.0, |this, p| {
                                                                 this.child(p.border_r_1())
@@ -8506,6 +8661,7 @@ impl Render for Workspace {
                                         }
                                     })
                                 }))
+                                .children(self.render_project_panel_overlay(window, cx))
                                 .children(self.render_notifications(window, cx)),
                         )
                         .when(self.status_bar_visible(cx), |parent| {
@@ -10655,7 +10811,7 @@ mod tests {
     };
     use fs::FakeFs;
     use gpui::{
-        DismissEvent, Empty, EventEmitter, FocusHandle, Focusable, Render, TestAppContext,
+        DismissEvent, Empty, EventEmitter, FocusHandle, Focusable, Render, TestAppContext, div,
         UpdateGlobal, VisualTestContext, px,
     };
     use project::{Project, ProjectEntryId};
@@ -10663,6 +10819,84 @@ mod tests {
     use settings::SettingsStore;
     use util::path;
     use util::rel_path::rel_path;
+
+    struct TestProjectPanel {
+        position: DockPosition,
+        focus_handle: FocusHandle,
+        size: Pixels,
+    }
+
+    impl TestProjectPanel {
+        fn new(position: DockPosition, cx: &mut App) -> Self {
+            Self {
+                position,
+                focus_handle: cx.focus_handle(),
+                size: px(300.),
+            }
+        }
+    }
+
+    impl EventEmitter<PanelEvent> for TestProjectPanel {}
+
+    impl Focusable for TestProjectPanel {
+        fn focus_handle(&self, _: &App) -> FocusHandle {
+            self.focus_handle.clone()
+        }
+    }
+
+    impl Render for TestProjectPanel {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .id("test-project-panel")
+                .track_focus(&self.focus_handle(cx))
+        }
+    }
+
+    impl Panel for TestProjectPanel {
+        fn persistent_name() -> &'static str {
+            "Project Panel"
+        }
+
+        fn panel_key() -> &'static str {
+            PROJECT_PANEL_KEY
+        }
+
+        fn position(&self, _window: &Window, _: &App) -> DockPosition {
+            self.position
+        }
+
+        fn position_is_valid(&self, position: DockPosition) -> bool {
+            matches!(position, DockPosition::Left | DockPosition::Right)
+        }
+
+        fn set_position(&mut self, position: DockPosition, _: &mut Window, _: &mut Context<Self>) {
+            self.position = position;
+        }
+
+        fn size(&self, _window: &Window, _: &App) -> Pixels {
+            self.size
+        }
+
+        fn set_size(&mut self, size: Option<Pixels>, _: &mut Window, _: &mut Context<Self>) {
+            self.size = size.unwrap_or(px(300.));
+        }
+
+        fn icon(&self, _: &Window, _: &App) -> Option<ui::IconName> {
+            None
+        }
+
+        fn icon_tooltip(&self, _: &Window, _: &App) -> Option<&'static str> {
+            Some("Project Panel")
+        }
+
+        fn toggle_action(&self) -> Box<dyn Action> {
+            Box::new(crate::ToggleLeftDock)
+        }
+
+        fn activation_priority(&self) -> u32 {
+            100
+        }
+    }
 
     #[gpui::test]
     async fn test_tab_disambiguation(cx: &mut TestAppContext) {
@@ -11952,6 +12186,147 @@ mod tests {
             assert!(!pane.focus_handle(cx).is_focused(window));
             assert!(workspace.right_dock().read(cx).is_open());
             assert!(workspace.zoomed.is_none());
+        });
+    }
+
+    #[gpui::test]
+    async fn toggle_project_panel_overlay_does_not_reflow_workspace(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let window = cx.windows().into_iter().next().unwrap();
+        let cx = &mut VisualTestContext::from_window(window, cx);
+
+        let item = cx.new(TestItem::new);
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+
+            let panel = cx.new(|cx| TestProjectPanel::new(DockPosition::Left, cx));
+            workspace.add_panel(panel, window, cx);
+        });
+        cx.run_until_parked();
+
+        let center_bounds_before = cx.debug_bounds("workspace-center").unwrap();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_panel_visibility::<TestProjectPanel>(window, cx);
+        });
+        cx.run_until_parked();
+
+        let center_bounds_after_open = cx.debug_bounds("workspace-center").unwrap();
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(workspace.left_dock().read(cx).is_open());
+            assert!(
+                workspace
+                    .render_dock(DockPosition::Left, workspace.left_dock(), window, cx)
+                    .is_none()
+            );
+        });
+        assert_eq!(center_bounds_before.size, center_bounds_after_open.size);
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_panel_visibility::<TestProjectPanel>(window, cx);
+        });
+        cx.run_until_parked();
+
+        let center_bounds_after_close = cx.debug_bounds("workspace-center").unwrap();
+        assert_eq!(center_bounds_before.size, center_bounds_after_close.size);
+    }
+
+    #[gpui::test]
+    async fn toggle_project_panel_overlay_moves_and_restores_focus(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let item = cx.new(TestItem::new);
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+
+            let panel = cx.new(|cx| TestProjectPanel::new(DockPosition::Left, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let pane_focus = workspace.active_pane().read(cx).focus_handle(cx);
+            window.focus(&pane_focus, cx);
+
+            workspace.toggle_panel_visibility::<TestProjectPanel>(window, cx);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(workspace.left_dock().read(cx).is_open());
+            assert!(panel.read(cx).focus_handle(cx).contains_focused(window, cx));
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_panel_visibility::<TestProjectPanel>(window, cx);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(!workspace.left_dock().read(cx).is_open());
+
+            let pane_focus = workspace.active_pane().read(cx).focus_handle(cx);
+            assert!(pane_focus.contains_focused(window, cx));
+        });
+    }
+
+    #[gpui::test]
+    async fn dismiss_project_panel_overlay_closes_and_restores_focus(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let item = cx.new(TestItem::new);
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+
+            let panel = cx.new(|cx| TestProjectPanel::new(DockPosition::Left, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let pane_focus = workspace.active_pane().read(cx).focus_handle(cx);
+            window.focus(&pane_focus, cx);
+
+            workspace.toggle_panel_visibility::<TestProjectPanel>(window, cx);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(workspace.project_panel_overlay_visible(cx));
+            assert!(panel.read(cx).focus_handle(cx).contains_focused(window, cx));
+
+            workspace.dismiss_project_panel_overlay(window, cx);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(!workspace.project_panel_overlay_visible(cx));
+            assert!(!workspace.left_dock().read(cx).is_open());
+
+            let pane_focus = workspace.active_pane().read(cx).focus_handle(cx);
+            assert!(pane_focus.contains_focused(window, cx));
         });
     }
 

@@ -456,9 +456,7 @@ pub fn init(cx: &mut App) {
             workspace.toggle_panel_focus::<ProjectPanel>(window, cx);
         });
         workspace.register_action(|workspace, _: &Toggle, window, cx| {
-            if !workspace.toggle_panel_focus::<ProjectPanel>(window, cx) {
-                workspace.close_panel::<ProjectPanel>(window, cx);
-            }
+            workspace.toggle_panel_visibility::<ProjectPanel>(window, cx);
         });
 
         workspace.register_action(|workspace, _: &ToggleHideGitIgnore, _, cx| {
@@ -2003,6 +2001,24 @@ impl ProjectPanel {
             self.hover_expand_task.take();
             return;
         }
+
+        if self.state.edit_state.is_some() {
+            self.marked_entries.clear();
+            cx.notify();
+            self.discard_edit_state(window, cx);
+            window.focus(&self.focus_handle, cx);
+            return;
+        }
+
+        if let Some(workspace) = self.workspace.upgrade()
+            && workspace.read(cx).project_panel_overlay_visible(cx)
+        {
+            workspace.update(cx, |workspace, cx| {
+                workspace.dismiss_project_panel_overlay(window, cx);
+            });
+            return;
+        }
+
         self.marked_entries.clear();
         cx.notify();
         self.discard_edit_state(window, cx);
@@ -7224,7 +7240,7 @@ impl Panel for ProjectPanel {
     }
 
     fn toggle_action(&self) -> Box<dyn Action> {
-        Box::new(ToggleFocus)
+        Box::new(Toggle)
     }
 
     fn persistent_name() -> &'static str {

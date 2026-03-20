@@ -30,10 +30,14 @@
 //! Update baseline images (when UI intentionally changes):
 //!   UPDATE_BASELINE=1 cargo run -p zed --bin zed_visual_test_runner --features visual-tests
 //!
+//! Run only the project panel overlay test:
+//!   VISUAL_TEST_PROJECT_PANEL_ONLY=1 cargo run -p zed --bin zed_visual_test_runner --features visual-tests
+//!
 //! ## Environment Variables
 //!
 //!   UPDATE_BASELINE - Set to update baseline images instead of comparing
 //!   VISUAL_TEST_OUTPUT_DIR - Directory to save test output (default: target/visual_tests)
+//!   VISUAL_TEST_PROJECT_PANEL_ONLY - Run only the project panel visual test
 
 // Stub main for non-macOS platforms
 #[cfg(not(target_os = "macos"))]
@@ -147,6 +151,8 @@ use constants::*;
 
 #[cfg(target_os = "macos")]
 fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> {
+    let project_panel_only = std::env::var("VISUAL_TEST_PROJECT_PANEL_ONLY").is_ok();
+
     // Create the visual test context with deterministic task scheduling
     // Use real Assets so that SVG icons render properly
     let mut cx = VisualTestAppContext::with_asset_source(
@@ -386,6 +392,24 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
     .log_err();
 
     cx.run_until_parked();
+
+    if project_panel_only {
+        println!("\n--- Test 1: project_panel ---");
+        let result = run_visual_test(
+            "project_panel",
+            workspace_window.into(),
+            &mut cx,
+            update_baseline,
+        )
+        .map(|_| ())
+        .context("project_panel visual test failed");
+
+        // This targeted mode is used as a one-shot verifier during development.
+        // Avoid leak-detector teardown noise from the full app graph after the
+        // screenshot has already been captured and written.
+        std::mem::forget(cx);
+        return result;
+    }
 
     // Track test results
     let mut passed = 0;

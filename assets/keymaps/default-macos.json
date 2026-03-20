@@ -688,7 +688,7 @@
       "cmd-7": ["workspace::ActivatePane", 6],
       "cmd-8": ["workspace::ActivatePane", 7],
       "cmd-9": ["workspace::ActivatePane", 8],
-      "cmd-b": "workspace::ToggleLeftDock",
+      "cmd-b": "project_panel::Toggle",
       "cmd-alt-b": "workspace::ToggleRightDock",
       "cmd-r": "workspace::ToggleRightDock",
       "cmd-j": "workspace::ToggleBottomDock",
