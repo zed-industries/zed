@@ -386,9 +386,10 @@ impl ExtensionManifest {
             let manifest_content = fs.load(&extension_manifest_path).await.with_context(|| {
                 format!("loading {extension_name} extension.toml, {extension_manifest_path:?}")
             })?;
-            toml::from_str(&manifest_content).map_err(|err| {
+            let manifest: ExtensionManifest = toml::from_str(&manifest_content).map_err(|err| {
                 anyhow!("Invalid extension.toml for extension {extension_name}:\n{err}")
-            })
+            })?;
+            Ok(manifest.normalize_paths()?)
         } else if let extension_manifest_path = extension_manifest_path.with_extension("json")
             && fs.is_file(&extension_manifest_path).await
         {
@@ -396,12 +397,49 @@ impl ExtensionManifest {
                 format!("loading {extension_name} extension.json, {extension_manifest_path:?}")
             })?;
 
-            serde_json::from_str::<OldExtensionManifest>(&manifest_content)
+            let manifest = serde_json::from_str::<OldExtensionManifest>(&manifest_content)
                 .with_context(|| format!("invalid extension.json for extension {extension_name}"))
-                .map(|manifest_json| manifest_from_old_manifest(manifest_json, extension_name))
+                .map(|manifest_json| manifest_from_old_manifest(manifest_json, extension_name))?;
+            Ok(manifest.normalize_paths()?)
         } else {
             anyhow::bail!("No extension manifest found for extension {extension_name}")
         }
+    }
+
+    /// Normalize all extension manifest paths to match POSIX style.
+    pub fn normalize_paths(mut self) -> Result<Self> {
+        let normalize = |path: RelPathBuf| -> Result<RelPathBuf> {
+            Ok(RelPath::new(path.as_std_path(), PathStyle::Windows)?.into_owned())
+        };
+
+        self.languages = self
+            .languages
+            .into_iter()
+            .map(normalize)
+            .collect::<Result<_>>()?;
+
+        self.themes = self
+            .themes
+            .into_iter()
+            .map(normalize)
+            .collect::<Result<_>>()?;
+
+        self.icon_themes = self
+            .icon_themes
+            .into_iter()
+            .map(normalize)
+            .collect::<Result<_>>()?;
+
+        self.debug_adapters = self
+            .debug_adapters
+            .into_iter()
+            .map(|(name, mut entry)| {
+                entry.schema_path = entry.schema_path.map(normalize).transpose()?;
+                Ok((name, entry))
+            })
+            .collect::<Result<_>>()?;
+
+        Ok(self)
     }
 }
 
