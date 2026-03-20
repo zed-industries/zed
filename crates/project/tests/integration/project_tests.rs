@@ -3774,8 +3774,8 @@ async fn test_diagnostic_summaries_cleared_on_buffer_reload(cx: &mut gpui::TestA
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
-    let request_count = Arc::new(atomic::AtomicUsize::new(0));
-    let closure_request_count = request_count.clone();
+    let pull_count = Arc::new(atomic::AtomicUsize::new(0));
+    let closure_pull_count = pull_count.clone();
     let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
@@ -3784,23 +3784,30 @@ async fn test_diagnostic_summaries_cleared_on_buffer_reload(cx: &mut gpui::TestA
                     lsp::DiagnosticOptions {
                         identifier: Some("test-reload".to_string()),
                         inter_file_dependencies: true,
-                        workspace_diagnostics: true,
-                        work_done_progress_options: lsp::WorkDoneProgressOptions {
-                            work_done_progress: None,
-                        },
+                        workspace_diagnostics: false,
+                        work_done_progress_options: Default::default(),
                     },
                 )),
                 ..lsp::ServerCapabilities::default()
             },
             initializer: Some(Box::new(move |fake_server| {
-                let request_count = closure_request_count.clone();
-                fake_server.set_request_handler::<lsp::request::WorkspaceDiagnosticRequest, _, _>(
+                let pull_count = closure_pull_count.clone();
+                fake_server.set_request_handler::<lsp::request::DocumentDiagnosticRequest, _, _>(
                     move |_, _| {
-                        let request_count = request_count.clone();
+                        let pull_count = pull_count.clone();
                         async move {
-                            request_count.fetch_add(1, atomic::Ordering::SeqCst);
-                            Ok(lsp::WorkspaceDiagnosticReportResult::Report(
-                                lsp::WorkspaceDiagnosticReport { items: Vec::new() },
+                            pull_count.fetch_add(1, atomic::Ordering::SeqCst);
+                            Ok(lsp::DocumentDiagnosticReportResult::Report(
+                                lsp::DocumentDiagnosticReport::Full(
+                                    lsp::RelatedFullDocumentDiagnosticReport {
+                                        related_documents: None,
+                                        full_document_diagnostic_report:
+                                            lsp::FullDocumentDiagnosticReport {
+                                                result_id: None,
+                                                items: Vec::new(),
+                                            },
+                                    },
+                                ),
                             ))
                         }
                     },
@@ -3818,8 +3825,7 @@ async fn test_diagnostic_summaries_cleared_on_buffer_reload(cx: &mut gpui::TestA
         .unwrap();
 
     let fake_server = fake_servers.next().await.unwrap();
-    // Advance clock to allow the initial workspace diagnostic pull's backoff timer to fire.
-    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.executor().run_until_parked();
 
     // Publish initial diagnostics via the fake server.
     fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
@@ -3844,8 +3850,7 @@ async fn test_diagnostic_summaries_cleared_on_buffer_reload(cx: &mut gpui::TestA
         );
     });
 
-    // Record the request count before reload so we can verify a new pull was triggered.
-    let pulls_before = request_count.load(atomic::Ordering::SeqCst);
+    let pulls_before = pull_count.load(atomic::Ordering::SeqCst);
 
     // Change the file on disk and reload the buffer.
     fs.save(
@@ -3860,14 +3865,12 @@ async fn test_diagnostic_summaries_cleared_on_buffer_reload(cx: &mut gpui::TestA
         .update(cx, |buffer, cx| buffer.reload(cx))
         .await
         .unwrap();
-    // Advance clock to allow the workspace diagnostic pull's backoff timer to fire.
-    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.executor().run_until_parked();
 
-    // Verify that a workspace diagnostic pull was triggered by the reload.
-    let pulls_after = request_count.load(atomic::Ordering::SeqCst);
+    let pulls_after = pull_count.load(atomic::Ordering::SeqCst);
     assert!(
         pulls_after > pulls_before,
-        "Expected workspace diagnostic pull after buffer reload (before={pulls_before}, after={pulls_after})"
+        "Expected document diagnostic pull after buffer reload (before={pulls_before}, after={pulls_after})"
     );
 }
 

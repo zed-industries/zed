@@ -3903,6 +3903,7 @@ pub struct LspStore {
     pub lsp_server_capabilities: HashMap<LanguageServerId, lsp::ServerCapabilities>,
     semantic_token_config: SemanticTokenConfig,
     lsp_data: HashMap<BufferId, BufferLspData>,
+    buffer_reload_tasks: HashMap<BufferId, Task<anyhow::Result<()>>>,
     next_hint_id: Arc<AtomicUsize>,
 }
 
@@ -4232,6 +4233,7 @@ impl LspStore {
             lsp_server_capabilities: HashMap::default(),
             semantic_token_config: SemanticTokenConfig::new(cx),
             lsp_data: HashMap::default(),
+            buffer_reload_tasks: HashMap::default(),
             next_hint_id: Arc::default(),
             active_entry: None,
             _maintain_workspace_config,
@@ -4294,6 +4296,7 @@ impl LspStore {
             semantic_token_config: SemanticTokenConfig::new(cx),
             next_hint_id: Arc::default(),
             lsp_data: HashMap::default(),
+            buffer_reload_tasks: HashMap::default(),
             active_entry: None,
 
             _maintain_workspace_config,
@@ -4360,7 +4363,7 @@ impl LspStore {
                 worktree.update(cx, |worktree, _cx| self.send_diagnostic_summaries(worktree));
             }
             WorktreeStoreEvent::WorktreeUpdatedEntries(worktree_id, changes) => {
-                self.invalidate_diagnostic_summaries_for_updated_entries(*worktree_id, changes, cx);
+                self.invalidate_diagnostic_summaries_for_removed_entries(*worktree_id, changes, cx);
             }
             WorktreeStoreEvent::WorktreeReleased(..)
             | WorktreeStoreEvent::WorktreeOrderChanged
@@ -4538,6 +4541,7 @@ impl LspStore {
                     };
                     if refcount == 0 {
                         lsp_store.lsp_data.remove(&buffer_id);
+                        lsp_store.buffer_reload_tasks.remove(&buffer_id);
                         let local = lsp_store.as_local_mut().unwrap();
                         local.registered_buffers.remove(&buffer_id);
 
@@ -7928,14 +7932,9 @@ impl LspStore {
     }
 
     fn on_buffer_reloaded(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        let server_ids: Vec<LanguageServerId> = buffer.update(cx, |buffer, cx| {
-            self.as_local()
-                .map(|local| local.language_server_ids_for_buffer(buffer, cx))
-                .unwrap_or_default()
-        });
-        for server_id in server_ids {
-            self.pull_workspace_diagnostics(server_id);
-        }
+        let buffer_id = buffer.read(cx).remote_id();
+        let task = self.pull_diagnostics_for_buffer(buffer, cx);
+        self.buffer_reload_tasks.insert(buffer_id, task);
     }
 
     async fn refresh_workspace_configurations(lsp_store: &WeakEntity<Self>, cx: &mut AsyncApp) {
@@ -8106,7 +8105,7 @@ impl LspStore {
         }
     }
 
-    fn invalidate_diagnostic_summaries_for_updated_entries(
+    fn invalidate_diagnostic_summaries_for_removed_entries(
         &mut self,
         worktree_id: WorktreeId,
         changes: &UpdatedEntriesSet,
@@ -8120,40 +8119,33 @@ impl LspStore {
         let mut cleared_server_ids: HashSet<LanguageServerId> = HashSet::default();
         let downstream = self.downstream_client.clone();
 
-        for (path, _, change) in changes.iter() {
-            match change {
-                PathChange::Removed => {
-                    if let Some(summaries_by_server_id) = summaries_for_tree.remove(path) {
-                        for (server_id, _) in &summaries_by_server_id {
-                            cleared_server_ids.insert(*server_id);
-                        }
-                        if let Some((client, project_id)) = &downstream {
-                            for (server_id, _) in &summaries_by_server_id {
-                                client
-                                    .send(proto::UpdateDiagnosticSummary {
-                                        project_id: *project_id,
-                                        worktree_id: worktree_id.to_proto(),
-                                        summary: Some(proto::DiagnosticSummary {
-                                            path: path.as_ref().to_proto(),
-                                            language_server_id: server_id.0 as u64,
-                                            error_count: 0,
-                                            warning_count: 0,
-                                        }),
-                                        more_summaries: Vec::new(),
-                                    })
-                                    .log_err();
-                            }
-                        }
-                        cleared_paths.push(ProjectPath {
-                            worktree_id,
-                            path: path.clone(),
-                        });
+        for (path, _, _) in changes
+            .iter()
+            .filter(|(_, _, change)| *change == PathChange::Removed)
+        {
+            if let Some(summaries_by_server_id) = summaries_for_tree.remove(path) {
+                for (server_id, _) in &summaries_by_server_id {
+                    cleared_server_ids.insert(*server_id);
+                    if let Some((client, project_id)) = &downstream {
+                        client
+                            .send(proto::UpdateDiagnosticSummary {
+                                project_id: *project_id,
+                                worktree_id: worktree_id.to_proto(),
+                                summary: Some(proto::DiagnosticSummary {
+                                    path: path.as_ref().to_proto(),
+                                    language_server_id: server_id.0 as u64,
+                                    error_count: 0,
+                                    warning_count: 0,
+                                }),
+                                more_summaries: Vec::new(),
+                            })
+                            .ok();
                     }
                 }
-                PathChange::Updated
-                | PathChange::AddedOrUpdated
-                | PathChange::Added
-                | PathChange::Loaded => {}
+                cleared_paths.push(ProjectPath {
+                    worktree_id,
+                    path: path.clone(),
+                });
             }
         }
 
