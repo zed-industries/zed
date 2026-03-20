@@ -85,6 +85,36 @@ fn preprocess_json_schema(json: &mut Value) -> Result<()> {
             obj.insert("properties".to_string(), Value::Object(Default::default()));
         }
     }
+
+    // OpenAI API requires non-missing `items` for arrays
+    if let Value::Object(obj) = json
+        && matches!(obj.get("type"), Some(Value::String(s)) if s == "array")
+    {
+        if !obj.contains_key("items") {
+            obj.insert("items".to_string(), Value::Object(Default::default()));
+        } else if let Some(items) = obj.get_mut("items")
+            && matches!(items, Value::Bool(_))
+        {
+            // OpenAI's schema validator is stricter than JSON Schema: normalize boolean schemas to object form.
+            *items = Value::Object(Default::default());
+        }
+    }
+
+    // Recursively process nested objects and arrays
+    match json {
+        Value::Object(obj) => {
+            for value in obj.values_mut() {
+                preprocess_json_schema(value)?;
+            }
+        }
+        Value::Array(arr) => {
+            for item in arr.iter_mut() {
+                preprocess_json_schema(item)?;
+            }
+        }
+        _ => {}
+    }
+
     Ok(())
 }
 
@@ -378,6 +408,211 @@ mod tests {
                     }
                 },
                 "additionalProperties": true
+            })
+        );
+    }
+
+    #[test]
+    fn test_preprocess_json_schema_adds_items_to_array() {
+        let mut json = json!({
+            "type": "array"
+        });
+
+        preprocess_json_schema(&mut json).unwrap();
+
+        assert_eq!(
+            json,
+            json!({
+                "type": "array",
+                "items": {}
+            })
+        );
+    }
+
+    #[test]
+    fn test_preprocess_json_schema_preserves_array_items() {
+        let mut json = json!({
+            "type": "array",
+            "items": {
+                "type": "string"
+            }
+        });
+
+        preprocess_json_schema(&mut json).unwrap();
+
+        assert_eq!(
+            json,
+            json!({
+                "type": "array",
+                "items": {
+                    "type": "string"
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn test_preprocess_json_schema_normalizes_boolean_array_items() {
+        let mut json = json!({
+            "type": "array",
+            "items": true
+        });
+
+        preprocess_json_schema(&mut json).unwrap();
+
+        assert_eq!(
+            json,
+            json!({
+                "type": "array",
+                "items": {}
+            })
+        );
+
+        let mut json = json!({
+            "type": "array",
+            "items": false
+        });
+
+        preprocess_json_schema(&mut json).unwrap();
+
+        assert_eq!(
+            json,
+            json!({
+                "type": "array",
+                "items": {}
+            })
+        );
+    }
+
+    #[test]
+    fn test_preprocess_json_schema_handles_nested_arrays() {
+        let mut json = json!({
+            "type": "object",
+            "properties": {
+                "values": {
+                    "type": "array"
+                }
+            }
+        });
+
+        preprocess_json_schema(&mut json).unwrap();
+
+        assert_eq!(
+            json,
+            json!({
+                "type": "object",
+                "properties": {
+                    "values": {
+                        "type": "array",
+                        "items": {}
+                    }
+                }
+            })
+        );
+    }
+
+    // The following tests exercise adapt_to_json_schema_subset.
+    // Per recent change, array `items` insertion/normalization is only applied
+    // for the OpenAI JSON Schema preprocessing path. The JSON Schema subset
+    // transformation for Google-compatible formats should not add or normalize
+    // `items`. Update expectations accordingly.
+
+    #[test]
+    fn test_transform_does_not_add_items_to_array() {
+        let mut json = json!({
+            "type": "array"
+        });
+
+        // For JsonSchemaSubset we expect no automatic insertion of `items`.
+        adapt_to_json_schema_subset(&mut json).unwrap();
+
+        assert_eq!(
+            json,
+            json!({
+                "type": "array"
+            })
+        );
+    }
+
+    #[test]
+    fn test_transform_preserves_array_items() {
+        let mut json = json!({
+            "type": "array",
+            "items": {
+                "type": "string"
+            }
+        });
+
+        adapt_to_json_schema_subset(&mut json).unwrap();
+
+        assert_eq!(
+            json,
+            json!({
+                "type": "array",
+                "items": {
+                    "type": "string"
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn test_transform_preserves_boolean_array_items() {
+        let mut json = json!({
+            "type": "array",
+            "items": true
+        });
+
+        // For JsonSchemaSubset we do not normalize boolean `items` to object form.
+        adapt_to_json_schema_subset(&mut json).unwrap();
+
+        assert_eq!(
+            json,
+            json!({
+                "type": "array",
+                "items": true
+            })
+        );
+
+        let mut json = json!({
+            "type": "array",
+            "items": false
+        });
+
+        adapt_to_json_schema_subset(&mut json).unwrap();
+
+        assert_eq!(
+            json,
+            json!({
+                "type": "array",
+                "items": false
+            })
+        );
+    }
+
+    #[test]
+    fn test_transform_leaves_nested_arrays_without_items() {
+        let mut json = json!({
+            "type": "object",
+            "properties": {
+                "values": {
+                    "type": "array"
+                }
+            }
+        });
+
+        // For JsonSchemaSubset we expect nested arrays to be left as-is with respect to `items`.
+        adapt_to_json_schema_subset(&mut json).unwrap();
+
+        assert_eq!(
+            json,
+            json!({
+                "type": "object",
+                "properties": {
+                    "values": {
+                        "type": "array"
+                    }
+                }
             })
         );
     }
