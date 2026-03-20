@@ -1,6 +1,5 @@
 use agent_client_protocol as acp;
 use agent_settings::AgentSettings;
-use anyhow::Result;
 use collections::FxHashSet;
 use futures::FutureExt as _;
 use gpui::{App, Entity, SharedString, Task};
@@ -18,7 +17,9 @@ use super::tool_permissions::{
     canonicalize_worktree_roots, path_has_symlink_escape, resolve_project_path,
     sensitive_settings_kind,
 };
-use crate::{AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_for_path};
+use crate::{
+    AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision, decide_permission_for_path,
+};
 
 /// Saves files that have unsaved changes.
 ///
@@ -64,25 +65,31 @@ impl AgentTool for SaveFileTool {
 
     fn run(
         self: Arc<Self>,
-        input: Self::Input,
+        input: ToolInput<Self::Input>,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<String>> {
-        let settings = AgentSettings::get_global(cx).clone();
-
-        // Check for any immediate deny before spawning async work.
-        for path in &input.paths {
-            let path_str = path.to_string_lossy();
-            let decision = decide_permission_for_path(Self::NAME, &path_str, &settings);
-            if let ToolPermissionDecision::Deny(reason) = decision {
-                return Task::ready(Err(anyhow::anyhow!("{}", reason)));
-            }
-        }
-
+    ) -> Task<Result<String, String>> {
         let project = self.project.clone();
-        let input_paths = input.paths;
 
         cx.spawn(async move |cx| {
+            let input = input
+                .recv()
+                .await
+                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+
+            // Check for any immediate deny before doing async work.
+            for path in &input.paths {
+                let path_str = path.to_string_lossy();
+                let decision = cx.update(|cx| {
+                    decide_permission_for_path(Self::NAME, &path_str, AgentSettings::get_global(cx))
+                });
+                if let ToolPermissionDecision::Deny(reason) = decision {
+                    return Err(reason);
+                }
+            }
+
+            let input_paths = input.paths;
+
             let fs = project.read_with(cx, |project, _cx| project.fs().clone());
             let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
 
@@ -90,7 +97,9 @@ impl AgentTool for SaveFileTool {
 
             for path in &input_paths {
                 let path_str = path.to_string_lossy();
-                let decision = decide_permission_for_path(Self::NAME, &path_str, &settings);
+                let decision = cx.update(|cx| {
+                    decide_permission_for_path(Self::NAME, &path_str, AgentSettings::get_global(cx))
+                });
                 let symlink_escape = project.read_with(cx, |project, cx| {
                     path_has_symlink_escape(project, path, &canonical_roots, cx)
                 });
@@ -109,7 +118,7 @@ impl AgentTool for SaveFileTool {
                         }
                     }
                     ToolPermissionDecision::Deny(reason) => {
-                        return Err(anyhow::anyhow!("{}", reason));
+                        return Err(reason);
                     }
                     ToolPermissionDecision::Confirm => {
                         if !symlink_escape {
@@ -154,7 +163,7 @@ impl AgentTool for SaveFileTool {
                 let context =
                     crate::ToolPermissionContext::new(Self::NAME, confirmation_paths.clone());
                 let authorize = cx.update(|cx| event_stream.authorize(title, context, cx));
-                authorize.await?;
+                authorize.await.map_err(|e| e.to_string())?;
             }
 
             let mut buffers_to_save: FxHashSet<Entity<Buffer>> = FxHashSet::default();
@@ -217,7 +226,7 @@ impl AgentTool for SaveFileTool {
                         }
                     }
                     _ = event_stream.cancelled_by_user().fuse() => {
-                        anyhow::bail!("Save cancelled by user");
+                        return Err("Save cancelled by user".to_string());
                     }
                 };
 
@@ -247,7 +256,7 @@ impl AgentTool for SaveFileTool {
                 let save_result = futures::select! {
                     result = save_task.fuse() => result,
                     _ = event_stream.cancelled_by_user().fuse() => {
-                        anyhow::bail!("Save cancelled by user");
+                        return Err("Save cancelled by user".to_string());
                     }
                 };
                 if let Err(error) = save_result {
@@ -383,12 +392,12 @@ mod tests {
         let output = cx
             .update(|cx| {
                 tool.clone().run(
-                    SaveFileToolInput {
+                    ToolInput::resolved(SaveFileToolInput {
                         paths: vec![
                             PathBuf::from("root/dirty.txt"),
                             PathBuf::from("root/clean.txt"),
                         ],
-                    },
+                    }),
                     ToolCallEventStream::test().0,
                     cx,
                 )
@@ -426,7 +435,7 @@ mod tests {
         let output = cx
             .update(|cx| {
                 tool.clone().run(
-                    SaveFileToolInput { paths: vec![] },
+                    ToolInput::resolved(SaveFileToolInput { paths: vec![] }),
                     ToolCallEventStream::test().0,
                     cx,
                 )
@@ -439,9 +448,9 @@ mod tests {
         let output = cx
             .update(|cx| {
                 tool.clone().run(
-                    SaveFileToolInput {
+                    ToolInput::resolved(SaveFileToolInput {
                         paths: vec![PathBuf::from("nonexistent/path.txt")],
-                    },
+                    }),
                     ToolCallEventStream::test().0,
                     cx,
                 )
@@ -491,9 +500,9 @@ mod tests {
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
             tool.clone().run(
-                SaveFileToolInput {
+                ToolInput::resolved(SaveFileToolInput {
                     paths: vec![PathBuf::from("project/link.txt")],
-                },
+                }),
                 event_stream,
                 cx,
             )
@@ -560,9 +569,9 @@ mod tests {
         let result = cx
             .update(|cx| {
                 tool.clone().run(
-                    SaveFileToolInput {
+                    ToolInput::resolved(SaveFileToolInput {
                         paths: vec![PathBuf::from("project/link.txt")],
-                    },
+                    }),
                     event_stream,
                     cx,
                 )
@@ -619,9 +628,9 @@ mod tests {
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
             tool.clone().run(
-                SaveFileToolInput {
+                ToolInput::resolved(SaveFileToolInput {
                     paths: vec![PathBuf::from("project/link.txt")],
-                },
+                }),
                 event_stream,
                 cx,
             )
@@ -703,12 +712,12 @@ mod tests {
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
             tool.clone().run(
-                SaveFileToolInput {
+                ToolInput::resolved(SaveFileToolInput {
                     paths: vec![
                         PathBuf::from("project/dirty.txt"),
                         PathBuf::from("project/link.txt"),
                     ],
-                },
+                }),
                 event_stream,
                 cx,
             )

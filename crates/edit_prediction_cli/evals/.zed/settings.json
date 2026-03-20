@@ -1,3 +1,4 @@
 {
   "remove_trailing_whitespace_on_save": false,
+  "soft_wrap": "none",
 }

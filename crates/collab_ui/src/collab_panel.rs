@@ -9,7 +9,7 @@ use channel::{Channel, ChannelEvent, ChannelStore};
 use client::{ChannelId, Client, Contact, User, UserStore};
 use collections::{HashMap, HashSet};
 use contact_finder::ContactFinder;
-use db::kvp::KEY_VALUE_STORE;
+use db::kvp::KeyValueStore;
 use editor::{Editor, EditorElement, EditorStyle};
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
@@ -36,8 +36,8 @@ use ui::{
 };
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::{
-    CopyRoomId, Deafen, LeaveCall, MultiWorkspace, Mute, OpenChannelNotes, ScreenShare,
-    ShareProject, Workspace,
+    CopyRoomId, Deafen, LeaveCall, MultiWorkspace, Mute, OpenChannelNotes, OpenChannelNotesById,
+    ScreenShare, ShareProject, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotifyResultExt},
 };
@@ -113,6 +113,13 @@ pub fn init(cx: &mut App) {
                         .detach_and_log_err(cx)
                 });
             }
+        });
+        workspace.register_action(|_, action: &OpenChannelNotesById, window, cx| {
+            let channel_id = client::ChannelId(action.channel_id);
+            let workspace = cx.entity();
+            window.defer(cx, move |window, cx| {
+                ChannelView::open(channel_id, None, workspace, window, cx).detach_and_log_err(cx)
+            });
         });
         // TODO: make it possible to bind this one to a held key for push to talk?
         // how to make "toggle_on_modifiers_press" contextual?
@@ -422,16 +429,17 @@ impl CollabPanel {
             .ok()
             .flatten()
         {
-            Some(serialization_key) => cx
-                .background_spawn(async move { KEY_VALUE_STORE.read_kvp(&serialization_key) })
-                .await
-                .context("reading collaboration panel from key value store")
-                .log_err()
-                .flatten()
-                .map(|panel| serde_json::from_str::<SerializedCollabPanel>(&panel))
-                .transpose()
-                .log_err()
-                .flatten(),
+            Some(serialization_key) => {
+                let kvp = cx.update(|_, cx| KeyValueStore::global(cx))?;
+                kvp.read_kvp(&serialization_key)
+                    .context("reading collaboration panel from key value store")
+                    .log_err()
+                    .flatten()
+                    .map(|panel| serde_json::from_str::<SerializedCollabPanel>(&panel))
+                    .transpose()
+                    .log_err()
+                    .flatten()
+            }
             None => None,
         };
 
@@ -472,19 +480,19 @@ impl CollabPanel {
         };
         let width = self.width;
         let collapsed_channels = self.collapsed_channels.clone();
+        let kvp = KeyValueStore::global(cx);
         self.pending_serialization = cx.background_spawn(
             async move {
-                KEY_VALUE_STORE
-                    .write_kvp(
-                        serialization_key,
-                        serde_json::to_string(&SerializedCollabPanel {
-                            width,
-                            collapsed_channels: Some(
-                                collapsed_channels.iter().map(|cid| cid.0).collect(),
-                            ),
-                        })?,
-                    )
-                    .await?;
+                kvp.write_kvp(
+                    serialization_key,
+                    serde_json::to_string(&SerializedCollabPanel {
+                        width,
+                        collapsed_channels: Some(
+                            collapsed_channels.iter().map(|cid| cid.0).collect(),
+                        ),
+                    })?,
+                )
+                .await?;
                 anyhow::Ok(())
             }
             .log_err(),
@@ -2324,6 +2332,12 @@ impl CollabPanel {
 
     fn render_signed_out(&mut self, cx: &mut Context<Self>) -> Div {
         let collab_blurb = "Work with your team in realtime with collaborative editing, voice, shared notes and more.";
+        let is_signing_in = self.client.status().borrow().is_signing_in();
+        let button_label = if is_signing_in {
+            "Signing in…"
+        } else {
+            "Sign in"
+        };
 
         v_flex()
             .gap_6()
@@ -2333,12 +2347,11 @@ impl CollabPanel {
                 v_flex()
                     .gap_2()
                     .child(
-                        Button::new("sign_in", "Sign in")
-                            .icon_color(Color::Muted)
-                            .icon(IconName::Github)
-                            .icon_position(IconPosition::Start)
+                        Button::new("sign_in", button_label)
+                            .start_icon(Icon::new(IconName::Github).color(Color::Muted))
                             .style(ButtonStyle::Filled)
                             .full_width()
+                            .disabled(is_signing_in)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 let client = this.client.clone();
                                 let workspace = this.workspace.clone();
@@ -2583,9 +2596,9 @@ impl CollabPanel {
             Section::Channels => {
                 Some(
                     h_flex()
-                        .gap_1()
                         .child(
                             IconButton::new("filter-active-channels", IconName::ListFilter)
+                                .icon_size(IconSize::Small)
                                 .toggle_state(self.filter_active_channels)
                                 .when(!self.filter_active_channels, |button| {
                                     button.visible_on_hover("section-header")
@@ -3107,6 +3120,8 @@ fn render_participant_name_and_handle(user: &User) -> impl IntoElement {
 
 impl Render for CollabPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let status = *self.client.status().borrow();
+
         v_flex()
             .key_context(self.dispatch_context(window, cx))
             .on_action(cx.listener(CollabPanel::cancel))
@@ -3125,7 +3140,7 @@ impl Render for CollabPanel {
             .on_action(cx.listener(CollabPanel::move_channel_down))
             .track_focus(&self.focus_handle)
             .size_full()
-            .child(if !self.client.status().borrow().is_or_was_connected() {
+            .child(if !status.is_or_was_connected() || status.is_signing_in() {
                 self.render_signed_out(cx)
             } else {
                 self.render_signed_in(window, cx)

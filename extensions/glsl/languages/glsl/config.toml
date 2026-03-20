@@ -5,6 +5,8 @@ path_suffixes = [
     "vert", "frag", "tesc", "tese", "geom",
     # Compute shaders
     "comp",
+    # Mesh pipeline shaders
+    "task", "mesh",
     # Ray tracing pipeline shaders
     "rgen", "rint", "rahit", "rchit", "rmiss", "rcall",
     # Other

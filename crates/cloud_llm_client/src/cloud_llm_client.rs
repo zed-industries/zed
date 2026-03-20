@@ -142,6 +142,10 @@ pub struct PredictEditsResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AcceptEditPredictionBody {
     pub request_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub e2e_latency_ms: Option<u128>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -160,6 +164,10 @@ pub struct EditPredictionRejection {
     #[serde(default)]
     pub reason: EditPredictionRejectReason,
     pub was_shown: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub e2e_latency_ms: Option<u128>,
 }
 
 #[derive(Default, Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -302,6 +310,8 @@ pub struct LanguageModel {
     pub supports_tools: bool,
     pub supports_images: bool,
     pub supports_thinking: bool,
+    #[serde(default)]
+    pub supports_fast_mode: bool,
     pub supported_effort_levels: Vec<SupportedEffortLevel>,
     #[serde(default)]
     pub supports_streaming_tools: bool,

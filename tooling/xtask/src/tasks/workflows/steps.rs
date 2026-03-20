@@ -3,9 +3,14 @@ use serde_json::Value;
 
 use crate::tasks::workflows::{runners::Platform, vars, vars::StepOutput};
 
+pub(crate) fn use_clang(job: Job) -> Job {
+    job.add_env(Env::new("CC", "clang"))
+        .add_env(Env::new("CXX", "clang++"))
+}
+
 const SCCACHE_R2_BUCKET: &str = "sccache-zed";
 
-const BASH_SHELL: &str = "bash -euxo pipefail {0}";
+pub(crate) const BASH_SHELL: &str = "bash -euxo pipefail {0}";
 // https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell
 pub const PWSH_SHELL: &str = "pwsh";
 
@@ -14,18 +19,11 @@ pub(crate) struct Nextest(Step<Run>);
 pub(crate) fn cargo_nextest(platform: Platform) -> Nextest {
     Nextest(named::run(
         platform,
-        "cargo nextest run --workspace --no-fail-fast",
+        "cargo nextest run --workspace --no-fail-fast --no-tests=warn",
     ))
 }
 
 impl Nextest {
-    pub(crate) fn with_target(mut self, target: &str) -> Step<Run> {
-        if let Some(nextest_command) = self.0.value.run.as_mut() {
-            nextest_command.push_str(&format!(r#" --target "{target}""#));
-        }
-        self.into()
-    }
-
     #[allow(dead_code)]
     pub(crate) fn with_filter_expr(mut self, filter_expr: &str) -> Self {
         if let Some(nextest_command) = self.0.value.run.as_mut() {
@@ -126,22 +124,12 @@ impl From<CheckoutStep> for Step<Use> {
                 FetchDepth::Full => step.add_with(("fetch-depth", 0)),
                 FetchDepth::Custom(depth) => step.add_with(("fetch-depth", depth)),
             })
-            .map(|step| match value.token {
-                Some(token) => step.add_with(("token", token)),
-                None => step,
+            .when_some(value.path, |step, path| step.add_with(("path", path)))
+            .when_some(value.repository, |step, repository| {
+                step.add_with(("repository", repository))
             })
-            .map(|step| match value.path {
-                Some(path) => step.add_with(("path", path)),
-                None => step,
-            })
-            .map(|step| match value.repository {
-                Some(repository) => step.add_with(("repository", repository)),
-                None => step,
-            })
-            .map(|step| match value.ref_ {
-                Some(ref_) => step.add_with(("ref", ref_)),
-                None => step,
-            })
+            .when_some(value.ref_, |step, ref_| step.add_with(("ref", ref_)))
+            .when_some(value.token, |step, token| step.add_with(("token", token)))
     }
 }
 
@@ -274,18 +262,12 @@ pub fn setup_linux() -> Step<Run> {
     named::bash("./script/linux")
 }
 
-fn install_mold() -> Step<Run> {
-    named::bash("./script/install-mold")
-}
-
 fn download_wasi_sdk() -> Step<Run> {
     named::bash("./script/download-wasi-sdk")
 }
 
 pub(crate) fn install_linux_dependencies(job: Job) -> Job {
-    job.add_step(setup_linux())
-        .add_step(install_mold())
-        .add_step(download_wasi_sdk())
+    job.add_step(setup_linux()).add_step(download_wasi_sdk())
 }
 
 pub fn script(name: &str) -> Step<Run> {
@@ -498,9 +480,8 @@ pub mod named {
 }
 
 pub fn git_checkout(ref_name: &dyn std::fmt::Display) -> Step<Run> {
-    named::bash(&format!(
-        "git fetch origin {ref_name} && git checkout {ref_name}"
-    ))
+    named::bash(r#"git fetch origin "$REF_NAME" && git checkout "$REF_NAME""#)
+        .add_env(("REF_NAME", ref_name.to_string()))
 }
 
 pub fn authenticate_as_zippy() -> (Step<Use>, StepOutput) {

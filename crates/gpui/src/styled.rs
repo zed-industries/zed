@@ -1,5 +1,5 @@
 use crate::{
-    self as gpui, AbsoluteLength, AlignContent, AlignItems, BorderStyle, CursorStyle,
+    self as gpui, AbsoluteLength, AlignContent, AlignItems, AlignSelf, BorderStyle, CursorStyle,
     DefiniteLength, Display, Fill, FlexDirection, FlexWrap, Font, FontFeatures, FontStyle,
     FontWeight, GridPlacement, Hsla, JustifyContent, Length, SharedString, StrikethroughStyle,
     StyleRefinement, TextAlign, TextOverflow, TextStyleRefinement, UnderlineStyle, WhiteSpace, px,
@@ -278,6 +278,55 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Sets how this specific element is aligned along the container's cross axis.
+    /// [Docs](https://tailwindcss.com/docs/align-self#start)
+    fn self_start(mut self) -> Self {
+        self.style().align_self = Some(AlignSelf::Start);
+        self
+    }
+
+    /// Sets this element to align against the end of the container's cross axis.
+    /// [Docs](https://tailwindcss.com/docs/align-self#end)
+    fn self_end(mut self) -> Self {
+        self.style().align_self = Some(AlignSelf::End);
+        self
+    }
+
+    /// Sets this element to align against the start of the container's cross axis.
+    /// [Docs](https://tailwindcss.com/docs/align-self#start)
+    fn self_flex_start(mut self) -> Self {
+        self.style().align_self = Some(AlignSelf::FlexStart);
+        self
+    }
+
+    /// Sets this element to align against the end of the container's cross axis.
+    /// [Docs](https://tailwindcss.com/docs/align-self#end)
+    fn self_flex_end(mut self) -> Self {
+        self.style().align_self = Some(AlignSelf::FlexEnd);
+        self
+    }
+
+    /// Sets this element to align along the center of the container's cross axis.
+    /// [Docs](https://tailwindcss.com/docs/align-self#center)
+    fn self_center(mut self) -> Self {
+        self.style().align_self = Some(AlignSelf::Center);
+        self
+    }
+
+    /// Sets this element to align along the baseline of the container's cross axis.
+    /// [Docs](https://tailwindcss.com/docs/align-self#baseline)
+    fn self_baseline(mut self) -> Self {
+        self.style().align_self = Some(AlignSelf::Baseline);
+        self
+    }
+
+    /// Sets this element to stretch to fill the available space along the container's cross axis.
+    /// [Docs](https://tailwindcss.com/docs/align-self#stretch)
+    fn self_stretch(mut self) -> Self {
+        self.style().align_self = Some(AlignSelf::Stretch);
+        self
+    }
+
     /// Sets the element to justify flex items against the start of the container's main axis.
     /// [Docs](https://tailwindcss.com/docs/justify-content#start)
     fn justify_start(mut self) -> Self {
@@ -381,6 +430,20 @@ pub trait Styled: Sized {
     /// [Docs](https://tailwindcss.com/docs/align-content#stretch)
     fn content_stretch(mut self) -> Self {
         self.style().align_content = Some(AlignContent::Stretch);
+        self
+    }
+
+    /// Sets the aspect ratio of the element.
+    /// [Docs](https://tailwindcss.com/docs/aspect-ratio)
+    fn aspect_ratio(mut self, ratio: f32) -> Self {
+        self.style().aspect_ratio = Some(ratio);
+        self
+    }
+
+    /// Sets the aspect ratio of the element to 1/1 – equal width and height.
+    /// [Docs](https://tailwindcss.com/docs/aspect-ratio)
+    fn aspect_square(mut self) -> Self {
+        self.style().aspect_ratio = Some(1.0);
         self
     }
 

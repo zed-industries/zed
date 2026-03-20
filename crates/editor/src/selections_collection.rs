@@ -1197,7 +1197,14 @@ fn resolve_selections_point<'a>(
     selections.map(move |s| {
         let start = summaries.next().unwrap();
         let end = summaries.next().unwrap();
-        assert!(start <= end, "start: {:?}, end: {:?}", start, end);
+        assert!(
+            start <= end,
+            "anchors: start: {:?}, end: {:?}; resolved to: start: {:?}, end: {:?}",
+            s.start,
+            s.end,
+            start,
+            end
+        );
         Selection {
             id: s.id,
             start,

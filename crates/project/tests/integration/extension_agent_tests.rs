@@ -9,14 +9,14 @@ use std::{any::Any, path::PathBuf, sync::Arc};
 #[test]
 fn extension_agent_constructs_proper_display_names() {
     // Verify the display name format for extension-provided agents
-    let name1 = ExternalAgentServerName(SharedString::from("Extension: Agent"));
+    let name1 = AgentId(SharedString::from("Extension: Agent"));
     assert!(name1.0.contains(": "));
 
-    let name2 = ExternalAgentServerName(SharedString::from("MyExt: MyAgent"));
+    let name2 = AgentId(SharedString::from("MyExt: MyAgent"));
     assert_eq!(name2.0, "MyExt: MyAgent");
 
     // Non-extension agents shouldn't have the separator
-    let custom = ExternalAgentServerName(SharedString::from("custom"));
+    let custom = AgentId(SharedString::from("custom"));
     assert!(!custom.0.contains(": "));
 }
 
@@ -25,21 +25,15 @@ struct NoopExternalAgent;
 impl ExternalAgentServer for NoopExternalAgent {
     fn get_command(
         &mut self,
-        _root_dir: Option<&str>,
         _extra_env: HashMap<String, String>,
-        _status_tx: Option<watch::Sender<SharedString>>,
         _new_version_available_tx: Option<watch::Sender<Option<String>>>,
         _cx: &mut AsyncApp,
-    ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
-        Task::ready(Ok((
-            AgentServerCommand {
-                path: PathBuf::from("noop"),
-                args: Vec::new(),
-                env: None,
-            },
-            "".to_string(),
-            None,
-        )))
+    ) -> Task<Result<AgentServerCommand>> {
+        Task::ready(Ok(AgentServerCommand {
+            path: PathBuf::from("noop"),
+            args: Vec::new(),
+            env: None,
+        }))
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
@@ -53,7 +47,7 @@ fn sync_removes_only_extension_provided_agents() {
 
     // Seed with extension agents (contain ": ") and custom agents (don't contain ": ")
     store.external_agents.insert(
-        ExternalAgentServerName(SharedString::from("Ext1: Agent1")),
+        AgentId(SharedString::from("Ext1: Agent1")),
         ExternalAgentEntry::new(
             Box::new(NoopExternalAgent) as Box<dyn ExternalAgentServer>,
             ExternalAgentSource::Extension,
@@ -62,7 +56,7 @@ fn sync_removes_only_extension_provided_agents() {
         ),
     );
     store.external_agents.insert(
-        ExternalAgentServerName(SharedString::from("Ext2: Agent2")),
+        AgentId(SharedString::from("Ext2: Agent2")),
         ExternalAgentEntry::new(
             Box::new(NoopExternalAgent) as Box<dyn ExternalAgentServer>,
             ExternalAgentSource::Extension,
@@ -71,7 +65,7 @@ fn sync_removes_only_extension_provided_agents() {
         ),
     );
     store.external_agents.insert(
-        ExternalAgentServerName(SharedString::from("custom-agent")),
+        AgentId(SharedString::from("custom-agent")),
         ExternalAgentEntry::new(
             Box::new(NoopExternalAgent) as Box<dyn ExternalAgentServer>,
             ExternalAgentSource::Custom,
@@ -90,7 +84,7 @@ fn sync_removes_only_extension_provided_agents() {
     assert!(
         store
             .external_agents
-            .contains_key(&ExternalAgentServerName(SharedString::from("custom-agent")))
+            .contains_key(&AgentId(SharedString::from("custom-agent")))
     );
 }
 
@@ -123,7 +117,7 @@ fn archive_launcher_constructs_with_all_fields() {
     };
 
     // Verify display name construction
-    let expected_name = ExternalAgentServerName(SharedString::from("GitHub Agent"));
+    let expected_name = AgentId(SharedString::from("GitHub Agent"));
     assert_eq!(expected_name.0, "GitHub Agent");
 }
 
@@ -176,7 +170,7 @@ async fn archive_agent_uses_extension_and_agent_id_for_cache_key(cx: &mut TestAp
 fn sync_extension_agents_registers_archive_launcher() {
     use extension::AgentServerManifestEntry;
 
-    let expected_name = ExternalAgentServerName(SharedString::from("Release Agent"));
+    let expected_name = AgentId(SharedString::from("Release Agent"));
     assert_eq!(expected_name.0, "Release Agent");
 
     // Verify the manifest entry structure for archive-based installation
@@ -301,26 +295,6 @@ async fn test_commands_run_in_extraction_directory(cx: &mut TestAppContext) {
 
 #[test]
 fn test_tilde_expansion_in_settings() {
-    let settings = settings::BuiltinAgentServerSettings {
-        path: Some(PathBuf::from("~/bin/agent")),
-        args: Some(vec!["--flag".into()]),
-        env: None,
-        ignore_system_version: None,
-        default_mode: None,
-        default_model: None,
-        favorite_models: vec![],
-        default_config_options: Default::default(),
-        favorite_config_option_values: Default::default(),
-    };
-
-    let BuiltinAgentServerSettings { path, .. } = settings.into();
-
-    let path = path.unwrap();
-    assert!(
-        !path.to_string_lossy().starts_with("~"),
-        "Tilde should be expanded for builtin agent path"
-    );
-
     let settings = settings::CustomAgentServerSettings::Custom {
         path: PathBuf::from("~/custom/agent"),
         args: vec!["serve".into()],

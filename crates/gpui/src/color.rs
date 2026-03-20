@@ -23,7 +23,7 @@ pub fn rgba(hex: u32) -> Rgba {
 }
 
 /// Swap from RGBA with premultiplied alpha to BGRA
-pub(crate) fn swap_rgba_pa_to_bgra(color: &mut [u8]) {
+pub fn swap_rgba_pa_to_bgra(color: &mut [u8]) {
     color.swap(0, 2);
     if color[3] > 0 {
         let a = color[3] as f32 / 255.;
@@ -820,6 +820,15 @@ impl LinearColorStop {
 }
 
 impl Background {
+    /// Returns the solid color if this is a solid background, None otherwise.
+    pub fn as_solid(&self) -> Option<Hsla> {
+        if self.tag == BackgroundTag::Solid {
+            Some(self.solid)
+        } else {
+            None
+        }
+    }
+
     /// Use specified color space for color interpolation.
     ///
     /// <https://developer.mozilla.org/en-US/docs/Web/CSS/color-interpolation-method>

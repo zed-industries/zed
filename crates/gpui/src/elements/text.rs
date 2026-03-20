@@ -6,6 +6,7 @@ use crate::{
     WrappedLineLayout, register_tooltip_mouse_handlers, set_tooltip_on_window,
 };
 use anyhow::Context as _;
+use gpui_util::ResultExt;
 use itertools::Itertools;
 use smallvec::SmallVec;
 use std::{
@@ -16,7 +17,6 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
-use util::ResultExt;
 
 impl Element for &'static str {
     type RequestLayoutState = TextLayout;
@@ -246,7 +246,12 @@ impl StyledText {
     pub fn with_runs(mut self, runs: Vec<TextRun>) -> Self {
         let mut text = &**self.text;
         for run in &runs {
-            text = text.get(run.len..).expect("invalid text run");
+            text = text.get(run.len..).unwrap_or_else(|| {
+                #[cfg(debug_assertions)]
+                panic!("invalid text run. Text: '{text}', run: {run:?}");
+                #[cfg(not(debug_assertions))]
+                panic!("invalid text run");
+            });
         }
         assert!(text.is_empty(), "invalid text run");
         self.runs = Some(runs);

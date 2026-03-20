@@ -87,6 +87,18 @@ impl Borrow<str> for LanguageName {
     }
 }
 
+impl PartialEq<str> for LanguageName {
+    fn eq(&self, other: &str) -> bool {
+        self.0.as_ref() == other
+    }
+}
+
+impl PartialEq<&str> for LanguageName {
+    fn eq(&self, other: &&str) -> bool {
+        self.0.as_ref() == *other
+    }
+}
+
 impl std::fmt::Display for LanguageName {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "{}", self.0)

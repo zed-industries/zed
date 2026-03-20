@@ -425,7 +425,7 @@ impl Domain for TerminalDb {
     ];
 }
 
-db::static_connection!(TERMINAL_DB, TerminalDb, [WorkspaceDb]);
+db::static_connection!(TerminalDb, [WorkspaceDb]);
 
 impl TerminalDb {
     query! {

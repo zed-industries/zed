@@ -222,7 +222,7 @@ impl PickerDelegate for RulePickerDelegate {
         cx.notify();
     }
 
-    fn can_select(&mut self, ix: usize, _: &mut Window, _: &mut Context<Picker<Self>>) -> bool {
+    fn can_select(&self, ix: usize, _: &mut Window, _: &mut Context<Picker<Self>>) -> bool {
         match self.filtered_entries.get(ix) {
             Some(RulePickerEntry::Rule(_)) => true,
             Some(RulePickerEntry::Header(_)) | Some(RulePickerEntry::Separator) | None => false,
@@ -1106,6 +1106,7 @@ impl RulesLibrary {
                                     temperature: None,
                                     thinking_allowed: true,
                                     thinking_effort: None,
+                                    speed: None,
                                 },
                                 cx,
                             )
@@ -1158,10 +1159,11 @@ impl RulesLibrary {
                             Button::new("new-rule", "New Rule")
                                 .full_width()
                                 .style(ButtonStyle::Outlined)
-                                .icon(IconName::Plus)
-                                .icon_size(IconSize::Small)
-                                .icon_position(IconPosition::Start)
-                                .icon_color(Color::Muted)
+                                .start_icon(
+                                    Icon::new(IconName::Plus)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
                                 .on_click(|_, window, cx| {
                                     window.dispatch_action(Box::new(NewRule), cx);
                                 }),

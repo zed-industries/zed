@@ -8,7 +8,7 @@ use std::time::Duration;
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
 use context_server::{ContextServer, ContextServerCommand, ContextServerId};
-use futures::{FutureExt as _, future::join_all};
+use futures::{FutureExt as _, future::Either, future::join_all};
 use gpui::{App, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity, actions};
 use itertools::Itertools;
 use registry::ContextServerDescriptorRegistry;
@@ -141,6 +141,8 @@ impl ContextServerConfiguration {
         worktree_store: Entity<WorktreeStore>,
         cx: &AsyncApp,
     ) -> Option<Self> {
+        const EXTENSION_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
+
         match settings {
             ContextServerSettings::Stdio {
                 enabled: _,
@@ -155,15 +157,24 @@ impl ContextServerConfiguration {
                 let descriptor =
                     cx.update(|cx| registry.read(cx).context_server_descriptor(&id.0))?;
 
-                match descriptor.command(worktree_store, cx).await {
-                    Ok(command) => Some(ContextServerConfiguration::Extension {
+                let command_future = descriptor.command(worktree_store, cx);
+                let timeout_future = cx.background_executor().timer(EXTENSION_COMMAND_TIMEOUT);
+
+                match futures::future::select(command_future, timeout_future).await {
+                    Either::Left((Ok(command), _)) => Some(ContextServerConfiguration::Extension {
                         command,
                         settings,
                         remote,
                     }),
-                    Err(e) => {
+                    Either::Left((Err(e), _)) => {
                         log::error!(
                             "Failed to create context server configuration from settings: {e:#}"
+                        );
+                        None
+                    }
+                    Either::Right(_) => {
+                        log::error!(
+                            "Timed out resolving command for extension context server {id}"
                         );
                         None
                     }
@@ -211,6 +222,7 @@ pub struct ContextServerStore {
     update_servers_task: Option<Task<Result<()>>>,
     context_server_factory: Option<ContextServerFactory>,
     needs_server_update: bool,
+    ai_disabled: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -366,23 +378,42 @@ impl ContextServerStore {
         cx: &mut Context<Self>,
     ) -> Self {
         let mut subscriptions = vec![cx.observe_global::<SettingsStore>(move |this, cx| {
+            let ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
+            let ai_was_disabled = this.ai_disabled;
+            this.ai_disabled = ai_disabled;
+
             let settings =
                 &Self::resolve_project_settings(&this.worktree_store, cx).context_servers;
-            if &this.context_server_settings == settings {
+            let settings_changed = &this.context_server_settings != settings;
+
+            if settings_changed {
+                this.context_server_settings = settings.clone();
+            }
+
+            // When AI is disabled, stop all running servers
+            if ai_disabled {
+                let server_ids: Vec<_> = this.servers.keys().cloned().collect();
+                for id in server_ids {
+                    this.stop_server(&id, cx).log_err();
+                }
                 return;
             }
-            this.context_server_settings = settings.clone();
-            if maintain_server_loop {
+
+            // Trigger updates if AI was re-enabled or settings changed
+            if maintain_server_loop && (ai_was_disabled || settings_changed) {
                 this.available_context_servers_changed(cx);
             }
         })];
 
         if maintain_server_loop {
             subscriptions.push(cx.observe(&registry, |this, _registry, cx| {
-                this.available_context_servers_changed(cx);
+                if !DisableAiSettings::get_global(cx).disable_ai {
+                    this.available_context_servers_changed(cx);
+                }
             }));
         }
 
+        let ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
         let mut this = Self {
             state,
             _subscriptions: subscriptions,
@@ -393,12 +424,13 @@ impl ContextServerStore {
             project: weak_project,
             registry,
             needs_server_update: false,
+            ai_disabled,
             servers: HashMap::default(),
             server_ids: Default::default(),
             update_servers_task: None,
             context_server_factory,
         };
-        if maintain_server_loop {
+        if maintain_server_loop && !DisableAiSettings::get_global(cx).disable_ai {
             this.available_context_servers_changed(cx);
         }
         this
@@ -855,6 +887,7 @@ impl ContextServerStore {
 
                 this.update(cx, |this, cx| {
                     this.populate_server_ids(cx);
+                    cx.notify();
                     this.update_servers_task.take();
                     if this.needs_server_update {
                         this.available_context_servers_changed(cx);
@@ -959,11 +992,23 @@ impl ContextServerStore {
         })??;
 
         for (id, config) in servers_to_start {
-            let (server, config) =
-                Self::create_context_server(this.clone(), id, config, cx).await?;
-            this.update(cx, |this, cx| {
-                this.run_server(server, config, cx);
-            })?;
+            match Self::create_context_server(this.clone(), id.clone(), config, cx).await {
+                Ok((server, config)) => {
+                    this.update(cx, |this, cx| {
+                        this.run_server(server, config, cx);
+                    })?;
+                }
+                Err(err) => {
+                    log::error!("{id} context server failed to create: {err:#}");
+                    this.update(cx, |_this, cx| {
+                        cx.emit(ServerStatusChangedEvent {
+                            server_id: id,
+                            status: ContextServerStatus::Error(err.to_string().into()),
+                        });
+                        cx.notify();
+                    })?;
+                }
+            }
         }
 
         Ok(())

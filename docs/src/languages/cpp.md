@@ -180,7 +180,7 @@ Allows switching between corresponding C++ source files (e.g., `.cpp`) and heade
 by running the command {#action editor::SwitchSourceHeader} from the command palette or by setting
 a keybinding for the `editor::SwitchSourceHeader` action.
 
-```json [settings]
+```json [keymap]
 {
   "context": "Editor",
   "bindings": {

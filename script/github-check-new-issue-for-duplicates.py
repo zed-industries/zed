@@ -89,7 +89,12 @@ def post_comment(issue_number: int, body):
 def build_duplicate_comment(matches):
     """Build the comment body for potential duplicates."""
     match_list = "\n".join(f"- #{m['number']}" for m in matches)
-    explanations = "\n\n".join(f"**#{m['number']}:** {m['explanation']}" for m in matches)
+    explanations = "\n\n".join(
+        f"**#{m['number']}:** {m['explanation']}\n\n**Shared root cause:** {m['shared_root_cause']}"
+        if m.get('shared_root_cause')
+        else f"**#{m['number']}:** {m['explanation']}"
+        for m in matches
+    )
 
     return f"""This issue appears to be a duplicate of:
 
@@ -307,7 +312,7 @@ def enrich_magnets(magnets):
     for magnet in magnets:
         data = github_api_get(f"/repos/{REPO_OWNER}/{REPO_NAME}/issues/{magnet['number']}")
         magnet["title"] = data["title"]
-        magnet["body_preview"] = (data.get("body") or "")[:500]
+        magnet["body_preview"] = (data.get("body") or "")[:1000]
 
 
 def areas_match(detected, magnet_area):
@@ -381,7 +386,7 @@ def search_for_similar_issues(issue, detected_areas, max_searches=6):
                         "title": item["title"],
                         "state": item.get("state", ""),
                         "created_at": item.get("created_at", ""),
-                        "body_preview": body[:500],
+                        "body_preview": body[:1000],
                         "source": search_type,
                     }
         except requests.RequestException as e:
@@ -414,12 +419,30 @@ def analyze_duplicates(anthropic_key, issue, magnets, search_results):
 
     system_prompt = """You analyze GitHub issues to identify potential duplicates.
 
-Given a new issue and a list of existing issues, identify which existing issues might be duplicates.
+Given a new issue and a list of existing issues, identify which existing issues are duplicates — meaning
+they are caused by the SAME BUG in the code, not just similar symptoms.
+
+CRITICAL DISTINCTION — shared symptoms vs shared root cause:
+- "models missing", "can't sign in", "editor hangs", "venv not detected" are SYMPTOMS that many
+  different bugs can produce. Two reports of the same symptom are NOT duplicates unless you can
+  identify a specific shared root cause.
+- A duplicate means: if a developer fixed the existing issue, the new issue would also be fixed.
+- If the issues just happen to be in the same feature area, or describe similar-sounding problems
+  with different specifics (different error messages, different triggers, different platforms, different
+  configurations), they are NOT duplicates.
 
 For each potential duplicate, assess confidence:
-- "high": Very likely the same issue (same root cause, same symptoms)
-- "medium": Possibly related (likely to be the same root cause)
-- Do NOT include tangentially related issues (same general area but probably different issues)
+- "high": Almost certainly the same bug. You can name a specific shared root cause, and the
+  reproduction steps / error messages / triggers are consistent.
+- "medium": Likely the same bug based on specific technical details, but some uncertainty remains.
+- Do NOT include issues that merely share symptoms, affect the same feature area, or sound similar
+  at a surface level.
+
+Examples of things that are NOT duplicates:
+- Two issues about "Copilot models not showing" — one caused by a Zed update breaking the model list,
+  the other caused by the user's plan not including those models.
+- Two issues about "Zed hangs" — one triggered by network drives, the other by large projects.
+- Two issues about "can't sign in" — one caused by a missing system package, the other by a server-side error.
 
 Output only valid JSON (no markdown code blocks) with this structure:
 {
@@ -427,13 +450,18 @@ Output only valid JSON (no markdown code blocks) with this structure:
     {
       "number": 12345,
       "confidence": "high|medium",
-      "explanation": "Brief explanation of why this might be a duplicate"
+      "shared_root_cause": "The specific bug/root cause shared by both issues",
+      "explanation": "Brief explanation with concrete evidence from both issues"
     }
   ],
   "summary": "One sentence summary of findings"
 }
 
-Only include matches with "high" or "medium" confidence. Return empty matches array if none found."""
+When in doubt, return an empty matches array. A false positive (flagging a non-duplicate) is much
+worse than a false negative (missing a real duplicate), because it wastes the time of both the
+issue author and the maintainers.
+
+Return empty matches array if none found or if you can only identify shared symptoms."""
 
     user_content = f"""## New Issue #{issue['number']}
 **Title:** {issue['title']}
