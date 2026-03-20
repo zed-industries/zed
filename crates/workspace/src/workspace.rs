@@ -165,6 +165,7 @@ use crate::{
 };
 
 pub const SERIALIZATION_THROTTLE_TIME: Duration = Duration::from_millis(200);
+#[cfg(any(test, feature = "test-support"))]
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 
 static ZED_WINDOW_SIZE: LazyLock<Option<Size<Pixels>>> = LazyLock::new(|| {
@@ -12432,6 +12433,50 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn toggle_left_dock_closes_project_panel_overlay_and_restores_focus(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+        enable_overlay_dock_panel_mode(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let item = cx.new(TestItem::new);
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+
+            let panel = cx.new(|cx| TestProjectPanel::new(DockPosition::Left, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let pane_focus = workspace.active_pane().read(cx).focus_handle(cx);
+            window.focus(&pane_focus, cx);
+            workspace.toggle_panel_visibility::<TestProjectPanel>(window, cx);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(workspace.overlay_docks_visible(cx));
+            assert!(panel.read(cx).focus_handle(cx).contains_focused(window, cx));
+            workspace.toggle_dock(DockPosition::Left, window, cx);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(!workspace.overlay_docks_visible(cx));
+            assert!(!workspace.left_dock().read(cx).is_open());
+
+            let pane_focus = workspace.active_pane().read(cx).focus_handle(cx);
+            assert!(pane_focus.contains_focused(window, cx));
+        });
+    }
+
+    #[gpui::test]
     async fn dismiss_project_panel_overlay_closes_and_restores_focus(
         cx: &mut gpui::TestAppContext,
     ) {
@@ -12471,6 +12516,56 @@ mod tests {
         workspace.update_in(cx, |workspace, window, cx| {
             assert!(!workspace.overlay_docks_visible(cx));
             assert!(!workspace.left_dock().read(cx).is_open());
+
+            let pane_focus = workspace.active_pane().read(cx).focus_handle(cx);
+            assert!(pane_focus.contains_focused(window, cx));
+        });
+    }
+
+    #[gpui::test]
+    async fn dismiss_overlay_docks_closes_multiple_open_overlays(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+        enable_overlay_dock_panel_mode(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let item = cx.new(TestItem::new);
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+
+            let project_panel = cx.new(|cx| TestProjectPanel::new(DockPosition::Left, cx));
+            workspace.add_panel(project_panel, window, cx);
+
+            let bottom_panel = cx.new(|cx| TestPanel::new(DockPosition::Bottom, 50, cx));
+            workspace.add_panel(bottom_panel, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let pane_focus = workspace.active_pane().read(cx).focus_handle(cx);
+            window.focus(&pane_focus, cx);
+            workspace.toggle_panel_visibility::<TestProjectPanel>(window, cx);
+            workspace.toggle_dock(DockPosition::Bottom, window, cx);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(workspace.overlay_docks_visible(cx));
+            assert!(workspace.left_dock().read(cx).is_open());
+            assert!(workspace.bottom_dock().read(cx).is_open());
+
+            workspace.dismiss_overlay_docks(window, cx);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(!workspace.overlay_docks_visible(cx));
+            assert!(!workspace.left_dock().read(cx).is_open());
+            assert!(!workspace.bottom_dock().read(cx).is_open());
 
             let pane_focus = workspace.active_pane().read(cx).focus_handle(cx);
             assert!(pane_focus.contains_focused(window, cx));
