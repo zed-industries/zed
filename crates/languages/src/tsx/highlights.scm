@@ -268,7 +268,6 @@
   "abstract"
   "as"
   "async"
-  "await"
   "debugger"
   "declare"
   "default"
@@ -333,6 +332,7 @@
   "try"
   "while"
   "yield"
+  "await"
 ] @keyword.control
 
 (switch_default
