@@ -2629,6 +2629,16 @@ impl ConversationView {
             cx.notify();
         }
     }
+
+    pub fn set_updated_at_for_tests(&mut self, updated_at: Instant, cx: &mut Context<Self>) {
+        let Some(connected) = self.as_connected_mut() else {
+            return;
+        };
+
+        connected.conversation.update(cx, |conversation, _cx| {
+            conversation.updated_at = Some(updated_at);
+        });
+    }
 }
 
 impl Render for ConversationView {
