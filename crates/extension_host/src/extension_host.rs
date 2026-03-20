@@ -57,6 +57,8 @@ use std::{
 };
 use task::TaskTemplates;
 use url::Url;
+use util::paths::PathStyle;
+use util::rel_path::RelPath;
 use util::{ResultExt, paths::RemotePathBuf};
 use wasm_host::{
     WasmExtension, WasmHost,
@@ -1248,13 +1250,16 @@ impl ExtensionStore {
             }));
             themes_to_add.extend(extension.manifest.themes.iter().map(|theme_path| {
                 let mut path = self.installed_dir.clone();
-                path.extend([Path::new(extension_id.as_ref()), theme_path.as_path()]);
+                path.extend([Path::new(extension_id.as_ref()), theme_path.as_std_path()]);
                 path
             }));
             icon_themes_to_add.extend(extension.manifest.icon_themes.iter().map(
                 |icon_theme_path| {
                     let mut path = self.installed_dir.clone();
-                    path.extend([Path::new(extension_id.as_ref()), icon_theme_path.as_path()]);
+                    path.extend([
+                        Path::new(extension_id.as_ref()),
+                        icon_theme_path.as_std_path(),
+                    ]);
 
                     let mut icons_root_path = self.installed_dir.clone();
                     icons_root_path.extend([Path::new(extension_id.as_ref())]);
@@ -1454,7 +1459,7 @@ impl ExtensionStore {
                         let mut path = root_dir.clone();
                         path.push(Path::new(manifest.id.as_ref()));
                         if let Some(schema_path) = &meta.schema_path {
-                            path.push(schema_path);
+                            path.push(schema_path.as_rel_path().as_std_path());
                         } else {
                             path.push("debug_adapter_schemas");
                             path.push(Path::new(debug_adapter.as_ref()).with_extension("json"));
@@ -1579,7 +1584,7 @@ impl ExtensionStore {
                 })?;
                 let config = ::toml::from_str::<LanguageConfig>(&config)?;
 
-                let relative_path = relative_path.to_path_buf();
+                let relative_path = RelPath::new(relative_path, PathStyle::local())?.into_owned();
                 if !extension_manifest.languages.contains(&relative_path) {
                     extension_manifest.languages.push(relative_path.clone());
                 }
@@ -1588,7 +1593,7 @@ impl ExtensionStore {
                     config.name.clone(),
                     ExtensionIndexLanguageEntry {
                         extension: extension_id.clone(),
-                        path: relative_path,
+                        path: relative_path.as_std_path().to_path_buf(),
                         matcher: config.matcher,
                         hidden: config.hidden,
                         grammar: config.grammar,
@@ -1612,7 +1617,7 @@ impl ExtensionStore {
                     continue;
                 };
 
-                let relative_path = relative_path.to_path_buf();
+                let relative_path = RelPath::new(relative_path, PathStyle::local())?.into_owned();
                 if !extension_manifest.themes.contains(&relative_path) {
                     extension_manifest.themes.push(relative_path.clone());
                 }
@@ -1622,7 +1627,7 @@ impl ExtensionStore {
                         theme_name.into(),
                         ExtensionIndexThemeEntry {
                             extension: extension_id.clone(),
-                            path: relative_path.clone(),
+                            path: relative_path.as_std_path().to_path_buf().clone(),
                         },
                     );
                 }
@@ -1644,7 +1649,7 @@ impl ExtensionStore {
                     continue;
                 };
 
-                let relative_path = relative_path.to_path_buf();
+                let relative_path = RelPath::new(relative_path, PathStyle::local())?.into_owned();
                 if !extension_manifest.icon_themes.contains(&relative_path) {
                     extension_manifest.icon_themes.push(relative_path.clone());
                 }
@@ -1654,7 +1659,7 @@ impl ExtensionStore {
                         icon_theme_name.into(),
                         ExtensionIndexIconThemeEntry {
                             extension: extension_id.clone(),
-                            path: relative_path.clone(),
+                            path: relative_path.as_std_path().to_path_buf().clone(),
                         },
                     );
                 }
@@ -1725,14 +1730,15 @@ impl ExtensionStore {
             }
 
             for language_path in loaded_extension.manifest.languages.iter() {
+                let language_path = language_path.as_std_path().to_path_buf();
                 if fs
-                    .is_file(&src_dir.join(language_path).join(CONFIG_TOML))
+                    .is_file(&src_dir.join(&language_path).join(CONFIG_TOML))
                     .await
                 {
-                    fs.create_dir(&tmp_dir.join(language_path)).await?;
+                    fs.create_dir(&tmp_dir.join(&language_path)).await?;
                     fs.copy_file(
-                        &src_dir.join(language_path).join(CONFIG_TOML),
-                        &tmp_dir.join(language_path).join(CONFIG_TOML),
+                        &src_dir.join(&language_path).join(CONFIG_TOML),
+                        &tmp_dir.join(&language_path).join(CONFIG_TOML),
                         fs::CopyOptions::default(),
                     )
                     .await?
@@ -1741,14 +1747,15 @@ impl ExtensionStore {
 
             for (adapter_name, meta) in loaded_extension.manifest.debug_adapters.iter() {
                 let schema_path = &extension::build_debug_adapter_schema_path(adapter_name, meta);
+                let schema_path = schema_path.as_std_path().to_path_buf();
 
-                if fs.is_file(&src_dir.join(schema_path)).await {
-                    if let Some(parent) = schema_path.parent() {
+                if fs.is_file(&src_dir.join(&schema_path)).await {
+                    if let Some(parent) = &schema_path.parent() {
                         fs.create_dir(&tmp_dir.join(parent)).await?
                     }
                     fs.copy_file(
-                        &src_dir.join(schema_path),
-                        &tmp_dir.join(schema_path),
+                        &src_dir.join(&schema_path),
+                        &tmp_dir.join(&schema_path),
                         fs::CopyOptions::default(),
                     )
                     .await?

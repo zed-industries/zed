@@ -11,6 +11,8 @@ use language::LanguageName;
 use lsp::LanguageServerName;
 use semver::Version;
 use serde::{Deserialize, Serialize};
+use util::paths::PathStyle;
+use util::rel_path::{RelPath, RelPathBuf};
 
 use crate::ExtensionCapability;
 
@@ -28,11 +30,11 @@ pub struct OldExtensionManifest {
     pub authors: Vec<String>,
 
     #[serde(default)]
-    pub themes: BTreeMap<Arc<str>, PathBuf>,
+    pub themes: BTreeMap<Arc<str>, RelPathBuf>,
     #[serde(default)]
-    pub languages: BTreeMap<Arc<str>, PathBuf>,
+    pub languages: BTreeMap<Arc<str>, RelPathBuf>,
     #[serde(default)]
-    pub grammars: BTreeMap<Arc<str>, PathBuf>,
+    pub grammars: BTreeMap<Arc<str>, RelPathBuf>,
 }
 
 /// The schema version of the [`ExtensionManifest`].
@@ -94,11 +96,11 @@ pub struct ExtensionManifest {
     pub lib: LibManifestEntry,
 
     #[serde(default)]
-    pub themes: Vec<PathBuf>,
+    pub themes: Vec<RelPathBuf>,
     #[serde(default)]
-    pub icon_themes: Vec<PathBuf>,
+    pub icon_themes: Vec<RelPathBuf>,
     #[serde(default)]
-    pub languages: Vec<PathBuf>,
+    pub languages: Vec<RelPathBuf>,
     #[serde(default)]
     pub grammars: BTreeMap<Arc<str>, GrammarManifestEntry>,
     #[serde(default)]
@@ -195,10 +197,16 @@ impl ExtensionManifest {
 pub fn build_debug_adapter_schema_path(
     adapter_name: &Arc<str>,
     meta: &DebugAdapterManifestEntry,
-) -> PathBuf {
+) -> RelPathBuf {
     meta.schema_path.clone().unwrap_or_else(|| {
-        Path::new("debug_adapter_schemas")
-            .join(Path::new(adapter_name.as_ref()).with_extension("json"))
+        RelPath::new(
+            Path::new("debug_adapter_schemas")
+                .join(Path::new(adapter_name.as_ref()).with_extension("json"))
+                .as_path(),
+            PathStyle::Posix,
+        )
+        .expect("debug adapter schema path should be a valid relative path")
+        .into_owned()
     })
 }
 
@@ -350,7 +358,7 @@ pub struct SlashCommandManifestEntry {
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct DebugAdapterManifestEntry {
-    pub schema_path: Option<PathBuf>,
+    pub schema_path: Option<RelPathBuf>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -412,14 +420,14 @@ fn manifest_from_old_manifest(
         lib: Default::default(),
         themes: {
             let mut themes = manifest_json.themes.into_values().collect::<Vec<_>>();
-            themes.sort();
+            themes.sort_by(|left, right| left.as_rel_path().cmp(right.as_rel_path()));
             themes.dedup();
             themes
         },
         icon_themes: Vec::new(),
         languages: {
             let mut languages = manifest_json.languages.into_values().collect::<Vec<_>>();
-            languages.sort();
+            languages.sort_by(|left, right| left.as_rel_path().cmp(right.as_rel_path()));
             languages.dedup();
             languages
         },
@@ -474,15 +482,21 @@ mod tests {
         }
     }
 
+    fn rel_path_buf(path: impl AsRef<Path>) -> RelPathBuf {
+        RelPath::new(path.as_ref(), PathStyle::Posix)
+            .expect("test debug adapter schema path should be valid relative path")
+            .into_owned()
+    }
+
     #[test]
     fn test_build_adapter_schema_path_with_schema_path() {
         let adapter_name = Arc::from("my_adapter");
         let entry = DebugAdapterManifestEntry {
-            schema_path: Some(PathBuf::from("foo/bar")),
+            schema_path: Some(rel_path_buf("foo/bar")),
         };
 
         let path = build_debug_adapter_schema_path(&adapter_name, &entry);
-        assert_eq!(path, PathBuf::from("foo/bar"));
+        assert_eq!(path, rel_path_buf("foo/bar"));
     }
 
     #[test]
@@ -493,7 +507,7 @@ mod tests {
         let path = build_debug_adapter_schema_path(&adapter_name, &entry);
         assert_eq!(
             path,
-            PathBuf::from("debug_adapter_schemas").join("my_adapter.json")
+            rel_path_buf(Path::new("debug_adapter_schemas").join("my_adapter.json"))
         );
     }
 
