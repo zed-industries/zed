@@ -401,9 +401,8 @@ pub fn init(cx: &mut App) {
             .register_action(|_, OpenSettingsAt { path }: &OpenSettingsAt, window, cx| {
                 let window_handle = window
                     .window_handle()
-                    .downcast::<MultiWorkspace>()
-                    .expect("Workspaces are root Windows");
-                open_settings_editor(Some(&path), None, Some(window_handle), cx);
+                    .downcast::<MultiWorkspace>();
+                open_settings_editor(Some(&path), None, window_handle, cx);
             })
             .register_action(|_, _: &OpenSettings, window, cx| {
                 let window_handle = window
