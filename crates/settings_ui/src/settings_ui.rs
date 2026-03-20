@@ -2184,9 +2184,9 @@ impl SettingsWindow {
 
         ui_files.reverse();
 
-        let mut missing_worktrees = Vec::new();
-
         if self.original_window.is_some() {
+            let mut missing_worktrees = Vec::new();
+
             for worktree in all_projects(self.original_window.as_ref(), cx)
                 .flat_map(|project| project.read(cx).visible_worktrees(cx))
                 .filter(|tree| !self.worktree_root_dirs.contains_key(&tree.read(cx).id()))
