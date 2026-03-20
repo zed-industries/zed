@@ -144,9 +144,18 @@ if echo "$E2E_AGENTS" | grep -q "claude"; then
         echo "[error] ANTHROPIC_API_KEY is required when testing claude agent"
         exit 1
     fi
+    # Use local claude-agent-acp build if mounted, otherwise let Zed auto-install from npm
+    CLAUDE_PATH_JSON=""
+    if [ -f "/opt/claude-agent-acp/dist/index.js" ]; then
+        CLAUDE_PATH_JSON="\"path\": \"node\", \"args\": [\"/opt/claude-agent-acp/dist/index.js\"],"
+        echo "[setup] Using LOCAL claude-agent-acp from /opt/claude-agent-acp"
+    else
+        echo "[setup] Using npm-installed claude-agent-acp (auto-install)"
+    fi
     AGENT_SERVERS_JSON=$(cat << AGENTEOF
   "agent_servers": {
     "claude": {
+      ${CLAUDE_PATH_JSON}
       "env": {
         "ANTHROPIC_API_KEY": "${CLAUDE_KEY}"
       }

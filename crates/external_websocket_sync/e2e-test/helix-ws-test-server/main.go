@@ -384,17 +384,7 @@ func (d *testDriver) advanceAfterCompletion(completedPhase int) {
 		d.mu.Unlock()
 		d.runPhase6()
 	case 7:
-		// Phases 8-9 test mid-stream interrupts and rapid cancel. These rely on
-		// agent-specific cancel/interrupt behavior that may not work identically
-		// across all ACP agents. Skip for non-native agents for now.
 		d.mu.Lock()
-		agent := d.round.agentName
-		if agent != "zed-agent" {
-			d.mu.Unlock()
-			log.Printf("[%s] Skipping phases 8-9 (interrupt tests) for non-native agent", agent)
-			go d.advanceToNextRound()
-			return
-		}
 		d.phase = 8
 		d.mu.Unlock()
 		d.runPhase8()
@@ -715,9 +705,8 @@ func (d *testDriver) validateRound() roundResult {
 		errors = append(errors, "Phase 7: No message_completed for "+d.round.reqID("phase7"))
 	}
 
-	// Phase 8-9: mid-stream interrupt and rapid cancel (zed-agent only for now)
-	// These phases test interrupt/cancel behavior that may work differently across ACP agents.
-	if agent == "zed-agent" {
+	// Phase 8-9: mid-stream interrupt and rapid cancel
+	{
 		// Phase 8: mid-stream interrupt
 		if d.round.phase8ThreadID == "" {
 			errors = append(errors, "Phase 8: No thread ID captured (phase 8 may not have run)")
@@ -775,19 +764,12 @@ func (d *testDriver) validateRound() roundResult {
 				log.Printf("[%s] Phase 9: Received %d completions -- thread recovered from rapid cancel (correct)", agent, d.round.phase9Completions)
 			}
 		}
-	} else {
-		log.Printf("[%s] Phases 8-9: Skipped (interrupt tests only run for zed-agent)", agent)
 	}
 
 	// Too many threads (follow-ups should not create new threads)
-	// zed-agent: Phases 1, 3, 8 each create one thread = 3 total.
-	// Other agents: Phases 1, 3 create threads = 2 total (phases 8-9 skipped).
-	expectedMaxThreads := 3
-	if agent != "zed-agent" {
-		expectedMaxThreads = 2
-	}
-	if len(threadCreatedEvents) > expectedMaxThreads {
-		errors = append(errors, fmt.Sprintf("Too many thread_created events (%d, expected %d)", len(threadCreatedEvents), expectedMaxThreads))
+	// Phases 1, 3, 8 each create one thread = 3 total.
+	if len(threadCreatedEvents) > 3 {
+		errors = append(errors, fmt.Sprintf("Too many thread_created events (%d, expected 3)", len(threadCreatedEvents)))
 	}
 
 	// --- MCP TOOLS WAIT VALIDATION (first round only) ---
@@ -865,12 +847,8 @@ func (d *testDriver) validateRound() roundResult {
 		log.Printf("[%s] Phase 5: Zed -> Helix user message sync - PASSED", agent)
 		log.Printf("[%s] Phase 6: Query UI state - PASSED", agent)
 		log.Printf("[%s] Phase 7: Open thread + follow-up - PASSED", agent)
-		if agent == "zed-agent" {
-			log.Printf("[%s] Phase 8: Mid-stream interrupt - PASSED", agent)
-			log.Printf("[%s] Phase 9: Rapid 3-turn cancel - PASSED", agent)
-		} else {
-			log.Printf("[%s] Phases 8-9: SKIPPED (interrupt tests for zed-agent only)", agent)
-		}
+		log.Printf("[%s] Phase 8: Mid-stream interrupt - PASSED", agent)
+		log.Printf("[%s] Phase 9: Rapid 3-turn cancel - PASSED", agent)
 	}
 
 	totalCompletions := 0
@@ -900,15 +878,8 @@ func (d *testDriver) validateStore() bool {
 	log.Printf("[store] Sessions in store: %d", len(sessions))
 	log.Printf("[store] Interactions in store: %d", len(interactions))
 
-	// zed-agent creates 3 threads (phases 1,3,8), other agents create 2 (phases 1,3).
-	expectedSessions := 0
-	for _, a := range d.agentRounds {
-		if a == "zed-agent" {
-			expectedSessions += 3
-		} else {
-			expectedSessions += 2
-		}
-	}
+	// Each round creates 3 threads (phases 1, 3, 8) = 3 sessions per round.
+	expectedSessions := 3 * len(d.agentRounds)
 	if len(sessions) < expectedSessions {
 		errors = append(errors, fmt.Sprintf("Expected at least %d sessions (%d rounds * 3 threads), got %d",
 			expectedSessions, len(d.agentRounds), len(sessions)))

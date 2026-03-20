@@ -71,10 +71,20 @@ mkdir -p "$SCREENSHOTS_DIR"
 # Run E2E test
 E2E_AGENTS="${E2E_AGENTS:-zed-agent}"
 echo "=== Running E2E test (agents: $E2E_AGENTS) ==="
+
+# Mount local claude-agent-acp if available (for testing local changes)
+CLAUDE_ACP_MOUNT=""
+CLAUDE_ACP_DIR="$ZED_DIR/../claude-agent-acp"
+if [ -d "$CLAUDE_ACP_DIR/dist" ] && echo "$E2E_AGENTS" | grep -q "claude"; then
+    CLAUDE_ACP_MOUNT="-v $(cd "$CLAUDE_ACP_DIR" && pwd):/opt/claude-agent-acp"
+    echo "[setup] Mounting local claude-agent-acp from $CLAUDE_ACP_DIR"
+fi
+
 docker run --rm \
     -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
     -e E2E_AGENTS="$E2E_AGENTS" \
     -v "$SCREENSHOTS_DIR:/test/screenshots" \
+    $CLAUDE_ACP_MOUNT \
     zed-ws-e2e
 
 # Report screenshots
