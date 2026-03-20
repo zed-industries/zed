@@ -10783,6 +10783,7 @@ impl LspStore {
             }
         });
 
+        let mut updated_diagnostics_paths = HashMap::default();
         for (worktree_id, summaries) in self.diagnostic_summaries.iter_mut() {
             summaries.retain(|path, summaries_by_server_id| {
                 if summaries_by_server_id.remove(&server_id).is_some() {
@@ -10800,12 +10801,25 @@ impl LspStore {
                                 more_summaries: Vec::new(),
                             })
                             .log_err();
+                    } else {
+                        let project_path = ProjectPath {
+                            worktree_id: *worktree_id,
+                            path: path.clone(),
+                        };
+                        updated_diagnostics_paths
+                            .entry(server_id)
+                            .or_insert_with(Vec::new)
+                            .push(project_path);
                     }
                     !summaries_by_server_id.is_empty()
                 } else {
                     true
                 }
             });
+        }
+
+        for (server_id, paths) in updated_diagnostics_paths {
+            cx.emit(LspStoreEvent::DiagnosticsUpdated { server_id, paths });
         }
 
         let local = self.as_local_mut().unwrap();
