@@ -517,11 +517,7 @@ impl AgentConfiguration {
         }
     }
 
-    fn render_context_servers_section(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn render_context_servers_section(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let context_server_ids = self.context_server_store.read(cx).server_ids();
 
         let add_server_popover = PopoverMenu::new("add-server-popover")
@@ -1355,7 +1351,7 @@ impl Render for AgentConfiguration {
                             .min_w_0()
                             .overflow_y_scroll()
                             .child(self.render_agent_servers_section(cx))
-                            .child(self.render_context_servers_section(window, cx))
+                            .child(self.render_context_servers_section(cx))
                             .child(self.render_provider_configuration_section(cx)),
                     )
                     .vertical_scrollbar_for(&self.scroll_handle, window, cx),
