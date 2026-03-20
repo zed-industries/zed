@@ -13,7 +13,9 @@ use gpui::{
     SharedUri, Subscription, Task, WeakEntity, Window, point,
 };
 use language::LanguageRegistry;
-use markdown::{CodeBlockRenderer, Markdown, MarkdownElement, MarkdownFont, MarkdownStyle};
+use markdown::{
+    CodeBlockRenderer, Markdown, MarkdownElement, MarkdownFont, MarkdownOptions, MarkdownStyle,
+};
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{WithScrollbar, prelude::*};
@@ -203,7 +205,16 @@ impl MarkdownPreviewView {
     ) -> Entity<Self> {
         cx.new(|cx| {
             let markdown = cx.new(|cx| {
-                Markdown::new(SharedString::default(), Some(language_registry), None, cx)
+                Markdown::new_with_options(
+                    SharedString::default(),
+                    Some(language_registry),
+                    None,
+                    MarkdownOptions {
+                        parse_html: true,
+                        ..Default::default()
+                    },
+                    cx,
+                )
             });
             let mut this = Self {
                 active_editor: None,

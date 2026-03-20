@@ -1,3 +1,4 @@
+pub mod html;
 pub mod parser;
 mod path_range;
 
@@ -36,7 +37,9 @@ use gpui::{
 };
 use language::{CharClassifier, Language, LanguageRegistry, Rope};
 use parser::CodeBlockMetadata;
-use parser::{MarkdownEvent, MarkdownTag, MarkdownTagEnd, parse_links_only, parse_markdown};
+use parser::{
+    MarkdownEvent, MarkdownTag, MarkdownTagEnd, parse_links_only, parse_markdown_with_options,
+};
 use pulldown_cmark::Alignment;
 use sum_tree::TreeMap;
 use theme::SyntaxTheme;
@@ -249,14 +252,16 @@ pub struct Markdown {
     focus_handle: FocusHandle,
     language_registry: Option<Arc<LanguageRegistry>>,
     fallback_code_block_language: Option<LanguageName>,
-    options: Options,
+    options: MarkdownOptions,
     copied_code_blocks: HashSet<ElementId>,
     code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
     context_menu_selected_text: Option<String>,
 }
 
-struct Options {
-    parse_links_only: bool,
+#[derive(Clone, Copy, Default)]
+pub struct MarkdownOptions {
+    pub parse_links_only: bool,
+    pub parse_html: bool,
 }
 
 pub enum CodeBlockRenderer {
@@ -304,6 +309,22 @@ impl Markdown {
         fallback_code_block_language: Option<LanguageName>,
         cx: &mut Context<Self>,
     ) -> Self {
+        Self::new_with_options(
+            source,
+            language_registry,
+            fallback_code_block_language,
+            MarkdownOptions::default(),
+            cx,
+        )
+    }
+
+    pub fn new_with_options(
+        source: SharedString,
+        language_registry: Option<Arc<LanguageRegistry>>,
+        fallback_code_block_language: Option<LanguageName>,
+        options: MarkdownOptions,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let focus_handle = cx.focus_handle();
         let mut this = Self {
             source,
@@ -318,9 +339,7 @@ impl Markdown {
             focus_handle,
             language_registry,
             fallback_code_block_language,
-            options: Options {
-                parse_links_only: false,
-            },
+            options,
             copied_code_blocks: HashSet::default(),
             code_block_scroll_handles: BTreeMap::default(),
             context_menu_selected_text: None,
@@ -330,29 +349,16 @@ impl Markdown {
     }
 
     pub fn new_text(source: SharedString, cx: &mut Context<Self>) -> Self {
-        let focus_handle = cx.focus_handle();
-        let mut this = Self {
+        Self::new_with_options(
             source,
-            selection: Selection::default(),
-            pressed_link: None,
-            autoscroll_request: None,
-            active_root_block: None,
-            should_reparse: false,
-            parsed_markdown: ParsedMarkdown::default(),
-            images_by_source_offset: Default::default(),
-            pending_parse: None,
-            focus_handle,
-            language_registry: None,
-            fallback_code_block_language: None,
-            options: Options {
+            None,
+            None,
+            MarkdownOptions {
                 parse_links_only: true,
+                ..Default::default()
             },
-            copied_code_blocks: HashSet::default(),
-            code_block_scroll_handles: BTreeMap::default(),
-            context_menu_selected_text: None,
-        };
-        this.parse(cx);
-        this
+            cx,
+        )
     }
 
     fn code_block_scroll_handle(&mut self, id: usize) -> ScrollHandle {
@@ -542,6 +548,7 @@ impl Markdown {
     fn start_background_parse(&self, cx: &Context<Self>) -> Task<()> {
         let source = self.source.clone();
         let should_parse_links_only = self.options.parse_links_only;
+        let should_parse_html = self.options.parse_html;
         let language_registry = self.language_registry.clone();
         let fallback = self.fallback_code_block_language.clone();
 
@@ -554,13 +561,18 @@ impl Markdown {
                         languages_by_name: TreeMap::default(),
                         languages_by_path: TreeMap::default(),
                         root_block_starts: Arc::default(),
+                        html_blocks: BTreeMap::default(),
                     },
                     Default::default(),
                 );
             }
 
-            let (events, language_names, paths, root_block_starts) = parse_markdown(&source);
-            let root_block_starts = Arc::from(root_block_starts);
+            let parsed = parse_markdown_with_options(&source, should_parse_html);
+            let events = parsed.events;
+            let language_names = parsed.language_names;
+            let paths = parsed.language_paths;
+            let root_block_starts = parsed.root_block_starts;
+            let html_blocks = parsed.html_blocks;
             let mut images_by_source_offset = HashMap::default();
             let mut languages_by_name = TreeMap::default();
             let mut languages_by_path = TreeMap::default();
@@ -619,7 +631,8 @@ impl Markdown {
                     events: Arc::from(events),
                     languages_by_name,
                     languages_by_path,
-                    root_block_starts,
+                    root_block_starts: Arc::from(root_block_starts),
+                    html_blocks,
                 },
                 images_by_source_offset,
             )
@@ -735,6 +748,7 @@ pub struct ParsedMarkdown {
     pub languages_by_name: TreeMap<SharedString, Arc<Language>>,
     pub languages_by_path: TreeMap<Arc<str>, Arc<Language>>,
     pub root_block_starts: Arc<[usize]>,
+    pub(crate) html_blocks: BTreeMap<usize, html::html_parser::ParsedHtmlBlock>,
 }
 
 impl ParsedMarkdown {
@@ -868,6 +882,113 @@ impl MarkdownElement {
     pub fn scroll_handle(mut self, scroll_handle: ScrollHandle) -> Self {
         self.autoscroll = AutoscrollBehavior::Controlled(scroll_handle);
         self
+    }
+
+    fn push_markdown_image(
+        &self,
+        builder: &mut MarkdownElementBuilder,
+        range: &Range<usize>,
+        source: ImageSource,
+        width: Option<DefiniteLength>,
+        height: Option<DefiniteLength>,
+    ) {
+        builder.modify_current_div(|el| {
+            el.items_center().flex().flex_row().child(
+                img(source)
+                    .max_w_full()
+                    .when_some(height, |this, height| this.h(height))
+                    .when_some(width, |this, width| this.w(width)),
+            )
+        });
+        let _ = range;
+    }
+
+    fn push_markdown_paragraph(
+        &self,
+        builder: &mut MarkdownElementBuilder,
+        range: &Range<usize>,
+        markdown_end: usize,
+    ) {
+        builder.push_div(
+            div().when(!self.style.height_is_multiple_of_line_height, |el| {
+                el.mb_2().line_height(rems(1.3))
+            }),
+            range,
+            markdown_end,
+        );
+    }
+
+    fn push_markdown_heading(
+        &self,
+        builder: &mut MarkdownElementBuilder,
+        level: pulldown_cmark::HeadingLevel,
+        range: &Range<usize>,
+        markdown_end: usize,
+    ) {
+        let mut heading = div().mb_2();
+        heading = apply_heading_style(heading, level, self.style.heading_level_styles.as_ref());
+
+        let mut heading_style = self.style.heading.clone();
+        let heading_text_style = heading_style.text_style().clone();
+        heading.style().refine(&heading_style);
+
+        builder.push_text_style(heading_text_style);
+        builder.push_div(heading, range, markdown_end);
+    }
+
+    fn pop_markdown_heading(&self, builder: &mut MarkdownElementBuilder) {
+        builder.pop_div();
+        builder.pop_text_style();
+    }
+
+    fn push_markdown_block_quote(
+        &self,
+        builder: &mut MarkdownElementBuilder,
+        range: &Range<usize>,
+        markdown_end: usize,
+    ) {
+        builder.push_text_style(self.style.block_quote.clone());
+        builder.push_div(
+            div()
+                .pl_4()
+                .mb_2()
+                .border_l_4()
+                .border_color(self.style.block_quote_border_color),
+            range,
+            markdown_end,
+        );
+    }
+
+    fn pop_markdown_block_quote(&self, builder: &mut MarkdownElementBuilder) {
+        builder.pop_div();
+        builder.pop_text_style();
+    }
+
+    fn push_markdown_list_item(
+        &self,
+        builder: &mut MarkdownElementBuilder,
+        bullet: AnyElement,
+        range: &Range<usize>,
+        markdown_end: usize,
+    ) {
+        builder.push_div(
+            div()
+                .when(!self.style.height_is_multiple_of_line_height, |el| {
+                    el.mb_1().gap_1().line_height(rems(1.3))
+                })
+                .h_flex()
+                .items_start()
+                .child(bullet),
+            range,
+            markdown_end,
+        );
+        // Without `w_0`, text doesn't wrap to the width of the container.
+        builder.push_div(div().flex_1().w_0(), range, markdown_end);
+    }
+
+    fn pop_markdown_list_item(&self, builder: &mut MarkdownElementBuilder) {
+        builder.pop_div();
+        builder.pop_div();
     }
 
     fn paint_selection(
@@ -1207,12 +1328,21 @@ impl Element for MarkdownElement {
         let mut code_block_ids = HashSet::default();
 
         let mut current_img_block_range: Option<Range<usize>> = None;
+        let mut handled_html_block = false;
         for (index, (range, event)) in parsed_markdown.events.iter().enumerate() {
             // Skip alt text for images that rendered
             if let Some(current_img_block_range) = &current_img_block_range
                 && current_img_block_range.end > range.end
             {
                 continue;
+            }
+
+            if handled_html_block {
+                if let MarkdownEvent::End(MarkdownTagEnd::HtmlBlock) = event {
+                    handled_html_block = false;
+                } else {
+                    continue;
+                }
             }
 
             match event {
@@ -1235,62 +1365,30 @@ impl Element for MarkdownElement {
                         MarkdownTag::Image { dest_url, .. } => {
                             if let Some(image) = images.get(&range.start) {
                                 current_img_block_range = Some(range.clone());
-                                builder.modify_current_div(|el| {
-                                    el.items_center()
-                                        .flex()
-                                        .flex_row()
-                                        .child(img(image.clone()).max_w_full())
-                                });
+                                self.push_markdown_image(
+                                    &mut builder,
+                                    range,
+                                    image.clone().into(),
+                                    None,
+                                    None,
+                                );
                             } else if let Some(source) = self
                                 .image_resolver
                                 .as_ref()
                                 .and_then(|resolve| resolve(dest_url.as_ref()))
                             {
                                 current_img_block_range = Some(range.clone());
-                                builder.modify_current_div(|el| {
-                                    el.items_center()
-                                        .flex()
-                                        .flex_row()
-                                        .child(img(source).max_w_full())
-                                });
+                                self.push_markdown_image(&mut builder, range, source, None, None);
                             }
                         }
                         MarkdownTag::Paragraph => {
-                            builder.push_div(
-                                div().when(!self.style.height_is_multiple_of_line_height, |el| {
-                                    el.mb_2().line_height(rems(1.3))
-                                }),
-                                range,
-                                markdown_end,
-                            );
+                            self.push_markdown_paragraph(&mut builder, range, markdown_end);
                         }
                         MarkdownTag::Heading { level, .. } => {
-                            let mut heading = div().mb_2();
-
-                            heading = apply_heading_style(
-                                heading,
-                                *level,
-                                self.style.heading_level_styles.as_ref(),
-                            );
-
-                            heading.style().refine(&self.style.heading);
-
-                            let text_style = self.style.heading.text_style().clone();
-
-                            builder.push_text_style(text_style);
-                            builder.push_div(heading, range, markdown_end);
+                            self.push_markdown_heading(&mut builder, *level, range, markdown_end);
                         }
                         MarkdownTag::BlockQuote => {
-                            builder.push_text_style(self.style.block_quote.clone());
-                            builder.push_div(
-                                div()
-                                    .pl_4()
-                                    .mb_2()
-                                    .border_l_4()
-                                    .border_color(self.style.block_quote_border_color),
-                                range,
-                                markdown_end,
-                            );
+                            self.push_markdown_block_quote(&mut builder, range, markdown_end);
                         }
                         MarkdownTag::CodeBlock { kind, .. } => {
                             let language = match kind {
@@ -1376,7 +1474,13 @@ impl Element for MarkdownElement {
                                 (CodeBlockRenderer::Custom { .. }, _) => {}
                             }
                         }
-                        MarkdownTag::HtmlBlock => builder.push_div(div(), range, markdown_end),
+                        MarkdownTag::HtmlBlock => {
+                            builder.push_div(div(), range, markdown_end);
+                            if let Some(block) = parsed_markdown.html_blocks.get(&range.start) {
+                                self.render_html_block(block, &mut builder, markdown_end, cx);
+                                handled_html_block = true;
+                            }
+                        }
                         MarkdownTag::List(bullet_index) => {
                             builder.push_list(*bullet_index);
                             builder.push_div(div().pl_2p5(), range, markdown_end);
@@ -1420,19 +1524,7 @@ impl Element for MarkdownElement {
                                 } else {
                                     div().child("•").into_any_element()
                                 };
-                            builder.push_div(
-                                div()
-                                    .when(!self.style.height_is_multiple_of_line_height, |el| {
-                                        el.mb_1().gap_1().line_height(rems(1.3))
-                                    })
-                                    .h_flex()
-                                    .items_start()
-                                    .child(bullet),
-                                range,
-                                markdown_end,
-                            );
-                            // Without `w_0`, text doesn't wrap to the width of the container.
-                            builder.push_div(div().flex_1().w_0(), range, markdown_end);
+                            self.push_markdown_list_item(&mut builder, bullet, range, markdown_end);
                         }
                         MarkdownTag::Emphasis => builder.push_text_style(TextStyleRefinement {
                             font_style: Some(FontStyle::Italic),
@@ -1537,12 +1629,10 @@ impl Element for MarkdownElement {
                         builder.pop_div();
                     }
                     MarkdownTagEnd::Heading(_) => {
-                        builder.pop_div();
-                        builder.pop_text_style()
+                        self.pop_markdown_heading(&mut builder);
                     }
                     MarkdownTagEnd::BlockQuote(_kind) => {
-                        builder.pop_text_style();
-                        builder.pop_div()
+                        self.pop_markdown_block_quote(&mut builder);
                     }
                     MarkdownTagEnd::CodeBlock => {
                         builder.trim_trailing_newline();
@@ -1620,8 +1710,7 @@ impl Element for MarkdownElement {
                         builder.pop_div();
                     }
                     MarkdownTagEnd::Item => {
-                        builder.pop_div();
-                        builder.pop_div();
+                        self.pop_markdown_list_item(&mut builder);
                     }
                     MarkdownTagEnd::Emphasis => builder.pop_text_style(),
                     MarkdownTagEnd::Strong => builder.pop_text_style(),

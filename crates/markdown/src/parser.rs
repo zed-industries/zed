@@ -4,11 +4,11 @@ pub use pulldown_cmark::TagEnd as MarkdownTagEnd;
 use pulldown_cmark::{
     Alignment, CowStr, HeadingLevel, LinkType, MetadataBlockKind, Options, Parser,
 };
-use std::{ops::Range, sync::Arc};
+use std::{collections::BTreeMap, ops::Range, sync::Arc};
 
 use collections::HashSet;
 
-use crate::path_range::PathWithRange;
+use crate::{html, path_range::PathWithRange};
 
 pub const PARSE_OPTIONS: Options = Options::ENABLE_TABLES
     .union(Options::ENABLE_FOOTNOTES)
@@ -27,6 +27,16 @@ struct ParseState {
     events: Vec<(Range<usize>, MarkdownEvent)>,
     root_block_starts: Vec<usize>,
     depth: usize,
+}
+
+#[derive(Debug, Default)]
+#[cfg_attr(test, derive(PartialEq))]
+pub(crate) struct ParsedMarkdownData {
+    pub events: Vec<(Range<usize>, MarkdownEvent)>,
+    pub language_names: HashSet<SharedString>,
+    pub language_paths: HashSet<Arc<str>>,
+    pub root_block_starts: Vec<usize>,
+    pub html_blocks: BTreeMap<usize, html::html_parser::ParsedHtmlBlock>,
 }
 
 impl ParseState {
@@ -70,17 +80,11 @@ impl ParseState {
     }
 }
 
-pub fn parse_markdown(
-    text: &str,
-) -> (
-    Vec<(Range<usize>, MarkdownEvent)>,
-    HashSet<SharedString>,
-    HashSet<Arc<str>>,
-    Vec<usize>,
-) {
+pub(crate) fn parse_markdown_with_options(text: &str, parse_html: bool) -> ParsedMarkdownData {
     let mut state = ParseState::default();
     let mut language_names = HashSet::default();
     let mut language_paths = HashSet::default();
+    let mut html_blocks = BTreeMap::default();
     let mut within_link = false;
     let mut within_metadata = false;
     let mut parser = Parser::new_ext(text, PARSE_OPTIONS)
@@ -97,6 +101,32 @@ pub fn parse_markdown(
         }
         match pulldown_event {
             pulldown_cmark::Event::Start(tag) => {
+                if let pulldown_cmark::Tag::HtmlBlock = &tag {
+                    state.push_event(range.clone(), MarkdownEvent::Start(MarkdownTag::HtmlBlock));
+
+                    if parse_html {
+                        if let Some(block) =
+                            html::html_parser::parse_html_block(&text[range.clone()], range.clone())
+                        {
+                            html_blocks.insert(range.start, block);
+
+                            while let Some((event, end_range)) = parser.next() {
+                                if let pulldown_cmark::Event::End(
+                                    pulldown_cmark::TagEnd::HtmlBlock,
+                                ) = event
+                                {
+                                    state.push_event(
+                                        end_range,
+                                        MarkdownEvent::End(MarkdownTagEnd::HtmlBlock),
+                                    );
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    continue;
+                }
+
                 let tag = match tag {
                     pulldown_cmark::Tag::Link {
                         link_type,
@@ -213,7 +243,7 @@ pub fn parse_markdown(
                         title: SharedString::from(title.into_string()),
                         id: SharedString::from(id.into_string()),
                     },
-                    pulldown_cmark::Tag::HtmlBlock => MarkdownTag::HtmlBlock,
+                    pulldown_cmark::Tag::HtmlBlock => MarkdownTag::HtmlBlock, // this is handled above separately
                     pulldown_cmark::Tag::DefinitionList => MarkdownTag::DefinitionList,
                     pulldown_cmark::Tag::DefinitionListTitle => MarkdownTag::DefinitionListTitle,
                     pulldown_cmark::Tag::DefinitionListDefinition => {
@@ -254,16 +284,26 @@ pub fn parse_markdown(
                     parsed,
                 }];
 
-                while matches!(parser.peek(), Some((pulldown_cmark::Event::Text(_), _))) {
-                    let Some((pulldown_cmark::Event::Text(next_event), next_range)) = parser.next()
-                    else {
+                while matches!(parser.peek(), Some((pulldown_cmark::Event::Text(_), _)))
+                    || (parse_html
+                        && matches!(
+                            parser.peek(),
+                            Some((pulldown_cmark::Event::InlineHtml(_), _))
+                        ))
+                {
+                    let Some((next_event, next_range)) = parser.next() else {
                         unreachable!()
                     };
-                    let next_len = last_len + next_event.len();
+                    let next_text = match next_event {
+                        pulldown_cmark::Event::Text(next_event) => next_event,
+                        pulldown_cmark::Event::InlineHtml(_) => CowStr::Borrowed(""),
+                        _ => unreachable!(),
+                    };
+                    let next_len = last_len + next_text.len();
                     ranges.push(TextRange {
                         source_range: next_range.clone(),
                         merged_range: last_len..next_len,
-                        parsed: next_event,
+                        parsed: next_text,
                     });
                     last_len = next_len;
                 }
@@ -387,12 +427,14 @@ pub fn parse_markdown(
             pulldown_cmark::Event::InlineMath(_) | pulldown_cmark::Event::DisplayMath(_) => {}
         }
     }
-    (
-        state.events,
+
+    ParsedMarkdownData {
+        events: state.events,
         language_names,
         language_paths,
-        state.root_block_starts,
-    )
+        root_block_starts: state.root_block_starts,
+        html_blocks,
+    }
 }
 
 pub fn parse_links_only(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
@@ -643,9 +685,9 @@ mod tests {
     #[test]
     fn test_html_comments() {
         assert_eq!(
-            parse_markdown("  <!--\nrdoc-file=string.c\n-->\nReturns"),
-            (
-                vec![
+            parse_markdown_with_options("  <!--\nrdoc-file=string.c\n-->\nReturns", false),
+            ParsedMarkdownData {
+                events: vec![
                     (2..30, RootStart),
                     (2..30, Start(HtmlBlock)),
                     (2..2, SubstitutedText("  ".into())),
@@ -660,19 +702,21 @@ mod tests {
                     (30..37, End(MarkdownTagEnd::Paragraph)),
                     (30..37, RootEnd(1)),
                 ],
-                HashSet::default(),
-                HashSet::default(),
-                vec![2, 30]
-            )
+                root_block_starts: vec![2, 30],
+                ..Default::default()
+            }
         )
     }
 
     #[test]
     fn test_plain_urls_and_escaped_text() {
         assert_eq!(
-            parse_markdown("&nbsp;&nbsp; https://some.url some \\`&#9658;\\` text"),
-            (
-                vec![
+            parse_markdown_with_options(
+                "&nbsp;&nbsp; https://some.url some \\`&#9658;\\` text",
+                false
+            ),
+            ParsedMarkdownData {
+                events: vec![
                     (0..51, RootStart),
                     (0..51, Start(Paragraph)),
                     (0..6, SubstitutedText("\u{a0}".into())),
@@ -697,17 +741,20 @@ mod tests {
                     (0..51, End(MarkdownTagEnd::Paragraph)),
                     (0..51, RootEnd(0)),
                 ],
-                HashSet::default(),
-                HashSet::default(),
-                vec![0]
-            )
+                root_block_starts: vec![0],
+                ..Default::default()
+            }
         );
     }
 
     #[test]
     fn test_incomplete_link() {
         assert_eq!(
-            parse_markdown("You can use the [GitHub Search API](https://docs.github.com/en").0,
+            parse_markdown_with_options(
+                "You can use the [GitHub Search API](https://docs.github.com/en",
+                false
+            )
+            .events,
             vec![
                 (0..62, RootStart),
                 (0..62, Start(Paragraph)),
@@ -736,9 +783,12 @@ mod tests {
     #[test]
     fn test_smart_punctuation() {
         assert_eq!(
-            parse_markdown("-- --- ... \"double quoted\" 'single quoted' ----------"),
-            (
-                vec![
+            parse_markdown_with_options(
+                "-- --- ... \"double quoted\" 'single quoted' ----------",
+                false
+            ),
+            ParsedMarkdownData {
+                events: vec![
                     (0..53, RootStart),
                     (0..53, Start(Paragraph)),
                     (0..2, SubstitutedText("–".into())),
@@ -759,19 +809,18 @@ mod tests {
                     (0..53, End(MarkdownTagEnd::Paragraph)),
                     (0..53, RootEnd(0)),
                 ],
-                HashSet::default(),
-                HashSet::default(),
-                vec![0]
-            )
+                root_block_starts: vec![0],
+                ..Default::default()
+            }
         )
     }
 
     #[test]
     fn test_code_block_metadata() {
         assert_eq!(
-            parse_markdown("```rust\nfn main() {\n let a = 1;\n}\n```"),
-            (
-                vec![
+            parse_markdown_with_options("```rust\nfn main() {\n let a = 1;\n}\n```", false),
+            ParsedMarkdownData {
+                events: vec![
                     (0..37, RootStart),
                     (
                         0..37,
@@ -787,19 +836,19 @@ mod tests {
                     (0..37, End(MarkdownTagEnd::CodeBlock)),
                     (0..37, RootEnd(0)),
                 ],
-                {
+                language_names: {
                     let mut h = HashSet::default();
                     h.insert("rust".into());
                     h
                 },
-                HashSet::default(),
-                vec![0]
-            )
+                root_block_starts: vec![0],
+                ..Default::default()
+            }
         );
         assert_eq!(
-            parse_markdown("    fn main() {}"),
-            (
-                vec![
+            parse_markdown_with_options("    fn main() {}", false),
+            ParsedMarkdownData {
+                events: vec![
                     (4..16, RootStart),
                     (
                         4..16,
@@ -815,29 +864,27 @@ mod tests {
                     (4..16, End(MarkdownTagEnd::CodeBlock)),
                     (4..16, RootEnd(0)),
                 ],
-                HashSet::default(),
-                HashSet::default(),
-                vec![4]
-            )
+                root_block_starts: vec![4],
+                ..Default::default()
+            }
         );
     }
 
     #[test]
     fn test_metadata_blocks_do_not_affect_root_blocks() {
         assert_eq!(
-            parse_markdown("+++\ntitle = \"Example\"\n+++\n\nParagraph"),
-            (
-                vec![
+            parse_markdown_with_options("+++\ntitle = \"Example\"\n+++\n\nParagraph", false),
+            ParsedMarkdownData {
+                events: vec![
                     (27..36, RootStart),
                     (27..36, Start(Paragraph)),
                     (27..36, Text),
                     (27..36, End(MarkdownTagEnd::Paragraph)),
                     (27..36, RootEnd(0)),
                 ],
-                HashSet::default(),
-                HashSet::default(),
-                vec![27]
-            )
+                root_block_starts: vec![27],
+                ..Default::default()
+            }
         );
     }
 
@@ -882,7 +929,11 @@ mod tests {
         // Note: In real usage, pulldown_cmark creates separate text events for the escaped character
         // We're verifying our parser can handle this correctly
         assert_eq!(
-            parse_markdown("https:/\\/example.com is equivalent to https://example&#46;com!").0,
+            parse_markdown_with_options(
+                "https:/\\/example.com is equivalent to https://example&#46;com!",
+                false
+            )
+            .events,
             vec![
                 (0..62, RootStart),
                 (0..62, Start(Paragraph)),
@@ -919,7 +970,11 @@ mod tests {
         );
 
         assert_eq!(
-            parse_markdown("Visit https://example.com/cat\\/é&#8205;☕ for coffee!").0,
+            parse_markdown_with_options(
+                "Visit https://example.com/cat\\/é&#8205;☕ for coffee!",
+                false
+            )
+            .events,
             [
                 (0..55, RootStart),
                 (0..55, Start(Paragraph)),
