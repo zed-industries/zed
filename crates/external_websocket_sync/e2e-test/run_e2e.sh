@@ -122,11 +122,41 @@ export ZED_HELIX_TLS=false
 export ZED_HELIX_SKIP_TLS_VERIFY=false
 export HELIX_SESSION_ID="e2e-test-session-001"
 
+# ---- Determine which agents to test ----
+# E2E_AGENTS controls which agent rounds to run. Default: zed-agent only.
+# Set E2E_AGENTS="zed-agent,claude" to also test Claude Code.
+export E2E_AGENTS="${E2E_AGENTS:-zed-agent}"
+echo "[setup] E2E_AGENTS=$E2E_AGENTS"
+
 # ---- Write Zed settings.json for LLM provider ----
 ZED_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/zed"
 mkdir -p "$ZED_CONFIG_DIR"
+
+# Build the agent_servers config for Claude Code if it's in E2E_AGENTS
+AGENT_SERVERS_JSON=""
+if echo "$E2E_AGENTS" | grep -q "claude"; then
+    # Claude Code needs ANTHROPIC_API_KEY passed through settings (Zed clears env vars)
+    CLAUDE_KEY="${ANTHROPIC_API_KEY:-}"
+    if [ -z "$CLAUDE_KEY" ]; then
+        echo "[error] ANTHROPIC_API_KEY is required when testing claude agent"
+        exit 1
+    fi
+    AGENT_SERVERS_JSON=$(cat << AGENTEOF
+  "agent_servers": {
+    "claude": {
+      "env": {
+        "ANTHROPIC_API_KEY": "${CLAUDE_KEY}"
+      }
+    }
+  },
+AGENTEOF
+)
+    echo "[setup] Claude Code agent configured with API key"
+fi
+
 cat > "$ZED_CONFIG_DIR/settings.json" << JSONEOF
 {
+${AGENT_SERVERS_JSON}
   "language_models": {
     "anthropic": {
       "api_url": "https://api.anthropic.com"
@@ -157,6 +187,7 @@ echo "[zed]   ZED_HELIX_URL=$ZED_HELIX_URL"
 echo "[zed]   ZED_EXTERNAL_SYNC_ENABLED=$ZED_EXTERNAL_SYNC_ENABLED"
 echo "[zed]   ZED_STATELESS=${ZED_STATELESS:-not set}"
 echo "[zed]   ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:+set (${#ANTHROPIC_API_KEY} chars)}"
+echo "[zed]   E2E_AGENTS=$E2E_AGENTS"
 echo ""
 
 # Start Zed

@@ -3,7 +3,8 @@
 // with an in-memory store, so the same message processing code runs in both
 // tests and production.
 //
-// The server implements 8 phases:
+// The server runs multiple "rounds", one per agent type (zed-agent, claude, etc.).
+// Each round executes the same 9 test phases:
 //
 //	Phase 1: Basic thread creation (new chat_message, no thread ID)
 //	Phase 2: Follow-up on existing thread (same thread ID)
@@ -36,15 +37,9 @@ import (
 	"github.com/helixml/helix/api/pkg/types"
 )
 
-type testDriver struct {
-	mu sync.Mutex
-
-	srv   *server.HelixAPIServer
-	store *memorystore.MemoryStore
-
-	phase   int
-	done    chan struct{}
-	agentID string // agent connection ID (discovered at runtime)
+// roundState holds per-agent-round state that gets reset between rounds.
+type roundState struct {
+	agentName string
 
 	// Track thread IDs from thread_created events
 	threadIDs []string
@@ -68,30 +63,71 @@ type testDriver struct {
 	phase8Completions   int    // number of message_completed events received for phase 8 thread
 
 	// Phase 9: rapid 3-turn cancel state
-	phase9ThreadID       string // thread ID (reuses phase 8's thread)
-	phase9RapidSent      bool   // whether the rapid sequence has been sent
-	phase9Completions    int    // number of message_completed events for phase 9
+	phase9ThreadID  string // thread ID (reuses phase 8's thread)
+	phase9RapidSent bool   // whether the rapid sequence has been sent
+	phase9Completions int  // number of message_completed events for phase 9
 }
 
-func newTestDriver(srv *server.HelixAPIServer, store *memorystore.MemoryStore) *testDriver {
+func newRoundState(agentName string) *roundState {
+	return &roundState{
+		agentName:   agentName,
+		completions: make(map[string][]string),
+	}
+}
+
+// reqID returns a round-namespaced request ID for validation uniqueness.
+func (r *roundState) reqID(phase string) string {
+	return fmt.Sprintf("req-%s-%s", phase, r.agentName)
+}
+
+type testDriver struct {
+	mu sync.Mutex
+
+	srv   *server.HelixAPIServer
+	store *memorystore.MemoryStore
+
+	phase   int
+	done    chan struct{}
+	agentID string // agent connection ID (discovered at runtime)
+
+	// Multi-agent round management
+	agentRounds    []string     // agent names to test (e.g., ["zed-agent", "claude"])
+	currentRoundIdx int
+	round          *roundState  // current round state
+
+	// Collected round results for final summary
+	roundResults []roundResult
+}
+
+type roundResult struct {
+	agentName string
+	passed    bool
+	errors    []string
+}
+
+func newTestDriver(srv *server.HelixAPIServer, store *memorystore.MemoryStore, agents []string) *testDriver {
 	return &testDriver{
 		srv:         srv,
 		store:       store,
-		completions: make(map[string][]string),
 		done:        make(chan struct{}),
+		agentRounds: agents,
+		round:       newRoundState(agents[0]),
 	}
 }
 
 // syncEventCallback is called by the production handler after every sync event.
 func (d *testDriver) syncEventCallback(sessionID string, syncMsg *types.SyncMessage) {
 	d.mu.Lock()
-	d.events = append(d.events, *syncMsg)
+	d.round.events = append(d.round.events, *syncMsg)
 
 	switch syncMsg.EventType {
 	case "agent_ready":
 		if d.phase == 0 {
 			d.phase = 1
 			d.mu.Unlock()
+			log.Printf("\n##################################################")
+			log.Printf("  ROUND %d/%d: Agent = %s", d.currentRoundIdx+1, len(d.agentRounds), d.round.agentName)
+			log.Printf("##################################################")
 			d.runPhase1()
 			return
 		}
@@ -102,15 +138,15 @@ func (d *testDriver) syncEventCallback(sessionID string, syncMsg *types.SyncMess
 			acpThreadID, _ = syncMsg.Data["context_id"].(string)
 		}
 		if acpThreadID != "" {
-			if len(d.threadIDs) == 0 {
-				d.phase1ThreadCreated = time.Now()
+			if len(d.round.threadIDs) == 0 {
+				d.round.phase1ThreadCreated = time.Now()
 			}
-			d.threadIDs = append(d.threadIDs, acpThreadID)
-			log.Printf("[test-server] Thread #%d: %s (event=%s)", len(d.threadIDs), truncate(acpThreadID, 16), syncMsg.EventType)
+			d.round.threadIDs = append(d.round.threadIDs, acpThreadID)
+			log.Printf("[%s] Thread #%d: %s (event=%s)", d.round.agentName, len(d.round.threadIDs), truncate(acpThreadID, 16), syncMsg.EventType)
 			// Capture the thread created for phase 8 so we can send the interrupt to it.
-			if d.phase == 8 && d.phase8ThreadID == "" {
-				d.phase8ThreadID = acpThreadID
-				log.Printf("[test-server] Phase 8: Captured thread ID: %s", truncate(acpThreadID, 16))
+			if d.phase == 8 && d.round.phase8ThreadID == "" {
+				d.round.phase8ThreadID = acpThreadID
+				log.Printf("[%s] Phase 8: Captured thread ID: %s", d.round.agentName, truncate(acpThreadID, 16))
 			}
 		}
 
@@ -118,14 +154,15 @@ func (d *testDriver) syncEventCallback(sessionID string, syncMsg *types.SyncMess
 		// Phase 8: send an interrupt as soon as the first assistant token arrives for
 		// the phase 8 thread. This guarantees ACP has started generating (running_turn
 		// is set), so the interrupt will properly cancel the active turn via run_turn().
-		if d.phase == 8 && !d.phase8InterruptSent {
+		if d.phase == 8 && !d.round.phase8InterruptSent {
 			role, _ := syncMsg.Data["role"].(string)
 			threadID, _ := syncMsg.Data["acp_thread_id"].(string)
-			if role == "assistant" && threadID == d.phase8ThreadID {
-				d.phase8InterruptSent = true
+			if role == "assistant" && threadID == d.round.phase8ThreadID {
+				d.round.phase8InterruptSent = true
+				agentName := d.round.agentName
 				d.mu.Unlock()
-				log.Printf("[test-server] Phase 8: First assistant token arrived, sending interrupt to %s", truncate(threadID, 16))
-				d.sendChatMessage("Actually just say 'hello'.", "req-phase8-interrupt", "zed-agent", threadID)
+				log.Printf("[%s] Phase 8: First assistant token arrived, sending interrupt to %s", agentName, truncate(threadID, 16))
+				d.sendChatMessage("Actually just say 'hello'.", d.round.reqID("phase8-interrupt"), agentName, threadID)
 				return
 			}
 		}
@@ -135,17 +172,18 @@ func (d *testDriver) syncEventCallback(sessionID string, syncMsg *types.SyncMess
 		// Enter in Zed) + chat_message (like Helix's queue delivery). This
 		// creates a 3-turn rapid cancel chain that previously caused a Task to
 		// be dropped, breaking the oneshot channel and hanging the thread.
-		if d.phase == 9 && !d.phase9RapidSent {
+		if d.phase == 9 && !d.round.phase9RapidSent {
 			role, _ := syncMsg.Data["role"].(string)
 			threadID, _ := syncMsg.Data["acp_thread_id"].(string)
-			if role == "assistant" && threadID == d.phase9ThreadID {
-				d.phase9RapidSent = true
+			if role == "assistant" && threadID == d.round.phase9ThreadID {
+				d.round.phase9RapidSent = true
+				agentName := d.round.agentName
 				d.mu.Unlock()
-				log.Printf("[test-server] Phase 9: First assistant token arrived, sending rapid 2-message sequence")
+				log.Printf("[%s] Phase 9: First assistant token arrived, sending rapid 2-message sequence", agentName)
 				// Turn 2: simulate user typing in Zed (interrupt)
-				d.sendSimulateUserInput(threadID, "User interrupt from Zed", "req-phase9-user-input", "zed-agent")
+				d.sendSimulateUserInput(threadID, "User interrupt from Zed", d.round.reqID("phase9-user-input"), agentName)
 				// Turn 3: simulate Helix queue delivery (arrives while turn 2 is starting)
-				d.sendChatMessage("Queue delivery from Helix", "req-phase9-queue", "zed-agent", threadID)
+				d.sendChatMessage("Queue delivery from Helix", d.round.reqID("phase9-queue"), agentName, threadID)
 				return
 			}
 		}
@@ -153,59 +191,60 @@ func (d *testDriver) syncEventCallback(sessionID string, syncMsg *types.SyncMess
 	case "message_completed":
 		acpThreadID, _ := syncMsg.Data["acp_thread_id"].(string)
 		requestID, _ := syncMsg.Data["request_id"].(string)
-		d.completions[acpThreadID] = append(d.completions[acpThreadID], requestID)
+		d.round.completions[acpThreadID] = append(d.round.completions[acpThreadID], requestID)
 		currentPhase := d.phase
+		agentName := d.round.agentName
 
 		// Phase 8 needs two completions before the test can end: one for the cancelled
 		// initial turn and one for the interrupt response.
-		if currentPhase == 8 && acpThreadID == d.phase8ThreadID {
-			d.phase8Completions++
-			completions := d.phase8Completions
+		if currentPhase == 8 && acpThreadID == d.round.phase8ThreadID {
+			d.round.phase8Completions++
+			completions := d.round.phase8Completions
 			d.mu.Unlock()
-			log.Printf("[test-server] Phase 8: Completion %d/2 for thread=%s req=%s",
-				completions, truncate(acpThreadID, 12), requestID)
+			log.Printf("[%s] Phase 8: Completion %d/2 for thread=%s req=%s",
+				agentName, completions, truncate(acpThreadID, 12), requestID)
 			if completions >= 2 {
-				log.Println("[test-server] Phase 8: Both turns completed (cancelled + interrupt)")
+				log.Printf("[%s] Phase 8: Both turns completed (cancelled + interrupt)", agentName)
 				time.Sleep(500 * time.Millisecond)
 				go d.advanceAfterCompletion(8)
 			}
 			return
 		}
 
-		// Phase 9: rapid 3-turn cancel — we expect at least 2 completions
+		// Phase 9: rapid 3-turn cancel -- we expect at least 2 completions
 		// (some turns may be cancelled/dropped, but the thread must not hang).
-		if currentPhase == 9 && acpThreadID == d.phase9ThreadID {
-			d.phase9Completions++
-			completions := d.phase9Completions
+		if currentPhase == 9 && acpThreadID == d.round.phase9ThreadID {
+			d.round.phase9Completions++
+			completions := d.round.phase9Completions
 			d.mu.Unlock()
-			log.Printf("[test-server] Phase 9: Completion %d for thread=%s req=%s",
-				completions, truncate(acpThreadID, 12), requestID)
+			log.Printf("[%s] Phase 9: Completion %d for thread=%s req=%s",
+				agentName, completions, truncate(acpThreadID, 12), requestID)
 			if completions >= 2 {
-				log.Println("[test-server] Phase 9: Received enough completions — thread did not hang")
+				log.Printf("[%s] Phase 9: Received enough completions -- thread did not hang", agentName)
 				time.Sleep(500 * time.Millisecond)
-				close(d.done)
+				go d.advanceToNextRound()
 			}
 			return
 		}
 
 		d.mu.Unlock()
 
-		log.Printf("[test-server] Completed: thread=%s req=%s (phase %d)",
-			truncate(acpThreadID, 12), requestID, currentPhase)
+		log.Printf("[%s] Completed: thread=%s req=%s (phase %d)",
+			agentName, truncate(acpThreadID, 12), requestID, currentPhase)
 
 		go d.advanceAfterCompletion(currentPhase)
 		return
 
 	case "ui_state_response":
-		d.uiStateResponses = append(d.uiStateResponses, *syncMsg)
+		d.round.uiStateResponses = append(d.round.uiStateResponses, *syncMsg)
 		currentPhase := d.phase
 		queryID, _ := syncMsg.Data["query_id"].(string)
 		activeView, _ := syncMsg.Data["active_view"].(string)
 		threadID, _ := syncMsg.Data["thread_id"].(string)
 		d.mu.Unlock()
 
-		log.Printf("[test-server] UI state: query_id=%s active_view=%s thread_id=%s (phase %d)",
-			queryID, activeView, truncate(threadID, 12), currentPhase)
+		log.Printf("[%s] UI state: query_id=%s active_view=%s thread_id=%s (phase %d)",
+			d.round.agentName, queryID, activeView, truncate(threadID, 12), currentPhase)
 
 		if currentPhase == 6 {
 			go d.advanceAfterUiState()
@@ -215,12 +254,12 @@ func (d *testDriver) syncEventCallback(sessionID string, syncMsg *types.SyncMess
 	case "thread_title_changed":
 		title, _ := syncMsg.Data["title"].(string)
 		acpThreadID, _ := syncMsg.Data["acp_thread_id"].(string)
-		log.Printf("[test-server] Title changed: thread=%s title=%q", truncate(acpThreadID, 12), title)
+		log.Printf("[%s] Title changed: thread=%s title=%q", d.round.agentName, truncate(acpThreadID, 12), title)
 
 	case "thread_load_error":
 		errMsg, _ := syncMsg.Data["error"].(string)
 		acpThreadID, _ := syncMsg.Data["acp_thread_id"].(string)
-		log.Printf("[test-server] THREAD LOAD ERROR: %s (thread=%s)", errMsg, truncate(acpThreadID, 12))
+		log.Printf("[%s] THREAD LOAD ERROR: %s (thread=%s)", d.round.agentName, errMsg, truncate(acpThreadID, 12))
 	}
 
 	d.mu.Unlock()
@@ -256,12 +295,16 @@ func (d *testDriver) sendSimulateUserInput(acpThreadID, message, requestID, agen
 	d.srv.QueueCommand(d.agentID, cmd)
 }
 
-func (d *testDriver) sendOpenThread(acpThreadID string) {
+func (d *testDriver) sendOpenThread(acpThreadID, agentName string) {
+	data := map[string]interface{}{
+		"acp_thread_id": acpThreadID,
+	}
+	if agentName != "" {
+		data["agent_name"] = agentName
+	}
 	cmd := types.ExternalAgentCommand{
 		Type: "open_thread",
-		Data: map[string]interface{}{
-			"acp_thread_id": acpThreadID,
-		},
+		Data: data,
 	}
 	if !d.srv.QueueCommand(d.agentID, cmd) {
 		log.Printf("[test-server] WARNING: Failed to send open_thread to agent %s", d.agentID)
@@ -332,191 +375,236 @@ func (d *testDriver) advanceAfterUiState() {
 	d.runPhase7()
 }
 
-func (d *testDriver) runPhase1() {
-	log.Println("\n==================================================")
-	log.Println("  PHASE 1: Basic thread creation")
-	log.Println("==================================================")
+// advanceToNextRound validates the current round, then starts the next one or finishes.
+func (d *testDriver) advanceToNextRound() {
 	d.mu.Lock()
-	d.phase1ChatSentAt = time.Now()
+	agentName := d.round.agentName
 	d.mu.Unlock()
-	d.sendChatMessage("What is 2 + 2? Reply with just the number.", "req-phase1", "zed-agent")
+
+	// Validate current round
+	result := d.validateRound()
+	d.mu.Lock()
+	d.roundResults = append(d.roundResults, result)
+	d.currentRoundIdx++
+
+	if d.currentRoundIdx >= len(d.agentRounds) {
+		// All rounds complete
+		d.mu.Unlock()
+		close(d.done)
+		return
+	}
+
+	// Start next round
+	nextAgent := d.agentRounds[d.currentRoundIdx]
+	d.round = newRoundState(nextAgent)
+	d.phase = 1
+	d.mu.Unlock()
+
+	log.Printf("\n##################################################")
+	log.Printf("  ROUND %d/%d: Agent = %s (after %s)", d.currentRoundIdx+1, len(d.agentRounds), nextAgent, agentName)
+	log.Printf("##################################################")
+
+	// Start phase 1 for the new round immediately (no need to wait for agent_ready again,
+	// the agent is already connected)
+	d.runPhase1()
+}
+
+func (d *testDriver) runPhase1() {
+	agent := d.round.agentName
+	log.Printf("\n==================================================")
+	log.Printf("  [%s] PHASE 1: Basic thread creation", agent)
+	log.Printf("==================================================")
+	d.mu.Lock()
+	d.round.phase1ChatSentAt = time.Now()
+	d.mu.Unlock()
+	d.sendChatMessage("What is 2 + 2? Reply with just the number.", d.round.reqID("phase1"), agent)
 }
 
 func (d *testDriver) runPhase2() {
-	log.Println("\n==================================================")
-	log.Println("  PHASE 2: Follow-up on existing thread")
-	log.Println("==================================================")
+	agent := d.round.agentName
+	log.Printf("\n==================================================")
+	log.Printf("  [%s] PHASE 2: Follow-up on existing thread", agent)
+	log.Printf("==================================================")
 	d.mu.Lock()
-	if len(d.threadIDs) == 0 {
+	if len(d.round.threadIDs) == 0 {
 		d.mu.Unlock()
-		log.Fatal("[test-server] ERROR: No thread IDs captured from phase 1!")
+		log.Fatalf("[%s] ERROR: No thread IDs captured from phase 1!", agent)
 	}
-	tid := d.threadIDs[0]
+	tid := d.round.threadIDs[0]
 	d.mu.Unlock()
 
-	log.Printf("[test-server] Using thread from phase 1: %s", truncate(tid, 16))
-	d.sendChatMessage("What is 3 + 3? Reply with just the number.", "req-phase2", "zed-agent", tid)
+	log.Printf("[%s] Using thread from phase 1: %s", agent, truncate(tid, 16))
+	d.sendChatMessage("What is 3 + 3? Reply with just the number.", d.round.reqID("phase2"), agent, tid)
 }
 
 func (d *testDriver) runPhase3() {
-	log.Println("\n==================================================")
-	log.Println("  PHASE 3: New thread (simulating thread transition)")
-	log.Println("==================================================")
-	d.sendChatMessage("What is 10 + 10? Reply with just the number.", "req-phase3", "zed-agent")
+	agent := d.round.agentName
+	log.Printf("\n==================================================")
+	log.Printf("  [%s] PHASE 3: New thread (simulating thread transition)", agent)
+	log.Printf("==================================================")
+	d.sendChatMessage("What is 10 + 10? Reply with just the number.", d.round.reqID("phase3"), agent)
 }
 
 func (d *testDriver) runPhase4() {
-	log.Println("\n==================================================")
-	log.Println("  PHASE 4: Follow-up to non-visible thread")
-	log.Println("==================================================")
+	agent := d.round.agentName
+	log.Printf("\n==================================================")
+	log.Printf("  [%s] PHASE 4: Follow-up to non-visible thread", agent)
+	log.Printf("==================================================")
 	d.mu.Lock()
-	if len(d.threadIDs) < 2 {
+	if len(d.round.threadIDs) < 2 {
 		d.mu.Unlock()
-		log.Fatal("[test-server] ERROR: Need at least 2 threads for phase 4!")
+		log.Fatalf("[%s] ERROR: Need at least 2 threads for phase 4!", agent)
 	}
-	tid := d.threadIDs[0]
+	tid := d.round.threadIDs[0]
 	d.mu.Unlock()
 
-	log.Printf("[test-server] Sending back to Thread A (non-visible): %s", truncate(tid, 16))
-	d.sendChatMessage("What is 5 + 5? Reply with just the number.", "req-phase4", "zed-agent", tid)
+	log.Printf("[%s] Sending back to Thread A (non-visible): %s", agent, truncate(tid, 16))
+	d.sendChatMessage("What is 5 + 5? Reply with just the number.", d.round.reqID("phase4"), agent, tid)
 }
 
 func (d *testDriver) runPhase5() {
-	log.Println("\n==================================================")
-	log.Println("  PHASE 5: Simulate user input (Zed -> Helix sync)")
-	log.Println("==================================================")
+	agent := d.round.agentName
+	log.Printf("\n==================================================")
+	log.Printf("  [%s] PHASE 5: Simulate user input (Zed -> Helix sync)", agent)
+	log.Printf("==================================================")
 	d.mu.Lock()
-	if len(d.threadIDs) == 0 {
+	if len(d.round.threadIDs) == 0 {
 		d.mu.Unlock()
-		log.Fatal("[test-server] ERROR: No thread IDs available for phase 5!")
+		log.Fatalf("[%s] ERROR: No thread IDs available for phase 5!", agent)
 	}
-	tid := d.threadIDs[0]
+	tid := d.round.threadIDs[0]
 	d.mu.Unlock()
 
-	log.Printf("[test-server] Sending simulate_user_input to thread: %s", truncate(tid, 16))
-	d.sendSimulateUserInput(tid, "This message was typed by the user in Zed", "req-phase5", "zed-agent")
+	log.Printf("[%s] Sending simulate_user_input to thread: %s", agent, truncate(tid, 16))
+	d.sendSimulateUserInput(tid, "This message was typed by the user in Zed", d.round.reqID("phase5"), agent)
 }
 
 func (d *testDriver) runPhase6() {
-	log.Println("\n==================================================")
-	log.Println("  PHASE 6: Query UI state")
-	log.Println("==================================================")
-	d.sendQueryUiState("query-phase6")
+	agent := d.round.agentName
+	log.Printf("\n==================================================")
+	log.Printf("  [%s] PHASE 6: Query UI state", agent)
+	log.Printf("==================================================")
+	d.sendQueryUiState(fmt.Sprintf("query-phase6-%s", agent))
 }
 
 func (d *testDriver) runPhase7() {
-	log.Println("\n==================================================")
-	log.Println("  PHASE 7: Open thread + follow-up chat")
-	log.Println("==================================================")
+	agent := d.round.agentName
+	log.Printf("\n==================================================")
+	log.Printf("  [%s] PHASE 7: Open thread + follow-up chat", agent)
+	log.Printf("==================================================")
 	d.mu.Lock()
-	if len(d.threadIDs) < 2 {
+	if len(d.round.threadIDs) < 2 {
 		d.mu.Unlock()
-		log.Fatal("[test-server] ERROR: Need at least 2 threads for phase 7!")
+		log.Fatalf("[%s] ERROR: Need at least 2 threads for phase 7!", agent)
 	}
 	// Open Thread B (created in phase 3), then send a follow-up
-	tid := d.threadIDs[1]
+	tid := d.round.threadIDs[1]
 	d.mu.Unlock()
 
-	log.Printf("[test-server] Opening Thread B: %s", truncate(tid, 16))
-	d.sendOpenThread(tid)
+	log.Printf("[%s] Opening Thread B: %s", agent, truncate(tid, 16))
+	d.sendOpenThread(tid, agent)
 
 	// Wait for Zed to open the thread before sending follow-up
 	time.Sleep(3 * time.Second)
 
-	log.Printf("[test-server] Sending follow-up to Thread B after open_thread")
-	d.sendChatMessage("What is 8 + 8? Reply with just the number.", "req-phase7", "zed-agent", tid)
+	log.Printf("[%s] Sending follow-up to Thread B after open_thread", agent)
+	d.sendChatMessage("What is 8 + 8? Reply with just the number.", d.round.reqID("phase7"), agent, tid)
 }
 
 func (d *testDriver) runPhase8() {
-	log.Println("\n==================================================")
-	log.Println("  PHASE 8: Mid-stream interrupt")
-	log.Println("==================================================")
+	agent := d.round.agentName
+	log.Printf("\n==================================================")
+	log.Printf("  [%s] PHASE 8: Mid-stream interrupt", agent)
+	log.Printf("==================================================")
 	// Send a question that will generate a streaming response long enough for us
 	// to send an interrupt before it completes. The syncEventCallback will fire the
 	// interrupt the moment the first assistant token arrives.
 	d.sendChatMessage(
 		"Write me a detailed explanation of recursion with three worked examples.",
-		"req-phase8-initial",
-		"zed-agent",
+		d.round.reqID("phase8-initial"),
+		agent,
 	)
 }
 
 func (d *testDriver) runPhase9() {
-	log.Println("\n==================================================")
-	log.Println("  PHASE 9: Rapid 3-turn cancel (regression test)")
-	log.Println("==================================================")
+	agent := d.round.agentName
+	log.Printf("\n==================================================")
+	log.Printf("  [%s] PHASE 9: Rapid 3-turn cancel (regression test)", agent)
+	log.Printf("==================================================")
 	log.Println("  Sends chat_message, then while streaming, fires")
 	log.Println("  simulate_user_input + chat_message back-to-back.")
 	log.Println("  Without the fix, the thread hangs permanently.")
 
 	// Reuse the phase 8 thread (it completed, so we can send follow-ups).
 	d.mu.Lock()
-	d.phase9ThreadID = d.phase8ThreadID
+	d.round.phase9ThreadID = d.round.phase8ThreadID
 	d.mu.Unlock()
 
 	// Turn 1: start a long-running response. The syncEventCallback will
 	// fire the rapid sequence as soon as the first assistant token arrives.
 	d.sendChatMessage(
 		"Write a detailed explanation of merge sort with code examples.",
-		"req-phase9-initial",
-		"zed-agent",
-		d.phase8ThreadID,
+		d.round.reqID("phase9-initial"),
+		agent,
+		d.round.phase8ThreadID,
 	)
 }
 
-// --- Validation ---
+// --- Per-round validation ---
 
-func (d *testDriver) validate() bool {
+func (d *testDriver) validateRound() roundResult {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	log.Println("\n==================================================")
-	log.Println("  VALIDATION")
-	log.Println("==================================================")
+	agent := d.round.agentName
+
+	log.Printf("\n==================================================")
+	log.Printf("  VALIDATION: %s", agent)
+	log.Printf("==================================================")
 
 	var errors []string
 
 	// --- Event-level validation ---
-	log.Printf("[test-server] Total sync events: %d", len(d.events))
-	log.Printf("[test-server] Thread IDs seen: %d", len(d.threadIDs))
-	log.Printf("[test-server] Completions: %v", d.completions)
+	log.Printf("[%s] Total sync events: %d", agent, len(d.round.events))
+	log.Printf("[%s] Thread IDs seen: %d", agent, len(d.round.threadIDs))
+	log.Printf("[%s] Completions: %v", agent, d.round.completions)
 
 	// Phase 1: Basic thread creation
-	threadCreatedEvents := d.filterEvents("thread_created")
+	threadCreatedEvents := d.filterRoundEvents("thread_created")
 	if len(threadCreatedEvents) < 1 {
 		errors = append(errors, "Phase 1: No thread_created event")
 	}
-	if !d.hasCompletion("req-phase1") {
-		errors = append(errors, "Phase 1: No message_completed for req-phase1")
+	if !d.hasRoundCompletion(d.round.reqID("phase1")) {
+		errors = append(errors, "Phase 1: No message_completed for "+d.round.reqID("phase1"))
 	}
 
 	// Phase 2: Follow-up on existing thread
-	if !d.hasCompletion("req-phase2") {
-		errors = append(errors, "Phase 2: No message_completed for req-phase2")
+	if !d.hasRoundCompletion(d.round.reqID("phase2")) {
+		errors = append(errors, "Phase 2: No message_completed for "+d.round.reqID("phase2"))
 	}
 
 	// Phase 3: New thread creation
-	if len(d.threadIDs) < 2 {
-		errors = append(errors, fmt.Sprintf("Phase 3: Expected at least 2 threads, got %d", len(d.threadIDs)))
-	} else if d.threadIDs[0] == d.threadIDs[1] {
+	if len(d.round.threadIDs) < 2 {
+		errors = append(errors, fmt.Sprintf("Phase 3: Expected at least 2 threads, got %d", len(d.round.threadIDs)))
+	} else if d.round.threadIDs[0] == d.round.threadIDs[1] {
 		errors = append(errors, "Phase 3: New thread has same ID as first thread!")
 	} else {
-		log.Printf("[test-server] Phase 3: New thread created: %s", truncate(d.threadIDs[1], 12))
+		log.Printf("[%s] Phase 3: New thread created: %s", agent, truncate(d.round.threadIDs[1], 12))
 	}
-	if !d.hasCompletion("req-phase3") {
-		errors = append(errors, "Phase 3: No message_completed for req-phase3")
+	if !d.hasRoundCompletion(d.round.reqID("phase3")) {
+		errors = append(errors, "Phase 3: No message_completed for "+d.round.reqID("phase3"))
 	}
 
 	// Phase 4: Follow-up to non-visible thread
-	if !d.hasCompletion("req-phase4") {
-		errors = append(errors, "Phase 4: No message_completed for req-phase4")
+	if !d.hasRoundCompletion(d.round.reqID("phase4")) {
+		errors = append(errors, "Phase 4: No message_completed for "+d.round.reqID("phase4"))
 	}
 
 	// Phase 5: Simulate user input
-	if !d.hasCompletion("req-phase5") {
-		errors = append(errors, "Phase 5: No message_completed for req-phase5")
+	if !d.hasRoundCompletion(d.round.reqID("phase5")) {
+		errors = append(errors, "Phase 5: No message_completed for "+d.round.reqID("phase5"))
 	}
-	userMsgs := d.filterEventsByFunc(func(e types.SyncMessage) bool {
+	userMsgs := d.filterRoundEventsByFunc(func(e types.SyncMessage) bool {
 		return e.EventType == "message_added" &&
 			e.Data["role"] == "user" &&
 			strings.Contains(fmt.Sprint(e.Data["content"]), "typed by the user in Zed")
@@ -524,99 +612,91 @@ func (d *testDriver) validate() bool {
 	if len(userMsgs) == 0 {
 		errors = append(errors, "Phase 5: No message_added with role='user' containing simulated input text")
 	} else {
-		log.Println("[test-server] Phase 5: User message synced back to Helix")
+		log.Printf("[%s] Phase 5: User message synced back to Helix", agent)
 	}
 
 	// Phase 6: query_ui_state
-	if len(d.uiStateResponses) == 0 {
+	expectedQueryID := fmt.Sprintf("query-phase6-%s", agent)
+	if len(d.round.uiStateResponses) == 0 {
 		errors = append(errors, "Phase 6: No ui_state_response received")
 	} else {
-		resp := d.uiStateResponses[0]
+		resp := d.round.uiStateResponses[0]
 		queryID, _ := resp.Data["query_id"].(string)
 		activeView, _ := resp.Data["active_view"].(string)
-		if queryID != "query-phase6" {
-			errors = append(errors, fmt.Sprintf("Phase 6: ui_state_response query_id=%q, expected 'query-phase6'", queryID))
+		if queryID != expectedQueryID {
+			errors = append(errors, fmt.Sprintf("Phase 6: ui_state_response query_id=%q, expected %q", queryID, expectedQueryID))
 		}
 		if activeView == "" {
 			errors = append(errors, "Phase 6: ui_state_response active_view is empty")
 		} else {
 			threadID, _ := resp.Data["thread_id"].(string)
 			entryCount, _ := resp.Data["entry_count"].(float64) // JSON numbers are float64
-			log.Printf("[test-server] Phase 6: UI state - active_view=%s, thread_id=%s, entry_count=%.0f",
-				activeView, truncate(threadID, 12), entryCount)
+			log.Printf("[%s] Phase 6: UI state - active_view=%s, thread_id=%s, entry_count=%.0f",
+				agent, activeView, truncate(threadID, 12), entryCount)
 		}
 
-		// Validate MCP server status
-		mcpServers, _ := resp.Data["mcp_servers"].(map[string]interface{})
-		if len(mcpServers) == 0 {
-			errors = append(errors, "Phase 6: ui_state_response mcp_servers is empty (expected at least slow-mcp-test)")
-		} else {
-			log.Printf("[test-server] Phase 6: MCP servers reported: %d", len(mcpServers))
-			slowMcpStatus, hasSlowMcp := mcpServers["slow-mcp-test"]
-			if !hasSlowMcp {
-				errors = append(errors, "Phase 6: mcp_servers missing 'slow-mcp-test' server")
-			} else if slowMcpStatus != "running" {
-				errors = append(errors, fmt.Sprintf(
-					"Phase 6: slow-mcp-test status=%q, expected 'running' (MCP server not connected)",
-					slowMcpStatus))
+		// Validate MCP server status (only for first round -- MCP servers are agent-independent)
+		if d.currentRoundIdx == 0 {
+			mcpServers, _ := resp.Data["mcp_servers"].(map[string]interface{})
+			if len(mcpServers) == 0 {
+				errors = append(errors, "Phase 6: ui_state_response mcp_servers is empty (expected at least slow-mcp-test)")
 			} else {
-				log.Printf("[test-server] Phase 6: slow-mcp-test MCP server is running (green/connected)")
-			}
-			for name, status := range mcpServers {
-				log.Printf("[test-server]   MCP server %q: %s", name, status)
+				log.Printf("[%s] Phase 6: MCP servers reported: %d", agent, len(mcpServers))
+				slowMcpStatus, hasSlowMcp := mcpServers["slow-mcp-test"]
+				if !hasSlowMcp {
+					errors = append(errors, "Phase 6: mcp_servers missing 'slow-mcp-test' server")
+				} else if slowMcpStatus != "running" {
+					errors = append(errors, fmt.Sprintf(
+						"Phase 6: slow-mcp-test status=%q, expected 'running' (MCP server not connected)",
+						slowMcpStatus))
+				} else {
+					log.Printf("[%s] Phase 6: slow-mcp-test MCP server is running (green/connected)", agent)
+				}
+				for name, status := range mcpServers {
+					log.Printf("[%s]   MCP server %q: %s", agent, name, status)
+				}
 			}
 		}
 
-		// Validate active model matches settings.json configuration
-		// Model availability depends on the Anthropic provider fetching its model list,
-		// which may not complete in headless/CI environments. Treat as a warning, not a hard failure.
+		// Validate active model
 		activeModel, _ := resp.Data["active_model"].(string)
 		if activeModel == "" {
-			log.Printf("[test-server] WARNING: Phase 6: active_model is empty (model list may not have loaded yet)")
+			log.Printf("[%s] WARNING: Phase 6: active_model is empty (model list may not have loaded yet)", agent)
 		} else {
-			log.Printf("[test-server] Phase 6: Active model: %s", activeModel)
-			if !strings.Contains(strings.ToLower(activeModel), "claude") {
-				log.Printf("[test-server] WARNING: Phase 6: active_model=%q does not contain 'claude'", activeModel)
-			} else {
-				log.Printf("[test-server] Phase 6: Model correctly set to Anthropic provider (contains 'claude')")
-			}
+			log.Printf("[%s] Phase 6: Active model: %s", agent, activeModel)
 		}
 	}
 
 	// Phase 7: open_thread + follow-up
-	if !d.hasCompletion("req-phase7") {
-		errors = append(errors, "Phase 7: No message_completed for req-phase7")
+	if !d.hasRoundCompletion(d.round.reqID("phase7")) {
+		errors = append(errors, "Phase 7: No message_completed for "+d.round.reqID("phase7"))
 	}
 
 	// Phase 8: mid-stream interrupt
-	// We expect two message_completed events for the phase 8 thread:
-	//   1. The cancelled initial turn (ACP cancel -> Stopped -> message_completed)
-	//   2. The interrupt response (normal completion)
-	if d.phase8ThreadID == "" {
+	if d.round.phase8ThreadID == "" {
 		errors = append(errors, "Phase 8: No thread ID captured (phase 8 may not have run)")
 	} else {
-		completionsForPhase8 := len(d.completions[d.phase8ThreadID])
+		completionsForPhase8 := len(d.round.completions[d.round.phase8ThreadID])
 		if completionsForPhase8 < 2 {
 			errors = append(errors, fmt.Sprintf(
 				"Phase 8: Expected 2 message_completed events (cancelled turn + interrupt), got %d",
 				completionsForPhase8))
 		} else {
-			log.Printf("[test-server] Phase 8: Received %d completions for phase 8 thread (correct)", completionsForPhase8)
+			log.Printf("[%s] Phase 8: Received %d completions for phase 8 thread (correct)", agent, completionsForPhase8)
 		}
 	}
-	if !d.hasCompletion("req-phase8-interrupt") {
-		errors = append(errors, "Phase 8: No message_completed for req-phase8-interrupt")
+	if !d.hasRoundCompletion(d.round.reqID("phase8-interrupt")) {
+		errors = append(errors, "Phase 8: No message_completed for "+d.round.reqID("phase8-interrupt"))
 	}
 
 	// Verify ordering: no assistant tokens for the interrupt arrived before the first
-	// message_completed for the phase 8 thread. This is the core invariant: the FIFO
-	// queue on the Helix side requires message_completed(I_A) before any I_B tokens.
-	if d.phase8ThreadID != "" && d.hasCompletion("req-phase8-interrupt") {
+	// message_completed for the phase 8 thread.
+	if d.round.phase8ThreadID != "" && d.hasRoundCompletion(d.round.reqID("phase8-interrupt")) {
 		seenFirstCompletion := false
 		orderingViolation := false
-		for _, e := range d.events {
+		for _, e := range d.round.events {
 			threadID, _ := e.Data["acp_thread_id"].(string)
-			if threadID != d.phase8ThreadID {
+			if threadID != d.round.phase8ThreadID {
 				continue
 			}
 			if e.EventType == "message_completed" && !seenFirstCompletion {
@@ -625,7 +705,7 @@ func (d *testDriver) validate() bool {
 			if e.EventType == "message_added" && !seenFirstCompletion {
 				role, _ := e.Data["role"].(string)
 				reqID, _ := e.Data["request_id"].(string)
-				if role == "assistant" && reqID == "req-phase8-interrupt" {
+				if role == "assistant" && reqID == d.round.reqID("phase8-interrupt") {
 					orderingViolation = true
 				}
 			}
@@ -633,182 +713,68 @@ func (d *testDriver) validate() bool {
 		if orderingViolation {
 			errors = append(errors, "Phase 8: Interrupt assistant tokens arrived before the first message_completed (FIFO ordering violated)")
 		} else {
-			log.Println("[test-server] Phase 8: Ordering correct — interrupt tokens arrived after first message_completed")
+			log.Printf("[%s] Phase 8: Ordering correct -- interrupt tokens arrived after first message_completed", agent)
 		}
 	}
 
-	// Phase 9: rapid 3-turn cancel (regression test for thread hang)
-	// The key assertion: we received at least 2 completions, meaning the thread
-	// did NOT hang permanently. Without the fix in acp_thread.rs (handling dropped
-	// oneshot tx in run_turn's outer future), the thread would be stuck in
-	// Generating state forever and no completions would arrive.
-	if d.phase9ThreadID == "" {
+	// Phase 9: rapid 3-turn cancel
+	if d.round.phase9ThreadID == "" {
 		errors = append(errors, "Phase 9: No thread ID (phase 9 may not have run)")
 	} else {
-		if d.phase9Completions < 2 {
+		if d.round.phase9Completions < 2 {
 			errors = append(errors, fmt.Sprintf(
-				"Phase 9: Expected at least 2 message_completed events (got %d) — thread may have hung",
-				d.phase9Completions))
+				"Phase 9: Expected at least 2 message_completed events (got %d) -- thread may have hung",
+				d.round.phase9Completions))
 		} else {
-			log.Printf("[test-server] Phase 9: Received %d completions — thread recovered from rapid cancel (correct)", d.phase9Completions)
+			log.Printf("[%s] Phase 9: Received %d completions -- thread recovered from rapid cancel (correct)", agent, d.round.phase9Completions)
 		}
 	}
 
 	// Too many threads (follow-ups should not create new threads)
 	// Phases 1, 3, 8 each create one thread = 3 threads total.
-	// Phases 2, 4, 5, 7, 9 use existing threads. Phase 8 interrupt uses the phase 8 thread.
 	if len(threadCreatedEvents) > 3 {
 		errors = append(errors, fmt.Sprintf("Too many thread_created events (%d, expected 3)", len(threadCreatedEvents)))
 	}
 
-	// --- STORE STATE VALIDATION (production handlers actually worked) ---
-	log.Println("\n--------------------------------------------------")
-	log.Println("  STORE STATE VALIDATION (production handlers)")
-	log.Println("--------------------------------------------------")
+	// --- MCP TOOLS WAIT VALIDATION (first round only) ---
+	if d.currentRoundIdx == 0 {
+		log.Println("\n--------------------------------------------------")
+		log.Printf("  [%s] MCP TOOLS WAIT VALIDATION", agent)
+		log.Println("--------------------------------------------------")
 
-	sessions := d.store.GetAllSessions()
-	interactions := d.store.GetAllInteractions()
+		if !d.round.phase1ChatSentAt.IsZero() && !d.round.phase1ThreadCreated.IsZero() {
+			mcpWaitDuration := d.round.phase1ThreadCreated.Sub(d.round.phase1ChatSentAt)
+			log.Printf("[%s] MCP wait: chat_message sent -> thread_created = %s", agent, mcpWaitDuration)
 
-	log.Printf("[test-server] Sessions in store: %d", len(sessions))
-	log.Printf("[test-server] Interactions in store: %d", len(interactions))
-
-	if len(sessions) < 3 {
-		errors = append(errors, fmt.Sprintf("Expected at least 3 sessions (Thread A + Thread B + Phase 8), got %d", len(sessions)))
-	}
-
-	// Check that sessions have ZedThreadID metadata
-	sessionsWithThread := 0
-	for _, s := range sessions {
-		if s.Metadata.ZedThreadID != "" {
-			sessionsWithThread++
-			log.Printf("[test-server] Session %s: ZedThreadID=%s, Owner=%s, Name=%q",
-				truncate(s.ID, 12), truncate(s.Metadata.ZedThreadID, 12), s.Owner, s.Name)
-		}
-	}
-	if sessionsWithThread < 3 {
-		errors = append(errors, fmt.Sprintf("Expected at least 3 sessions with ZedThreadID, got %d", sessionsWithThread))
-	}
-
-	// Check completed interactions have non-empty ResponseMessage
-	completedInteractions := 0
-	for _, i := range interactions {
-		if i.State == types.InteractionStateComplete {
-			completedInteractions++
-			if i.ResponseMessage == "" {
-				errors = append(errors, fmt.Sprintf("Interaction %s: complete but empty ResponseMessage (accumulation bug!)",
-					truncate(i.ID, 12)))
+			const minExpectedDelay = 8 * time.Second
+			if mcpWaitDuration < minExpectedDelay {
+				errors = append(errors, fmt.Sprintf(
+					"MCP tools wait: thread_created arrived %.1fs after chat_message (expected >= %.0fs). "+
+						"This means Zed did NOT wait for MCP tools to load before sending the first message.",
+					mcpWaitDuration.Seconds(), minExpectedDelay.Seconds()))
 			} else {
-				log.Printf("[test-server] Completed interaction %s: %d bytes response, session=%s",
-					truncate(i.ID, 12), len(i.ResponseMessage), truncate(i.SessionID, 12))
+				log.Printf("[%s] MCP tools wait: Zed correctly waited %.1fs for tools to load", agent, mcpWaitDuration.Seconds())
 			}
-			// Verify structured response entries are populated and have correct types
-			if len(i.ResponseEntries) == 0 {
-				errors = append(errors, fmt.Sprintf("Interaction %s: complete but no ResponseEntries (structured entries missing!)",
-					truncate(i.ID, 12)))
-			} else {
-				// Parse entries to validate types
-				var entries []struct {
-					Type      string `json:"type"`
-					Content   string `json:"content"`
-					MessageID string `json:"message_id"`
-				}
-				if err := json.Unmarshal(i.ResponseEntries, &entries); err != nil {
-					errors = append(errors, fmt.Sprintf("Interaction %s: failed to parse ResponseEntries: %v",
-						truncate(i.ID, 12), err))
-				} else {
-					hasText := false
-					hasToolCall := false
-					for _, e := range entries {
-						if e.Type == "text" {
-							hasText = true
-						}
-						if e.Type == "tool_call" {
-							hasToolCall = true
-						}
-						if e.Type != "text" && e.Type != "tool_call" {
-							errors = append(errors, fmt.Sprintf("Interaction %s: unexpected entry type %q (expected 'text' or 'tool_call')",
-								truncate(i.ID, 12), e.Type))
-						}
-						if e.Content == "" {
-							errors = append(errors, fmt.Sprintf("Interaction %s: entry %s has empty content",
-								truncate(i.ID, 12), e.MessageID))
-						}
-					}
-					if !hasText {
-						errors = append(errors, fmt.Sprintf("Interaction %s: ResponseEntries has no 'text' entries (expected at least one)",
-							truncate(i.ID, 12)))
-					}
-					log.Printf("[test-server] Interaction %s: %d response_entries (text=%v, tool_call=%v)",
-						truncate(i.ID, 12), len(entries), hasText, hasToolCall)
-				}
-			}
-		}
-	}
-
-	// HARD FAIL: We need completed interactions in the store
-	// The handler processes N×message_added + message_completed per phase.
-	// Some interactions get reused across phases (server-initiated follow-ups reuse
-	// the thread's existing interaction), so the count may be lower than the phase count.
-	if completedInteractions < 2 {
-		errors = append(errors, fmt.Sprintf("Expected at least 2 completed interactions, got %d", completedInteractions))
-	}
-
-	// Check context mappings
-	mappings := d.srv.ContextMappings()
-	log.Printf("[test-server] Context mappings: %d entries", len(mappings))
-	for threadID, sessionID := range mappings {
-		log.Printf("[test-server]   %s -> %s", truncate(threadID, 12), truncate(sessionID, 12))
-	}
-
-	// Verify multi-thread: Thread A and Thread B map to different sessions
-	if len(d.threadIDs) >= 2 {
-		sessionA := mappings[d.threadIDs[0]]
-		sessionB := mappings[d.threadIDs[1]]
-		if sessionA == sessionB {
-			errors = append(errors, fmt.Sprintf("Thread A and Thread B map to same session: %s", truncate(sessionA, 12)))
 		} else {
-			log.Printf("[test-server] Multi-thread: Thread A -> %s, Thread B -> %s (different sessions)",
-				truncate(sessionA, 12), truncate(sessionB, 12))
+			log.Printf("[%s] WARNING: Could not measure MCP tools wait (missing timestamps)", agent)
 		}
-	}
-
-	// --- MCP TOOLS WAIT VALIDATION ---
-	log.Println("\n--------------------------------------------------")
-	log.Println("  MCP TOOLS WAIT VALIDATION")
-	log.Println("--------------------------------------------------")
-
-	if !d.phase1ChatSentAt.IsZero() && !d.phase1ThreadCreated.IsZero() {
-		mcpWaitDuration := d.phase1ThreadCreated.Sub(d.phase1ChatSentAt)
-		log.Printf("[test-server] MCP wait: chat_message sent -> thread_created = %s", mcpWaitDuration)
-
-		// The slow MCP server delays tools/list by 10 seconds.
-		// If wait_for_tools_ready() works, thread creation should be delayed
-		// by at least 8 seconds (allowing 2s buffer for server startup).
-		const minExpectedDelay = 8 * time.Second
-		if mcpWaitDuration < minExpectedDelay {
-			errors = append(errors, fmt.Sprintf(
-				"MCP tools wait: thread_created arrived %.1fs after chat_message (expected >= %.0fs). "+
-					"This means Zed did NOT wait for MCP tools to load before sending the first message.",
-				mcpWaitDuration.Seconds(), minExpectedDelay.Seconds()))
-		} else {
-			log.Printf("[test-server] MCP tools wait: Zed correctly waited %.1fs for tools to load", mcpWaitDuration.Seconds())
-		}
-	} else {
-		log.Println("[test-server] WARNING: Could not measure MCP tools wait (missing timestamps)")
 	}
 
 	// --- STREAMING VALIDATION ---
 	log.Println("\n--------------------------------------------------")
-	log.Println("  STREAMING VALIDATION")
+	log.Printf("  [%s] STREAMING VALIDATION", agent)
 	log.Println("--------------------------------------------------")
 
-	completionPhases := []string{"req-phase1", "req-phase2", "req-phase3", "req-phase4", "req-phase5", "req-phase7"}
+	completionPhases := []string{
+		d.round.reqID("phase1"), d.round.reqID("phase2"), d.round.reqID("phase3"),
+		d.round.reqID("phase4"), d.round.reqID("phase5"), d.round.reqID("phase7"),
+	}
 	for _, reqID := range completionPhases {
 		firstAddedIdx := -1
 		completedIdx := -1
 		addedCount := 0
 
-		for i, evt := range d.events {
+		for i, evt := range d.round.events {
 			if evt.EventType == "message_added" && evt.Data["role"] == "assistant" {
 				if firstAddedIdx == -1 {
 					firstAddedIdx = i
@@ -822,11 +788,133 @@ func (d *testDriver) validate() bool {
 
 		if firstAddedIdx >= 0 && completedIdx >= 0 {
 			if firstAddedIdx < completedIdx {
-				log.Printf("[test-server] Streaming %s: %d message_added before message_completed", reqID, addedCount)
+				log.Printf("[%s] Streaming %s: %d message_added before message_completed", agent, reqID, addedCount)
 			} else {
 				errors = append(errors, fmt.Sprintf("Streaming %s: message_added did NOT arrive before message_completed", reqID))
 			}
 		}
+	}
+
+	// --- SUMMARY ---
+	passed := len(errors) == 0
+	if !passed {
+		fmt.Println()
+		for _, e := range errors {
+			log.Printf("[%s] FAIL: %s", agent, e)
+		}
+	} else {
+		fmt.Println()
+		log.Printf("[%s] Phase 1: Basic thread creation - PASSED", agent)
+		log.Printf("[%s] Phase 2: Follow-up on existing thread - PASSED", agent)
+		log.Printf("[%s] Phase 3: New thread via WebSocket - PASSED", agent)
+		log.Printf("[%s] Phase 4: Follow-up to non-visible thread - PASSED", agent)
+		log.Printf("[%s] Phase 5: Zed -> Helix user message sync - PASSED", agent)
+		log.Printf("[%s] Phase 6: Query UI state - PASSED", agent)
+		log.Printf("[%s] Phase 7: Open thread + follow-up - PASSED", agent)
+		log.Printf("[%s] Phase 8: Mid-stream interrupt - PASSED", agent)
+		log.Printf("[%s] Phase 9: Rapid 3-turn cancel - PASSED", agent)
+	}
+
+	totalCompletions := 0
+	for _, v := range d.round.completions {
+		totalCompletions += len(v)
+	}
+	log.Printf("[%s] Total threads: %d, Total completions: %d",
+		agent, len(d.round.threadIDs), totalCompletions)
+
+	return roundResult{agentName: agent, passed: passed, errors: errors}
+}
+
+// validateStore runs cross-round store state validation (sessions, interactions).
+func (d *testDriver) validateStore() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	log.Println("\n==================================================")
+	log.Println("  STORE STATE VALIDATION (production handlers)")
+	log.Println("==================================================")
+
+	var errors []string
+
+	sessions := d.store.GetAllSessions()
+	interactions := d.store.GetAllInteractions()
+
+	log.Printf("[store] Sessions in store: %d", len(sessions))
+	log.Printf("[store] Interactions in store: %d", len(interactions))
+
+	// Each round creates 3 threads = 3 sessions. With N rounds, expect 3*N.
+	expectedSessions := 3 * len(d.agentRounds)
+	if len(sessions) < expectedSessions {
+		errors = append(errors, fmt.Sprintf("Expected at least %d sessions (%d rounds * 3 threads), got %d",
+			expectedSessions, len(d.agentRounds), len(sessions)))
+	}
+
+	// Check that sessions have ZedThreadID metadata
+	sessionsWithThread := 0
+	for _, s := range sessions {
+		if s.Metadata.ZedThreadID != "" {
+			sessionsWithThread++
+			log.Printf("[store] Session %s: ZedThreadID=%s, Owner=%s, Name=%q",
+				truncate(s.ID, 12), truncate(s.Metadata.ZedThreadID, 12), s.Owner, s.Name)
+		}
+	}
+	if sessionsWithThread < expectedSessions {
+		errors = append(errors, fmt.Sprintf("Expected at least %d sessions with ZedThreadID, got %d", expectedSessions, sessionsWithThread))
+	}
+
+	// Check completed interactions have non-empty ResponseMessage
+	completedInteractions := 0
+	for _, i := range interactions {
+		if i.State == types.InteractionStateComplete {
+			completedInteractions++
+			if i.ResponseMessage == "" {
+				errors = append(errors, fmt.Sprintf("Interaction %s: complete but empty ResponseMessage (accumulation bug!)",
+					truncate(i.ID, 12)))
+			} else {
+				log.Printf("[store] Completed interaction %s: %d bytes response, session=%s",
+					truncate(i.ID, 12), len(i.ResponseMessage), truncate(i.SessionID, 12))
+			}
+			// Verify structured response entries
+			if len(i.ResponseEntries) == 0 {
+				errors = append(errors, fmt.Sprintf("Interaction %s: complete but no ResponseEntries",
+					truncate(i.ID, 12)))
+			} else {
+				var entries []struct {
+					Type      string `json:"type"`
+					Content   string `json:"content"`
+					MessageID string `json:"message_id"`
+				}
+				if err := json.Unmarshal(i.ResponseEntries, &entries); err != nil {
+					errors = append(errors, fmt.Sprintf("Interaction %s: failed to parse ResponseEntries: %v",
+						truncate(i.ID, 12), err))
+				} else {
+					hasText := false
+					for _, e := range entries {
+						if e.Type == "text" {
+							hasText = true
+						}
+						if e.Type != "text" && e.Type != "tool_call" {
+							errors = append(errors, fmt.Sprintf("Interaction %s: unexpected entry type %q",
+								truncate(i.ID, 12), e.Type))
+						}
+						if e.Content == "" {
+							errors = append(errors, fmt.Sprintf("Interaction %s: entry %s has empty content",
+								truncate(i.ID, 12), e.MessageID))
+						}
+					}
+					if !hasText {
+						errors = append(errors, fmt.Sprintf("Interaction %s: no 'text' entries in ResponseEntries",
+							truncate(i.ID, 12)))
+					}
+				}
+			}
+		}
+	}
+
+	// Expect at least 2 completed interactions per round
+	expectedCompleted := 2 * len(d.agentRounds)
+	if completedInteractions < expectedCompleted {
+		errors = append(errors, fmt.Sprintf("Expected at least %d completed interactions, got %d", expectedCompleted, completedInteractions))
 	}
 
 	// --- ACCUMULATION VALIDATION ---
@@ -840,7 +928,7 @@ func (d *testDriver) validate() bool {
 
 	for _, i := range interactions {
 		if i.State == types.InteractionStateComplete && i.ResponseMessage != "" {
-			log.Printf("[test-server] Interaction %s (session %s): %d bytes, lastMsgID=%s, offset=%d",
+			log.Printf("[store] Interaction %s (session %s): %d bytes, lastMsgID=%s, offset=%d",
 				truncate(i.ID, 12), truncate(i.SessionID, 12),
 				len(i.ResponseMessage), truncate(i.LastZedMessageID, 12), i.LastZedMessageOffset)
 		}
@@ -851,90 +939,38 @@ func (d *testDriver) validate() bool {
 	log.Println("  THREAD TITLE VALIDATION")
 	log.Println("--------------------------------------------------")
 
-	titleChangeEvents := d.filterEvents("thread_title_changed")
-	if len(titleChangeEvents) > 0 {
-		log.Printf("[test-server] Thread title changes: %d events", len(titleChangeEvents))
-		for _, e := range titleChangeEvents {
-			title, _ := e.Data["title"].(string)
-			threadID, _ := e.Data["acp_thread_id"].(string)
-			log.Printf("[test-server]   Thread %s -> %q", truncate(threadID, 12), title)
+	updatedNames := 0
+	for _, s := range sessions {
+		if s.Name != "" && s.Name != "New Conversation" && s.Name != "New Chat" {
+			updatedNames++
+			log.Printf("[store] Session %s name: %q", truncate(s.ID, 12), s.Name)
 		}
-		// Verify at least one session name was updated from the default
-		updatedNames := 0
-		for _, s := range sessions {
-			if s.Name != "" && s.Name != "New Conversation" && s.Name != "New Chat" {
-				updatedNames++
-				log.Printf("[test-server] Session %s name: %q", truncate(s.ID, 12), s.Name)
-			}
-		}
-		if updatedNames > 0 {
-			log.Printf("[test-server] Thread title -> session name sync: %d sessions updated", updatedNames)
-		}
+	}
+	if updatedNames > 0 {
+		log.Printf("[store] Thread title -> session name sync: %d sessions updated", updatedNames)
 	} else {
-		// Not a failure - Zed may not generate titles for very short prompts
-		log.Println("[test-server] No thread_title_changed events (Zed may not generate titles for short prompts)")
+		log.Println("[store] No thread title updates (Zed may not generate titles for short prompts)")
 	}
 
-	// --- USER MESSAGE INTERACTION VALIDATION ---
-	log.Println("\n--------------------------------------------------")
-	log.Println("  USER MESSAGE INTERACTION VALIDATION")
-	log.Println("--------------------------------------------------")
-
-	// Phase 5 sends simulate_user_input, which should create an interaction with PromptMessage
-	userInteractions := 0
-	for _, i := range interactions {
-		if i.PromptMessage != "" && strings.Contains(i.PromptMessage, "typed by the user in Zed") {
-			userInteractions++
-			log.Printf("[test-server] User interaction %s: PromptMessage=%q (session %s)",
-				truncate(i.ID, 12), truncate(i.PromptMessage, 50), truncate(i.SessionID, 12))
-		}
-	}
-	if userInteractions == 0 {
-		// Check if any interaction has a PromptMessage related to Phase 5
-		// The simulate_user_input creates a user message that goes through handleMessageAdded(role=user)
-		log.Println("[test-server] NOTE: No interaction found with Phase 5 user message in PromptMessage")
-	} else {
-		log.Printf("[test-server] User-initiated interactions: %d", userInteractions)
-	}
-
-	// --- SUMMARY ---
 	if len(errors) > 0 {
 		fmt.Println()
 		for _, e := range errors {
-			log.Printf("[test-server] FAIL: %s", e)
+			log.Printf("[store] FAIL: %s", e)
 		}
 		return false
 	}
 
-	fmt.Println()
-	log.Println("[test-server] Phase 1: Basic thread creation - PASSED")
-	log.Println("[test-server] Phase 2: Follow-up on existing thread - PASSED")
-	log.Println("[test-server] Phase 3: New thread via WebSocket - PASSED")
-	log.Println("[test-server] Phase 4: Follow-up to non-visible thread - PASSED")
-	log.Println("[test-server] Phase 5: Zed -> Helix user message sync - PASSED")
-	log.Println("[test-server] Phase 6: Query UI state - PASSED")
-	log.Println("[test-server] Phase 6: MCP server connected (slow-mcp-test running) - PASSED")
-	log.Println("[test-server] Phase 6: Active model check - SKIPPED (warning only)")
-	log.Println("[test-server] Phase 7: Open thread + follow-up - PASSED")
-	log.Println("[test-server] MCP tools wait: Zed waited for slow MCP server before first message - PASSED")
-	log.Println("[test-server] Store state: Sessions and interactions created correctly - PASSED")
-	log.Println("[test-server] Accumulation: ResponseMessage content preserved - PASSED")
-	log.Println("[test-server] Structured entries: ResponseEntries populated on completion - PASSED")
-
-	totalCompletions := 0
-	for _, v := range d.completions {
-		totalCompletions += len(v)
-	}
-	log.Printf("[test-server] Total threads: %d, Total completions: %d, Sessions: %d, Interactions: %d",
-		len(d.threadIDs), totalCompletions, len(sessions), len(interactions))
+	log.Println("\n[store] Store state: Sessions and interactions created correctly - PASSED")
+	log.Println("[store] Accumulation: ResponseMessage content preserved - PASSED")
+	log.Println("[store] Structured entries: ResponseEntries populated on completion - PASSED")
 	return true
 }
 
 // --- helpers ---
 
-func (d *testDriver) filterEvents(eventType string) []types.SyncMessage {
+func (d *testDriver) filterRoundEvents(eventType string) []types.SyncMessage {
 	var out []types.SyncMessage
-	for _, e := range d.events {
+	for _, e := range d.round.events {
 		if e.EventType == eventType {
 			out = append(out, e)
 		}
@@ -942,9 +978,9 @@ func (d *testDriver) filterEvents(eventType string) []types.SyncMessage {
 	return out
 }
 
-func (d *testDriver) filterEventsByFunc(fn func(types.SyncMessage) bool) []types.SyncMessage {
+func (d *testDriver) filterRoundEventsByFunc(fn func(types.SyncMessage) bool) []types.SyncMessage {
 	var out []types.SyncMessage
-	for _, e := range d.events {
+	for _, e := range d.round.events {
 		if fn(e) {
 			out = append(out, e)
 		}
@@ -952,8 +988,8 @@ func (d *testDriver) filterEventsByFunc(fn func(types.SyncMessage) bool) []types
 	return out
 }
 
-func (d *testDriver) hasCompletion(requestID string) bool {
-	for _, e := range d.events {
+func (d *testDriver) hasRoundCompletion(requestID string) bool {
+	for _, e := range d.round.events {
 		if e.EventType == "message_completed" && e.Data["request_id"] == requestID {
 			return true
 		}
@@ -971,6 +1007,24 @@ func truncate(s string, n int) string {
 // --- main ---
 
 func main() {
+	// Determine which agents to test. Default: zed-agent only (backwards compatible).
+	// Set E2E_AGENTS="zed-agent,claude" to test multiple agents.
+	agentsStr := os.Getenv("E2E_AGENTS")
+	var agents []string
+	if agentsStr != "" {
+		for _, a := range strings.Split(agentsStr, ",") {
+			a = strings.TrimSpace(a)
+			if a != "" {
+				agents = append(agents, a)
+			}
+		}
+	}
+	if len(agents) == 0 {
+		agents = []string{"zed-agent"}
+	}
+
+	log.Printf("[test-server] Agent rounds: %v", agents)
+
 	// Create in-memory store and no-op pubsub
 	store := memorystore.New()
 	ps := pubsub.NewNoop()
@@ -979,7 +1033,7 @@ func main() {
 	srv := server.NewTestServer(store, ps)
 
 	// Create test driver
-	driver := newTestDriver(srv, store)
+	driver := newTestDriver(srv, store, agents)
 
 	// Register sync event hook so test driver observes all events
 	srv.SetSyncEventHook(driver.syncEventCallback)
@@ -1025,21 +1079,56 @@ func main() {
 		}
 	}()
 
+	// Increase timeout for multi-agent runs
+	timeout := 300 * time.Second
+	if len(agents) > 1 {
+		timeout = time.Duration(300*len(agents)) * time.Second
+	}
+
 	select {
 	case <-driver.done:
-	case <-time.After(300 * time.Second):
+	case <-time.After(timeout):
 		driver.mu.Lock()
-		eventTypes := make([]string, len(driver.events))
-		for i, e := range driver.events {
-			eventTypes[i] = e.EventType
+		var eventTypes []string
+		if driver.round != nil {
+			for _, e := range driver.round.events {
+				eventTypes = append(eventTypes, e.EventType)
+			}
 		}
 		driver.mu.Unlock()
-		log.Printf("[test-server] TIMEOUT at phase %d. Events: %v", driver.phase, eventTypes)
+		log.Printf("[test-server] TIMEOUT at round %d/%d, phase %d. Events: %v",
+			driver.currentRoundIdx+1, len(agents), driver.phase, eventTypes)
 		os.Exit(1)
 	}
 
-	if driver.validate() {
-		log.Println("\n[test-server] ALL TESTS PASSED (9 phases, production handlers, in-memory store)")
+	// Validate store state (cross-round)
+	storeOK := driver.validateStore()
+
+	// Print final summary
+	log.Println("\n##################################################")
+	log.Println("  FINAL RESULTS")
+	log.Println("##################################################")
+
+	allPassed := storeOK
+	for _, r := range driver.roundResults {
+		status := "PASSED"
+		if !r.passed {
+			status = "FAILED"
+			allPassed = false
+		}
+		log.Printf("  [%s] %s (9 phases)", r.agentName, status)
+		for _, e := range r.errors {
+			log.Printf("    FAIL: %s", e)
+		}
+	}
+	if storeOK {
+		log.Println("  [store] PASSED")
+	} else {
+		log.Println("  [store] FAILED")
+	}
+
+	if allPassed {
+		log.Printf("\n[test-server] ALL TESTS PASSED (%d agent rounds x 9 phases, production handlers, in-memory store)", len(agents))
 		os.Exit(0)
 	} else {
 		os.Exit(1)

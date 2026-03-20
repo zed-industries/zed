@@ -44,6 +44,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xvfb x11-utils dbus \
     mesa-vulkan-drivers \
     imagemagick \
+    nodejs npm \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=go-builder /helix-ws-test-server /usr/local/bin/helix-ws-test-server
 COPY --from=mcp-builder /slow-mcp-server /usr/local/bin/slow-mcp-server

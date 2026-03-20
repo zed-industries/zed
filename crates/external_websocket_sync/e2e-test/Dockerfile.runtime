@@ -32,6 +32,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     dbus \
     # Screenshot capture (import command for X11 screenshots)
     imagemagick \
+    # Node.js for Claude Code auto-install (Zed downloads @zed-industries/claude-agent-acp via npm)
+    nodejs npm \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy pre-built binaries

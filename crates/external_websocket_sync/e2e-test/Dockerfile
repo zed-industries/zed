@@ -92,6 +92,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xvfb x11-utils \
     # Software Vulkan (lavapipe)
     mesa-vulkan-drivers \
+    # Node.js for Claude Code auto-install (Zed downloads @zed-industries/claude-agent-acp via npm)
+    nodejs npm \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy pre-built Zed binary (built locally with `cargo build --features external_websocket_sync -p zed`)
