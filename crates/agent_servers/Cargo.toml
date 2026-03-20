@@ -30,6 +30,7 @@ env_logger = { workspace = true, optional = true }
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
+feature_flags.workspace = true
 gpui_tokio = { workspace = true, optional = true }
 credentials_provider.workspace = true
 google_ai.workspace = true

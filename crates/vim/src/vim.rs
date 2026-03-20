@@ -635,7 +635,7 @@ impl Vim {
     fn activate(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) {
         let vim = Vim::new(window, cx);
         let state = vim.update(cx, |vim, cx| {
-            if !editor.mode().is_full() {
+            if !editor.use_modal_editing() {
                 vim.mode = Mode::Insert;
             }
 
@@ -996,7 +996,14 @@ impl Vim {
         cx: &mut Context<Vim>,
         f: impl Fn(&mut Vim, &A, &mut Window, &mut Context<Vim>) + 'static,
     ) {
-        let subscription = editor.register_action(cx.listener(f));
+        let subscription = editor.register_action(cx.listener(move |vim, action, window, cx| {
+            if !Vim::globals(cx).dot_replaying {
+                if vim.status_label.take().is_some() {
+                    cx.notify();
+                }
+            }
+            f(vim, action, window, cx);
+        }));
         cx.on_release(|_, _| drop(subscription)).detach();
     }
 
@@ -1155,7 +1162,6 @@ impl Vim {
         let last_mode = self.mode;
         let prior_mode = self.last_mode;
         let prior_tx = self.current_tx;
-        self.status_label.take();
         self.last_mode = last_mode;
         self.mode = mode;
         self.operator_stack.clear();
@@ -1586,6 +1592,7 @@ impl Vim {
                 globals.dot_recording = true;
                 globals.recording_actions = Default::default();
                 globals.recording_count = None;
+                globals.recording_register_for_dot = self.selected_register;
 
                 let selections = self.editor().map(|editor| {
                     editor.update(cx, |editor, cx| {
@@ -2070,7 +2077,7 @@ impl Vim {
             input_enabled: self.editor_input_enabled(),
             expects_character_input: self.expects_character_input(),
             autoindent: self.should_autoindent(),
-            cursor_offset_on_selection: self.mode.is_visual(),
+            cursor_offset_on_selection: self.mode.is_visual() || self.mode.is_helix(),
             line_mode: matches!(self.mode, Mode::VisualLine),
             hide_edit_predictions: !matches!(self.mode, Mode::Insert | Mode::Replace),
         }
@@ -2091,6 +2098,11 @@ impl Vim {
         editor.set_cursor_offset_on_selection(state.cursor_offset_on_selection);
         editor.selections.set_line_mode(state.line_mode);
         editor.set_edit_predictions_hidden_for_vim_mode(state.hide_edit_predictions, window, cx);
+    }
+
+    fn set_status_label(&mut self, label: impl Into<SharedString>, cx: &mut Context<Editor>) {
+        self.status_label = Some(label.into());
+        cx.notify();
     }
 }
 

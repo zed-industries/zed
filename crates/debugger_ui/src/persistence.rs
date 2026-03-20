@@ -1,7 +1,7 @@
 use anyhow::Context as _;
 use collections::HashMap;
 use dap::{Capabilities, adapters::DebugAdapterName};
-use db::kvp::KEY_VALUE_STORE;
+use db::kvp::KeyValueStore;
 use gpui::{Axis, Context, Entity, EntityId, Focusable, Subscription, WeakEntity, Window};
 use project::Project;
 use serde::{Deserialize, Serialize};
@@ -125,15 +125,15 @@ const DEBUGGER_PANEL_PREFIX: &str = "debugger_panel_";
 pub(crate) async fn serialize_pane_layout(
     adapter_name: DebugAdapterName,
     pane_group: SerializedLayout,
+    kvp: KeyValueStore,
 ) -> anyhow::Result<()> {
     let serialized_pane_group = serde_json::to_string(&pane_group)
         .context("Serializing pane group with serde_json as a string")?;
-    KEY_VALUE_STORE
-        .write_kvp(
-            format!("{DEBUGGER_PANEL_PREFIX}-{adapter_name}"),
-            serialized_pane_group,
-        )
-        .await
+    kvp.write_kvp(
+        format!("{DEBUGGER_PANEL_PREFIX}-{adapter_name}"),
+        serialized_pane_group,
+    )
+    .await
 }
 
 pub(crate) fn build_serialized_layout(
@@ -187,13 +187,13 @@ fn serialize_pane(pane: &Entity<Pane>, cx: &App) -> SerializedPane {
     }
 }
 
-pub(crate) async fn get_serialized_layout(
+pub(crate) fn get_serialized_layout(
     adapter_name: impl AsRef<str>,
+    kvp: &KeyValueStore,
 ) -> Option<SerializedLayout> {
     let key = format!("{DEBUGGER_PANEL_PREFIX}-{}", adapter_name.as_ref());
 
-    KEY_VALUE_STORE
-        .read_kvp(&key)
+    kvp.read_kvp(&key)
         .log_err()
         .flatten()
         .and_then(|value| serde_json::from_str::<SerializedLayout>(&value).ok())

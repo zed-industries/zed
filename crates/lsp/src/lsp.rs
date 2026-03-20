@@ -1306,6 +1306,29 @@ impl LanguageServer {
         self.version.clone()
     }
 
+    /// Get the readable version of the running language server.
+    pub fn readable_version(&self) -> Option<SharedString> {
+        match self.name().as_ref() {
+            "gopls" => {
+                // Gopls returns a detailed JSON object as its version string; we must parse it to extract the semantic version.
+                // Example: `{"GoVersion":"go1.26.0","Path":"golang.org/x/tools/gopls","Main":{},"Deps":[],"Settings":[],"Version":"v0.21.1"}`
+                self.version
+                    .as_ref()
+                    .and_then(|obj| {
+                        #[derive(Deserialize)]
+                        struct GoplsVersion<'a> {
+                            #[serde(rename = "Version")]
+                            version: &'a str,
+                        }
+                        let parsed: GoplsVersion = serde_json::from_str(obj.as_str()).ok()?;
+                        Some(parsed.version.trim_start_matches("v").to_owned().into())
+                    })
+                    .or_else(|| self.version.clone())
+            }
+            _ => self.version.clone(),
+        }
+    }
+
     /// Get the process name of the running language server.
     pub fn process_name(&self) -> &str {
         &self.process_name

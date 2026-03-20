@@ -48,7 +48,7 @@ use std::{
     rc::Rc,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -58,14 +58,14 @@ mod edit_file_thread_test;
 mod test_tools;
 use test_tools::*;
 
-fn init_test(cx: &mut TestAppContext) {
+pub(crate) fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
     });
 }
 
-struct FakeTerminalHandle {
+pub(crate) struct FakeTerminalHandle {
     killed: Arc<AtomicBool>,
     stopped_by_user: Arc<AtomicBool>,
     exit_sender: std::cell::RefCell<Option<futures::channel::oneshot::Sender<()>>>,
@@ -75,7 +75,7 @@ struct FakeTerminalHandle {
 }
 
 impl FakeTerminalHandle {
-    fn new_never_exits(cx: &mut App) -> Self {
+    pub(crate) fn new_never_exits(cx: &mut App) -> Self {
         let killed = Arc::new(AtomicBool::new(false));
         let stopped_by_user = Arc::new(AtomicBool::new(false));
 
@@ -99,7 +99,7 @@ impl FakeTerminalHandle {
         }
     }
 
-    fn new_with_immediate_exit(cx: &mut App, exit_code: u32) -> Self {
+    pub(crate) fn new_with_immediate_exit(cx: &mut App, exit_code: u32) -> Self {
         let killed = Arc::new(AtomicBool::new(false));
         let stopped_by_user = Arc::new(AtomicBool::new(false));
         let (exit_sender, _exit_receiver) = futures::channel::oneshot::channel();
@@ -118,15 +118,15 @@ impl FakeTerminalHandle {
         }
     }
 
-    fn was_killed(&self) -> bool {
+    pub(crate) fn was_killed(&self) -> bool {
         self.killed.load(Ordering::SeqCst)
     }
 
-    fn set_stopped_by_user(&self, stopped: bool) {
+    pub(crate) fn set_stopped_by_user(&self, stopped: bool) {
         self.stopped_by_user.store(stopped, Ordering::SeqCst);
     }
 
-    fn signal_exit(&self) {
+    pub(crate) fn signal_exit(&self) {
         if let Some(sender) = self.exit_sender.borrow_mut().take() {
             let _ = sender.send(());
         }
@@ -178,17 +178,22 @@ impl SubagentHandle for FakeSubagentHandle {
 }
 
 #[derive(Default)]
-struct FakeThreadEnvironment {
+pub(crate) struct FakeThreadEnvironment {
     terminal_handle: Option<Rc<FakeTerminalHandle>>,
     subagent_handle: Option<Rc<FakeSubagentHandle>>,
+    terminal_creations: Arc<AtomicUsize>,
 }
 
 impl FakeThreadEnvironment {
-    pub fn with_terminal(self, terminal_handle: FakeTerminalHandle) -> Self {
+    pub(crate) fn with_terminal(self, terminal_handle: FakeTerminalHandle) -> Self {
         Self {
             terminal_handle: Some(terminal_handle.into()),
             ..self
         }
+    }
+
+    pub(crate) fn terminal_creation_count(&self) -> usize {
+        self.terminal_creations.load(Ordering::SeqCst)
     }
 }
 
@@ -200,6 +205,7 @@ impl crate::ThreadEnvironment for FakeThreadEnvironment {
         _output_byte_limit: Option<u64>,
         _cx: &mut AsyncApp,
     ) -> Task<Result<Rc<dyn crate::TerminalHandle>>> {
+        self.terminal_creations.fetch_add(1, Ordering::SeqCst);
         let handle = self
             .terminal_handle
             .clone()
@@ -3177,20 +3183,12 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     let fake_fs = cx.update(|cx| fs::FakeFs::new(cx.background_executor().clone()));
     fake_fs.insert_tree(path!("/test"), json!({})).await;
     let project = Project::test(fake_fs.clone(), [Path::new("/test")], cx).await;
-    let cwd = Path::new("/test");
+    let cwd = PathList::new(&[Path::new("/test")]);
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
 
     // Create agent and connection
-    let agent = NativeAgent::new(
-        project.clone(),
-        thread_store,
-        templates.clone(),
-        None,
-        fake_fs.clone(),
-        &mut cx.to_async(),
-    )
-    .await
-    .unwrap();
+    let agent = cx
+        .update(|cx| NativeAgent::new(thread_store, templates.clone(), None, fake_fs.clone(), cx));
     let connection = NativeAgentConnection(agent.clone());
 
     // Create a thread using new_thread
@@ -4388,23 +4386,16 @@ async fn test_subagent_tool_call_end_to_end(cx: &mut TestAppContext) {
     .await;
     let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
-    let agent = NativeAgent::new(
-        project.clone(),
-        thread_store.clone(),
-        Templates::new(),
-        None,
-        fs.clone(),
-        &mut cx.to_async(),
-    )
-    .await
-    .unwrap();
+    let agent = cx.update(|cx| {
+        NativeAgent::new(thread_store.clone(), Templates::new(), None, fs.clone(), cx)
+    });
     let connection = Rc::new(NativeAgentConnection(agent.clone()));
 
     let acp_thread = cx
         .update(|cx| {
             connection
                 .clone()
-                .new_session(project.clone(), Path::new(""), cx)
+                .new_session(project.clone(), PathList::new(&[Path::new("")]), cx)
         })
         .await
         .unwrap();
@@ -4530,23 +4521,16 @@ async fn test_subagent_tool_output_does_not_include_thinking(cx: &mut TestAppCon
     .await;
     let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
-    let agent = NativeAgent::new(
-        project.clone(),
-        thread_store.clone(),
-        Templates::new(),
-        None,
-        fs.clone(),
-        &mut cx.to_async(),
-    )
-    .await
-    .unwrap();
+    let agent = cx.update(|cx| {
+        NativeAgent::new(thread_store.clone(), Templates::new(), None, fs.clone(), cx)
+    });
     let connection = Rc::new(NativeAgentConnection(agent.clone()));
 
     let acp_thread = cx
         .update(|cx| {
             connection
                 .clone()
-                .new_session(project.clone(), Path::new(""), cx)
+                .new_session(project.clone(), PathList::new(&[Path::new("")]), cx)
         })
         .await
         .unwrap();
@@ -4685,23 +4669,16 @@ async fn test_subagent_tool_call_cancellation_during_task_prompt(cx: &mut TestAp
     .await;
     let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
-    let agent = NativeAgent::new(
-        project.clone(),
-        thread_store.clone(),
-        Templates::new(),
-        None,
-        fs.clone(),
-        &mut cx.to_async(),
-    )
-    .await
-    .unwrap();
+    let agent = cx.update(|cx| {
+        NativeAgent::new(thread_store.clone(), Templates::new(), None, fs.clone(), cx)
+    });
     let connection = Rc::new(NativeAgentConnection(agent.clone()));
 
     let acp_thread = cx
         .update(|cx| {
             connection
                 .clone()
-                .new_session(project.clone(), Path::new(""), cx)
+                .new_session(project.clone(), PathList::new(&[Path::new("")]), cx)
         })
         .await
         .unwrap();
@@ -4822,23 +4799,16 @@ async fn test_subagent_tool_resume_session(cx: &mut TestAppContext) {
     .await;
     let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
-    let agent = NativeAgent::new(
-        project.clone(),
-        thread_store.clone(),
-        Templates::new(),
-        None,
-        fs.clone(),
-        &mut cx.to_async(),
-    )
-    .await
-    .unwrap();
+    let agent = cx.update(|cx| {
+        NativeAgent::new(thread_store.clone(), Templates::new(), None, fs.clone(), cx)
+    });
     let connection = Rc::new(NativeAgentConnection(agent.clone()));
 
     let acp_thread = cx
         .update(|cx| {
             connection
                 .clone()
-                .new_session(project.clone(), Path::new(""), cx)
+                .new_session(project.clone(), PathList::new(&[Path::new("")]), cx)
         })
         .await
         .unwrap();
@@ -5201,23 +5171,16 @@ async fn test_subagent_context_window_warning(cx: &mut TestAppContext) {
     .await;
     let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
-    let agent = NativeAgent::new(
-        project.clone(),
-        thread_store.clone(),
-        Templates::new(),
-        None,
-        fs.clone(),
-        &mut cx.to_async(),
-    )
-    .await
-    .unwrap();
+    let agent = cx.update(|cx| {
+        NativeAgent::new(thread_store.clone(), Templates::new(), None, fs.clone(), cx)
+    });
     let connection = Rc::new(NativeAgentConnection(agent.clone()));
 
     let acp_thread = cx
         .update(|cx| {
             connection
                 .clone()
-                .new_session(project.clone(), Path::new(""), cx)
+                .new_session(project.clone(), PathList::new(&[Path::new("")]), cx)
         })
         .await
         .unwrap();
@@ -5334,23 +5297,16 @@ async fn test_subagent_no_context_window_warning_when_already_at_warning(cx: &mu
     .await;
     let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
-    let agent = NativeAgent::new(
-        project.clone(),
-        thread_store.clone(),
-        Templates::new(),
-        None,
-        fs.clone(),
-        &mut cx.to_async(),
-    )
-    .await
-    .unwrap();
+    let agent = cx.update(|cx| {
+        NativeAgent::new(thread_store.clone(), Templates::new(), None, fs.clone(), cx)
+    });
     let connection = Rc::new(NativeAgentConnection(agent.clone()));
 
     let acp_thread = cx
         .update(|cx| {
             connection
                 .clone()
-                .new_session(project.clone(), Path::new(""), cx)
+                .new_session(project.clone(), PathList::new(&[Path::new("")]), cx)
         })
         .await
         .unwrap();
@@ -5515,23 +5471,16 @@ async fn test_subagent_error_propagation(cx: &mut TestAppContext) {
     .await;
     let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
-    let agent = NativeAgent::new(
-        project.clone(),
-        thread_store.clone(),
-        Templates::new(),
-        None,
-        fs.clone(),
-        &mut cx.to_async(),
-    )
-    .await
-    .unwrap();
+    let agent = cx.update(|cx| {
+        NativeAgent::new(thread_store.clone(), Templates::new(), None, fs.clone(), cx)
+    });
     let connection = Rc::new(NativeAgentConnection(agent.clone()));
 
     let acp_thread = cx
         .update(|cx| {
             connection
                 .clone()
-                .new_session(project.clone(), Path::new(""), cx)
+                .new_session(project.clone(), PathList::new(&[Path::new("")]), cx)
         })
         .await
         .unwrap();
@@ -6528,4 +6477,111 @@ async fn test_streaming_tool_error_waits_for_prior_tools_to_complete(cx: &mut Te
             },
         ]
     );
+}
+
+#[gpui::test]
+async fn test_mid_turn_model_and_settings_refresh(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model, thread, fs, ..
+    } = setup(cx, TestModel::Fake).await;
+    let fake_model_a = model.as_fake();
+
+    thread.update(cx, |thread, _cx| {
+        thread.add_tool(EchoTool);
+        thread.add_tool(DelayTool);
+    });
+
+    // Set up two profiles: profile-a has both tools, profile-b has only DelayTool.
+    fs.insert_file(
+        paths::settings_file(),
+        json!({
+            "agent": {
+                "profiles": {
+                    "profile-a": {
+                        "name": "Profile A",
+                        "tools": {
+                            EchoTool::NAME: true,
+                            DelayTool::NAME: true,
+                        }
+                    },
+                    "profile-b": {
+                        "name": "Profile B",
+                        "tools": {
+                            DelayTool::NAME: true,
+                        }
+                    }
+                }
+            }
+        })
+        .to_string()
+        .into_bytes(),
+    )
+    .await;
+    cx.run_until_parked();
+
+    thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("profile-a".into()), cx);
+        thread.set_thinking_enabled(false, cx);
+    });
+
+    // Send a message — first iteration starts with model A, profile-a, thinking off.
+    thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["test mid-turn refresh"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // Verify first request has both tools and thinking disabled.
+    let completions = fake_model_a.pending_completions();
+    assert_eq!(completions.len(), 1);
+    let first_tools = tool_names_for_completion(&completions[0]);
+    assert_eq!(first_tools, vec![DelayTool::NAME, EchoTool::NAME]);
+    assert!(!completions[0].thinking_allowed);
+
+    // Model A responds with an echo tool call.
+    fake_model_a.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_1".into(),
+            name: "echo".into(),
+            raw_input: r#"{"text":"hello"}"#.into(),
+            input: json!({"text": "hello"}),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model_a.end_last_completion_stream();
+
+    // Before the next iteration runs, switch to profile-b (only DelayTool),
+    // swap in a new model, and enable thinking.
+    let fake_model_b = Arc::new(FakeLanguageModel::with_id_and_thinking(
+        "test-provider",
+        "model-b",
+        "Model B",
+        true,
+    ));
+    thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("profile-b".into()), cx);
+        thread.set_model(fake_model_b.clone() as Arc<dyn LanguageModel>, cx);
+        thread.set_thinking_enabled(true, cx);
+    });
+
+    // Run until parked — processes the echo tool call, loops back, picks up
+    // the new model/profile/thinking, and makes a second request to model B.
+    cx.run_until_parked();
+
+    // The second request should have gone to model B.
+    let model_b_completions = fake_model_b.pending_completions();
+    assert_eq!(
+        model_b_completions.len(),
+        1,
+        "second request should go to model B"
+    );
+
+    // Profile-b only has DelayTool, so echo should be gone.
+    let second_tools = tool_names_for_completion(&model_b_completions[0]);
+    assert_eq!(second_tools, vec![DelayTool::NAME]);
+
+    // Thinking should now be enabled.
+    assert!(model_b_completions[0].thinking_allowed);
 }

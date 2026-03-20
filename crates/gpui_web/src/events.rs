@@ -1,10 +1,10 @@
 use std::rc::Rc;
 
 use gpui::{
-    Capslock, ExternalPaths, FileDropEvent, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
-    MouseUpEvent, NavigationDirection, Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent,
-    TouchPhase, point, px,
+    Capslock, DispatchEventResult, ExternalPaths, FileDropEvent, KeyDownEvent, KeyUpEvent,
+    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent,
+    MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformInput, Point, ScrollDelta,
+    ScrollWheelEvent, TouchPhase, point, px,
 };
 use smallvec::smallvec;
 use wasm_bindgen::prelude::*;
@@ -64,6 +64,9 @@ impl WebWindowInner {
             self.register_dragleave(),
             self.register_key_down(),
             self.register_key_up(),
+            self.register_composition_start(),
+            self.register_composition_update(),
+            self.register_composition_end(),
             self.register_focus(),
             self.register_blur(),
             self.register_pointer_enter(),
@@ -82,6 +85,18 @@ impl WebWindowInner {
     ) -> Closure<dyn FnMut(JsValue)> {
         let closure = Closure::<dyn FnMut(JsValue)>::new(handler);
         self.canvas
+            .add_event_listener_with_callback(event_name, closure.as_ref().unchecked_ref())
+            .ok();
+        closure
+    }
+
+    fn listen_input(
+        self: &Rc<Self>,
+        event_name: &str,
+        handler: impl FnMut(JsValue) + 'static,
+    ) -> Closure<dyn FnMut(JsValue)> {
+        let closure = Closure::<dyn FnMut(JsValue)>::new(handler);
+        self.input_element
             .add_event_listener_with_callback(event_name, closure.as_ref().unchecked_ref())
             .ok();
         closure
@@ -109,11 +124,9 @@ impl WebWindowInner {
         closure
     }
 
-    fn dispatch_input(&self, input: PlatformInput) {
+    fn dispatch_input(&self, input: PlatformInput) -> Option<DispatchEventResult> {
         let mut borrowed = self.callbacks.borrow_mut();
-        if let Some(ref mut callback) = borrowed.input {
-            callback(input);
-        }
+        borrowed.input.as_mut().map(|callback| callback(input))
     }
 
     fn register_pointer_down(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
@@ -121,7 +134,7 @@ impl WebWindowInner {
         self.listen("pointerdown", move |event: JsValue| {
             let event: web_sys::PointerEvent = event.unchecked_into();
             event.prevent_default();
-            this.canvas.focus().ok();
+            this.input_element.focus().ok();
 
             let button = dom_mouse_button_to_gpui(event.button());
             let position = pointer_position_in_element(&event);
@@ -315,7 +328,7 @@ impl WebWindowInner {
 
     fn register_key_down(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
         let this = Rc::clone(self);
-        self.listen("keydown", move |event: JsValue| {
+        self.listen_input("keydown", move |event: JsValue| {
             let event: web_sys::KeyboardEvent = event.unchecked_into();
 
             let modifiers = modifiers_from_keyboard_event(&event, this.is_mac);
@@ -346,20 +359,38 @@ impl WebWindowInner {
             let keystroke = Keystroke {
                 modifiers,
                 key,
-                key_char,
+                key_char: key_char.clone(),
             };
 
-            this.dispatch_input(PlatformInput::KeyDown(KeyDownEvent {
+            let result = this.dispatch_input(PlatformInput::KeyDown(KeyDownEvent {
                 keystroke,
                 is_held,
                 prefer_character_input: false,
             }));
+
+            if let Some(result) = result {
+                if !result.propagate {
+                    return;
+                }
+            }
+
+            if this.is_composing.get() || event.is_composing() {
+                return;
+            }
+
+            if modifiers.is_subset_of(&Modifiers::shift()) {
+                if let Some(text) = key_char {
+                    this.with_input_handler(|handler| {
+                        handler.replace_text_in_range(None, &text);
+                    });
+                }
+            }
         })
     }
 
     fn register_key_up(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
         let this = Rc::clone(self);
-        self.listen("keyup", move |event: JsValue| {
+        self.listen_input("keyup", move |event: JsValue| {
             let event: web_sys::KeyboardEvent = event.unchecked_into();
 
             let modifiers = modifiers_from_keyboard_event(&event, this.is_mac);
@@ -396,9 +427,42 @@ impl WebWindowInner {
         })
     }
 
+    fn register_composition_start(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+        let this = Rc::clone(self);
+        self.listen_input("compositionstart", move |_event: JsValue| {
+            this.is_composing.set(true);
+        })
+    }
+
+    fn register_composition_update(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+        let this = Rc::clone(self);
+        self.listen_input("compositionupdate", move |event: JsValue| {
+            let event: web_sys::CompositionEvent = event.unchecked_into();
+            let data = event.data().unwrap_or_default();
+            this.is_composing.set(true);
+            this.with_input_handler(|handler| {
+                handler.replace_and_mark_text_in_range(None, &data, None);
+            });
+        })
+    }
+
+    fn register_composition_end(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+        let this = Rc::clone(self);
+        self.listen_input("compositionend", move |event: JsValue| {
+            let event: web_sys::CompositionEvent = event.unchecked_into();
+            let data = event.data().unwrap_or_default();
+            this.is_composing.set(false);
+            this.with_input_handler(|handler| {
+                handler.replace_text_in_range(None, &data);
+                handler.unmark_text();
+            });
+            this.input_element.set_value("");
+        })
+    }
+
     fn register_focus(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
         let this = Rc::clone(self);
-        self.listen("focus", move |_event: JsValue| {
+        self.listen_input("focus", move |_event: JsValue| {
             {
                 let mut state = this.state.borrow_mut();
                 state.is_active = true;
@@ -412,7 +476,7 @@ impl WebWindowInner {
 
     fn register_blur(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
         let this = Rc::clone(self);
-        self.listen("blur", move |_event: JsValue| {
+        self.listen_input("blur", move |_event: JsValue| {
             {
                 let mut state = this.state.borrow_mut();
                 state.is_active = false;
@@ -556,7 +620,10 @@ pub(crate) fn is_mac_platform(browser_window: &web_sys::Window) -> bool {
 }
 
 fn is_modifier_only_key(key: &str) -> bool {
-    matches!(key, "control" | "alt" | "shift" | "platform" | "capslock")
+    matches!(
+        key,
+        "control" | "alt" | "shift" | "platform" | "capslock" | "compose" | "process"
+    )
 }
 
 fn compute_key_char(

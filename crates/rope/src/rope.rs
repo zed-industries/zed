@@ -699,6 +699,10 @@ impl<'a> Cursor<'a> {
             self.offset,
             end_offset
         );
+        assert!(
+            end_offset <= self.rope.len(),
+            "cannot summarize past end of rope"
+        );
 
         self.chunks.seek_forward(&end_offset, Bias::Right);
         self.offset = end_offset;
@@ -710,6 +714,10 @@ impl<'a> Cursor<'a> {
             "cannot slice backward from {} to {}",
             self.offset,
             end_offset
+        );
+        assert!(
+            end_offset <= self.rope.len(),
+            "cannot summarize past end of rope"
         );
 
         let mut slice = Rope::new();
@@ -740,6 +748,10 @@ impl<'a> Cursor<'a> {
             "cannot summarize backward from {} to {}",
             self.offset,
             end_offset
+        );
+        assert!(
+            end_offset <= self.rope.len(),
+            "cannot summarize past end of rope"
         );
 
         let mut summary = D::zero(());

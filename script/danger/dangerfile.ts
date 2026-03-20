@@ -61,6 +61,25 @@ if (includesIssueUrl) {
   );
 }
 
+const MIGRATION_SCHEMA_FILES = [
+  "crates/collab/migrations/20251208000000_test_schema.sql",
+  "crates/collab/migrations.sqlite/20221109000000_test_schema.sql",
+];
+
+const modifiedSchemaFiles = danger.git.modified_files.filter((file) =>
+  MIGRATION_SCHEMA_FILES.some((schemaFilePath) => file.endsWith(schemaFilePath)),
+);
+
+if (modifiedSchemaFiles.length > 0) {
+  warn(
+    [
+      "This PR modifies database schema files.",
+      "",
+      "If you are making database changes, a migration needs to be added in the Cloud repository.",
+    ].join("\n"),
+  );
+}
+
 const FIXTURE_CHANGE_ATTESTATION = "Changes to test fixtures are intentional and necessary.";
 
 const FIXTURES_PATHS = ["crates/assistant_tools/src/edit_agent/evals/fixtures"];
