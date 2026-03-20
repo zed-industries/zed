@@ -479,6 +479,7 @@ mod tests {
                         description: SharedString::from(""),
                         version: SharedString::from("1.0.0"),
                         repository: None,
+                        website: None,
                         icon_path: None,
                     },
                     package: id,
