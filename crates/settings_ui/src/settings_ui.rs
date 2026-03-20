@@ -399,23 +399,15 @@ pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
         workspace
             .register_action(|_, OpenSettingsAt { path }: &OpenSettingsAt, window, cx| {
-                let window_handle = window
-                    .window_handle()
-                    .downcast::<MultiWorkspace>();
+                let window_handle = window.window_handle().downcast::<MultiWorkspace>();
                 open_settings_editor(Some(&path), None, window_handle, cx);
             })
             .register_action(|_, _: &OpenSettings, window, cx| {
-                let window_handle = window
-                    .window_handle()
-                    .downcast::<MultiWorkspace>()
-                    .expect("Workspaces are root Windows");
-                open_settings_editor(None, None, Some(window_handle), cx);
+                let window_handle = window.window_handle().downcast::<MultiWorkspace>();
+                open_settings_editor(None, None, window_handle, cx);
             })
             .register_action(|workspace, _: &OpenProjectSettings, window, cx| {
-                let window_handle = window
-                    .window_handle()
-                    .downcast::<MultiWorkspace>()
-                    .expect("Workspaces are root Windows");
+                let window_handle = window.window_handle().downcast::<MultiWorkspace>();
                 let target_worktree_id = workspace
                     .project()
                     .read(cx)
@@ -426,7 +418,7 @@ pub fn init(cx: &mut App) {
                             .is_dir()
                             .then_some(tree.read(cx).id())
                     });
-                open_settings_editor(None, target_worktree_id, Some(window_handle), cx);
+                open_settings_editor(None, target_worktree_id, window_handle, cx);
             });
     })
     .detach();
