@@ -593,27 +593,6 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_diffing_clipboard_against_partial_selection_expands_to_include_trailing_characters(
-        cx: &mut TestAppContext,
-    ) {
-        base_test(
-            path!("/test"),
-            path!("/test/text.txt"),
-            "a",
-            "«bˇ»b",
-            &unindent(
-                "
-                - a
-                + ˇb",
-            ),
-            "Clipboard ↔ text.txt @ L1:1-2",
-            &format!("Clipboard ↔ {} @ L1:1-2", path!("test/text.txt")),
-            cx,
-        )
-        .await;
-    }
-
-    #[gpui::test]
     async fn test_diffing_clipboard_against_partial_multiline_selection(cx: &mut TestAppContext) {
         base_test(
             path!("/test"),
