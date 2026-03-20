@@ -1210,7 +1210,7 @@ impl Vim {
             return;
         }
 
-        if !mode.is_visual() && last_mode.is_visual() {
+        if !mode.is_visual() && last_mode.is_visual() && !last_mode.is_helix() {
             self.create_visual_marks(last_mode, window, cx);
         }
 
@@ -1277,7 +1277,7 @@ impl Vim {
                 }
 
                 s.move_with(&mut |map, selection| {
-                    if last_mode.is_visual() && !mode.is_visual() {
+                    if last_mode.is_visual() && !last_mode.is_helix() && !mode.is_visual() {
                         let mut point = selection.head();
                         if !selection.reversed && !selection.is_empty() {
                             point = movement::left(map, selection.head());

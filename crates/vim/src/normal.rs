@@ -732,7 +732,7 @@ impl Vim {
                 editor.edit_with_autoindent(edits, cx);
                 editor.change_selections(Default::default(), window, cx, |s| {
                     s.move_with(&mut |map, selection| {
-                        let previous_line = map.start_of_relative_buffer_row(selection.tail(), -1);
+                        let previous_line = map.start_of_relative_buffer_row(selection.start, -1);
                         let insert_point = motion::end_of_line(map, false, previous_line, 1);
                         selection.collapse_to(insert_point, SelectionGoal::None)
                     });
@@ -782,9 +782,9 @@ impl Vim {
                             // If this is an insert after a selection to the end of the line, the
                             // cursor needs to be bumped back, because it'll be at the start of the
                             // *next* line.
-                            map.start_of_relative_buffer_row(selection.head(), -1)
+                            map.start_of_relative_buffer_row(selection.end, -1)
                         } else {
-                            selection.head()
+                            selection.end
                         };
                         let insert_point = motion::end_of_line(map, false, current_line, 1);
                         selection.collapse_to(insert_point, SelectionGoal::None)
