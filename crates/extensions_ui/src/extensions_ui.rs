@@ -232,7 +232,6 @@ enum Feature {
     ExtensionTailwind,
     ExtensionTy,
     Git,
-    LanguageBash,
     LanguageC,
     LanguageCpp,
     LanguageGo,
@@ -262,7 +261,6 @@ fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
             (Feature::ExtensionTailwind, vec!["tail", "tailwind"]),
             (Feature::ExtensionTy, vec!["ty"]),
             (Feature::Git, vec!["git"]),
-            (Feature::LanguageBash, vec!["sh", "bash"]),
             (Feature::LanguageC, vec!["c", "clang"]),
             (Feature::LanguageCpp, vec!["c++", "cpp", "clang"]),
             (Feature::LanguageGo, vec!["go", "golang"]),
@@ -1640,12 +1638,6 @@ impl ExtensionsPage {
                     "Zed comes with basic Git support—more features are coming in the future."
                         .into(),
                     "https://zed.dev/docs/git".into(),
-                    false,
-                    cx,
-                ),
-                Feature::LanguageBash => self.render_feature_upsell_banner(
-                    "Shell support is built-in to Zed!".into(),
-                    "https://zed.dev/docs/languages/bash".into(),
                     false,
                     cx,
                 ),
