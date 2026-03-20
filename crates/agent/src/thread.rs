@@ -3,12 +3,14 @@ use crate::{
     DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
     ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool,
     RestoreFileFromDiskTool, SaveFileTool, SpawnAgentTool, StreamingEditFileTool,
-    SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision, WebSearchTool,
-    decide_permission_from_settings,
+    SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision,
+    UpdatePlanTool, WebSearchTool, decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
-use feature_flags::{FeatureFlagAppExt as _, StreamingEditFileToolFeatureFlag};
+use feature_flags::{
+    FeatureFlagAppExt as _, StreamingEditFileToolFeatureFlag, UpdatePlanToolFeatureFlag,
+};
 
 use agent_client_protocol as acp;
 use agent_settings::{
@@ -661,6 +663,7 @@ pub enum ThreadEvent {
     AgentThinking(String),
     ToolCall(acp::ToolCall),
     ToolCallUpdate(acp_thread::ToolCallUpdate),
+    Plan(acp::Plan),
     ToolCallAuthorization(ToolCallAuthorization),
     SubagentSpawned(acp::SessionId),
     Retry(acp_thread::RetryStatus),
@@ -1529,6 +1532,9 @@ impl Thread {
         self.add_tool(MovePathTool::new(self.project.clone()));
         self.add_tool(NowTool);
         self.add_tool(OpenTool::new(self.project.clone()));
+        if cx.has_flag::<UpdatePlanToolFeatureFlag>() {
+            self.add_tool(UpdatePlanTool);
+        }
         self.add_tool(ReadFileTool::new(
             self.project.clone(),
             self.action_log.clone(),
@@ -3476,6 +3482,10 @@ impl ThreadEventStream {
             .ok();
     }
 
+    fn send_plan(&self, plan: acp::Plan) {
+        self.0.unbounded_send(Ok(ThreadEvent::Plan(plan))).ok();
+    }
+
     fn send_retry(&self, status: acp_thread::RetryStatus) {
         self.0.unbounded_send(Ok(ThreadEvent::Retry(status))).ok();
     }
@@ -3609,6 +3619,10 @@ impl ToolCallEventStream {
             .0
             .unbounded_send(Ok(ThreadEvent::SubagentSpawned(id)))
             .ok();
+    }
+
+    pub fn update_plan(&self, plan: acp::Plan) {
+        self.stream.send_plan(plan);
     }
 
     /// Authorize a third-party tool (e.g., MCP tool from a context server).
@@ -3897,6 +3911,15 @@ impl ToolCallEventStreamReceiver {
             update.terminal
         } else {
             panic!("Expected terminal but got: {:?}", event);
+        }
+    }
+
+    pub async fn expect_plan(&mut self) -> acp::Plan {
+        let event = self.0.next().await;
+        if let Some(Ok(ThreadEvent::Plan(plan))) = event {
+            plan
+        } else {
+            panic!("Expected plan but got: {:?}", event);
         }
     }
 }

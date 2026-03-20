@@ -1219,6 +1219,9 @@ impl NativeAgentConnection {
                                     thread.update_tool_call(update, cx)
                                 })??;
                             }
+                            ThreadEvent::Plan(plan) => {
+                                acp_thread.update(cx, |thread, cx| thread.update_plan(plan, cx))?;
+                            }
                             ThreadEvent::SubagentSpawned(session_id) => {
                                 acp_thread.update(cx, |thread, cx| {
                                     thread.subagent_spawned(session_id, cx);

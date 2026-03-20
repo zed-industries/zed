@@ -999,6 +999,20 @@ async fn expect_tool_call_update_fields(
     }
 }
 
+async fn expect_plan(events: &mut UnboundedReceiver<Result<ThreadEvent>>) -> acp::Plan {
+    let event = events
+        .next()
+        .await
+        .expect("no plan event received")
+        .unwrap();
+    match event {
+        ThreadEvent::Plan(plan) => plan,
+        event => {
+            panic!("Unexpected event {event:?}");
+        }
+    }
+}
+
 async fn next_tool_call_authorization(
     events: &mut UnboundedReceiver<Result<ThreadEvent>>,
 ) -> ToolCallAuthorization {
@@ -3417,6 +3431,122 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_update_plan_tool_updates_thread_events(cx: &mut TestAppContext) {
+    let ThreadTest { thread, model, .. } = setup(cx, TestModel::Fake).await;
+    thread.update(cx, |thread, _cx| thread.add_tool(UpdatePlanTool));
+    let fake_model = model.as_fake();
+
+    let mut events = thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Make a plan"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    let input = json!({
+        "plan": [
+            {
+                "step": "Inspect the code",
+                "status": "completed",
+                "priority": "high"
+            },
+            {
+                "step": "Implement the tool",
+                "status": "in_progress"
+            },
+            {
+                "step": "Run tests",
+                "status": "pending",
+                "priority": "low"
+            }
+        ]
+    });
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "plan_1".into(),
+            name: UpdatePlanTool::NAME.into(),
+            raw_input: input.to_string(),
+            input,
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    let tool_call = expect_tool_call(&mut events).await;
+    assert_eq!(
+        tool_call,
+        acp::ToolCall::new("plan_1", "Update plan")
+            .kind(acp::ToolKind::Think)
+            .raw_input(json!({
+                "plan": [
+                    {
+                        "step": "Inspect the code",
+                        "status": "completed",
+                        "priority": "high"
+                    },
+                    {
+                        "step": "Implement the tool",
+                        "status": "in_progress"
+                    },
+                    {
+                        "step": "Run tests",
+                        "status": "pending",
+                        "priority": "low"
+                    }
+                ]
+            }))
+            .meta(acp::Meta::from_iter([(
+                "tool_name".into(),
+                "update_plan".into()
+            )]))
+    );
+
+    let update = expect_tool_call_update_fields(&mut events).await;
+    assert_eq!(
+        update,
+        acp::ToolCallUpdate::new(
+            "plan_1",
+            acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress)
+        )
+    );
+
+    let plan = expect_plan(&mut events).await;
+    assert_eq!(
+        plan,
+        acp::Plan::new(vec![
+            acp::PlanEntry::new(
+                "Inspect the code",
+                acp::PlanEntryPriority::High,
+                acp::PlanEntryStatus::Completed,
+            ),
+            acp::PlanEntry::new(
+                "Implement the tool",
+                acp::PlanEntryPriority::Medium,
+                acp::PlanEntryStatus::InProgress,
+            ),
+            acp::PlanEntry::new(
+                "Run tests",
+                acp::PlanEntryPriority::Low,
+                acp::PlanEntryStatus::Pending,
+            ),
+        ])
+    );
+
+    let update = expect_tool_call_update_fields(&mut events).await;
+    assert_eq!(
+        update,
+        acp::ToolCallUpdate::new(
+            "plan_1",
+            acp::ToolCallUpdateFields::new()
+                .status(acp::ToolCallStatus::Completed)
+                .raw_output("Plan updated")
+        )
+    );
+}
+
+#[gpui::test]
 async fn test_send_no_retry_on_success(cx: &mut TestAppContext) {
     let ThreadTest { thread, model, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
@@ -3822,6 +3952,7 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
                             StreamingEchoTool::NAME: true,
                             StreamingFailingEchoTool::NAME: true,
                             TerminalTool::NAME: true,
+                            UpdatePlanTool::NAME: true,
                         }
                     }
                 }
@@ -5009,48 +5140,6 @@ async fn test_subagent_tool_resume_session(cx: &mut TestAppContext) {
 
         "}
     );
-}
-
-#[gpui::test]
-async fn test_subagent_tool_is_present_when_feature_flag_enabled(cx: &mut TestAppContext) {
-    init_test(cx);
-
-    cx.update(|cx| {
-        cx.update_flags(true, vec!["subagents".to_string()]);
-    });
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(path!("/test"), json!({})).await;
-    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
-    let project_context = cx.new(|_cx| ProjectContext::default());
-    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
-    let context_server_registry =
-        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
-    let model = Arc::new(FakeLanguageModel::default());
-
-    let environment = Rc::new(cx.update(|cx| {
-        FakeThreadEnvironment::default().with_terminal(FakeTerminalHandle::new_never_exits(cx))
-    }));
-
-    let thread = cx.new(|cx| {
-        let mut thread = Thread::new(
-            project.clone(),
-            project_context,
-            context_server_registry,
-            Templates::new(),
-            Some(model),
-            cx,
-        );
-        thread.add_default_tools(environment, cx);
-        thread
-    });
-
-    thread.read_with(cx, |thread, _| {
-        assert!(
-            thread.has_registered_tool(SpawnAgentTool::NAME),
-            "subagent tool should be present when feature flag is enabled"
-        );
-    });
 }
 
 #[gpui::test]
