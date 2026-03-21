@@ -27,6 +27,7 @@ use rand::Rng as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use url::Url;
@@ -1043,23 +1044,9 @@ impl OAuthCallback {
 /// up and releasing the loopback port.
 const CALLBACK_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 
-/// The preferred fixed port for the OAuth callback server. This port is listed
-/// in Zed's hosted CIMD (Client ID Metadata Document) at `zed.dev`, so using
-/// it makes CIMD-based authentication work with authorization servers that do
-/// strict redirect URI matching including port. When this port is unavailable
-/// (e.g. another Zed instance is mid-auth), we fall back to an ephemeral port,
-/// which still works with DCR and with RFC 8252-compliant servers that ignore
-/// the port for loopback redirects.
-///
-/// A fixed port is safe here because PKCE prevents an attacker who binds to
-/// this port from exchanging an intercepted authorization code — they don't
-/// have the code verifier. See RFC 8252 Section 8.1.
-const PREFERRED_CALLBACK_PORT: u16 = 27523;
-
 /// Start a loopback HTTP server to receive the OAuth authorization callback.
 ///
-/// Tries to bind to [`PREFERRED_CALLBACK_PORT`] first for CIMD compatibility,
-/// falling back to an ephemeral port if the preferred port is unavailable.
+/// Binds to an ephemeral loopback port for each flow.
 ///
 /// Returns `(redirect_uri, callback_future)`. The caller should use the
 /// redirect URI in the authorization request, open the browser, then await
@@ -1069,21 +1056,14 @@ const PREFERRED_CALLBACK_PORT: u16 = 27523;
 /// contains `code` and `state` query parameters, responds with a minimal
 /// HTML page telling the user they can close the tab, and shuts down.
 ///
-/// The callback server shuts down when the returned oneshot receiver is
-/// dropped (e.g. because the authentication task was cancelled), or after a
-/// 5-minute timeout.
+/// The callback server shuts down when the returned oneshot receiver is dropped
+/// (e.g. because the authentication task was cancelled), or after a timeout
+/// ([CALLBACK_TIMEOUT]).
 pub async fn start_callback_server() -> Result<(
     String,
     futures::channel::oneshot::Receiver<Result<OAuthCallback>>,
 )> {
-    let server = tiny_http::Server::http(format!("127.0.0.1:{}", PREFERRED_CALLBACK_PORT))
-        .or_else(|_| {
-            log::info!(
-                "preferred OAuth callback port {} unavailable, using ephemeral port",
-                PREFERRED_CALLBACK_PORT,
-            );
-            tiny_http::Server::http("127.0.0.1:0")
-        })
+    let server = tiny_http::Server::http("127.0.0.1:0")
         .map_err(|e| anyhow!(e).context("Failed to bind loopback listener for OAuth callback"))?;
     let port = server
         .server_addr()
@@ -1143,7 +1123,12 @@ pub async fn start_callback_server() -> Result<(
             let response = tiny_http::Response::from_string(body)
                 .with_status_code(status_code)
                 .with_header(
-                    tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"text/html"[..]).unwrap(),
+                    tiny_http::Header::from_str("Content-Type: text/html")
+                        .expect("failed to construct response header"),
+                )
+                .with_header(
+                    tiny_http::Header::from_str("Keep-Alive: timeout=0,max=0")
+                        .expect("failed to construct response header"),
                 );
             request.respond(response).log_err();
 
