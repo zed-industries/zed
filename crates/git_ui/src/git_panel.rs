@@ -172,6 +172,8 @@ fn git_panel_context_menu(
             .action_disabled_when(!state.has_stash_items, "Stash Pop", StashPop.boxed_clone())
             .action("View Stash", zed_actions::git::ViewStash.boxed_clone())
             .separator()
+            .action("Merge Branch...", git::MergeBranch.boxed_clone())
+            .separator()
             .action("Open Diff", project_diff::Diff.boxed_clone())
             .separator()
             .action_disabled_when(
@@ -1227,6 +1229,13 @@ impl GitPanel {
         self.selected_entry.and_then(|i| self.entries.get(i))
     }
 
+    pub fn selected_paths(&self) -> Vec<RepoPath> {
+        self.get_selected_entry()
+            .and_then(|e| e.status_entry())
+            .map(|e| vec![e.repo_path.clone()])
+            .unwrap_or_default()
+    }
+
     fn open_diff(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         maybe!({
             let entry = self.entries.get(self.selected_entry?)?.status_entry()?;
@@ -1992,29 +2001,6 @@ impl GitPanel {
                     stash_task
                         .map_err(|e| {
                             this.show_error_toast("stash apply", e, cx);
-                        })
-                        .ok();
-                    cx.notify();
-                })
-            }
-        })
-        .detach();
-    }
-
-    pub fn stash_all(&mut self, _: &StashAll, _window: &mut Window, cx: &mut Context<Self>) {
-        let Some(active_repository) = self.active_repository.clone() else {
-            return;
-        };
-
-        cx.spawn({
-            async move |this, cx| {
-                let stash_task = active_repository
-                    .update(cx, |repo, cx| repo.stash_all(cx))
-                    .await;
-                this.update(cx, |this, cx| {
-                    stash_task
-                        .map_err(|e| {
-                            this.show_error_toast("stash", e, cx);
                         })
                         .ok();
                     cx.notify();
@@ -5282,6 +5268,8 @@ impl GitPanel {
                     git::AddToGitignore.boxed_clone(),
                 )
                 .separator()
+                .action("Stash File", git::StashSelected.boxed_clone())
+                .separator()
                 .action("Open Diff", menu::Confirm.boxed_clone())
                 .action("Open File", menu::SecondaryConfirm.boxed_clone())
                 .separator()
@@ -5903,7 +5891,6 @@ impl Render for GitPanel {
                     .on_action(cx.listener(Self::add_to_gitignore))
                     .on_action(cx.listener(Self::clean_all))
                     .on_action(cx.listener(Self::generate_commit_message_action))
-                    .on_action(cx.listener(Self::stash_all))
                     .on_action(cx.listener(Self::stash_pop))
             })
             .on_action(cx.listener(Self::collapse_selected_entry))

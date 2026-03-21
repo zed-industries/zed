@@ -363,6 +363,7 @@ message Stash {
     uint64 project_id = 1;
     uint64 repository_id = 2;
     repeated string paths = 3;
+    optional string message = 4;
 }
 
 message StashPop {
@@ -577,6 +578,19 @@ message GitCreateWorktree {
     string name = 3;
     string directory = 4;
     optional string commit = 5;
+}
+
+message GitRemoveWorktree {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    string path = 3;
+    bool force = 4;
+}
+
+message GitMergeBranch {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    string branch = 3;
 }
 
 message RunGitHook {

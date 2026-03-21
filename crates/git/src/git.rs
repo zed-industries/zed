@@ -101,6 +101,10 @@ actions!(
         Clone,
         /// Adds a file to .gitignore.
         AddToGitignore,
+        /// Stashes the currently selected files.
+        StashSelected,
+        /// Merges another branch into the current branch.
+        MergeBranch,
     ]
 );
 

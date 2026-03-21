@@ -22,7 +22,15 @@ use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use workspace::{ModalView, Workspace, notifications::DetachAndPromptErr};
 
-actions!(git, [WorktreeFromDefault, WorktreeFromDefaultOnWindow]);
+actions!(
+    git,
+    [
+        WorktreeFromDefault,
+        WorktreeFromDefaultOnWindow,
+        /// Remove the selected worktree.
+        RemoveWorktreeItem,
+    ]
+);
 
 pub fn open(
     workspace: &mut Workspace,
@@ -177,6 +185,19 @@ impl WorktreeList {
             );
         })
     }
+
+    pub fn handle_remove_worktree(
+        &mut self,
+        _: &RemoveWorktreeItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.picker.update(cx, |picker, cx| {
+            picker
+                .delegate
+                .remove_worktree_at(picker.delegate.selected_index(), window, cx);
+        });
+    }
 }
 impl ModalView for WorktreeList {}
 impl EventEmitter<DismissEvent> for WorktreeList {}
@@ -199,6 +220,7 @@ impl Render for WorktreeList {
             .on_action(cx.listener(|this, _: &WorktreeFromDefaultOnWindow, w, cx| {
                 this.handle_new_worktree(true, w, cx)
             }))
+            .on_action(cx.listener(Self::handle_remove_worktree))
             .child(self.picker.clone())
             .when(!self.embedded, |el| {
                 el.on_mouse_down_out({
@@ -363,6 +385,47 @@ impl WorktreeListDelegate {
         .detach_and_prompt_err("Failed to create worktree", window, cx, |e, _, _| {
             Some(e.to_string())
         });
+    }
+
+    fn remove_worktree_at(
+        &self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        let Some(entry) = self.matches.get(ix) else {
+            return;
+        };
+        if entry.is_new {
+            return;
+        }
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        let path = entry.worktree.path.clone();
+        let path_for_filter = path.clone();
+        let path_display = path.display().to_string();
+        let answer = window.prompt(
+            gpui::PromptLevel::Warning,
+            &format!("Remove worktree at {path_display}?"),
+            Some("This will delete the worktree directory. Make sure all changes are committed."),
+            &["Remove", "Cancel"],
+            cx,
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            if answer.await? == 0 {
+                repo.update(cx, |repo, _| repo.remove_worktree(path, false))
+                    .await??;
+                this.update_in(cx, |this, _window, cx| {
+                    if let Some(worktrees) = &mut this.delegate.all_worktrees {
+                        worktrees.retain(|w| w.path != path_for_filter);
+                    }
+                    this.refresh(_window, cx);
+                })?;
+            }
+            anyhow::Ok(())
+        })
+        .detach_and_prompt_err("Failed to remove worktree", window, cx, |_, _, _| None);
     }
 
     fn open_worktree(
@@ -785,6 +848,21 @@ impl PickerDelegate for WorktreeListDelegate {
         } else {
             Some(
                 footer_container
+                    .child(
+                        Button::new("remove-worktree", "Remove")
+                            .key_binding(
+                                KeyBinding::for_action_in(
+                                    &RemoveWorktreeItem,
+                                    &focus_handle,
+                                    cx,
+                                )
+                                .map(|kb| kb.size(rems_from_px(12.))),
+                            )
+                            .on_click(|_, window, cx| {
+                                window
+                                    .dispatch_action(RemoveWorktreeItem.boxed_clone(), cx)
+                            }),
+                    )
                     .child(
                         Button::new("open-in-new-window", "Open in New Window")
                             .key_binding(

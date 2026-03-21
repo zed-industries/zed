@@ -147,13 +147,17 @@ pub fn init(cx: &mut App) {
                 });
             });
         }
-        workspace.register_action(|workspace, action: &git::StashAll, window, cx| {
+        workspace.register_action(|workspace, _: &git::StashAll, window, cx| {
+            open_stash_modal(workspace, None, window, cx);
+        });
+        workspace.register_action(|workspace, _: &git::StashSelected, window, cx| {
             let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
                 return;
             };
-            panel.update(cx, |panel, cx| {
-                panel.stash_all(action, window, cx);
-            });
+            let paths = panel.update(cx, |panel, _cx| panel.selected_paths());
+            if !paths.is_empty() {
+                open_stash_modal(workspace, Some(paths), window, cx);
+            }
         });
         workspace.register_action(|workspace, action: &git::StashPop, window, cx| {
             let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
@@ -194,6 +198,9 @@ pub fn init(cx: &mut App) {
             panel.update(cx, |panel, cx| {
                 panel.uncommit(window, cx);
             })
+        });
+        workspace.register_action(|workspace, _: &git::MergeBranch, window, cx| {
+            merge_branch(workspace, window, cx);
         });
         CommandPaletteFilter::update_global(cx, |filter, _cx| {
             filter.hide_action_types(&[
@@ -425,6 +432,159 @@ fn rename_current_branch(
     workspace.toggle_modal(window, cx, |window, cx| {
         RenameBranchModal::new(current_branch_name, repo, window, cx)
     });
+}
+
+pub(crate) struct StashMessageModal {
+    editor: Entity<Editor>,
+    repo: Entity<Repository>,
+    paths: Option<Vec<git::repository::RepoPath>>,
+}
+
+impl StashMessageModal {
+    pub fn new(
+        repo: Entity<Repository>,
+        paths: Option<Vec<git::repository::RepoPath>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text("Stash message (optional)", window, cx);
+            editor
+        });
+        Self {
+            editor,
+            repo,
+            paths,
+        }
+    }
+
+    fn cancel(&mut self, _: &Cancel, _window: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(DismissEvent);
+    }
+
+    fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        let text = self.editor.read(cx).text(cx);
+        let message = if text.is_empty() { None } else { Some(text) };
+
+        let repo = self.repo.clone();
+        let paths = self.paths.clone();
+        cx.spawn(async move |_, cx| {
+            if let Some(paths) = paths {
+                repo.update(cx, |repo, cx| repo.stash_entries(paths, message, cx))
+                    .await
+            } else {
+                repo.update(cx, |repo, cx| repo.stash_all(message, cx))
+                    .await
+            }
+        })
+        .detach_and_prompt_err("Failed to stash", window, cx, |_, _, _| None);
+        cx.emit(DismissEvent);
+    }
+}
+
+impl EventEmitter<DismissEvent> for StashMessageModal {}
+impl ModalView for StashMessageModal {}
+impl Focusable for StashMessageModal {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.editor.focus_handle(cx)
+    }
+}
+
+impl Render for StashMessageModal {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .key_context("StashMessageModal")
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::confirm))
+            .elevation_2(cx)
+            .w(rems(34.))
+            .child(
+                h_flex()
+                    .px_3()
+                    .pt_2()
+                    .pb_1()
+                    .w_full()
+                    .gap_1p5()
+                    .child(Icon::new(IconName::FileGit).size(IconSize::XSmall))
+                    .child(Headline::new("Stash Changes").size(HeadlineSize::XSmall)),
+            )
+            .child(div().px_3().pb_3().w_full().child(self.editor.clone()))
+    }
+}
+
+pub(crate) fn open_stash_modal(
+    workspace: &mut Workspace,
+    paths: Option<Vec<git::repository::RepoPath>>,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+        return;
+    };
+
+    let repo = panel.read(cx).active_repository.clone();
+    let Some(repo) = repo else {
+        return;
+    };
+
+    workspace.toggle_modal(window, cx, |window, cx| {
+        StashMessageModal::new(repo, paths, window, cx)
+    });
+}
+
+fn merge_branch(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+        return;
+    };
+    let repo = panel.read(cx).active_repository.clone();
+    let Some(repo) = repo else {
+        return;
+    };
+    let branches_receiver = repo.update(cx, |repo, _| repo.branches());
+    let weak_workspace = workspace.weak_handle();
+
+    window
+        .spawn(cx, async move |cx| {
+            let branches = branches_receiver.await??;
+            let branch_names: Vec<SharedString> = branches
+                .iter()
+                .filter(|b| !b.is_head)
+                .map(|b| SharedString::from(b.name().to_string()))
+                .collect();
+
+            if branch_names.is_empty() {
+                return anyhow::Ok(());
+            }
+
+            let picker_task = weak_workspace.update_in(cx, |workspace, window, cx| {
+                crate::picker_prompt::prompt(
+                    "Merge branch into current",
+                    branch_names.clone(),
+                    workspace.weak_handle(),
+                    window,
+                    cx,
+                )
+            })?;
+
+            let selected = picker_task.await;
+
+            if let Some(index) = selected {
+                let Some(branch_name) = branch_names.get(index) else {
+                    return Ok(());
+                };
+                let branch_name = branch_name.to_string();
+                repo.update(cx, |repo, cx| repo.merge_branch(branch_name, cx))
+                    .await
+            } else {
+                Ok(())
+            }
+        })
+        .detach_and_prompt_err("Failed to merge branch", window, cx, |_, _, _| None);
 }
 
 fn render_remote_button(

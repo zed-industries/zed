@@ -509,6 +509,8 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_git_clone);
         client.add_entity_request_handler(Self::handle_get_worktrees);
         client.add_entity_request_handler(Self::handle_create_worktree);
+        client.add_entity_request_handler(Self::handle_remove_worktree);
+        client.add_entity_request_handler(Self::handle_merge_branch);
     }
 
     pub fn is_local(&self) -> bool {
@@ -2016,9 +2018,11 @@ impl GitStore {
             .map(|path| RepoPath::new(&path))
             .collect::<Result<Vec<_>>>()?;
 
+        let message = envelope.payload.message;
+
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
-                repository_handle.stash_entries(entries, cx)
+                repository_handle.stash_entries(entries, message, cx)
             })
             .await?;
 
@@ -2221,6 +2225,43 @@ impl GitStore {
                 repository_handle.create_worktree(name, directory, commit)
             })
             .await??;
+
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_remove_worktree(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitRemoveWorktree>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let path = PathBuf::from(envelope.payload.path);
+        let force = envelope.payload.force;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.remove_worktree(path, force)
+            })
+            .await??;
+
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_merge_branch(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitMergeBranch>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let branch = envelope.payload.branch;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.merge_branch(branch, cx)
+            })
+            .await?;
 
         Ok(proto::Ack {})
     }
@@ -4512,15 +4553,20 @@ impl Repository {
         self.stage_or_unstage_entries(false, to_unstage, cx)
     }
 
-    pub fn stash_all(&mut self, cx: &mut Context<Self>) -> Task<anyhow::Result<()>> {
+    pub fn stash_all(
+        &mut self,
+        message: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<()>> {
         let to_stash = self.cached_status().map(|entry| entry.repo_path).collect();
 
-        self.stash_entries(to_stash, cx)
+        self.stash_entries(to_stash, message, cx)
     }
 
     pub fn stash_entries(
         &mut self,
         entries: Vec<RepoPath>,
+        message: Option<String>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<()>> {
         let id = self.id;
@@ -4533,7 +4579,11 @@ impl Repository {
                             backend,
                             environment,
                             ..
-                        }) => backend.stash_paths(entries, environment).await,
+                        }) => {
+                            backend
+                                .stash_paths(entries, message, environment)
+                                .await
+                        }
                         RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
                             client
                                 .request(proto::Stash {
@@ -4543,6 +4593,7 @@ impl Repository {
                                         .into_iter()
                                         .map(|repo_path| repo_path.to_proto())
                                         .collect(),
+                                    message,
                                 })
                                 .await
                                 .context("sending stash request")?;
@@ -5241,6 +5292,76 @@ impl Repository {
                 }
             },
         )
+    }
+
+    pub fn remove_worktree(
+        &mut self,
+        path: PathBuf,
+        force: bool,
+    ) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
+        self.send_job(
+            Some("git worktree remove".into()),
+            move |repo, _cx| async move {
+                match repo {
+                    RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                        backend.remove_worktree(path, force).await
+                    }
+                    RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                        client
+                            .request(proto::GitRemoveWorktree {
+                                project_id: project_id.0,
+                                repository_id: id.to_proto(),
+                                path: path.to_string_lossy().to_string(),
+                                force,
+                            })
+                            .await?;
+
+                        Ok(())
+                    }
+                }
+            },
+        )
+    }
+
+    pub fn merge_branch(
+        &mut self,
+        branch: String,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<()>> {
+        let id = self.id;
+
+        cx.spawn(async move |this, cx| {
+            this.update(cx, |this, _| {
+                this.send_job(
+                    Some(format!("git merge {branch}").into()),
+                    move |git_repo, _cx| async move {
+                        match git_repo {
+                            RepositoryState::Local(LocalRepositoryState {
+                                backend,
+                                environment,
+                                ..
+                            }) => backend.merge_branch(branch, environment).await,
+                            RepositoryState::Remote(RemoteRepositoryState {
+                                project_id,
+                                client,
+                            }) => {
+                                client
+                                    .request(proto::GitMergeBranch {
+                                        project_id: project_id.0,
+                                        repository_id: id.to_proto(),
+                                        branch,
+                                    })
+                                    .await?;
+                                Ok(())
+                            }
+                        }
+                    },
+                )
+            })?
+            .await??;
+            Ok(())
+        })
     }
 
     pub fn default_branch(

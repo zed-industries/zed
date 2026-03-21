@@ -537,6 +537,14 @@ pub trait GitRepository: Send + Sync {
         from_commit: Option<String>,
     ) -> BoxFuture<'_, Result<()>>;
 
+    fn remove_worktree(&self, path: PathBuf, force: bool) -> BoxFuture<'_, Result<()>>;
+
+    fn merge_branch(
+        &self,
+        branch: String,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>>;
+
     fn reset(
         &self,
         commit: String,
@@ -619,6 +627,7 @@ pub trait GitRepository: Send + Sync {
     fn stash_paths(
         &self,
         paths: Vec<RepoPath>,
+        message: Option<String>,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>>;
 
@@ -1506,6 +1515,60 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
+    fn remove_worktree(&self, path: PathBuf, force: bool) -> BoxFuture<'_, Result<()>> {
+        let git_binary_path = self.any_git_binary_path.clone();
+        let working_directory = self.working_directory();
+        self.executor
+            .spawn(async move {
+                let mut args = vec![
+                    OsString::from("--no-optional-locks"),
+                    OsString::from("worktree"),
+                    OsString::from("remove"),
+                ];
+                if force {
+                    args.push(OsString::from("--force"));
+                }
+                args.push(OsString::from(path.as_os_str()));
+                let output = new_smol_command(&git_binary_path)
+                    .current_dir(working_directory?)
+                    .args(&args)
+                    .output()
+                    .await?;
+                if output.status.success() {
+                    Ok(())
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    anyhow::bail!("git worktree remove failed: {stderr}");
+                }
+            })
+            .boxed()
+    }
+
+    fn merge_branch(
+        &self,
+        branch: String,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        let git_binary_path = self.any_git_binary_path.clone();
+        let working_directory = self.working_directory();
+        self.executor
+            .spawn(async move {
+                let output = new_smol_command(&git_binary_path)
+                    .current_dir(working_directory?)
+                    .envs(env.iter())
+                    .args(["merge", &branch])
+                    .output()
+                    .await?;
+                if output.status.success() {
+                    Ok(())
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    anyhow::bail!("git merge failed: {stderr}");
+                }
+            })
+            .boxed()
+    }
+
     fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
         let repo = self.repository.clone();
         let working_directory = self.working_directory();
@@ -1929,6 +1992,7 @@ impl GitRepository for RealGitRepository {
     fn stash_paths(
         &self,
         paths: Vec<RepoPath>,
+        message: Option<String>,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
         let working_directory = self.working_directory();
@@ -1940,6 +2004,10 @@ impl GitRepository for RealGitRepository {
                     .envs(env.iter())
                     .args(["stash", "push", "--quiet"])
                     .arg("--include-untracked");
+
+                if let Some(msg) = &message {
+                    cmd.args(["-m", msg]);
+                }
 
                 cmd.args(paths.iter().map(|p| p.as_unix_str()));
 

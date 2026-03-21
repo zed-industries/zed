@@ -32,7 +32,9 @@ actions!(
         /// Deletes the selected git branch or remote.
         DeleteBranch,
         /// Filter the list of remotes
-        FilterRemotes
+        FilterRemotes,
+        /// Enters the new branch creation mode.
+        CreateBranch,
     ]
 );
 
@@ -280,6 +282,24 @@ impl BranchList {
             cx.notify();
         });
     }
+
+    pub fn handle_create_branch(
+        &mut self,
+        _: &branch_picker::CreateBranch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.picker.update(cx, |picker, cx| {
+            picker.delegate.state = PickerState::NewBranch;
+            picker.delegate.matches = vec![Entry::NewBranch {
+                name: String::new(),
+            }];
+            picker.delegate.selected_index = 0;
+            picker.set_query("", window, cx);
+            picker.refresh_placeholder(window, cx);
+            cx.notify();
+        });
+    }
 }
 impl ModalView for BranchList {}
 impl EventEmitter<DismissEvent> for BranchList {}
@@ -298,6 +318,7 @@ impl Render for BranchList {
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .on_action(cx.listener(Self::handle_delete))
             .on_action(cx.listener(Self::handle_filter))
+            .on_action(cx.listener(Self::handle_create_branch))
             .child(self.picker.clone())
             .when(!self.embedded, |this| {
                 this.on_mouse_down_out({
@@ -1189,28 +1210,43 @@ impl PickerDelegate for BranchListDelegate {
                                 )
                             } else {
                                 this.justify_between()
-                                    .child({
-                                        let focus_handle = focus_handle.clone();
-                                        Button::new("filter-remotes", "Filter Remotes")
-                                            .toggle_state(matches!(
-                                                self.branch_filter,
-                                                BranchFilter::Remote
-                                            ))
-                                            .key_binding(
-                                                KeyBinding::for_action_in(
-                                                    &branch_picker::FilterRemotes,
-                                                    &focus_handle,
-                                                    cx,
-                                                )
-                                                .map(|kb| kb.size(rems_from_px(12.))),
-                                            )
-                                            .on_click(|_click, window, cx| {
-                                                window.dispatch_action(
-                                                    branch_picker::FilterRemotes.boxed_clone(),
-                                                    cx,
-                                                );
+                                    .child(
+                                        h_flex()
+                                            .gap_1()
+                                            .child({
+                                                let focus_handle = focus_handle.clone();
+                                                Button::new("filter-remotes", "Filter Remotes")
+                                                    .toggle_state(matches!(
+                                                        self.branch_filter,
+                                                        BranchFilter::Remote
+                                                    ))
+                                                    .key_binding(
+                                                        KeyBinding::for_action_in(
+                                                            &branch_picker::FilterRemotes,
+                                                            &focus_handle,
+                                                            cx,
+                                                        )
+                                                        .map(|kb| kb.size(rems_from_px(12.))),
+                                                    )
+                                                    .on_click(|_click, window, cx| {
+                                                        window.dispatch_action(
+                                                            branch_picker::FilterRemotes
+                                                                .boxed_clone(),
+                                                            cx,
+                                                        );
+                                                    })
                                             })
-                                    })
+                                            .child(
+                                                Button::new("new-branch", "New Branch")
+                                                    .on_click(|_, window, cx| {
+                                                        window.dispatch_action(
+                                                            branch_picker::CreateBranch
+                                                                .boxed_clone(),
+                                                            cx,
+                                                        );
+                                                    }),
+                                            ),
+                                    )
                                     .child(delete_and_select_btns)
                             }
                         })
