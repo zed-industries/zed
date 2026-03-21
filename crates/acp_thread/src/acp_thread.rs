@@ -1037,6 +1037,7 @@ pub struct AcpThread {
     title: SharedString,
     provisional_title: Option<SharedString>,
     entries: Vec<AgentThreadEntry>,
+    tool_call_aliases: HashMap<acp::ToolCallId, acp::ToolCallId>,
     plan: Plan,
     project: Entity<Project>,
     action_log: Entity<ActionLog>,
@@ -1223,6 +1224,7 @@ impl AcpThread {
             action_log,
             shared_buffers: Default::default(),
             entries: Default::default(),
+            tool_call_aliases: Default::default(),
             plan: Default::default(),
             title: title.into(),
             provisional_title: None,
@@ -1894,7 +1896,38 @@ impl AcpThread {
         Ok(())
     }
 
+    fn placeholder_tool_call_ix(&self, title: &str, cx: &App) -> Option<usize> {
+        self.entries
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(ix, entry)| {
+                let AgentThreadEntry::ToolCall(call) = entry else {
+                    return None;
+                };
+
+                let is_placeholder = call.content.is_empty()
+                    && call.raw_output.is_none()
+                    && matches!(
+                        call.status,
+                        ToolCallStatus::Pending | ToolCallStatus::InProgress
+                    )
+                    && call.label.read(cx).source() == title;
+
+                is_placeholder.then_some(ix)
+            })
+    }
+
+    fn resolve_tool_call_id<'a>(&'a self, id: &'a acp::ToolCallId) -> &'a acp::ToolCallId {
+        let mut resolved = id;
+        while let Some(next) = self.tool_call_aliases.get(resolved) {
+            resolved = next;
+        }
+        resolved
+    }
+
     fn index_for_tool_call(&self, id: &acp::ToolCallId) -> Option<usize> {
+        let id = self.resolve_tool_call_id(id);
         self.entries
             .iter()
             .enumerate()
@@ -1911,6 +1944,7 @@ impl AcpThread {
     }
 
     fn tool_call_mut(&mut self, id: &acp::ToolCallId) -> Option<(usize, &mut ToolCall)> {
+        let id = self.resolve_tool_call_id(id).clone();
         // The tool call we are looking for is typically the last one, or very close to the end.
         // At the moment, it doesn't seem like a hashmap would be a good fit for this use case.
         self.entries
@@ -1919,7 +1953,7 @@ impl AcpThread {
             .rev()
             .find_map(|(index, tool_call)| {
                 if let AgentThreadEntry::ToolCall(tool_call) = tool_call
-                    && &tool_call.id == id
+                    && tool_call.id == id
                 {
                     Some((index, tool_call))
                 } else {
@@ -1929,6 +1963,7 @@ impl AcpThread {
     }
 
     pub fn tool_call(&self, id: &acp::ToolCallId) -> Option<(usize, &ToolCall)> {
+        let id = self.resolve_tool_call_id(id);
         self.entries
             .iter()
             .enumerate()
@@ -2031,16 +2066,29 @@ impl AcpThread {
         };
 
         let tool_call_id = tool_call.tool_call_id.clone();
-        let should_insert_fresh_entry = self
-            .index_for_tool_call(&tool_call_id)
-            .is_some_and(|ix| ix + 1 < self.entries.len());
-
-        if should_insert_fresh_entry {
-            if let Some(ix) = self.index_for_tool_call(&tool_call_id) {
-                self.entries.remove(ix);
-                cx.emit(AcpThreadEvent::EntriesRemoved(ix..ix + 1));
-            }
-            self.insert_tool_call_entry(tool_call, status, cx)?;
+        if self.index_for_tool_call(&tool_call_id).is_none()
+            && let Some(title) = tool_call.fields.title.as_deref()
+            && let Some(ix) = self.placeholder_tool_call_ix(title, cx)
+        {
+            let AgentThreadEntry::ToolCall(call) = &mut self.entries[ix] else {
+                unreachable!()
+            };
+            let previous_id = call.id.clone();
+            call.id = tool_call_id.clone();
+            self.tool_call_aliases
+                .insert(previous_id, tool_call_id.clone());
+            let language_registry = self.project.read(cx).languages().clone();
+            let path_style = self.project.read(cx).path_style(cx);
+            call.update_fields(
+                tool_call.fields,
+                tool_call.meta,
+                language_registry,
+                path_style,
+                &self.terminals,
+                cx,
+            )?;
+            call.status = status;
+            cx.emit(AcpThreadEvent::EntryUpdated(ix));
         } else {
             self.upsert_tool_call_inner(tool_call, status, cx)?;
         }
