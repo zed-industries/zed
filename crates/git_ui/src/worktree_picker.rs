@@ -212,7 +212,8 @@ impl Render for WorktreeList {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("GitWorktreeSelector")
-            .w(self.width)
+            .when(self.embedded, |this| this.size_full())
+            .when(!self.embedded, |this| this.w(self.width))
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .on_action(cx.listener(|this, _: &WorktreeFromDefault, w, cx| {
                 this.handle_new_worktree(false, w, cx)

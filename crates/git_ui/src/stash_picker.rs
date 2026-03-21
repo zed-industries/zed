@@ -54,6 +54,7 @@ pub fn create_embedded(
 
 pub struct StashList {
     width: Rems,
+    embedded: bool,
     pub picker: Entity<Picker<StashListDelegate>>,
     picker_focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
@@ -135,6 +136,7 @@ impl StashList {
             picker,
             picker_focus_handle,
             width,
+            embedded,
             _subscriptions,
         }
     }
@@ -205,7 +207,8 @@ impl Render for StashList {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("StashList")
-            .w(self.width)
+            .when(self.embedded, |this| this.size_full())
+            .when(!self.embedded, |this| this.w(self.width))
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .on_action(cx.listener(Self::handle_drop_stash))
             .on_action(cx.listener(Self::handle_show_stash))

@@ -32,9 +32,13 @@ pub struct PullRequestEntry {
     pub url: String,
     pub state: String,
     pub head_ref_name: String,
+    #[serde(default)]
+    pub base_ref_name: String,
     pub created_at: String,
     pub author: PullRequestAuthor,
     pub is_draft: bool,
+    #[serde(default)]
+    pub body: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -61,6 +65,7 @@ pub fn create_embedded(
 
 pub struct PullRequestList {
     width: Rems,
+    embedded: bool,
     pub picker: Entity<Picker<PullRequestListDelegate>>,
     picker_focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
@@ -110,6 +115,7 @@ impl PullRequestList {
             picker,
             picker_focus_handle,
             width,
+            embedded,
             _subscriptions,
         }
     }
@@ -201,7 +207,8 @@ impl Render for PullRequestList {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("PullRequestList")
-            .w(self.width)
+            .when(self.embedded, |this| this.size_full())
+            .when(!self.embedded, |this| this.w(self.width))
             .on_action(cx.listener(Self::handle_create_pr))
             .child(self.picker.clone())
     }
@@ -221,7 +228,7 @@ async fn fetch_pull_requests(
         "pr",
         "list",
         "--json",
-        "number,title,url,state,headRefName,createdAt,author,isDraft",
+        "number,title,url,state,headRefName,baseRefName,createdAt,author,isDraft,body",
         "--limit",
         "50",
     ]);
@@ -268,7 +275,7 @@ pub async fn fetch_current_branch_pr(
         "--head",
         branch_name,
         "--json",
-        "number,title,url,state,headRefName,createdAt,author,isDraft",
+        "number,title,url,state,headRefName,baseRefName,createdAt,author,isDraft,body",
         "--limit",
         "1",
     ]);
@@ -552,11 +559,17 @@ impl PickerDelegate for PullRequestListDelegate {
 
         let timestamp = self.format_timestamp(&entry.created_at);
 
+        let branch_label = if entry.base_ref_name.is_empty() {
+            entry.head_ref_name.clone()
+        } else {
+            format!("{} → {}", entry.head_ref_name, entry.base_ref_name)
+        };
+
         let detail_info = h_flex()
             .gap_1p5()
             .w_full()
             .child(
-                Label::new(entry.head_ref_name.clone())
+                Label::new(branch_label)
                     .truncate()
                     .color(Color::Muted)
                     .size(LabelSize::Small),
@@ -601,13 +614,42 @@ impl PickerDelegate for PullRequestListDelegate {
                 )
             });
 
+        let tooltip_text = {
+            let mut parts = vec![format!("#{} {}", entry.number, entry.title)];
+
+            let merge_direction = if entry.base_ref_name.is_empty() {
+                entry.head_ref_name.clone()
+            } else {
+                format!("{} → {}", entry.head_ref_name, entry.base_ref_name)
+            };
+
+            let status = if entry.is_draft {
+                "draft".to_string()
+            } else {
+                entry.state.to_lowercase()
+            };
+
+            parts.push(format!("{} • {} • by {}", merge_direction, status, entry.author.login));
+
+            if !entry.body.is_empty() {
+                let body_preview = if entry.body.len() > 400 {
+                    format!("{}…", &entry.body[..400])
+                } else {
+                    entry.body.clone()
+                };
+                parts.push(String::new());
+                parts.push(body_preview);
+            }
+            parts.join("\n")
+        };
+
         Some(
             ListItem::new(format!("pr-{ix}"))
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
                 .child(v_flex().w_full().child(title_label).child(detail_info))
-                .tooltip(Tooltip::text(format!("PR #{}", entry.number))),
+                .tooltip(Tooltip::text(tooltip_text)),
         )
     }
 

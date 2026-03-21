@@ -4594,6 +4594,7 @@ impl GitPanel {
             )
     }
 
+    #[allow(dead_code)]
     fn render_previous_commit(
         &self,
         _window: &mut Window,
@@ -4728,6 +4729,10 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<crate::git_picker::GitPicker> {
+        let panel_width = self
+            .width
+            .unwrap_or_else(|| GitPanelSettings::get_global(cx).default_width);
+
         if self.embedded_picker.is_none() {
             let workspace = self.workspace.clone();
             let repository = self.active_repository.clone();
@@ -4735,15 +4740,21 @@ impl GitPanel {
                 let mut picker = crate::git_picker::GitPicker::new(
                     workspace,
                     repository,
-                    crate::git_picker::GitPickerTab::Branches,
+                    crate::git_picker::GitPickerTab::Graph,
                     rems(34.),
                     window,
                     cx,
                 );
                 picker.set_embedded();
+                picker.set_panel_width(panel_width);
                 picker
             });
             self.embedded_picker = Some(picker);
+        } else if let Some(picker) = &self.embedded_picker {
+            picker.update(cx, |picker, cx| {
+                picker.set_panel_width(panel_width);
+                cx.notify();
+            });
         }
         self.embedded_picker.clone().unwrap()
     }
@@ -4759,6 +4770,47 @@ impl GitPanel {
         }
 
         let height = self.picker_section_height.unwrap_or(settings.picker_section_height);
+        let is_graph_tab = self
+            .embedded_picker
+            .as_ref()
+            .map(|p| p.read(cx).tab == crate::git_picker::GitPickerTab::Graph)
+            .unwrap_or(true);
+
+        let graph_entries: Option<Vec<gpui::AnyElement>> = if is_graph_tab {
+            self.commit_history.as_ref().and_then(|history| {
+                if history.entries.is_empty() {
+                    return None;
+                }
+                let entry_count = history.entries.len();
+                Some(
+                    history
+                        .entries
+                        .iter()
+                        .zip(history.graph_layouts.iter())
+                        .enumerate()
+                        .map(|(idx, (entry, layout))| {
+                            self.render_commit_entry(idx, entry, layout, idx == entry_count - 1, cx)
+                        })
+                        .collect(),
+                )
+            })
+        } else {
+            None
+        };
+
+        let graph_has_more = is_graph_tab
+            && self
+                .commit_history
+                .as_ref()
+                .map(|h| h.has_more)
+                .unwrap_or(false);
+        let graph_loading = is_graph_tab
+            && self
+                .commit_history
+                .as_ref()
+                .map(|h| h.loading_more)
+                .unwrap_or(false);
+
         let picker = self.ensure_embedded_picker(window, cx);
 
         let resize_handle = div()
@@ -4815,7 +4867,36 @@ impl GitPanel {
                     .overflow_hidden()
                     .border_t_1()
                     .border_color(cx.theme().colors().border)
-                    .child(picker),
+                    .child(picker)
+                    .when_some(graph_entries, |this, entries| {
+                        this.child(
+                            v_flex()
+                                .id("graph-content-scroll")
+                                .flex_1()
+                                .overflow_y_scroll()
+                                .children(entries)
+                                .when(graph_loading, |this| {
+                                    this.child(
+                                        h_flex().justify_center().py_2().child(
+                                            Label::new("Loading more...")
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                        ),
+                                    )
+                                })
+                                .when(graph_has_more && !graph_loading, |this| {
+                                    this.child(
+                                        h_flex().justify_center().py_1().child(
+                                            Button::new("load-more-commits", "Load more")
+                                                .style(ButtonStyle::Subtle)
+                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                    this.load_more_commits(window, cx);
+                                                })),
+                                        ),
+                                    )
+                                }),
+                        )
+                    }),
             );
 
         Some(section)
@@ -6092,9 +6173,6 @@ impl Render for GitPanel {
                     .children(self.render_footer(window, cx))
                     .when(self.amend_pending, |this| {
                         this.child(self.render_pending_amend(cx))
-                    })
-                    .when(!self.amend_pending, |this| {
-                        this.children(self.render_previous_commit(window, cx))
                     })
                     .when(!self.amend_pending, |this| {
                         this.children(self.render_git_picker_section(window, cx))
