@@ -1865,6 +1865,10 @@ impl AcpThread {
 
             cx.emit(AcpThreadEvent::EntryUpdated(ix));
         } else {
+            if let Some(ix) = self.index_for_tool_call(&id) {
+                self.entries.remove(ix);
+                cx.emit(AcpThreadEvent::EntriesRemoved(ix..ix + 1));
+            }
             self.insert_tool_call_entry(update, status, cx)?;
         };
 
@@ -2032,6 +2036,10 @@ impl AcpThread {
             .is_some_and(|ix| ix + 1 < self.entries.len());
 
         if should_insert_fresh_entry {
+            if let Some(ix) = self.index_for_tool_call(&tool_call_id) {
+                self.entries.remove(ix);
+                cx.emit(AcpThreadEvent::EntriesRemoved(ix..ix + 1));
+            }
             self.insert_tool_call_entry(tool_call, status, cx)?;
         } else {
             self.upsert_tool_call_inner(tool_call, status, cx)?;
