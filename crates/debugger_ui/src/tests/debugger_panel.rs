@@ -18,7 +18,7 @@ use editor::{
     ActiveDebugLine, Editor, EditorMode, MultiBuffer,
     actions::{self},
 };
-use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
+use gpui::{BackgroundExecutor, Focusable, TestAppContext, VisualTestContext};
 use project::{
     FakeFs, Project,
     debugger::session::{ThreadId, ThreadStatus},
@@ -2554,4 +2554,92 @@ async fn test_restart_request_is_not_sent_more_than_once_until_response(
         2,
         "A second restart should be allowed after the first one completes"
     );
+}
+
+#[gpui::test]
+async fn test_handle_start_debugging_request_does_not_steal_editor_focus(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "main.rs": "First line\nSecond line\nThird line\nFourth line",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let session = start_debug_session(&workspace, cx, |_| {}).unwrap();
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
+
+    let fake_config = json!({"one": "two"});
+    let launched_with = Arc::new(parking_lot::Mutex::new(None));
+    let _subscription = project::debugger::test::intercept_debug_sessions(cx, {
+        let launched_with = launched_with.clone();
+        move |client| {
+            let launched_with = launched_with.clone();
+            client.on_request::<dap::requests::Launch, _>(move |_, args| {
+                launched_with.lock().replace(args.raw);
+                Ok(())
+            });
+            client.on_request::<dap::requests::Attach, _>(move |_, _| {
+                assert!(false, "should not get attach request");
+                Ok(())
+            });
+        }
+    });
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let worktree = project.find_worktree(Path::new(path!("/project")), cx).unwrap().0;
+            project.open_buffer((worktree.read(cx).id(), rel_path("main.rs")), cx)
+        })
+        .await
+        .unwrap();
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            MultiBuffer::build_from_buffer(buffer, cx),
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+
+    
+    editor.update_in(cx, |editor, window, cx| {
+        window.focus(&editor.focus_handle(cx), cx);
+        assert!(editor.is_focused(window));
+    });
+
+    client
+        .fake_reverse_request::<StartDebugging>(StartDebuggingRequestArguments {
+            request: StartDebuggingRequestArgumentsRequest::Launch,
+            configuration: fake_config.clone(),
+        })
+        .await;
+
+    cx.run_until_parked();
+
+    workspace
+        .update(cx, |workspace, window, cx| {
+            let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
+            let is_debug_panel_focused = debug_panel
+                .read(cx)
+                .active_session()
+                .unwrap()
+                .read(cx)
+                .focus_handle(cx)
+                .is_focused(window);
+            assert!(!is_debug_panel_focused);
+        })
+        .unwrap();
 }
