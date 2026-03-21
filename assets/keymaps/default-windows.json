@@ -18,7 +18,7 @@
       "enter": "menu::Confirm",
       "ctrl-enter": "menu::SecondaryConfirm",
       "ctrl-c": "menu::Cancel",
-      "escape": "project_panel::Dismiss",
+      "escape": "menu::Cancel",
       "shift-alt-enter": "menu::Restart",
       "alt-enter": ["picker::ConfirmInput", { "secondary": false }],
       "ctrl-alt-enter": ["picker::ConfirmInput", { "secondary": true }],
@@ -940,7 +940,7 @@
       "ctrl-k ctrl-shift-f": "project_panel::NewSearchInDirectory",
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrevious",
-      "escape": "menu::Cancel",
+      "escape": "project_panel::Dismiss",
     },
   },
   {

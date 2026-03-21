@@ -30,7 +30,7 @@
       "cmd-escape": "menu::Cancel",
       "ctrl-escape": "menu::Cancel",
       "ctrl-c": "menu::Cancel",
-      "escape": "project_panel::Dismiss",
+      "escape": "menu::Cancel",
       "alt-shift-enter": "menu::Restart",
       "cmd-shift-w": "workspace::CloseWindow",
       "shift-escape": "workspace::ToggleZoom",
@@ -306,7 +306,7 @@
     "context": "AgentFeedbackMessageEditor > Editor",
     "use_key_equivalents": true,
     "bindings": {
-      "escape": "menu::Cancel",
+      "escape": "project_panel::Dismiss",
       "enter": "menu::Confirm",
       "alt-enter": "editor::Newline",
     },
@@ -1002,7 +1002,7 @@
       "cmd-alt-shift-f": "project_panel::NewSearchInDirectory",
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrevious",
-      "escape": "menu::Cancel",
+      "escape": "project_panel::Dismiss",
     },
   },
   {

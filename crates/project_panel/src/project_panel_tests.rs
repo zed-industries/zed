@@ -10623,6 +10623,40 @@ async fn test_dismiss_closes_project_panel_overlay(cx: &mut gpui::TestAppContext
     });
 }
 
+#[gpui::test]
+async fn test_escape_binding_routes_to_project_panel_dismiss(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+    enable_overlay_dock_panel_mode(cx);
+    load_default_keymap(cx);
+    cx.update(|cx| {
+        let input = [gpui::Keystroke::parse("escape").unwrap()];
+
+        let mut project_panel_context = gpui::KeyContext::new_with_defaults();
+        project_panel_context.add("ProjectPanel");
+        project_panel_context.add("menu");
+        project_panel_context.add("not_editing");
+
+        let mut default_context = gpui::KeyContext::new_with_defaults();
+        default_context.add("menu");
+
+        let keymap = cx.key_bindings();
+        let keymap = keymap.borrow();
+
+        let (project_panel_bindings, _) =
+            keymap.bindings_for_input(&input, &[project_panel_context]);
+        assert_eq!(
+            project_panel_bindings.first().map(|binding| binding.action().name()),
+            Some("project_panel::Dismiss"),
+        );
+
+        let (default_bindings, _) = keymap.bindings_for_input(&input, &[default_context]);
+        assert_eq!(
+            default_bindings.first().map(|binding| binding.action().name()),
+            Some("menu::Cancel"),
+        );
+    });
+}
+
 pub(crate) fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
@@ -10667,6 +10701,18 @@ fn enable_overlay_dock_panel_mode(cx: &mut TestAppContext) {
         store.update_user_settings(cx, |settings| {
             settings.workspace.dock_panel_mode = Some(settings::DockPanelMode::Overlay);
         });
+    });
+}
+
+fn load_default_keymap(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        cx.bind_keys(
+            settings::KeymapFile::load_asset_allow_partial_failure(
+                settings::DEFAULT_KEYMAP_PATH,
+                cx,
+            )
+            .expect("failed to load default keymap"),
+        );
     });
 }
 
