@@ -2302,7 +2302,13 @@ impl AgentPanel {
         let default = AgentSettings::get_global(cx).new_thread_location;
         let start_thread_in = match default {
             NewThreadLocation::LocalProject => StartThreadIn::LocalProject,
-            NewThreadLocation::NewWorktree => StartThreadIn::NewWorktree,
+            NewThreadLocation::NewWorktree => {
+                if self.project_has_git_repository(cx) {
+                    StartThreadIn::NewWorktree
+                } else {
+                    StartThreadIn::LocalProject
+                }
+            }
         };
         if self.start_thread_in != start_thread_in {
             self.start_thread_in = start_thread_in;
@@ -4053,9 +4059,10 @@ impl AgentPanel {
                         .gap(DynamicSpacing::Base04.rems(cx))
                         .pl(DynamicSpacing::Base04.rems(cx))
                         .child(agent_selector_menu)
-                        .when(has_visible_worktrees, |this| {
-                            this.child(self.render_start_thread_in_selector(cx))
-                        }),
+                        .when(
+                            has_visible_worktrees && self.project_has_git_repository(cx),
+                            |this| this.child(self.render_start_thread_in_selector(cx)),
+                        ),
                 )
                 .child(
                     h_flex()
