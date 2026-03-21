@@ -282,7 +282,7 @@ jobs:
       with:
         cache: rust
         path: ~/.rustup
-    - name: rustup target add x86_64-apple-darwin
+    - name: steps::install_rustup_target
       run: rustup target add x86_64-apple-darwin
     - name: steps::setup_sccache
       run: ./script/setup-sccache
