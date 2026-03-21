@@ -6158,7 +6158,7 @@ impl Workspace {
         if let Some(manager) = HistoryManager::global(cx) {
             let paths = PathList::new(&self.root_paths(cx));
             manager.update(cx, |this, cx| {
-                this.update_history(id, HistoryManagerEntry::new(id, &paths), cx);
+                this.update_history(id, HistoryManagerEntry::new(id, &paths, false), cx);
             });
         }
     }
@@ -8046,7 +8046,7 @@ pub async fn last_opened_workspace_location(
         .await
         .log_err()
         .flatten()
-        .map(|(id, location, paths, _timestamp)| (id, location, paths))
+        .map(|(id, location, paths, _timestamp, _pinned)| (id, location, paths))
 }
 
 pub async fn last_session_workspace_locations(

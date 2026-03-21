@@ -970,6 +970,9 @@ impl Domain for WorkspaceDb {
         sql!(
             ALTER TABLE remote_connections ADD COLUMN use_podman BOOLEAN;
         ),
+        sql!(
+            ALTER TABLE workspaces ADD COLUMN pinned INTEGER DEFAULT 0;
+        ),
     ];
 
     // Allow recovering from bad migration that was initially shipped to nightly
@@ -1613,30 +1616,34 @@ impl WorkspaceDb {
             PathList,
             Option<RemoteConnectionId>,
             DateTime<Utc>,
+            bool,
         )>,
     > {
         Ok(self
             .recent_workspaces_query()?
             .into_iter()
-            .map(|(id, paths, order, remote_connection_id, timestamp)| {
-                (
-                    id,
-                    PathList::deserialize(&SerializedPathList { paths, order }),
-                    remote_connection_id.map(RemoteConnectionId),
-                    parse_timestamp(&timestamp),
-                )
-            })
+            .map(
+                |(id, paths, order, remote_connection_id, timestamp, pinned)| {
+                    (
+                        id,
+                        PathList::deserialize(&SerializedPathList { paths, order }),
+                        remote_connection_id.map(RemoteConnectionId),
+                        parse_timestamp(&timestamp),
+                        pinned,
+                    )
+                },
+            )
             .collect())
     }
 
     query! {
-        fn recent_workspaces_query() -> Result<Vec<(WorkspaceId, String, String, Option<u64>, String)>> {
-            SELECT workspace_id, paths, paths_order, remote_connection_id, timestamp
+        fn recent_workspaces_query() -> Result<Vec<(WorkspaceId, String, String, Option<u64>, String, bool)>> {
+            SELECT workspace_id, paths, paths_order, remote_connection_id, timestamp, COALESCE(pinned, 0)
             FROM workspaces
             WHERE
                 paths IS NOT NULL OR
                 remote_connection_id IS NOT NULL
-            ORDER BY timestamp DESC
+            ORDER BY pinned DESC, timestamp DESC
         }
     }
 
@@ -1783,6 +1790,14 @@ impl WorkspaceDb {
         }
     }
 
+    query! {
+        pub async fn set_workspace_pinned(id: WorkspaceId, pinned: bool) -> Result<()> {
+            UPDATE workspaces
+            SET pinned = ?2
+            WHERE workspace_id IS ?1
+        }
+    }
+
     async fn all_paths_exist_with_a_directory(paths: &[PathBuf], fs: &dyn Fs) -> bool {
         let mut any_dir = false;
         for path in paths {
@@ -1809,13 +1824,14 @@ impl WorkspaceDb {
             SerializedWorkspaceLocation,
             PathList,
             DateTime<Utc>,
+            bool,
         )>,
     > {
         let mut result = Vec::new();
         let mut delete_tasks = Vec::new();
         let remote_connections = self.remote_connections()?;
 
-        for (id, paths, remote_connection_id, timestamp) in self.recent_workspaces()? {
+        for (id, paths, remote_connection_id, timestamp, pinned) in self.recent_workspaces()? {
             if let Some(remote_connection_id) = remote_connection_id {
                 if let Some(connection_options) = remote_connections.get(&remote_connection_id) {
                     result.push((
@@ -1823,6 +1839,7 @@ impl WorkspaceDb {
                         SerializedWorkspaceLocation::Remote(connection_options.clone()),
                         paths,
                         timestamp,
+                        pinned,
                     ));
                 } else {
                     delete_tasks.push(self.delete_workspace_by_id(id));
@@ -1844,7 +1861,13 @@ impl WorkspaceDb {
             // WSL VM and file server to boot up. This can block for many seconds.
             // Supported scenarios use remote workspaces.
             if !has_wsl_path && Self::all_paths_exist_with_a_directory(paths.paths(), fs).await {
-                result.push((id, SerializedWorkspaceLocation::Local, paths, timestamp));
+                result.push((
+                    id,
+                    SerializedWorkspaceLocation::Local,
+                    paths,
+                    timestamp,
+                    pinned,
+                ));
             } else {
                 delete_tasks.push(self.delete_workspace_by_id(id));
             }
@@ -1863,6 +1886,7 @@ impl WorkspaceDb {
             SerializedWorkspaceLocation,
             PathList,
             DateTime<Utc>,
+            bool,
         )>,
     > {
         Ok(self.recent_workspaces_on_disk(fs).await?.into_iter().next())
@@ -2121,6 +2145,15 @@ impl WorkspaceDb {
             UPDATE workspaces
             SET timestamp = CURRENT_TIMESTAMP
             WHERE workspace_id = ?
+        }
+    }
+
+    #[cfg(test)]
+    query! {
+        pub async fn set_workspace_timestamp(workspace_id: WorkspaceId, timestamp: String) -> Result<()> {
+            UPDATE workspaces
+            SET timestamp = ?2
+            WHERE workspace_id = ?1
         }
     }
 
@@ -4468,5 +4501,112 @@ mod tests {
             "flush_serialization should ensure window bounds are persisted to the DB \
              before the process exits."
         );
+    }
+
+    #[gpui::test]
+    async fn test_workspace_pinned(cx: &mut gpui::TestAppContext) {
+        let db = WorkspaceDb::open_test_db("test_workspace_pinned").await;
+
+        let id1 = db.next_id().await.unwrap();
+        db.save_workspace(SerializedWorkspace {
+            id: id1,
+            location: SerializedWorkspaceLocation::Local,
+            paths: PathList::new(&["/tmp/test1"]),
+            center_group: SerializedPaneGroup::Pane(SerializedPane::new(vec![], false, 0)),
+            window_bounds: None,
+            display: None,
+            docks: Default::default(),
+            centered_layout: false,
+            session_id: None,
+            breakpoints: Default::default(),
+            window_id: None,
+            user_toolchains: Default::default(),
+        })
+        .await;
+        db.set_workspace_timestamp(id1, "2020-01-01 00:00:01".into())
+            .await
+            .unwrap();
+
+        let id2 = db.next_id().await.unwrap();
+        db.save_workspace(SerializedWorkspace {
+            id: id2,
+            location: SerializedWorkspaceLocation::Local,
+            paths: PathList::new(&["/tmp/test2"]),
+            center_group: SerializedPaneGroup::Pane(SerializedPane::new(vec![], false, 0)),
+            window_bounds: None,
+            display: None,
+            docks: Default::default(),
+            centered_layout: false,
+            session_id: None,
+            breakpoints: Default::default(),
+            window_id: None,
+            user_toolchains: Default::default(),
+        })
+        .await;
+        db.set_workspace_timestamp(id2, "2020-01-01 00:00:02".into())
+            .await
+            .unwrap();
+
+        let id3 = db.next_id().await.unwrap();
+        db.save_workspace(SerializedWorkspace {
+            id: id3,
+            location: SerializedWorkspaceLocation::Local,
+            paths: PathList::new(&["/tmp/test3"]),
+            center_group: SerializedPaneGroup::Pane(SerializedPane::new(vec![], false, 0)),
+            window_bounds: None,
+            display: None,
+            docks: Default::default(),
+            centered_layout: false,
+            session_id: None,
+            breakpoints: Default::default(),
+            window_id: None,
+            user_toolchains: Default::default(),
+        })
+        .await;
+        db.set_workspace_timestamp(id3, "2020-01-01 00:00:03".into())
+            .await
+            .unwrap();
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/tmp/test1", Default::default()).await;
+        fs.insert_tree("/tmp/test2", Default::default()).await;
+        fs.insert_tree("/tmp/test3", Default::default()).await;
+
+        // Initially no pins, order should be id3, id2, id1 (most recent first)
+        let recent = db.recent_workspaces_on_disk(fs.as_ref()).await.unwrap();
+        assert_eq!(recent[0].0, id3);
+        assert_eq!(recent[1].0, id2);
+        assert_eq!(recent[2].0, id1);
+
+        // Pin id1
+        db.set_workspace_pinned(id1, true).await.unwrap();
+
+        let recent = db.recent_workspaces_on_disk(fs.as_ref()).await.unwrap();
+        assert_eq!(recent[0].0, id1);
+        assert_eq!(recent[0].4, true); // pinned
+        assert_eq!(recent[1].0, id3);
+        assert_eq!(recent[1].4, false); // unpinned
+        assert_eq!(recent[2].0, id2);
+        assert_eq!(recent[2].4, false); // unpinned
+
+        // Pin toggle round-trip
+        db.set_workspace_pinned(id1, false).await.unwrap();
+
+        let recent = db.recent_workspaces_on_disk(fs.as_ref()).await.unwrap();
+        assert_eq!(recent[0].0, id3); // Back to normal order
+        assert_eq!(recent[1].0, id2);
+        assert_eq!(recent[2].0, id1);
+        assert_eq!(recent[2].4, false);
+
+        // Pin multiple, verify ordering among pinned
+        db.set_workspace_pinned(id2, true).await.unwrap();
+        db.set_workspace_pinned(id1, true).await.unwrap();
+
+        let recent = db.recent_workspaces_on_disk(fs.as_ref()).await.unwrap();
+        // Since id2 timestamp is newer than id1, id2 > id1 or wait.
+        // id2 (2) > id1 (1) in timestamp.
+        assert_eq!(recent[0].0, id2);
+        assert_eq!(recent[1].0, id1);
+        assert_eq!(recent[2].0, id3);
     }
 }

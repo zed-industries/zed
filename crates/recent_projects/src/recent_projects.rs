@@ -59,6 +59,7 @@ pub struct RecentProjectEntry {
     pub paths: Vec<PathBuf>,
     pub workspace_id: WorkspaceId,
     pub timestamp: DateTime<Utc>,
+    pub is_pinned: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -95,9 +96,9 @@ pub async fn get_recent_projects(
 
     let entries: Vec<RecentProjectEntry> = workspaces
         .into_iter()
-        .filter(|(id, _, _, _)| Some(*id) != current_workspace_id)
-        .filter(|(_, location, _, _)| matches!(location, SerializedWorkspaceLocation::Local))
-        .map(|(workspace_id, _, path_list, timestamp)| {
+        .filter(|(id, _, _, _, _)| Some(*id) != current_workspace_id)
+        .filter(|(_, location, _, _, _)| matches!(location, SerializedWorkspaceLocation::Local))
+        .map(|(workspace_id, _, path_list, timestamp, pinned)| {
             let paths: Vec<PathBuf> = path_list.paths().to_vec();
             let ordered_paths: Vec<&PathBuf> = path_list.ordered_paths().collect();
 
@@ -127,6 +128,7 @@ pub async fn get_recent_projects(
                 paths,
                 workspace_id,
                 timestamp,
+                is_pinned: pinned,
             }
         })
         .collect();
@@ -632,6 +634,7 @@ pub struct RecentProjectsDelegate {
         SerializedWorkspaceLocation,
         PathList,
         DateTime<Utc>,
+        bool,
     )>,
     filtered_entries: Vec<ProjectPickerEntry>,
     selected_index: usize,
@@ -680,13 +683,14 @@ impl RecentProjectsDelegate {
             SerializedWorkspaceLocation,
             PathList,
             DateTime<Utc>,
+            bool,
         )>,
     ) {
         self.workspaces = workspaces;
         let has_non_local_recent = !self
             .workspaces
             .iter()
-            .all(|(_, location, _, _)| matches!(location, SerializedWorkspaceLocation::Local));
+            .all(|(_, location, _, _, _)| matches!(location, SerializedWorkspaceLocation::Local));
         self.has_any_non_local_projects =
             self.project_connection_options.is_some() || has_non_local_recent;
     }
@@ -797,8 +801,8 @@ impl PickerDelegate for RecentProjectsDelegate {
             .workspaces
             .iter()
             .enumerate()
-            .filter(|(_, (id, _, paths, _))| self.is_valid_recent_candidate(*id, paths, cx))
-            .map(|(id, (_, _, paths, _))| {
+            .filter(|(_, (id, _, paths, _, _))| self.is_valid_recent_candidate(*id, paths, cx))
+            .map(|(id, (_, _, paths, _, _))| {
                 let combined_string = paths
                     .ordered_paths()
                     .map(|path| path.compact().to_string_lossy().into_owned())
@@ -853,7 +857,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             entries.push(ProjectPickerEntry::Header("Recent Projects".into()));
 
             if is_empty_query {
-                for (id, (workspace_id, _, paths, _)) in self.workspaces.iter().enumerate() {
+                for (id, (workspace_id, _, paths, _, _)) in self.workspaces.iter().enumerate() {
                     if self.is_valid_recent_candidate(*workspace_id, paths, cx) {
                         entries.push(ProjectPickerEntry::RecentProject(StringMatch {
                             candidate_id: id,
@@ -905,6 +909,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     candidate_workspace_id,
                     candidate_workspace_location,
                     candidate_workspace_paths,
+                    _,
                     _,
                 )) = self.workspaces.get(selected_match.candidate_id)
                 else {
@@ -1110,7 +1115,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             }
             ProjectPickerEntry::RecentProject(hit) => {
                 let popover_style = matches!(self.style, ProjectPickerStyle::Popover);
-                let (_, location, paths, _) = self.workspaces.get(hit.candidate_id)?;
+                let (_, location, paths, _, is_pinned) = self.workspaces.get(hit.candidate_id)?;
                 let is_local = matches!(location, SerializedWorkspaceLocation::Local);
                 let paths_to_add = paths.paths().to_vec();
                 let tooltip_path: SharedString = paths
@@ -1146,9 +1151,30 @@ impl PickerDelegate for RecentProjectsDelegate {
                 };
 
                 let focus_handle = self.focus_handle.clone();
+                let is_pinned = *is_pinned;
+                let pin_icon = if is_pinned {
+                    IconName::Pin
+                } else {
+                    IconName::Unpin
+                };
+                let pin_tooltip = if is_pinned {
+                    "Unpin Project"
+                } else {
+                    "Pin Project"
+                };
 
                 let secondary_actions = h_flex()
                     .gap_px()
+                    .child(
+                        IconButton::new(("pin", ix), pin_icon)
+                            .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::text(pin_tooltip))
+                            .on_click(cx.listener(move |picker, _event, window, cx| {
+                                cx.stop_propagation();
+                                window.prevent_default();
+                                picker.delegate.toggle_pin(ix, window, cx);
+                            })),
+                    )
                     .when(is_local, |this| {
                         this.child(
                             IconButton::new("add_to_workspace", IconName::Plus)
@@ -1230,7 +1256,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 .tooltip(Tooltip::text(tooltip_path)),
                         )
                         .map(|el| {
-                            if self.selected_index == ix {
+                            if self.selected_index == ix || is_pinned {
                                 el.end_slot(secondary_actions)
                             } else {
                                 el.end_hover_slot(secondary_actions)
@@ -1494,7 +1520,7 @@ impl RecentProjectsDelegate {
         if let Some(ProjectPickerEntry::RecentProject(selected_match)) =
             self.filtered_entries.get(ix)
         {
-            let (workspace_id, _, _, _) = &self.workspaces[selected_match.candidate_id];
+            let (workspace_id, _, _, _, _) = &self.workspaces[selected_match.candidate_id];
             let workspace_id = *workspace_id;
             let fs = self
                 .workspace
@@ -1528,6 +1554,38 @@ impl RecentProjectsDelegate {
             })
             .detach();
         }
+    }
+
+    fn toggle_pin(&self, ix: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        let Some(ProjectPickerEntry::RecentProject(selected_match)) = self.filtered_entries.get(ix)
+        else {
+            return;
+        };
+        let (workspace_id, _, _, _, is_pinned) = &self.workspaces[selected_match.candidate_id];
+        let workspace_id = *workspace_id;
+        let new_pinned = !is_pinned;
+        let fs = self
+            .workspace
+            .upgrade()
+            .map(|ws| ws.read(cx).app_state().fs.clone());
+        cx.spawn_in(window, async move |this, cx| {
+            WORKSPACE_DB
+                .set_workspace_pinned(workspace_id, new_pinned)
+                .await
+                .log_err();
+            let Some(fs) = fs else { return };
+            let workspaces = WORKSPACE_DB
+                .recent_workspaces_on_disk(fs.as_ref())
+                .await
+                .unwrap_or_default();
+            this.update_in(cx, move |picker, window, cx| {
+                picker.delegate.set_workspaces(workspaces);
+                picker.delegate.reset_selected_match_index = false;
+                picker.update_matches(picker.query(cx), window, cx);
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn is_current_workspace(

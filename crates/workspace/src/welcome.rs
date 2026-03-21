@@ -219,6 +219,7 @@ pub struct WelcomePage {
             SerializedWorkspaceLocation,
             PathList,
             DateTime<Utc>,
+            bool,
         )>,
     >,
 }
@@ -280,7 +281,7 @@ impl WelcomePage {
         cx: &mut Context<Self>,
     ) {
         if let Some(recent_workspaces) = &self.recent_workspaces {
-            if let Some((_workspace_id, location, paths, _timestamp)) =
+            if let Some((_workspace_id, location, paths, _timestamp, _pinned)) =
                 recent_workspaces.get(action.index)
             {
                 let is_local = matches!(location, SerializedWorkspaceLocation::Local);
@@ -359,7 +360,7 @@ impl Render for WelcomePage {
             .flatten()
             .take(5)
             .enumerate()
-            .map(|(index, (_, loc, paths, _))| {
+            .map(|(index, (_, loc, paths, _, _))| {
                 self.render_recent_project(index, first_section_entries + index, loc, paths)
             })
             .collect::<Vec<_>>();
