@@ -1301,9 +1301,11 @@ impl GitPanel {
             self.workspace
                 .update(cx, |workspace, cx| {
                     ProjectDiff::deploy_at(workspace, Some(entry.clone()), window, cx);
+                    if let Some(project_diff) = workspace.active_item_as::<ProjectDiff>(cx) {
+                        project_diff.focus_handle(cx).focus(window, cx);
+                    }
                 })
                 .ok();
-            self.focus_handle.focus(window, cx);
 
             Some(())
         });
@@ -1348,7 +1350,7 @@ impl GitPanel {
             let open_task = self
                 .workspace
                 .update(cx, |workspace, cx| {
-                    workspace.open_path_preview(path, None, false, false, true, window, cx)
+                    workspace.open_path_preview(path, None, true, false, true, window, cx)
                 })
                 .ok()?;
 
@@ -5263,7 +5265,6 @@ impl GitPanel {
                         this.open_file(&Default::default(), window, cx)
                     } else {
                         this.open_diff(&Default::default(), window, cx);
-                        this.focus_handle.focus(window, cx);
                     }
                 })
             })
