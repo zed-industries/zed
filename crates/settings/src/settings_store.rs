@@ -769,9 +769,11 @@ impl SettingsStore {
         text: &str,
         update: impl FnOnce(&mut SettingsContent),
     ) -> Vec<(Range<usize>, String)> {
-        let old_content = UserSettingsContent::parse_json_with_comments(text)
-            .log_err()
-            .unwrap_or_default();
+        let (old_content, parse_status) = UserSettingsContent::parse_json(text);
+        if let ParseStatus::Failed { error } = &parse_status {
+            log::error!("Failed to parse settings for update: {error}");
+        }
+        let old_content = old_content.unwrap_or_default();
         let mut new_content = old_content.clone();
         update(&mut new_content.content);
 
