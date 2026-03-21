@@ -562,7 +562,7 @@ impl MentionSet {
         ));
         let delegate =
             AgentServerDelegate::new(project.read(cx).agent_server_store().clone(), None);
-        let connection = server.connect(delegate, cx);
+        let connection = server.connect(delegate, project.clone(), cx);
         cx.spawn(async move |_, cx| {
             let agent = connection.await?;
             let agent = agent.downcast::<agent::NativeAgentConnection>().unwrap();

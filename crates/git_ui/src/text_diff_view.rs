@@ -47,11 +47,24 @@ impl TextDiffView {
         let source_editor = diff_data.editor.clone();
 
         let selection_data = source_editor.update(cx, |editor, cx| {
-            let multibuffer = editor.buffer().read(cx);
-            let source_buffer = multibuffer.as_singleton()?;
+            let multibuffer = editor.buffer();
             let selections = editor.selections.all::<Point>(&editor.display_snapshot(cx));
-            let buffer_snapshot = source_buffer.read(cx);
             let first_selection = selections.first()?;
+
+            let (source_buffer, buffer_start, start_excerpt) = multibuffer
+                .read(cx)
+                .point_to_buffer_point(first_selection.start, cx)?;
+            let buffer_end = multibuffer
+                .read(cx)
+                .point_to_buffer_point(first_selection.end, cx)
+                .and_then(|(buf, pt, end_excerpt)| {
+                    (buf.read(cx).remote_id() == source_buffer.read(cx).remote_id()
+                        && end_excerpt == start_excerpt)
+                        .then_some(pt)
+                })
+                .unwrap_or(buffer_start);
+
+            let buffer_snapshot = source_buffer.read(cx);
             let max_point = buffer_snapshot.max_point();
 
             if first_selection.is_empty() {
@@ -59,15 +72,12 @@ impl TextDiffView {
                 return Some((source_buffer, full_range));
             }
 
-            let start = first_selection.start;
-            let end = first_selection.end;
-            let expanded_start = Point::new(start.row, 0);
-
-            let expanded_end = if end.column > 0 {
-                let next_row = end.row + 1;
+            let expanded_start = Point::new(buffer_start.row, 0);
+            let expanded_end = if buffer_end.column > 0 {
+                let next_row = buffer_end.row + 1;
                 cmp::min(max_point, Point::new(next_row, 0))
             } else {
-                end
+                buffer_end
             };
             Some((source_buffer, expanded_start..expanded_end))
         });
@@ -78,11 +88,24 @@ impl TextDiffView {
         };
 
         source_editor.update(cx, |source_editor, cx| {
-            source_editor.change_selections(Default::default(), window, cx, |s| {
-                s.select_ranges(vec![
-                    expanded_selection_range.start..expanded_selection_range.end,
-                ]);
-            })
+            let multibuffer = source_editor.buffer();
+            let mb_range = {
+                let mb = multibuffer.read(cx);
+                let start_anchor =
+                    mb.buffer_point_to_anchor(&source_buffer, expanded_selection_range.start, cx);
+                let end_anchor =
+                    mb.buffer_point_to_anchor(&source_buffer, expanded_selection_range.end, cx);
+                start_anchor.zip(end_anchor).map(|(s, e)| {
+                    let snapshot = mb.snapshot(cx);
+                    s.to_point(&snapshot)..e.to_point(&snapshot)
+                })
+            };
+
+            if let Some(range) = mb_range {
+                source_editor.change_selections(Default::default(), window, cx, |s| {
+                    s.select_ranges(vec![range]);
+                });
+            }
         });
 
         let source_buffer_snapshot = source_buffer.read(cx).snapshot();
@@ -439,8 +462,9 @@ impl Render for TextDiffView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use editor::{MultiBufferOffset, test::editor_test_context::assert_state_with_diff};
+    use editor::{MultiBufferOffset, PathKey, test::editor_test_context::assert_state_with_diff};
     use gpui::{TestAppContext, VisualContext};
+    use language::Point;
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::SettingsStore;
@@ -641,6 +665,185 @@ mod tests {
             cx,
         )
         .await;
+    }
+
+    #[gpui::test]
+    async fn test_diffing_clipboard_from_multibuffer_with_selection(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "a.txt": "alpha\nbeta\ngamma",
+                "b.txt": "one\ntwo\nthree"
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+
+        let buffer_a = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/project/a.txt"), cx)
+            })
+            .await
+            .unwrap();
+        let buffer_b = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/project/b.txt"), cx)
+            })
+            .await
+            .unwrap();
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let editor = cx.new_window_entity(|window, cx| {
+            let multibuffer = cx.new(|cx| {
+                let mut mb = MultiBuffer::new(language::Capability::ReadWrite);
+                mb.set_excerpts_for_path(
+                    PathKey::sorted(0),
+                    buffer_a.clone(),
+                    [Point::new(0, 0)..Point::new(2, 5)],
+                    0,
+                    cx,
+                );
+                mb.set_excerpts_for_path(
+                    PathKey::sorted(1),
+                    buffer_b.clone(),
+                    [Point::new(0, 0)..Point::new(2, 5)],
+                    0,
+                    cx,
+                );
+                mb
+            });
+
+            let mut editor =
+                Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx);
+            // Select "beta" inside the first excerpt
+            editor.change_selections(Default::default(), window, cx, |s| {
+                s.select_ranges([MultiBufferOffset(6)..MultiBufferOffset(10)]);
+            });
+            editor
+        });
+
+        let diff_view = workspace
+            .update_in(cx, |workspace, window, cx| {
+                TextDiffView::open(
+                    &DiffClipboardWithSelectionData {
+                        clipboard_text: "REPLACED".to_string(),
+                        editor,
+                    },
+                    workspace,
+                    window,
+                    cx,
+                )
+            })
+            .unwrap()
+            .await
+            .unwrap();
+
+        cx.executor().run_until_parked();
+
+        diff_view.read_with(cx, |diff_view, _cx| {
+            assert!(
+                diff_view.title.contains("Clipboard"),
+                "diff view should have opened with a clipboard diff title, got: {}",
+                diff_view.title
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_diffing_clipboard_from_multibuffer_with_empty_selection(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "a.txt": "alpha\nbeta\ngamma",
+                "b.txt": "one\ntwo\nthree"
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+
+        let buffer_a = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/project/a.txt"), cx)
+            })
+            .await
+            .unwrap();
+        let buffer_b = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/project/b.txt"), cx)
+            })
+            .await
+            .unwrap();
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let editor = cx.new_window_entity(|window, cx| {
+            let multibuffer = cx.new(|cx| {
+                let mut mb = MultiBuffer::new(language::Capability::ReadWrite);
+                mb.set_excerpts_for_path(
+                    PathKey::sorted(0),
+                    buffer_a.clone(),
+                    [Point::new(0, 0)..Point::new(2, 5)],
+                    0,
+                    cx,
+                );
+                mb.set_excerpts_for_path(
+                    PathKey::sorted(1),
+                    buffer_b.clone(),
+                    [Point::new(0, 0)..Point::new(2, 5)],
+                    0,
+                    cx,
+                );
+                mb
+            });
+
+            let mut editor =
+                Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx);
+            // Cursor inside the first excerpt (no selection)
+            editor.change_selections(Default::default(), window, cx, |s| {
+                s.select_ranges([MultiBufferOffset(6)..MultiBufferOffset(6)]);
+            });
+            editor
+        });
+
+        let diff_view = workspace
+            .update_in(cx, |workspace, window, cx| {
+                TextDiffView::open(
+                    &DiffClipboardWithSelectionData {
+                        clipboard_text: "REPLACED".to_string(),
+                        editor,
+                    },
+                    workspace,
+                    window,
+                    cx,
+                )
+            })
+            .unwrap()
+            .await
+            .unwrap();
+
+        cx.executor().run_until_parked();
+
+        // Empty selection should diff the full underlying buffer
+        diff_view.read_with(cx, |diff_view, _cx| {
+            assert!(
+                diff_view.title.contains("Clipboard"),
+                "diff view should have opened with a clipboard diff title, got: {}",
+                diff_view.title
+            );
+        });
     }
 
     async fn base_test(

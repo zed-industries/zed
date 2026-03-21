@@ -39,7 +39,7 @@ use ui_input::InputField;
 use util::ResultExt;
 use workspace::{
     Item, ModalView, SerializableItem, Workspace, notifications::NotifyTaskExt as _,
-    register_serializable_item,
+    register_serializable_item, with_active_or_new_workspace,
 };
 
 pub use ui_components::*;
@@ -128,14 +128,16 @@ pub fn init(cx: &mut App) {
         }
     }
 
+    cx.on_action(|_: &OpenKeymap, cx| {
+        with_active_or_new_workspace(cx, |workspace, window, cx| {
+            open_keymap_editor(None, workspace, window, cx);
+        });
+    });
+
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
-        workspace
-            .register_action(|workspace, _: &OpenKeymap, window, cx| {
-                open_keymap_editor(None, workspace, window, cx);
-            })
-            .register_action(|workspace, action: &ChangeKeybinding, window, cx| {
-                open_keymap_editor(Some(action.action.clone()), workspace, window, cx);
-            });
+        workspace.register_action(|workspace, action: &ChangeKeybinding, window, cx| {
+            open_keymap_editor(Some(action.action.clone()), workspace, window, cx);
+        });
     })
     .detach();
 

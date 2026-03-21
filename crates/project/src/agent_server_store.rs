@@ -1374,13 +1374,8 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
                 .await
                 .unwrap_or_default();
 
-            let mut exec_args = Vec::new();
-            exec_args.push("--yes".to_string());
-            exec_args.push(package.to_string());
-            if !args.is_empty() {
-                exec_args.push("--".to_string());
-                exec_args.extend(args);
-            }
+            let mut exec_args = vec!["--yes".to_string(), "--".to_string(), package.to_string()];
+            exec_args.extend(args);
 
             let npm_command = node_runtime
                 .npm_command(

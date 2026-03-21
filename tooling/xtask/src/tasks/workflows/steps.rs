@@ -211,11 +211,18 @@ pub fn clear_target_dir_if_large(platform: Platform) -> Step<Run> {
     }
 }
 
-pub fn clippy(platform: Platform) -> Step<Run> {
+pub fn clippy(platform: Platform, target: Option<&str>) -> Step<Run> {
     match platform {
         Platform::Windows => named::pwsh("./script/clippy.ps1"),
-        _ => named::bash("./script/clippy"),
+        _ => match target {
+            Some(target) => named::bash(format!("./script/clippy --target {target}")),
+            None => named::bash("./script/clippy"),
+        },
     }
+}
+
+pub fn install_rustup_target(target: &str) -> Step<Run> {
+    named::bash(format!("rustup target add {target}"))
 }
 
 pub fn cache_rust_dependencies_namespace() -> Step<Use> {
