@@ -1113,9 +1113,28 @@
     },
   },
   {
-    "context": "MessageEditor > Editor && VimControl",
+    "context": "MessageEditor > Editor && VimControl && vim_mode == normal",
     "bindings": {
       "enter": "agent::Chat",
+    },
+  },
+  {
+    "context": "MessageEditor > Editor && VimControl && vim_mode == helix_normal",
+    "bindings": {
+      "enter": "agent::Chat",
+    },
+  },
+  {
+    "context": "MessageEditor > Editor && VimControl && vim_mode == insert && !use_modifier_to_send",
+    "bindings": {
+      "enter": "agent::Chat",
+    },
+  },
+  {
+    "context": "MessageEditor > Editor && VimControl && vim_mode == insert && use_modifier_to_send",
+    "bindings": {
+      "ctrl-enter": "agent::Chat",
+      "enter": "editor::Newline",
     },
   },
 
