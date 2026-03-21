@@ -277,6 +277,20 @@ impl SkillsContext {
         })
     }
 
+    /// Create a new SkillsContext with skills loaded synchronously.
+    /// Use this for the first construction to ensure skills are available immediately.
+    pub fn new_sync(
+        worktree_roots: Vec<PathBuf>,
+        templates: Arc<Templates>,
+        cx: &mut App,
+    ) -> Entity<Self> {
+        let skills = discover_all_skills_sync(&worktree_roots);
+        let formatted = format_skills_for_prompt(&skills, templates);
+        cx.new(|_cx| Self {
+            formatted_skills: Some(formatted),
+        })
+    }
+
     /// Create a SkillsContext with pre-populated skills (for loading from DB).
     pub fn from_formatted(formatted_skills: String, cx: &mut App) -> Entity<Self> {
         cx.new(|_cx| Self {

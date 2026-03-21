@@ -30,8 +30,8 @@ use zed_actions::{
 };
 
 use crate::DEFAULT_THREAD_TITLE;
-use crate::ui::{AcpOnboardingModal, HoldForDefault};
 use crate::thread_metadata_store::{ThreadId, ThreadMetadataStore};
+use crate::ui::HoldForDefault;
 use crate::{
     AddContextServer, AgentDiffPane, ConversationView, CopyThreadToClipboard, CreateWorktree,
     Follow, InlineAssistant, LoadThreadFromClipboard, NewThread, NewWorktreeBranchTarget,

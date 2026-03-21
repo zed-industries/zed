@@ -61,6 +61,69 @@ impl ProjectContext {
                 .to_string(),
         }
     }
+
+    /// Create a ProjectContext with rules files loaded synchronously.
+    /// Use this for the first construction to ensure rules are available immediately.
+    pub fn new_sync(worktree_roots: &[(String, Arc<Path>)]) -> Self {
+        // Load worktree rules synchronously
+        let worktrees: Vec<WorktreeContext> = worktree_roots
+            .iter()
+            .map(|(root_name, abs_path)| {
+                let rules_file = Self::load_worktree_rules_sync(abs_path);
+                WorktreeContext {
+                    root_name: root_name.clone(),
+                    abs_path: abs_path.clone(),
+                    rules_file,
+                }
+            })
+            .collect();
+
+        let has_rules = worktrees
+            .iter()
+            .any(|worktree| worktree.rules_file.is_some());
+
+        Self {
+            worktrees,
+            has_rules,
+            has_user_rules: false,
+            user_rules: Vec::new(),
+            os: std::env::consts::OS.to_string(),
+            arch: std::env::consts::ARCH.to_string(),
+            shell: ShellKind::new(&get_default_system_shell_preferring_bash(), cfg!(windows))
+                .to_string(),
+        }
+    }
+
+    /// Load worktree rules file synchronously
+    fn load_worktree_rules_sync(abs_path: &Arc<Path>) -> Option<RulesFileContext> {
+        use std::fs;
+
+        for rules_file_name in RULES_FILE_NAMES {
+            let path = abs_path.join(rules_file_name);
+            if path.is_file() {
+                match fs::read_to_string(&path) {
+                    Ok(contents) => {
+                        // Get the relative path for the rules file
+                        let path_in_worktree =
+                            util::rel_path::RelPath::unix(rules_file_name).ok()?.into();
+                        return Some(RulesFileContext {
+                            path_in_worktree,
+                            text: contents.trim().to_string(),
+                            project_entry_id: 0, // Not available in sync context
+                        });
+                    }
+                    Err(err) => {
+                        log::warn!(
+                            "failed to read worktree rules file {}: {}",
+                            path.display(),
+                            err
+                        );
+                    }
+                }
+            }
+        }
+        None
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -1067,7 +1067,7 @@ impl Thread {
             .visible_worktrees(cx)
             .map(|worktree| worktree.read(cx).abs_path().as_ref().to_path_buf())
             .collect();
-        let available_skills = SkillsContext::new(worktree_roots, templates.clone(), cx);
+        let available_skills = SkillsContext::new_sync(worktree_roots, templates.clone(), cx);
         Self {
             id: acp::SessionId::new(uuid::Uuid::new_v4().to_string()),
             prompt_id: PromptId::new(),
@@ -1303,7 +1303,7 @@ impl Thread {
             .visible_worktrees(cx)
             .map(|worktree| worktree.read(cx).abs_path().as_ref().to_path_buf())
             .collect();
-        let available_skills = SkillsContext::new(worktree_roots, templates.clone(), cx);
+        let available_skills = SkillsContext::new_sync(worktree_roots, templates.clone(), cx);
 
         Self {
             id,
