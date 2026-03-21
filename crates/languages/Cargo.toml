@@ -44,6 +44,7 @@ collections.workspace = true
 futures.workspace = true
 globset.workspace = true
 gpui.workspace = true
+grammars.workspace = true
 http_client.workspace = true
 itertools.workspace = true
 json_schema_store.workspace = true
@@ -97,6 +98,7 @@ url.workspace = true
 util.workspace = true
 
 [dev-dependencies]
+fs = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 theme = { workspace = true, features = ["test-support"] }
 tree-sitter-bash.workspace = true

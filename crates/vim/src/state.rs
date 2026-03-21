@@ -17,7 +17,7 @@ use gpui::{
     Action, App, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, DismissEvent, Entity,
     EntityId, Global, HighlightStyle, StyledText, Subscription, Task, TextStyle, WeakEntity,
 };
-use language::{Buffer, BufferEvent, BufferId, Chunk, Point};
+use language::{Buffer, BufferEvent, BufferId, Chunk, HighlightIdExt as _, Point};
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectItem, ProjectPath};

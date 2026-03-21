@@ -5,7 +5,7 @@ use gpui::{
     App, Context, Entity, HighlightStyle, MouseButton, ScrollHandle, Size, StyledText, Task,
     TextStyle, Window, combine_highlights,
 };
-use language::BufferSnapshot;
+use language::{BufferSnapshot, HighlightIdExt as _};
 use markdown::{Markdown, MarkdownElement};
 use multi_buffer::{Anchor, MultiBufferOffset, ToOffset};
 use settings::Settings;

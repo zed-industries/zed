@@ -1,0 +1,21 @@
+name = "Rust"
+grammar = "rust"
+path_suffixes = ["rs"]
+line_comments = ["// ", "/// ", "//! "]
+autoclose_before = ";:.,=}])>"
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "r#\"", end = "\"#", close = true, newline = true, not_in = ["string", "comment"] },
+    { start = "r##\"", end = "\"##", close = true, newline = true, not_in = ["string", "comment"] },
+    { start = "r###\"", end = "\"###", close = true, newline = true, not_in = ["string", "comment"] },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true },
+    { start = "<", end = ">", close = false, newline = true, not_in = ["string", "comment"] },
+    { start = "\"", end = "\"", close = true, newline = false, not_in = ["string"] },
+    { start = "/*", end = " */", close = true, newline = false, not_in = ["string", "comment"] },
+]
+collapsed_placeholder = " /* ... */ "
+debuggers = ["CodeLLDB", "GDB"]
+documentation_comment = { start = "/*", prefix = "* ", end = "*/", tab_size = 1 }
+ignored_import_segments = ["crate", "super"]
+import_path_strip_regex = "/(lib|mod)\\.rs$"

@@ -1,0 +1,4 @@
+name = "Diff"
+grammar = "diff"
+path_suffixes = ["diff", "patch"]
+brackets = []

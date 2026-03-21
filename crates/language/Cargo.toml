@@ -40,6 +40,7 @@ globset.workspace = true
 gpui.workspace = true
 http_client.workspace = true
 imara-diff.workspace = true
+language_core.workspace = true
 itertools.workspace = true
 log.workspace = true
 lsp.workspace = true

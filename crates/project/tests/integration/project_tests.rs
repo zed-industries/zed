@@ -11613,7 +11613,6 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
             worktree_root: PathBuf,
             subroot_relative_path: Arc<RelPath>,
             _: Option<HashMap<String, String>>,
-            _: &dyn Fs,
         ) -> ToolchainList {
             // This lister will always return a path .venv directories within ancestors
             let ancestors = subroot_relative_path.ancestors().collect::<Vec<_>>();
@@ -11638,7 +11637,6 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
             &self,
             _: PathBuf,
             _: Option<HashMap<String, String>>,
-            _: &dyn Fs,
         ) -> anyhow::Result<Toolchain> {
             Err(anyhow::anyhow!("Not implemented"))
         }

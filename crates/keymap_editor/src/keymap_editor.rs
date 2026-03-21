@@ -23,7 +23,7 @@ use gpui::{
     ScrollWheelEvent, Stateful, StyledText, Subscription, Task, TextStyleRefinement, WeakEntity,
     actions, anchored, deferred, div,
 };
-use language::{Language, LanguageConfig, ToOffset as _};
+use language::{HighlightIdExt as _, Language, LanguageConfig, ToOffset as _};
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{CompletionDisplayOptions, Project};
 use settings::{

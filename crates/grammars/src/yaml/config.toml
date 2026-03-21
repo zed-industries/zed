@@ -1,0 +1,24 @@
+name = "YAML"
+grammar = "yaml"
+path_suffixes = ["yml", "yaml", "pixi.lock", "clang-format", "clangd", "bst"]
+line_comments = ["# "]
+autoclose_before = ",]}"
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "\"", end = "\"", close = true, newline = false, not_in = ["string"] },
+    { start = "'", end = "'", close = true, newline = false, not_in = ["string"] },
+]
+
+auto_indent_on_paste = false
+auto_indent_using_last_non_empty_line = false
+# 1st block to match basic elements followed by ':' like 'test: ' for example
+# 2nd block to match for first element in an array if it's an object
+# For example:
+# ```yaml
+# test:
+#   - first: one
+# ```
+increase_indent_pattern = "(:?^[^#]*:\\s*[|>]?\\s*$)|(:?^\\s*-[^#]*:\\s*(:?#+.*)$)"
+prettier_parser_name = "yaml"
+tab_size = 2

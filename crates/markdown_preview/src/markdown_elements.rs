@@ -2,7 +2,7 @@ use gpui::{
     DefiniteLength, FontStyle, FontWeight, HighlightStyle, SharedString, StrikethroughStyle,
     UnderlineStyle, px,
 };
-use language::HighlightId;
+use language::{HighlightId, HighlightIdExt as _};
 use std::{fmt::Display, ops::Range, path::PathBuf};
 use urlencoding;
 

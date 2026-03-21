@@ -1,0 +1,46 @@
+name = "TSX"
+grammar = "tsx"
+path_suffixes = ["tsx"]
+line_comments = ["// "]
+block_comment = { start = "/*", prefix = "* ", end = "*/", tab_size = 1 }
+documentation_comment = { start = "/**", prefix = "* ", end = "*/", tab_size = 1 }
+wrap_characters = { start_prefix = "<", start_suffix = ">", end_prefix = "</", end_suffix = ">" }
+autoclose_before = ";:.,=}])>"
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true },
+    { start = "<", end = ">", close = false, newline = true, not_in = ["string", "comment"] },
+    { start = "\"", end = "\"", close = true, newline = false, not_in = ["string"] },
+    { start = "'", end = "'", close = true, newline = false, not_in = ["string", "comment"] },
+    { start = "`", end = "`", close = true, newline = false, not_in = ["string"] },
+    { start = "/*", end = " */", close = true, newline = false, not_in = ["string", "comment"] },
+]
+word_characters = ["#", "$"]
+scope_opt_in_language_servers = ["tailwindcss-language-server", "emmet-language-server"]
+prettier_parser_name = "typescript"
+tab_size = 2
+debuggers = ["JavaScript"]
+
+[jsx_tag_auto_close]
+open_tag_node_name = "jsx_opening_element"
+close_tag_node_name = "jsx_closing_element"
+jsx_element_node_name = "jsx_element"
+tag_name_node_name = "identifier"
+tag_name_node_name_alternates = ["member_expression"]
+
+[overrides.default]
+linked_edit_characters = ["."]
+
+[overrides.element]
+line_comments = { remove = true }
+block_comment = { start = "{/*", prefix = "", end = "*/}", tab_size = 0 }
+opt_into_language_servers = ["emmet-language-server"]
+
+[overrides.string]
+completion_query_characters = ["-", "."]
+opt_into_language_servers = ["tailwindcss-language-server"]
+prefer_label_for_snippet = true
+
+[overrides.function_name_before_type_arguments]
+prefer_label_for_snippet = true

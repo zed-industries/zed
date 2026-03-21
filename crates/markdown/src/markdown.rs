@@ -6,7 +6,7 @@ use futures::FutureExt as _;
 use gpui::EdgesRefinement;
 use gpui::HitboxBehavior;
 use gpui::UnderlineStyle;
-use language::LanguageName;
+use language::{HighlightIdExt, LanguageName};
 use log::Level;
 pub use path_range::{LineCol, PathWithRange};
 use settings::Settings as _;

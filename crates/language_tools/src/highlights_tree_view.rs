@@ -8,7 +8,7 @@ use gpui::{
     MouseDownEvent, MouseMoveEvent, ParentElement, Render, ScrollStrategy, SharedString, Styled,
     Task, UniformListScrollHandle, WeakEntity, Window, actions, div, rems, uniform_list,
 };
-use language::ToOffset;
+use language::{HighlightIdExt, ToOffset};
 use menu::{SelectNext, SelectPrevious};
 use std::{mem, ops::Range};
 use theme::ActiveTheme;

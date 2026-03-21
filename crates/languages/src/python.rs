@@ -1109,7 +1109,15 @@ fn python_env_kind_display(k: &PythonEnvironmentKind) -> &'static str {
     }
 }
 
-pub(crate) struct PythonToolchainProvider;
+pub(crate) struct PythonToolchainProvider {
+    fs: Arc<dyn Fs>,
+}
+
+impl PythonToolchainProvider {
+    pub fn new(fs: Arc<dyn Fs>) -> Self {
+        Self { fs }
+    }
+}
 
 static ENV_PRIORITY_LIST: &[PythonEnvironmentKind] = &[
     // Prioritize non-Conda environments.
@@ -1224,8 +1232,8 @@ impl ToolchainLister for PythonToolchainProvider {
         worktree_root: PathBuf,
         subroot_relative_path: Arc<RelPath>,
         project_env: Option<HashMap<String, String>>,
-        fs: &dyn Fs,
     ) -> ToolchainList {
+        let fs = &*self.fs;
         let env = project_env.unwrap_or_default();
         let environment = EnvironmentApi::from_env(&env);
         let locators = pet::locators::create_locators(
@@ -1356,8 +1364,8 @@ impl ToolchainLister for PythonToolchainProvider {
         &self,
         path: PathBuf,
         env: Option<HashMap<String, String>>,
-        fs: &dyn Fs,
     ) -> anyhow::Result<Toolchain> {
+        let fs = &*self.fs;
         let env = env.unwrap_or_default();
         let environment = EnvironmentApi::from_env(&env);
         let locators = pet::locators::create_locators(
@@ -2652,7 +2660,8 @@ mod tests {
             });
         });
 
-        let provider = PythonToolchainProvider;
+        let fs = project::FakeFs::new(cx.executor());
+        let provider = PythonToolchainProvider::new(fs);
         let malicious_name = "foo; rm -rf /";
 
         let manager_executable = std::env::current_exe().unwrap();

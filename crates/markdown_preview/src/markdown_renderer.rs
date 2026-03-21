@@ -15,6 +15,7 @@ use gpui::{
     Keystroke, Modifiers, ParentElement, Render, RenderImage, Resource, SharedString, Styled,
     StyledText, Task, TextStyle, WeakEntity, Window, div, img, pulsating_between, rems,
 };
+use language::HighlightIdExt as _;
 use settings::Settings;
 use std::{
     ops::{Mul, Range},

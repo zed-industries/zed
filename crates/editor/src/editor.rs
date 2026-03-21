@@ -131,10 +131,10 @@ use itertools::{Either, Itertools};
 use language::{
     AutoindentMode, BlockCommentConfig, BracketMatch, BracketPair, Buffer, BufferRow,
     BufferSnapshot, Capability, CharClassifier, CharKind, CharScopeContext, CodeLabel, CursorShape,
-    DiagnosticEntryRef, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText, IndentKind,
-    IndentSize, Language, LanguageName, LanguageRegistry, LanguageScope, LocalFile, OffsetRangeExt,
-    OutlineItem, Point, Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
-    WordsQuery,
+    DiagnosticEntryRef, DiffOptions, EditPredictionsMode, EditPreview, HighlightIdExt as _,
+    HighlightedText, IndentKind, IndentSize, Language, LanguageName, LanguageRegistry,
+    LanguageScope, LocalFile, OffsetRangeExt, OutlineItem, Point, Selection, SelectionGoal,
+    TextObject, TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
         self, LanguageSettings, LspInsertMode, RewrapBehavior, WordsCompletionMode,
         all_language_settings, language_settings,

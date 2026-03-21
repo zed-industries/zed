@@ -24,7 +24,9 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::language_settings::language_settings;
-use language::{Anchor, BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
+use language::{
+    Anchor, BufferId, BufferSnapshot, HighlightIdExt as _, OffsetRangeExt, OutlineItem,
+};
 use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use std::{
     cmp,
