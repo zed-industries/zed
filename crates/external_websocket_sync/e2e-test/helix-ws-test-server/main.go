@@ -1279,7 +1279,7 @@ func main() {
 			status = "FAILED"
 			allPassed = false
 		}
-		log.Printf("  [%s] %s (9 phases)", r.agentName, status)
+		log.Printf("  [%s] %s", r.agentName, status)
 		for _, e := range r.errors {
 			log.Printf("    FAIL: %s", e)
 		}
@@ -1291,7 +1291,7 @@ func main() {
 	}
 
 	if allPassed {
-		log.Printf("\n[test-server] ALL TESTS PASSED (%d agent rounds x 9 phases, production handlers, in-memory store)", len(agents))
+		log.Printf("\n[test-server] ALL TESTS PASSED (%d agent rounds, production handlers, in-memory store)", len(agents))
 		os.Exit(0)
 	} else {
 		os.Exit(1)
