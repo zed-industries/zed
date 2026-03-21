@@ -5961,6 +5961,7 @@ impl ThreadView {
                 cx,
             ),
             PermissionOptions::Dropdown(choices) => self.render_permission_buttons_with_dropdown(
+                session_id,
                 is_first,
                 choices,
                 None,
@@ -5974,6 +5975,7 @@ impl ThreadView {
                 patterns,
                 tool_name,
             } => self.render_permission_buttons_with_dropdown(
+                session_id,
                 is_first,
                 choices,
                 Some((patterns, tool_name)),
@@ -5987,6 +5989,7 @@ impl ThreadView {
 
     fn render_permission_buttons_with_dropdown(
         &self,
+        session_id: acp::SessionId,
         is_first: bool,
         choices: &[PermissionOptionChoice],
         patterns: Option<(&[PermissionPattern], &str)>,
@@ -5996,6 +5999,14 @@ impl ThreadView {
         cx: &Context<Self>,
     ) -> Div {
         let selection = self.permission_selections.get(&tool_call_id);
+        let options = match patterns {
+            Some((patterns, tool_name)) => PermissionOptions::DropdownWithPatterns {
+                choices: choices.to_vec(),
+                patterns: patterns.to_vec(),
+                tool_name: tool_name.to_string(),
+            },
+            None => PermissionOptions::Dropdown(choices.to_vec()),
+        };
 
         let selected_index = selection
             .and_then(|s| s.choice_index())
@@ -6064,8 +6075,18 @@ impl ThreadView {
                                 )
                             })
                             .on_click(cx.listener({
+                                let session_id = session_id.clone();
+                                let tool_call_id = tool_call_id.clone();
+                                let options = options.clone();
                                 move |this, _, window, cx| {
-                                    this.authorize_pending_with_granularity(true, window, cx);
+                                    this.authorize_with_granularity(
+                                        session_id.clone(),
+                                        tool_call_id.clone(),
+                                        &options,
+                                        true,
+                                        window,
+                                        cx,
+                                    );
                                 }
                             })),
                     )
@@ -6088,8 +6109,18 @@ impl ThreadView {
                                 )
                             })
                             .on_click(cx.listener({
+                                let session_id = session_id.clone();
+                                let tool_call_id = tool_call_id.clone();
+                                let options = options.clone();
                                 move |this, _, window, cx| {
-                                    this.authorize_pending_with_granularity(false, window, cx);
+                                    this.authorize_with_granularity(
+                                        session_id.clone(),
+                                        tool_call_id.clone(),
+                                        &options,
+                                        false,
+                                        window,
+                                        cx,
+                                    );
                                 }
                             })),
                     ),
