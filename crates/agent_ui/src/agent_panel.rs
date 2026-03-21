@@ -3049,6 +3049,11 @@ impl AgentPanel {
     }
 
     fn should_render_onboarding(&self, cx: &mut Context<Self>) -> bool {
+        // In Helix builds, AI is configured centrally; don't show Zed Pro ads.
+        if cfg!(feature = "external_websocket_sync") {
+            return false;
+        }
+
         if self.on_boarding_upsell_dismissed.load(Ordering::Acquire) {
             return false;
         }
