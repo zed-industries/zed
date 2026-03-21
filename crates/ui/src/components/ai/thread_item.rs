@@ -193,6 +193,26 @@ impl ThreadItem {
 impl RenderOnce for ThreadItem {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let color = cx.theme().colors();
+        let base_bg = color
+            .title_bar_background
+            .blend(color.panel_background.opacity(0.2));
+
+        let base_bg = if self.selected {
+            color.element_active
+        } else {
+            base_bg
+        };
+
+        let hover_color = color
+            .element_active
+            .blend(color.element_background.opacity(0.2));
+
+        let gradient_overlay = GradientFade::new(base_bg, hover_color, hover_color)
+            .width(px(64.0))
+            .right(px(-10.0))
+            .gradient_stop(0.75)
+            .group_name("thread-item");
+
         let dot_separator = || {
             Label::new("•")
                 .size(LabelSize::Small)
@@ -220,7 +240,7 @@ impl RenderOnce for ThreadItem {
         };
 
         let decoration = |icon: IconDecorationKind, color: Hsla| {
-            IconDecoration::new(icon, cx.theme().colors().surface_background, cx)
+            IconDecoration::new(icon, base_bg, cx)
                 .color(color)
                 .position(gpui::Point {
                     x: px(-2.),
@@ -294,36 +314,21 @@ impl RenderOnce for ThreadItem {
                 .into_any_element()
         };
 
-        let b_bg = color
-            .title_bar_background
-            .blend(color.panel_background.opacity(0.8));
-
-        let base_bg = if self.selected {
-            color.element_active
-        } else {
-            b_bg
-        };
-
-        let gradient_overlay = GradientFade::new(base_bg, color.element_hover, base_bg)
-            .width(px(64.0))
-            .right(px(-10.0))
-            .gradient_stop(0.75)
-            .group_name("thread-item");
-
         let has_diff_stats = self.added.is_some() || self.removed.is_some();
+        let diff_stat_id = self.id.clone();
         let added_count = self.added.unwrap_or(0);
         let removed_count = self.removed.unwrap_or(0);
-        let diff_stat_id = self.id.clone();
+
         let has_worktree = self.worktree.is_some();
         let has_timestamp = !self.timestamp.is_empty();
         let timestamp = self.timestamp;
 
         v_flex()
             .id(self.id.clone())
+            .cursor_pointer()
             .group("thread-item")
             .relative()
             .overflow_hidden()
-            .cursor_pointer()
             .w_full()
             .py_1()
             .px_1p5()
@@ -331,7 +336,7 @@ impl RenderOnce for ThreadItem {
             .border_1()
             .border_color(gpui::transparent_black())
             .when(self.focused, |s| s.border_color(color.border_focused))
-            .hover(|s| s.bg(color.element_hover))
+            .hover(|s| s.bg(hover_color))
             .on_hover(self.on_hover)
             .child(
                 h_flex()
@@ -352,15 +357,11 @@ impl RenderOnce for ThreadItem {
                     .child(gradient_overlay)
                     .when(self.hovered, |this| {
                         this.when_some(self.action_slot, |this, slot| {
-                            let overlay = GradientFade::new(
-                                base_bg,
-                                color.element_hover,
-                                color.element_hover,
-                            )
-                            .width(px(64.0))
-                            .right(px(6.))
-                            .gradient_stop(0.75)
-                            .group_name("thread-item");
+                            let overlay = GradientFade::new(base_bg, hover_color, hover_color)
+                                .width(px(64.0))
+                                .right(px(6.))
+                                .gradient_stop(0.75)
+                                .group_name("thread-item");
 
                             this.child(
                                 h_flex()
