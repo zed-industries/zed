@@ -950,7 +950,7 @@ impl TitleBar {
                                     )
                                 })
                                 .child(
-                                    Label::new(branch_name.clone())
+                                    Label::new(branch_name)
                                         .size(LabelSize::Small)
                                         .color(Color::Muted),
                                 ),
