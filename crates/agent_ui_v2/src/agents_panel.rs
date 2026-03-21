@@ -1,5 +1,5 @@
 use acp_thread::{AgentSessionInfo, AgentSessionList};
-use agent::{ClaudeCodeSessionIndex, ClaudeCodeSessionList, NativeAgentServer, ThreadStore};
+use agent::{CLI_PROJECT_PATH_KEY, CLI_SOURCE_KEY, ClaudeCodeSessionIndex, ClaudeCodeSessionList, NativeAgentServer, ThreadStore};
 use agent_client_protocol as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use agent_settings::AgentSettings;
@@ -18,6 +18,7 @@ use settings::{Settings as _, update_settings_file};
 use std::rc::Rc;
 use std::sync::Arc;
 use ui::{App, Context, IconName, IntoElement, ParentElement, Render, Styled, Window};
+use terminal_view::terminal_panel::TerminalPanel;
 use util::ResultExt;
 use workspace::{
     Panel, Workspace,
@@ -68,6 +69,7 @@ pub struct AgentsPanel {
     pending_restore: Option<SerializedAgentThreadPane>,
     pending_serialization: Task<Option<()>>,
     _subscriptions: Vec<Subscription>,
+    _session_poll_task: Option<Task<()>>,
 }
 
 impl AgentsPanel {
@@ -115,6 +117,35 @@ impl AgentsPanel {
         })
     }
 
+    fn try_load_cli_sessions(
+        project: &Entity<Project>,
+        history: &Entity<AcpThreadHistory>,
+        cx: &mut App,
+    ) {
+        let project_path = project
+            .read(cx)
+            .worktrees(cx)
+            .next()
+            .map(|worktree| worktree.read(cx).abs_path().to_path_buf());
+
+        let Some(project_path) = project_path else {
+            return;
+        };
+
+        if !history.read(cx).is_empty() {
+            return;
+        }
+
+        if let Some(index) = ClaudeCodeSessionIndex::for_project(&project_path) {
+            log::info!("AgentsPanel: Found Claude Code sessions for project {:?}", project_path);
+            let session_list: Rc<dyn AgentSessionList> =
+                Rc::new(ClaudeCodeSessionList::new(index));
+            history.update(cx, |history, cx| {
+                history.set_session_list(Some(session_list), cx);
+            });
+        }
+    }
+
     fn new(
         workspace: WeakEntity<Workspace>,
         fs: Arc<dyn Fs>,
@@ -128,25 +159,15 @@ impl AgentsPanel {
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let history = cx.new(|cx| AcpThreadHistory::new(None, window, cx));
 
-        // Check for Claude Code CLI sessions in the project directory
-        let project_path = project
-            .read(cx)
-            .worktrees(cx)
-            .next()
-            .map(|worktree| worktree.read(cx).abs_path().to_path_buf());
-
-        if let Some(project_path) = project_path {
-            if let Some(index) = ClaudeCodeSessionIndex::for_project(&project_path) {
-                log::info!(
-                    "AgentsPanel: Found Claude Code sessions for project {:?}",
-                    project_path
-                );
-                let session_list: Rc<dyn AgentSessionList> =
-                    Rc::new(ClaudeCodeSessionList::new(index));
-                history.update(cx, |history, cx| {
-                    history.set_session_list(Some(session_list), cx);
-                });
-            }
+        // Load Claude Code CLI sessions immediately and also observe for worktree changes
+        Self::try_load_cli_sessions(&project, &history, cx);
+        {
+            let history_for_worktree = history.clone();
+            let project_for_worktree = project.clone();
+            cx.observe(&project, move |_, _, cx| {
+                Self::try_load_cli_sessions(&project_for_worktree, &history_for_worktree, cx);
+            })
+            .detach();
         }
 
         let history_handle = history.clone();
@@ -174,13 +195,47 @@ impl AgentsPanel {
 
             cx.update(|cx| {
                 if let Some(session_list) = connection.session_list(cx) {
-                    history_handle.update(cx, |history, cx| {
-                        history.set_session_list(Some(session_list), cx);
-                    });
+                    // Only set native session list if CLI sessions weren't already loaded
+                    if history_handle.read(cx).is_empty() {
+                        history_handle.update(cx, |history, cx| {
+                            history.set_session_list(Some(session_list), cx);
+                        });
+                    }
                 }
             });
         })
         .detach();
+
+        // Poll the sessions directory every 5 seconds for new/removed .jsonl files
+        let poll_project = project.clone();
+        let poll_history = history.clone();
+        let session_poll_task = cx.spawn(async move |_, cx| {
+            loop {
+                cx.background_executor().timer(std::time::Duration::from_secs(5)).await;
+                let should_refresh = cx.update(|cx| {
+                    let project_path = poll_project
+                        .read(cx)
+                        .worktrees(cx)
+                        .next()
+                        .map(|worktree| worktree.read(cx).abs_path().to_path_buf());
+                    if let Some(project_path) = project_path {
+                        if let Some(index) = ClaudeCodeSessionIndex::for_project(&project_path) {
+                            let current_count = poll_history.read(cx).sessions().len();
+                            let disk_count = index.list_sessions().map(|s| s.len()).unwrap_or(0);
+                            return current_count != disk_count;
+                        }
+                    }
+                    false
+                });
+                if should_refresh {
+                    cx.update(|cx| {
+                        poll_history.update(cx, |history, cx| {
+                            history.refresh_sessions_pub(cx);
+                        });
+                    });
+                }
+            }
+        });
 
         let this = cx.weak_entity();
         let subscriptions = vec![
@@ -207,6 +262,7 @@ impl AgentsPanel {
             pending_restore: None,
             pending_serialization: Task::ready(None),
             _subscriptions: subscriptions,
+            _session_poll_task: Some(session_poll_task),
         }
     }
 
@@ -357,9 +413,64 @@ impl AgentsPanel {
     ) {
         match event {
             ThreadHistoryEvent::Open(entry) => {
-                self.open_thread(entry.clone(), true, None, window, cx);
+                let cli_source = entry.meta.as_ref().and_then(|m| {
+                    let cli = m.get(CLI_SOURCE_KEY)?.as_str()?;
+                    let path = m.get(CLI_PROJECT_PATH_KEY)?.as_str()?;
+                    Some((cli.to_string(), std::path::PathBuf::from(path)))
+                });
+                if let Some((cli_command, project_path)) = cli_source {
+                    let title = entry.title.as_ref().map(|t| t.to_string());
+                    self.resume_cli_session(&cli_command, &entry.session_id.0, title.as_deref(), &project_path, window, cx);
+                } else {
+                    self.open_thread(entry.clone(), true, None, window, cx);
+                }
             }
         }
+    }
+
+    fn resume_cli_session(
+        &self,
+        cli_command: &str,
+        session_id: &str,
+        title: Option<&str>,
+        project_path: &std::path::Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
+            log::error!("No terminal panel available to resume CLI session");
+            return;
+        };
+
+        let label = title.unwrap_or("Claude Code Session").to_string();
+        let spawn_task = task::SpawnInTerminal {
+            id: task::TaskId(format!("cli-resume-{}", session_id)),
+            full_label: label.clone(),
+            label: label.clone(),
+            command: Some(cli_command.to_string()),
+            args: vec!["--resume".to_string(), session_id.to_string()],
+            command_label: format!("{} --resume {}", cli_command, session_id),
+            cwd: Some(project_path.to_path_buf()),
+            env: Default::default(),
+            use_new_terminal: true,
+            allow_concurrent_runs: true,
+            reveal: task::RevealStrategy::Always,
+            reveal_target: task::RevealTarget::Dock,
+            hide: task::HideStrategy::Never,
+            shell: task::Shell::System,
+            show_summary: false,
+            show_command: false,
+            show_rerun: true,
+        };
+
+        terminal_panel
+            .update(cx, |panel, cx| {
+                panel.spawn_task(&spawn_task, window, cx)
+            })
+            .detach_and_log_err(cx);
     }
 
     fn maybe_restore_pending(&mut self, window: &mut Window, cx: &mut Context<Self>) {

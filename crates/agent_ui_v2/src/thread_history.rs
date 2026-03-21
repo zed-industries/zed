@@ -40,12 +40,13 @@ pub struct AcpThreadHistory {
     sessions: Vec<AgentSessionInfo>,
     scroll_handle: UniformListScrollHandle,
     selected_index: usize,
-    hovered_index: Option<usize>,
     search_editor: Entity<Editor>,
     search_query: SharedString,
     visible_items: Vec<ListItemType>,
     local_timezone: UtcOffset,
     confirming_delete_history: bool,
+    renaming_index: Option<usize>,
+    rename_editor: Entity<Editor>,
     _update_task: Task<()>,
     _watch_task: Option<Task<()>>,
     _subscriptions: Vec<gpui::Subscription>,
@@ -103,6 +104,20 @@ impl AcpThreadHistory {
                 }
             });
 
+        let rename_editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text("Rename...", window, cx);
+            editor
+        });
+
+        let rename_editor_subscription =
+            cx.subscribe(&rename_editor, |this, _, event, cx| match event {
+                EditorEvent::Blurred => {
+                    this.confirm_rename(cx);
+                }
+                _ => {}
+            });
+
         let scroll_handle = UniformListScrollHandle::default();
 
         let mut this = Self {
@@ -110,7 +125,6 @@ impl AcpThreadHistory {
             sessions: Vec::new(),
             scroll_handle,
             selected_index: 0,
-            hovered_index: None,
             visible_items: Default::default(),
             search_editor,
             local_timezone: UtcOffset::from_whole_seconds(
@@ -119,7 +133,9 @@ impl AcpThreadHistory {
             .unwrap(),
             search_query: SharedString::default(),
             confirming_delete_history: false,
-            _subscriptions: vec![search_editor_subscription],
+            renaming_index: None,
+            rename_editor,
+            _subscriptions: vec![search_editor_subscription, rename_editor_subscription],
             _update_task: Task::ready(()),
             _watch_task: None,
         };
@@ -253,6 +269,10 @@ impl AcpThreadHistory {
 
     pub(crate) fn is_empty(&self) -> bool {
         self.sessions.is_empty()
+    }
+
+    pub(crate) fn refresh_sessions_pub(&mut self, cx: &mut Context<Self>) {
+        self.refresh_sessions(false, cx);
     }
 
     pub(crate) fn session_for_id(&self, session_id: &acp::SessionId) -> Option<AgentSessionInfo> {
@@ -423,7 +443,56 @@ impl AcpThreadHistory {
     }
 
     fn confirm(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.renaming_index.is_some() {
+            self.confirm_rename(cx);
+            return;
+        }
         self.confirm_entry(self.selected_index, cx);
+    }
+
+    fn cancel_rename(&mut self, _: &menu::Cancel, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.renaming_index.is_some() {
+            self.renaming_index = None;
+            cx.notify();
+        }
+    }
+
+    fn start_rename(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(entry) = self.get_history_entry(ix) else {
+            return;
+        };
+        let current_title = thread_title(entry).to_string();
+
+        self.renaming_index = Some(ix);
+        self.rename_editor.update(cx, |editor, cx| {
+            editor.set_text(current_title, window, cx);
+            editor.select_all(&editor::actions::SelectAll, window, cx);
+        });
+        self.rename_editor.focus_handle(cx).focus(window, cx);
+        cx.notify();
+    }
+
+    fn confirm_rename(&mut self, cx: &mut Context<Self>) {
+        let Some(ix) = self.renaming_index.take() else {
+            return;
+        };
+        let Some(entry) = self.get_history_entry(ix) else {
+            cx.notify();
+            return;
+        };
+        let new_title = self.rename_editor.read(cx).text(cx);
+        let new_title = new_title.trim().to_string();
+        if new_title.is_empty() {
+            cx.notify();
+            return;
+        }
+
+        let session_id = entry.session_id.clone();
+        if let Some(session_list) = self.session_list.as_ref() {
+            let task = session_list.rename_session(&session_id, Some(new_title), cx);
+            task.detach_and_log_err(cx);
+        }
+        cx.notify();
     }
 
     fn confirm_entry(&mut self, ix: usize, cx: &mut Context<Self>) {
@@ -520,7 +589,7 @@ impl AcpThreadHistory {
         cx: &Context<Self>,
     ) -> AnyElement {
         let selected = ix == self.selected_index;
-        let hovered = Some(ix) == self.hovered_index;
+        let is_renaming = self.renaming_index == Some(ix);
         let display_text = match (format, entry.updated_at) {
             (EntryTimeFormat::DateAndTime, Some(entry_time)) => {
                 let now = Utc::now();
@@ -542,6 +611,24 @@ impl AcpThreadHistory {
                 EntryTimeFormat::DateAndTime.format_timestamp(time.timestamp(), self.local_timezone)
             })
             .unwrap_or_else(|| "Unknown".to_string());
+
+        if is_renaming {
+            return h_flex()
+                .w_full()
+                .pb_1()
+                .child(
+                    ListItem::new(ix)
+                        .rounded()
+                        .toggle_state(selected)
+                        .spacing(ListItemSpacing::Sparse)
+                        .start_slot(
+                            h_flex()
+                                .w_full()
+                                .child(self.rename_editor.clone()),
+                        ),
+                )
+                .into_any_element();
+        }
 
         h_flex()
             .w_full()
@@ -570,32 +657,35 @@ impl AcpThreadHistory {
                     .tooltip(move |_, cx| {
                         Tooltip::with_meta(title.clone(), None, full_date.clone(), cx)
                     })
-                    .on_hover(cx.listener(move |this, is_hovered, _window, cx| {
-                        if *is_hovered {
-                            this.hovered_index = Some(ix);
-                        } else if this.hovered_index == Some(ix) {
-                            this.hovered_index = None;
-                        }
-
-                        cx.notify();
-                    }))
-                    .end_slot::<IconButton>(if hovered {
-                        Some(
-                            IconButton::new("delete", IconName::Trash)
-                                .shape(IconButtonShape::Square)
-                                .icon_size(IconSize::XSmall)
-                                .icon_color(Color::Muted)
-                                .tooltip(move |_window, cx| {
-                                    Tooltip::for_action("Delete", &RemoveSelectedThread, cx)
-                                })
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.remove_thread(ix, cx);
-                                    cx.stop_propagation()
-                                })),
-                        )
-                    } else {
-                        None
-                    })
+                    .end_slot(
+                        h_flex()
+                            .gap_0p5()
+                            .ml_2()
+                            .child(
+                                IconButton::new("rename", IconName::Pencil)
+                                    .shape(IconButtonShape::Square)
+                                    .icon_size(IconSize::XSmall)
+                                    .icon_color(Color::Muted)
+                                    .tooltip(Tooltip::text("Rename"))
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.start_rename(ix, window, cx);
+                                        cx.stop_propagation()
+                                    })),
+                            )
+                            .child(
+                                IconButton::new("delete", IconName::Trash)
+                                    .shape(IconButtonShape::Square)
+                                    .icon_size(IconSize::XSmall)
+                                    .icon_color(Color::Muted)
+                                    .tooltip(move |_window, cx| {
+                                        Tooltip::for_action("Delete", &RemoveSelectedThread, cx)
+                                    })
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.remove_thread(ix, cx);
+                                        cx.stop_propagation()
+                                    })),
+                            ),
+                    )
                     .on_click(cx.listener(move |this, _, _, cx| this.confirm_entry(ix, cx))),
             )
             .into_any_element()
@@ -621,6 +711,7 @@ impl Render for AcpThreadHistory {
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::cancel_rename))
             .on_action(cx.listener(Self::remove_selected_thread))
             .on_action(cx.listener(|this, _: &RemoveHistory, window, cx| {
                 this.remove_history(window, cx);

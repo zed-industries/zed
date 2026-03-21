@@ -254,6 +254,10 @@ impl AcpThreadHistory {
         self.sessions.is_empty()
     }
 
+    pub fn refresh_sessions_pub(&mut self, cx: &mut Context<Self>) {
+        self.refresh_sessions(false, cx);
+    }
+
     pub(crate) fn session_for_id(&self, session_id: &acp::SessionId) -> Option<AgentSessionInfo> {
         self.sessions
             .iter()

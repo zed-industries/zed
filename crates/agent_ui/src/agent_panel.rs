@@ -1,7 +1,7 @@
 use std::{ops::Range, path::Path, rc::Rc, sync::Arc, time::Duration};
 
 use acp_thread::{AcpThread, AgentSessionInfo, AgentSessionList};
-use agent::{ClaudeCodeSessionIndex, ClaudeCodeSessionList, ContextServerRegistry, ThreadStore};
+use agent::{CLI_PROJECT_PATH_KEY, CLI_SOURCE_KEY, ClaudeCodeSessionIndex, ClaudeCodeSessionList, ContextServerRegistry, ThreadStore};
 use agent_servers::AgentServer;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use project::{
@@ -64,6 +64,7 @@ use ui::{
     ProgressBar, Tab, TabBar, TabPosition, Tooltip, prelude::*, right_click_menu,
     utils::WithRemSize,
 };
+use terminal_view::terminal_panel::TerminalPanel;
 use util::ResultExt as _;
 use workspace::{
     CollaboratorId, DraggedSelection, DraggedTab, ModalView, ToggleZoom, ToolbarItemView, Workspace,
@@ -640,6 +641,40 @@ pub struct AgentPanel {
 }
 
 impl AgentPanel {
+    fn try_load_cli_sessions(
+        project: &Entity<Project>,
+        acp_history: &Entity<AcpThreadHistory>,
+        cx: &mut App,
+    ) {
+        let project_path = project
+            .read(cx)
+            .worktrees(cx)
+            .next()
+            .map(|worktree| worktree.read(cx).abs_path().to_path_buf());
+
+        let Some(project_path) = project_path else {
+            log::debug!("CLI sessions: No worktree available yet");
+            return;
+        };
+
+        // Don't re-set if already populated
+        if !acp_history.read(cx).is_empty() {
+            return;
+        }
+
+        log::info!("CLI sessions: Checking project path: {:?}", project_path);
+        if let Some(index) = ClaudeCodeSessionIndex::for_project(&project_path) {
+            log::info!("CLI sessions: Found index, loading sessions");
+            let session_list: Rc<dyn AgentSessionList> =
+                Rc::new(ClaudeCodeSessionList::new(index));
+            acp_history.update(cx, |history, cx| {
+                history.set_session_list(Some(session_list), cx);
+            });
+        } else {
+            log::info!("CLI sessions: No session index at {:?}", project_path);
+        }
+    }
+
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let width = self.width;
         let selected_agent = self.selected_agent.clone();
@@ -738,6 +773,19 @@ impl AgentPanel {
 
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let acp_history = cx.new(|cx| AcpThreadHistory::new(None, window, cx));
+
+        // Pre-populate Claude Code CLI session history from disk.
+        // Try immediately, and also observe the project for when worktrees become available.
+        Self::try_load_cli_sessions(&project, &acp_history, cx);
+        {
+            let acp_history_for_worktree = acp_history.clone();
+            let project_for_worktree = project.clone();
+            cx.observe(&project, move |_, _, cx| {
+                Self::try_load_cli_sessions(&project_for_worktree, &acp_history_for_worktree, cx);
+            })
+            .detach();
+        }
+
         let text_thread_history =
             cx.new(|cx| TextThreadHistory::new(text_thread_store.clone(), window, cx));
         cx.subscribe_in(
@@ -745,13 +793,28 @@ impl AgentPanel {
             window,
             |this, _, event, window, cx| match event {
                 ThreadHistoryEvent::Open(thread) => {
-                    this.external_thread(
-                        Some(crate::ExternalAgent::NativeAgent),
-                        Some(thread.clone()),
-                        None,
-                        window,
-                        cx,
-                    );
+                    let cli_source = thread.meta.as_ref().and_then(|m| {
+                        let cli = m.get(CLI_SOURCE_KEY)?.as_str()?;
+                        let path = m.get(CLI_PROJECT_PATH_KEY)?.as_str()?;
+                        Some((cli.to_string(), std::path::PathBuf::from(path)))
+                    });
+                    if let Some((cli_command, project_path)) = cli_source {
+                        this.resume_cli_session(
+                            &cli_command,
+                            &thread.session_id.0,
+                            &project_path,
+                            window,
+                            cx,
+                        );
+                    } else {
+                        this.external_thread(
+                            Some(crate::ExternalAgent::NativeAgent),
+                            Some(thread.clone()),
+                            None,
+                            window,
+                            cx,
+                        );
+                    }
                 }
             },
         )
@@ -1967,62 +2030,54 @@ impl AgentPanel {
 
         let acp_history = self.acp_history.clone();
 
-        // TODO: Claude Code session history disabled until resume with history is supported
-        // For Claude Code, immediately set up the session list from CLI storage
-        // This runs right away rather than waiting for the thread_view to emit changes
-        // if is_claude_code {
-        //     let project_path = project_for_history
-        //         .read(cx)
-        //         .worktrees(cx)
-        //         .next()
-        //         .map(|worktree| worktree.read(cx).abs_path().to_path_buf());
-        //
-        //     if let Some(project_path) = project_path {
-        //         log::info!("Claude Code: Looking for sessions at project path: {:?}", project_path);
-        //         if let Some(index) = ClaudeCodeSessionIndex::for_project(&project_path) {
-        //             log::info!("Claude Code: Found session index, creating session list");
-        //             let session_list: Rc<dyn AgentSessionList> =
-        //                 Rc::new(ClaudeCodeSessionList::new(index));
-        //             acp_history.update(cx, |history, cx| {
-        //                 history.set_session_list(Some(session_list), cx);
-        //             });
-        //         } else {
-        //             log::info!("Claude Code: No session index found at {:?}", project_path);
-        //         }
-        //     } else {
-        //         log::info!("Claude Code: No project path found");
-        //     }
-        // }
+        if is_claude_code {
+            let project_path = project_for_history
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .map(|worktree| worktree.read(cx).abs_path().to_path_buf());
 
-        // Also observe for future changes (e.g., when native agent connection provides a session list)
+            if let Some(project_path) = project_path {
+                log::info!("Claude Code: Looking for sessions at project path: {:?}", project_path);
+                if let Some(index) = ClaudeCodeSessionIndex::for_project(&project_path) {
+                    log::info!("Claude Code: Found session index, creating session list");
+                    let session_list: Rc<dyn AgentSessionList> =
+                        Rc::new(ClaudeCodeSessionList::new(index));
+                    acp_history.update(cx, |history, cx| {
+                        history.set_session_list(Some(session_list), cx);
+                    });
+                } else {
+                    log::info!("Claude Code: No session index found at {:?}", project_path);
+                }
+            } else {
+                log::info!("Claude Code: No project path found");
+            }
+        }
+
         let acp_history_for_observer = acp_history.clone();
-        let _project_for_observer = project_for_history.clone();
-        let _is_claude_code = is_claude_code;
+        let project_for_observer = project_for_history.clone();
         self.history_subscription = Some(cx.observe(&thread_view, move |_, thread_view, cx| {
             if let Some(session_list) = thread_view.read(cx).session_list() {
                 acp_history_for_observer.update(cx, |history, cx| {
                     history.set_session_list(Some(session_list), cx);
                 });
+            } else if is_claude_code {
+                let project_path = project_for_observer
+                    .read(cx)
+                    .worktrees(cx)
+                    .next()
+                    .map(|worktree| worktree.read(cx).abs_path().to_path_buf());
+
+                if let Some(project_path) = project_path {
+                    if let Some(index) = ClaudeCodeSessionIndex::for_project(&project_path) {
+                        let session_list: Rc<dyn AgentSessionList> =
+                            Rc::new(ClaudeCodeSessionList::new(index));
+                        acp_history_for_observer.update(cx, |history, cx| {
+                            history.set_session_list(Some(session_list), cx);
+                        });
+                    }
+                }
             }
-            // TODO: Claude Code session history disabled until resume with history is supported
-            // else if is_claude_code {
-            //     // Fallback: For Claude Code, try to create a session list from CLI storage
-            //     let project_path = project_for_observer
-            //         .read(cx)
-            //         .worktrees(cx)
-            //         .next()
-            //         .map(|worktree| worktree.read(cx).abs_path().to_path_buf());
-            //
-            //     if let Some(project_path) = project_path {
-            //         if let Some(index) = ClaudeCodeSessionIndex::for_project(&project_path) {
-            //             let session_list: Rc<dyn AgentSessionList> =
-            //                 Rc::new(ClaudeCodeSessionList::new(index));
-            //             acp_history_for_observer.update(cx, |history, cx| {
-            //                 history.set_session_list(Some(session_list), cx);
-            //             });
-            //         }
-            //     }
-            // }
         }));
 
         self.set_active_view(
@@ -2031,6 +2086,50 @@ impl AgentPanel {
             window,
             cx,
         );
+    }
+
+    fn resume_cli_session(
+        &self,
+        cli_command: &str,
+        session_id: &str,
+        project_path: &Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
+            log::error!("No terminal panel available to resume CLI session");
+            return;
+        };
+
+        let label = format!("{} --resume {}", cli_command, &session_id[..8.min(session_id.len())]);
+        let spawn_task = task::SpawnInTerminal {
+            id: task::TaskId(format!("cli-resume-{}", session_id)),
+            full_label: label.clone(),
+            label: label.clone(),
+            command: Some(cli_command.to_string()),
+            args: vec!["--resume".to_string(), session_id.to_string()],
+            command_label: format!("{} --resume {}", cli_command, session_id),
+            cwd: Some(project_path.to_path_buf()),
+            env: Default::default(),
+            use_new_terminal: true,
+            allow_concurrent_runs: true,
+            reveal: task::RevealStrategy::Always,
+            reveal_target: task::RevealTarget::Dock,
+            hide: task::HideStrategy::Never,
+            shell: task::Shell::System,
+            show_summary: false,
+            show_command: false,
+            show_rerun: true,
+        };
+
+        terminal_panel
+            .update(cx, |panel, cx| {
+                panel.spawn_task(&spawn_task, window, cx)
+            })
+            .detach_and_log_err(cx);
     }
 }
 

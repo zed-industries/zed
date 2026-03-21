@@ -12,6 +12,11 @@ use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+/// Key used in `AgentSessionInfo::meta` to store the CLI command name (e.g. "claude").
+pub const CLI_SOURCE_KEY: &str = "cli_source";
+/// Key used in `AgentSessionInfo::meta` to store the project path for terminal cwd.
+pub const CLI_PROJECT_PATH_KEY: &str = "cli_project_path";
+
 /// Information about a Claude Code session from the CLI storage
 #[derive(Debug, Clone)]
 pub struct ClaudeCodeSessionInfo {
@@ -92,62 +97,112 @@ impl ClaudeCodeSessionIndex {
         &self.project_path
     }
 
-    /// List all sessions from the sessions-index.json file
+    /// List all sessions by scanning .jsonl files on disk.
+    /// Uses sessions-index.json for metadata when available, falls back to
+    /// reading the file directly for sessions not in the index.
     pub fn list_sessions(&self) -> Result<Vec<ClaudeCodeSessionInfo>> {
+        // Build a lookup from the index for metadata
+        let mut index_entries: HashMap<String, SessionEntry> = HashMap::default();
         let index_path = self.sessions_dir.join("sessions-index.json");
-        let file = File::open(&index_path)
-            .with_context(|| format!("Failed to open {}", index_path.display()))?;
-        let reader = BufReader::new(file);
-        let index: SessionsIndex = serde_json::from_reader(reader)
-            .with_context(|| format!("Failed to parse {}", index_path.display()))?;
+        if let Ok(file) = File::open(&index_path) {
+            if let Ok(index) = serde_json::from_reader::<_, SessionsIndex>(BufReader::new(file)) {
+                for entry in index.entries {
+                    index_entries.insert(entry.session_id.clone(), entry);
+                }
+            }
+        }
 
+        // Scan all .jsonl files on disk
         let mut sessions = Vec::new();
-        for entry in index.entries {
-            let created = entry
-                .created
-                .as_ref()
-                .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-                .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(Utc::now);
+        let read_dir = std::fs::read_dir(&self.sessions_dir)
+            .with_context(|| format!("Failed to read {}", self.sessions_dir.display()))?;
 
-            let modified = entry
-                .modified
-                .as_ref()
-                .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-                .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or(created);
+        for dir_entry in read_dir.flatten() {
+            let path = dir_entry.path();
+            let Some(ext) = path.extension() else { continue };
+            if ext != "jsonl" { continue; }
+            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { continue };
+            let session_id = stem.to_string();
 
-            // Use first 120 chars of first prompt as title, or session ID if not available
-            let title = entry
-                .first_prompt
-                .as_ref()
-                .map(|p| {
-                    // Clean up the prompt: remove leading/trailing whitespace and normalize newlines
-                    let cleaned = p.trim().replace('\n', " ");
+            if let Some(entry) = index_entries.get(&session_id) {
+                // Use index metadata
+                let created = entry.created.as_ref()
+                    .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .unwrap_or_else(Utc::now);
+                let modified = entry.modified.as_ref()
+                    .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .unwrap_or(created);
+                let title = entry.first_prompt.as_ref()
+                    .map(|p| {
+                        let cleaned = p.trim().replace('\n', " ");
+                        let trimmed: String = cleaned.chars().take(120).collect();
+                        if cleaned.len() > 120 { format!("{}...", trimmed) } else { trimmed }
+                    })
+                    .unwrap_or_else(|| session_id.clone());
+
+                sessions.push(ClaudeCodeSessionInfo {
+                    session_id,
+                    title,
+                    created,
+                    modified,
+                    git_branch: entry.git_branch.clone(),
+                    message_count: entry.message_count.unwrap_or(0),
+                    full_path: path.clone(),
+                });
+            } else {
+                // Not in index — extract info from file metadata and first user message
+                let file_meta = std::fs::metadata(&path).ok();
+                let modified = file_meta.as_ref()
+                    .and_then(|m| m.modified().ok())
+                    .map(|t| DateTime::<Utc>::from(t))
+                    .unwrap_or_else(Utc::now);
+                let created = file_meta.as_ref()
+                    .and_then(|m| m.created().ok())
+                    .map(|t| DateTime::<Utc>::from(t))
+                    .unwrap_or(modified);
+
+                let title = Self::extract_first_user_message(&path)
+                    .unwrap_or_else(|| session_id[..8.min(session_id.len())].to_string());
+
+                sessions.push(ClaudeCodeSessionInfo {
+                    session_id,
+                    title,
+                    created,
+                    modified,
+                    git_branch: None,
+                    message_count: 0,
+                    full_path: path,
+                });
+            }
+        }
+
+        sessions.sort_by(|a, b| b.modified.cmp(&a.modified));
+        Ok(sessions)
+    }
+
+    /// Extract the first user message from a .jsonl session file for use as a title.
+    fn extract_first_user_message(path: &Path) -> Option<String> {
+        use std::io::BufRead;
+        let file = File::open(path).ok()?;
+        let reader = std::io::BufReader::new(file);
+        for line in reader.lines().take(50) {
+            let line = line.ok()?;
+            let value: serde_json::Value = serde_json::from_str(&line).ok()?;
+            if value.get("type").and_then(|t| t.as_str()) == Some("user") {
+                if let Some(content) = value.pointer("/message/content").and_then(|c| c.as_str()) {
+                    let cleaned = content.trim().replace('\n', " ");
                     let trimmed: String = cleaned.chars().take(120).collect();
-                    if cleaned.len() > 120 {
+                    return Some(if cleaned.len() > 120 {
                         format!("{}...", trimmed)
                     } else {
                         trimmed
-                    }
-                })
-                .unwrap_or_else(|| entry.session_id.clone());
-
-            sessions.push(ClaudeCodeSessionInfo {
-                session_id: entry.session_id,
-                title,
-                created,
-                modified,
-                git_branch: entry.git_branch,
-                message_count: entry.message_count.unwrap_or(0),
-                full_path: PathBuf::from(entry.full_path),
-            });
+                    });
+                }
+            }
         }
-
-        // Sort by modified time, most recent first
-        sessions.sort_by(|a, b| b.modified.cmp(&a.modified));
-
-        Ok(sessions)
+        None
     }
 
     /// Delete a session by removing its JSONL file and updating the index
@@ -245,15 +300,24 @@ impl SessionCustomNames {
 pub struct ClaudeCodeSessionList {
     index: ClaudeCodeSessionIndex,
     custom_names: RefCell<SessionCustomNames>,
+    watch_tx: RefCell<watch::Sender<()>>,
+    watch_rx: watch::Receiver<()>,
 }
 
 impl ClaudeCodeSessionList {
     pub fn new(index: ClaudeCodeSessionIndex) -> Self {
         let custom_names = SessionCustomNames::load(index.sessions_dir());
+        let (watch_tx, watch_rx) = watch::channel(());
         Self {
             index,
             custom_names: RefCell::new(custom_names),
+            watch_tx: RefCell::new(watch_tx),
+            watch_rx,
         }
+    }
+
+    fn notify_changed(&self) {
+        self.watch_tx.borrow_mut().send(()).ok();
     }
 
     pub fn project_path(&self) -> &Path {
@@ -286,6 +350,10 @@ impl ClaudeCodeSessionList {
 
     /// Synchronously list sessions (for use in pickers/modals)
     pub fn list_sessions_sync(&self) -> Vec<AgentSessionInfo> {
+        self.list_sessions_sync_with_cli("claude")
+    }
+
+    fn list_sessions_sync_with_cli(&self, cli_command: &str) -> Vec<AgentSessionInfo> {
         let sessions = match self.index.list_sessions() {
             Ok(sessions) => sessions,
             Err(e) => {
@@ -308,7 +376,12 @@ impl ClaudeCodeSessionList {
                     cwd: Some(self.index.project_path.clone()),
                     title: Some(title.into()),
                     updated_at: Some(s.modified),
-                    meta: None,
+                    meta: Some({
+                        let mut map = serde_json::Map::new();
+                        map.insert(CLI_SOURCE_KEY.to_string(), serde_json::Value::String(cli_command.to_string()));
+                        map.insert(CLI_PROJECT_PATH_KEY.to_string(), serde_json::Value::String(self.index.project_path.to_string_lossy().to_string()));
+                        map
+                    }),
                 }
             })
             .collect()
@@ -322,38 +395,25 @@ impl AgentSessionList for ClaudeCodeSessionList {
         _cx: &mut App,
     ) -> Task<Result<AgentSessionListResponse>> {
         log::info!("ClaudeCodeSessionList::list_sessions called");
-        let sessions = match self.index.list_sessions() {
-            Ok(sessions) => {
-                log::info!("Found {} Claude Code sessions", sessions.len());
-                sessions
-            }
-            Err(e) => {
-                log::error!("Error loading Claude Code sessions: {:?}", e);
-                return Task::ready(Err(e));
-            }
-        };
-
-        let custom_names = self.custom_names.borrow();
-        let infos: Vec<AgentSessionInfo> = sessions
-            .into_iter()
-            .map(|s| {
-                let title = custom_names
-                    .get(&s.session_id)
-                    .cloned()
-                    .unwrap_or(s.title);
-
-                AgentSessionInfo {
-                    session_id: acp::SessionId::new(s.session_id.clone()),
-                    cwd: Some(self.index.project_path.clone()),
-                    title: Some(title.into()),
-                    updated_at: Some(s.modified),
-                    meta: None,
-                }
-            })
-            .collect();
-
+        let infos = self.list_sessions_sync_with_cli("claude");
         log::info!("Returning {} session infos", infos.len());
         Task::ready(Ok(AgentSessionListResponse::new(infos)))
+    }
+
+    fn rename_session(
+        &self,
+        session_id: &acp::SessionId,
+        new_title: Option<String>,
+        _cx: &mut App,
+    ) -> Task<Result<()>> {
+        let session_id_str = session_id.to_string();
+        match self.rename_session(&session_id_str, new_title) {
+            Ok(()) => {
+                self.notify_changed();
+                Task::ready(Ok(()))
+            }
+            Err(e) => Task::ready(Err(e)),
+        }
     }
 
     fn delete_session(&self, session_id: &acp::SessionId, _cx: &mut App) -> Task<Result<()>> {
@@ -366,7 +426,10 @@ impl AgentSessionList for ClaudeCodeSessionList {
 
         // Delete the session files
         match self.index.delete_session(&session_id_str) {
-            Ok(()) => Task::ready(Ok(())),
+            Ok(()) => {
+                self.notify_changed();
+                Task::ready(Ok(()))
+            }
             Err(e) => Task::ready(Err(e)),
         }
     }
@@ -397,9 +460,7 @@ impl AgentSessionList for ClaudeCodeSessionList {
     }
 
     fn watch(&self, _cx: &mut App) -> Option<watch::Receiver<()>> {
-        // We don't have a watch mechanism for file system changes yet
-        // Could implement using notify crate in the future
-        None
+        Some(self.watch_rx.clone())
     }
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {

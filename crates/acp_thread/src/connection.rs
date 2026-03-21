@@ -237,6 +237,15 @@ pub trait AgentSessionList {
         Task::ready(Ok(()))
     }
 
+    fn rename_session(
+        &self,
+        _session_id: &acp::SessionId,
+        _new_title: Option<String>,
+        _cx: &mut App,
+    ) -> Task<Result<()>> {
+        Task::ready(Ok(()))
+    }
+
     fn watch(&self, _cx: &mut App) -> Option<watch::Receiver<()>> {
         None
     }
