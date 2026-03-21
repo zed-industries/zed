@@ -47,6 +47,7 @@ pub mod picker_prompt;
 pub mod project_diff;
 pub(crate) mod remote_output;
 pub mod repository_selector;
+pub mod pull_request_picker;
 pub mod stash_picker;
 pub mod text_diff_view;
 pub mod worktree_picker;
@@ -88,6 +89,11 @@ pub fn init(cx: &mut App) {
                             panel.create_pull_request(window, cx);
                         });
                     }
+                },
+            );
+            workspace.register_action(
+                |workspace, _: &zed_actions::git::ViewPullRequests, window, cx| {
+                    git_picker::open_pull_requests(workspace, window, cx);
                 },
             );
             workspace.register_action(|workspace, _: &git::Fetch, window, cx| {
@@ -814,6 +820,15 @@ mod remote_button {
                         .action("Push", git::Push.boxed_clone())
                         .action("Push To", git::PushTo.boxed_clone())
                         .action("Force Push", git::ForcePush.boxed_clone())
+                        .separator()
+                        .action(
+                            "Create Pull Request",
+                            zed_actions::git::CreatePullRequest.boxed_clone(),
+                        )
+                        .action(
+                            "View Pull Requests",
+                            zed_actions::git::ViewPullRequests.boxed_clone(),
+                        )
                 }))
             })
             .anchor(Corner::TopRight)

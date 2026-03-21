@@ -517,6 +517,7 @@ impl GitRepository for FakeGitRepository {
             Ok(git::repository::BranchHistory {
                 entries: Vec::new(),
                 branch_name,
+                graph_layouts: Vec::new(),
             })
         }
         .boxed()

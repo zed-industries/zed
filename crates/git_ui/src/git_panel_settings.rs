@@ -28,6 +28,8 @@ pub struct GitPanelSettings {
     pub show_commit_history: bool,
     pub commit_history_height: Pixels,
     pub commit_history_page_size: usize,
+    pub show_picker_section: bool,
+    pub picker_section_height: Pixels,
 }
 
 impl ScrollbarVisibility for GitPanelSettings {
@@ -64,6 +66,8 @@ impl Settings for GitPanelSettings {
             show_commit_history: git_panel.show_commit_history.unwrap(),
             commit_history_height: px(git_panel.commit_history_height.unwrap()),
             commit_history_page_size: git_panel.commit_history_page_size.unwrap(),
+            show_picker_section: git_panel.show_picker_section.unwrap_or(true),
+            picker_section_height: px(git_panel.picker_section_height.unwrap_or(200.)),
         }
     }
 }

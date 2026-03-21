@@ -35,6 +35,8 @@ actions!(
         FilterRemotes,
         /// Enters the new branch creation mode.
         CreateBranch,
+        /// Load more branches in the list.
+        LoadMoreBranches,
     ]
 );
 
@@ -283,6 +285,19 @@ impl BranchList {
         });
     }
 
+    pub fn handle_load_more(
+        &mut self,
+        _: &branch_picker::LoadMoreBranches,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.picker.update(cx, |picker, cx| {
+            picker.delegate.display_limit += DEFAULT_DISPLAY_LIMIT;
+            picker.update_matches(picker.query(cx), window, cx);
+            cx.notify();
+        });
+    }
+
     pub fn handle_create_branch(
         &mut self,
         _: &branch_picker::CreateBranch,
@@ -395,6 +410,8 @@ impl BranchFilter {
     }
 }
 
+const DEFAULT_DISPLAY_LIMIT: usize = 20;
+
 pub struct BranchListDelegate {
     workspace: WeakEntity<Workspace>,
     matches: Vec<Entry>,
@@ -408,6 +425,8 @@ pub struct BranchListDelegate {
     branch_filter: BranchFilter,
     state: PickerState,
     focus_handle: FocusHandle,
+    display_limit: usize,
+    total_match_count: usize,
 }
 
 #[derive(Debug)]
@@ -442,6 +461,8 @@ impl BranchListDelegate {
             branch_filter: BranchFilter::All,
             state: PickerState::List,
             focus_handle: cx.focus_handle(),
+            display_limit: DEFAULT_DISPLAY_LIMIT,
+            total_match_count: 0,
         }
     }
 
@@ -455,6 +476,19 @@ impl BranchListDelegate {
         let Some(repo) = self.repo.clone() else {
             return;
         };
+
+        let has_changes = repo.read(cx).status().next().is_some();
+        if has_changes {
+            let _ = window.prompt(
+                gpui::PromptLevel::Warning,
+                "Uncommitted Changes",
+                Some("You have uncommitted changes. Please commit or stash them before creating a new branch."),
+                &["OK"],
+                cx,
+            );
+            return;
+        }
+
         let new_branch_name = new_branch_name.to_string().replace(' ', "-");
         let base_branch = from_branch.map(|b| b.to_string());
         cx.spawn(async move |_, cx| {
@@ -756,6 +790,7 @@ impl PickerDelegate for BranchListDelegate {
                             picker.delegate.matches = Vec::new();
                             picker.delegate.selected_index = 0;
                         }
+                        picker.delegate.total_match_count = picker.delegate.matches.len();
                         picker.delegate.last_query = query;
                         return;
                     }
@@ -786,6 +821,11 @@ impl PickerDelegate for BranchListDelegate {
                         picker.delegate.state = PickerState::List;
                     }
                     let delegate = &mut picker.delegate;
+                    delegate.total_match_count = matches.len();
+                    let limit = delegate.display_limit;
+                    if matches.len() > limit {
+                        matches.truncate(limit);
+                    }
                     delegate.matches = matches;
                     if delegate.matches.is_empty() {
                         delegate.selected_index = 0;
@@ -1185,8 +1225,39 @@ impl PickerDelegate for BranchListDelegate {
                             })),
                     );
 
+                let has_more = self.total_match_count > self.matches.len();
+                let remaining = self.total_match_count.saturating_sub(self.matches.len());
+
                 Some(
-                    footer_container()
+                    v_flex()
+                        .when(has_more, |this| {
+                            this.child(
+                                h_flex()
+                                    .w_full()
+                                    .justify_center()
+                                    .py_1()
+                                    .border_t_1()
+                                    .border_color(cx.theme().colors().border_variant)
+                                    .child(
+                                        Button::new(
+                                            "load-more-branches",
+                                            format!(
+                                                "Load More ({} remaining)",
+                                                remaining
+                                            ),
+                                        )
+                                        .style(ButtonStyle::Subtle)
+                                        .size(ButtonSize::Compact)
+                                        .on_click(|_, window, cx| {
+                                            window.dispatch_action(
+                                                branch_picker::LoadMoreBranches.boxed_clone(),
+                                                cx,
+                                            );
+                                        }),
+                                    ),
+                            )
+                        })
+                        .child(footer_container()
                         .map(|this| {
                             if branch_from_default_button.is_some() {
                                 this.justify_end().when_some(
@@ -1249,7 +1320,7 @@ impl PickerDelegate for BranchListDelegate {
                                     )
                                     .child(delete_and_select_btns)
                             }
-                        })
+                        }))
                         .into_any_element(),
                 )
             }

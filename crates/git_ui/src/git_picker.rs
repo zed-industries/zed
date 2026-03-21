@@ -1,9 +1,9 @@
 use std::fmt::Display;
 
 use gpui::{
-    App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    KeyContext, ModifiersChangedEvent, MouseButton, ParentElement, Render, Styled, Subscription,
-    WeakEntity, Window, actions, rems,
+    Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement, KeyContext, ModifiersChangedEvent, MouseButton, ParentElement, Render,
+    Styled, Subscription, WeakEntity, Window, actions, rems,
 };
 use project::git_store::Repository;
 use ui::{
@@ -12,7 +12,10 @@ use ui::{
 };
 use workspace::{ModalView, Workspace, pane};
 
-use crate::branch_picker::{self, BranchList, DeleteBranch, FilterRemotes};
+use crate::branch_picker::{
+    self, BranchList, CreateBranch, DeleteBranch, FilterRemotes, LoadMoreBranches,
+};
+use crate::pull_request_picker::{self, CreatePullRequestInline, PullRequestList};
 use crate::stash_picker::{self, DropStashItem, ShowStashItem, StashList};
 use crate::worktree_picker::{
     self, WorktreeFromDefault, WorktreeFromDefaultOnWindow, WorktreeList,
@@ -20,7 +23,12 @@ use crate::worktree_picker::{
 
 actions!(
     git_picker,
-    [ActivateBranchesTab, ActivateWorktreesTab, ActivateStashTab,]
+    [
+        ActivateBranchesTab,
+        ActivateWorktreesTab,
+        ActivateStashTab,
+        ActivatePullRequestsTab,
+    ]
 );
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -28,6 +36,7 @@ pub enum GitPickerTab {
     Branches,
     Worktrees,
     Stash,
+    PullRequests,
 }
 
 impl Display for GitPickerTab {
@@ -36,19 +45,22 @@ impl Display for GitPickerTab {
             GitPickerTab::Branches => "Branches",
             GitPickerTab::Worktrees => "Worktrees",
             GitPickerTab::Stash => "Stash",
+            GitPickerTab::PullRequests => "PRs",
         };
         write!(f, "{}", label)
     }
 }
 
 pub struct GitPicker {
-    tab: GitPickerTab,
+    pub tab: GitPickerTab,
     workspace: WeakEntity<Workspace>,
     repository: Option<Entity<Repository>>,
     width: Rems,
+    embedded: bool,
     branch_list: Option<Entity<BranchList>>,
     worktree_list: Option<Entity<WorktreeList>>,
     stash_list: Option<Entity<StashList>>,
+    pull_request_list: Option<Entity<PullRequestList>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -66,14 +78,20 @@ impl GitPicker {
             workspace,
             repository,
             width,
+            embedded: false,
             branch_list: None,
             worktree_list: None,
             stash_list: None,
+            pull_request_list: None,
             _subscriptions: Vec::new(),
         };
 
         this.ensure_active_picker(window, cx);
         this
+    }
+
+    pub fn set_embedded(&mut self) {
+        self.embedded = true;
     }
 
     fn ensure_active_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -86,6 +104,9 @@ impl GitPicker {
             }
             GitPickerTab::Stash => {
                 self.ensure_stash_list(window, cx);
+            }
+            GitPickerTab::PullRequests => {
+                self.ensure_pull_request_list(window, cx);
             }
         }
     }
@@ -174,11 +195,41 @@ impl GitPicker {
         self.stash_list.clone().unwrap()
     }
 
+    fn ensure_pull_request_list(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<PullRequestList> {
+        if self.pull_request_list.is_none() {
+            let pull_request_list = cx.new(|cx| {
+                pull_request_picker::create_embedded(
+                    self.repository.clone(),
+                    self.workspace.clone(),
+                    self.width,
+                    window,
+                    cx,
+                )
+            });
+
+            let subscription =
+                cx.subscribe(&pull_request_list, |this, _, _: &DismissEvent, cx| {
+                    if this.tab == GitPickerTab::PullRequests {
+                        cx.emit(DismissEvent);
+                    }
+                });
+
+            self._subscriptions.push(subscription);
+            self.pull_request_list = Some(pull_request_list);
+        }
+        self.pull_request_list.clone().unwrap()
+    }
+
     fn activate_next_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.tab = match self.tab {
             GitPickerTab::Branches => GitPickerTab::Worktrees,
             GitPickerTab::Worktrees => GitPickerTab::Stash,
-            GitPickerTab::Stash => GitPickerTab::Branches,
+            GitPickerTab::Stash => GitPickerTab::PullRequests,
+            GitPickerTab::PullRequests => GitPickerTab::Branches,
         };
         self.ensure_active_picker(window, cx);
         self.focus_active_picker(window, cx);
@@ -187,9 +238,10 @@ impl GitPicker {
 
     fn activate_previous_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.tab = match self.tab {
-            GitPickerTab::Branches => GitPickerTab::Stash,
+            GitPickerTab::Branches => GitPickerTab::PullRequests,
             GitPickerTab::Worktrees => GitPickerTab::Branches,
             GitPickerTab::Stash => GitPickerTab::Worktrees,
+            GitPickerTab::PullRequests => GitPickerTab::Stash,
         };
         self.ensure_active_picker(window, cx);
         self.focus_active_picker(window, cx);
@@ -213,6 +265,11 @@ impl GitPicker {
                     stash_list.focus_handle(cx).focus(window, cx);
                 }
             }
+            GitPickerTab::PullRequests => {
+                if let Some(pull_request_list) = &self.pull_request_list {
+                    pull_request_list.focus_handle(cx).focus(window, cx);
+                }
+            }
         }
     }
 
@@ -220,9 +277,23 @@ impl GitPicker {
         let focus_handle = self.focus_handle(cx);
         let branches_focus_handle = focus_handle.clone();
         let worktrees_focus_handle = focus_handle.clone();
-        let stash_focus_handle = focus_handle;
+        let stash_focus_handle = focus_handle.clone();
+        let prs_focus_handle = focus_handle;
 
-        h_flex().p_2().pb_0p5().w_full().child(
+        let is_main_branch = self
+            .repository
+            .as_ref()
+            .and_then(|repo| {
+                let repo = repo.read(cx);
+                let branch = repo.branch.as_ref()?;
+                let name = branch.name();
+                Some(name == "main" || name == "master")
+            })
+            .unwrap_or(false);
+
+        let tab = self.tab;
+
+        h_flex().p_2().pb_0p5().w_full().justify_between().child(
             ToggleButtonGroup::single_row(
                 "git-picker-tabs",
                 [
@@ -277,6 +348,23 @@ impl GitPicker {
                             cx,
                         )
                     }),
+                    ToggleButtonSimple::new(
+                        GitPickerTab::PullRequests.to_string(),
+                        cx.listener(|this, _, window, cx| {
+                            this.tab = GitPickerTab::PullRequests;
+                            this.ensure_active_picker(window, cx);
+                            this.focus_active_picker(window, cx);
+                            cx.notify();
+                        }),
+                    )
+                    .tooltip(move |_, cx| {
+                        Tooltip::for_action_in(
+                            "Toggle Pull Request Picker",
+                            &ActivatePullRequestsTab,
+                            &prs_focus_handle,
+                            cx,
+                        )
+                    }),
                 ],
             )
             .label_size(LabelSize::Default)
@@ -286,8 +374,32 @@ impl GitPicker {
                 GitPickerTab::Branches => 0,
                 GitPickerTab::Worktrees => 1,
                 GitPickerTab::Stash => 2,
+                GitPickerTab::PullRequests => 3,
             }),
         )
+        .when(tab == GitPickerTab::Branches, |this| {
+            this.child(
+                Button::new("tab-action-create-branch", "New Branch")
+                    .size(ButtonSize::Compact)
+                    .style(ButtonStyle::Filled)
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(branch_picker::CreateBranch.boxed_clone(), cx);
+                    }),
+            )
+        })
+        .when(tab == GitPickerTab::PullRequests && !is_main_branch, |this| {
+            this.child(
+                Button::new("tab-action-create-pr", "Create PR")
+                    .size(ButtonSize::Compact)
+                    .style(ButtonStyle::Filled)
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(
+                            CreatePullRequestInline.boxed_clone(),
+                            cx,
+                        );
+                    }),
+            )
+        })
     }
 
     fn render_active_picker(
@@ -307,6 +419,10 @@ impl GitPicker {
             GitPickerTab::Stash => {
                 let stash_list = self.ensure_stash_list(window, cx);
                 stash_list.into_any_element()
+            }
+            GitPickerTab::PullRequests => {
+                let pull_request_list = self.ensure_pull_request_list(window, cx);
+                pull_request_list.into_any_element()
             }
         }
     }
@@ -339,6 +455,13 @@ impl GitPicker {
                     });
                 }
             }
+            GitPickerTab::PullRequests => {
+                if let Some(pull_request_list) = &self.pull_request_list {
+                    pull_request_list.update(cx, |list, cx| {
+                        list.handle_modifiers_changed(ev, window, cx);
+                    });
+                }
+            }
         }
     }
 
@@ -351,6 +474,32 @@ impl GitPicker {
         if let Some(branch_list) = &self.branch_list {
             branch_list.update(cx, |list, cx| {
                 list.handle_delete(&DeleteBranch, window, cx);
+            });
+        }
+    }
+
+    fn handle_create_branch(
+        &mut self,
+        _: &CreateBranch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(branch_list) = &self.branch_list {
+            branch_list.update(cx, |list, cx| {
+                list.handle_create_branch(&CreateBranch, window, cx);
+            });
+        }
+    }
+
+    fn handle_load_more_branches(
+        &mut self,
+        _: &LoadMoreBranches,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(branch_list) = &self.branch_list {
+            branch_list.update(cx, |list, cx| {
+                list.handle_load_more(&LoadMoreBranches, window, cx);
             });
         }
     }
@@ -390,6 +539,19 @@ impl GitPicker {
         if let Some(worktree_list) = &self.worktree_list {
             worktree_list.update(cx, |list, cx| {
                 list.handle_new_worktree(true, window, cx);
+            });
+        }
+    }
+
+    fn handle_create_pr_inline(
+        &mut self,
+        _: &CreatePullRequestInline,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(pr_list) = &self.pull_request_list {
+            pr_list.update(cx, |list, cx| {
+                list.handle_create_pr(&CreatePullRequestInline, window, cx);
             });
         }
     }
@@ -442,6 +604,11 @@ impl Focusable for GitPicker {
                     return stash_list.focus_handle(cx);
                 }
             }
+            GitPickerTab::PullRequests => {
+                if let Some(pull_request_list) = &self.pull_request_list {
+                    return pull_request_list.focus_handle(cx);
+                }
+            }
         }
         cx.focus_handle()
     }
@@ -451,8 +618,8 @@ impl Render for GitPicker {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .occlude()
-            .w(self.width)
-            .elevation_3(cx)
+            .when(!self.embedded, |this| this.w(self.width).elevation_3(cx))
+            .when(self.embedded, |this| this.size_full())
             .overflow_hidden()
             .key_context({
                 let mut key_context = KeyContext::new_with_defaults();
@@ -462,6 +629,7 @@ impl Render for GitPicker {
                     GitPickerTab::Branches => key_context.add("GitBranchSelector"),
                     GitPickerTab::Worktrees => key_context.add("GitWorktreeSelector"),
                     GitPickerTab::Stash => key_context.add("StashList"),
+                    GitPickerTab::PullRequests => key_context.add("PullRequestList"),
                 }
                 key_context
             })
@@ -497,10 +665,18 @@ impl Render for GitPicker {
                 this.focus_active_picker(window, cx);
                 cx.notify();
             }))
+            .on_action(cx.listener(|this, _: &ActivatePullRequestsTab, window, cx| {
+                this.tab = GitPickerTab::PullRequests;
+                this.ensure_active_picker(window, cx);
+                this.focus_active_picker(window, cx);
+                cx.notify();
+            }))
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .when(self.tab == GitPickerTab::Branches, |el| {
                 el.on_action(cx.listener(Self::handle_delete_branch))
                     .on_action(cx.listener(Self::handle_filter_remotes))
+                    .on_action(cx.listener(Self::handle_load_more_branches))
+                    .on_action(cx.listener(Self::handle_create_branch))
             })
             .when(self.tab == GitPickerTab::Worktrees, |el| {
                 el.on_action(cx.listener(Self::handle_worktree_from_default))
@@ -509,6 +685,9 @@ impl Render for GitPicker {
             .when(self.tab == GitPickerTab::Stash, |el| {
                 el.on_action(cx.listener(Self::handle_drop_stash))
                     .on_action(cx.listener(Self::handle_show_stash))
+            })
+            .when(self.tab == GitPickerTab::PullRequests, |el| {
+                el.on_action(cx.listener(Self::handle_create_pr_inline))
             })
             .child(self.render_tab_bar(cx))
             .child(self.render_active_picker(window, cx))
@@ -540,6 +719,14 @@ pub fn open_stash(
     cx: &mut Context<Workspace>,
 ) {
     open_with_tab(workspace, GitPickerTab::Stash, window, cx);
+}
+
+pub fn open_pull_requests(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    open_with_tab(workspace, GitPickerTab::PullRequests, window, cx);
 }
 
 fn open_with_tab(
@@ -575,4 +762,9 @@ pub fn register(workspace: &mut Workspace) {
     workspace.register_action(|workspace, _: &zed_actions::git::ViewStash, window, cx| {
         open_with_tab(workspace, GitPickerTab::Stash, window, cx);
     });
+    workspace.register_action(
+        |workspace, _: &zed_actions::git::ViewPullRequests, window, cx| {
+            open_with_tab(workspace, GitPickerTab::PullRequests, window, cx);
+        },
+    );
 }

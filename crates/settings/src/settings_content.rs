@@ -539,6 +539,18 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: 20
     pub commit_history_page_size: Option<usize>,
+
+    /// Whether to show the git picker section (branches, worktrees, stash, PRs)
+    /// in the git panel.
+    ///
+    /// Default: true
+    pub show_picker_section: Option<bool>,
+
+    /// Default height of the git picker section in pixels.
+    ///
+    /// Default: 200
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    pub picker_section_height: Option<f32>,
 }
 
 #[derive(

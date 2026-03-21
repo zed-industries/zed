@@ -7190,6 +7190,7 @@ dependencies = [
  "unindent",
  "util",
  "watch",
+ "which 6.0.3",
  "windows 0.61.3",
  "workspace",
  "zed_actions",

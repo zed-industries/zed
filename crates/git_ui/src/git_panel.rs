@@ -4,7 +4,7 @@ use crate::commit_tooltip::CommitTooltip;
 use crate::commit_view::CommitView;
 use crate::project_diff::{self, Diff, ProjectDiff};
 use crate::remote_output::{self, RemoteAction, SuccessMessage};
-use crate::{branch_picker, picker_prompt, render_remote_button};
+use crate::{branch_picker, picker_prompt, pull_request_picker, render_remote_button};
 use crate::{
     file_history_view::FileHistoryView, git_panel_settings::GitPanelSettings, git_status_icon,
     repository_selector::RepositorySelector,
@@ -591,7 +591,16 @@ struct CommitHistoryState {
 #[derive(Clone)]
 struct DraggedCommitHistoryResize;
 
+#[derive(Clone)]
+struct DraggedPickerResize;
+
 impl gpui::Render for DraggedCommitHistoryResize {
+    fn render(&mut self, _window: &mut Window, _cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        gpui::Empty
+    }
+}
+
+impl gpui::Render for DraggedPickerResize {
     fn render(&mut self, _window: &mut Window, _cx: &mut gpui::Context<Self>) -> impl IntoElement {
         gpui::Empty
     }
@@ -642,6 +651,12 @@ pub struct GitPanel {
     commit_history_height: Option<Pixels>,
     commit_history_drag_start_height: Option<Pixels>,
     commit_history_drag_start_y: Option<Pixels>,
+    current_branch_pr: Option<pull_request_picker::PullRequestEntry>,
+    current_branch_pr_task: Option<Task<()>>,
+    embedded_picker: Option<Entity<crate::git_picker::GitPicker>>,
+    picker_section_height: Option<Pixels>,
+    picker_drag_start_height: Option<Pixels>,
+    picker_drag_start_y: Option<Pixels>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -744,13 +759,23 @@ impl GitPanel {
                 move |this, _git_store, event, window, cx| match event {
                     GitStoreEvent::ActiveRepositoryChanged(_) => {
                         this.active_repository = this.project.read(cx).active_repository(cx);
+                        this.embedded_picker = None;
                         this.schedule_update(window, cx);
                         this.refresh_commit_history(window, cx);
+                        this.refresh_current_branch_pr(cx);
+                    }
+                    GitStoreEvent::RepositoryUpdated(
+                        _,
+                        RepositoryEvent::BranchChanged,
+                        true,
+                    ) => {
+                        this.schedule_update(window, cx);
+                        this.refresh_commit_history(window, cx);
+                        this.refresh_current_branch_pr(cx);
                     }
                     GitStoreEvent::RepositoryUpdated(
                         _,
                         RepositoryEvent::StatusesChanged
-                        | RepositoryEvent::BranchChanged
                         | RepositoryEvent::MergeHeadsChanged,
                         true,
                     )
@@ -817,10 +842,17 @@ impl GitPanel {
                 commit_history_height: None,
                 commit_history_drag_start_height: None,
                 commit_history_drag_start_y: None,
+                current_branch_pr: None,
+                current_branch_pr_task: None,
+                embedded_picker: None,
+                picker_section_height: None,
+                picker_drag_start_height: None,
+                picker_drag_start_y: None,
             };
 
             this.schedule_update(window, cx);
             this.refresh_commit_history(window, cx);
+            this.refresh_current_branch_pr(cx);
             this
         })
     }
@@ -3157,6 +3189,38 @@ impl GitPanel {
         }
     }
 
+    fn refresh_current_branch_pr(&mut self, cx: &mut Context<Self>) {
+        let branch_name = self
+            .active_repository
+            .as_ref()
+            .and_then(|repo| repo.read(cx).branch.as_ref().map(|b| b.name().to_owned()));
+
+        let work_dir = self
+            .active_repository
+            .as_ref()
+            .map(|repo| repo.read(cx).work_directory_abs_path.to_path_buf());
+
+        let Some(branch_name) = branch_name else {
+            self.current_branch_pr = None;
+            self.current_branch_pr_task = None;
+            cx.notify();
+            return;
+        };
+
+        let task = cx.spawn(async move |this, cx| {
+            let result =
+                pull_request_picker::fetch_current_branch_pr(work_dir, &branch_name).await;
+
+            this.update(cx, |this, cx| {
+                this.current_branch_pr = result.ok().flatten();
+                cx.notify();
+            })
+            .log_err();
+        });
+
+        self.current_branch_pr_task = Some(task);
+    }
+
     fn askpass_delegate(
         &self,
         operation: impl Into<SharedString>,
@@ -4251,11 +4315,14 @@ impl GitPanel {
             editor.max_point(cx).row().0 >= MAX_PANEL_EDITOR_LINES as u32
         });
 
+        let current_branch_pr = self.current_branch_pr.clone();
+
         let footer = v_flex()
             .child(PanelRepoFooter::new(
                 display_name,
                 branch,
                 head_commit,
+                current_branch_pr,
                 Some(git_panel),
             ))
             .child(
@@ -4656,6 +4723,104 @@ impl GitPanel {
         Some(panel)
     }
 
+    fn ensure_embedded_picker(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<crate::git_picker::GitPicker> {
+        if self.embedded_picker.is_none() {
+            let workspace = self.workspace.clone();
+            let repository = self.active_repository.clone();
+            let picker = cx.new(|cx| {
+                let mut picker = crate::git_picker::GitPicker::new(
+                    workspace,
+                    repository,
+                    crate::git_picker::GitPickerTab::Branches,
+                    rems(34.),
+                    window,
+                    cx,
+                );
+                picker.set_embedded();
+                picker
+            });
+            self.embedded_picker = Some(picker);
+        }
+        self.embedded_picker.clone().unwrap()
+    }
+
+    fn render_git_picker_section(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement> {
+        let settings = GitPanelSettings::get_global(cx);
+        if !settings.show_picker_section {
+            return None;
+        }
+
+        let height = self.picker_section_height.unwrap_or(settings.picker_section_height);
+        let picker = self.ensure_embedded_picker(window, cx);
+
+        let resize_handle = div()
+            .id("picker-section-resize-handle")
+            .h(px(4.))
+            .w_full()
+            .cursor_row_resize()
+            .on_drag(DraggedPickerResize, |_, _, _, cx| {
+                cx.stop_propagation();
+                cx.new(|_| DraggedPickerResize)
+            })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseDownEvent, _, _cx| {
+                    this.picker_drag_start_height = None;
+                    this.picker_drag_start_y = None;
+                }),
+            )
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, e: &gpui::MouseUpEvent, _, cx| {
+                    this.picker_drag_start_height = None;
+                    this.picker_drag_start_y = None;
+                    if e.click_count == 2 {
+                        this.picker_section_height = None;
+                        cx.notify();
+                    }
+                }),
+            );
+
+        let section = v_flex()
+            .on_drag_move(cx.listener(
+                |this, e: &DragMoveEvent<DraggedPickerResize>, _, cx| {
+                    let settings = GitPanelSettings::get_global(cx);
+                    let start_height = *this
+                        .picker_drag_start_height
+                        .get_or_insert_with(|| {
+                            this.picker_section_height.unwrap_or(settings.picker_section_height)
+                        });
+                    let start_y = *this
+                        .picker_drag_start_y
+                        .get_or_insert(e.event.position.y);
+                    let delta_y = start_y - e.event.position.y;
+                    let new_height = (start_height + delta_y).max(px(80.)).min(px(600.));
+                    this.picker_section_height = Some(new_height);
+                    cx.notify();
+                },
+            ))
+            .child(resize_handle)
+            .child(
+                v_flex()
+                    .id("picker-section-scroll")
+                    .h(height)
+                    .overflow_hidden()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border)
+                    .child(picker),
+            );
+
+        Some(section)
+    }
+
     fn render_commit_entry(
         &self,
         ix: usize,
@@ -4847,7 +5012,7 @@ impl GitPanel {
             .cursor_pointer()
             .child(graph)
             .child(
-                Label::new(subject.clone())
+                Label::new(subject)
                     .size(LabelSize::Small)
                     .truncate(),
             );
@@ -4872,7 +5037,6 @@ impl GitPanel {
             .on_click({
                 let sha = sha.clone();
                 let repo = repo.downgrade();
-                let workspace = workspace.clone();
                 move |_, window, cx| {
                     CommitView::open(
                         sha.to_string(),
@@ -4894,19 +5058,15 @@ impl GitPanel {
                     }
                 }),
             )
-            .hoverable_tooltip({
-                let sha = sha.clone();
-                let repo = repo.clone();
-                move |window, cx| {
-                    GitPanelMessageTooltip::new(
-                        this.clone(),
-                        sha.clone(),
-                        repo.clone(),
-                        window,
-                        cx,
-                    )
-                    .into()
-                }
+            .hoverable_tooltip(move |window, cx| {
+                GitPanelMessageTooltip::new(
+                    this.clone(),
+                    sha.clone(),
+                    repo.clone(),
+                    window,
+                    cx,
+                )
+                .into()
             })
             .into_any_element()
     }
@@ -4920,7 +5080,7 @@ impl GitPanel {
     ) {
         let menu = ContextMenu::build(window, cx, move |menu, _window, _cx| {
             let sha_for_revert = sha.clone();
-            let sha_for_copy = sha.clone();
+            let sha_for_copy = sha;
             menu.entry("Revert to this commit", None, move |_window, _cx| {
                 log::info!("Revert to commit: {}", sha_for_revert);
                 // TODO: Implement git reset --hard <sha>
@@ -5936,6 +6096,9 @@ impl Render for GitPanel {
                     .when(!self.amend_pending, |this| {
                         this.children(self.render_previous_commit(window, cx))
                     })
+                    .when(!self.amend_pending, |this| {
+                        this.children(self.render_git_picker_section(window, cx))
+                    })
                     .into_any_element(),
             )
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {
@@ -6111,6 +6274,7 @@ pub struct PanelRepoFooter {
     active_repository: SharedString,
     branch: Option<Branch>,
     head_commit: Option<CommitDetails>,
+    current_branch_pr: Option<pull_request_picker::PullRequestEntry>,
 
     // Getting a GitPanel in previews will be difficult.
     //
@@ -6123,12 +6287,14 @@ impl PanelRepoFooter {
         active_repository: SharedString,
         branch: Option<Branch>,
         head_commit: Option<CommitDetails>,
+        current_branch_pr: Option<pull_request_picker::PullRequestEntry>,
         git_panel: Option<Entity<GitPanel>>,
     ) -> Self {
         Self {
             active_repository,
             branch,
             head_commit,
+            current_branch_pr,
             git_panel,
         }
     }
@@ -6138,6 +6304,7 @@ impl PanelRepoFooter {
             active_repository,
             branch,
             head_commit: None,
+            current_branch_pr: None,
             git_panel: None,
         }
     }
@@ -6289,7 +6456,27 @@ impl RenderOnce for PanelRepoFooter {
                                 .child("/"),
                         )
                     })
-                    .child(branch_selector),
+                    .child(branch_selector)
+                    .when_some(self.current_branch_pr.as_ref(), |this, pr| {
+                        let pr_label = format!("PR #{}", pr.number);
+                        let pr_url = pr.url.clone();
+                        let pr_title = pr.title.clone();
+                        let color = if pr.is_draft {
+                            Color::Muted
+                        } else {
+                            Color::Success
+                        };
+                        this.child(
+                            Button::new("pr-badge", pr_label)
+                                .size(ButtonSize::None)
+                                .label_size(LabelSize::Small)
+                                .color(color)
+                                .tooltip(Tooltip::text(pr_title))
+                                .on_click(move |_, _, cx| {
+                                    cx.open_url(pr_url.as_str());
+                                }),
+                        )
+                    }),
             )
             .children(if let Some(git_panel) = self.git_panel {
                 git_panel.update(cx, |git_panel, cx| git_panel.render_remote_button(cx))
