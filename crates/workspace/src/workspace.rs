@@ -4024,6 +4024,10 @@ impl Workspace {
                 .update(cx, |pane, cx| window.focus(&pane.focus_handle(cx), cx))
         }
 
+        if !closing_overlay {
+            self.clear_stale_overlay_focus_if_no_overlays(cx);
+        }
+
         cx.notify();
         self.serialize_workspace(window, cx);
     }
@@ -4044,6 +4048,8 @@ impl Workspace {
             });
             if had_overlay && !self.overlay_docks_visible(cx) {
                 self.restore_overlay_focus(window, cx);
+            } else {
+                self.clear_stale_overlay_focus_if_no_overlays(cx);
             }
             return true;
         }
@@ -4062,6 +4068,7 @@ impl Workspace {
         if had_overlay_docks {
             self.restore_overlay_focus(window, cx);
         } else {
+            self.clear_stale_overlay_focus_if_no_overlays(cx);
             cx.focus_self(window);
         }
         cx.notify();
@@ -4143,6 +4150,9 @@ impl Workspace {
         }
 
         let panel = self.focus_or_unfocus_panel::<T>(window, cx, &mut |_, _, _| true)?;
+        if self.resolved_dock_mode_for_panel::<T>(cx) == DockPanelMode::Push {
+            self.clear_stale_overlay_focus_if_no_overlays(cx);
+        }
         panel.to_any().downcast().ok()
     }
 
@@ -4174,6 +4184,10 @@ impl Workspace {
             if panel_mode == DockPanelMode::Overlay && !self.overlay_docks_visible(cx) {
                 self.restore_overlay_focus(window, cx);
             }
+        }
+
+        if panel_mode == DockPanelMode::Push {
+            self.clear_stale_overlay_focus_if_no_overlays(cx);
         }
 
         telemetry::event!(
@@ -4213,6 +4227,9 @@ impl Workspace {
             }
             self.open_panel::<T>(window, cx);
             self.focus_panel::<T>(window, cx);
+            if panel_mode == DockPanelMode::Push {
+                self.clear_stale_overlay_focus_if_no_overlays(cx);
+            }
             true
         }
     }
@@ -4422,6 +4439,12 @@ impl Workspace {
 
         self.active_pane
             .update(cx, |pane, cx| window.focus(&pane.focus_handle(cx), cx));
+    }
+
+    fn clear_stale_overlay_focus_if_no_overlays(&mut self, cx: &App) {
+        if !self.overlay_docks_visible(cx) {
+            self.overlay_dock_previous_focus = None;
+        }
     }
 
     fn dismiss_zoomed_items_to_reveal(
@@ -12718,6 +12741,71 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn switching_between_overlay_panels_keeps_same_dock_as_overlay_in_mixed_mode(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+        set_dock_panel_modes(
+            cx,
+            DockPanelMode::Push,
+            [
+                (PROJECT_PANEL_KEY, DockPanelMode::Overlay),
+                (TestPanel::panel_key(), DockPanelMode::Overlay),
+            ],
+        );
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |multi_workspace, _| {
+            multi_workspace.workspace().clone()
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.register_action(|workspace, _: &dock::test::ToggleTestPanel, window, cx| {
+                workspace.toggle_panel_focus::<TestPanel>(window, cx);
+            });
+
+            let project_panel = cx.new(|cx| TestProjectPanel::new(DockPosition::Left, cx));
+            workspace.add_panel(project_panel, window, cx);
+
+            let other_panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 50, cx));
+            workspace.add_panel(other_panel, window, cx);
+
+            workspace.toggle_panel_visibility::<TestProjectPanel>(window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(workspace.overlay_docks_visible(cx));
+            window.dispatch_action(Box::new(dock::test::ToggleTestPanel), cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(
+                workspace.overlay_docks_visible(cx),
+                "switching between overlay panels should keep the dock in the overlay layer"
+            );
+            assert!(
+                workspace.dock_renders_as_overlay(DockPosition::Left, workspace.left_dock(), cx),
+                "left dock should remain an overlay when the replacement panel also resolves to overlay"
+            );
+
+            let visible_panel = workspace
+                .left_dock()
+                .read(cx)
+                .visible_panel()
+                .expect("left dock should have a visible panel");
+            assert_eq!(visible_panel.panel_key(), TestPanel::panel_key());
+
+            let other_panel = workspace.panel::<TestPanel>(cx).expect("test panel exists");
+            assert!(other_panel.read(cx).focus_handle(cx).contains_focused(window, cx));
+        });
+    }
+
+    #[gpui::test]
     async fn switching_from_overlay_panel_to_push_panel_reflows_same_dock(
         cx: &mut gpui::TestAppContext,
     ) {
@@ -12769,6 +12857,62 @@ mod tests {
                 .visible_panel()
                 .expect("left dock should have a visible panel");
             assert_eq!(visible_panel.panel_key(), TestPanel::panel_key());
+
+            let other_panel = workspace.panel::<TestPanel>(cx).expect("test panel exists");
+            assert!(other_panel.read(cx).focus_handle(cx).contains_focused(window, cx));
+        });
+    }
+
+    #[gpui::test]
+    async fn switching_from_overlay_panel_to_push_panel_clears_saved_overlay_focus(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+        set_dock_panel_modes(cx, DockPanelMode::Push, [(PROJECT_PANEL_KEY, DockPanelMode::Overlay)]);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |multi_workspace, _| {
+            multi_workspace.workspace().clone()
+        });
+
+        let item = cx.new(TestItem::new);
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.register_action(|workspace, _: &dock::test::ToggleTestPanel, window, cx| {
+                workspace.toggle_panel_focus::<TestPanel>(window, cx);
+            });
+
+            workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+
+            let project_panel = cx.new(|cx| TestProjectPanel::new(DockPosition::Left, cx));
+            workspace.add_panel(project_panel, window, cx);
+
+            let other_panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 50, cx));
+            workspace.add_panel(other_panel, window, cx);
+
+            let pane_focus = workspace.active_pane().read(cx).focus_handle(cx);
+            window.focus(&pane_focus, cx);
+            workspace.toggle_panel_visibility::<TestProjectPanel>(window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(workspace.overlay_dock_previous_focus.is_some());
+            window.dispatch_action(Box::new(dock::test::ToggleTestPanel), cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(
+                !workspace.overlay_docks_visible(cx),
+                "push takeover should remove the dock from the overlay layer"
+            );
+            assert!(
+                workspace.overlay_dock_previous_focus.is_none(),
+                "saved overlay focus should be cleared when a push panel takes over the last visible overlay"
+            );
 
             let other_panel = workspace.panel::<TestPanel>(cx).expect("test panel exists");
             assert!(other_panel.read(cx).focus_handle(cx).contains_focused(window, cx));
