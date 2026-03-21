@@ -1,6 +1,9 @@
 use std::{num::NonZeroUsize, time::Duration};
 
-use crate::DockPosition;
+use crate::{
+    DockPosition,
+    dock::{Dock, Panel},
+};
 use collections::HashMap;
 use serde::Deserialize;
 pub use settings::{
@@ -152,6 +155,16 @@ impl WorkspaceSettings {
             .get(panel_key)
             .copied()
             .unwrap_or(self.dock_panel_mode)
+    }
+
+    pub fn resolved_dock_mode_for_panel<T: Panel>(&self) -> DockPanelMode {
+        self.resolved_dock_panel_mode_for_key(T::panel_key())
+    }
+
+    pub fn resolved_dock_mode_for_dock(&self, dock: &Dock) -> DockPanelMode {
+        dock.active_panel()
+            .map(|panel| self.resolved_dock_panel_mode_for_key(panel.panel_key()))
+            .unwrap_or_else(|| self.fallback_dock_panel_mode())
     }
 }
 

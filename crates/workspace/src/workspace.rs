@@ -3956,6 +3956,11 @@ impl Workspace {
 
         let other_is_zoomed = self.zoomed.is_some() && self.zoomed_position != Some(dock_side);
         let was_visible = self.is_dock_at_position_open(dock_side, cx) && !other_is_zoomed;
+        let closing_overlay = was_visible
+            && self.dock_renders_as_overlay(dock_side, &self.dock_at_position(dock_side), cx);
+        let had_overlay_docks = self.overlay_docks_visible(cx);
+        let previous_focus = (!had_overlay_docks).then(|| window.focused(cx)).flatten();
+        let mut opening_overlay = false;
 
         if let Some(panel) = self.dock_at_position(dock_side).read(cx).active_panel() {
             telemetry::event!(
@@ -3966,9 +3971,6 @@ impl Workspace {
         }
         if was_visible {
             self.save_open_dock_positions(cx);
-        } else if self.dock_panel_mode(cx) == DockPanelMode::Overlay && !self.overlay_docks_visible(cx)
-        {
-            self.overlay_dock_previous_focus = window.focused(cx);
         }
 
         let dock = self.dock_at_position(dock_side);
@@ -3983,6 +3985,12 @@ impl Workspace {
                     return;
                 };
                 dock.activate_panel(panel_ix, window, cx);
+            }
+
+            if !was_visible {
+                opening_overlay =
+                    WorkspaceSettings::get_global(cx).resolved_dock_mode_for_dock(dock)
+                        == DockPanelMode::Overlay;
             }
 
             if let Some(active_panel) = dock.active_panel() {
@@ -4001,14 +4009,15 @@ impl Workspace {
             }
         });
 
+        if opening_overlay && !had_overlay_docks {
+            self.overlay_dock_previous_focus = previous_focus;
+        }
+
         if reveal_dock {
             self.dismiss_zoomed_items_to_reveal(Some(dock_side), window, cx);
         }
 
-        if self.dock_panel_mode(cx) == DockPanelMode::Overlay
-            && was_visible
-            && !self.overlay_docks_visible(cx)
-        {
+        if closing_overlay && !self.overlay_docks_visible(cx) {
             self.restore_overlay_focus(window, cx);
         } else if focus_center {
             self.active_pane
@@ -4027,12 +4036,13 @@ impl Workspace {
 
     fn close_active_dock(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if let Some(dock) = self.active_dock(window, cx).cloned() {
+            let position = dock.read(cx).position();
+            let had_overlay = self.dock_renders_as_overlay(position, &dock, cx);
             self.save_open_dock_positions(cx);
             dock.update(cx, |dock, cx| {
                 dock.set_open(false, window, cx);
             });
-            if self.dock_panel_mode(cx) == DockPanelMode::Overlay && !self.overlay_docks_visible(cx)
-            {
+            if had_overlay && !self.overlay_docks_visible(cx) {
                 self.restore_overlay_focus(window, cx);
             }
             return true;
@@ -4042,8 +4052,7 @@ impl Workspace {
 
     pub fn close_all_docks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.save_open_dock_positions(cx);
-        let had_overlay_docks =
-            self.dock_panel_mode(cx) == DockPanelMode::Overlay && self.overlay_docks_visible(cx);
+        let had_overlay_docks = self.overlay_docks_visible(cx);
         for dock in self.all_docks() {
             dock.update(cx, |dock, cx| {
                 dock.set_open(false, window, cx);
@@ -4126,7 +4135,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Entity<T>> {
-        if self.dock_panel_mode(cx) == DockPanelMode::Overlay
+        if self.resolved_dock_mode_for_panel::<T>(cx) == DockPanelMode::Overlay
             && !self.is_panel_visible::<T>(cx)
             && !self.overlay_docks_visible(cx)
         {
@@ -4146,7 +4155,8 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        if self.dock_panel_mode(cx) == DockPanelMode::Overlay
+        let panel_mode = self.resolved_dock_mode_for_panel::<T>(cx);
+        if panel_mode == DockPanelMode::Overlay
             && !self.is_panel_visible::<T>(cx)
             && !self.overlay_docks_visible(cx)
         {
@@ -4161,8 +4171,7 @@ impl Workspace {
 
         if !did_focus_panel && WorkspaceSettings::get_global(cx).close_panel_on_toggle {
             self.close_panel::<T>(window, cx);
-            if self.dock_panel_mode(cx) == DockPanelMode::Overlay && !self.overlay_docks_visible(cx)
-            {
+            if panel_mode == DockPanelMode::Overlay && !self.overlay_docks_visible(cx) {
                 self.restore_overlay_focus(window, cx);
             }
         }
@@ -4191,16 +4200,15 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        let panel_mode = self.resolved_dock_mode_for_panel::<T>(cx);
         if self.is_panel_visible::<T>(cx) {
             self.close_panel::<T>(window, cx);
-            if self.dock_panel_mode(cx) == DockPanelMode::Overlay && !self.overlay_docks_visible(cx)
-            {
+            if panel_mode == DockPanelMode::Overlay && !self.overlay_docks_visible(cx) {
                 self.restore_overlay_focus(window, cx);
             }
             false
         } else {
-            if self.dock_panel_mode(cx) == DockPanelMode::Overlay && !self.overlay_docks_visible(cx)
-            {
+            if panel_mode == DockPanelMode::Overlay && !self.overlay_docks_visible(cx) {
                 self.overlay_dock_previous_focus = window.focused(cx);
             }
             self.open_panel::<T>(window, cx);
@@ -4377,8 +4385,12 @@ impl Workspace {
         ]
     }
 
-    fn dock_panel_mode(&self, cx: &App) -> DockPanelMode {
-        WorkspaceSettings::get_global(cx).fallback_dock_panel_mode()
+    fn resolved_dock_mode_for_panel<T: Panel>(&self, cx: &App) -> DockPanelMode {
+        WorkspaceSettings::get_global(cx).resolved_dock_mode_for_panel::<T>()
+    }
+
+    fn resolved_dock_mode_for_dock(&self, dock: &Dock, cx: &App) -> DockPanelMode {
+        WorkspaceSettings::get_global(cx).resolved_dock_mode_for_dock(dock)
     }
 
     fn dock_renders_as_overlay(
@@ -4387,7 +4399,7 @@ impl Workspace {
         dock: &Entity<Dock>,
         cx: &App,
     ) -> bool {
-        self.dock_panel_mode(cx) == DockPanelMode::Overlay
+        self.resolved_dock_mode_for_dock(&dock.read(cx), cx) == DockPanelMode::Overlay
             && self.zoomed_position != Some(position)
             && dock.read(cx).is_open()
             && dock.read(cx).visible_panel().is_some()
@@ -12706,6 +12718,159 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn switching_from_overlay_panel_to_push_panel_reflows_same_dock(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+        set_dock_panel_modes(cx, DockPanelMode::Push, [(PROJECT_PANEL_KEY, DockPanelMode::Overlay)]);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |multi_workspace, _| {
+            multi_workspace.workspace().clone()
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.register_action(|workspace, _: &dock::test::ToggleTestPanel, window, cx| {
+                workspace.toggle_panel_focus::<TestPanel>(window, cx);
+            });
+
+            let project_panel = cx.new(|cx| TestProjectPanel::new(DockPosition::Left, cx));
+            workspace.add_panel(project_panel, window, cx);
+
+            let other_panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 50, cx));
+            workspace.add_panel(other_panel, window, cx);
+
+            workspace.toggle_panel_visibility::<TestProjectPanel>(window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(workspace.overlay_docks_visible(cx));
+            window.dispatch_action(Box::new(dock::test::ToggleTestPanel), cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(
+                !workspace.overlay_docks_visible(cx),
+                "switching to a push-mode panel should remove the left dock from the overlay layer"
+            );
+            assert!(
+                !workspace.dock_renders_as_overlay(DockPosition::Left, workspace.left_dock(), cx),
+                "left dock should rejoin layout for the push-mode panel"
+            );
+
+            let visible_panel = workspace
+                .left_dock()
+                .read(cx)
+                .visible_panel()
+                .expect("left dock should have a visible panel");
+            assert_eq!(visible_panel.panel_key(), TestPanel::panel_key());
+
+            let other_panel = workspace.panel::<TestPanel>(cx).expect("test panel exists");
+            assert!(other_panel.read(cx).focus_handle(cx).contains_focused(window, cx));
+        });
+    }
+
+    #[gpui::test]
+    async fn switching_from_push_panel_to_overlay_panel_promotes_same_dock_to_overlay(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+        set_dock_panel_modes(cx, DockPanelMode::Push, [(PROJECT_PANEL_KEY, DockPanelMode::Overlay)]);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let project_panel = cx.new(|cx| TestProjectPanel::new(DockPosition::Left, cx));
+            workspace.add_panel(project_panel, window, cx);
+
+            let other_panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 50, cx));
+            workspace.add_panel(other_panel, window, cx);
+
+            workspace.toggle_panel_focus::<TestPanel>(window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(!workspace.overlay_docks_visible(cx));
+            workspace.toggle_panel_visibility::<TestProjectPanel>(window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(
+                workspace.overlay_docks_visible(cx),
+                "switching to an overlay-mode panel should move the left dock into the overlay layer"
+            );
+            assert!(
+                workspace.dock_renders_as_overlay(DockPosition::Left, workspace.left_dock(), cx),
+                "left dock should render as an overlay for the project panel"
+            );
+
+            let visible_panel = workspace
+                .left_dock()
+                .read(cx)
+                .visible_panel()
+                .expect("left dock should have a visible panel");
+            assert_eq!(visible_panel.panel_key(), PROJECT_PANEL_KEY);
+
+            let project_panel = workspace
+                .panel::<TestProjectPanel>(cx)
+                .expect("project panel exists");
+            assert!(project_panel.read(cx).focus_handle(cx).contains_focused(window, cx));
+        });
+    }
+
+    #[gpui::test]
+    async fn dismiss_overlay_docks_leaves_push_mode_docks_open(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+        set_dock_panel_modes(cx, DockPanelMode::Push, [(PROJECT_PANEL_KEY, DockPanelMode::Overlay)]);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let project_panel = cx.new(|cx| TestProjectPanel::new(DockPosition::Left, cx));
+            workspace.add_panel(project_panel, window, cx);
+
+            let right_panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 50, cx));
+            workspace.add_panel(right_panel, window, cx);
+
+            workspace.toggle_panel_visibility::<TestProjectPanel>(window, cx);
+            workspace.toggle_panel_focus::<TestPanel>(window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert!(workspace.overlay_docks_visible(cx));
+            assert!(workspace.right_dock().read(cx).is_open());
+
+            workspace.dismiss_overlay_docks(window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, _window, cx| {
+            assert!(!workspace.left_dock().read(cx).is_open());
+            assert!(
+                workspace.right_dock().read(cx).is_open(),
+                "dismiss_overlay_docks should leave push-mode docks untouched"
+            );
+            assert!(!workspace.overlay_docks_visible(cx));
+        });
+    }
+
+    #[gpui::test]
     async fn test_close_panel_on_toggle(cx: &mut gpui::TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
@@ -15610,10 +15775,55 @@ mod tests {
     }
 
     fn enable_overlay_dock_panel_mode(cx: &mut TestAppContext) {
+        set_dock_panel_modes(cx, DockPanelMode::Overlay, []);
+    }
+
+    fn set_dock_panel_modes(
+        cx: &mut TestAppContext,
+        fallback: DockPanelMode,
+        overrides: impl IntoIterator<Item = (&'static str, DockPanelMode)>,
+    ) {
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.workspace.dock_panel_mode = Some(DockPanelMode::Overlay);
+                settings.workspace.dock_panel_mode = Some(fallback);
+                settings.workspace.dock_panel_modes = Some(
+                    overrides
+                        .into_iter()
+                        .map(|(key, mode)| (key.to_string(), mode))
+                        .collect(),
+                );
             });
+        });
+    }
+
+    #[gpui::test]
+    async fn resolved_dock_panel_mode_for_key_prefers_override_and_falls_back(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        set_dock_panel_modes(
+            cx,
+            DockPanelMode::Push,
+            [
+                (PROJECT_PANEL_KEY, DockPanelMode::Overlay),
+                (TestPanel::panel_key(), DockPanelMode::Push),
+            ],
+        );
+
+        cx.update(|cx| {
+            let settings = WorkspaceSettings::get_global(cx);
+            assert_eq!(
+                settings.resolved_dock_panel_mode_for_key(PROJECT_PANEL_KEY),
+                DockPanelMode::Overlay
+            );
+            assert_eq!(
+                settings.resolved_dock_panel_mode_for_key(TestPanel::panel_key()),
+                DockPanelMode::Push
+            );
+            assert_eq!(
+                settings.resolved_dock_panel_mode_for_key("UnknownPanel"),
+                DockPanelMode::Push
+            );
         });
     }
 
