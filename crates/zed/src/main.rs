@@ -813,6 +813,7 @@ fn main() {
         watch_themes(fs.clone(), cx);
         watch_languages(fs.clone(), app_state.languages.clone(), cx);
 
+        zed::i18n::init_with_system_locale();
         let menus = app_menus(cx);
         cx.set_menus(menus);
         initialize_workspace(app_state.clone(), prompt_builder, cx);
