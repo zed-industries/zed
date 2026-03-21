@@ -598,6 +598,27 @@ impl Display for ToolCallStatus {
     }
 }
 
+impl ToolCallStatus {
+    fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            ToolCallStatus::Completed
+                | ToolCallStatus::Failed
+                | ToolCallStatus::Rejected
+                | ToolCallStatus::Canceled
+        )
+    }
+
+    fn starts_new_tool_call(&self) -> bool {
+        matches!(
+            self,
+            ToolCallStatus::Pending
+                | ToolCallStatus::WaitingForConfirmation { .. }
+                | ToolCallStatus::InProgress
+        )
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum ContentBlock {
     Empty,
@@ -1821,7 +1842,13 @@ impl AcpThread {
             );
         }
 
-        if let Some(ix) = self.index_for_tool_call(&id) {
+        if let Some(ix) = self.index_for_tool_call(&id)
+            && !matches!(
+                &self.entries[ix],
+                AgentThreadEntry::ToolCall(call)
+                    if call.status.is_terminal() && status.starts_new_tool_call()
+            )
+        {
             let AgentThreadEntry::ToolCall(call) = &mut self.entries[ix] else {
                 unreachable!()
             };
@@ -1838,18 +1865,28 @@ impl AcpThread {
 
             cx.emit(AcpThreadEvent::EntryUpdated(ix));
         } else {
-            let call = ToolCall::from_acp(
-                update.try_into()?,
-                status,
-                language_registry,
-                self.project.read(cx).path_style(cx),
-                &self.terminals,
-                cx,
-            )?;
-            self.push_entry(AgentThreadEntry::ToolCall(call), cx);
+            self.insert_tool_call_entry(update, status, cx)?;
         };
 
         self.resolve_locations(id, cx);
+        Ok(())
+    }
+
+    fn insert_tool_call_entry(
+        &mut self,
+        update: acp::ToolCallUpdate,
+        status: ToolCallStatus,
+        cx: &mut Context<Self>,
+    ) -> Result<(), acp::Error> {
+        let call = ToolCall::from_acp(
+            update.try_into()?,
+            status,
+            self.project.read(cx).languages().clone(),
+            self.project.read(cx).path_style(cx),
+            &self.terminals,
+            cx,
+        )?;
+        self.push_entry(AgentThreadEntry::ToolCall(call), cx);
         Ok(())
     }
 
@@ -1990,7 +2027,15 @@ impl AcpThread {
         };
 
         let tool_call_id = tool_call.tool_call_id.clone();
-        self.upsert_tool_call_inner(tool_call, status, cx)?;
+        let should_insert_fresh_entry = self
+            .index_for_tool_call(&tool_call_id)
+            .is_some_and(|ix| ix + 1 < self.entries.len());
+
+        if should_insert_fresh_entry {
+            self.insert_tool_call_entry(tool_call, status, cx)?;
+        } else {
+            self.upsert_tool_call_inner(tool_call, status, cx)?;
+        }
         cx.emit(AcpThreadEvent::ToolAuthorizationRequested(
             tool_call_id.clone(),
         ));
