@@ -1526,8 +1526,8 @@
   {
     "context": "GitPicker",
     "bindings": {
-      "cmd-1": "git_picker::ActivateBranchesTab",
-      "cmd-2": "git_picker::ActivateWorktreesTab",
+      "cmd-1": "git_picker::ActivateWorktreesTab",
+      "cmd-2": "git_picker::ActivateBranchesTab",
       "cmd-3": "git_picker::ActivateStashTab",
     },
   },
