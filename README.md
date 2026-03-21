@@ -1,4 +1,33 @@
-# Zed
+# Zed (Custom Fork)
+
+Custom fork of [Zed](https://github.com/zed-industries/zed), a high-performance, multiplayer code editor.
+
+## Custom Features
+
+This fork adds the following features on the `custom` branch:
+
+- **Transient Auto-Selection Context Chip** — Automatically attaches your active editor selection as a context chip in the Agent Thread. Selections are debounced and update as you navigate, giving the agent immediate context about the code you're looking at.
+
+- **Token Usage Display** — Shows token usage details inline next to the progress ring during ACP sessions, with a click-to-toggle for expanded context window information.
+
+- **Context Window Display** — Adds a context window utilization indicator to the Agent Thread footer, letting you see how much of the model's context window is in use.
+
+## Staying Up to Date
+
+This fork tracks upstream via the `main` branch. Custom features live on the `custom` branch, rebased on top of `main`.
+
+```bash
+git fetch upstream
+git checkout main && git pull upstream main
+git checkout custom && git rebase main
+git push --force-with-lease origin custom
+```
+
+---
+
+*Upstream README follows below.*
+
+---
 
 [![Zed](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/zed-industries/zed/main/assets/badge/v0.json)](https://zed.dev)
 [![CI](https://github.com/zed-industries/zed/actions/workflows/run_tests.yml/badge.svg)](https://github.com/zed-industries/zed/actions/workflows/run_tests.yml)
