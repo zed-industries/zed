@@ -47,6 +47,7 @@ impl SidebarRecentProjects {
                 workspaces: Vec::new(),
                 filtered_workspaces: Vec::new(),
                 selected_index: 0,
+                has_any_non_local_projects: false,
                 focus_handle: cx.focus_handle(),
             };
 
@@ -122,6 +123,7 @@ pub struct SidebarRecentProjectsDelegate {
     )>,
     filtered_workspaces: Vec<StringMatch>,
     selected_index: usize,
+    has_any_non_local_projects: bool,
     focus_handle: FocusHandle,
 }
 
@@ -135,6 +137,9 @@ impl SidebarRecentProjectsDelegate {
             DateTime<Utc>,
         )>,
     ) {
+        self.has_any_non_local_projects = workspaces
+            .iter()
+            .any(|(_, location, _, _)| !matches!(location, SerializedWorkspaceLocation::Local));
         self.workspaces = workspaces;
     }
 }
@@ -383,7 +388,9 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                     h_flex()
                         .gap_3()
                         .flex_grow()
-                        .child(Icon::new(icon).color(Color::Muted))
+                        .when(self.has_any_non_local_projects, |this| {
+                            this.child(Icon::new(icon).color(Color::Muted))
+                        })
                         .child(highlighted_match.render(window, cx)),
                 )
                 .tooltip(Tooltip::text(tooltip_path))
