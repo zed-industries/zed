@@ -155,6 +155,19 @@ def test_static_url_path():
 +++ b/tests/test_basic.py
 @@ -1372,15 +1372,15 @@
 -de
++def test_static_folder():
+#                       ^[CURSOR_POSITION]
++    pass
+
+
+def test_static_url_path():
+```
+
+```diff
+--- a/tests/test_basic.py
++++ b/tests/test_basic.py
+@@ -1372,15 +1372,15 @@
+-de
 +def test_static_route_with_host_matching(app, client):
 +    
 #    ^[CURSOR_POSITION]

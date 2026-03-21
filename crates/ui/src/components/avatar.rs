@@ -73,7 +73,7 @@ impl Avatar {
 impl RenderOnce for Avatar {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let border_width = if self.border_color.is_some() {
-            px(2.)
+            px(1.)
         } else {
             px(0.)
         };

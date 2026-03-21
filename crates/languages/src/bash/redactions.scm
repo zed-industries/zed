@@ -1,2 +1,2 @@
 (variable_assignment
-    value: (_) @redact)
+  value: (_) @redact)

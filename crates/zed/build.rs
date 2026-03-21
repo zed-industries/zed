@@ -2,6 +2,27 @@
 use std::process::Command;
 
 fn main() {
+    #[cfg(target_os = "linux")]
+    {
+        // Add rpaths for libraries that webrtc-sys dlopens at runtime.
+        // This is mostly required for hosts with non-standard SO installation
+        // locations such as NixOS.
+        let dlopened_libs = ["libva", "libva-drm", "egl"];
+
+        let mut rpath_dirs = std::collections::BTreeSet::new();
+        for lib in &dlopened_libs {
+            if let Some(libdir) = pkg_config::get_variable(lib, "libdir").ok() {
+                rpath_dirs.insert(libdir);
+            } else {
+                eprintln!("zed build.rs: {lib} not found in pkg-config's path");
+            }
+        }
+
+        for dir in &rpath_dirs {
+            println!("cargo:rustc-link-arg=-Wl,-rpath,{dir}");
+        }
+    }
+
     if cfg!(target_os = "macos") {
         println!("cargo:rustc-env=MACOSX_DEPLOYMENT_TARGET=10.15.7");
 
@@ -24,12 +45,28 @@ fn main() {
         "cargo:rustc-env=TARGET={}",
         std::env::var("TARGET").unwrap()
     );
-    if let Ok(output) = Command::new("git").args(["rev-parse", "HEAD"]).output()
-        && output.status.success()
-    {
-        let git_sha = String::from_utf8_lossy(&output.stdout);
-        let git_sha = git_sha.trim();
 
+    let git_sha = match std::env::var("ZED_COMMIT_SHA").ok() {
+        Some(git_sha) => {
+            // In deterministic build environments such as Nix, we inject the commit sha into the build script.
+            Some(git_sha)
+        }
+        None => {
+            if let Some(output) = Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .output()
+                .ok()
+                && output.status.success()
+            {
+                let git_sha = String::from_utf8_lossy(&output.stdout);
+                Some(git_sha.trim().to_string())
+            } else {
+                None
+            }
+        }
+    };
+
+    if let Some(git_sha) = git_sha {
         println!("cargo:rustc-env=ZED_COMMIT_SHA={git_sha}");
 
         if let Some(build_identifier) = option_env!("GITHUB_RUN_NUMBER") {

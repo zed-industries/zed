@@ -248,7 +248,10 @@ fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
     static KEYWORDS_BY_FEATURE: OnceLock<BTreeMap<Feature, Vec<&'static str>>> = OnceLock::new();
     KEYWORDS_BY_FEATURE.get_or_init(|| {
         BTreeMap::from_iter([
-            (Feature::AgentClaude, vec!["claude", "claude code"]),
+            (
+                Feature::AgentClaude,
+                vec!["claude", "claude code", "claude agent"],
+            ),
             (Feature::AgentCodex, vec!["codex", "codex cli"]),
             (Feature::AgentGemini, vec!["gemini", "gemini cli"]),
             (
@@ -867,9 +870,12 @@ impl ExtensionsPage {
             )
             .child(
                 h_flex()
+                    .min_w_0()
+                    .w_full()
                     .justify_between()
                     .child(
                         h_flex()
+                            .min_w_0()
                             .gap_1()
                             .child(
                                 Icon::new(IconName::Person)
@@ -886,6 +892,7 @@ impl ExtensionsPage {
                     .child(
                         h_flex()
                             .gap_1()
+                            .flex_shrink_0()
                             .child({
                                 let repo_url_for_tooltip = repository_url.clone();
 
@@ -1049,10 +1056,11 @@ impl ExtensionsPage {
                     "Install",
                 )
                 .style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                .icon(IconName::Download)
-                .icon_size(IconSize::Small)
-                .icon_color(Color::Muted)
-                .icon_position(IconPosition::Start)
+                .start_icon(
+                    Icon::new(IconName::Download)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
+                )
                 .on_click({
                     let extension_id = extension.id.clone();
                     move |_, _, cx| {
@@ -1071,10 +1079,11 @@ impl ExtensionsPage {
                     "Install",
                 )
                 .style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                .icon(IconName::Download)
-                .icon_size(IconSize::Small)
-                .icon_color(Color::Muted)
-                .icon_position(IconPosition::Start)
+                .start_icon(
+                    Icon::new(IconName::Download)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
+                )
                 .disabled(true),
                 configure: None,
                 upgrade: None,
@@ -1472,10 +1481,11 @@ impl ExtensionsPage {
                 }
             });
         let open_registry_button = Button::new("open_registry", "Learn More")
-            .icon(IconName::ArrowUpRight)
-            .icon_size(IconSize::Small)
-            .icon_position(IconPosition::End)
-            .icon_color(Color::Muted)
+            .end_icon(
+                Icon::new(IconName::ArrowUpRight)
+                    .size(IconSize::Small)
+                    .color(Color::Muted),
+            )
             .on_click({
                 move |_event, _window, cx| {
                     telemetry::event!(
@@ -1513,9 +1523,7 @@ impl ExtensionsPage {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let docs_url_button = Button::new("open_docs", "View Documentation")
-            .icon(IconName::ArrowUpRight)
-            .icon_size(IconSize::Small)
-            .icon_position(IconPosition::End)
+            .end_icon(Icon::new(IconName::ArrowUpRight).size(IconSize::Small))
             .on_click({
                 move |_event, _window, cx| {
                     telemetry::event!(
@@ -1587,8 +1595,8 @@ impl ExtensionsPage {
         for feature in &self.upsells {
             let banner = match feature {
                 Feature::AgentClaude => self.render_feature_upsell_banner(
-                    "Claude Code support is built-in to Zed!".into(),
-                    "https://zed.dev/docs/ai/external-agents#claude-code".into(),
+                    "Claude Agent support is built-in to Zed!".into(),
+                    "https://zed.dev/docs/ai/external-agents#claude-agent".into(),
                     false,
                     cx,
                 ),
@@ -1880,7 +1888,7 @@ impl Item for ExtensionsPage {
         false
     }
 
-    fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
+    fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(workspace::item::ItemEvent)) {
         f(*event)
     }
 }

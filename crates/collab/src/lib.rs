@@ -18,6 +18,9 @@ use serde::Deserialize;
 use std::{path::PathBuf, sync::Arc};
 use util::ResultExt;
 
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const REVISION: Option<&'static str> = option_env!("GITHUB_SHA");
+
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 pub enum Error {
@@ -150,6 +153,14 @@ impl Config {
         }
     }
 
+    /// Returns the base Zed Cloud URL.
+    pub fn zed_cloud_url(&self) -> &str {
+        match self.zed_environment.as_ref() {
+            "development" => "http://localhost:8787",
+            _ => "https://cloud.zed.dev",
+        }
+    }
+
     #[cfg(feature = "test-support")]
     pub fn test() -> Self {
         Self {
@@ -199,6 +210,7 @@ impl ServiceMode {
 
 pub struct AppState {
     pub db: Arc<Database>,
+    pub http_client: Option<reqwest::Client>,
     pub livekit_client: Option<Arc<dyn livekit_api::Client>>,
     pub blob_store_client: Option<aws_sdk_s3::Client>,
     pub executor: Executor,
@@ -228,9 +240,16 @@ impl AppState {
             None
         };
 
+        let user_agent = format!("Collab/{VERSION} ({})", REVISION.unwrap_or("unknown"));
+        let http_client = reqwest::Client::builder()
+            .user_agent(user_agent)
+            .build()
+            .context("failed to construct HTTP client")?;
+
         let db = Arc::new(db);
         let this = Self {
             db: db.clone(),
+            http_client: Some(http_client),
             livekit_client,
             blob_store_client: build_blob_store_client(&config).await.log_err(),
             executor,

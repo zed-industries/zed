@@ -14,7 +14,7 @@ use client::{Client, ProxySettings, UserStore, parse_zed_link};
 use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
 use crashes::InitCrashHandler;
-use db::kvp::{GLOBAL_KEY_VALUE_STORE, KEY_VALUE_STORE};
+use db::kvp::{GlobalKeyValueStore, KeyValueStore};
 use editor::Editor;
 use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
@@ -22,6 +22,7 @@ use futures::{StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
 use git_ui::clone::clone_and_open;
 use gpui::{App, AppContext, Application, AsyncApp, Focusable as _, QuitMode, UpdateGlobal as _};
+use gpui_platform;
 
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
@@ -47,7 +48,7 @@ use std::{
     path::{Path, PathBuf},
     process,
     rc::Rc,
-    sync::{Arc, OnceLock},
+    sync::{Arc, LazyLock, OnceLock},
     time::Instant,
 };
 use theme::{ActiveTheme, GlobalTheme, ThemeRegistry};
@@ -98,7 +99,7 @@ fn files_not_created_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
         .collect::<Vec<_>>().join("\n\n");
 
     eprintln!("{message}: {error_details}");
-    Application::new()
+    Application::with_platform(gpui_platform::current_platform(false))
         .with_quit_mode(QuitMode::Explicit)
         .run(move |cx| {
             if let Ok(window) = cx.open_window(gpui::WindowOptions::default(), |_, cx| {
@@ -193,6 +194,30 @@ fn main() {
     // `zed --crash-handler` Makes zed operate in minidump crash handler mode
     if let Some(socket) = &args.crash_handler {
         crashes::crash_server(socket.as_path());
+        return;
+    }
+
+    #[cfg(target_os = "windows")]
+    if args.record_etw_trace {
+        let zed_pid = args
+            .etw_zed_pid
+            .and_then(|pid| if pid >= 0 { Some(pid as u32) } else { None });
+        let Some(output_path) = args.etw_output else {
+            eprintln!("--etw-output is required for --record-etw-trace");
+            process::exit(1);
+        };
+
+        let Some(etw_socket) = args.etw_socket else {
+            eprintln!("--etw-socket is required for --record-etw-trace");
+            process::exit(1);
+        };
+
+        if let Err(error) =
+            etw_tracing::record_etw_trace(zed_pid, &output_path, etw_socket.as_str())
+        {
+            eprintln!("ETW trace recording failed: {error:#}");
+            process::exit(1);
+        }
         return;
     }
 
@@ -297,27 +322,41 @@ fn main() {
     #[cfg(windows)]
     check_for_conpty_dll();
 
-    let app = Application::new().with_assets(Assets);
+    let app =
+        Application::with_platform(gpui_platform::current_platform(false)).with_assets(Assets);
 
+    let app_db = db::AppDatabase::new();
     let system_id = app.background_executor().spawn(system_id());
-    let installation_id = app.background_executor().spawn(installation_id());
-    let session_id = Uuid::new_v4().to_string();
-    let session = app
+    let installation_id = app
         .background_executor()
-        .spawn(Session::new(session_id.clone()));
+        .spawn(installation_id(KeyValueStore::from_app_db(&app_db)));
+    let session_id = Uuid::new_v4().to_string();
+    let session = app.background_executor().spawn(Session::new(
+        session_id.clone(),
+        KeyValueStore::from_app_db(&app_db),
+    ));
 
-    app.background_executor()
-        .spawn(crashes::init(InitCrashHandler {
+    crashes::init(
+        InitCrashHandler {
             session_id,
-            zed_version: app_version.to_string(),
+            // strip the build and channel information from the version string, we send them separately
+            zed_version: semver::Version::new(
+                app_version.major,
+                app_version.minor,
+                app_version.patch,
+            )
+            .to_string(),
             binary: "zed".to_string(),
             release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
             commit_sha: app_commit_sha
                 .as_ref()
                 .map(|sha| sha.full())
                 .unwrap_or_else(|| "no sha".to_owned()),
-        }))
-        .detach();
+        },
+        |task| {
+            app.background_executor().spawn(task).detach();
+        },
+    );
 
     let (open_listener, mut open_rx) = OpenListener::new();
 
@@ -416,7 +455,8 @@ fn main() {
     });
 
     app.run(move |cx| {
-        let db_trusted_paths = match workspace::WORKSPACE_DB.fetch_trusted_worktrees() {
+        cx.set_global(app_db);
+        let db_trusted_paths = match workspace::WorkspaceDb::global(cx).fetch_trusted_worktrees() {
             Ok(trusted_paths) => trusted_paths,
             Err(e) => {
                 log::error!("Failed to do initial trusted worktrees fetch: {e:#}");
@@ -544,6 +584,19 @@ fn main() {
             session.id().to_owned(),
             cx,
         );
+        cx.subscribe(&user_store, {
+            let telemetry = telemetry.clone();
+            move |_, evt: &client::user::Event, _| match evt {
+                client::user::Event::PrivateUserInfoUpdated => {
+                    crashes::set_user_info(crashes::UserInfo {
+                        metrics_id: telemetry.metrics_id().map(|s| s.to_string()),
+                        is_staff: telemetry.is_staff(),
+                    });
+                }
+                _ => {}
+            }
+        })
+        .detach();
 
         // We should rename these in the future to `first app open`, `first app open for release channel`, and `app open`
         if let (Some(system_id), Some(installation_id)) = (&system_id, &installation_id) {
@@ -609,15 +662,14 @@ fn main() {
         );
 
         copilot_ui::init(&app_state, cx);
-        supermaven::init(app_state.client.clone(), cx);
-        language_model::init(app_state.client.clone(), cx);
+        language_model::init(app_state.user_store.clone(), app_state.client.clone(), cx);
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
         acp_tools::init(cx);
         zed::telemetry_log::init(cx);
         zed::remote_debug::init(cx);
         edit_prediction_ui::init(cx);
         web_search::init(cx);
-        web_search_providers::init(app_state.client.clone(), cx);
+        web_search_providers::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         snippet_provider::init(cx);
         edit_prediction_registry::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         let prompt_builder = PromptBuilder::load(app_state.fs.clone(), stdout_is_a_pty(), cx);
@@ -687,6 +739,7 @@ fn main() {
         git_graph::init(cx);
         feedback::init(cx);
         markdown_preview::init(cx);
+        csv_preview::init(cx);
         svg_preview::init(cx);
         onboarding::init(cx);
         settings_ui::init(cx);
@@ -697,6 +750,8 @@ fn main() {
         json_schema_store::init(cx);
         miniprofiler_ui::init(*STARTUP_TIME.get().unwrap(), cx);
         which_key::init(cx);
+        #[cfg(target_os = "windows")]
+        etw_tracing::init(cx);
 
         cx.observe_global::<SettingsStore>({
             let http = app_state.client.http_client();
@@ -864,7 +919,9 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 })
                 .detach_and_log_err(cx);
             }
-            OpenRequestKind::AgentPanel { initial_prompt } => {
+            OpenRequestKind::AgentPanel {
+                external_source_prompt,
+            } => {
                 cx.spawn(async move |cx| {
                     let multi_workspace =
                         workspace::get_any_active_multi_workspace(app_state, cx.clone()).await?;
@@ -873,7 +930,11 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                         multi_workspace.workspace().update(cx, |workspace, cx| {
                             if let Some(panel) = workspace.focus_panel::<AgentPanel>(window, cx) {
                                 panel.update(cx, |panel, cx| {
-                                    panel.new_external_thread_with_text(initial_prompt, window, cx);
+                                    panel.new_agent_thread_with_external_source_prompt(
+                                        external_source_prompt,
+                                        window,
+                                        cx,
+                                    );
                                 });
                             }
                         });
@@ -920,17 +981,14 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
 
                     thread_store
                         .update(&mut cx.clone(), |store, cx| {
-                            store.save_thread(save_session_id.clone(), db_thread, cx)
+                            store.save_thread(
+                                save_session_id.clone(),
+                                db_thread,
+                                Default::default(),
+                                cx,
+                            )
                         })
                         .await?;
-
-                    let thread_metadata = acp_thread::AgentSessionInfo {
-                        session_id,
-                        cwd: None,
-                        title: Some(format!("🔗 {}", response.title).into()),
-                        updated_at: Some(chrono::Utc::now()),
-                        meta: None,
-                    };
 
                     let sharer_username = response.sharer_username.clone();
 
@@ -938,7 +996,13 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                         workspace.update(cx, |workspace, cx| {
                             if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                                 panel.update(cx, |panel, cx| {
-                                    panel.open_thread(thread_metadata, window, cx);
+                                    panel.open_thread(
+                                        session_id,
+                                        None,
+                                        Some(format!("🔗 {}", response.title).into()),
+                                        window,
+                                        cx,
+                                    );
                                 });
                                 panel.focus_handle(cx).focus(window, cx);
                             }
@@ -1241,42 +1305,37 @@ async fn authenticate(client: Arc<Client>, cx: &AsyncApp) -> Result<()> {
 
 async fn system_id() -> Result<IdType> {
     let key_name = "system_id".to_string();
+    let db = GlobalKeyValueStore::global();
 
-    if let Ok(Some(system_id)) = GLOBAL_KEY_VALUE_STORE.read_kvp(&key_name) {
+    if let Ok(Some(system_id)) = db.read_kvp(&key_name) {
         return Ok(IdType::Existing(system_id));
     }
 
     let system_id = Uuid::new_v4().to_string();
 
-    GLOBAL_KEY_VALUE_STORE
-        .write_kvp(key_name, system_id.clone())
-        .await?;
+    db.write_kvp(key_name, system_id.clone()).await?;
 
     Ok(IdType::New(system_id))
 }
 
-async fn installation_id() -> Result<IdType> {
+async fn installation_id(db: KeyValueStore) -> Result<IdType> {
     let legacy_key_name = "device_id".to_string();
     let key_name = "installation_id".to_string();
 
     // Migrate legacy key to new key
-    if let Ok(Some(installation_id)) = KEY_VALUE_STORE.read_kvp(&legacy_key_name) {
-        KEY_VALUE_STORE
-            .write_kvp(key_name, installation_id.clone())
-            .await?;
-        KEY_VALUE_STORE.delete_kvp(legacy_key_name).await?;
+    if let Ok(Some(installation_id)) = db.read_kvp(&legacy_key_name) {
+        db.write_kvp(key_name, installation_id.clone()).await?;
+        db.delete_kvp(legacy_key_name).await?;
         return Ok(IdType::Existing(installation_id));
     }
 
-    if let Ok(Some(installation_id)) = KEY_VALUE_STORE.read_kvp(&key_name) {
+    if let Ok(Some(installation_id)) = db.read_kvp(&key_name) {
         return Ok(IdType::Existing(installation_id));
     }
 
     let installation_id = Uuid::new_v4().to_string();
 
-    KEY_VALUE_STORE
-        .write_kvp(key_name, installation_id.clone())
-        .await?;
+    db.write_kvp(key_name, installation_id.clone()).await?;
 
     Ok(IdType::New(installation_id))
 }
@@ -1285,19 +1344,24 @@ pub(crate) async fn restore_or_create_workspace(
     app_state: Arc<AppState>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
+    let kvp = cx.update(|cx| KeyValueStore::global(cx));
     if let Some((multi_workspaces, remote_workspaces)) = restorable_workspaces(cx, &app_state).await
     {
         let mut results: Vec<Result<(), Error>> = Vec::new();
         let mut tasks = Vec::new();
 
-        let mut local_results = Vec::new();
         for multi_workspace in multi_workspaces {
-            local_results
-                .push(restore_multiworkspace(multi_workspace, app_state.clone(), cx).await);
-        }
-
-        for result in local_results {
-            results.push(result.map(|_| ()));
+            match restore_multiworkspace(multi_workspace, app_state.clone(), cx).await {
+                Ok(result) => {
+                    for error in result.errors {
+                        log::error!("Failed to restore workspace in group: {error:#}");
+                        results.push(Err(error));
+                    }
+                }
+                Err(e) => {
+                    results.push(Err(e));
+                }
+            }
         }
 
         for session_workspace in remote_workspaces {
@@ -1358,7 +1422,7 @@ pub(crate) async fn restore_or_create_workspace(
                         .update(cx, |multi_workspace, _, cx| {
                             multi_workspace.workspace().update(cx, |workspace, cx| {
                                 workspace.show_toast(
-                                    Toast::new(NotificationId::unique::<()>(), message),
+                                    Toast::new(NotificationId::unique::<()>(), message.clone()),
                                     cx,
                                 )
                             });
@@ -1370,14 +1434,26 @@ pub(crate) async fn restore_or_create_workspace(
             });
 
             // If we couldn't show a toast (no windows opened successfully),
-            // we've already logged the errors above, so the user can check logs
+            // open a fallback empty workspace and show the error there
             if !toast_shown {
-                log::error!(
-                    "Failed to show notification for window restoration errors, because no workspace windows were available."
-                );
+                log::error!("All workspace restorations failed. Opening fallback empty workspace.");
+                cx.update(|cx| {
+                    workspace::open_new(
+                        Default::default(),
+                        app_state.clone(),
+                        cx,
+                        |workspace, _window, cx| {
+                            workspace.show_toast(
+                                Toast::new(NotificationId::unique::<()>(), message),
+                                cx,
+                            );
+                        },
+                    )
+                })
+                .await?;
             }
         }
-    } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
+    } else if matches!(kvp.read_kvp(FIRST_OPEN), Ok(None)) {
         cx.update(|cx| show_onboarding_view(app_state, cx)).await?;
     } else {
         cx.update(|cx| {
@@ -1413,7 +1489,8 @@ async fn restorable_workspaces(
     let (remote_workspaces, local_workspaces) = locations
         .into_iter()
         .partition(|sw| matches!(sw.location, SerializedWorkspaceLocation::Remote(_)));
-    let multi_workspaces = workspace::read_serialized_multi_workspaces(local_workspaces);
+    let multi_workspaces =
+        cx.update(|cx| workspace::read_serialized_multi_workspaces(local_workspaces, cx));
     Some((multi_workspaces, remote_workspaces))
 }
 
@@ -1421,7 +1498,12 @@ pub(crate) async fn restorable_workspace_locations(
     cx: &mut AsyncApp,
     app_state: &Arc<AppState>,
 ) -> Option<Vec<SessionWorkspace>> {
-    let mut restore_behavior = cx.update(|cx| WorkspaceSettings::get(None, cx).restore_on_startup);
+    let (mut restore_behavior, db) = cx.update(|cx| {
+        (
+            WorkspaceSettings::get(None, cx).restore_on_startup,
+            workspace::WorkspaceDb::global(cx),
+        )
+    });
 
     let session_handle = app_state.session.clone();
     let (last_session_id, last_session_window_stack) = cx.update(|cx| {
@@ -1444,7 +1526,7 @@ pub(crate) async fn restorable_workspace_locations(
 
     match restore_behavior {
         workspace::RestoreOnStartupBehavior::LastWorkspace => {
-            workspace::last_opened_workspace_location(app_state.fs.as_ref())
+            workspace::last_opened_workspace_location(&db, app_state.fs.as_ref())
                 .await
                 .map(|(workspace_id, location, paths)| {
                     vec![SessionWorkspace {
@@ -1460,6 +1542,7 @@ pub(crate) async fn restorable_workspace_locations(
                 let ordered = last_session_window_stack.is_some();
 
                 let mut locations = workspace::last_session_workspace_locations(
+                    &db,
                     &last_session_id,
                     last_session_window_stack,
                     app_state.fs.as_ref(),
@@ -1502,8 +1585,14 @@ fn init_paths() -> HashMap<io::ErrorKind, Vec<&'static Path>> {
     })
 }
 
+pub(crate) static FORCE_CLI_MODE: LazyLock<bool> = LazyLock::new(|| {
+    let env_var = std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_some();
+    unsafe { std::env::remove_var(FORCE_CLI_MODE_ENV_VAR_NAME) };
+    env_var
+});
+
 fn stdout_is_a_pty() -> bool {
-    std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_none() && io::stdout().is_terminal()
+    !*FORCE_CLI_MODE && io::stdout().is_terminal()
 }
 
 #[derive(Parser, Debug)]
@@ -1591,6 +1680,26 @@ struct Args {
     /// Output current environment variables as JSON to stdout
     #[arg(long, hide = true)]
     printenv: bool,
+
+    /// Record an ETW trace. Must be run as administrator.
+    #[cfg(target_os = "windows")]
+    #[arg(long, hide = true)]
+    record_etw_trace: bool,
+
+    /// The PID of the Zed process to trace for heap analysis.
+    #[cfg(target_os = "windows")]
+    #[arg(long, hide = true, allow_hyphen_values = true)]
+    etw_zed_pid: Option<i64>,
+
+    /// Output path for the ETW trace file.
+    #[cfg(target_os = "windows")]
+    #[arg(long, hide = true)]
+    etw_output: Option<PathBuf>,
+
+    /// Unix socket path for IPC with the parent Zed process.
+    #[cfg(target_os = "windows")]
+    #[arg(long, hide = true)]
+    etw_socket: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -1750,23 +1859,40 @@ fn dump_all_gpui_actions() {
     struct ActionDef {
         name: &'static str,
         human_name: String,
+        schema: Option<serde_json::Value>,
         deprecated_aliases: &'static [&'static str],
+        deprecation_message: Option<&'static str>,
         documentation: Option<&'static str>,
     }
+    let mut generator = settings::KeymapFile::action_schema_generator();
     let mut actions = gpui::generate_list_of_all_registered_actions()
-        .map(|action| ActionDef {
-            name: action.name,
-            human_name: command_palette::humanize_action_name(action.name),
-            deprecated_aliases: action.deprecated_aliases,
-            documentation: action.documentation,
+        .map(|action| {
+            let schema = (action.json_schema)(&mut generator)
+                .map(|s| serde_json::to_value(s).expect("Failed to serialize action schema"));
+            ActionDef {
+                name: action.name,
+                human_name: command_palette::humanize_action_name(action.name),
+                schema,
+                deprecated_aliases: action.deprecated_aliases,
+                deprecation_message: action.deprecation_message,
+                documentation: action.documentation,
+            }
         })
         .collect::<Vec<ActionDef>>();
 
     actions.sort_by_key(|a| a.name);
 
+    let schema_definitions = serde_json::to_value(generator.definitions())
+        .expect("Failed to serialize schema definitions");
+
+    let output = serde_json::json!({
+        "actions": actions,
+        "schema_definitions": schema_definitions,
+    });
+
     io::Write::write(
         &mut std::io::stdout(),
-        serde_json::to_string_pretty(&actions).unwrap().as_bytes(),
+        serde_json::to_string_pretty(&output).unwrap().as_bytes(),
     )
     .unwrap();
 }

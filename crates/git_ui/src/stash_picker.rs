@@ -527,6 +527,7 @@ impl PickerDelegate for StashListDelegate {
                 .p_1p5()
                 .gap_0p5()
                 .justify_end()
+                .flex_wrap()
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child(

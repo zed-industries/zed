@@ -1,0 +1,195 @@
+# PR Size Check — Label & Comment
+#
+# Triggered by workflow_run after pr-size-check.yml completes.
+# Downloads the size result artifact and applies labels + comments.
+#
+# This runs on the base repo with full GITHUB_TOKEN write access,
+# so it works for both same-repo and fork PRs.
+#
+# Security note: The artifact is treated as untrusted data — only
+# structured JSON fields (PR number, size label, color, boolean) are
+# read. No artifact content is executed or interpolated into shell.
+
+name: PR Size Label
+
+on:
+  workflow_run:
+    workflows: ["PR Size Check"]
+    types: [completed]
+
+jobs:
+  apply-labels:
+    if: >
+      github.repository_owner == 'zed-industries' &&
+      github.event.workflow_run.conclusion == 'success'
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Download size result artifact
+        id: download
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            const allArtifacts = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.payload.workflow_run.id,
+            });
+
+            const match = allArtifacts.data.artifacts.find(a => a.name === 'pr-size-result');
+            if (!match) {
+              console.log('No pr-size-result artifact found, skipping');
+              core.setOutput('found', 'false');
+              return;
+            }
+
+            const download = await github.rest.actions.downloadArtifact({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              artifact_id: match.id,
+              archive_format: 'zip',
+            });
+
+            const temp = path.join(process.env.RUNNER_TEMP, 'pr-size');
+            fs.mkdirSync(temp, { recursive: true });
+            fs.writeFileSync(path.join(temp, 'result.zip'), Buffer.from(download.data));
+            core.setOutput('found', 'true');
+
+      - name: Unzip artifact
+        if: steps.download.outputs.found == 'true'
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/pr-size
+        run: unzip "$ARTIFACT_DIR/result.zip" -d "$ARTIFACT_DIR"
+
+      - name: Apply labels and comment
+        if: steps.download.outputs.found == 'true'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            const temp = path.join(process.env.RUNNER_TEMP, 'pr-size');
+            const resultPath = path.join(temp, 'result.json');
+            if (!fs.existsSync(resultPath)) {
+              console.log('No result.json found, skipping');
+              return;
+            }
+
+            const result = JSON.parse(fs.readFileSync(resultPath, 'utf8'));
+
+            // Validate artifact data (treat as untrusted)
+            const prNumber = Number(result.pr_number);
+            const totalChanges = Number(result.total_changes);
+            const sizeLabel = String(result.size_label);
+            const labelColor = String(result.label_color);
+            const hasReviewGuidance = Boolean(result.has_review_guidance);
+
+            if (!prNumber || !sizeLabel.startsWith('Size ')) {
+              core.setFailed(`Invalid artifact data: pr=${prNumber}, label=${sizeLabel}`);
+              return;
+            }
+
+            console.log(`PR #${prNumber}: ${totalChanges} LOC, ${sizeLabel}`);
+
+            // --- Size label (idempotent) ---
+            const existingLabels = (await github.rest.issues.listLabelsOnIssue({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+            })).data.map(l => l.name);
+
+            const existingSizeLabels = existingLabels.filter(l => l.startsWith('Size '));
+            const alreadyCorrect = existingSizeLabels.length === 1 && existingSizeLabels[0] === sizeLabel;
+
+            if (!alreadyCorrect) {
+              for (const label of existingSizeLabels) {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: prNumber,
+                  name: label,
+                });
+              }
+
+              try {
+                await github.rest.issues.createLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: sizeLabel,
+                  color: labelColor,
+                });
+              } catch (e) {
+                if (e.status !== 422) throw e;
+              }
+
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                labels: [sizeLabel],
+              });
+            }
+
+            // --- Large PR handling (400+ LOC) ---
+            if (totalChanges >= 400) {
+              if (!existingLabels.includes('large-pr')) {
+                try {
+                  await github.rest.issues.createLabel({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    name: 'large-pr',
+                    color: 'e99695',
+                  });
+                } catch (e) {
+                  if (e.status !== 422) throw e;
+                }
+
+                await github.rest.issues.addLabels({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: prNumber,
+                  labels: ['large-pr'],
+                });
+              }
+
+              // Comment once with guidance
+              const MARKER = '<!-- pr-size-check -->';
+              const { data: comments } = await github.rest.issues.listComments({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+              });
+
+              const alreadyCommented = comments.some(c => c.body.includes(MARKER));
+              if (!alreadyCommented) {
+                let body = `${MARKER}\n`;
+                body += `### :straight_ruler: PR Size: **${totalChanges} lines changed** (${sizeLabel})\n\n`;
+                body += `Please note: this PR exceeds the 400 LOC soft limit.\n`;
+                body += `- Consider **splitting** into separate PRs if the changes are separable\n`;
+                body += `- Ensure the PR description includes a **guided tour** in the "How to Review" section so reviewers know where to start\n`;
+
+                if (hasReviewGuidance) {
+                  body += `\n:white_check_mark: "How to Review" section appears to include guidance — thank you!\n`;
+                }
+
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: prNumber,
+                  body: body,
+                });
+              }
+            }
+
+            console.log(`PR #${prNumber}: labeled ${sizeLabel}, done`);
+defaults:
+  run:
+    shell: bash -euxo pipefail {0}

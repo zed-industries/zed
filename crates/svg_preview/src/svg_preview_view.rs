@@ -182,7 +182,7 @@ impl SvgPreviewView {
             buffer,
             window,
             move |this, _buffer, event: &BufferEvent, window, cx| match event {
-                BufferEvent::Edited | BufferEvent::Saved => {
+                BufferEvent::Edited { .. } | BufferEvent::Saved => {
                     this.render_image(window, cx);
                 }
                 _ => {}
@@ -337,5 +337,5 @@ impl Item for SvgPreviewView {
         Some("svg preview: open")
     }
 
-    fn to_item_events(_event: &Self::Event, _f: impl FnMut(workspace::item::ItemEvent)) {}
+    fn to_item_events(_event: &Self::Event, _f: &mut dyn FnMut(workspace::item::ItemEvent)) {}
 }
