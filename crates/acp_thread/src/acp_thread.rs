@@ -4552,6 +4552,131 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_permission_request_reuses_latest_placeholder_tool_call(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::ToolCall(
+                        acp::ToolCall::new("placeholder-id", "Run permission checks")
+                            .kind(acp::ToolKind::Execute)
+                            .status(acp::ToolCallStatus::InProgress),
+                    ),
+                    cx,
+                )
+                .unwrap();
+
+            thread
+                .request_tool_call_authorization(
+                    acp::ToolCallUpdate::new(
+                        "authorized-id",
+                        acp::ToolCallUpdateFields::new()
+                            .title("Run permission checks")
+                            .kind(acp::ToolKind::Execute),
+                    ),
+                    PermissionOptions::Flat(vec![acp::PermissionOption::new(
+                        acp::PermissionOptionId::new("allow"),
+                        "Allow",
+                        acp::PermissionOptionKind::AllowOnce,
+                    )]),
+                    cx,
+                )
+                .unwrap();
+
+            assert_eq!(thread.entries.len(), 1);
+
+            let AgentThreadEntry::ToolCall(tool_call) = &thread.entries[0] else {
+                panic!("Expected tool call entry");
+            };
+            assert_eq!(tool_call.id, acp::ToolCallId::new("authorized-id"));
+            assert_eq!(tool_call.label.read(cx).source(), "Run permission checks");
+            assert!(matches!(
+                tool_call.status,
+                ToolCallStatus::WaitingForConfirmation { .. }
+            ));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_call_updates_follow_placeholder_alias_after_permission_request(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::ToolCall(
+                        acp::ToolCall::new("placeholder-id", "Run permission checks")
+                            .kind(acp::ToolKind::Execute)
+                            .status(acp::ToolCallStatus::InProgress),
+                    ),
+                    cx,
+                )
+                .unwrap();
+
+            thread
+                .request_tool_call_authorization(
+                    acp::ToolCallUpdate::new(
+                        "authorized-id",
+                        acp::ToolCallUpdateFields::new()
+                            .title("Run permission checks")
+                            .kind(acp::ToolKind::Execute),
+                    ),
+                    PermissionOptions::Flat(vec![acp::PermissionOption::new(
+                        acp::PermissionOptionId::new("allow"),
+                        "Allow",
+                        acp::PermissionOptionKind::AllowOnce,
+                    )]),
+                    cx,
+                )
+                .unwrap();
+
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                        acp::ToolCallId::new("placeholder-id"),
+                        acp::ToolCallUpdateFields::new()
+                            .status(acp::ToolCallStatus::Completed)
+                            .raw_output(serde_json::json!("done")),
+                    )),
+                    cx,
+                )
+                .unwrap();
+
+            assert_eq!(thread.entries.len(), 1);
+
+            let AgentThreadEntry::ToolCall(tool_call) = &thread.entries[0] else {
+                panic!("Expected tool call entry");
+            };
+            assert_eq!(tool_call.id, acp::ToolCallId::new("authorized-id"));
+            assert!(matches!(tool_call.status, ToolCallStatus::Completed));
+            assert_eq!(tool_call.raw_output, Some(serde_json::json!("done")));
+        });
+    }
+
     /// Tests that restoring a checkpoint properly cleans up terminals that were
     /// created after that checkpoint, and cancels any in-progress generation.
     ///
