@@ -414,7 +414,7 @@ impl MacPlatform {
                         submenu.addItem_(Self::create_menu_item(item, delegate, actions, keymap));
                     }
                     item.setSubmenu_(submenu);
-                    item.setEnabled_(!disabled);
+                    item.setEnabled_(if *disabled { NO } else { YES });
                     item.setTitle_(ns_string(name));
                     item
                 }
