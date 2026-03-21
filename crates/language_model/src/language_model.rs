@@ -932,6 +932,30 @@ impl LanguageModelCostInfo {
             SharedString::from(format!("{:.2}", cost))
         }
     }
+
+    pub fn estimate_cost(&self, input_tokens: u64, output_tokens: u64) -> Option<f64> {
+        match self {
+            LanguageModelCostInfo::TokenCost {
+                input_token_cost_per_1m,
+                output_token_cost_per_1m,
+            } => {
+                let cost = (input_tokens as f64 * input_token_cost_per_1m / 1_000_000.0)
+                    + (output_tokens as f64 * output_token_cost_per_1m / 1_000_000.0);
+                Some(cost)
+            }
+            LanguageModelCostInfo::RequestCost { .. } => None,
+        }
+    }
+
+    pub fn format_cost(cost: f64) -> SharedString {
+        if cost < 0.005 {
+            SharedString::from("< $0.01")
+        } else if cost < 10.0 {
+            SharedString::from(format!("${:.2}", cost))
+        } else {
+            SharedString::from(format!("${:.0}", cost))
+        }
+    }
 }
 
 impl LanguageModelProviderId {
@@ -1173,5 +1197,46 @@ mod tests {
         assert_eq!(deserialized.id, original.id);
         assert_eq!(deserialized.name, original.name);
         assert_eq!(deserialized.thought_signature, None);
+    }
+
+    #[test]
+    fn test_estimate_cost_with_token_pricing() {
+        let cost_info = LanguageModelCostInfo::TokenCost {
+            input_token_cost_per_1m: 3.0,
+            output_token_cost_per_1m: 15.0,
+        };
+
+        let cost = cost_info.estimate_cost(100_000, 20_000);
+        assert_eq!(cost, Some(0.6));
+    }
+
+    #[test]
+    fn test_estimate_cost_returns_none_for_request_cost() {
+        let cost_info = LanguageModelCostInfo::RequestCost {
+            cost_per_request: 1.0,
+        };
+
+        assert_eq!(cost_info.estimate_cost(100_000, 20_000), None);
+    }
+
+    #[test]
+    fn test_estimate_cost_with_zero_tokens() {
+        let cost_info = LanguageModelCostInfo::TokenCost {
+            input_token_cost_per_1m: 3.0,
+            output_token_cost_per_1m: 15.0,
+        };
+
+        assert_eq!(cost_info.estimate_cost(0, 0), Some(0.0));
+    }
+
+    #[test]
+    fn test_format_cost() {
+        assert_eq!(
+            LanguageModelCostInfo::format_cost(0.001).as_ref(),
+            "< $0.01"
+        );
+        assert_eq!(LanguageModelCostInfo::format_cost(0.47).as_ref(), "$0.47");
+        assert_eq!(LanguageModelCostInfo::format_cost(1.23).as_ref(), "$1.23");
+        assert_eq!(LanguageModelCostInfo::format_cost(15.5).as_ref(), "$16");
     }
 }

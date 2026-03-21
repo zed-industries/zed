@@ -8,7 +8,7 @@ use editor::actions::OpenExcerpts;
 use crate::StartThreadIn;
 use crate::message_editor::SharedSessionCapabilities;
 use gpui::{Corner, List};
-use language_model::{LanguageModelEffortLevel, Speed};
+use language_model::{LanguageModelCostInfo, LanguageModelEffortLevel, Speed};
 use settings::update_settings_file;
 use ui::{ButtonLike, SplitButton, SplitButtonStyle, Tab};
 use workspace::SERIALIZATION_THROTTLE_TIME;
@@ -3249,6 +3249,15 @@ impl ThreadView {
             let output = crate::text_thread_editor::humanize_token_count(usage.output_tokens);
             let output_max = crate::text_thread_editor::humanize_token_count(max_output_tokens);
 
+            let estimated_cost = self
+                .as_native_thread(cx)
+                .and_then(|thread| thread.read(cx).model().cloned())
+                .and_then(|model| model.model_cost_info())
+                .and_then(|cost_info| {
+                    cost_info.estimate_cost(usage.input_tokens, usage.output_tokens)
+                })
+                .map(LanguageModelCostInfo::format_cost);
+
             Some(
                 h_flex()
                     .flex_shrink_0()
@@ -3294,6 +3303,9 @@ impl ThreadView {
                                     .color(Color::Muted),
                             ),
                     )
+                    .when_some(estimated_cost, |this, cost| {
+                        this.child(Label::new(cost).size(LabelSize::Small).color(Color::Muted))
+                    })
                     .into_any_element(),
             )
         } else {
@@ -3313,6 +3325,15 @@ impl ThreadView {
             let separator_color = Color::Custom(cx.theme().colors().text_disabled.opacity(0.6));
 
             let percentage = format!("{}%", (progress_ratio * 100.0).round() as u32);
+
+            let estimated_cost = self
+                .as_native_thread(cx)
+                .and_then(|thread| thread.read(cx).model().cloned())
+                .and_then(|model| model.model_cost_info())
+                .and_then(|cost_info| {
+                    cost_info.estimate_cost(usage.input_tokens, usage.output_tokens)
+                })
+                .map(LanguageModelCostInfo::format_cost);
 
             let (user_rules_count, project_rules_count) = self
                 .as_native_thread(cx)
@@ -3361,6 +3382,21 @@ impl ThreadView {
                                         .child(Label::new("/").color(separator_color))
                                         .child(Label::new(max.clone()).color(Color::Muted)),
                                 )
+                                .when_some(estimated_cost.clone(), |this, cost| {
+                                    this.child(
+                                        v_flex()
+                                            .mt_1p5()
+                                            .pt_1p5()
+                                            .border_t_1()
+                                            .border_color(cx.theme().colors().border_variant)
+                                            .child(
+                                                Label::new("Estimated cost")
+                                                    .color(Color::Muted)
+                                                    .size(LabelSize::Small),
+                                            )
+                                            .child(Label::new(cost)),
+                                    )
+                                })
                                 .when(user_rules_count > 0 || project_rules_count > 0, |this| {
                                     this.child(
                                         v_flex()
