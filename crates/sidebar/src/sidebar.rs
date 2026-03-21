@@ -886,9 +886,7 @@ impl Sidebar {
                         ThreadEntryWorkspace::Closed(_) => false,
                     };
 
-                    if thread.is_background && thread.status == AgentThreadStatus::Completed {
-                        notified_threads.insert(session_id.clone());
-                    } else if thread.status == AgentThreadStatus::Completed
+                    if thread.status == AgentThreadStatus::Completed
                         && !is_thread_workspace_active
                         && old_statuses.get(session_id) == Some(&AgentThreadStatus::Running)
                     {
