@@ -399,6 +399,8 @@ actions!(
         SelectPrevDirectory,
         /// Opens a diff view to compare two marked files.
         CompareMarkedFiles,
+        /// Dismisses the project panel when it is active.
+        Dismiss,
         /// Undoes the last file operation.
         Undo,
     ]
@@ -1999,6 +2001,8 @@ impl ProjectPanel {
         if cx.stop_active_drag(window) {
             self.drag_target_entry.take();
             self.hover_expand_task.take();
+            window.prevent_default();
+            cx.stop_propagation();
             return;
         }
 
@@ -2007,15 +2011,21 @@ impl ProjectPanel {
             cx.notify();
             self.discard_edit_state(window, cx);
             window.focus(&self.focus_handle, cx);
+            window.prevent_default();
+            cx.stop_propagation();
             return;
         }
 
         if let Some(workspace) = self.workspace.upgrade()
             && workspace.read(cx).panel_is_overlay_visible::<ProjectPanel>(cx)
         {
-            workspace.update(cx, |workspace, cx| {
-                workspace.dismiss_panel_overlay::<ProjectPanel>(window, cx);
+            window.defer(cx, move |window, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.dismiss_panel_overlay::<ProjectPanel>(window, cx);
+                });
             });
+            window.prevent_default();
+            cx.stop_propagation();
             return;
         }
 
@@ -2023,6 +2033,12 @@ impl ProjectPanel {
         cx.notify();
         self.discard_edit_state(window, cx);
         window.focus(&self.focus_handle, cx);
+        window.prevent_default();
+        cx.stop_propagation();
+    }
+
+    fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
+        self.cancel(&menu::Cancel, window, cx);
     }
 
     fn open_entry(
@@ -6646,6 +6662,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::open_split_vertical))
                 .on_action(cx.listener(Self::open_split_horizontal))
                 .on_action(cx.listener(Self::confirm))
+                .on_action(cx.listener(Self::dismiss))
                 .on_action(cx.listener(Self::cancel))
                 .on_action(cx.listener(Self::copy_path))
                 .on_action(cx.listener(Self::copy_relative_path))

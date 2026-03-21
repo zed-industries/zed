@@ -18,7 +18,7 @@
       "enter": "menu::Confirm",
       "ctrl-enter": "menu::SecondaryConfirm",
       "ctrl-c": "menu::Cancel",
-      "escape": "menu::Cancel",
+      "escape": "project_panel::Dismiss",
       "shift-alt-enter": "menu::Restart",
       "alt-enter": ["picker::ConfirmInput", { "secondary": false }],
       "ctrl-alt-enter": ["picker::ConfirmInput", { "secondary": true }],

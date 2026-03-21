@@ -10568,6 +10568,61 @@ async fn run_create_file_in_folded_path_case(
     }
 }
 
+#[gpui::test]
+async fn test_dismiss_closes_project_panel_overlay(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+    enable_overlay_dock_panel_mode(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/project_root",
+        json!({
+            "dir": {
+                "file.txt": ""
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        let panel = ProjectPanel::new(workspace, window, cx);
+        workspace.add_panel(panel.clone(), window, cx);
+        panel
+    });
+    cx.run_until_parked();
+
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.open_panel::<ProjectPanel>(window, cx);
+        workspace.focus_panel::<ProjectPanel>(window, cx);
+    });
+    cx.run_until_parked();
+
+    select_path(&panel, "project_root/dir", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        window.focus(&panel.focus_handle(cx), cx);
+    });
+    cx.run_until_parked();
+
+    workspace.update_in(cx, |workspace, _window, cx| {
+        assert!(workspace.is_panel_visible::<ProjectPanel>(cx));
+    });
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.dismiss(&Dismiss, window, cx);
+    });
+    cx.run_until_parked();
+
+    workspace.update_in(cx, |workspace, _window, cx| {
+        assert!(!workspace.is_panel_visible::<ProjectPanel>(cx));
+    });
+}
+
 pub(crate) fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
@@ -10603,6 +10658,14 @@ fn init_test_with_editor(cx: &mut TestAppContext) {
                     .auto_fold_dirs = Some(false);
                 settings.project.worktree.file_scan_exclusions = Some(Vec::new())
             });
+        });
+    });
+}
+
+fn enable_overlay_dock_panel_mode(cx: &mut TestAppContext) {
+    cx.update_global::<SettingsStore, _>(|store, cx| {
+        store.update_user_settings(cx, |settings| {
+            settings.workspace.dock_panel_mode = Some(settings::DockPanelMode::Overlay);
         });
     });
 }
