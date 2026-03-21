@@ -132,6 +132,7 @@ enum ListEntry {
     NewThread {
         path_list: PathList,
         workspace: Entity<Workspace>,
+        is_active_draft: bool,
     },
 }
 
@@ -427,8 +428,15 @@ impl Sidebar {
         cx.subscribe_in(
             agent_panel,
             window,
-            |this, _agent_panel, event: &AgentPanelEvent, _window, cx| match event {
+            |this, agent_panel, event: &AgentPanelEvent, _window, cx| match event {
                 AgentPanelEvent::ActiveViewChanged => {
+                    let is_new_draft = agent_panel
+                        .read(cx)
+                        .active_conversation()
+                        .is_some_and(|cv| cv.read(cx).parent_id(cx).is_none());
+                    if is_new_draft {
+                        this.focused_thread = None;
+                    }
                     this.observe_draft_editor(cx);
                     this.update_entries(cx);
                 }
@@ -694,6 +702,10 @@ impl Sidebar {
         let has_open_projects = workspaces
             .iter()
             .any(|ws| !workspace_path_list(ws, cx).paths().is_empty());
+
+        let active_ws_index = active_workspace
+            .as_ref()
+            .and_then(|active| workspaces.iter().position(|ws| ws == active));
 
         for (ws_index, workspace) in workspaces.iter().enumerate() {
             if absorbed.contains_key(&ws_index) {
@@ -972,9 +984,12 @@ impl Sidebar {
                 let is_draft_for_workspace = self.agent_panel_visible
                     && self.active_thread_is_draft
                     && self.focused_thread.is_none()
-                    && active_workspace
-                        .as_ref()
-                        .is_some_and(|active| active == workspace);
+                    && active_ws_index.is_some_and(|active_idx| {
+                        active_idx == ws_index
+                            || absorbed
+                                .get(&active_idx)
+                                .is_some_and(|(main_idx, _)| *main_idx == ws_index)
+                    });
 
                 let show_new_thread_entry = thread_count == 0 || is_draft_for_workspace;
 
@@ -996,6 +1011,7 @@ impl Sidebar {
                     entries.push(ListEntry::NewThread {
                         path_list: path_list.clone(),
                         workspace: workspace.clone(),
+                        is_active_draft: is_draft_for_workspace,
                     });
                 }
 
@@ -1145,7 +1161,10 @@ impl Sidebar {
             ListEntry::NewThread {
                 path_list,
                 workspace,
-            } => self.render_new_thread(ix, path_list, workspace, is_selected, cx),
+                is_active_draft,
+            } => {
+                self.render_new_thread(ix, path_list, workspace, *is_active_draft, is_selected, cx)
+            }
         };
 
         if is_group_header_after_first {
@@ -2679,15 +2698,11 @@ impl Sidebar {
         ix: usize,
         _path_list: &PathList,
         workspace: &Entity<Workspace>,
+        is_active_draft: bool,
         is_selected: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let is_active = self.agent_panel_visible
-            && self.active_thread_is_draft
-            && self
-                .multi_workspace
-                .upgrade()
-                .map_or(false, |mw| mw.read(cx).workspace() == workspace);
+        let is_active = is_active_draft && self.agent_panel_visible && self.active_thread_is_draft;
 
         let label: SharedString = if is_active {
             self.active_draft_text(cx)
@@ -5244,6 +5259,196 @@ mod tests {
             assert!(
                 sidebar.active_thread_is_draft,
                 "After creating a new thread the panel should be in draft state"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_cmd_n_shows_new_thread_entry(cx: &mut TestAppContext) {
+        // When the user presses Cmd-N (NewThread action) while viewing a
+        // non-empty thread, the sidebar should show the "New Thread" entry.
+        // This exercises the same code path as the workspace action handler
+        // (which bypasses the sidebar's create_new_thread method).
+        let project = init_test_project_with_agent_panel("/my-project", cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, &project, cx);
+
+        let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
+
+        // Create a non-empty thread (has messages).
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("Done".into()),
+        )]);
+        open_thread_with_connection(&panel, connection, cx);
+        send_message(&panel, cx);
+
+        let session_id = active_session_id(&panel, cx);
+        save_test_thread_metadata(&session_id, path_list.clone(), cx).await;
+        cx.run_until_parked();
+
+        assert_eq!(
+            visible_entries_as_strings(&sidebar, cx),
+            vec!["v [my-project]", "  Hello *"]
+        );
+
+        // Simulate cmd-n
+        let workspace = multi_workspace.read_with(cx, |mw, _cx| mw.workspace().clone());
+        panel.update_in(cx, |panel, window, cx| {
+            panel.new_thread(&NewThread, window, cx);
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.focus_panel::<AgentPanel>(window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            visible_entries_as_strings(&sidebar, cx),
+            vec!["v [my-project]", "  [+ New Thread]", "  Hello *"],
+            "After Cmd-N the sidebar should show a highlighted New Thread entry"
+        );
+
+        sidebar.read_with(cx, |sidebar, _cx| {
+            assert!(
+                sidebar.focused_thread.is_none(),
+                "focused_thread should be cleared after Cmd-N"
+            );
+            assert!(
+                sidebar.active_thread_is_draft,
+                "the new blank thread should be a draft"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_cmd_n_shows_new_thread_entry_in_absorbed_worktree(cx: &mut TestAppContext) {
+        // When the active workspace is an absorbed git worktree, cmd-n
+        // should still show the "New Thread" entry under the main repo's
+        // header and highlight it as active.
+        agent_ui::test_support::init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(false, vec!["agent-v2".into()]);
+            ThreadStore::init_global(cx);
+            SidebarThreadMetadataStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            prompt_store::init(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+
+        // Main repo with a linked worktree.
+        fs.insert_tree(
+            "/project",
+            serde_json::json!({
+                ".git": {
+                    "worktrees": {
+                        "feature-a": {
+                            "commondir": "../../",
+                            "HEAD": "ref: refs/heads/feature-a",
+                        },
+                    },
+                },
+                "src": {},
+            }),
+        )
+        .await;
+
+        // Worktree checkout pointing back to the main repo.
+        fs.insert_tree(
+            "/wt-feature-a",
+            serde_json::json!({
+                ".git": "gitdir: /project/.git/worktrees/feature-a",
+                "src": {},
+            }),
+        )
+        .await;
+
+        fs.with_git_state(std::path::Path::new("/project/.git"), false, |state| {
+            state.worktrees.push(git::repository::Worktree {
+                path: std::path::PathBuf::from("/wt-feature-a"),
+                ref_name: Some("refs/heads/feature-a".into()),
+                sha: "aaa".into(),
+            });
+        })
+        .unwrap();
+
+        cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+        let main_project = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+        let worktree_project =
+            project::Project::test(fs.clone(), ["/wt-feature-a".as_ref()], cx).await;
+
+        main_project
+            .update(cx, |p, cx| p.git_scans_complete(cx))
+            .await;
+        worktree_project
+            .update(cx, |p, cx| p.git_scans_complete(cx))
+            .await;
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            MultiWorkspace::test_new(main_project.clone(), window, cx)
+        });
+
+        let worktree_workspace = multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.test_add_workspace(worktree_project.clone(), window, cx)
+        });
+
+        let worktree_panel = add_agent_panel(&worktree_workspace, &worktree_project, cx);
+
+        // Switch to the worktree workspace.
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.activate_index(1, window, cx);
+        });
+
+        let sidebar = setup_sidebar(&multi_workspace, cx);
+
+        // Create a non-empty thread in the worktree workspace.
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("Done".into()),
+        )]);
+        open_thread_with_connection(&worktree_panel, connection, cx);
+        send_message(&worktree_panel, cx);
+
+        let session_id = active_session_id(&worktree_panel, cx);
+        let wt_path_list = PathList::new(&[std::path::PathBuf::from("/wt-feature-a")]);
+        save_test_thread_metadata(&session_id, wt_path_list, cx).await;
+        cx.run_until_parked();
+
+        assert_eq!(
+            visible_entries_as_strings(&sidebar, cx),
+            vec!["v [project]", "  Hello {wt-feature-a} *"]
+        );
+
+        // Simulate Cmd-N in the worktree workspace.
+        worktree_panel.update_in(cx, |panel, window, cx| {
+            panel.new_thread(&NewThread, window, cx);
+        });
+        worktree_workspace.update_in(cx, |workspace, window, cx| {
+            workspace.focus_panel::<AgentPanel>(window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            visible_entries_as_strings(&sidebar, cx),
+            vec![
+                "v [project]",
+                "  [+ New Thread]",
+                "  Hello {wt-feature-a} *"
+            ],
+            "After Cmd-N in an absorbed worktree, the sidebar should show \
+             a highlighted New Thread entry under the main repo header"
+        );
+
+        sidebar.read_with(cx, |sidebar, _cx| {
+            assert!(
+                sidebar.focused_thread.is_none(),
+                "focused_thread should be cleared after Cmd-N"
+            );
+            assert!(
+                sidebar.active_thread_is_draft,
+                "the new blank thread should be a draft"
             );
         });
     }
