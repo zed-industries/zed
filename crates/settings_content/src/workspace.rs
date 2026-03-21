@@ -27,6 +27,12 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: push
     pub dock_panel_mode: Option<DockPanelMode>,
+    /// Optional per-panel overrides for dock-backed panel rendering, keyed by `Panel::panel_key()`.
+    ///
+    /// Example keys include `ProjectPanel`, `OutlinePanel`, and `TerminalPanel`.
+    ///
+    /// Default: none
+    pub dock_panel_modes: Option<HashMap<String, DockPanelMode>>,
     /// Direction to split horizontally.
     ///
     /// Default: "up"

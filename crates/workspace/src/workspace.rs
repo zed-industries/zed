@@ -4378,7 +4378,7 @@ impl Workspace {
     }
 
     fn dock_panel_mode(&self, cx: &App) -> DockPanelMode {
-        WorkspaceSettings::get_global(cx).dock_panel_mode
+        WorkspaceSettings::get_global(cx).fallback_dock_panel_mode()
     }
 
     fn dock_renders_as_overlay(

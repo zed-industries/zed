@@ -974,6 +974,7 @@ impl VsCodeSettings {
             }),
             bottom_dock_layout: None,
             dock_panel_mode: None,
+            dock_panel_modes: None,
             centered_layout: None,
             close_on_file_delete: None,
             close_panel_on_toggle: None,
