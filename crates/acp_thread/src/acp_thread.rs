@@ -4578,7 +4578,7 @@ mod tests {
                 )
                 .unwrap();
 
-            thread
+            let _ = thread
                 .request_tool_call_authorization(
                     acp::ToolCallUpdate::new(
                         "authorized-id",
@@ -4637,7 +4637,7 @@ mod tests {
                 )
                 .unwrap();
 
-            thread
+            let _ = thread
                 .request_tool_call_authorization(
                     acp::ToolCallUpdate::new(
                         "authorized-id",
