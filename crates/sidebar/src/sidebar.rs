@@ -3296,7 +3296,7 @@ mod tests {
                             if *is_fully_expanded {
                                 format!("  - Collapse{}", selected)
                             } else {
-                                format!("  + More{}", selected)
+                                format!("  + View More{}", selected)
                             }
                         }
                         ListEntry::NewThread { .. } => {
@@ -3473,7 +3473,7 @@ mod tests {
                 "  Thread 10",
                 "  Thread 9",
                 "  Thread 8",
-                "  + View More (7)",
+                "  + View More",
             ]
         );
     }
@@ -3492,10 +3492,10 @@ mod tests {
         multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
         cx.run_until_parked();
 
-        // Initially shows 5 threads + View More (12 remaining)
+        // Initially shows 5 threads + View More
         let entries = visible_entries_as_strings(&sidebar, cx);
         assert_eq!(entries.len(), 7); // header + 5 threads + View More
-        assert!(entries.iter().any(|e| e.contains("View More (12)")));
+        assert!(entries.iter().any(|e| e.contains("View More")));
 
         // Focus and navigate to View More, then confirm to expand by one batch
         open_and_focus_sidebar(&sidebar, cx);
@@ -3505,10 +3505,10 @@ mod tests {
         cx.dispatch_action(Confirm);
         cx.run_until_parked();
 
-        // Now shows 10 threads + View More (7 remaining)
+        // Now shows 10 threads + View More
         let entries = visible_entries_as_strings(&sidebar, cx);
         assert_eq!(entries.len(), 12); // header + 10 threads + View More
-        assert!(entries.iter().any(|e| e.contains("View More (7)")));
+        assert!(entries.iter().any(|e| e.contains("View More")));
 
         // Expand again by one batch
         sidebar.update_in(cx, |s, _window, cx| {
@@ -3518,10 +3518,10 @@ mod tests {
         });
         cx.run_until_parked();
 
-        // Now shows 15 threads + View More (2 remaining)
+        // Now shows 15 threads + View More
         let entries = visible_entries_as_strings(&sidebar, cx);
         assert_eq!(entries.len(), 17); // header + 15 threads + View More
-        assert!(entries.iter().any(|e| e.contains("View More (2)")));
+        assert!(entries.iter().any(|e| e.contains("View More")));
 
         // Expand one more time - should show all 17 threads with Collapse button
         sidebar.update_in(cx, |s, _window, cx| {
@@ -3544,10 +3544,10 @@ mod tests {
         });
         cx.run_until_parked();
 
-        // Back to initial state: 5 threads + View More (12 remaining)
+        // Back to initial state: 5 threads + View More
         let entries = visible_entries_as_strings(&sidebar, cx);
         assert_eq!(entries.len(), 7); // header + 5 threads + View More
-        assert!(entries.iter().any(|e| e.contains("View More (12)")));
+        assert!(entries.iter().any(|e| e.contains("View More")));
     }
 
     #[gpui::test]
@@ -3765,7 +3765,7 @@ mod tests {
                 "  Error thread * (error)",
                 "  Waiting thread (waiting)",
                 "  Notified thread * (!)",
-                "  + View More (42)",
+                "  + View More",
                 "> [collapsed-project]",
             ]
         );
@@ -3965,17 +3965,17 @@ mod tests {
         multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
         cx.run_until_parked();
 
-        // Should show header + NewThread + 5 threads + "View More (3)"
+        // Should show header + 5 threads + "View More"
         let entries = visible_entries_as_strings(&sidebar, cx);
-        assert_eq!(entries.len(), 8);
-        assert!(entries.iter().any(|e| e.contains("View More (3)")));
+        assert_eq!(entries.len(), 7);
+        assert!(entries.iter().any(|e| e.contains("View More")));
 
-        // Focus sidebar (selection starts at None), then navigate down to the "View More" entry (index 7)
+        // Focus sidebar (selection starts at None), then navigate down to the "View More" entry (index 6)
         open_and_focus_sidebar(&sidebar, cx);
-        for _ in 0..8 {
+        for _ in 0..7 {
             cx.dispatch_action(SelectNext);
         }
-        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(7));
+        assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(6));
 
         // Confirm on "View More" to expand
         cx.dispatch_action(Confirm);
@@ -3983,7 +3983,7 @@ mod tests {
 
         // All 8 threads should now be visible with a "Collapse" button
         let entries = visible_entries_as_strings(&sidebar, cx);
-        assert_eq!(entries.len(), 11); // header + NewThread + 8 threads + Collapse button
+        assert_eq!(entries.len(), 10); // header + 8 threads + Collapse button
         assert!(!entries.iter().any(|e| e.contains("View More")));
         assert!(entries.iter().any(|e| e.contains("Collapse")));
     }
