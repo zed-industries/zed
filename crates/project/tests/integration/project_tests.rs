@@ -3965,7 +3965,7 @@ async fn test_diagnostic_summaries_cleared_on_buffer_reload(cx: &mut gpui::TestA
         },
     );
 
-    let (buffer, _handle) = project
+    let (_buffer, _handle) = project
         .update(cx, |project, cx| {
             project.open_local_buffer_with_lsp(path!("/dir/a.rs"), cx)
         })
@@ -4000,7 +4000,8 @@ async fn test_diagnostic_summaries_cleared_on_buffer_reload(cx: &mut gpui::TestA
 
     let pulls_before = pull_count.load(atomic::Ordering::SeqCst);
 
-    // Change the file on disk and reload the buffer.
+    // Change the file on disk. The FS event triggers buffer reload,
+    // which in turn triggers pull_diagnostics_for_buffer.
     fs.save(
         path!("/dir/a.rs").as_ref(),
         &"fixed content".into(),
@@ -4008,11 +4009,6 @@ async fn test_diagnostic_summaries_cleared_on_buffer_reload(cx: &mut gpui::TestA
     )
     .await
     .unwrap();
-
-    buffer
-        .update(cx, |buffer, cx| buffer.reload(cx))
-        .await
-        .unwrap();
     cx.executor().run_until_parked();
 
     let pulls_after = pull_count.load(atomic::Ordering::SeqCst);
