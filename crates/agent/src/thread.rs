@@ -2969,6 +2969,23 @@ impl Thread {
         self.running_turn.is_none()
     }
 
+    /// Returns the fully rendered system prompt that would be sent to the model.
+    pub fn render_system_prompt(&self, cx: &App) -> anyhow::Result<String> {
+        let available_tools: Vec<_> = self
+            .running_turn
+            .as_ref()
+            .map(|turn| turn.tools.keys().cloned().collect())
+            .unwrap_or_default();
+
+        SystemPromptTemplate {
+            project: self.project_context.read(cx),
+            available_tools,
+            model_name: self.model.as_ref().map(|m| m.name().0.to_string()),
+        }
+        .render(&self.templates)
+        .context("failed to render system prompt")
+    }
+
     fn build_request_messages(
         &self,
         available_tools: Vec<SharedString>,

@@ -4492,6 +4492,8 @@ impl ThreadView {
                     .as_ref()
                     .is_some_and(|checkpoint| checkpoint.show);
 
+                let is_native_thread = self.as_native_thread(cx).is_some();
+
                 let is_subagent = self.is_subagent();
                 let can_rewind = self.thread.read(cx).supports_truncate(cx);
                 let is_editable = can_rewind && message.id.is_some() && !is_subagent;
@@ -4514,6 +4516,28 @@ impl ThreadView {
                     .px_2()
                     .gap_1p5()
                     .w_full()
+                    .when(entry_ix == 0 && is_native_thread, |this| {
+                        this.child(
+                            h_flex()
+                                .px_3()
+                                .gap_2()
+                                .child(Divider::horizontal())
+                                .child(
+                                    Button::new("view-system-prompt", "View System Prompt")
+                                        .start_icon(Icon::new(IconName::FileTextFilled).size(IconSize::XSmall).color(Color::Muted))
+                                        .label_size(LabelSize::XSmall)
+                                        .color(Color::Muted)
+                                        .tooltip(Tooltip::text("View the fully templated system prompt the agent will see."))
+                                        .on_click(cx.listener(move |_this, _, window, cx| {
+                                            window.dispatch_action(
+                                                zed_actions::agent::ViewSystemPrompt.boxed_clone(),
+                                                cx,
+                                            );
+                                        }))
+                                )
+                                .child(Divider::horizontal())
+                        )
+                    })
                     .when(is_editable && has_checkpoint_button, |this| {
                         this.children(message.id.clone().map(|message_id| {
                             h_flex()

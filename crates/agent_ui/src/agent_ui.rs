@@ -35,6 +35,7 @@ pub mod thread_worktree_archive;
 mod thread_worktree_picker;
 pub mod threads_archive_view;
 mod ui;
+mod view_system_prompt_modal;
 mod worktree_names;
 
 use std::path::PathBuf;
@@ -80,6 +81,7 @@ pub(crate) use model_selector_popover::ModelSelectorPopover;
 pub(crate) use thread_history::ThreadHistory;
 pub(crate) use thread_history_view::*;
 pub use thread_import::{AcpThreadImportOnboarding, ThreadImportModal};
+pub use view_system_prompt_modal::ViewSystemPromptModal;
 use zed_actions;
 
 pub const DEFAULT_THREAD_TITLE: &str = "New Agent Thread";

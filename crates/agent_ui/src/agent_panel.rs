@@ -24,12 +24,11 @@ use zed_actions::{
     agent::{
         AddSelectionToThread, ConflictContent, OpenSettings, ReauthenticateAgent, ResetAgentZoom,
         ResetOnboarding, ResolveConflictedFilesWithAgent, ResolveConflictsWithAgent,
-        ReviewBranchDiff,
+        ReviewBranchDiff, ViewSystemPrompt,
     },
     assistant::{FocusAgent, OpenRulesLibrary, Toggle, ToggleFocus},
 };
 
-use crate::DEFAULT_THREAD_TITLE;
 use crate::thread_metadata_store::{ThreadId, ThreadMetadataStore};
 use crate::{
     AddContextServer, AgentDiffPane, ConversationView, CopyThreadToClipboard, CreateWorktree,
@@ -46,6 +45,7 @@ use crate::{
     Agent, AgentInitialContent, ExternalSourcePrompt, NewExternalAgentThread,
     NewNativeAgentThreadFromSummary,
 };
+use crate::{DEFAULT_THREAD_TITLE, ViewSystemPromptModal};
 use crate::{ExpandMessageEditor, ThreadHistoryView};
 use crate::{ManageProfiles, ThreadHistoryViewEvent};
 use crate::{ThreadHistory, agent_connection_store::AgentConnectionStore};
@@ -284,6 +284,17 @@ pub fn init(cx: &mut App) {
                         panel.update(cx, |panel, cx| {
                             panel.toggle_worktree_selector(&ToggleWorktreeSelector, window, cx);
                         });
+                    }
+                })
+                .register_action(|workspace, _: &ViewSystemPrompt, window, cx| {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        if let Some(thread) = panel.read(cx).active_native_agent_thread(cx) {
+                            let system_prompt = match thread.read(cx).render_system_prompt(cx) {
+                                Ok(prompt) => prompt,
+                                Err(e) => format!("Failed to render system prompt: {}", e),
+                            };
+                            ViewSystemPromptModal::toggle(system_prompt, workspace, window, cx);
+                        }
                     }
                 })
                 .register_action(|_workspace, _: &ResetOnboarding, window, cx| {
