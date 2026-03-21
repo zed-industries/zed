@@ -14,7 +14,7 @@ fn main() {
             if let Some(libdir) = pkg_config::get_variable(lib, "libdir").ok() {
                 rpath_dirs.insert(libdir);
             } else {
-                eprintln!("zed: {lib} not found");
+                eprintln!("zed build.rs: {lib} not found in pkg-config's path");
             }
         }
 
