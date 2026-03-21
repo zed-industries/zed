@@ -985,24 +985,23 @@ impl AcpServerView {
                             cx,
                         );
 
-                        // Notify external system when user created a new thread (not resume)
+                        // Notify external system when user created a new thread (not resume).
+                        // Send unconditionally for non-resume — even for empty threads.
+                        // Helix needs to know about the new thread to create a session for it.
                         #[cfg(feature = "external_websocket_sync")]
                         {
                             if !is_resume {
                                 let thread_entity = &current.read(cx).thread;
-                                let entry_count = thread_entity.read(cx).entries().len();
-                                if entry_count > 0 {
-                                    let acp_thread_id = thread_entity.read(cx).session_id().to_string();
-                                    let title = thread_entity.read(cx).title().to_string();
-                                    let title_opt = if title.is_empty() { None } else { Some(title) };
-                                    if let Err(e) = external_websocket_sync::send_websocket_event(
-                                        external_websocket_sync::SyncEvent::UserCreatedThread {
-                                            acp_thread_id,
-                                            title: title_opt,
-                                        }
-                                    ) {
-                                        log::error!("Failed to send UserCreatedThread WebSocket event: {}", e);
+                                let acp_thread_id = thread_entity.read(cx).session_id().to_string();
+                                let title = thread_entity.read(cx).title().to_string();
+                                let title_opt = if title.is_empty() { None } else { Some(title) };
+                                if let Err(e) = external_websocket_sync::send_websocket_event(
+                                    external_websocket_sync::SyncEvent::UserCreatedThread {
+                                        acp_thread_id,
+                                        title: title_opt,
                                     }
+                                ) {
+                                    log::error!("Failed to send UserCreatedThread WebSocket event: {}", e);
                                 }
                             }
                         }
