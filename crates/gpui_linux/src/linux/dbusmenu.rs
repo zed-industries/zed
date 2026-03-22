@@ -31,9 +31,18 @@ pub fn setup_global_menu_sources<D: 'static, T: GlobalMenuState + 'static>(
             let client = client.clone();
             move |action| {
                 if let Some(client) = client.upgrade() {
-                    let mut state = client.borrow_mut();
-                    if let Some(callback) = state.linux_common().callbacks.app_menu_action.as_mut() {
+                    let mut callback = {
+                        let mut state = client.borrow_mut();
+                        state.linux_common().callbacks.app_menu_action.take()
+                    };
+
+                    if let Some(callback) = callback.as_mut() {
                         callback(action.as_ref());
+                    }
+
+                    let mut state = client.borrow_mut();
+                    if state.linux_common().callbacks.app_menu_action.is_none() {
+                        state.linux_common().callbacks.app_menu_action = callback;
                     }
                 }
             }
@@ -78,6 +87,9 @@ pub fn setup_global_menu_sources<D: 'static, T: GlobalMenuState + 'static>(
                         Vec::new()
                     } else {
                         valid_ids
+                            .into_iter()
+                            .filter(|id| refreshed_ids.contains(id))
+                            .collect()
                     };
 
                     let mut state = client.borrow_mut();
@@ -733,16 +745,29 @@ impl DBusMenuServer {
             let state = self.state.lock().map_err(|_| {
                 zbus::fdo::Error::Failed("Failed to access DBusMenu state".to_string())
             })?;
-            ids.into_iter()
-                .filter_map(|id| {
-                    state.items.get(&id).map(|entry| {
+            if ids.is_empty() {
+                state
+                    .items
+                    .iter()
+                    .map(|(&id, entry)| {
                         (
                             id,
                             filter_properties(entry.properties.clone(), &property_filter),
                         )
                     })
-                })
-                .collect::<Vec<_>>()
+                    .collect::<Vec<_>>()
+            } else {
+                ids.into_iter()
+                    .filter_map(|id| {
+                        state.items.get(&id).map(|entry| {
+                            (
+                                id,
+                                filter_properties(entry.properties.clone(), &property_filter),
+                            )
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            }
         };
 
         Ok(entries)
@@ -778,10 +803,14 @@ impl DBusMenuServer {
             .state
             .lock()
             .map_err(|_| zbus::fdo::Error::Failed("Failed to access DBusMenu state".to_string()))?;
-        state
+        let entry = state
             .items
             .get(&id)
-            .and_then(|entry| entry.properties.get(name).cloned())
+            .ok_or_else(|| zbus::fdo::Error::InvalidArgs(format!("Unknown menu item id: {id}")))?;
+        entry
+            .properties
+            .get(name)
+            .cloned()
             .ok_or_else(|| zbus::fdo::Error::UnknownProperty(name.to_string()))
     }
 
