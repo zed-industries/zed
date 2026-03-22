@@ -738,10 +738,12 @@ impl WaylandClient {
                     Rc::downgrade(&state),
                     move |state| {
                         let (service_name, dbus_menu_server, appmenus) = {
-                            let Some(service_name) = state.dbus_service_name.as_ref().cloned() else {
+                            let Some(service_name) = state.dbus_service_name.as_ref().cloned()
+                            else {
                                 return;
                             };
-                            let Some(dbus_menu_server) = state.common.dbus_menu_server.clone() else {
+                            let Some(dbus_menu_server) = state.common.dbus_menu_server.clone()
+                            else {
                                 return;
                             };
                             let appmenus = state
@@ -753,7 +755,10 @@ impl WaylandClient {
                         };
 
                         for appmenu in appmenus {
-                            appmenu.set_address(service_name.clone(), crate::linux::dbusmenu::DBUSMENU_OBJECT_PATH.to_string());
+                            appmenu.set_address(
+                                service_name.clone(),
+                                crate::linux::dbusmenu::DBUSMENU_OBJECT_PATH.to_string(),
+                            );
                         }
                     },
                 );
@@ -882,8 +887,9 @@ impl LinuxClient for WaylandClient {
             let dbus_menu_server = state.common.dbus_menu_server.clone();
             let surface = window.0.surface();
             let appmenu = appmenu_manager.create(&surface, &state.globals.qh, ());
-            if let Some(_dbus_menu_server) =
-                dbus_menu_server.as_ref().filter(|server| server.is_connected())
+            if let Some(_dbus_menu_server) = dbus_menu_server
+                .as_ref()
+                .filter(|server| server.is_connected())
             {
                 let object_path = crate::linux::dbusmenu::DBUSMENU_OBJECT_PATH.to_string();
                 appmenu.set_address(service_name.clone(), object_path);

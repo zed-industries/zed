@@ -58,7 +58,6 @@ use crate::linux::{
 };
 use crate::linux::{LinuxCommon, LinuxKeyboardLayout, X11Window, modifiers_from_xinput_info};
 
-
 use gpui::{
     AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,
     Modifiers, ModifiersChangedEvent, MouseButton, Pixels, PlatformDisplay, PlatformInput,
@@ -322,8 +321,14 @@ impl Drop for X11Client {
                     state.dbus_menu_thread.take(),
                 ),
                 Err(_) => {
-                    log::warn!("Failed to borrow X11Client inner in Drop; DBusMenu resources may leak");
-                    let server = self.0.try_borrow().ok().and_then(|state| state.common.dbus_menu_server.clone());
+                    log::warn!(
+                        "Failed to borrow X11Client inner in Drop; DBusMenu resources may leak"
+                    );
+                    let server = self
+                        .0
+                        .try_borrow()
+                        .ok()
+                        .and_then(|state| state.common.dbus_menu_server.clone());
                     (server, None)
                 }
             };
@@ -614,7 +619,9 @@ impl X11Client {
                                     let window_ids: Vec<xproto::Window> =
                                         state.windows.keys().copied().collect();
                                     for x_window in window_ids {
-                                        let final_path = crate::linux::dbusmenu::DBUSMENU_OBJECT_PATH.to_string();
+                                        let final_path =
+                                            crate::linux::dbusmenu::DBUSMENU_OBJECT_PATH
+                                                .to_string();
                                         set_x11_appmenu_properties(
                                             &state.xcb_connection,
                                             &state.atoms,

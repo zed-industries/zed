@@ -12,8 +12,8 @@ use gpui::{Action, KeyContext, KeybindingKeystroke, Keymap, OsAction, OwnedMenu,
 use util::ResultExt as _;
 use zbus::zvariant::{OwnedValue, Value};
 
-use std::rc::Weak;
 use std::cell::RefCell;
+use std::rc::Weak;
 
 pub trait GlobalMenuState {
     fn linux_common(&mut self) -> &mut crate::linux::LinuxCommon;
@@ -51,7 +51,7 @@ pub fn setup_global_menu_sources<D: 'static, T: GlobalMenuState + 'static>(
                             common.callbacks.will_open_app_menu.take(),
                         )
                     };
-                    
+
                     let request_ids = request.ids;
                     if let Some(callback) = will_open_app_menu.as_mut() {
                         callback();
@@ -524,7 +524,9 @@ impl DBusMenuServer {
             for (id, enabled, value) in &updates {
                 if let Some(entry) = state.items.get_mut(id) {
                     entry.enabled = Some(*enabled);
-                    entry.properties.insert("enabled".to_string(), value.clone());
+                    entry
+                        .properties
+                        .insert("enabled".to_string(), value.clone());
                 }
             }
         }
@@ -568,9 +570,9 @@ impl DBusMenuServer {
         removed_props: Vec<(i32, Vec<String>)>,
     ) {
         self.request_items_properties_updated_for_paths(
-            updated_props, 
-            removed_props, 
-            vec![DBUSMENU_OBJECT_PATH.to_string()]
+            updated_props,
+            removed_props,
+            vec![DBUSMENU_OBJECT_PATH.to_string()],
         );
     }
 
@@ -656,10 +658,7 @@ impl DBusMenuServer {
         }
     }
 
-    async fn about_to_show_group(
-        &self,
-        ids: Vec<i32>,
-    ) -> zbus::fdo::Result<(Vec<i32>, Vec<i32>)> {
+    async fn about_to_show_group(&self, ids: Vec<i32>) -> zbus::fdo::Result<(Vec<i32>, Vec<i32>)> {
         let sender = match self.about_to_show_sender.lock() {
             Ok(sender) => sender.clone(),
             Err(_) => return Ok((Vec::new(), Vec::new())),
@@ -737,7 +736,10 @@ impl DBusMenuServer {
             ids.into_iter()
                 .filter_map(|id| {
                     state.items.get(&id).map(|entry| {
-                        (id, filter_properties(entry.properties.clone(), &property_filter))
+                        (
+                            id,
+                            filter_properties(entry.properties.clone(), &property_filter),
+                        )
                     })
                 })
                 .collect::<Vec<_>>()
@@ -753,9 +755,10 @@ impl DBusMenuServer {
         property_names: Vec<String>,
     ) -> zbus::fdo::Result<(u32, (i32, HashMap<String, OwnedValue>, Vec<OwnedValue>))> {
         let property_filter = build_property_filter(&property_names);
-        let state = self.state.lock().map_err(|_| {
-            zbus::fdo::Error::Failed("Failed to access DBusMenu state".to_string())
-        })?;
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| zbus::fdo::Error::Failed("Failed to access DBusMenu state".to_string()))?;
         let revision = state.revision;
         let depth = if recursion_depth < 0 {
             i32::MAX
@@ -764,8 +767,8 @@ impl DBusMenuServer {
         };
         let layout = collect_layout_node_filtered(&state, parent_id, depth, &property_filter)
             .ok_or_else(|| {
-            zbus::fdo::Error::InvalidArgs(format!("Unknown menu item id: {parent_id}"))
-        })?;
+                zbus::fdo::Error::InvalidArgs(format!("Unknown menu item id: {parent_id}"))
+            })?;
 
         Ok((revision, layout))
     }
@@ -986,7 +989,11 @@ fn build_menu_tree(
                     } else {
                         log::error!("Failed to encode DBusMenu toggle-type");
                     }
-                    let toggle_state = if *checked { Value::I32(1) } else { Value::I32(0) };
+                    let toggle_state = if *checked {
+                        Value::I32(1)
+                    } else {
+                        Value::I32(0)
+                    };
                     if let Ok(value) = toggle_state.try_into() {
                         props.insert("toggle-state".to_string(), value);
                     } else {
@@ -1023,7 +1030,6 @@ fn build_menu_tree(
         },
     );
 }
-
 
 pub fn global_menu_env_override() -> Option<bool> {
     match std::env::var("ZED_GLOBAL_MENU").ok().as_deref() {
