@@ -121,6 +121,11 @@
   // References
   {
     "token_type": "parameter",
+    "token_modifiers": ["declaration"],
+    "style": ["variable.parameter"]
+  },
+  {
+    "token_type": "parameter",
     "token_modifiers": [],
     "style": ["variable"],
   },
