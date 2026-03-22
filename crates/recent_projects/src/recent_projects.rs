@@ -28,6 +28,7 @@ use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     Subscription, Task, WeakEntity, Window, actions, px,
 };
+use zed::i18n::t;
 
 use picker::{
     Picker, PickerDelegate,
@@ -779,7 +780,7 @@ impl PickerDelegate for RecentProjectsDelegate {
     type ListItem = AnyElement;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Search projects…".into()
+        t("recent_projects.search_projects").into()
     }
 
     fn render_editor(
@@ -946,7 +947,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         };
 
         if has_siblings_to_show {
-            entries.push(ProjectPickerEntry::Header("This Window".into()));
+            entries.push(ProjectPickerEntry::Header(t("recent_projects.this_window").into()));
 
             if is_empty_query {
                 for (id, (workspace_id, _, _, _)) in self.workspaces.iter().enumerate() {
@@ -973,7 +974,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         };
 
         if has_recent_to_show {
-            entries.push(ProjectPickerEntry::Header("Recent Projects".into()));
+            entries.push(ProjectPickerEntry::Header(t("recent_projects.recent_projects").into()));
 
             if is_empty_query {
                 for (id, (workspace_id, _, paths, _)) in self.workspaces.iter().enumerate() {
@@ -1144,9 +1145,9 @@ impl PickerDelegate for RecentProjectsDelegate {
 
     fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
         let text = if self.workspaces.is_empty() && self.open_folders.is_empty() {
-            "Recently opened projects will show up here".into()
+            t("recent_projects.no_recent_projects")
         } else {
-            "No matches".into()
+            t("recent_projects.no_matches")
         };
         Some(text)
     }
@@ -1182,7 +1183,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .child(
                         IconButton::new(("remove-folder", worktree_id.to_usize()), IconName::Close)
                             .icon_size(IconSize::Small)
-                            .tooltip(Tooltip::text("Remove Folder from Workspace"))
+                            .tooltip(Tooltip::text(t("recent_projects.remove_folder_tooltip")))
                             .on_click(cx.listener(move |picker, _, window, cx| {
                                 let Some(workspace) = picker.delegate.workspace.upgrade() else {
                                     return;
@@ -1318,7 +1319,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .child(
                         IconButton::new("remove_open_project", IconName::Close)
                             .icon_size(IconSize::Small)
-                            .tooltip(Tooltip::text("Remove Project from Window"))
+                            .tooltip(Tooltip::text(t("recent_projects.remove_project_tooltip")))
                             .on_click(cx.listener(move |picker, _, window, cx| {
                                 cx.stop_propagation();
                                 window.prevent_default();
@@ -1417,7 +1418,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                         this.child(
                             IconButton::new("add_to_workspace", IconName::FolderPlus)
                                 .icon_size(IconSize::Small)
-                                .tooltip(Tooltip::text("Add Project to this Workspace"))
+                                .tooltip(Tooltip::text(t("recent_projects.add_project_tooltip")))
                                 .on_click({
                                     let paths_to_add = paths_to_add.clone();
                                     cx.listener(move |picker, _event, window, cx| {
@@ -1439,7 +1440,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 .tooltip({
                                     move |_, cx| {
                                         Tooltip::for_action_in(
-                                            "Open Project in New Window",
+                                            &t("recent_projects.open_project_new_window"),
                                             &menu::SecondaryConfirm,
                                             &focus_handle,
                                             cx,
@@ -1457,7 +1458,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .child(
                         IconButton::new("delete", IconName::Close)
                             .icon_size(IconSize::Small)
-                            .tooltip(Tooltip::text("Delete from Recent Projects"))
+                            .tooltip(Tooltip::text(t("recent_projects.delete_recent_tooltip")))
                             .on_click(cx.listener(move |this, _event, window, cx| {
                                 cx.stop_propagation();
                                 window.prevent_default();
@@ -1526,14 +1527,14 @@ impl PickerDelegate for RecentProjectsDelegate {
                         let open_action = workspace::Open {
                             create_new_window: self.create_new_window,
                         };
-                        Button::new("open_local_folder", "Open Local Project")
+                        Button::new("open_local_folder", t("recent_projects.open_local_project"))
                             .key_binding(KeyBinding::for_action_in(&open_action, &focus_handle, cx))
                             .on_click(move |_, window, cx| {
                                 window.dispatch_action(open_action.boxed_clone(), cx)
                             })
                     })
                     .child(
-                        Button::new("open_remote_folder", "Open Remote Project")
+                        Button::new("open_remote_folder", t("recent_projects.open_remote_project"))
                             .key_binding(KeyBinding::for_action(
                                 &OpenRemote {
                                     from_existing_connection: false,
@@ -1567,7 +1568,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                 .map(|this| {
                     if is_already_open_entry {
                         this.child(
-                            Button::new("activate", "Activate")
+                            Button::new("activate", t("recent_projects.activate"))
                                 .key_binding(KeyBinding::for_action_in(
                                     &menu::Confirm,
                                     &focus_handle,
@@ -1579,7 +1580,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                         )
                     } else {
                         this.child(
-                            Button::new("open_new_window", "New Window")
+                            Button::new("open_new_window", t("recent_projects.new_window"))
                                 .key_binding(KeyBinding::for_action_in(
                                     &menu::SecondaryConfirm,
                                     &focus_handle,
@@ -1590,7 +1591,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 }),
                         )
                         .child(
-                            Button::new("open_here", "Open")
+                            Button::new("open_here", t("recent_projects.open"))
                                 .key_binding(KeyBinding::for_action_in(
                                     &menu::Confirm,
                                     &focus_handle,
@@ -1612,7 +1613,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                             y: px(-2.0),
                         })
                         .trigger(
-                            Button::new("actions-trigger", "Actions…")
+                            Button::new("actions-trigger", t("recent_projects.actions"))
                                 .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                                 .key_binding(KeyBinding::for_action_in(
                                     &ToggleActionsMenu,
@@ -1630,11 +1631,11 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     move |menu, _, _| {
                                         menu.context(focus_handle)
                                             .action(
-                                                "Open Local Project",
+                                                t("recent_projects.open_local_project"),
                                                 workspace::Open { create_new_window }.boxed_clone(),
                                             )
                                             .action(
-                                                "Open Remote Project",
+                                                t("recent_projects.open_remote_project"),
                                                 OpenRemote {
                                                     from_existing_connection: false,
                                                     create_new_window: false,

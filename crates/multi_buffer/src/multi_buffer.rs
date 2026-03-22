@@ -486,7 +486,8 @@ impl ops::Add<isize> for MultiBufferOffset {
     type Output = Self;
 
     fn add(self, rhs: isize) -> Self::Output {
-        MultiBufferOffset((self.0 as isize + rhs) as usize)
+        let result = (self.0 as isize).saturating_add(rhs);
+        MultiBufferOffset(result.max(0) as usize)
     }
 }
 
@@ -8698,13 +8699,11 @@ impl ToOffset for Point {
 impl ToOffset for MultiBufferOffset {
     #[track_caller]
     fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffset {
-        assert!(
-            *self <= snapshot.len(),
-            "offset {} is greater than the snapshot.len() {}",
-            self.0,
-            snapshot.len().0,
-        );
-        *self
+        if *self > snapshot.len() {
+            snapshot.len()
+        } else {
+            *self
+        }
     }
     fn to_offset_utf16(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffsetUtf16 {
         snapshot.offset_to_offset_utf16(*self)

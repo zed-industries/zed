@@ -20,6 +20,7 @@ use workspace::{
     MultiWorkspace, OpenOptions, PathList, SerializedWorkspaceLocation, Workspace, WorkspaceDb,
     WorkspaceId, notifications::DetachAndPromptErr,
 };
+use zed::i18n::t;
 
 use crate::{highlights_for_path, icon_for_remote_connection, open_remote_project};
 
@@ -145,7 +146,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
     type ListItem = AnyElement;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Search recent projects…".into()
+        t("recent_projects.search_recent_projects").into()
     }
 
     fn render_editor(
@@ -310,9 +311,9 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
 
     fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
         let text = if self.workspaces.is_empty() {
-            "Recently opened projects will show up here"
+            t("recent_projects.no_recent_projects")
         } else {
-            "No matches"
+            t("recent_projects.no_matches")
         };
         Some(text.into())
     }
@@ -405,7 +406,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                     let open_action = workspace::Open {
                         create_new_window: false,
                     };
-                    Button::new("open_local_folder", "Add Local Project")
+                    Button::new("open_local_folder", t("recent_projects.add_local_project"))
                         .key_binding(KeyBinding::for_action_in(&open_action, &focus_handle, cx))
                         .on_click(move |_, window, cx| {
                             window.dispatch_action(open_action.boxed_clone(), cx)

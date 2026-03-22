@@ -9,6 +9,8 @@ use ui::{Avatar, ListItem, ListItemSpacing, prelude::*};
 use util::{ResultExt as _, TryFutureExt};
 use workspace::ModalView;
 
+use crate::i18n::t;
+
 pub struct ContactFinder {
     picker: Entity<Picker<ContactFinderDelegate>>,
 }
@@ -44,8 +46,8 @@ impl Render for ContactFinder {
                     .bg(cx.theme().colors().element_background)
                     // HACK: Prevent the background color from overflowing the parent container.
                     .rounded_t(px(8.))
-                    .child(Label::new("Contacts"))
-                    .child(h_flex().child(Label::new("Invite new contacts"))),
+                    .child(Label::new(t("label.contacts")))
+                    .child(h_flex().child(Label::new(t("label.invite_new_contacts")))),
             )
             .child(self.picker.clone())
             .w(rems(34.))

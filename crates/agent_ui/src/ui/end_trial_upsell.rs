@@ -5,6 +5,8 @@ use client::zed_urls;
 use gpui::{AnyElement, App, IntoElement, RenderOnce, Window};
 use ui::{Divider, Tooltip, prelude::*};
 
+use crate::i18n::t;
+
 #[derive(IntoElement, RegisterComponent)]
 pub struct EndTrialUpsell {
     dismiss_upsell: Arc<dyn Fn(&mut Window, &mut App)>,
@@ -24,7 +26,7 @@ impl RenderOnce for EndTrialUpsell {
                 h_flex()
                     .gap_2()
                     .child(
-                        Label::new("Pro")
+                        Label::new(t("message.pro"))
                             .size(LabelSize::Small)
                             .color(Color::Accent)
                             .buffer_font(cx),
@@ -49,13 +51,13 @@ impl RenderOnce for EndTrialUpsell {
                 h_flex()
                     .gap_2()
                     .child(
-                        Label::new("Free")
+                        Label::new(t("message.free"))
                             .size(LabelSize::Small)
                             .color(Color::Muted)
                             .buffer_font(cx),
                     )
                     .child(
-                        Label::new("(Current Plan)")
+                        Label::new(t("message.current_plan"))
                             .size(LabelSize::Small)
                             .color(Color::Custom(cx.theme().colors().text_muted.opacity(0.6)))
                             .buffer_font(cx),
@@ -65,9 +67,9 @@ impl RenderOnce for EndTrialUpsell {
             .child(PlanDefinitions.free_plan());
 
         AgentPanelOnboardingCard::new()
-            .child(Headline::new("Your Zed Pro Trial has expired"))
+            .child(Headline::new(t("message.trial_expired")))
             .child(
-                Label::new("You've been automatically reset to the Free plan.")
+                Label::new(t("message.auto_reset_free"))
                     .color(Color::Muted)
                     .mb_2(),
             )
@@ -77,7 +79,7 @@ impl RenderOnce for EndTrialUpsell {
                 h_flex().absolute().top_4().right_4().child(
                     IconButton::new("dismiss_onboarding", IconName::Close)
                         .icon_size(IconSize::Small)
-                        .tooltip(Tooltip::text("Dismiss"))
+                        .tooltip(Tooltip::text(t("tooltip.dismiss")))
                         .on_click({
                             let callback = self.dismiss_upsell.clone();
                             move |_, window, cx| {

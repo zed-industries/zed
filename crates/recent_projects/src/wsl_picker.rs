@@ -9,6 +9,7 @@ use ui::{
 };
 use util::ResultExt as _;
 use workspace::{ModalView, MultiWorkspace};
+use zed::i18n::t;
 
 use crate::open_remote_project;
 

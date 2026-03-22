@@ -63,6 +63,7 @@ use workspace::{
     },
 };
 use zed_actions::{agent::AddSelectionToThread, assistant::InlineAssist};
+use zed::i18n::t;
 
 struct ImeState {
     marked_text: String,
@@ -508,22 +509,22 @@ impl TerminalView {
             .is_some_and(|text| !text.is_empty());
         let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
             menu.context(self.focus_handle.clone())
-                .action("New Terminal", Box::new(NewTerminal::default()))
+                .action(t("terminal.new_terminal"), Box::new(NewTerminal::default()))
                 .separator()
-                .action("Copy", Box::new(Copy))
-                .action("Paste", Box::new(Paste))
-                .action("Select All", Box::new(SelectAll))
-                .action("Clear", Box::new(Clear))
+                .action(t("terminal.copy"), Box::new(Copy))
+                .action(t("terminal.paste"), Box::new(Paste))
+                .action(t("terminal.select_all"), Box::new(SelectAll))
+                .action(t("terminal.clear"), Box::new(Clear))
                 .when(assistant_enabled, |menu| {
                     menu.separator()
-                        .action("Inline Assist", Box::new(InlineAssist::default()))
+                        .action(t("terminal.inline_assist"), Box::new(InlineAssist::default()))
                         .when(has_selection, |menu| {
-                            menu.action("Add to Agent Thread", Box::new(AddSelectionToThread))
+                            menu.action(t("terminal.add_to_agent_thread"), Box::new(AddSelectionToThread))
                         })
                 })
                 .separator()
                 .action(
-                    "Close Terminal Tab",
+                    t("terminal.close_terminal_tab"),
                     Box::new(CloseActiveItem {
                         save_intent: None,
                         close_pinned: true,
@@ -964,7 +965,7 @@ impl TerminalView {
                 .size(ButtonSize::Compact)
                 .icon_color(Color::Default)
                 .shape(ui::IconButtonShape::Square)
-                .tooltip(move |_window, cx| Tooltip::for_action("Rerun task", &RerunTask, cx))
+                .tooltip(move |_window, cx| Tooltip::for_action(&t("terminal.rerun_task"), &RerunTask, cx))
                 .on_click(move |_, window, cx| {
                     window.dispatch_action(Box::new(terminal_rerun_override(&task_id)), cx);
                 }),

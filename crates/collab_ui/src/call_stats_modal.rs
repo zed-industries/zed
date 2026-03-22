@@ -8,6 +8,8 @@ use ui::prelude::*;
 use workspace::{ModalView, Workspace};
 use zed_actions::ShowCallStats;
 
+use crate::i18n::t;
+
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _cx| {
         workspace.register_action(|workspace, _: &ShowCallStats, window, cx| {
@@ -164,7 +166,7 @@ impl Render for CallStatsModal {
             .child(
                 h_flex()
                     .justify_between()
-                    .child(Label::new("Call Diagnostics").size(LabelSize::Large))
+                    .child(Label::new(t("label.call_diagnostics")).size(LabelSize::Large))
                     .child(
                         Label::new(quality_text)
                             .size(LabelSize::Large)
@@ -176,7 +178,7 @@ impl Render for CallStatsModal {
                     h_flex()
                         .justify_center()
                         .py_4()
-                        .child(Label::new("Not in a call").color(Color::Muted)),
+                        .child(Label::new(t("label.not_in_a_call")).color(Color::Muted)),
                 )
             })
             .when(is_connected, |this| {
@@ -186,7 +188,7 @@ impl Render for CallStatsModal {
                         .child(
                             h_flex()
                                 .gap_2()
-                                .child(Label::new("Network").weight(FontWeight::SEMIBOLD)),
+                                .child(Label::new(t("label.network")).weight(FontWeight::SEMIBOLD)),
                         )
                         .child(self.render_metric_row(
                             "Latency",

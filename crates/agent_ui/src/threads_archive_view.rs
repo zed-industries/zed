@@ -4,6 +4,7 @@ use crate::{
     Agent, RemoveSelectedThread, agent_connection_store::AgentConnectionStore,
     thread_history::ThreadHistory,
 };
+use crate::i18n::t;
 use acp_thread::AgentSessionInfo;
 use agent::ThreadStore;
 use agent_client_protocol as acp;
@@ -835,7 +836,7 @@ impl ThreadsArchiveView {
                 this.child(
                     IconButton::new("clear_filter", IconName::Close)
                         .icon_size(IconSize::Small)
-                        .tooltip(Tooltip::text("Clear Search"))
+                        .tooltip(Tooltip::text(t("tooltip.clear_search")))
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.reset_filter_editor_text(window, cx);
                             this.update_items(cx);

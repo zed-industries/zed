@@ -1,4 +1,4 @@
-use crate::NotificationPanelSettings;
+use crate::{NotificationPanelSettings, i18n::t};
 use anyhow::Result;
 use channel::ChannelStore;
 use client::{ChannelId, Client, Notification, User, UserStore};
@@ -530,7 +530,7 @@ impl Render for NotificationPanel {
                     .h(Tab::container_height(cx))
                     .border_b_1()
                     .border_color(cx.theme().colors().border)
-                    .child(Label::new("Notifications"))
+                    .child(Label::new(t("label.notifications")))
                     .child(Icon::new(IconName::Envelope)),
             )
             .map(|this| {
@@ -568,7 +568,7 @@ impl Render for NotificationPanel {
                             )
                             .child(
                                 div().flex().w_full().items_center().child(
-                                    Label::new("Connect to view notifications.")
+                                    Label::new(t("label.connect_to_view_notifications"))
                                         .color(Color::Muted)
                                         .size(LabelSize::Small),
                                 ),
@@ -578,7 +578,7 @@ impl Render for NotificationPanel {
                     this.child(
                         v_flex().p_4().child(
                             div().flex().w_full().items_center().child(
-                                Label::new("You have no notifications.")
+                                Label::new(t("label.you_have_no_notifications"))
                                     .color(Color::Muted)
                                     .size(LabelSize::Small),
                             ),

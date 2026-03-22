@@ -1,4 +1,5 @@
 use crate::{Keep, KeepAll, OpenAgentDiff, Reject, RejectAll};
+use crate::i18n::t;
 use acp_thread::{AcpThread, AcpThreadEvent};
 use action_log::{ActionLogTelemetry, LastRejectUndo};
 use agent_settings::AgentSettings;
@@ -1020,7 +1021,7 @@ impl Render for AgentDiffToolbar {
         let spinner_icon = div()
             .px_0p5()
             .id("generating")
-            .tooltip(Tooltip::text("Generating Changes…"))
+            .tooltip(Tooltip::text(t("tooltip.generating_changes")))
             .child(
                 Icon::new(IconName::LoadCircle)
                     .size(IconSize::Small)

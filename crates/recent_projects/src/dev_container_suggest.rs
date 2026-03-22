@@ -10,6 +10,7 @@ use workspace::Workspace;
 use workspace::notifications::NotificationId;
 use workspace::notifications::simple_message_notification::MessageNotification;
 use worktree::UpdatedEntriesSet;
+use zed::i18n::t;
 
 const DEV_CONTAINER_SUGGEST_KEY: &str = "dev_container_suggest_dismissed";
 
@@ -82,7 +83,7 @@ pub fn suggest_on_worktree_updated(
         workspace.show_notification(notification_id, cx, |cx| {
             cx.new(move |cx| {
                 MessageNotification::new(
-                    "This project contains a Dev Container configuration file. Would you like to re-open it in a container?",
+                    t("message.dev_container_suggest"),
                     cx,
                 )
                 .primary_message("Yes, Open in Container")

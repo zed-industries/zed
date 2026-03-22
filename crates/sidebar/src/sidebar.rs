@@ -44,6 +44,8 @@ use zed_actions::editor::{MoveDown, MoveUp};
 
 use zed_actions::agents_sidebar::FocusSidebarFilter;
 
+use zed::i18n::t;
+
 gpui::actions!(
     agents_sidebar,
     [
@@ -1270,7 +1272,7 @@ impl Sidebar {
                             )
                             .icon_size(IconSize::Small)
                             .icon_color(Color::Muted)
-                            .tooltip(Tooltip::text("Collapse Displayed Threads"))
+                            .tooltip(Tooltip::text(t("tooltip.collapse_threads")))
                             .on_click(cx.listener({
                                 let path_list_for_collapse = path_list_for_collapse.clone();
                                 move |this, _, _window, cx| {
@@ -1292,7 +1294,7 @@ impl Sidebar {
                             )
                             .icon_size(IconSize::Small)
                             .icon_color(Color::Muted)
-                            .tooltip(Tooltip::text("Remove Project"))
+                            .tooltip(Tooltip::text(t("tooltip.remove_project")))
                             .on_click(cx.listener(
                                 move |this, _, window, cx| {
                                     this.remove_workspace(&workspace_for_remove_btn, window, cx);
@@ -2383,7 +2385,7 @@ impl Sidebar {
                         .icon_size(IconSize::Small)
                         .icon_color(Color::Error)
                         .style(ButtonStyle::Tinted(TintColor::Error))
-                        .tooltip(Tooltip::text("Stop Generation"))
+                        .tooltip(Tooltip::text(t("tooltip.stop_generation")))
                         .on_click({
                             let session_id = session_id_for_delete.clone();
                             cx.listener(move |this, _, _window, cx| {
@@ -2703,7 +2705,7 @@ impl Sidebar {
             .gap_1()
             .track_focus(&self.focus_handle(cx))
             .child(
-                Button::new("open_project", "Open Project")
+                Button::new("open_project", t("sidebar.open_project"))
                     .full_width()
                     .key_binding(KeyBinding::for_action(&workspace::Open::default(), cx))
                     .on_click(|_, window, cx| {
@@ -2721,11 +2723,11 @@ impl Sidebar {
                     .w_1_2()
                     .gap_2()
                     .child(Divider::horizontal())
-                    .child(Label::new("or").size(LabelSize::XSmall).color(Color::Muted))
+                    .child(Label::new(t("sidebar.or")).size(LabelSize::XSmall).color(Color::Muted))
                     .child(Divider::horizontal()),
             )
             .child(
-                Button::new("clone_repo", "Clone Repository")
+                Button::new("clone_repo", t("sidebar.clone_repository"))
                     .full_width()
                     .on_click(|_, window, cx| {
                         window.dispatch_action(git::Clone.boxed_clone(), cx);
@@ -2776,7 +2778,7 @@ impl Sidebar {
                                 this.child(
                                     IconButton::new("clear_filter", IconName::Close)
                                         .icon_size(IconSize::Small)
-                                        .tooltip(Tooltip::text("Clear Search"))
+                                        .tooltip(Tooltip::text(t("tooltip.clear_search")))
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.reset_filter_editor_text(window, cx);
                                             this.update_entries(cx);
@@ -2797,7 +2799,7 @@ impl Sidebar {
                         h_flex()
                             .gap_2()
                             .justify_between()
-                            .child(Label::new("Toggle Sidebar"))
+                            .child(Label::new(t("sidebar.toggle_sidebar")))
                             .child(KeyBinding::for_action(&ToggleWorkspaceSidebar, cx)),
                     )
                     .child(
@@ -2807,7 +2809,7 @@ impl Sidebar {
                             .border_t_1()
                             .border_color(cx.theme().colors().border_variant)
                             .justify_between()
-                            .child(Label::new("Focus Sidebar"))
+                            .child(Label::new(t("sidebar.focus_sidebar")))
                             .child(KeyBinding::for_action(&FocusWorkspaceSidebar, cx)),
                     )
                     .into_any_element()

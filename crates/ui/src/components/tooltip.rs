@@ -4,6 +4,7 @@ use std::rc::Rc;
 use gpui::{Action, AnyElement, AnyView, AppContext, FocusHandle, IntoElement, Render};
 use settings::Settings;
 use theme::ThemeSettings;
+use zed::i18n::t;
 
 use crate::prelude::*;
 use crate::{Color, KeyBinding, Label, LabelSize, StyledExt, h_flex, v_flex};
@@ -288,7 +289,7 @@ impl Component for Tooltip {
             example_group(vec![single_example(
                 "Text only",
                 Button::new("delete-example", "Delete")
-                    .tooltip(Tooltip::text("This is a tooltip!"))
+                    .tooltip(Tooltip::text(&t("tooltip.this_is_tooltip")))
                     .into_any_element(),
             )])
             .into_any_element(),

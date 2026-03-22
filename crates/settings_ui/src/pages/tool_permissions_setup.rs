@@ -11,6 +11,7 @@ use theme::ThemeSettings;
 use ui::{Banner, ContextMenu, Divider, PopoverMenu, Severity, Tooltip, prelude::*};
 use util::ResultExt as _;
 use util::shell::ShellKind;
+use zed::i18n::t;
 
 use crate::{SettingsWindow, components::SettingsInputField};
 
@@ -535,7 +536,7 @@ fn render_verification_section(
                 .border_color(color.border_variant)
                 .rounded_sm()
                 .child(
-                    Label::new("Test Your Rules")
+                    Label::new(t("settings.test_your_rules"))
                         .color(Color::Muted)
                         .size(LabelSize::Small),
                 )
@@ -555,7 +556,7 @@ fn render_verification_section(
                     this.when(patterns_agree, |this| {
                         if matched_patterns.is_empty() {
                             this.child(
-                                Label::new("No regex matches, using the default action.")
+                                Label::new(t("settings.no_regex_matches"))
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
                             )
@@ -787,7 +788,7 @@ fn render_verdict_label(mode: ToolPermissionMode) -> AnyElement {
     h_flex()
         .gap_1()
         .child(
-            Label::new("Result:")
+            Label::new(t("settings.result"))
                 .size(LabelSize::Small)
                 .color(Color::Muted),
         )
@@ -817,7 +818,7 @@ fn render_invalid_patterns_section(
                         .size(IconSize::Small)
                         .color(Color::Error),
                 )
-                .child(Label::new("Invalid Patterns").color(Color::Error)),
+                .child(Label::new(t("settings.invalid_patterns")).color(Color::Error)),
         )
         .child(
             Label::new(
@@ -880,7 +881,7 @@ fn render_invalid_patterns_section(
                                     IconButton::new(delete_id, IconName::Trash)
                                         .icon_size(IconSize::Small)
                                         .icon_color(Color::Muted)
-                                        .tooltip(Tooltip::text("Delete Invalid Pattern"))
+                                        .tooltip(Tooltip::text(t("tooltip.delete_invalid_pattern")))
                                         .on_click(cx.listener(move |_, _, _, cx| {
                                             delete_pattern(
                                                 &tool_id_for_delete,
@@ -955,7 +956,7 @@ fn render_pattern_empty_state(cx: &mut Context<SettingsWindow>) -> AnyElement {
         .border_dashed()
         .border_color(cx.theme().colors().border_variant)
         .child(
-            Label::new("No patterns configured")
+            Label::new(t("settings.no_patterns_configured"))
                 .size(LabelSize::Small)
                 .color(Color::Disabled),
         )
@@ -987,7 +988,7 @@ fn render_user_pattern_row(
             IconButton::new(delete_id, IconName::Trash)
                 .icon_size(IconSize::Small)
                 .icon_color(Color::Muted)
-                .tooltip(Tooltip::text("Delete Pattern"))
+                .tooltip(Tooltip::text(t("tooltip.delete_pattern")))
                 .on_click(cx.listener(move |_, _, _, cx| {
                     delete_pattern(&tool_id_for_delete, rule_type, &pattern_for_delete, cx);
                 })),
@@ -1081,7 +1082,7 @@ fn render_global_default_mode_section(current_mode: ToolPermissionMode) -> AnyEl
             v_flex()
                 .w_full()
                 .min_w_0()
-                .child(Label::new("Default Permission"))
+                .child(Label::new(t("settings.default_permission")))
                 .child(
                     Label::new(
                         "Controls the default behavior for all tool actions. Per-tool rules and patterns can override this.",
@@ -1137,9 +1138,9 @@ fn render_default_mode_section(
             v_flex()
                 .w_full()
                 .min_w_0()
-                .child(Label::new("Default Action"))
+                .child(Label::new(t("settings.default_action")))
                 .child(
-                    Label::new("Action to take when no patterns match.")
+                    Label::new(t("settings.action_to_take"))
                         .size(LabelSize::Small)
                         .color(Color::Muted),
                 ),

@@ -23,7 +23,12 @@ use editor::{
     },
     scroll::Autoscroll,
 };
+use gpui::SharedString;
 use project::InlayId;
+
+mod zed_i18n {
+    pub use zed::i18n::t;
+}
 
 /// Marker types
 enum ReplExecutedRange {}
@@ -183,7 +188,7 @@ impl EditorBlock {
                         .icon_color(Color::Muted)
                         .size(ButtonSize::Compact)
                         .shape(IconButtonShape::Square)
-                        .tooltip(Tooltip::text("Close output area"))
+                        .tooltip(Tooltip::text(zed_i18n::t("repl.close_output_area")))
                         .on_click(move |_, window, cx| {
                             if let BlockId::Custom(block_id) = block_id {
                                 (on_close)(block_id, window, cx)
@@ -928,18 +933,18 @@ impl Render for Session {
                     .as_ref()
                     .map(|info| info.language_info.name.clone()),
                 Some(
-                    Button::new("interrupt", "Interrupt")
+                    Button::new("interrupt", zed_i18n::t("repl.interrupt"))
                         .style(ButtonStyle::Subtle)
                         .on_click(cx.listener(move |session, _, _, cx| {
                             session.interrupt(cx);
                         })),
                 ),
             ),
-            Kernel::StartingKernel(_) => (Some("Starting".into()), None),
+            Kernel::StartingKernel(_) => (Some(zed_i18n::t("repl.starting").into()), None),
             Kernel::ErroredLaunch(err) => (Some(format!("Error: {err}")), None),
-            Kernel::ShuttingDown => (Some("Shutting Down".into()), None),
-            Kernel::Shutdown => (Some("Shutdown".into()), None),
-            Kernel::Restarting => (Some("Restarting".into()), None),
+            Kernel::ShuttingDown => (Some(zed_i18n::t("repl.kernel_shutting_down").into()), None),
+            Kernel::Shutdown => (Some(zed_i18n::t("repl.kernel_shutdown").into()), None),
+            Kernel::Restarting => (Some(zed_i18n::t("repl.kernel_restarting").into()), None),
         };
 
         KernelListItem::new(self.kernel_specification.clone())
@@ -964,7 +969,7 @@ impl Render for Session {
             .child(Label::new(self.kernel_specification.name()))
             .children(status_text.map(|status_text| Label::new(format!("({status_text})"))))
             .button(
-                Button::new("shutdown", "Shutdown")
+                Button::new("shutdown", zed_i18n::t("repl.shutdown"))
                     .style(ButtonStyle::Subtle)
                     .disabled(self.kernel.is_shutting_down())
                     .on_click(cx.listener(move |session, _, window, cx| {

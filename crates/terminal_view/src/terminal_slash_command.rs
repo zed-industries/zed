@@ -1,6 +1,8 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
+use zed::i18n::t;
+
 use crate::{TerminalView, terminal_panel::TerminalPanel};
 use anyhow::Result;
 use assistant_slash_command::{
@@ -30,7 +32,7 @@ impl SlashCommand for TerminalSlashCommand {
     }
 
     fn description(&self) -> String {
-        "Insert terminal output".into()
+        t("terminal.insert_terminal_output").into()
     }
 
     fn icon(&self) -> IconName {
@@ -90,7 +92,8 @@ impl SlashCommand for TerminalSlashCommand {
             .last_n_non_empty_lines(line_count);
 
         let mut text = String::new();
-        text.push_str("Terminal output:\n");
+        text.push_str(&t("terminal.terminal_output"));
+        text.push('\n');
         text.push_str(&lines.join("\n"));
         let range = 0..text.len();
 
@@ -99,7 +102,7 @@ impl SlashCommand for TerminalSlashCommand {
             sections: vec![SlashCommandOutputSection {
                 range,
                 icon: IconName::Terminal,
-                label: "Terminal".into(),
+                label: t("terminal.terminal").into(),
                 metadata: None,
             }],
             run_commands_in_text: false,

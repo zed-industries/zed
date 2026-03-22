@@ -150,12 +150,25 @@ impl XmlEditParser {
         }
     }
 
-    fn find_end_tag(&self) -> Option<Range<usize>> {
-        let (tag, start_ix) = END_TAGS
-            .iter()
+    fn find_end_tag(&self, specific_tag: Option<&str>) -> Option<Range<usize>> {
+        let tags_to_search: Box<dyn Iterator<Item = &str>> = if let Some(tag) = specific_tag {
+            Box::new(std::iter::once(tag))
+        } else {
+            Box::new(END_TAGS.iter().copied())
+        };
+
+        let (tag, start_ix) = tags_to_search
             .flat_map(|tag| Some((tag, self.buffer.find(tag)?)))
             .min_by_key(|(_, ix)| *ix)?;
         Some(start_ix..start_ix + tag.len())
+    }
+
+    fn find_old_text_end_tag(&self) -> Option<Range<usize>> {
+        self.find_end_tag(Some(OLD_TEXT_END_TAG))
+    }
+
+    fn find_new_text_end_tag(&self) -> Option<Range<usize>> {
+        self.find_end_tag(Some(NEW_TEXT_END_TAG))
     }
 
     fn ends_with_tag_prefix(&self) -> bool {
@@ -212,7 +225,7 @@ impl EditFormatParser for XmlEditParser {
                     }
 
                     let line_hint = *line_hint;
-                    if let Some(tag_range) = self.find_end_tag() {
+                    if let Some(tag_range) = self.find_old_text_end_tag() {
                         let mut chunk = self.buffer[..tag_range.start].to_string();
                         if chunk.ends_with('\n') {
                             chunk.pop();
@@ -257,7 +270,7 @@ impl EditFormatParser for XmlEditParser {
                         *start = false;
                     }
 
-                    if let Some(tag_range) = self.find_end_tag() {
+                    if let Some(tag_range) = self.find_new_text_end_tag() {
                         let mut chunk = self.buffer[..tag_range.start].to_string();
                         if chunk.ends_with('\n') {
                             chunk.pop();
@@ -608,6 +621,33 @@ mod tests {
             vec![Edit {
                 old_text: "code with <tag>nested</tag> elements".to_string(),
                 new_text: "new <code>content</code>".to_string(),
+                line_hint: None,
+            }]
+        );
+        assert_eq!(
+            parser.finish(),
+            EditParserMetrics {
+                tags: 2,
+                mismatched_tags: 0
+            }
+        );
+    }
+
+    #[gpui::test(iterations = 1000)]
+    fn test_xml_literal_tag_strings_in_content(mut rng: StdRng) {
+        let mut parser = EditParser::new(EditFormat::XmlTags);
+        assert_eq!(
+            parse_random_chunks(
+                "<old_text>The text to replace is <old_text>cat</old_text><new_text>dog</new_text></old_text><new_text>The text to replace is <old_text>fish</old_text><new_text>sharks</new_text></new_text>",
+                &mut parser,
+                &mut rng
+            ),
+            vec![Edit {
+                old_text: "The text to replace is <old_text>cat</old_text><new_text>dog</new_text>"
+                    .to_string(),
+                new_text:
+                    "The text to replace is <old_text>fish</old_text><new_text>sharks</new_text>"
+                        .to_string(),
                 line_hint: None,
             }]
         );

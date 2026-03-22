@@ -1,4 +1,5 @@
 mod agent_configuration;
+pub(crate) mod i18n;
 pub(crate) mod agent_connection_store;
 mod agent_diff;
 mod agent_model_selector;

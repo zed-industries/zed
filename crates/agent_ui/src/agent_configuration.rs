@@ -48,6 +48,7 @@ pub(crate) use manage_profiles_modal::ManageProfilesModal;
 use crate::agent_configuration::add_llm_provider_modal::{
     AddLlmProviderModal, LlmCompatibleProvider,
 };
+use crate::i18n::t;
 
 pub struct AgentConfiguration {
     fs: Arc<dyn Fs>,
@@ -1163,7 +1164,7 @@ impl AgentConfiguration {
                     )
                     .icon_color(Color::Muted)
                     .icon_size(IconSize::Small)
-                    .tooltip(Tooltip::text("Remove Custom Agent"))
+                    .tooltip(Tooltip::text(t("tooltip.remove_custom")))
                     .on_click(cx.listener(move |_, _, _window, cx| {
                         let agent_name = agent_server_name.clone();
                         update_settings_file(fs.clone(), cx, move |settings, _| {

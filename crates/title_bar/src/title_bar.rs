@@ -50,6 +50,7 @@ use workspace::{
     MultiWorkspace, ToggleWorktreeSecurity, Workspace, WorkspaceId, notifications::NotifyResultExt,
 };
 use zed_actions::OpenRemote;
+use zed::i18n::t;
 
 pub use onboarding_banner::restore_banner;
 
@@ -632,7 +633,7 @@ impl TitleBar {
             return None;
         }
 
-        let button = Button::new("restricted_mode_trigger", "Restricted Mode")
+        let button = Button::new("restricted_mode_trigger", t("title_bar.restricted_mode"))
             .style(ButtonStyle::Tinted(TintColor::Warning))
             .label_size(LabelSize::Small)
             .color(Color::Warning)
@@ -643,9 +644,9 @@ impl TitleBar {
             )
             .tooltip(|_, cx| {
                 Tooltip::with_meta(
-                    "You're in Restricted Mode",
+                    t("title_bar.youre_in_restricted_mode"),
                     Some(&ToggleWorktreeSecurity),
-                    "Mark this project as trusted and unlock all features",
+                    t("title_bar.mark_project_trusted"),
                     cx,
                 )
             })
@@ -700,7 +701,7 @@ impl TitleBar {
                         host_user.github_login
                     );
 
-                    Tooltip::with_meta(tooltip_title, None, "Click to Follow", cx)
+                    Tooltip::with_meta(tooltip_title, None, t("title_bar.click_to_follow"), cx)
                 })
                 .on_click({
                     let host_peer_id = host.peer_id;
@@ -1019,7 +1020,7 @@ impl TitleBar {
                 div()
                     .id("disconnected")
                     .child(Icon::new(IconName::Disconnected).size(IconSize::Small))
-                    .tooltip(Tooltip::text("Disconnected"))
+                    .tooltip(Tooltip::text(t("tooltip.disconnected")))
                     .into_any_element(),
             ),
             client::Status::UpgradeRequired => {
@@ -1056,7 +1057,7 @@ impl TitleBar {
     pub fn render_sign_in_button(&mut self, _: &mut Context<Self>) -> Button {
         let client = self.client.clone();
         let workspace = self.workspace.clone();
-        Button::new("sign_in", "Sign In")
+        Button::new("sign_in", t("title_bar.sign_in"))
             .label_size(LabelSize::Small)
             .on_click(move |_, window, cx| {
                 let client = client.clone();
@@ -1146,7 +1147,7 @@ impl TitleBar {
                 Button::new("organization-menu", &organization.name)
                     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                     .label_size(LabelSize::Small),
-                Tooltip::text("Toggle Organization Menu"),
+                Tooltip::text(t("tooltip.toggle_org_menu")),
             )
             .anchor(gpui::Corner::TopRight)
             .into_any_element()
@@ -1200,7 +1201,7 @@ impl TitleBar {
                                     .w_full()
                                     .gap_1()
                                     .justify_between()
-                                    .child(Label::new("Restart to update Zed").color(Color::Accent))
+                                    .child(Label::new(t("title_bar.restart_to_update_zed")).color(Color::Accent))
                                     .child(
                                         Icon::new(IconName::Download)
                                             .size(IconSize::Small)
@@ -1214,23 +1215,23 @@ impl TitleBar {
                         )
                         .separator()
                     })
-                    .action("Settings", zed_actions::OpenSettings.boxed_clone())
-                    .action("Keymap", Box::new(zed_actions::OpenKeymap))
+                    .action(t("title_bar.settings"), zed_actions::OpenSettings.boxed_clone())
+                    .action(t("title_bar.keymap"), Box::new(zed_actions::OpenKeymap))
                     .action(
-                        "Themes…",
+                        t("title_bar.themes"),
                         zed_actions::theme_selector::Toggle::default().boxed_clone(),
                     )
                     .action(
-                        "Icon Themes…",
+                        t("title_bar.icon_themes"),
                         zed_actions::icon_theme_selector::Toggle::default().boxed_clone(),
                     )
                     .action(
-                        "Extensions",
+                        t("title_bar.extensions"),
                         zed_actions::Extensions::default().boxed_clone(),
                     )
                     .when(is_signed_in, |this| {
                         this.separator()
-                            .action("Sign Out", client::SignOut.boxed_clone())
+                            .action(t("title_bar.sign_out"), client::SignOut.boxed_clone())
                     })
                 })
                 .into()
@@ -1256,13 +1257,13 @@ impl TitleBar {
                             });
                     this.trigger_with_tooltip(
                         ButtonLike::new("user-menu").children(avatar),
-                        Tooltip::text("Toggle User Menu"),
+                        Tooltip::text(t("tooltip.toggle_user_menu")),
                     )
                 } else {
                     this.trigger_with_tooltip(
                         IconButton::new("user-menu", IconName::ChevronDown)
                             .icon_size(IconSize::Small),
-                        Tooltip::text("Toggle User Menu"),
+                        Tooltip::text(t("tooltip.toggle_user_menu")),
                     )
                 }
             })

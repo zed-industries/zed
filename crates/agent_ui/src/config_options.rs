@@ -21,6 +21,7 @@ use ui::{
 use util::ResultExt as _;
 
 use crate::ui::HoldForDefault;
+use crate::i18n::t;
 
 const PICKER_THRESHOLD: usize = 5;
 

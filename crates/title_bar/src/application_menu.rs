@@ -6,6 +6,7 @@ use serde::Deserialize;
 
 use smallvec::SmallVec;
 use ui::{ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
+use zed::i18n::t;
 
 use crate::title_bar_settings::TitleBarSettings;
 
@@ -168,7 +169,7 @@ impl ApplicationMenu {
                         )
                         .style(ButtonStyle::Subtle)
                         .icon_size(IconSize::Small),
-                        Tooltip::text("Open Application Menu"),
+                        Tooltip::text(t("tooltip.open_app_menu")),
                     )
                     .with_handle(handle),
             )

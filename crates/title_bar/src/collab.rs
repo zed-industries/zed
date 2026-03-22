@@ -419,7 +419,7 @@ impl TitleBar {
                 .child(
                     IconButton::new("leave-call", IconName::Exit)
                         .style(ButtonStyle::Subtle)
-                        .tooltip(Tooltip::text("Leave Call"))
+                        .tooltip(Tooltip::text(t("tooltip.leave_call")))
                         .icon_size(IconSize::Small)
                         .on_click(move |_, _window, cx| {
                             ActiveCall::global(cx)
@@ -449,12 +449,12 @@ impl TitleBar {
             children.push(
                 Button::new(
                     "toggle_sharing",
-                    if is_shared { "Unshare" } else { "Share" },
+                    if is_shared { t("title_bar.unshare") } else { t("title_bar.share") },
                 )
                 .tooltip(Tooltip::text(if is_shared {
-                    "Stop sharing project with call participants"
+                    t("title_bar.stop_sharing_project")
                 } else {
-                    "Share project with call participants"
+                    t("title_bar.share_project")
                 }))
                 .style(ButtonStyle::Subtle)
                 .selected_style(ButtonStyle::Tinted(TintColor::Accent))
@@ -462,7 +462,7 @@ impl TitleBar {
                 .label_size(LabelSize::Small)
                 .when(is_sharing_disabled, |parent| {
                     parent.disabled(true).tooltip(Tooltip::text(
-                        "This project may not be shared in a public channel.",
+                        t("title_bar.cannot_share_public_channel"),
                     ))
                 })
                 .on_click(cx.listener(move |this, _, window, cx| {
@@ -490,16 +490,16 @@ impl TitleBar {
                     if is_muted {
                         if is_deafened {
                             Tooltip::with_meta(
-                                "Unmute Microphone",
+                                t("title_bar.unmute_microphone"),
                                 None,
-                                "Audio will be unmuted",
+                                t("title_bar.audio_will_be_unmuted"),
                                 cx,
                             )
                         } else {
-                            Tooltip::simple("Unmute Microphone", cx)
+                            Tooltip::simple(t("title_bar.unmute_microphone"), cx)
                         }
                     } else {
-                        Tooltip::simple("Mute Microphone", cx)
+                        Tooltip::simple(t("title_bar.mute_microphone"), cx)
                     }
                 })
                 .style(ButtonStyle::Subtle)
@@ -526,18 +526,18 @@ impl TitleBar {
             .toggle_state(is_deafened)
             .tooltip(move |_window, cx| {
                 if is_deafened {
-                    let label = "Unmute Audio";
+                    let label = t("title_bar.unmute_audio");
 
                     if !muted_by_user {
-                        Tooltip::with_meta(label, None, "Microphone will be unmuted", cx)
+                        Tooltip::with_meta(label, None, t("title_bar.microphone_will_be_unmuted"), cx)
                     } else {
                         Tooltip::simple(label, cx)
                     }
                 } else {
-                    let label = "Mute Audio";
+                    let label = t("title_bar.mute_audio");
 
                     if !muted_by_user {
-                        Tooltip::with_meta(label, None, "Microphone will be muted", cx)
+                        Tooltip::with_meta(label, None, t("title_bar.microphone_will_be_muted"), cx)
                     } else {
                         Tooltip::simple(label, cx)
                     }
@@ -559,9 +559,9 @@ impl TitleBar {
                 .toggle_state(is_screen_sharing)
                 .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                 .tooltip(Tooltip::text(if is_screen_sharing {
-                    "Stop Sharing Screen"
+                    t("title_bar.stop_sharing_screen")
                 } else {
-                    "Share Screen"
+                    t("title_bar.share_screen")
                 }))
                 .on_click(move |_, window, cx| {
                     let should_share = ActiveCall::global(cx)

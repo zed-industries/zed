@@ -9,6 +9,10 @@ use util::ResultExt as _;
 use workspace::item::ItemEvent;
 use workspace::{Workspace, item::Item};
 
+mod zed_i18n {
+    pub use zed::i18n::t;
+}
+
 use crate::jupyter_settings::JupyterSettings;
 use crate::repl_store::ReplStore;
 
@@ -188,7 +192,7 @@ impl Item for ReplSessionsPage {
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
-        Some("REPL Session Started")
+        Some(zed_i18n::t("repl.repl_session_started"))
     }
 
     fn show_toolbar(&self) -> bool {
@@ -221,7 +225,7 @@ impl Render for ReplSessionsPage {
         if kernel_specifications.is_empty() {
             let instructions = "To start interactively running code in your editor, you need to install and configure Jupyter kernels.";
 
-            return ReplSessionsContainer::new("No Jupyter Kernels Available")
+            return ReplSessionsContainer::new(zed_i18n::t("repl.no_jupyter_kernels_available"))
                 .child(Label::new(instructions))
                 .child(
                     h_flex().w_full().p_4().justify_center().gap_2().child(
@@ -229,7 +233,7 @@ impl Render for ReplSessionsPage {
                             .style(ButtonStyle::Filled)
                             .size(ButtonSize::Large)
                             .layer(ElevationIndex::ModalSurface)
-                            .child(Label::new("Install Kernels"))
+                            .child(Label::new(zed_i18n::t("repl.install_kernels")))
                             .on_click(move |_, _, cx| {
                                 cx.open_url(
                                     "https://zed.dev/docs/repl#language-specific-instructions",
@@ -243,14 +247,14 @@ impl Render for ReplSessionsPage {
         if sessions.is_empty() {
             let instructions = "To run code in a Jupyter kernel, select some code and use the 'repl::Run' command.";
 
-            return ReplSessionsContainer::new("No Jupyter Kernel Sessions").child(
+            return ReplSessionsContainer::new(zed_i18n::t("repl.no_jupyter_kernel_sessions")).child(
                 v_flex()
                     .child(Label::new(instructions))
                     .child(KeyBinding::for_action(&Run, cx)),
             );
         }
 
-        ReplSessionsContainer::new("Jupyter Kernel Sessions").children(sessions)
+        ReplSessionsContainer::new(zed_i18n::t("repl.jupyter_kernel_sessions")).children(sessions)
     }
 }
 

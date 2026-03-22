@@ -55,6 +55,7 @@ terminal_view.workspace = true
 theme.workspace = true
 ui.workspace = true
 util.workspace = true
+zed.workspace = true
 uuid.workspace = true
 workspace.workspace = true
 picker.workspace = true

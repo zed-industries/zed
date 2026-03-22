@@ -95,7 +95,6 @@ impl PythonDebugAdapter {
 
         let mut configuration = task_definition.config.clone();
         if let Ok(console) = configuration.dot_get_mut("console") {
-            // Use built-in Zed terminal if user did not explicitly provide a setting for console.
             if console.is_null() {
                 *console = Value::String("integratedTerminal".into());
             }
@@ -104,6 +103,41 @@ impl PythonDebugAdapter {
         if let Some(obj) = configuration.as_object_mut() {
             obj.entry("cwd")
                 .or_insert(delegate.worktree_root_path().to_string_lossy().into());
+
+            let mut envs: HashMap<String, String> = HashMap::default();
+            if let Some(env_files) = obj.get("envFile") {
+                let file_paths: Vec<&str> = match env_files {
+                    Value::Array(arr) => arr.iter().filter_map(|v| v.as_str()).collect(),
+                    Value::String(s) => vec![s.as_str()],
+                    _ => vec![],
+                };
+
+                for path_str in file_paths {
+                    if let Ok(file) = delegate.fs().open_sync(Path::new(path_str)).await {
+                        let file_envs: HashMap<String, String> =
+                            dotenvy::from_read_iter(file).filter_map(Result::ok).collect();
+                        envs.extend(file_envs);
+                    }
+                }
+                obj.remove("envFile");
+            }
+
+            if let Some(existing_env) = obj.get("env").and_then(|v| v.as_object()) {
+                for (k, v) in existing_env {
+                    envs.insert(k.clone(), v.as_str().unwrap_or_default().to_string());
+                }
+            }
+
+            if !envs.is_empty() {
+                obj.insert(
+                    "env".to_string(),
+                    Value::Object(
+                        envs.into_iter()
+                            .map(|(k, v)| (k, Value::String(v)))
+                            .collect(),
+                    ),
+                );
+            }
         }
 
         Ok(StartDebuggingRequestArguments {

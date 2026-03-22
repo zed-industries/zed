@@ -76,6 +76,7 @@ use zed_actions::agent::{AddSelectionToThread, PasteRaw, ToggleModelSelector};
 use crate::CycleFavoriteModels;
 
 use crate::{slash_command::SlashCommandCompletionProvider, slash_command_picker};
+use crate::i18n::t;
 use assistant_text_thread::{
     CacheStatus, Content, InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId,
     MessageMetadata, MessageStatus, PendingSlashCommandStatus, TextThread, TextThreadEvent,
@@ -2174,7 +2175,7 @@ impl TextThreadEditor {
                 let (style, tooltip) = if over_warn_threshold {
                     (
                         ButtonStyle::Tinted(TintColor::Warning),
-                        Some(Tooltip::text("Token limit is close to exhaustion")(
+                        Some(Tooltip::text(t("tooltip.token_limit_close"))(
                             window, cx,
                         )),
                     )

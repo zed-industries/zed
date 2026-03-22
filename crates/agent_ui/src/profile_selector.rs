@@ -1,4 +1,5 @@
 use crate::{CycleModeSelector, ManageProfiles, ToggleProfileSelector};
+use crate::i18n::t;
 use agent_settings::{
     AgentProfile, AgentProfileId, AgentSettings, AvailableProfiles, builtin_profiles,
 };
@@ -154,7 +155,7 @@ impl Render for ProfileSelector {
                 .disabled(true)
                 .label_size(LabelSize::Small)
                 .color(Color::Muted)
-                .tooltip(Tooltip::text("This model does not support tools."))
+                .tooltip(Tooltip::text(t("tooltip.model_no_tools")))
                 .into_any_element();
         }
 

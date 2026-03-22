@@ -4,6 +4,7 @@ pub mod collab_panel;
 pub mod notification_panel;
 pub mod notifications;
 mod panel_settings;
+pub mod i18n;
 
 use std::{rc::Rc, sync::Arc};
 

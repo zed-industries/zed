@@ -20,6 +20,7 @@ use crate::{
     SettingField, SettingItem, SettingsFieldMetadata, SettingsPageItem, SettingsWindow, USER,
     components::{SettingsInputField, SettingsSectionHeader},
 };
+use zed::i18n::t;
 
 pub(crate) fn render_edit_prediction_setup_page(
     settings_window: &SettingsWindow,
@@ -178,9 +179,9 @@ fn render_provider_dropdown(window: &mut Window, cx: &mut App) -> AnyElement {
                         .w_full()
                         .min_w_0()
                         .max_w_1_2()
-                        .child(Label::new("Provider"))
+                        .child(Label::new(t("settings.provider")))
                         .child(
-                            Label::new("Select which provider to use for edit predictions.")
+                            Label::new(t("settings.select_provider"))
                                 .size(LabelSize::Small)
                                 .color(Color::Muted),
                         ),
@@ -258,7 +259,7 @@ fn render_api_key_provider(
             .flex_wrap()
             .gap_0p5()
             .child(
-                Label::new("Visit the")
+                Label::new(t("settings.visit_the"))
                     .size(LabelSize::Small)
                     .color(Color::Muted),
             )
@@ -269,7 +270,7 @@ fn render_api_key_provider(
                     .label_color(Color::Muted),
             )
             .child(
-                Label::new("to generate an API key.")
+                Label::new(t("settings.to_generate_api_key"))
                     .size(LabelSize::Small)
                     .color(Color::Muted),
             ),
@@ -310,7 +311,7 @@ fn render_api_key_provider(
                         .w_full()
                         .min_w_0()
                         .max_w_1_2()
-                        .child(Label::new("API Key"))
+                        .child(Label::new(t("settings.api_key")))
                         .child(description)
                         .when_some(env_var_name, |this, env_var_name| {
                             this.child({
