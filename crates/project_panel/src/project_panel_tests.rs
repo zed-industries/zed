@@ -10286,7 +10286,7 @@ fn test_sort_by_name_descending_preserves_grouping() {
 }
 
 #[test]
-fn test_sort_by_modified_time_falls_back_to_name_when_missing_mtime() {
+fn test_sort_by_modified_time_places_missing_mtime_after_known_entries() {
     let mut entries = vec![
         test_git_entry("beta.txt", true, Some(MTime::from_seconds_and_nanos(2, 0))),
         test_git_entry("alpha.txt", true, None),
@@ -10303,7 +10303,48 @@ fn test_sort_by_modified_time_falls_back_to_name_when_missing_mtime() {
         .iter()
         .map(|entry| entry.path.as_unix_str().to_string())
         .collect::<Vec<_>>();
-    assert_eq!(paths, vec!["alpha.txt", "beta.txt"]);
+    assert_eq!(paths, vec!["beta.txt", "alpha.txt"]);
+}
+
+#[test]
+fn test_sort_by_modified_time_with_mixed_known_and_missing_mtimes_is_stable() {
+    let mut entries = vec![
+        test_git_entry("alpha.txt", true, Some(MTime::from_seconds_and_nanos(1, 0))),
+        test_git_entry("beta.txt", true, None),
+        test_git_entry("charlie.txt", true, Some(MTime::from_seconds_and_nanos(2, 0))),
+    ];
+
+    sort_worktree_entries(
+        &mut entries,
+        settings::ProjectPanelSortMode::Mixed,
+        settings::ProjectPanelSortBy::ModifiedTime,
+        settings::ProjectPanelSortDirection::Descending,
+    );
+
+    let descending_paths = entries
+        .iter()
+        .map(|entry| entry.path.as_unix_str().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        descending_paths,
+        vec!["charlie.txt", "alpha.txt", "beta.txt"]
+    );
+
+    sort_worktree_entries(
+        &mut entries,
+        settings::ProjectPanelSortMode::Mixed,
+        settings::ProjectPanelSortBy::ModifiedTime,
+        settings::ProjectPanelSortDirection::Ascending,
+    );
+
+    let ascending_paths = entries
+        .iter()
+        .map(|entry| entry.path.as_unix_str().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ascending_paths,
+        vec!["alpha.txt", "charlie.txt", "beta.txt"]
+    );
 }
 
 #[test]
