@@ -11,7 +11,7 @@ use theme::ThemeSettings;
 use ui::{Banner, ContextMenu, Divider, PopoverMenu, Severity, Tooltip, prelude::*};
 use util::ResultExt as _;
 use util::shell::ShellKind;
-use zed::i18n::t;
+use zed_i18n::t;
 
 use crate::{SettingsWindow, components::SettingsInputField};
 

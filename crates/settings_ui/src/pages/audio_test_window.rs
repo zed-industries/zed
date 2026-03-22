@@ -23,7 +23,7 @@ use workspace::client_side_decorations;
 
 use super::audio_input_output_setup::render_audio_device_dropdown;
 use crate::{SettingsUiFile, update_settings_file};
-use zed::i18n::t;
+use zed_i18n::t;
 
 pub struct AudioTestWindow {
     title_bar: Option<Entity<PlatformTitleBar>>,

@@ -20,7 +20,7 @@ use crate::{
     SettingField, SettingItem, SettingsFieldMetadata, SettingsPageItem, SettingsWindow, USER,
     components::{SettingsInputField, SettingsSectionHeader},
 };
-use zed::i18n::t;
+use zed_i18n::t;
 
 pub(crate) fn render_edit_prediction_setup_page(
     settings_window: &SettingsWindow,
