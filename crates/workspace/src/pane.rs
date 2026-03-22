@@ -1955,6 +1955,23 @@ impl Pane {
             }
 
             for item_to_close in items_to_close {
+                let process_name = cx.update(|_, cx| item_to_close.running_process_name(cx))?;
+                if let Some(name) = process_name {
+                    let answer = pane.update_in(cx, |_, window, cx| {
+                        window.prompt(
+                            PromptLevel::Warning,
+                            &format!("Terminal is running: {name}"),
+                            Some("Closing will terminate this process."),
+                            &["Close", "Cancel"],
+                            cx,
+                        )
+                    })?;
+                    match answer.await {
+                        Ok(0) => {}
+                        _ => return Ok(()),
+                    }
+                }
+
                 let mut should_close = true;
                 let mut should_save = true;
                 if save_intent == SaveIntent::Close {

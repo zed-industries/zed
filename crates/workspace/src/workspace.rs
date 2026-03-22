@@ -2939,6 +2939,15 @@ impl Workspace {
                         }
                     }
                 }
+                for dock in this.all_docks() {
+                    for pane in dock.read(cx).panes(cx) {
+                        for item in pane.read(cx).items() {
+                            if let Some(name) = item.running_process_name(cx) {
+                                processes.push(name);
+                            }
+                        }
+                    }
+                }
                 processes
             })?;
 
@@ -2955,8 +2964,9 @@ impl Workspace {
                     )
                 })?;
 
-                if answer.await.log_err() == Some(1) {
-                    return anyhow::Ok(false);
+                match answer.await.log_err() {
+                    Some(0) => {} // "Force Close" — proceed
+                    _ => return anyhow::Ok(false), // "Cancel" or dialog dismissed
                 }
             }
 
