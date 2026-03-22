@@ -1,5 +1,6 @@
 use std::{
     borrow::Borrow,
+    path::MAIN_SEPARATOR,
     sync::atomic::{self, AtomicBool},
 };
 
@@ -9,8 +10,6 @@ const BASE_DISTANCE_PENALTY: f64 = 0.6;
 const ADDITIONAL_DISTANCE_PENALTY: f64 = 0.05;
 const MIN_DISTANCE_PENALTY: f64 = 0.2;
 
-// TODO:
-// Use `Path` instead of `&str` for paths.
 pub struct Matcher<'a> {
     query: &'a [char],
     lowercase_query: &'a [char],
@@ -22,6 +21,10 @@ pub struct Matcher<'a> {
     last_positions: Vec<usize>,
     score_matrix: Vec<Option<f64>>,
     best_position_matrix: Vec<usize>,
+}
+
+fn is_path_separator(c: char) -> bool {
+    c == MAIN_SEPARATOR
 }
 
 pub trait MatchCandidate {
@@ -226,7 +229,7 @@ impl<'a> Matcher<'a> {
                     None => continue,
                 }
             };
-            let is_path_sep = path_char == '/';
+            let is_path_sep = is_path_separator(path_char);
 
             if query_idx == 0 && is_path_sep {
                 last_slash = j;
@@ -245,7 +248,7 @@ impl<'a> Matcher<'a> {
                         None => path[j - 1 - prefix.len()],
                     };
 
-                    if last == '/' {
+                    if is_path_separator(last) {
                         char_score = 0.9;
                     } else if (last == '-' || last == '_' || last == ' ' || last.is_numeric())
                         || (last.is_lowercase() && curr.is_uppercase())
@@ -266,7 +269,7 @@ impl<'a> Matcher<'a> {
                 // Apply a severe penalty if the case doesn't match.
                 // This will make the exact matches have higher score than the case-insensitive and the
                 // path insensitive matches.
-                if (self.smart_case || curr == '/') && self.query[query_idx] != curr {
+                if (self.smart_case || is_path_separator(curr)) && self.query[query_idx] != curr {
                     char_score *= 0.001;
                 }
 
