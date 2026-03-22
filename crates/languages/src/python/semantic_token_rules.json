@@ -6,5 +6,10 @@
   {
     "token_type": "clsParameter",
     "style": ["variable.special"]
+  },
+  // ty specific
+  {
+    "token_type": "builtinConstant",
+    "style": ["constant.builtin"]
   }
 ]
