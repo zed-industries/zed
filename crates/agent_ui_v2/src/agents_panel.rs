@@ -1,5 +1,5 @@
 use acp_thread::{AgentSessionInfo, AgentSessionList};
-use agent::{CLI_PROJECT_PATH_KEY, CLI_SOURCE_KEY, ClaudeCodeSessionIndex, ClaudeCodeSessionList, NativeAgentServer, ThreadStore};
+use agent::{CLI_PROJECT_PATH_KEY, CLI_SOURCE_KEY, ClaudeCodeSessionIndex, ClaudeCodeSessionList, CodexSessionIndex, CodexSessionList, NativeAgentServer, ThreadStore};
 use agent_client_protocol as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use agent_settings::AgentSettings;
@@ -15,6 +15,7 @@ use project::Project;
 use prompt_store::PromptStore;
 use serde::{Deserialize, Serialize};
 use settings::{Settings as _, update_settings_file};
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use ui::{App, Context, IconName, IntoElement, ParentElement, Render, SharedString, Styled, Window};
@@ -136,14 +137,21 @@ impl AgentsPanel {
             return;
         }
 
-        if let Some(index) = ClaudeCodeSessionIndex::for_project(&project_path) {
-            log::info!("AgentsPanel: Found Claude Code sessions for project {:?}", project_path);
-            let session_list: Rc<dyn AgentSessionList> =
-                Rc::new(ClaudeCodeSessionList::new(index));
-            history.update(cx, |history, cx| {
-                history.set_session_list(Some(session_list), cx);
-            });
-        }
+        history.update(cx, |history, cx| {
+            if let Some(index) = ClaudeCodeSessionIndex::for_project(&project_path) {
+                log::info!("AgentsPanel: Found Claude Code sessions for project {:?}", project_path);
+                let session_list: Rc<dyn AgentSessionList> =
+                    Rc::new(ClaudeCodeSessionList::new(index));
+                history.set_claude_session_list(session_list, cx);
+            }
+
+            if let Some(index) = CodexSessionIndex::for_project(&project_path) {
+                log::info!("AgentsPanel: Found Codex sessions");
+                let session_list: Rc<dyn AgentSessionList> =
+                    Rc::new(CodexSessionList::new(index));
+                history.set_codex_session_list(session_list, cx);
+            }
+        });
     }
 
     fn new(
@@ -430,7 +438,13 @@ impl AgentsPanel {
                 let fallback: SharedString =
                     session_id.0[..8.min(session_id.0.len())].to_string().into();
                 let title = entry.title.clone().unwrap_or(fallback);
-                self.edit_thread_content(session_id, title, window, cx);
+                let codex_path = entry
+                    .meta
+                    .as_ref()
+                    .and_then(|m| m.get("codex_file_path"))
+                    .and_then(|v| v.as_str())
+                    .map(PathBuf::from);
+                self.edit_thread_content(session_id, title, codex_path, window, cx);
             }
         }
     }
@@ -452,14 +466,27 @@ impl AgentsPanel {
             return;
         };
 
-        let label = title.unwrap_or("Claude Code Session").to_string();
+        let is_codex = cli_command == "codex";
+        let default_label = if is_codex { "Codex Session" } else { "Claude Code Session" };
+        let label = title.unwrap_or(default_label).to_string();
+        let (args, command_label) = if is_codex {
+            (
+                vec!["resume".to_string(), session_id.to_string()],
+                format!("{} resume {}", cli_command, session_id),
+            )
+        } else {
+            (
+                vec!["--resume".to_string(), session_id.to_string()],
+                format!("{} --resume {}", cli_command, session_id),
+            )
+        };
         let spawn_task = task::SpawnInTerminal {
             id: task::TaskId(format!("cli-resume-{}", session_id)),
             full_label: label.clone(),
             label: label.clone(),
             command: Some(cli_command.to_string()),
-            args: vec!["--resume".to_string(), session_id.to_string()],
-            command_label: format!("{} --resume {}", cli_command, session_id),
+            args,
+            command_label,
             cwd: Some(project_path.to_path_buf()),
             env: Default::default(),
             use_new_terminal: true,
@@ -537,6 +564,7 @@ impl AgentsPanel {
         &self,
         session_id: acp::SessionId,
         title: SharedString,
+        codex_path: Option<PathBuf>,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -544,26 +572,28 @@ impl AgentsPanel {
             return;
         };
 
-        let project_path = self
-            .project
-            .read(cx)
-            .worktrees(cx)
-            .next()
-            .map(|worktree| worktree.read(cx).abs_path().to_path_buf());
+        let file_path = if let Some(path) = codex_path {
+            path
+        } else {
+            let project_path = self
+                .project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .map(|worktree| worktree.read(cx).abs_path().to_path_buf());
 
-        let Some(project_path) = project_path else {
-            log::error!("No project path available for edit_thread_content");
-            return;
+            let Some(project_path) = project_path else {
+                log::error!("No project path available for edit_thread_content");
+                return;
+            };
+
+            let Some(index) = ClaudeCodeSessionIndex::for_project(&project_path) else {
+                log::error!("No Claude Code sessions directory found for project");
+                return;
+            };
+
+            index.sessions_dir().join(format!("{}.jsonl", session_id.0))
         };
-
-        let Some(index) = ClaudeCodeSessionIndex::for_project(&project_path) else {
-            log::error!("No Claude Code sessions directory found for project");
-            return;
-        };
-
-        let file_path = index
-            .sessions_dir()
-            .join(format!("{}.jsonl", session_id.0));
 
         if !file_path.exists() {
             log::error!(

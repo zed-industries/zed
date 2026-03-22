@@ -12,7 +12,7 @@ mod thread_store;
 mod tool_permissions;
 mod tools;
 
-pub use claude_code_sessions::{CLI_PROJECT_PATH_KEY, CLI_SOURCE_KEY, ClaudeCodeSessionIndex, ClaudeCodeSessionList};
+pub use claude_code_sessions::{CLI_PROJECT_PATH_KEY, CLI_SOURCE_KEY, ClaudeCodeSessionIndex, ClaudeCodeSessionList, CodexSessionIndex, CodexSessionList};
 use context_server::ContextServerId;
 pub use db::*;
 pub use native_agent_server::NativeAgentServer;

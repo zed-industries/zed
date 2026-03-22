@@ -11,8 +11,8 @@ use std::{fmt::Display, ops::Range, rc::Rc};
 use text::Bias;
 use time::{OffsetDateTime, UtcOffset};
 use ui::{
-    HighlightedLabel, IconButtonShape, ListItem, ListItemSpacing, Tab, Tooltip, WithScrollbar,
-    prelude::*,
+    HighlightedLabel, IconButtonShape, ListItem, ListItemSpacing, Tab, TabBar, Tooltip,
+    WithScrollbar, prelude::*,
 };
 
 const DEFAULT_TITLE: &SharedString = &SharedString::new_static("New Thread");
@@ -35,6 +35,12 @@ actions!(
     ]
 );
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CliTab {
+    Claude,
+    Codex,
+}
+
 pub struct AcpThreadHistory {
     session_list: Option<Rc<dyn AgentSessionList>>,
     sessions: Vec<AgentSessionInfo>,
@@ -47,6 +53,9 @@ pub struct AcpThreadHistory {
     confirming_delete_history: bool,
     renaming_index: Option<usize>,
     rename_editor: Entity<Editor>,
+    active_tab: CliTab,
+    claude_session_list: Option<Rc<dyn AgentSessionList>>,
+    codex_session_list: Option<Rc<dyn AgentSessionList>>,
     _update_task: Task<()>,
     _watch_task: Option<Task<()>>,
     _subscriptions: Vec<gpui::Subscription>,
@@ -136,6 +145,9 @@ impl AcpThreadHistory {
             confirming_delete_history: false,
             renaming_index: None,
             rename_editor,
+            active_tab: CliTab::Claude,
+            claude_session_list: None,
+            codex_session_list: None,
             _subscriptions: vec![search_editor_subscription, rename_editor_subscription],
             _update_task: Task::ready(()),
             _watch_task: None,
@@ -209,6 +221,42 @@ impl AcpThreadHistory {
                 }
             }))
         });
+    }
+
+    pub(crate) fn set_claude_session_list(
+        &mut self,
+        session_list: Rc<dyn AgentSessionList>,
+        cx: &mut Context<Self>,
+    ) {
+        self.claude_session_list = Some(session_list);
+        if self.active_tab == CliTab::Claude {
+            let list = self.claude_session_list.clone();
+            self.set_session_list(list, cx);
+        }
+    }
+
+    pub(crate) fn set_codex_session_list(
+        &mut self,
+        session_list: Rc<dyn AgentSessionList>,
+        cx: &mut Context<Self>,
+    ) {
+        self.codex_session_list = Some(session_list);
+        if self.active_tab == CliTab::Codex {
+            let list = self.codex_session_list.clone();
+            self.set_session_list(list, cx);
+        }
+    }
+
+    fn select_tab(&mut self, tab: CliTab, cx: &mut Context<Self>) {
+        if self.active_tab == tab {
+            return;
+        }
+        self.active_tab = tab;
+        let list = match tab {
+            CliTab::Claude => self.claude_session_list.clone(),
+            CliTab::Codex => self.codex_session_list.clone(),
+        };
+        self.set_session_list(list, cx);
     }
 
     fn refresh_sessions(&mut self, preserve_selected_item: bool, cx: &mut Context<Self>) {
@@ -735,6 +783,30 @@ impl Render for AcpThreadHistory {
             .on_action(cx.listener(|this, _: &RemoveHistory, window, cx| {
                 this.remove_history(window, cx);
             }))
+            .child({
+                let active_tab = self.active_tab;
+                TabBar::new("cli-tabs")
+                    .child(
+                        Tab::new("claude-cli")
+                            .position(ui::TabPosition::First)
+                            .close_side(ui::TabCloseSide::End)
+                            .toggle_state(active_tab == CliTab::Claude)
+                            .child(Label::new("Claude CLI").size(LabelSize::Small))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.select_tab(CliTab::Claude, cx);
+                            })),
+                    )
+                    .child(
+                        Tab::new("codex-cli")
+                            .position(ui::TabPosition::Last)
+                            .close_side(ui::TabCloseSide::End)
+                            .toggle_state(active_tab == CliTab::Codex)
+                            .child(Label::new("Codex CLI").size(LabelSize::Small))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.select_tab(CliTab::Codex, cx);
+                            })),
+                    )
+            })
             .child(
                 h_flex()
                     .h(Tab::container_height(cx))

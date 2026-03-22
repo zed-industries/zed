@@ -2120,14 +2120,26 @@ impl AgentPanel {
             return;
         };
 
-        let label = format!("{} --resume {}", cli_command, &session_id[..8.min(session_id.len())]);
+        // Claude uses `claude --resume <id>`, Codex uses `codex resume <id>`
+        let (args, command_label) = if cli_command == "codex" {
+            (
+                vec!["resume".to_string(), session_id.to_string()],
+                format!("codex resume {}", session_id),
+            )
+        } else {
+            (
+                vec!["--resume".to_string(), session_id.to_string()],
+                format!("{} --resume {}", cli_command, session_id),
+            )
+        };
+        let label = format!("{} resume {}", cli_command, &session_id[..8.min(session_id.len())]);
         let spawn_task = task::SpawnInTerminal {
             id: task::TaskId(format!("cli-resume-{}", session_id)),
             full_label: label.clone(),
             label: label.clone(),
             command: Some(cli_command.to_string()),
-            args: vec!["--resume".to_string(), session_id.to_string()],
-            command_label: format!("{} --resume {}", cli_command, session_id),
+            args,
+            command_label,
             cwd: Some(project_path.to_path_buf()),
             env: Default::default(),
             use_new_terminal: true,

@@ -48,6 +48,34 @@ impl Focusable for ThreadContentEditor {
     }
 }
 
+fn extract_codex_content(value: &serde_json::Value) -> String {
+    let Some(content) = value.pointer("/payload/content") else {
+        return String::new();
+    };
+
+    if let Some(arr) = content.as_array() {
+        let parts: Vec<String> = arr
+            .iter()
+            .filter_map(|item| {
+                let item_type = item.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                match item_type {
+                    "output_text" | "input_text" => {
+                        item.get("text").and_then(|t| t.as_str()).map(|s| s.to_string())
+                    }
+                    "tool_use" | "function_call" => item
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .map(|name| format!("[Tool: {}]", name)),
+                    _ => None,
+                }
+            })
+            .collect();
+        return parts.join(" ");
+    }
+
+    String::new()
+}
+
 fn extract_content_text(value: &serde_json::Value) -> String {
     let Some(content) = value.pointer("/message/content") else {
         return String::new();
@@ -88,23 +116,38 @@ impl JsonlEntry {
                     .and_then(|t| t.as_str())
                     .unwrap_or("unknown");
 
-                let entry_type = match msg_type {
-                    "user" => EntryType::User,
-                    "assistant" => EntryType::Assistant,
-                    "progress" => EntryType::Progress,
-                    _ => EntryType::Other,
-                };
-
-                let preview = match entry_type {
-                    EntryType::User | EntryType::Assistant => extract_content_text(&value),
-                    EntryType::Progress => {
-                        let tool = value
-                            .pointer("/data/type")
-                            .and_then(|t| t.as_str())
-                            .unwrap_or("progress");
-                        format!("[{}]", tool)
-                    }
-                    EntryType::Other => format!("[{}]", msg_type),
+                let (entry_type, preview) = if msg_type == "response_item" {
+                    let role = value
+                        .pointer("/payload/role")
+                        .and_then(|r| r.as_str())
+                        .unwrap_or("unknown");
+                    let et = match role {
+                        "user" => EntryType::User,
+                        "assistant" => EntryType::Assistant,
+                        "developer" => EntryType::Other,
+                        _ => EntryType::Other,
+                    };
+                    let text = extract_codex_content(&value);
+                    (et, if text.is_empty() { format!("[{}]", role) } else { text })
+                } else {
+                    let et = match msg_type {
+                        "user" => EntryType::User,
+                        "assistant" => EntryType::Assistant,
+                        "progress" => EntryType::Progress,
+                        _ => EntryType::Other,
+                    };
+                    let text = match et {
+                        EntryType::User | EntryType::Assistant => extract_content_text(&value),
+                        EntryType::Progress => {
+                            let tool = value
+                                .pointer("/data/type")
+                                .and_then(|t| t.as_str())
+                                .unwrap_or("progress");
+                            format!("[{}]", tool)
+                        }
+                        EntryType::Other => format!("[{}]", msg_type),
+                    };
+                    (et, text)
                 };
 
                 (entry_type, preview)
@@ -224,8 +267,10 @@ impl ThreadContentEditor {
                     format!("Failed to write session file: {}", file_path.display())
                 })?;
 
-            this.update(cx, |_, cx| {
-                cx.emit(Event::Close);
+            this.update(cx, |this, cx| {
+                this.entries.retain(|e| !e.checked);
+                this.is_dirty = false;
+                cx.notify();
             })?;
 
             anyhow::Ok(())

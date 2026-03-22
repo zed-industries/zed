@@ -467,3 +467,313 @@ impl AgentSessionList for ClaudeCodeSessionList {
         self
     }
 }
+
+// ── Codex CLI session support ───────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct CodexSessionIndexEntry {
+    id: String,
+    thread_name: Option<String>,
+    updated_at: Option<String>,
+}
+
+pub struct CodexSessionIndex {
+    project_path: PathBuf,
+    sessions_dir: PathBuf,
+    index_path: PathBuf,
+}
+
+impl CodexSessionIndex {
+    pub fn for_project(project_path: &Path) -> Option<Self> {
+        let codex_dir = dirs::home_dir()?.join(".codex");
+        let sessions_dir = codex_dir.join("sessions");
+        let index_path = codex_dir.join("session_index.jsonl");
+
+        if sessions_dir.exists() {
+            Some(Self {
+                project_path: project_path.to_path_buf(),
+                sessions_dir,
+                index_path,
+            })
+        } else {
+            None
+        }
+    }
+
+    pub fn sessions_dir(&self) -> &Path {
+        &self.sessions_dir
+    }
+
+    fn read_index(&self) -> HashMap<String, CodexSessionIndexEntry> {
+        let mut entries = HashMap::default();
+        let Ok(content) = std::fs::read_to_string(&self.index_path) else {
+            return entries;
+        };
+        for line in content.lines() {
+            if let Ok(entry) = serde_json::from_str::<CodexSessionIndexEntry>(line) {
+                entries.insert(entry.id.clone(), entry);
+            }
+        }
+        entries
+    }
+
+    pub fn list_sessions(&self) -> Result<Vec<CodexSessionInfo>> {
+        let index = self.read_index();
+        let mut sessions = Vec::new();
+
+        self.scan_sessions_recursive(&self.sessions_dir, &index, &mut sessions)?;
+        sessions.sort_by(|a, b| b.modified.cmp(&a.modified));
+        Ok(sessions)
+    }
+
+    fn scan_sessions_recursive(
+        &self,
+        dir: &Path,
+        index: &HashMap<String, CodexSessionIndexEntry>,
+        sessions: &mut Vec<CodexSessionInfo>,
+    ) -> Result<()> {
+        let read_dir = match std::fs::read_dir(dir) {
+            Ok(rd) => rd,
+            Err(_) => return Ok(()),
+        };
+
+        for dir_entry in read_dir.flatten() {
+            let path = dir_entry.path();
+            if path.is_dir() {
+                self.scan_sessions_recursive(&path, index, sessions)?;
+            } else if path.extension().map_or(false, |e| e == "jsonl") {
+                if !Self::session_matches_project(&path, &self.project_path) {
+                    continue;
+                }
+
+                let file_name = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or_default();
+
+                let session_id = file_name
+                    .rsplit('-')
+                    .take(5)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect::<Vec<_>>()
+                    .join("-");
+
+                let file_meta = std::fs::metadata(&path).ok();
+                let modified = file_meta
+                    .as_ref()
+                    .and_then(|m| m.modified().ok())
+                    .map(DateTime::<Utc>::from)
+                    .unwrap_or_else(Utc::now);
+
+                let title = index
+                    .get(&session_id)
+                    .and_then(|e| e.thread_name.clone())
+                    .or_else(|| Self::extract_first_user_message(&path))
+                    .unwrap_or_else(|| session_id[..8.min(session_id.len())].to_string());
+
+                sessions.push(CodexSessionInfo {
+                    session_id,
+                    title,
+                    modified,
+                    full_path: path,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn session_matches_project(path: &Path, project_path: &Path) -> bool {
+        use std::io::BufRead;
+        let Ok(file) = File::open(path) else {
+            return false;
+        };
+        let reader = std::io::BufReader::new(file);
+        for line in reader.lines().take(5) {
+            let Ok(line) = line else { break };
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+                continue;
+            };
+            if value.get("type").and_then(|t| t.as_str()) == Some("session_meta") {
+                if let Some(cwd) = value.pointer("/payload/cwd").and_then(|c| c.as_str()) {
+                    return Path::new(cwd) == project_path;
+                }
+            }
+            if value.get("type").and_then(|t| t.as_str()) == Some("turn_context") {
+                if let Some(cwd) = value.pointer("/payload/cwd").and_then(|c| c.as_str()) {
+                    return Path::new(cwd) == project_path;
+                }
+            }
+        }
+        false
+    }
+
+    fn extract_first_user_message(path: &Path) -> Option<String> {
+        use std::io::BufRead;
+        let file = File::open(path).ok()?;
+        let reader = std::io::BufReader::new(file);
+        for line in reader.lines().take(20) {
+            let line = line.ok()?;
+            let value: serde_json::Value = serde_json::from_str(&line).ok()?;
+            if value.get("type").and_then(|t| t.as_str()) == Some("response_item") {
+                let role = value.pointer("/payload/role").and_then(|r| r.as_str());
+                if role == Some("user") {
+                    if let Some(content) = value
+                        .pointer("/payload/content")
+                        .and_then(|c| c.as_array())
+                    {
+                        for item in content {
+                            if let Some(text) = item
+                                .get("text")
+                                .or_else(|| item.get("input_text"))
+                                .and_then(|t| t.as_str())
+                            {
+                                let cleaned = text.trim().replace('\n', " ");
+                                let trimmed: String = cleaned.chars().take(120).collect();
+                                return Some(if cleaned.len() > 120 {
+                                    format!("{}...", trimmed)
+                                } else {
+                                    trimmed
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    pub fn delete_session(&self, session_id: &str) -> Result<()> {
+        let sessions = self.list_sessions()?;
+        for session in &sessions {
+            if session.session_id == session_id {
+                if session.full_path.exists() {
+                    std::fs::remove_file(&session.full_path)
+                        .with_context(|| format!("Failed to delete {}", session.full_path.display()))?;
+                }
+                break;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CodexSessionInfo {
+    pub session_id: String,
+    pub title: String,
+    pub modified: DateTime<Utc>,
+    pub full_path: PathBuf,
+}
+
+pub struct CodexSessionList {
+    index: CodexSessionIndex,
+    watch_tx: RefCell<watch::Sender<()>>,
+    watch_rx: watch::Receiver<()>,
+}
+
+impl CodexSessionList {
+    pub fn new(index: CodexSessionIndex) -> Self {
+        let (watch_tx, watch_rx) = watch::channel(());
+        Self {
+            index,
+            watch_tx: RefCell::new(watch_tx),
+            watch_rx,
+        }
+    }
+
+    fn notify_changed(&self) {
+        self.watch_tx.borrow_mut().send(()).ok();
+    }
+
+    pub fn sessions_dir(&self) -> &Path {
+        self.index.sessions_dir()
+    }
+
+    pub fn session_file_path(&self, session_id: &str) -> Option<PathBuf> {
+        let sessions = self.index.list_sessions().ok()?;
+        sessions
+            .into_iter()
+            .find(|s| s.session_id == session_id)
+            .map(|s| s.full_path)
+    }
+}
+
+impl AgentSessionList for CodexSessionList {
+    fn list_sessions(
+        &self,
+        _request: AgentSessionListRequest,
+        _cx: &mut App,
+    ) -> Task<Result<AgentSessionListResponse>> {
+        let sessions = match self.index.list_sessions() {
+            Ok(sessions) => sessions,
+            Err(e) => {
+                log::error!("Failed to list Codex sessions: {:?}", e);
+                return Task::ready(Ok(AgentSessionListResponse::new(Vec::new())));
+            }
+        };
+
+        let project_path = self.index.project_path.to_string_lossy().to_string();
+        let infos: Vec<AgentSessionInfo> = sessions
+            .into_iter()
+            .map(|s| {
+                let mut meta = serde_json::Map::new();
+                meta.insert(
+                    CLI_SOURCE_KEY.to_string(),
+                    serde_json::Value::String("codex".to_string()),
+                );
+                meta.insert(
+                    CLI_PROJECT_PATH_KEY.to_string(),
+                    serde_json::Value::String(project_path.clone()),
+                );
+                meta.insert(
+                    "codex_file_path".to_string(),
+                    serde_json::Value::String(s.full_path.to_string_lossy().to_string()),
+                );
+
+                AgentSessionInfo {
+                    session_id: acp::SessionId::new(s.session_id),
+                    cwd: Some(std::path::PathBuf::from(&project_path)),
+                    title: Some(s.title.into()),
+                    updated_at: Some(s.modified),
+                    meta: Some(meta),
+                }
+            })
+            .collect();
+
+        Task::ready(Ok(AgentSessionListResponse::new(infos)))
+    }
+
+    fn rename_session(
+        &self,
+        _session_id: &acp::SessionId,
+        _new_title: Option<String>,
+        _cx: &mut App,
+    ) -> Task<Result<()>> {
+        Task::ready(Ok(()))
+    }
+
+    fn delete_session(&self, session_id: &acp::SessionId, _cx: &mut App) -> Task<Result<()>> {
+        match self.index.delete_session(&session_id.0) {
+            Ok(()) => {
+                self.notify_changed();
+                Task::ready(Ok(()))
+            }
+            Err(e) => Task::ready(Err(e)),
+        }
+    }
+
+    fn delete_sessions(&self, _cx: &mut App) -> Task<Result<()>> {
+        Task::ready(Ok(()))
+    }
+
+    fn watch(&self, _cx: &mut App) -> Option<watch::Receiver<()>> {
+        Some(self.watch_rx.clone())
+    }
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+        self
+    }
+}
