@@ -208,6 +208,11 @@
   },
   {
     "token_type": "string",
+    "token_modifiers": ["documentation"],
+    "style": ["string.doc"],
+  },
+  {
+    "token_type": "string",
     "token_modifiers": [],
     "style": ["string"],
   },
