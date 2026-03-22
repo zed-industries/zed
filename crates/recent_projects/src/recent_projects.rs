@@ -28,7 +28,7 @@ use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     Subscription, Task, WeakEntity, Window, actions, px,
 };
-use zed::i18n::t;
+use zed_i18n::t;
 
 use picker::{
     Picker, PickerDelegate,

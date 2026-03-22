@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use zed::i18n::t;
+use zed_i18n::t;
 
 use crate::{TerminalView, terminal_panel::TerminalPanel};
 use anyhow::Result;

@@ -38,7 +38,7 @@ use workspace::{
 };
 
 use anyhow::{Result, anyhow};
-use zed::i18n::t;
+use zed_i18n::t;
 use zed_actions::assistant::InlineAssist;
 
 const TERMINAL_PANEL_KEY: &str = "TerminalPanel";

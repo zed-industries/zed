@@ -20,7 +20,7 @@ use workspace::{
     MultiWorkspace, OpenOptions, PathList, SerializedWorkspaceLocation, Workspace, WorkspaceDb,
     WorkspaceId, notifications::DetachAndPromptErr,
 };
-use zed::i18n::t;
+use zed_i18n::t;
 
 use crate::{highlights_for_path, icon_for_remote_connection, open_remote_project};
 

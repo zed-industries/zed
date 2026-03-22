@@ -50,7 +50,7 @@ use workspace::{
     MultiWorkspace, ToggleWorktreeSecurity, Workspace, WorkspaceId, notifications::NotifyResultExt,
 };
 use zed_actions::OpenRemote;
-use zed::i18n::t;
+use zed_i18n::t;
 
 pub use onboarding_banner::restore_banner;
 

@@ -10,7 +10,7 @@ use workspace::Workspace;
 use workspace::notifications::NotificationId;
 use workspace::notifications::simple_message_notification::MessageNotification;
 use worktree::UpdatedEntriesSet;
-use zed::i18n::t;
+use zed_i18n::t;
 
 const DEV_CONTAINER_SUGGEST_KEY: &str = "dev_container_suggest_dismissed";
 

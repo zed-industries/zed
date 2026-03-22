@@ -56,7 +56,7 @@ use workspace::{
     notifications::{DetachAndPromptErr, NotificationId},
     open_remote_project_with_existing_connection,
 };
-use zed::i18n::t;
+use zed_i18n::t;
 
 pub struct RemoteServerProjects {
     mode: Mode,

@@ -6,7 +6,7 @@ use serde::Deserialize;
 
 use smallvec::SmallVec;
 use ui::{ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
-use zed::i18n::t;
+use zed_i18n::t;
 
 use crate::title_bar_settings::TitleBarSettings;
 

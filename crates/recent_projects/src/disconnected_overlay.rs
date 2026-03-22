@@ -6,7 +6,7 @@ use ui::{ElevationIndex, Modal, ModalFooter, ModalHeader, Section, prelude::*};
 use workspace::{
     ModalView, MultiWorkspace, OpenOptions, Workspace, notifications::DetachAndPromptErr,
 };
-use zed::i18n::t;
+use zed_i18n::t;
 
 use crate::open_remote_project;
 

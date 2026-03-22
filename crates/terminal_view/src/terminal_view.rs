@@ -63,7 +63,7 @@ use workspace::{
     },
 };
 use zed_actions::{agent::AddSelectionToThread, assistant::InlineAssist};
-use zed::i18n::t;
+use zed_i18n::t;
 
 struct ImeState {
     marked_text: String,
