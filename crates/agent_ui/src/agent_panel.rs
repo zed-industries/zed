@@ -2,6 +2,7 @@ use std::{ops::Range, path::Path, rc::Rc, sync::Arc, time::Duration};
 
 use acp_thread::{AcpThread, AgentSessionInfo, AgentSessionList};
 use agent::{CLI_PROJECT_PATH_KEY, CLI_SOURCE_KEY, ClaudeCodeSessionIndex, ClaudeCodeSessionList, ContextServerRegistry, ThreadStore};
+use agent_client_protocol as acp;
 use agent_servers::AgentServer;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use project::{
@@ -816,6 +817,9 @@ impl AgentPanel {
                         );
                     }
                 }
+                ThreadHistoryEvent::EditContent(session_id) => {
+                    this.edit_thread_content(session_id.clone(), window, cx);
+                }
             },
         )
         .detach();
@@ -990,6 +994,18 @@ impl AgentPanel {
 
     pub fn thread_store(&self) -> &Entity<ThreadStore> {
         &self.thread_store
+    }
+
+    pub fn edit_thread_content(
+        &self,
+        session_id: acp::SessionId,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) {
+        log::warn!(
+            "edit_thread_content not supported in v1 agent panel for session {}",
+            session_id.0
+        );
     }
 
     pub fn open_thread(

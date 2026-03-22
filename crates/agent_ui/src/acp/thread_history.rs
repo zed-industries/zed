@@ -67,6 +67,7 @@ impl ListItemType {
 
 pub enum ThreadHistoryEvent {
     Open(AgentSessionInfo),
+    EditContent(acp::SessionId),
 }
 
 impl EventEmitter<ThreadHistoryEvent> for AcpThreadHistory {}
@@ -455,6 +456,13 @@ impl AcpThreadHistory {
         task.detach_and_log_err(cx);
     }
 
+    fn edit_thread_content(&mut self, visible_item_ix: usize, cx: &mut Context<Self>) {
+        let Some(entry) = self.get_history_entry(visible_item_ix) else {
+            return;
+        };
+        cx.emit(ThreadHistoryEvent::EditContent(entry.session_id.clone()));
+    }
+
     fn remove_history(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(session_list) = self.session_list.as_ref() {
             session_list.delete_sessions(cx).detach_and_log_err(cx);
@@ -581,23 +589,38 @@ impl AcpThreadHistory {
 
                         cx.notify();
                     }))
-                    .end_slot::<IconButton>(if hovered {
-                        Some(
-                            IconButton::new("delete", IconName::Trash)
-                                .shape(IconButtonShape::Square)
-                                .icon_size(IconSize::XSmall)
-                                .icon_color(Color::Muted)
-                                .tooltip(move |_window, cx| {
-                                    Tooltip::for_action("Delete", &RemoveSelectedThread, cx)
-                                })
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.remove_thread(ix, cx);
-                                    cx.stop_propagation()
-                                })),
-                        )
-                    } else {
-                        None
-                    })
+                    .end_slot(
+                        h_flex()
+                            .gap_0p5()
+                            .child(
+                                IconButton::new("edit-content", IconName::Notepad)
+                                    .shape(IconButtonShape::Square)
+                                    .icon_size(IconSize::XSmall)
+                                    .icon_color(Color::Muted)
+                                    .tooltip(Tooltip::text("Edit Thread Content"))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.edit_thread_content(ix, cx);
+                                        cx.stop_propagation()
+                                    })),
+                            )
+                            .child(
+                                IconButton::new("delete", IconName::Trash)
+                                    .shape(IconButtonShape::Square)
+                                    .icon_size(IconSize::XSmall)
+                                    .icon_color(Color::Muted)
+                                    .tooltip(move |_window, cx| {
+                                        Tooltip::for_action(
+                                            "Delete",
+                                            &RemoveSelectedThread,
+                                            cx,
+                                        )
+                                    })
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.remove_thread(ix, cx);
+                                        cx.stop_propagation()
+                                    })),
+                            ),
+                    )
                     .on_click(cx.listener(move |this, _, _, cx| this.confirm_entry(ix, cx))),
             )
             .into_any_element()
@@ -814,31 +837,63 @@ impl RenderOnce for AcpHistoryEntryElement {
                     ),
             )
             .on_hover(self.on_hover)
-            .end_slot::<IconButton>(if self.hovered || self.selected {
-                Some(
-                    IconButton::new("delete", IconName::Trash)
-                        .shape(IconButtonShape::Square)
-                        .icon_size(IconSize::XSmall)
-                        .icon_color(Color::Muted)
-                        .tooltip(move |_window, cx| {
-                            Tooltip::for_action("Delete", &RemoveSelectedThread, cx)
-                        })
-                        .on_click({
-                            let thread_view = self.thread_view.clone();
-                            let entry = self.entry.clone();
+            .end_slot(
+                h_flex()
+                    .gap_0p5()
+                    .child(
+                        IconButton::new("edit-content", IconName::Notepad)
+                            .shape(IconButtonShape::Square)
+                            .icon_size(IconSize::XSmall)
+                            .icon_color(Color::Muted)
+                            .tooltip(Tooltip::text("Edit Thread Content"))
+                            .on_click({
+                                let thread_view = self.thread_view.clone();
+                                let session_id = self.entry.session_id.clone();
 
-                            move |_event, _window, cx| {
-                                if let Some(thread_view) = thread_view.upgrade() {
-                                    thread_view.update(cx, |thread_view, cx| {
-                                        thread_view.delete_history_entry(entry.clone(), cx);
-                                    });
+                                move |_event, window, cx| {
+                                    if let Some(workspace) = thread_view
+                                        .upgrade()
+                                        .and_then(|view| view.read(cx).workspace().upgrade())
+                                    {
+                                        if let Some(panel) =
+                                            workspace.read(cx).panel::<AgentPanel>(cx)
+                                        {
+                                            panel.update(cx, |panel, cx| {
+                                                panel.edit_thread_content(
+                                                    session_id.clone(),
+                                                    window,
+                                                    cx,
+                                                );
+                                            });
+                                        }
+                                    }
+                                    cx.stop_propagation();
                                 }
-                            }
-                        }),
-                )
-            } else {
-                None
-            })
+                            }),
+                    )
+                    .child(
+                        IconButton::new("delete", IconName::Trash)
+                            .shape(IconButtonShape::Square)
+                            .icon_size(IconSize::XSmall)
+                            .icon_color(Color::Muted)
+                            .tooltip(move |_window, cx| {
+                                Tooltip::for_action("Delete", &RemoveSelectedThread, cx)
+                            })
+                            .on_click({
+                                let thread_view = self.thread_view.clone();
+                                let entry = self.entry.clone();
+
+                                move |_event, _window, cx| {
+                                    if let Some(thread_view) = thread_view.upgrade() {
+                                        thread_view.update(cx, |thread_view, cx| {
+                                            thread_view
+                                                .delete_history_entry(entry.clone(), cx);
+                                        });
+                                    }
+                                }
+                            }),
+                    ),
+            )
             .on_click({
                 let thread_view = self.thread_view.clone();
                 let entry = self.entry;

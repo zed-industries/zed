@@ -19,6 +19,7 @@ mod terminal_codegen;
 mod terminal_inline_assistant;
 mod text_thread_editor;
 mod text_thread_history;
+pub mod thread_content_editor;
 mod ui;
 
 use std::rc::Rc;

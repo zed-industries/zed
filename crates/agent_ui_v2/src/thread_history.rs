@@ -77,6 +77,7 @@ impl ListItemType {
 #[allow(dead_code)]
 pub enum ThreadHistoryEvent {
     Open(AgentSessionInfo),
+    EditContent(AgentSessionInfo),
 }
 
 impl EventEmitter<ThreadHistoryEvent> for AcpThreadHistory {}
@@ -522,6 +523,13 @@ impl AcpThreadHistory {
         task.detach_and_log_err(cx);
     }
 
+    fn edit_thread_content(&mut self, visible_item_ix: usize, cx: &mut Context<Self>) {
+        let Some(entry) = self.get_history_entry(visible_item_ix) else {
+            return;
+        };
+        cx.emit(ThreadHistoryEvent::EditContent(entry.clone()));
+    }
+
     fn remove_history(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(session_list) = self.session_list.as_ref() {
             session_list.delete_sessions(cx).detach_and_log_err(cx);
@@ -661,6 +669,17 @@ impl AcpThreadHistory {
                         h_flex()
                             .gap_0p5()
                             .ml_2()
+                            .child(
+                                IconButton::new("edit-content", IconName::Notepad)
+                                    .shape(IconButtonShape::Square)
+                                    .icon_size(IconSize::XSmall)
+                                    .icon_color(Color::Muted)
+                                    .tooltip(Tooltip::text("Edit Thread Content"))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.edit_thread_content(ix, cx);
+                                        cx.stop_propagation()
+                                    })),
+                            )
                             .child(
                                 IconButton::new("rename", IconName::Pencil)
                                     .shape(IconButtonShape::Square)

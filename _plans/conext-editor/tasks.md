@@ -1,56 +1,44 @@
 # Thread Content Editor - Task Checklist
 
 ## Pre-implementation
-- [ ] Verify DB struct name (`grep "impl" crates/agent/src/db.rs` to find struct with `load_thread`/`save_thread`)
-- [ ] Verify `ListItem::end_slot::<AnyElement>` compiles (or find alternative)
-- [ ] Verify how `AcpThreadHistory` accesses the database (trace from `remove_thread`)
+- [x] Verify DB struct name - `ThreadsDatabase` (pub(crate)). Use `Entity<ThreadStore>` instead.
+- [x] Verify `ListItem::end_slot` - `end_slot<E: IntoElement>` works. Need `::<Div>` type annotation.
+- [x] Verify how `AcpThreadHistory` accesses the database - emit event to AgentPanel which has `Entity<ThreadStore>`.
 
 ## Implementation
 
-### Task 1: Create ThreadContentEditor struct and module
-- [ ] Add `pub(crate) mod thread_content_editor;` to `crates/agent_ui/src/agent_ui.rs`
-- [ ] Create `crates/agent_ui/src/thread_content_editor.rs` with struct, MessageEntry, MessageRole, Event enum
-- [ ] Implement `EventEmitter<Event>` and `Focusable`
-- [ ] Commit
+### Task 1-6: ThreadContentEditor (all complete)
+- [x] Module declaration in `agent_ui.rs`
+- [x] Struct, MessageEntry, MessageRole, Event enum
+- [x] EventEmitter + Focusable
+- [x] `MessageEntry::from_message()` with preview truncation
+- [x] Constructor
+- [x] `render_toolbar()` with Save/Cancel buttons
+- [x] `render_message_row()` with checkbox + right-click menu
+- [x] Render trait with uniform_list + vertical_scrollbar_for
+- [x] `toggle_message()`, `uncheck_from()`, `save()`
+- [x] Item trait (tab_content_text, tab_icon, to_item_events, is_dirty)
+- [x] `open()` function
 
-### Task 2: Constructor and data loading
-- [ ] Implement `MessageEntry::from_message()` (extracts role + preview text, truncates to 200 chars)
-- [ ] Implement `ThreadContentEditor::new()` constructor
-- [ ] Commit
-
-### Task 3: Render trait (toolbar + message list)
-- [ ] Implement `render_toolbar()` - title label, Save button (disabled when not dirty), Cancel button
-- [ ] Implement `render_message_row()` - right_click_menu wrapping ListItem with checkbox + role label + preview
-- [ ] Implement `Render` trait - v_flex with toolbar + uniform_list with WithScrollbar
-- [ ] Commit
-
-### Task 4: Toggle/save/uncheck_from actions
-- [ ] Implement `toggle_message(ix)` - flip checkbox, set is_dirty
-- [ ] Implement `uncheck_from(ix)` - uncheck ix and everything below
-- [ ] Implement `save()` - filter checked messages, load existing DbThread, update messages, save to DB, emit Close
-- [ ] Commit
-
-### Task 5: Item trait
-- [ ] Implement `Item` for `ThreadContentEditor` (tab_content_text, tab_icon, to_item_events, clone_on_split, is_singleton)
-- [ ] Commit
-
-### Task 6: Open function
-- [ ] Implement `ThreadContentEditor::open()` - loads from DB, creates entity, adds to workspace active pane
-- [ ] Commit
-
-### Task 7: Add edit button to thread history panel
-- [ ] Modify `render_entry_from_sessions` (~line 584) - change end_slot from single IconButton to h_flex with pencil + trash
-- [ ] Modify `AcpHistoryEntryElement::render` (~line 817) - same dual-button pattern
-- [ ] Add `edit_thread_content()` method to AcpThreadHistory
-- [ ] Commit
+### Task 7: Edit button in thread history panel
+- [x] `ThreadHistoryEvent::EditContent(acp::SessionId)` variant
+- [x] `edit_thread_content()` method on AcpThreadHistory
+- [x] Dual pencil+trash buttons in `render_entry_from_sessions`
+- [x] Dual pencil+trash buttons in `AcpHistoryEntryElement::render`
 
 ### Task 8: Wire up AgentPanel
-- [ ] Add `edit_thread_content()` method to AgentPanel
-- [ ] Wire it to call `ThreadContentEditor::open()`
-- [ ] Commit
+- [x] `edit_thread_content()` method on AgentPanel
+- [x] Handle `ThreadHistoryEvent::EditContent` in subscription
+- [x] Import `agent_client_protocol as acp`
 
 ### Task 9: Verify and fix compilation
-- [ ] Run `./script/clippy` and fix errors
+- [x] `cargo build` passes with zero errors
+- [x] Fixed: `agent::thread` is private → use `agent::*` re-exports
+- [x] Fixed: `WithScrollbar` trait not in scope
+- [x] Fixed: `Tooltip::text()` returns closure, pass directly
+- [x] Fixed: `end_slot` needs `::<Div>` type annotation
+- [x] Fixed: `cx.update()` returns Task directly in entity spawn context
+- [x] Fixed: borrow/move issues with entity clones in closures
 - [ ] Build with `cargo run` and test manually
 - [ ] Verify: hover shows pencil + trash icons
 - [ ] Verify: pencil opens ThreadContentEditor tab

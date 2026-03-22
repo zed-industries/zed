@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings as _, update_settings_file};
 use std::rc::Rc;
 use std::sync::Arc;
-use ui::{App, Context, IconName, IntoElement, ParentElement, Render, Styled, Window};
+use ui::{App, Context, IconName, IntoElement, ParentElement, Render, SharedString, Styled, Window};
 use terminal_view::terminal_panel::TerminalPanel;
 use util::ResultExt;
 use workspace::{
@@ -425,6 +425,13 @@ impl AgentsPanel {
                     self.open_thread(entry.clone(), true, None, window, cx);
                 }
             }
+            ThreadHistoryEvent::EditContent(entry) => {
+                let session_id = entry.session_id.clone();
+                let fallback: SharedString =
+                    session_id.0[..8.min(session_id.0.len())].to_string().into();
+                let title = entry.title.clone().unwrap_or(fallback);
+                self.edit_thread_content(session_id, title, window, cx);
+            }
         }
     }
 
@@ -524,6 +531,56 @@ impl AgentsPanel {
                 active_tab_index: 0,
             });
         }
+    }
+
+    fn edit_thread_content(
+        &self,
+        session_id: acp::SessionId,
+        title: SharedString,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        let project_path = self
+            .project
+            .read(cx)
+            .worktrees(cx)
+            .next()
+            .map(|worktree| worktree.read(cx).abs_path().to_path_buf());
+
+        let Some(project_path) = project_path else {
+            log::error!("No project path available for edit_thread_content");
+            return;
+        };
+
+        let Some(index) = ClaudeCodeSessionIndex::for_project(&project_path) else {
+            log::error!("No Claude Code sessions directory found for project");
+            return;
+        };
+
+        let file_path = index
+            .sessions_dir()
+            .join(format!("{}.jsonl", session_id.0));
+
+        if !file_path.exists() {
+            log::error!(
+                "Session file not found: {}",
+                file_path.display()
+            );
+            return;
+        }
+
+        agent_ui::thread_content_editor::ThreadContentEditor::open(
+            file_path,
+            title,
+            workspace,
+            window,
+            cx,
+        )
+        .detach_and_log_err(cx);
     }
 
     fn open_thread(

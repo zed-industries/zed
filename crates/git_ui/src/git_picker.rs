@@ -333,11 +333,16 @@ impl GitPicker {
             };
 
         // Determine how many tabs fit based on panel width.
-        // Each tab button is ~70px, action buttons ~90px, overflow ~28px, padding ~16px.
+        // Each tab is ~70px. Reserve space for action button + padding when present.
         let all_tabs = GitPickerTab::ALL;
+        let has_action_button = tab == GitPickerTab::Branches
+            || (tab == GitPickerTab::PullRequests && !is_main_branch);
         let max_visible = if let Some(panel_w) = self.panel_width {
-            let available = panel_w - px(16.);
-            let per_tab = px(70.);
+            let action_button_width = if has_action_button { px(110.) } else { px(0.) };
+            let padding = px(20.);
+            let overflow_btn = px(32.);
+            let available = panel_w - padding - action_button_width - overflow_btn;
+            let per_tab = px(75.);
             let count = (available / per_tab) as usize;
             count.min(all_tabs.len()).max(1)
         } else {
