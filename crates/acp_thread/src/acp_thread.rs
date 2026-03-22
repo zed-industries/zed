@@ -2112,7 +2112,18 @@ impl AcpThread {
                         }
                     }
 
-                    kept_count = Some(ix);
+                    kept_count = Some(
+                        this.entries[..ix]
+                            .iter()
+                            .filter(|entry| {
+                                matches!(
+                                    entry,
+                                    AgentThreadEntry::UserMessage(_)
+                                        | AgentThreadEntry::AssistantMessage(_)
+                                )
+                            })
+                            .count(),
+                    );
                 }
                 let reject = this.action_log().update(cx, |action_log, cx| {
                     action_log.reject_all_edits(Some(telemetry), cx)

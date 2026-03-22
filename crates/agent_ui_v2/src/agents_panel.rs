@@ -433,6 +433,22 @@ impl AgentsPanel {
                     self.open_thread(entry.clone(), true, None, window, cx);
                 }
             }
+            ThreadHistoryEvent::OpenInPanel(entry) => {
+                let agent_server: Rc<dyn AgentServer> = entry
+                    .meta
+                    .as_ref()
+                    .and_then(|m| {
+                        let cli = m.get(CLI_SOURCE_KEY)?.as_str()?;
+                        if cli.to_lowercase().contains("codex") {
+                            Some(Rc::new(agent_servers::Codex) as Rc<dyn AgentServer>)
+                        } else {
+                            Some(Rc::new(agent_servers::ClaudeCode) as Rc<dyn AgentServer>)
+                        }
+                    })
+                    .unwrap_or_else(|| Rc::new(agent_servers::ClaudeCode));
+
+                self.open_thread_with_cli_server(entry.clone(), agent_server, window, cx);
+            }
             ThreadHistoryEvent::EditContent(entry) => {
                 let session_id = entry.session_id.clone();
                 let fallback: SharedString =
@@ -664,6 +680,79 @@ impl AgentsPanel {
         if let Some(workspace) = self.workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
                 workspace.register_utility_pane(slot, panel_id, agent_thread_pane.clone(), cx);
+            });
+        }
+
+        self.agent_thread_pane = Some(agent_thread_pane);
+        self.serialize(cx);
+        cx.notify();
+    }
+
+    fn open_thread_with_cli_server(
+        &mut self,
+        entry: AgentSessionInfo,
+        agent_server: Rc<dyn AgentServer>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.pending_restore = None;
+
+        let workspace = self.workspace.clone();
+        let project = self.project.clone();
+        let thread_store = self.thread_store.clone();
+        let prompt_store = self.prompt_store.clone();
+
+        if let Some(existing_pane) = &self.agent_thread_pane {
+            existing_pane.update(cx, |pane, cx| {
+                pane.open_thread_with_server(
+                    entry,
+                    agent_server,
+                    workspace,
+                    project,
+                    Some(thread_store),
+                    prompt_store,
+                    window,
+                    cx,
+                );
+                pane.set_expanded(true, cx);
+            });
+            self.serialize(cx);
+            cx.notify();
+            return;
+        }
+
+        let agent_thread_pane = cx.new(|cx| {
+            let mut pane = AgentThreadPane::new(workspace.clone(), cx);
+            pane.open_thread_with_server(
+                entry,
+                agent_server,
+                workspace.clone(),
+                project,
+                Some(thread_store),
+                prompt_store,
+                window,
+                cx,
+            );
+            pane.set_expanded(true, cx);
+            pane
+        });
+
+        let state_subscription = cx.subscribe(&agent_thread_pane, Self::handle_utility_pane_event);
+        let close_subscription = cx.subscribe(&agent_thread_pane, Self::handle_close_pane_event);
+
+        self._subscriptions.push(state_subscription);
+        self._subscriptions.push(close_subscription);
+
+        let panel_id = cx.entity_id();
+
+        if let Some(workspace) = self.workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| {
+                workspace.register_utility_pane(
+                    UtilityPaneSlot::Right,
+                    panel_id,
+                    agent_thread_pane.clone(),
+                    cx,
+                );
             });
         }
 

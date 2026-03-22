@@ -319,14 +319,27 @@ impl AgentThreadPane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let agent: Rc<dyn AgentServer> = Rc::new(NativeAgentServer::new(fs, thread_store.clone()));
+        self.open_thread_with_server(entry, agent, workspace, project, Some(thread_store), prompt_store, window, cx);
+    }
+
+    pub fn open_thread_with_server(
+        &mut self,
+        entry: AgentSessionInfo,
+        agent: Rc<dyn AgentServer>,
+        workspace: WeakEntity<Workspace>,
+        project: Entity<Project>,
+        thread_store: Option<Entity<ThreadStore>>,
+        prompt_store: Option<Entity<PromptStore>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let thread_id = entry.session_id.clone();
 
         if let Some(existing_ix) = self.tabs.iter().position(|t| t.thread_id == thread_id) {
             self.activate_tab(existing_ix, window, cx);
             return;
         }
-
-        let agent: Rc<dyn AgentServer> = Rc::new(NativeAgentServer::new(fs, thread_store.clone()));
 
         let thread_view = cx.new(|cx| {
             AcpThreadView::new(
@@ -335,7 +348,7 @@ impl AgentThreadPane {
                 None,
                 workspace,
                 project,
-                Some(thread_store),
+                thread_store,
                 prompt_store,
                 true,
                 window,

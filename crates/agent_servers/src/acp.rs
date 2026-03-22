@@ -630,7 +630,39 @@ impl AgentConnection for AcpConnection {
         Some(cx.spawn(async move |cx| {
             log::info!("Loading session: {} for {} (use_load_session: {})", session_id.0, name, use_load_session);
 
-            if use_load_session {
+            let action_log = cx.new(|_| ActionLog::new(project.clone()));
+            let thread: Entity<AcpThread> = cx.new(|cx| {
+                AcpThread::new(
+                    self.server_name.clone(),
+                    self.clone(),
+                    project,
+                    action_log,
+                    session_id.clone(),
+                    watch::Receiver::constant(self.agent_capabilities.prompt_capabilities.clone()),
+                    cx,
+                )
+            });
+
+            // Register the session before awaiting the load RPC so any streamed
+            // history notifications can attach to the thread instead of being dropped.
+            sessions.borrow_mut().insert(
+                session_id.clone(),
+                AcpSession {
+                    thread: thread.downgrade(),
+                    suppress_abort_err: false,
+                    session_modes: None,
+                    models: None,
+                    config_options: None,
+                },
+            );
+
+            let load_result: Result<
+                (
+                    Option<Rc<RefCell<acp::SessionModeState>>>,
+                    Option<Rc<RefCell<acp::SessionModelState>>>,
+                    Option<ConfigOptions>,
+                ),
+            > = if use_load_session {
                 // Use standard load_session if supported
                 let response = conn
                     .load_session(
@@ -649,40 +681,19 @@ impl AgentConnection for AcpConnection {
                         }
                     })?;
 
-                let action_log = cx.new(|_| ActionLog::new(project.clone()));
-                let thread: Entity<AcpThread> = cx.new(|cx| {
-                    AcpThread::new(
-                        self.server_name.clone(),
-                        self.clone(),
-                        project,
-                        action_log,
-                        session_id.clone(),
-                        watch::Receiver::constant(self.agent_capabilities.prompt_capabilities.clone()),
-                        cx,
-                    )
-                });
-
                 let use_config_options = cx.update(|cx| cx.has_flag::<AcpBetaFeatureFlag>());
                 let (modes, models, config_options) =
                     if use_config_options && let Some(opts) = response.config_options
                     {
-                        (None, None, Some(Rc::new(RefCell::new(opts))))
+                        (None, None, Some(ConfigOptions::new(Rc::new(RefCell::new(opts)))))
                     } else {
-                        let modes = response.modes.map(|modes| Rc::new(RefCell::new(modes)));
-                        let models = response.models.map(|models| Rc::new(RefCell::new(models)));
-                        (modes, models, None)
+                        (
+                            response.modes.map(|modes| Rc::new(RefCell::new(modes))),
+                            response.models.map(|models| Rc::new(RefCell::new(models))),
+                            None,
+                        )
                     };
-
-                let session = AcpSession {
-                    thread: thread.downgrade(),
-                    suppress_abort_err: false,
-                    session_modes: modes,
-                    models,
-                    config_options: config_options.map(ConfigOptions::new),
-                };
-                sessions.borrow_mut().insert(session_id, session);
-
-                Ok(thread)
+                Ok((modes, models, config_options))
             } else {
                 // Use unstable session/resume method (ACP SDK)
                 log::info!("Trying session/resume (unstable) method");
@@ -699,34 +710,26 @@ impl AgentConnection for AcpConnection {
 
                 log::info!("Successfully resumed session: {}", session_id.0);
 
-                let returned_session_id = session_id;
+                Ok((
+                    response.modes.map(|modes| Rc::new(RefCell::new(modes))),
+                    response.models.map(|models| Rc::new(RefCell::new(models))),
+                    None,
+                ))
+            };
 
-                let action_log = cx.new(|_| ActionLog::new(project.clone()));
-                let thread: Entity<AcpThread> = cx.new(|cx| {
-                    AcpThread::new(
-                        self.server_name.clone(),
-                        self.clone(),
-                        project,
-                        action_log,
-                        returned_session_id.clone(),
-                        watch::Receiver::constant(self.agent_capabilities.prompt_capabilities.clone()),
-                        cx,
-                    )
-                });
-
-                let modes = response.modes.map(|modes| Rc::new(RefCell::new(modes)));
-                let models = response.models.map(|models| Rc::new(RefCell::new(models)));
-
-                let session = AcpSession {
-                    thread: thread.downgrade(),
-                    suppress_abort_err: false,
-                    session_modes: modes,
-                    models,
-                    config_options: None,
-                };
-                sessions.borrow_mut().insert(returned_session_id, session);
-
-                Ok(thread)
+            match load_result {
+                Ok((modes, models, config_options)) => {
+                    if let Some(session) = sessions.borrow_mut().get_mut(&session_id) {
+                        session.session_modes = modes;
+                        session.models = models;
+                        session.config_options = config_options;
+                    }
+                    Ok(thread)
+                }
+                Err(err) => {
+                    sessions.borrow_mut().remove(&session_id);
+                    Err(err)
+                }
             }
         }))
     }

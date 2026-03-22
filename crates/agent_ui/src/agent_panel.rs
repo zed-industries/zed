@@ -817,6 +817,28 @@ impl AgentPanel {
                         );
                     }
                 }
+                ThreadHistoryEvent::OpenInPanel(thread) => {
+                    let agent_type = thread
+                        .meta
+                        .as_ref()
+                        .and_then(|m| {
+                            let cli = m.get(CLI_SOURCE_KEY)?.as_str()?;
+                            if cli.to_lowercase().contains("codex") {
+                                Some(crate::ExternalAgent::Codex)
+                            } else {
+                                Some(crate::ExternalAgent::ClaudeCode)
+                            }
+                        })
+                        .unwrap_or(crate::ExternalAgent::ClaudeCode);
+
+                    this.external_thread(
+                        Some(agent_type),
+                        Some(thread.clone()),
+                        None,
+                        window,
+                        cx,
+                    );
+                }
                 ThreadHistoryEvent::EditContent(session_id) => {
                     this.edit_thread_content(session_id.clone(), window, cx);
                 }
@@ -1189,7 +1211,7 @@ impl AgentPanel {
 
             let server = ext_agent.server(fs, thread_store);
             this.update_in(cx, |agent_panel, window, cx| {
-                agent_panel._external_thread(
+                agent_panel.open_external_thread(
                     server,
                     resume_thread,
                     summarize_thread,
@@ -2004,7 +2026,7 @@ impl AgentPanel {
         );
     }
 
-    fn _external_thread(
+    pub fn open_external_thread(
         &mut self,
         server: Rc<dyn AgentServer>,
         resume_thread: Option<AgentSessionInfo>,
@@ -2099,6 +2121,27 @@ impl AgentPanel {
         self.set_active_view(
             ActiveView::ExternalAgentThread { thread_view },
             !loading,
+            window,
+            cx,
+        );
+    }
+
+    pub fn display_thread_view(
+        &mut self,
+        thread_view: Entity<crate::acp::AcpThreadView>,
+        ext_agent: ExternalAgent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let selected_agent = AgentType::from(ext_agent);
+        if self.selected_agent != selected_agent {
+            self.selected_agent = selected_agent;
+            self.serialize(cx);
+        }
+
+        self.set_active_view(
+            ActiveView::ExternalAgentThread { thread_view },
+            true,
             window,
             cx,
         );
@@ -3873,7 +3916,7 @@ impl AgentPanel {
             name: server.name(),
         };
 
-        self._external_thread(
+        self.open_external_thread(
             server, None, None, workspace, project, false, ext_agent, window, cx,
         );
     }

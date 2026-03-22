@@ -1,4 +1,5 @@
 use acp_thread::{AgentSessionInfo, AgentSessionList, AgentSessionListRequest};
+use agent::CLI_SOURCE_KEY;
 use agent_client_protocol as acp;
 use chrono::{Datelike as _, Local, NaiveDate, TimeDelta, Utc};
 use editor::{Editor, EditorEvent};
@@ -11,8 +12,8 @@ use std::{fmt::Display, ops::Range, rc::Rc};
 use text::Bias;
 use time::{OffsetDateTime, UtcOffset};
 use ui::{
-    HighlightedLabel, IconButtonShape, ListItem, ListItemSpacing, Tab, TabBar, Tooltip,
-    WithScrollbar, prelude::*,
+    ContextMenu, HighlightedLabel, IconButtonShape, ListItem, ListItemSpacing,
+    Tab, TabBar, Tooltip, WithScrollbar, prelude::*, right_click_menu,
 };
 
 const DEFAULT_TITLE: &SharedString = &SharedString::new_static("New Thread");
@@ -83,9 +84,9 @@ impl ListItemType {
     }
 }
 
-#[allow(dead_code)]
 pub enum ThreadHistoryEvent {
     Open(AgentSessionInfo),
+    OpenInPanel(AgentSessionInfo),
     EditContent(AgentSessionInfo),
 }
 
@@ -686,7 +687,15 @@ impl AcpThreadHistory {
                 .into_any_element();
         }
 
-        h_flex()
+        let is_cli_session = entry
+            .meta
+            .as_ref()
+            .and_then(|m| m.get(CLI_SOURCE_KEY))
+            .is_some();
+        let menu_entry = entry.clone();
+        let entity = cx.entity();
+
+        let row = h_flex()
             .w_full()
             .pb_1()
             .child(
@@ -754,7 +763,46 @@ impl AcpThreadHistory {
                             ),
                     )
                     .on_click(cx.listener(move |this, _, _, cx| this.confirm_entry(ix, cx))),
-            )
+            );
+
+        right_click_menu(("history-entry-menu", ix))
+            .trigger(move |_, _, _| row)
+            .menu(move |window, cx| {
+                let entity = entity.clone();
+                let menu_entry = menu_entry.clone();
+                ContextMenu::build(window, cx, move |menu, _, _| {
+                    if is_cli_session {
+                        menu.entry("Open in Terminal", None, {
+                            let entity = entity.clone();
+                            let menu_entry = menu_entry.clone();
+                            move |_, cx| {
+                                entity.update(cx, |_, cx| {
+                                    cx.emit(ThreadHistoryEvent::Open(menu_entry.clone()));
+                                });
+                            }
+                        })
+                        .entry("Open in Agent Panel", None, {
+                            let entity = entity.clone();
+                            let menu_entry = menu_entry.clone();
+                            move |_, cx| {
+                                entity.update(cx, |_, cx| {
+                                    cx.emit(ThreadHistoryEvent::OpenInPanel(menu_entry.clone()));
+                                });
+                            }
+                        })
+                    } else {
+                        menu.entry("Open", None, {
+                            let entity = entity.clone();
+                            let menu_entry = menu_entry.clone();
+                            move |_, cx| {
+                                entity.update(cx, |_, cx| {
+                                    cx.emit(ThreadHistoryEvent::Open(menu_entry.clone()));
+                                });
+                            }
+                        })
+                    }
+                })
+            })
             .into_any_element()
     }
 }

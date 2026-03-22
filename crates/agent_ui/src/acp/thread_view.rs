@@ -617,12 +617,15 @@ impl AcpThreadView {
 
         let connect_task = agent.connect(root_dir.as_deref(), delegate, cx);
         let load_task = cx.spawn_in(window, async move |this, cx| {
+            log::info!("[OpenInPanel] initial_state async task started, resume_thread: {}", resume_thread.is_some());
             let connection = match connect_task.await {
                 Ok((connection, login)) => {
+                    log::info!("[OpenInPanel] connect succeeded");
                     this.update(cx, |this, _| this.login = login).ok();
                     connection
                 }
                 Err(err) => {
+                    log::error!("[OpenInPanel] connect FAILED: {:?}", err);
                     this.update_in(cx, |this, window, cx| {
                         if err.downcast_ref::<LoadError>().is_some() {
                             this.handle_load_error(err, window, cx);
@@ -641,12 +644,16 @@ impl AcpThreadView {
             }
 
             let root_dir = root_dir.unwrap_or(paths::home_dir().as_path().into());
+            let is_native = connection.clone().downcast::<agent::NativeAgentConnection>().is_some();
+            log::info!("[OpenInPanel] is_native_agent: {}, resume_thread: {:?}", is_native, resume_thread.as_ref().map(|r| &r.session_id));
+
             let result = if let Some(native_agent) = connection
                 .clone()
                 .downcast::<agent::NativeAgentConnection>()
                 && let Some(resume) = resume_thread.clone()
             {
                 // Native agent resume
+                log::info!("[OpenInPanel] Taking NATIVE path for session: {}", resume.session_id.0);
                 cx.update(|_, cx| {
                     native_agent
                         .0
@@ -655,21 +662,29 @@ impl AcpThreadView {
                 .log_err()
             } else if let Some(resume) = resume_thread.clone() {
                 // Try to load existing session via ACP protocol
-                cx.update(|_, cx| {
+                log::info!("[OpenInPanel] Taking ACP load_thread path for session: {}", resume.session_id.0);
+                let load_result = cx.update(|_, cx| {
                     connection
                         .clone()
                         .load_thread(&resume.session_id, project.clone(), &root_dir, cx)
-                })
-                .log_err()
-                .flatten()
+                });
+                match &load_result {
+                    Ok(Some(_)) => log::info!("[OpenInPanel] load_thread returned Some(task)"),
+                    Ok(None) => log::warn!("[OpenInPanel] load_thread returned None"),
+                    Err(e) => log::error!("[OpenInPanel] load_thread cx.update failed: {:?}", e),
+                }
+                load_result.log_err().flatten()
             } else {
+                log::info!("[OpenInPanel] No resume_thread, creating new thread");
                 None
             };
 
             // Fall back to creating new thread if resume not supported or no resume requested
             let result = if let Some(result) = result {
+                log::info!("[OpenInPanel] Got load result, will await it");
                 Some(result)
             } else {
+                log::warn!("[OpenInPanel] Falling back to new_thread");
                 cx.update(|_, cx| {
                     connection
                         .clone()
@@ -679,21 +694,29 @@ impl AcpThreadView {
             };
 
             let Some(result) = result else {
+                log::error!("[OpenInPanel] result is None, returning early");
                 return;
             };
 
+            log::info!("[OpenInPanel] Awaiting load result...");
             let result = match result.await {
-                Err(e) => match e.downcast::<acp_thread::AuthRequired>() {
-                    Ok(err) => {
-                        cx.update(|window, cx| {
-                            Self::handle_auth_required(this, err, agent, connection, window, cx)
-                        })
-                        .log_err();
-                        return;
+                Err(e) => {
+                    log::error!("[OpenInPanel] load await FAILED: {:?}", e);
+                    match e.downcast::<acp_thread::AuthRequired>() {
+                        Ok(err) => {
+                            cx.update(|window, cx| {
+                                Self::handle_auth_required(this, err, agent, connection, window, cx)
+                            })
+                            .log_err();
+                            return;
+                        }
+                        Err(err) => Err(err),
                     }
-                    Err(err) => Err(err),
-                },
-                Ok(thread) => Ok(thread),
+                }
+                Ok(thread) => {
+                    log::info!("[OpenInPanel] load await SUCCEEDED");
+                    Ok(thread)
+                }
             };
 
             this.update_in(cx, |this, window, cx| {
@@ -971,6 +994,23 @@ impl AcpThreadView {
             ThreadState::Unauthenticated { .. }
             | ThreadState::Loading { .. }
             | ThreadState::LoadError { .. } => None,
+        }
+    }
+
+    fn external_agent_choice(&self) -> Option<crate::ExternalAgent> {
+        let agent = self.agent.clone();
+        if agent.clone().downcast::<agent_servers::Gemini>().is_some() {
+            Some(crate::ExternalAgent::Gemini)
+        } else if agent.clone().downcast::<agent_servers::ClaudeCode>().is_some() {
+            Some(crate::ExternalAgent::ClaudeCode)
+        } else if agent.clone().downcast::<agent_servers::Codex>().is_some() {
+            Some(crate::ExternalAgent::Codex)
+        } else if let Some(custom) = agent.downcast::<agent_servers::CustomAgentServer>() {
+            Some(crate::ExternalAgent::Custom {
+                name: custom.name(),
+            })
+        } else {
+            None
         }
     }
 
@@ -1755,12 +1795,7 @@ impl AcpThreadView {
         .detach_and_log_err(cx);
     }
 
-    fn fork_conversation(
-        &mut self,
-        entry_ix: usize,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn fork_conversation(&mut self, entry_ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(thread) = self.thread().cloned() else {
             return;
         };
@@ -1771,10 +1806,19 @@ impl AcpThreadView {
             return;
         };
 
-        let kept_count = entry_ix + 1;
+        let kept_count = thread.read(cx).entries()[..=entry_ix]
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    entry,
+                    AgentThreadEntry::UserMessage(_) | AgentThreadEntry::AssistantMessage(_)
+                )
+            })
+            .count();
         let workspace = self.workspace.clone();
+        let fork_agent = self.external_agent_choice();
 
-        cx.spawn(async move |_this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let content = smol::fs::read_to_string(&file_path).await?;
             let lines: Vec<&str> = content.lines().collect();
 
@@ -1807,16 +1851,34 @@ impl AcpThreadView {
                 .join(format!("{}.jsonl", new_session_id));
             smol::fs::write(&new_file_path, kept.as_bytes()).await?;
 
-            workspace.update(cx, |workspace, cx| {
-                let short_id: String = new_session_id.chars().take(8).collect();
-                workspace.show_toast(
-                    Toast::new(
-                        NotificationId::unique::<Self>(),
-                        format!("Forked conversation saved ({}). Open it from the history panel.", short_id),
-                    ),
-                    cx,
-                );
-            })?;
+            this.update_in(cx, |this, window, cx| {
+                let Some(agent_choice) = fork_agent.clone() else {
+                    return Err(anyhow!("fork is only supported for external ACP agents"));
+                };
+                let Some(workspace) = workspace.upgrade() else {
+                    return Err(anyhow!("workspace no longer available"));
+                };
+                let resume_thread =
+                    AgentSessionInfo::new(acp::SessionId::new(new_session_id.clone()));
+
+                workspace.update(cx, |workspace, cx| {
+                    let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
+                        return;
+                    };
+                    panel.update(cx, |panel, cx| {
+                        panel.external_thread(
+                            Some(agent_choice),
+                            Some(resume_thread),
+                            None,
+                            window,
+                            cx,
+                        );
+                    });
+                });
+
+                this.focus_handle(cx).focus(window, cx);
+                Ok(())
+            })??;
 
             anyhow::Ok(())
         })
