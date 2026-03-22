@@ -46,6 +46,19 @@ fn load_linux_repo_snapshot() -> Vec<GitEntry> {
         .collect()
 }
 
+fn pseudo_random_mtime(ix: usize) -> MTime {
+    // Use a deterministic splitmix64 sequence so benchmark mtimes are stable across runs
+    // without preserving the original input order.
+    let mut x = (ix as u64).wrapping_add(0x9E37_79B9_7F4A_7C15);
+    x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    x ^= x >> 31;
+
+    let seconds = (x & 0xFFFF_FFFF).max(1);
+    let nanos = ((x >> 32) % 1_000_000_000) as u32;
+    MTime::from_seconds_and_nanos(seconds, nanos)
+}
+
 fn with_assigned_mtimes(snapshot: &[GitEntry], include_missing: bool) -> Vec<GitEntry> {
     snapshot
         .iter()
@@ -55,7 +68,7 @@ fn with_assigned_mtimes(snapshot: &[GitEntry], include_missing: bool) -> Vec<Git
             entry.entry.mtime = if include_missing && ix % 4 == 0 {
                 None
             } else {
-                Some(MTime::from_seconds_and_nanos((ix as u64) + 1, 0))
+                Some(pseudo_random_mtime(ix))
             };
             entry
         })
