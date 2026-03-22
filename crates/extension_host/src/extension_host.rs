@@ -1579,7 +1579,7 @@ impl ExtensionStore {
                 })?;
                 let config = ::toml::from_str::<LanguageConfig>(&config)?;
 
-                let relative_path = relative_path.to_path_buf();
+                let relative_path = normalize_relative_path(relative_path);
                 if !extension_manifest.languages.contains(&relative_path) {
                     extension_manifest.languages.push(relative_path.clone());
                 }
@@ -1612,7 +1612,7 @@ impl ExtensionStore {
                     continue;
                 };
 
-                let relative_path = relative_path.to_path_buf();
+                let relative_path = normalize_relative_path(relative_path);
                 if !extension_manifest.themes.contains(&relative_path) {
                     extension_manifest.themes.push(relative_path.clone());
                 }
@@ -1644,7 +1644,7 @@ impl ExtensionStore {
                     continue;
                 };
 
-                let relative_path = relative_path.to_path_buf();
+                let relative_path = normalize_relative_path(relative_path);
                 if !extension_manifest.icon_themes.contains(&relative_path) {
                     extension_manifest.icon_themes.push(relative_path.clone());
                 }
@@ -1873,6 +1873,21 @@ impl ExtensionStore {
         self.remote_clients.push(client.downgrade());
         self.ssh_registered_tx.unbounded_send(()).ok();
     }
+}
+
+/// Normalizes a relative path to always use forward slashes as separators.
+///
+/// This is needed because on Windows, `Path::strip_prefix` returns paths with
+/// backslash separators, but these paths may be serialized into extension manifests
+/// and sent to remote hosts (e.g., Linux via SSH) where backslashes are not
+/// recognized as path separators.
+fn normalize_relative_path(path: &Path) -> PathBuf {
+    PathBuf::from(
+        path.components()
+            .map(|c| c.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/"),
+    )
 }
 
 fn load_plugin_queries(root_path: &Path) -> LanguageQueries {
