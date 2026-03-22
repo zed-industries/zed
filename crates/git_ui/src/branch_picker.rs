@@ -16,10 +16,7 @@ use project::project_settings::ProjectSettings;
 use settings::Settings;
 use std::sync::Arc;
 use time::OffsetDateTime;
-use ui::{
-    Divider, HighlightedLabel, KeyBinding, ListHeader, ListItem, ListItemSpacing, Tooltip,
-    prelude::*,
-};
+use ui::{Divider, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use ui_input::ErasedEditor;
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
@@ -1084,21 +1081,6 @@ impl PickerDelegate for BranchListDelegate {
         )
     }
 
-    fn render_header(
-        &self,
-        _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
-    ) -> Option<AnyElement> {
-        matches!(self.state, PickerState::List).then(|| {
-            let label = match self.branch_filter {
-                BranchFilter::All => "Branches",
-                BranchFilter::Remote => "Remotes",
-            };
-
-            ListHeader::new(label).inset(true).into_any_element()
-        })
-    }
-
     fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
         if self.editor_position() == PickerEditorPosition::End {
             return None;
@@ -1193,7 +1175,11 @@ impl PickerDelegate for BranchListDelegate {
                                 this.justify_between()
                                     .child({
                                         let focus_handle = focus_handle.clone();
-                                        Button::new("filter-remotes", "Filter Remotes")
+                                        let filter_label = match self.branch_filter {
+                                            BranchFilter::All => "Filter Remote",
+                                            BranchFilter::Remote => "Show All",
+                                        };
+                                        Button::new("filter-remotes", filter_label)
                                             .toggle_state(matches!(
                                                 self.branch_filter,
                                                 BranchFilter::Remote

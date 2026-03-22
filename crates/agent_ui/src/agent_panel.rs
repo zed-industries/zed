@@ -75,8 +75,8 @@ use search::{BufferSearchBar, buffer_search};
 use settings::{Settings, update_settings_file};
 use theme::ThemeSettings;
 use ui::{
-    Button, Callout, ContextMenu, ContextMenuEntry, DocumentationSide, KeyBinding, PopoverMenu,
-    PopoverMenuHandle, SpinnerLabel, Tab, Tooltip, prelude::*, utils::WithRemSize,
+    Button, Callout, CommonAnimationExt, ContextMenu, ContextMenuEntry, DocumentationSide,
+    KeyBinding, PopoverMenu, PopoverMenuHandle, Tab, Tooltip, prelude::*, utils::WithRemSize,
 };
 use util::{ResultExt as _, debug_panic};
 use workspace::{
@@ -2302,7 +2302,13 @@ impl AgentPanel {
         let default = AgentSettings::get_global(cx).new_thread_location;
         let start_thread_in = match default {
             NewThreadLocation::LocalProject => StartThreadIn::LocalProject,
-            NewThreadLocation::NewWorktree => StartThreadIn::NewWorktree,
+            NewThreadLocation::NewWorktree => {
+                if self.project_has_git_repository(cx) {
+                    StartThreadIn::NewWorktree
+                } else {
+                    StartThreadIn::LocalProject
+                }
+            }
         };
         if self.start_thread_in != start_thread_in {
             self.start_thread_in = start_thread_in;
@@ -4053,9 +4059,10 @@ impl AgentPanel {
                         .gap(DynamicSpacing::Base04.rems(cx))
                         .pl(DynamicSpacing::Base04.rems(cx))
                         .child(agent_selector_menu)
-                        .when(has_visible_worktrees, |this| {
-                            this.child(self.render_start_thread_in_selector(cx))
-                        }),
+                        .when(
+                            has_visible_worktrees && self.project_has_git_repository(cx),
+                            |this| this.child(self.render_start_thread_in_selector(cx)),
+                        ),
                 )
                 .child(
                     h_flex()
@@ -4134,41 +4141,31 @@ impl AgentPanel {
         match status {
             WorktreeCreationStatus::Creating => Some(
                 h_flex()
+                    .absolute()
+                    .bottom_12()
                     .w_full()
-                    .px(DynamicSpacing::Base06.rems(cx))
-                    .py(DynamicSpacing::Base02.rems(cx))
-                    .gap_2()
-                    .bg(cx.theme().colors().surface_background)
-                    .border_b_1()
-                    .border_color(cx.theme().colors().border)
-                    .child(SpinnerLabel::new().size(LabelSize::Small))
+                    .p_2()
+                    .gap_1()
+                    .justify_center()
+                    .bg(cx.theme().colors().editor_background)
                     .child(
-                        Label::new("Creating worktree…")
+                        Icon::new(IconName::LoadCircle)
+                            .size(IconSize::Small)
+                            .color(Color::Muted)
+                            .with_rotate_animation(3),
+                    )
+                    .child(
+                        Label::new("Creating Worktree…")
                             .color(Color::Muted)
                             .size(LabelSize::Small),
                     )
                     .into_any_element(),
             ),
             WorktreeCreationStatus::Error(message) => Some(
-                h_flex()
-                    .w_full()
-                    .px(DynamicSpacing::Base06.rems(cx))
-                    .py(DynamicSpacing::Base02.rems(cx))
-                    .gap_2()
-                    .bg(cx.theme().colors().surface_background)
-                    .border_b_1()
-                    .border_color(cx.theme().colors().border)
-                    .child(
-                        Icon::new(IconName::Warning)
-                            .size(IconSize::Small)
-                            .color(Color::Warning),
-                    )
-                    .child(
-                        Label::new(message.clone())
-                            .color(Color::Warning)
-                            .size(LabelSize::Small)
-                            .truncate(),
-                    )
+                Callout::new()
+                    .icon(IconName::Warning)
+                    .severity(Severity::Warning)
+                    .title(message.clone())
                     .into_any_element(),
             ),
         }
@@ -4611,7 +4608,6 @@ impl Render for AgentPanel {
                 }
             }))
             .child(self.render_toolbar(window, cx))
-            .children(self.render_worktree_creation_status(cx))
             .children(self.render_workspace_trust_message(cx))
             .children(self.render_onboarding(window, cx))
             .map(|parent| {
@@ -4668,6 +4664,7 @@ impl Render for AgentPanel {
                     ActiveView::Configuration => parent.children(self.configuration.clone()),
                 }
             })
+            .children(self.render_worktree_creation_status(cx))
             .children(self.render_trial_end_upsell(window, cx));
 
         match self.active_view.which_font_size_used() {
