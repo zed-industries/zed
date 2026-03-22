@@ -742,7 +742,7 @@ impl WaylandClient {
                     &state.borrow().loop_handle,
                     Rc::downgrade(&state),
                     move |state| {
-                        let (service_name, dbus_menu_server, appmenus) = {
+                        let (service_name, _dbus_menu_server, appmenus) = {
                             let Some(service_name) = state.dbus_service_name.as_ref().cloned()
                             else {
                                 return;

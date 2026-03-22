@@ -132,12 +132,10 @@ pub enum DBusMenuCommand {
     LayoutUpdated {
         revision: u32,
         parent: i32,
-        object_paths: Vec<String>,
     },
     ItemsPropertiesUpdated {
         updated_props: Vec<(i32, HashMap<String, OwnedValue>)>,
         removed_props: Vec<(i32, Vec<String>)>,
-        object_paths: Vec<String>,
     },
     Shutdown,
 }
@@ -256,65 +254,53 @@ impl DBusMenuServer {
                             DBusMenuCommand::LayoutUpdated {
                                 revision,
                                 parent,
-                                object_paths,
                             } => {
-                                for object_path in object_paths {
-                                    let emitter =
-                                        match zbus::object_server::SignalEmitter::new(
-                                            &connection,
-                                            object_path.as_str(),
-                                        ) {
-                                            Ok(emitter) => emitter,
-                                            Err(error) => {
-                                                log::error!(
-                                                    "Failed to build DBusMenu signal emitter for {object_path}: {error}"
-                                                );
-                                                continue;
-                                            }
-                                        };
-                                    if let Err(error) = DBusMenuServer::layout_updated(
-                                        &emitter,
-                                        revision,
-                                        parent,
-                                    )
-                                    .await
-                                    {
-                                        log::error!(
-                                            "Failed to emit DBusMenu LayoutUpdated signal for {object_path}: {error}"
-                                        );
+                                let emitter = match zbus::object_server::SignalEmitter::new(
+                                    &connection,
+                                    object_path.as_str(),
+                                ) {
+                                    Ok(emitter) => emitter,
+                                    Err(error) => {
+                                        log::error!("Failed to build DBusMenu signal emitter for {object_path}: {error}");
+                                        continue;
                                     }
+                                };
+                                if let Err(error) = DBusMenuServer::layout_updated(
+                                    &emitter,
+                                    revision,
+                                    parent,
+                                )
+                                .await
+                                {
+                                    log::error!(
+                                        "Failed to emit DBusMenu LayoutUpdated signal for {object_path}: {error}"
+                                    );
                                 }
                             }
                             DBusMenuCommand::ItemsPropertiesUpdated {
                                 updated_props,
                                 removed_props,
-                                object_paths,
                             } => {
-                                for object_path in object_paths {
-                                    let emitter =
-                                        match zbus::object_server::SignalEmitter::new(
-                                            &connection,
-                                            object_path.as_str(),
-                                        ) {
-                                            Ok(emitter) => emitter,
-                                            Err(error) => {
-                                                log::error!(
-                                                    "Failed to build DBusMenu signal emitter for {object_path}: {error}"
-                                                );
-                                                continue;
-                                            }
-                                        };
-                                    if let Err(error) = DBusMenuServer::items_properties_updated(
-                                        &emitter,
-                                        updated_props.clone(),
-                                        removed_props.clone(),
-                                    )
-                                    .await
-                                    {
-                                        log::error!(
-                                            "Failed to emit DBusMenu ItemsPropertiesUpdated for {object_path}: {error}"
-                                        );
+                                let emitter = match zbus::object_server::SignalEmitter::new(
+                                    &connection,
+                                    object_path.as_str(),
+                                ) {
+                                    Ok(emitter) => emitter,
+                                    Err(error) => {
+                                        log::error!("Failed to build DBusMenu signal emitter for {object_path}: {error}");
+                                        continue;
                                     }
+                                };
+                                if let Err(error) = DBusMenuServer::items_properties_updated(
+                                    &emitter,
+                                    updated_props.clone(),
+                                    removed_props.clone(),
+                                )
+                                .await
+                                {
+                                    log::error!(
+                                        "Failed to emit DBusMenu ItemsPropertiesUpdated for {object_path}: {error}"
+                                    );
                                 }
                             }
                             DBusMenuCommand::Shutdown => {
@@ -494,11 +480,6 @@ impl DBusMenuServer {
         }
     }
 
-    pub fn refresh_enabled_states(&self, validate: &mut dyn FnMut(&dyn Action) -> bool) -> bool {
-        let updated_ids = self.refresh_enabled_states_inner(validate);
-        !updated_ids.is_empty()
-    }
-
     pub fn refresh_enabled_states_inner(
         &self,
         validate: &mut dyn FnMut(&dyn Action) -> bool,
@@ -565,10 +546,6 @@ impl DBusMenuServer {
     }
 
     fn request_layout_updated(&self, revision: u32) {
-        self.request_layout_updated_for_paths(revision, vec![DBUSMENU_OBJECT_PATH.to_string()]);
-    }
-
-    fn request_layout_updated_for_paths(&self, revision: u32, object_paths: Vec<String>) {
         if !self.is_connected() {
             return;
         }
@@ -587,7 +564,6 @@ impl DBusMenuServer {
         if let Err(error) = sender.try_send(DBusMenuCommand::LayoutUpdated {
             revision,
             parent: 0,
-            object_paths,
         }) {
             log::error!("Failed to queue DBusMenu LayoutUpdated signal: {error}");
         }
@@ -597,19 +573,6 @@ impl DBusMenuServer {
         &self,
         updated_props: Vec<(i32, HashMap<String, OwnedValue>)>,
         removed_props: Vec<(i32, Vec<String>)>,
-    ) {
-        self.request_items_properties_updated_for_paths(
-            updated_props,
-            removed_props,
-            vec![DBUSMENU_OBJECT_PATH.to_string()],
-        );
-    }
-
-    fn request_items_properties_updated_for_paths(
-        &self,
-        updated_props: Vec<(i32, HashMap<String, OwnedValue>)>,
-        removed_props: Vec<(i32, Vec<String>)>,
-        object_paths: Vec<String>,
     ) {
         if !self.is_connected() {
             return;
@@ -629,7 +592,6 @@ impl DBusMenuServer {
         if let Err(error) = sender.try_send(DBusMenuCommand::ItemsPropertiesUpdated {
             updated_props,
             removed_props,
-            object_paths,
         }) {
             log::error!("Failed to queue DBusMenu ItemsPropertiesUpdated signal: {error}");
         }
@@ -879,13 +841,6 @@ impl DBusMenuServer {
         updated_props: Vec<(i32, HashMap<String, OwnedValue>)>,
         removed_props: Vec<(i32, Vec<String>)>,
     ) -> zbus::Result<()>;
-
-    #[zbus(signal)]
-    pub async fn item_activation_requested(
-        ctxt: &zbus::object_server::SignalEmitter<'_>,
-        id: i32,
-        timestamp: u32,
-    ) -> zbus::Result<()>;
 }
 
 fn root_properties() -> HashMap<String, OwnedValue> {
@@ -896,7 +851,6 @@ fn root_properties() -> HashMap<String, OwnedValue> {
     } else {
         log::error!("Failed to build DBusMenu root properties");
     }
-    insert_visible_property(&mut props);
     props
 }
 
@@ -975,7 +929,6 @@ fn build_menu_tree(
     } else {
         log::error!("Failed to encode DBusMenu children-display property");
     }
-    insert_visible_property(&mut properties);
 
     let mut child_ids = Vec::new();
 
@@ -992,7 +945,6 @@ fn build_menu_tree(
                 } else {
                     log::error!("Failed to encode DBusMenu separator type");
                 }
-                insert_visible_property(&mut props);
                 items.insert(
                     child_id,
                     MenuItemEntry {
@@ -1018,15 +970,6 @@ fn build_menu_tree(
                     props.insert("label".to_string(), value);
                 } else {
                     log::error!("Failed to encode DBusMenu label for menu item {}", name);
-                }
-
-                if let Some(value) = owned_bool(true) {
-                    props.insert("enabled".to_string(), value);
-                } else {
-                    log::error!(
-                        "Failed to encode DBusMenu enabled state for menu item {}",
-                        name
-                    );
                 }
 
                 if let Some(shortcut) = dbus_shortcut_for_action(action.as_ref(), keymap) {
@@ -1066,7 +1009,6 @@ fn build_menu_tree(
                         log::error!("Failed to encode DBusMenu toggle-state");
                     }
                 }
-                insert_visible_property(&mut props);
                 items.insert(
                     child_id,
                     MenuItemEntry {
@@ -1113,14 +1055,6 @@ pub fn global_menu_env_override() -> Option<bool> {
 
 fn owned_bool(value: bool) -> Option<OwnedValue> {
     Value::Bool(value).try_into().ok()
-}
-
-fn insert_visible_property(props: &mut HashMap<String, OwnedValue>) {
-    if let Some(value) = owned_bool(true) {
-        props.insert("visible".to_string(), value);
-    } else {
-        log::error!("Failed to encode DBusMenu visible property");
-    }
 }
 
 fn icon_name_for_os_action(action: OsAction) -> Option<&'static str> {
@@ -1221,11 +1155,8 @@ fn normalize_dbus_key(key: &str) -> Option<String> {
                     key.to_string()
                 }
             } else if key.len() == 1 {
-                let mut chars = key.chars();
-                let ch = chars.next()?;
-                if chars.next().is_some() {
-                    key.to_string()
-                } else if ch.is_ascii_alphabetic() {
+                let ch = key.chars().next()?;
+                if ch.is_ascii_alphabetic() {
                     ch.to_ascii_uppercase().to_string()
                 } else {
                     key.to_string()
