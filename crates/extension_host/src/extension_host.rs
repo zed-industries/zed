@@ -1890,6 +1890,38 @@ fn normalize_relative_path(path: &Path) -> PathBuf {
     )
 }
 
+#[cfg(test)]
+mod normalize_path_tests {
+    use super::*;
+
+    #[test]
+    fn test_normalize_forward_slashes_preserved() {
+        let path = Path::new("languages/agda");
+        assert_eq!(normalize_relative_path(path), PathBuf::from("languages/agda"));
+    }
+
+    #[test]
+    fn test_normalize_backslashes_converted() {
+        let path = PathBuf::from("languages\\agda");
+        assert_eq!(normalize_relative_path(&path), PathBuf::from("languages/agda"));
+    }
+
+    #[test]
+    fn test_normalize_nested_path() {
+        let path = PathBuf::from("themes\\subfolder\\theme.json");
+        assert_eq!(
+            normalize_relative_path(&path),
+            PathBuf::from("themes/subfolder/theme.json")
+        );
+    }
+
+    #[test]
+    fn test_normalize_single_component() {
+        let path = Path::new("languages");
+        assert_eq!(normalize_relative_path(path), PathBuf::from("languages"));
+    }
+}
+
 fn load_plugin_queries(root_path: &Path) -> LanguageQueries {
     let mut result = LanguageQueries::default();
     if let Some(entries) = std::fs::read_dir(root_path).log_err() {
