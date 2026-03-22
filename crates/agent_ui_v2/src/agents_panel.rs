@@ -467,44 +467,29 @@ impl AgentsPanel {
         };
 
         let is_codex = cli_command == "codex";
-        let default_label = if is_codex { "Codex Session" } else { "Claude Code Session" };
-        let label = title.unwrap_or(default_label).to_string();
-        let (args, command_label) = if is_codex {
-            (
-                vec!["resume".to_string(), session_id.to_string()],
-                format!("{} resume {}", cli_command, session_id),
-            )
+        let command = if is_codex {
+            format!("{} resume {}\n", cli_command, session_id)
         } else {
-            (
-                vec!["--resume".to_string(), session_id.to_string()],
-                format!("{} --resume {}", cli_command, session_id),
-            )
-        };
-        let spawn_task = task::SpawnInTerminal {
-            id: task::TaskId(format!("cli-resume-{}", session_id)),
-            full_label: label.clone(),
-            label: label.clone(),
-            command: Some(cli_command.to_string()),
-            args,
-            command_label,
-            cwd: Some(project_path.to_path_buf()),
-            env: Default::default(),
-            use_new_terminal: true,
-            allow_concurrent_runs: true,
-            reveal: task::RevealStrategy::Always,
-            reveal_target: task::RevealTarget::Dock,
-            hide: task::HideStrategy::Never,
-            shell: task::Shell::System,
-            show_summary: false,
-            show_command: false,
-            show_rerun: true,
+            format!("{} --resume {}\n", cli_command, session_id)
         };
 
-        terminal_panel
-            .update(cx, |panel, cx| {
-                panel.spawn_task(&spawn_task, window, cx)
-            })
-            .detach_and_log_err(cx);
+        let default_label = if is_codex { "Codex Session" } else { "Claude Code Session" };
+        let label = title.unwrap_or(default_label).to_string();
+        let cwd = Some(project_path.to_path_buf());
+
+        let task = terminal_panel.update(cx, |panel, cx| {
+            panel.add_terminal_shell(cwd, task::RevealStrategy::Always, window, cx)
+        });
+
+        cx.spawn_in(window, async move |_, cx| {
+            let terminal = task.await?;
+            terminal.update(cx, |terminal, cx| {
+                terminal.set_title_override(Some(label), cx);
+                terminal.input(command.into_bytes());
+            })?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     fn maybe_restore_pending(&mut self, window: &mut Window, cx: &mut Context<Self>) {

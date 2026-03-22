@@ -818,7 +818,7 @@ impl TerminalPanel {
         })
     }
 
-    fn add_terminal_shell(
+    pub fn add_terminal_shell(
         &mut self,
         cwd: Option<PathBuf>,
         reveal_strategy: RevealStrategy,
