@@ -162,6 +162,10 @@ impl PickerDelegate for IconThemeSelectorDelegate {
     ) {
         self.selection_completed = true;
 
+        // Ensure the previewed theme matches the currently highlighted item,
+        // since filtering without navigation may leave the global settings stale.
+        self.selected_theme = self.show_selected_theme(cx);
+
         let theme_settings = ThemeSettings::get_global(cx);
         let theme_name = theme_settings
             .icon_theme
@@ -252,12 +256,7 @@ impl PickerDelegate for IconThemeSelectorDelegate {
 
             this.update(cx, |this, cx| {
                 this.delegate.matches = matches;
-                if query.is_empty() && this.delegate.selected_theme.is_none() {
-                    this.delegate.selected_index = this
-                        .delegate
-                        .selected_index
-                        .min(this.delegate.matches.len().saturating_sub(1));
-                } else if let Some(selected) = this.delegate.selected_theme.as_ref() {
+                if let Some(selected) = this.delegate.selected_theme.as_ref() {
                     this.delegate.selected_index = this
                         .delegate
                         .matches
@@ -265,11 +264,16 @@ impl PickerDelegate for IconThemeSelectorDelegate {
                         .enumerate()
                         .find(|(_, mtch)| mtch.string.as_str() == selected.0.as_ref())
                         .map(|(ix, _)| ix)
-                        .unwrap_or_default();
+                        .unwrap_or(0);
                 } else {
-                    this.delegate.selected_index = 0;
+                    this.delegate.selected_index = this
+                        .delegate
+                        .selected_index
+                        .min(this.delegate.matches.len().saturating_sub(1));
                 }
-                this.delegate.selected_theme = this.delegate.show_selected_theme(cx);
+                if let Some(theme) = this.delegate.show_selected_theme(cx) {
+                    this.delegate.selected_theme = Some(theme);
+                }
             })
             .log_err();
         })
