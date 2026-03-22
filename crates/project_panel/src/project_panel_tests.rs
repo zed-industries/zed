@@ -9910,17 +9910,28 @@ fn visible_entries_as_strings(
     result
 }
 
-/// Test that missing sort_mode field defaults to DirectoriesFirst
+/// Test that missing sort settings fields fall back to the current name-sorted behavior.
 #[gpui::test]
 async fn test_sort_mode_default_fallback(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    // Verify that when sort_mode is not specified, it defaults to DirectoriesFirst
+    // Verify that when sort settings are not specified, they resolve to the
+    // current behavior: directories first, name ascending.
     let default_settings = cx.read(|cx| *ProjectPanelSettings::get_global(cx));
     assert_eq!(
         default_settings.sort_mode,
         settings::ProjectPanelSortMode::DirectoriesFirst,
         "sort_mode should default to DirectoriesFirst"
+    );
+    assert_eq!(
+        default_settings.sort_by,
+        settings::ProjectPanelSortBy::Name,
+        "sort_by should default to Name"
+    );
+    assert_eq!(
+        default_settings.sort_direction,
+        settings::ProjectPanelSortDirection::Ascending,
+        "sort_direction should default to Ascending"
     );
 }
 
