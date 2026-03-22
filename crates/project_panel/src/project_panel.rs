@@ -76,7 +76,7 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
 };
-use worktree::CreatedEntry;
+use worktree::{CreatedEntry, Snapshot};
 use zed_actions::{
     project_panel::{Toggle, ToggleFocus},
     workspace::OpenWithSystem,

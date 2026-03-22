@@ -1,13 +1,15 @@
 use super::*;
 use collections::HashSet;
 use editor::MultiBufferOffset;
+use fs::MTime;
 use gpui::{Empty, Entity, TestAppContext, VisualTestContext};
 use menu::Cancel;
 use pretty_assertions::assert_eq;
-use project::{FakeFs, ProjectPath};
+use project::{FakeFs, GitEntry, ProjectPath};
 use serde_json::json;
 use settings::{ProjectPanelAutoOpenSettings, SettingsStore};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 use util::{path, paths::PathStyle, rel_path::rel_path};
 use workspace::{
     AppState, ItemHandle, MultiWorkspace, Pane, Workspace,
@@ -9910,6 +9912,37 @@ fn visible_entries_as_strings(
     result
 }
 
+fn test_entry(path: &str, is_file: bool, mtime: Option<MTime>) -> Entry {
+    let path = RelPath::unix(path).expect("valid relative path").into_arc();
+    Entry {
+        id: ProjectEntryId::from_usize(path.as_unix_str().len()),
+        kind: if is_file {
+            EntryKind::File
+        } else {
+            EntryKind::Dir
+        },
+        path: path.clone(),
+        inode: 0,
+        mtime,
+        canonical_path: None,
+        is_ignored: false,
+        is_hidden: false,
+        is_always_included: false,
+        is_external: false,
+        is_private: false,
+        size: 0,
+        char_bag: Default::default(),
+        is_fifo: false,
+    }
+}
+
+fn test_git_entry(path: &str, is_file: bool, mtime: Option<MTime>) -> GitEntry {
+    GitEntry {
+        entry: test_entry(path, is_file, mtime),
+        git_summary: Default::default(),
+    }
+}
+
 /// Test that missing sort settings fields fall back to the current name-sorted behavior.
 #[gpui::test]
 async fn test_sort_mode_default_fallback(cx: &mut gpui::TestAppContext) {
@@ -10140,6 +10173,164 @@ async fn test_sort_mode_toggle(cx: &mut gpui::TestAppContext) {
         visible_entries_as_strings(&panel, 0..50, cx),
         &["v root", "    > dir1", "      file1.txt", "      file2.txt",]
     );
+}
+
+#[gpui::test]
+async fn test_sort_by_modified_time_toggle(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "alpha.txt": "",
+            "beta.txt": "",
+            "gamma.txt": "",
+        }),
+    )
+    .await;
+
+    fs.set_next_mtime(SystemTime::UNIX_EPOCH + Duration::from_secs(10));
+    fs.touch_path("/root/gamma.txt").await;
+    fs.set_next_mtime(SystemTime::UNIX_EPOCH + Duration::from_secs(20));
+    fs.touch_path("/root/alpha.txt").await;
+    fs.set_next_mtime(SystemTime::UNIX_EPOCH + Duration::from_secs(30));
+    fs.touch_path("/root/beta.txt").await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &[
+            "v root",
+            "      alpha.txt",
+            "      beta.txt",
+            "      gamma.txt",
+        ]
+    );
+
+    cx.update(|_, cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                let project_panel = settings.project_panel.get_or_insert_default();
+                project_panel.sort_mode = Some(settings::ProjectPanelSortMode::Mixed);
+                project_panel.sort_by = Some(settings::ProjectPanelSortBy::ModifiedTime);
+                project_panel.sort_direction =
+                    Some(settings::ProjectPanelSortDirection::Descending);
+            });
+        });
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &[
+            "v root",
+            "      beta.txt",
+            "      alpha.txt",
+            "      gamma.txt",
+        ]
+    );
+
+    cx.update(|_, cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project_panel
+                    .get_or_insert_default()
+                    .sort_direction = Some(settings::ProjectPanelSortDirection::Ascending);
+            });
+        });
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &[
+            "v root",
+            "      gamma.txt",
+            "      alpha.txt",
+            "      beta.txt",
+        ]
+    );
+}
+
+#[test]
+fn test_sort_by_name_descending_preserves_grouping() {
+    let mut entries = vec![
+        test_git_entry("alpha.txt", true, None),
+        test_git_entry("beta.txt", true, None),
+        test_git_entry("aardvark", false, None),
+        test_git_entry("zebra", false, None),
+    ];
+
+    sort_worktree_entries(
+        &mut entries,
+        settings::ProjectPanelSortMode::DirectoriesFirst,
+        settings::ProjectPanelSortBy::Name,
+        settings::ProjectPanelSortDirection::Descending,
+    );
+
+    let paths = entries
+        .iter()
+        .map(|entry| entry.path.as_unix_str().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(paths, vec!["zebra", "aardvark", "beta.txt", "alpha.txt"]);
+}
+
+#[test]
+fn test_sort_by_modified_time_falls_back_to_name_when_missing_mtime() {
+    let mut entries = vec![
+        test_git_entry("beta.txt", true, Some(MTime::from_seconds_and_nanos(2, 0))),
+        test_git_entry("alpha.txt", true, None),
+    ];
+
+    sort_worktree_entries(
+        &mut entries,
+        settings::ProjectPanelSortMode::Mixed,
+        settings::ProjectPanelSortBy::ModifiedTime,
+        settings::ProjectPanelSortDirection::Descending,
+    );
+
+    let paths = entries
+        .iter()
+        .map(|entry| entry.path.as_unix_str().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(paths, vec!["alpha.txt", "beta.txt"]);
+}
+
+#[test]
+fn test_sort_by_modified_time_preserves_grouping() {
+    let mut entries = vec![
+        test_git_entry(
+            "alpha.txt",
+            true,
+            Some(MTime::from_seconds_and_nanos(10, 0)),
+        ),
+        test_git_entry("docs", false, Some(MTime::from_seconds_and_nanos(1, 0))),
+        test_git_entry("beta.txt", true, Some(MTime::from_seconds_and_nanos(20, 0))),
+        test_git_entry("src", false, Some(MTime::from_seconds_and_nanos(30, 0))),
+    ];
+
+    sort_worktree_entries(
+        &mut entries,
+        settings::ProjectPanelSortMode::DirectoriesFirst,
+        settings::ProjectPanelSortBy::ModifiedTime,
+        settings::ProjectPanelSortDirection::Descending,
+    );
+
+    let paths = entries
+        .iter()
+        .map(|entry| entry.path.as_unix_str().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(paths, vec!["src", "docs", "beta.txt", "alpha.txt"]);
 }
 
 #[gpui::test]
