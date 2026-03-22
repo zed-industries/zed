@@ -41,7 +41,7 @@ use runtimelib::{ExecutionState, JupyterMessage, JupyterMessageContent, MimeBund
 use ui::{CommonAnimationExt, CopyButton, IconButton, Tooltip, prelude::*};
 
 mod zed_i18n {
-    pub use zed::i18n::t;
+    pub use zed_i18n::t;
 }
 
 mod image;

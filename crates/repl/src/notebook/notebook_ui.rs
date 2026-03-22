@@ -24,7 +24,7 @@ use workspace::searchable::SearchableItemHandle;
 use workspace::{Item, ItemHandle, Pane, ProjectItem, ToolbarItemLocation};
 
 mod zed_i18n {
-    pub use zed::i18n::t;
+    pub use zed_i18n::t;
 }
 
 use super::{Cell, CellEvent, CellPosition, MarkdownCellEvent, RenderableCell};

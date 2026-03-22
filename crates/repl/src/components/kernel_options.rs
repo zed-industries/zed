@@ -9,7 +9,7 @@ use std::sync::Arc;
 use ui::{ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, PopoverTrigger, prelude::*};
 
 mod zed_i18n {
-    pub use zed::i18n::t;
+    pub use zed_i18n::t;
 }
 
 type OnSelect = Box<dyn Fn(KernelSpecification, &mut Window, &mut App)>;

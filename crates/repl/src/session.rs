@@ -27,7 +27,7 @@ use gpui::SharedString;
 use project::InlayId;
 
 mod zed_i18n {
-    pub use zed::i18n::t;
+    pub use zed_i18n::t;
 }
 
 /// Marker types

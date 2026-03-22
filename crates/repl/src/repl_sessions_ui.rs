@@ -10,7 +10,7 @@ use workspace::item::ItemEvent;
 use workspace::{Workspace, item::Item};
 
 mod zed_i18n {
-    pub use zed::i18n::t;
+    pub use zed_i18n::t;
 }
 
 use crate::jupyter_settings::JupyterSettings;
