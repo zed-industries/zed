@@ -29,7 +29,7 @@
 
 (call_expression
   function: (qualified_identifier
-    name: (identifier) @function))
+    name: (identifier) @function.call))
 
 (call_expression
   (qualified_identifier
@@ -54,11 +54,11 @@
   (#has-ancestor? @_parent call_expression))
 
 (call_expression
-  function: (identifier) @function)
+  function: (identifier) @function.call)
 
 (call_expression
   function: (field_expression
-    field: (field_identifier) @function))
+    field: (field_identifier) @function.call))
 
 (preproc_function_def
   name: (identifier) @function.special)
