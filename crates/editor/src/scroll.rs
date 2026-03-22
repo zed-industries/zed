@@ -918,9 +918,8 @@ impl Editor {
         let top = self
             .scroll_manager
             .scroll_top_display_point(&display_snapshot, cx);
-        let vertical_scroll_margin = EditorSettings::get_global(cx).vertical_scroll_margin;
         let vertical_scroll_margin =
-            (vertical_scroll_margin as u32).min(visible_line_count as u32 / 2);
+            (self.vertical_scroll_margin() as u32).min(visible_line_count as u32 / 2);
 
         let max_point = display_snapshot.max_point();
         let min_row = if top.row().0 == 0 {
