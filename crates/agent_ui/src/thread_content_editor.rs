@@ -16,6 +16,7 @@ pub struct ThreadContentEditor {
     file_path: PathBuf,
     title: SharedString,
     entries: Vec<JsonlEntry>,
+    visible_indices: Vec<usize>,
     scroll_handle: UniformListScrollHandle,
     focus: FocusHandle,
     is_dirty: bool,
@@ -33,6 +34,7 @@ enum EntryType {
     User,
     Assistant,
     Progress,
+    System,
     Other,
 }
 
@@ -46,6 +48,45 @@ impl Focusable for ThreadContentEditor {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus.clone()
     }
+}
+
+fn is_system_content(value: &serde_json::Value) -> bool {
+    if let Some(content) = value.pointer("/message/content").and_then(|c| c.as_str()) {
+        if content.contains("<environment_context>")
+            || content.contains("<INSTRUCTIONS>")
+            || content.contains("SKILL.md")
+            || content.contains("<system-reminder>")
+        {
+            return true;
+        }
+    }
+    if let Some(arr) = value.pointer("/message/content").and_then(|c| c.as_array()) {
+        for item in arr {
+            if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
+                if text.contains("<environment_context>")
+                    || text.contains("<INSTRUCTIONS>")
+                    || text.contains("SKILL.md")
+                    || text.contains("<system-reminder>")
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    if let Some(arr) = value.pointer("/payload/content").and_then(|c| c.as_array()) {
+        for item in arr {
+            if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
+                if text.contains("<environment_context>")
+                    || text.contains("<INSTRUCTIONS>")
+                    || text.contains("SKILL.md")
+                    || text.contains("<system-reminder>")
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 fn extract_codex_content(value: &serde_json::Value) -> String {
@@ -62,10 +103,6 @@ fn extract_codex_content(value: &serde_json::Value) -> String {
                     "output_text" | "input_text" => {
                         item.get("text").and_then(|t| t.as_str()).map(|s| s.to_string())
                     }
-                    "tool_use" | "function_call" => item
-                        .get("name")
-                        .and_then(|n| n.as_str())
-                        .map(|name| format!("[Tool: {}]", name)),
                     _ => None,
                 }
             })
@@ -92,11 +129,6 @@ fn extract_content_text(value: &serde_json::Value) -> String {
                 let item_type = item.get("type").and_then(|t| t.as_str()).unwrap_or("");
                 match item_type {
                     "text" => item.get("text").and_then(|t| t.as_str()).map(|s| s.to_string()),
-                    "tool_use" => item
-                        .get("name")
-                        .and_then(|n| n.as_str())
-                        .map(|name| format!("[Tool: {}]", name)),
-                    "tool_result" => Some("[tool_result]".to_string()),
                     _ => None,
                 }
             })
@@ -116,28 +148,58 @@ impl JsonlEntry {
                     .and_then(|t| t.as_str())
                     .unwrap_or("unknown");
 
+                let is_system = is_system_content(&value);
+
                 let (entry_type, preview) = if msg_type == "response_item" {
                     let role = value
                         .pointer("/payload/role")
                         .and_then(|r| r.as_str())
                         .unwrap_or("unknown");
-                    let et = match role {
-                        "user" => EntryType::User,
-                        "assistant" => EntryType::Assistant,
-                        "developer" => EntryType::Other,
-                        _ => EntryType::Other,
+                    let mut et = if is_system {
+                        EntryType::System
+                    } else {
+                        match role {
+                            "user" => EntryType::User,
+                            "assistant" => EntryType::Assistant,
+                            "developer" => EntryType::System,
+                            _ => EntryType::Other,
+                        }
                     };
                     let text = extract_codex_content(&value);
-                    (et, if text.is_empty() { format!("[{}]", role) } else { text })
+                    if text.is_empty()
+                        && matches!(et, EntryType::User | EntryType::Assistant)
+                    {
+                        et = EntryType::Other;
+                    }
+                    (
+                        et,
+                        if text.is_empty() {
+                            format!("[{}]", role)
+                        } else {
+                            text
+                        },
+                    )
                 } else {
-                    let et = match msg_type {
-                        "user" => EntryType::User,
-                        "assistant" => EntryType::Assistant,
-                        "progress" => EntryType::Progress,
-                        _ => EntryType::Other,
+                    let mut et = if is_system {
+                        EntryType::System
+                    } else {
+                        match msg_type {
+                            "user" => EntryType::User,
+                            "assistant" => EntryType::Assistant,
+                            "progress" => EntryType::Progress,
+                            _ => EntryType::Other,
+                        }
                     };
                     let text = match et {
-                        EntryType::User | EntryType::Assistant => extract_content_text(&value),
+                        EntryType::User | EntryType::Assistant => {
+                            let extracted = extract_content_text(&value);
+                            if extracted.is_empty() {
+                                et = EntryType::Other;
+                                format!("[{}]", msg_type)
+                            } else {
+                                extracted
+                            }
+                        }
                         EntryType::Progress => {
                             let tool = value
                                 .pointer("/data/type")
@@ -145,6 +207,7 @@ impl JsonlEntry {
                                 .unwrap_or("progress");
                             format!("[{}]", tool)
                         }
+                        EntryType::System => "[system]".to_string(),
                         EntryType::Other => format!("[{}]", msg_type),
                     };
                     (et, text)
@@ -182,16 +245,27 @@ impl ThreadContentEditor {
         lines: Vec<String>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let entries = lines.into_iter().map(JsonlEntry::from_line).collect();
+        let entries: Vec<JsonlEntry> = lines.into_iter().map(JsonlEntry::from_line).collect();
+        let visible_indices = Self::compute_visible_indices(&entries);
 
         Self {
             file_path,
             title,
             entries,
+            visible_indices,
             scroll_handle: UniformListScrollHandle::new(),
             focus: cx.focus_handle(),
             is_dirty: false,
         }
+    }
+
+    fn compute_visible_indices(entries: &[JsonlEntry]) -> Vec<usize> {
+        entries
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| matches!(e.entry_type, EntryType::User | EntryType::Assistant))
+            .map(|(i, _)| i)
+            .collect()
     }
 
     pub fn open(
@@ -225,19 +299,36 @@ impl ThreadContentEditor {
         })
     }
 
-    fn toggle_message(&mut self, ix: usize, cx: &mut Context<Self>) {
-        if let Some(entry) = self.entries.get_mut(ix) {
-            entry.checked = !entry.checked;
-            self.is_dirty = true;
-            cx.notify();
-        }
+    fn toggle_message(&mut self, display_ix: usize, cx: &mut Context<Self>) {
+        let Some(&entry_ix) = self.visible_indices.get(display_ix) else {
+            return;
+        };
+        self.entries[entry_ix].checked = !self.entries[entry_ix].checked;
+        self.is_dirty = self.entries.iter().any(|e| e.checked);
+        cx.notify();
     }
 
-    fn check_from(&mut self, ix: usize, cx: &mut Context<Self>) {
-        for entry in self.entries.iter_mut().skip(ix) {
-            entry.checked = true;
+    fn delete_from_here(&mut self, display_ix: usize, cx: &mut Context<Self>) {
+        for &idx in &self.visible_indices[display_ix..] {
+            self.entries[idx].checked = true;
         }
         self.is_dirty = true;
+        cx.notify();
+    }
+
+    fn select_all(&mut self, cx: &mut Context<Self>) {
+        for &idx in &self.visible_indices {
+            self.entries[idx].checked = true;
+        }
+        self.is_dirty = true;
+        cx.notify();
+    }
+
+    fn deselect_all(&mut self, cx: &mut Context<Self>) {
+        for entry in &mut self.entries {
+            entry.checked = false;
+        }
+        self.is_dirty = false;
         cx.notify();
     }
 
@@ -269,6 +360,7 @@ impl ThreadContentEditor {
 
             this.update(cx, |this, cx| {
                 this.entries.retain(|e| !e.checked);
+                this.visible_indices = Self::compute_visible_indices(&this.entries);
                 this.is_dirty = false;
                 cx.notify();
             })?;
@@ -280,7 +372,6 @@ impl ThreadContentEditor {
 
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let checked = self.checked_count();
-        let total = self.entries.len();
 
         h_flex()
             .w_full()
@@ -294,14 +385,9 @@ impl ThreadContentEditor {
                     .size(LabelSize::Small)
                     .color(Color::Default),
             )
-            .child(
-                Label::new(format!("{}/{} selected for deletion", checked, total))
-                    .size(LabelSize::XSmall)
-                    .color(Color::Muted),
-            )
             .child(div().flex_grow())
             .child(
-                Button::new("delete", format!("Delete {} Messages", checked))
+                Button::new("delete", format!("Delete {} Entries", checked))
                     .style(ButtonStyle::Filled)
                     .color(Color::Error)
                     .disabled(checked == 0)
@@ -318,20 +404,20 @@ impl ThreadContentEditor {
             )
     }
 
-    fn render_message_row(&self, ix: usize, cx: &Context<Self>) -> AnyElement {
-        let entry = &self.entries[ix];
+    fn render_message_row(&self, display_ix: usize, cx: &Context<Self>) -> AnyElement {
+        let entry_ix = self.visible_indices[display_ix];
+        let entry = &self.entries[entry_ix];
+
         let role_label = match entry.entry_type {
             EntryType::User => "USER",
             EntryType::Assistant => "ASSISTANT",
-            EntryType::Progress => "PROGRESS",
-            EntryType::Other => "OTHER",
+            _ => "OTHER",
         };
 
         let role_color = match entry.entry_type {
             EntryType::User => Color::Accent,
             EntryType::Assistant => Color::Success,
-            EntryType::Progress => Color::Warning,
-            EntryType::Other => Color::Muted,
+            _ => Color::Muted,
         };
 
         let checked = entry.checked;
@@ -342,27 +428,26 @@ impl ThreadContentEditor {
         };
 
         let preview = entry.preview.clone();
-        let label_text: SharedString = format!("{} [{}]", role_label, ix + 1).into();
+        let label_text: SharedString = role_label.into();
 
         let entity = cx.entity();
-        let entity_for_trigger = entity.clone();
+        let entity_for_checkbox = entity.clone();
         let entity_for_menu = entity.clone();
 
-        right_click_menu(format!("msg-ctx-{}", ix))
+        right_click_menu(format!("msg-ctx-{}", display_ix))
             .trigger(move |_, _, _| {
-                let entity = entity_for_trigger.clone();
-                ListItem::new(("msg", ix))
+                ListItem::new(("msg", display_ix))
                     .spacing(ListItemSpacing::Sparse)
                     .start_slot(
                         h_flex()
                             .gap_2()
                             .items_start()
                             .child(
-                                Checkbox::new(("check", ix), toggle_state).on_click({
-                                    let entity = entity.clone();
+                                Checkbox::new(("check", display_ix), toggle_state).on_click({
+                                    let entity = entity_for_checkbox.clone();
                                     move |_state, _window, cx| {
                                         entity.update(cx, |this, cx| {
-                                            this.toggle_message(ix, cx);
+                                            this.toggle_message(display_ix, cx);
                                         });
                                     }
                                 }),
@@ -391,11 +476,31 @@ impl ThreadContentEditor {
                 let entity = entity_for_menu.clone();
                 ContextMenu::build(window, cx, move |menu, _window, _cx| {
                     menu.item(
-                        ContextMenuEntry::new("Select this and all below").handler({
+                        ContextMenuEntry::new("Delete from here").handler({
                             let entity = entity.clone();
                             move |_window, cx| {
                                 entity.update(cx, |this, cx| {
-                                    this.check_from(ix, cx);
+                                    this.delete_from_here(display_ix, cx);
+                                });
+                            }
+                        }),
+                    )
+                    .item(
+                        ContextMenuEntry::new("Select all").handler({
+                            let entity = entity.clone();
+                            move |_window, cx| {
+                                entity.update(cx, |this, cx| {
+                                    this.select_all(cx);
+                                });
+                            }
+                        }),
+                    )
+                    .item(
+                        ContextMenuEntry::new("Deselect all").handler({
+                            let entity = entity.clone();
+                            move |_window, cx| {
+                                entity.update(cx, |this, cx| {
+                                    this.deselect_all(cx);
                                 });
                             }
                         }),
@@ -408,7 +513,7 @@ impl ThreadContentEditor {
 
 impl Render for ThreadContentEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let entry_count = self.entries.len();
+        let visible_count = self.visible_indices.len();
 
         v_flex()
             .key_context("ThreadContentEditor")
@@ -425,7 +530,7 @@ impl Render for ThreadContentEditor {
                     .child(
                         gpui::uniform_list(
                             "thread-messages",
-                            entry_count,
+                            visible_count,
                             cx.processor(
                                 |this: &mut Self, range: Range<usize>, _window, cx| {
                                     range
