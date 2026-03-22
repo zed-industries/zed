@@ -149,7 +149,7 @@ impl PtyProcessInfo {
         self.get_child().is_some_and(|process| process.kill())
     }
 
-    fn load(&self) -> Option<ProcessInfo> {
+    pub(crate) fn load(&self) -> Option<ProcessInfo> {
         let process = self.refresh()?;
         let cwd = process.cwd().map_or(PathBuf::new(), |p| p.to_owned());
 

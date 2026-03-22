@@ -2123,38 +2123,6 @@ impl Terminal {
         }
     }
 
-    /// Returns the foreground process info if a non-shell process is running.
-    /// Returns None if the terminal is idle (only shell running).
-    pub fn foreground_process_name(&self) -> Option<String> {
-        match &self.terminal_type {
-            TerminalType::Pty { info, .. } => {
-                let process_info = info.current.read();
-                let fpi = process_info.as_ref()?;
-                let shells = [
-                    "bash",
-                    "zsh",
-                    "fish",
-                    "sh",
-                    "nu",
-                    "pwsh",
-                    "powershell",
-                    "cmd",
-                ];
-                if shells.iter().any(|s| fpi.name.eq_ignore_ascii_case(s)) {
-                    None
-                } else {
-                    let args = if fpi.argv.len() > 1 {
-                        format!(" {}", fpi.argv[1..].join(" "))
-                    } else {
-                        String::new()
-                    };
-                    Some(format!("{}{}", fpi.name, args))
-                }
-            }
-            TerminalType::DisplayOnly => None,
-        }
-    }
-
     pub fn title(&self, truncate: bool) -> String {
         const MAX_CHARS: usize = 25;
         match &self.task {
@@ -2204,6 +2172,38 @@ impl Terminal {
                         .unwrap_or_else(|| "Terminal".to_string()),
                     TerminalType::DisplayOnly => "Terminal".to_string(),
                 }),
+        }
+    }
+
+    pub fn foreground_process_name(&self) -> Option<String> {
+        self.foreground_process_info(false)
+    }
+
+    pub fn foreground_process_name_refreshed(&self) -> Option<String> {
+        self.foreground_process_info(true)
+    }
+
+    fn foreground_process_info(&self, refresh: bool) -> Option<String> {
+        match &self.terminal_type {
+            TerminalType::Pty { info, .. } => {
+                let fpi = if refresh {
+                    info.load()?
+                } else {
+                    info.current.read().clone()?
+                };
+                let shells = ["bash", "zsh", "fish", "sh", "nu", "pwsh", "powershell", "cmd"];
+                if shells.iter().any(|s| fpi.name.eq_ignore_ascii_case(s)) {
+                    None
+                } else {
+                    let args = if fpi.argv.len() > 1 {
+                        format!(" {}", fpi.argv[1..].join(" "))
+                    } else {
+                        String::new()
+                    };
+                    Some(format!("{}{}", fpi.name, args))
+                }
+            }
+            TerminalType::DisplayOnly => None,
         }
     }
 

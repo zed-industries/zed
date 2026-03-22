@@ -1636,7 +1636,7 @@ impl Item for TerminalView {
         if terminal.task().is_some() {
             return None;
         }
-        terminal.foreground_process_name()
+        terminal.foreground_process_name_refreshed()
     }
 
     fn has_conflict(&self, _cx: &App) -> bool {
