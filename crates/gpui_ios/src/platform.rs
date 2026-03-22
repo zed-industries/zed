@@ -126,6 +126,14 @@ impl Platform for IosPlatform {
         handle: AnyWindowHandle,
         params: WindowParams,
     ) -> Result<Box<dyn PlatformWindow>> {
+        if self.active_window.borrow().is_some() {
+            log::error!(
+                "[gpui_ios] rejected second open_window call — iOS only supports a single window"
+            );
+            anyhow::bail!(
+                "iOS only supports a single window; use Window::replace_root to change content"
+            );
+        }
         let window =
             IosWindow::new(params, self.display.clone(), self.renderer_context.clone())?;
         *self.active_window.borrow_mut() = Some(handle);

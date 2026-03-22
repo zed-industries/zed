@@ -368,6 +368,17 @@ impl MetalRenderer {
             (viewport_size.width.ceil() as i32).into(),
             (viewport_size.height.ceil() as i32).into(),
         );
+        {
+            static DRAW_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let count = DRAW_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if count < 10 || count % 60 == 0 {
+                log::info!(
+                    "[metal] draw #{count}, scene primitives: {}, viewport: {:?}",
+                    scene.len(),
+                    viewport_size
+                );
+            }
+        }
         let drawable = if let Some(drawable) = layer.next_drawable() {
             drawable
         } else {

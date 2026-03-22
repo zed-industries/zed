@@ -3044,7 +3044,7 @@ impl Workspace {
         cx.defer(|cx| {
             cx.windows().iter().find(|window| {
                 window
-                    .update(cx, |_, window, _| {
+                    .update(cx, |_, window, _cx| {
                         if window.is_window_active() {
                             //This can only get called when the window's project connection has been lost
                             //so we don't need to prompt the user for anything and instead just close the window
@@ -3056,6 +3056,30 @@ impl Workspace {
                     })
                     .unwrap_or(false)
             });
+
+            // On iOS, remove_window() is a no-op. Close the project instead
+            // so that subscribers (e.g. the connection landing screen) can
+            // navigate back via project::Event::Closed.  The close is deferred
+            // so it runs outside the current update stack, avoiding a panic
+            // from dropping the workspace while it is being borrowed.
+            #[cfg(target_os = "ios")]
+            {
+                if let Some(app_state) = cx.try_global::<GlobalAppState>() {
+                    if let Some(app_state) = app_state.0.upgrade() {
+                        let workspace_store = app_state.workspace_store.clone();
+                        let projects: Vec<_> = workspace_store.read(cx)
+                            .workspaces()
+                            .filter_map(|w| w.upgrade())
+                            .map(|w| w.read(cx).project.clone())
+                            .collect();
+                        cx.defer(move |cx| {
+                            for project in projects {
+                                project.update(cx, |project, cx| project.close(cx));
+                            }
+                        });
+                    }
+                }
+            }
         });
     }
 
@@ -7986,6 +8010,23 @@ impl Render for Workspace {
             log::info!("Rendered first frame");
         }
 
+        #[cfg(target_os = "ios")]
+        {
+            static RENDER_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let count = RENDER_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if count < 10 || count % 60 == 0 {
+                let bg = cx.theme().colors().background;
+                log::info!(
+                    "[workspace] render #{}, panes: {}, titlebar: {}, is_remote: {}, bg: {:?}",
+                    count,
+                    self.center.panes().len(),
+                    self.titlebar_item.is_some(),
+                    self.project.read(cx).is_remote(),
+                    bg,
+                );
+            }
+        }
+
         let centered_layout = self.centered_layout
             && self.center.panes().len() == 1
             && self.active_item(cx).is_some();
@@ -8063,6 +8104,12 @@ impl Render for Workspace {
                                     let this = cx.entity();
                                     canvas(
                                         move |bounds, window, cx| {
+                                            #[cfg(target_os = "ios")]
+                                            log::info!(
+                                                "[workspace] canvas bounds: origin={:?}, size={:?}",
+                                                bounds.origin,
+                                                bounds.size,
+                                            );
                                             this.update(cx, |this, cx| {
                                                 let bounds_changed = this.bounds != bounds;
                                                 this.bounds = bounds;

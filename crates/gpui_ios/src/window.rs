@@ -127,6 +127,7 @@ impl IosWindowState {
 
         let layer_ptr = self.renderer.layer_ptr();
         let _: () = msg_send![layer_ptr, setFrame: view_bounds];
+        let _: () = msg_send![layer_ptr, setContentsScale: scale as f64];
         self.renderer.update_drawable_size(gpui::size(
             DevicePixels(device_width),
             DevicePixels(device_height),
@@ -201,16 +202,15 @@ impl IosWindow {
         // Store a Weak in the view's ivar. The view calls back into us via
         // `layoutSubviews`; the Weak ensures we don't access freed state if
         // the window is ever torn down before the view.
-        //
-        // We rely on the natural UIKit run-loop order for the initial layout:
-        // `addSubview` queues a layout pass that commits in the same CATransaction
-        // flush, which happens before the next vsync. Since CADisplayLink only fires
-        // on vsync, `layoutSubviews` → `handle_layout` will always set a valid
-        // drawable size before the first `nextDrawable` call.
         let weak: Weak<RefCell<IosWindowState>> = Rc::downgrade(&state);
         let weak_ptr = Box::into_raw(Box::new(weak)) as *mut c_void;
         unsafe {
             (*ui_view).set_ivar("_window_state", weak_ptr);
+            // The initial addSubview: triggered layoutSubviews before the ivar
+            // was set, so apply_layout was skipped. Force a layout pass now so
+            // the Metal drawable gets valid dimensions before the first vsync.
+            let _: () = msg_send![ui_view, setNeedsLayout];
+            let _: () = msg_send![ui_view, layoutIfNeeded];
             // Make the view first responder immediately so hardware keyboard
             // events (pressesBegan/pressesEnded) are delivered even before any
             // editor or software keyboard is active.
@@ -275,7 +275,18 @@ impl IosWindow {
             let view_layer: *mut Object = msg_send![view, layer];
             let _: () = msg_send![view_layer, addSublayer: layer_ptr];
 
+            // If the container already has subviews, force a synchronous layout
+            // pass after adding ours so the Metal layer gets a valid drawable
+            // size before the first CADisplayLink tick. The first window doesn't
+            // need this because UIKit lays it out naturally before the first vsync;
+            // subsequent windows are added to an already-laid-out container and
+            // may not trigger layoutSubviews in time without an explicit nudge.
+            let existing_subviews: *mut Object = msg_send![container, subviews];
+            let subview_count: usize = msg_send![existing_subviews, count];
             let _: () = msg_send![container, addSubview: view];
+            if subview_count > 0 {
+                let _: () = msg_send![container, layoutIfNeeded];
+            }
 
             // Attach a two-finger pan gesture recognizer for direct touch scrolling.
             // Raw touchesBegan: is filtered to single-finger only so there is no overlap.
@@ -660,7 +671,16 @@ thread_local! {
 }
 
 extern "C" fn display_link_fired(_data: *mut c_void) {
+    static TICK_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let tick = TICK_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    // Log every 60 ticks (~1 second at 60fps) to confirm the display link is alive.
+    if tick % 60 == 0 {
+        log::info!("[display_link] tick #{tick}");
+    }
     FRAME_CALLBACK.with(|slot| {
+        if slot.borrow().is_none() && tick % 60 == 0 {
+            log::warn!("[display_link] no frame callback registered at tick #{tick}");
+        }
         if let Some(callback) = slot.borrow_mut().as_mut() {
             callback(RequestFrameOptions::default());
         }
@@ -974,6 +994,17 @@ fn register_metal_view_class() -> &'static Class {
                 traits_smart_dashes_type as extern "C" fn(&Object, Sel) -> isize,
             );
 
+            // ── View lifecycle ───────────────────────────────────────────────
+            decl.add_method(
+                sel!(didMoveToWindow),
+                did_move_to_window as extern "C" fn(&Object, Sel),
+            );
+            decl.add_method(
+                sel!(traitCollectionDidChange:),
+                trait_collection_did_change
+                    as extern "C" fn(&Object, Sel, *mut Object),
+            );
+
             // ── Keyboard control ──────────────────────────────────────────────
             // Override `inputView` to conditionally show/suppress the keyboard.
             decl.add_method(
@@ -1057,6 +1088,65 @@ extern "C" fn view_dealloc(this: &Object, _sel: Sel) {
         }
         let superclass = class!(UIView);
         let _: () = msg_send![super(this, superclass), dealloc];
+    }
+}
+
+/// Called by UIKit when the view is added to (or removed from) a UIWindow.
+/// This is the canonical place to initialise display-dependent properties
+/// like `contentsScale`.  It also serves as a safety-net layout pass: if
+/// `layoutSubviews` has not yet fired by this point the Metal layer would
+/// still be at 0×0, so we run `apply_layout` here as well.
+extern "C" fn did_move_to_window(this: &Object, _sel: Sel) {
+    unsafe {
+        let superclass = class!(UIView);
+        let _: () = msg_send![super(this, superclass), didMoveToWindow];
+
+        let raw: *mut c_void = *this.get_ivar("_window_state");
+        if raw.is_null() {
+            return;
+        }
+        let weak = &*(raw as *const Weak<RefCell<IosWindowState>>);
+        let Some(state_rc) = weak.upgrade() else {
+            return;
+        };
+
+        let view = this as *const Object as *mut Object;
+        let resize_event = state_rc.borrow_mut().apply_layout(view);
+
+        if let Some((new_size, scale)) = resize_event {
+            let mut callback = state_rc.borrow_mut().callbacks.resize.take();
+            if let Some(ref mut f) = callback {
+                f(new_size, scale);
+            }
+            let mut state = state_rc.borrow_mut();
+            if state.callbacks.resize.is_none() {
+                state.callbacks.resize = callback;
+            }
+        }
+    }
+}
+
+/// Called by UIKit when the trait collection changes (e.g. dark/light mode
+/// switch, Dynamic Type size change, or display gamut change).
+extern "C" fn trait_collection_did_change(this: &Object, _sel: Sel, _previous: *mut Object) {
+    unsafe {
+        let raw: *mut c_void = *this.get_ivar("_window_state");
+        if raw.is_null() {
+            return;
+        }
+        let weak = &*(raw as *const Weak<RefCell<IosWindowState>>);
+        let Some(state_rc) = weak.upgrade() else {
+            return;
+        };
+
+        let mut callback = state_rc.borrow_mut().callbacks.appearance_changed.take();
+        if let Some(ref mut f) = callback {
+            f();
+        }
+        let mut state = state_rc.borrow_mut();
+        if state.callbacks.appearance_changed.is_none() {
+            state.callbacks.appearance_changed = callback;
+        }
     }
 }
 

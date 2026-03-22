@@ -23,7 +23,7 @@ pub mod scap_screen_capture;
     feature = "screen-capture"
 ))]
 pub(crate) type PlatformScreenCaptureFrame = scap::frame::Frame;
-#[cfg(not(feature = "screen-capture"))]
+#[cfg(any(not(feature = "screen-capture"), target_os = "ios"))]
 pub(crate) type PlatformScreenCaptureFrame = ();
 #[cfg(all(target_os = "macos", feature = "screen-capture"))]
 pub(crate) type PlatformScreenCaptureFrame = core_video::image_buffer::CVImageBuffer;

@@ -29,6 +29,7 @@ menu.workspace = true
 node_runtime.workspace = true
 paths.workspace = true
 project.workspace = true
+project_panel.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 recent_projects.workspace = true

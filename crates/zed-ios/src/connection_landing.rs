@@ -2,20 +2,23 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use askpass::EncryptedPassword;
-use editor::{Editor, actions::{Backtab, Tab}};
+use editor::{
+    Editor,
+    actions::{Backtab, Tab},
+};
 use gpui::{
-    App, AppContext as _, AsyncApp, ClickEvent, Context, Entity, Focusable as _, IntoElement,
-    Render, SharedString, Task, Window, WindowOptions, div, prelude::*,
+    AnyWindowHandle, App, AppContext as _, AsyncApp, ClickEvent, Context, Entity, Focusable as _,
+    IntoElement, Render, SharedString, Task, Window, WindowOptions, div, prelude::*,
 };
 use remote::SshConnectionOptions;
 use serde::{Deserialize, Serialize};
-use util::ResultExt;
 use theme::ActiveTheme;
 use ui::{
     ButtonCommon, ButtonStyle, Clickable, Color, FixedWidth, Headline, Icon, IconButton, IconName,
     IconSize, Indicator, Label, LabelCommon, LabelSize, Vector, VectorName, h_flex, rems_from_px,
     v_flex,
 };
+use util::ResultExt;
 
 /// On-disk representation of a saved SSH host.
 #[derive(Clone, Serialize, Deserialize)]
@@ -27,6 +30,8 @@ struct SavedHostEntry {
     port: u16,
     #[serde(default)]
     password: Option<String>,
+    #[serde(default)]
+    project_path: Option<String>,
 }
 
 fn default_port() -> u16 {
@@ -39,23 +44,46 @@ fn saved_hosts_path() -> PathBuf {
 
 fn load_saved_host_entries() -> Vec<SavedHostEntry> {
     let path = saved_hosts_path();
+    log::info!("[zed-ios] loading saved hosts from: {}", path.display());
     match std::fs::read_to_string(&path) {
-        Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
-        Err(_) => Vec::new(),
+        Ok(contents) => {
+            let entries: Vec<SavedHostEntry> = serde_json::from_str(&contents).unwrap_or_default();
+            log::info!("[zed-ios] loaded {} saved hosts", entries.len());
+            entries
+        }
+        Err(error) => {
+            log::info!("[zed-ios] no saved hosts file: {error}");
+            Vec::new()
+        }
     }
 }
 
 fn save_host_entries(entries: &[SavedHostEntry]) {
     let path = saved_hosts_path();
+    log::info!(
+        "[zed-ios] saving {} hosts to: {}",
+        entries.len(),
+        path.display()
+    );
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).log_err();
+        if let Err(error) = std::fs::create_dir_all(parent) {
+            log::error!(
+                "[zed-ios] failed to create config dir {}: {error}",
+                parent.display()
+            );
+            return;
+        }
     }
     match serde_json::to_string_pretty(entries) {
         Ok(json) => {
-            std::fs::write(&path, json).log_err();
+            if let Err(error) = std::fs::write(&path, &json) {
+                log::error!("[zed-ios] failed to write hosts file: {error}");
+            } else {
+                log::info!("[zed-ios] saved hosts successfully");
+            }
         }
         Err(error) => {
-            log::error!("failed to serialize saved hosts: {error}");
+            log::error!("[zed-ios] failed to serialize saved hosts: {error}");
         }
     }
 }
@@ -75,6 +103,7 @@ struct SavedHost {
     username: SharedString,
     port: u16,
     password: Option<String>,
+    project_path: Option<String>,
     status: ConnectionStatus,
 }
 
@@ -86,6 +115,7 @@ impl SavedHost {
             username: SharedString::from(entry.username),
             port: entry.port,
             password: entry.password,
+            project_path: entry.project_path,
             status: ConnectionStatus::Disconnected,
         }
     }
@@ -97,6 +127,7 @@ impl SavedHost {
             username: self.username.to_string(),
             port: self.port,
             password: self.password.clone(),
+            project_path: self.project_path.clone(),
         }
     }
 
@@ -145,6 +176,7 @@ impl SavedHost {
 enum LandingMode {
     Default,
     AddHost,
+    EditHost(usize),
 }
 
 /// Landing screen shown on iPad launch. Lists saved SSH hosts and provides
@@ -161,7 +193,14 @@ pub struct ConnectionLanding {
     username_editor: Entity<Editor>,
     port_editor: Entity<Editor>,
     password_editor: Entity<Editor>,
-    _connect_task: Option<Task<()>>,
+    project_path_editor: Entity<Editor>,
+    password_prompt: Option<PasswordPromptState>,
+}
+
+struct PasswordPromptState {
+    prompt_text: SharedString,
+    editor: Entity<Editor>,
+    tx: Option<futures::channel::oneshot::Sender<EncryptedPassword>>,
 }
 
 impl ConnectionLanding {
@@ -192,6 +231,11 @@ impl ConnectionLanding {
             editor.set_masked(true, cx);
             editor
         });
+        let project_path_editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text("~/myproject", window, cx);
+            editor
+        });
 
         let saved_hosts = load_saved_host_entries()
             .into_iter()
@@ -208,7 +252,8 @@ impl ConnectionLanding {
             username_editor,
             port_editor,
             password_editor,
-            _connect_task: None,
+            project_path_editor,
+            password_prompt: None,
         }
     }
 
@@ -249,6 +294,51 @@ impl ConnectionLanding {
         self.password_editor.update(cx, |editor, cx| {
             editor.set_text("", window, cx);
         });
+        self.project_path_editor.update(cx, |editor, cx| {
+            editor.set_text("", window, cx);
+        });
+        self.name_editor.focus_handle(cx).focus(window, cx);
+        cx.notify();
+    }
+
+    fn switch_to_edit_host(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(host) = self.saved_hosts.get(index) else {
+            return;
+        };
+        let name_text = host
+            .nickname
+            .as_ref()
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        let host_text = host.host.to_string();
+        let username_text = host.username.to_string();
+        let port_text = if host.port == 22 {
+            String::new()
+        } else {
+            host.port.to_string()
+        };
+        let password_text = host.password.clone().unwrap_or_default();
+        let project_path_text = host.project_path.clone().unwrap_or_default();
+
+        self.name_editor.update(cx, |editor, cx| {
+            editor.set_text(name_text, window, cx);
+        });
+        self.host_editor.update(cx, |editor, cx| {
+            editor.set_text(host_text, window, cx);
+        });
+        self.username_editor.update(cx, |editor, cx| {
+            editor.set_text(username_text, window, cx);
+        });
+        self.port_editor.update(cx, |editor, cx| {
+            editor.set_text(port_text, window, cx);
+        });
+        self.password_editor.update(cx, |editor, cx| {
+            editor.set_text(password_text, window, cx);
+        });
+        self.project_path_editor.update(cx, |editor, cx| {
+            editor.set_text(project_path_text, window, cx);
+        });
+        self.mode = LandingMode::EditHost(index);
         self.name_editor.focus_handle(cx).focus(window, cx);
         cx.notify();
     }
@@ -281,6 +371,12 @@ impl ConnectionLanding {
         } else {
             Some(password_text.to_string())
         };
+        let project_path_text = self.project_path_editor.read(cx).text(cx);
+        let project_path = if project_path_text.is_empty() {
+            None
+        } else {
+            Some(project_path_text.to_string())
+        };
 
         if host.is_empty() || username.is_empty() {
             return;
@@ -292,22 +388,33 @@ impl ConnectionLanding {
             Some(SharedString::from(name))
         };
 
-        self.saved_hosts.push(SavedHost {
+        let updated = SavedHost {
             nickname,
             host: SharedString::from(host),
             username: SharedString::from(username),
             port,
             password,
+            project_path,
             status: ConnectionStatus::Disconnected,
-        });
+        };
+
+        match self.mode {
+            LandingMode::EditHost(index) if index < self.saved_hosts.len() => {
+                self.saved_hosts[index] = updated;
+            }
+            _ => {
+                self.saved_hosts.push(updated);
+            }
+        }
         self.persist_hosts();
 
+        self.editing_hosts = false;
         self.mode = LandingMode::Default;
         self.focus_handle.focus(window, cx);
         cx.notify();
     }
 
-    fn connect_host(&mut self, index: usize, _window: &mut Window, cx: &mut Context<Self>) {
+    fn connect_host(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(host) = self.saved_hosts.get_mut(index) else {
             return;
         };
@@ -321,113 +428,213 @@ impl ConnectionLanding {
             password: host.password.clone(),
             ..Default::default()
         };
+        let project_path = host.project_path.clone();
 
         let app_state = match crate::ios::app_state() {
             Some(state) => state,
             None => {
                 log::error!("[zed-ios] app_state not available for SSH connection");
                 if let Some(host) = self.saved_hosts.get_mut(index) {
-                    host.status =
-                        ConnectionStatus::Error("App not initialized".into());
+                    host.status = ConnectionStatus::Error("App not initialized".into());
                     cx.notify();
                 }
                 return;
             }
         };
 
-        let delegate = Arc::new(IosRemoteClientDelegate);
+        let landing_window = window.window_handle();
+        let delegate = Arc::new(IosRemoteClientDelegate {
+            window: landing_window,
+        });
 
-        self._connect_task = Some(cx.spawn(async move |this, cx| {
+        // Detach instead of storing in _connect_task: replace_root
+        // inside do_connect drops the ConnectionLanding entity (and its
+        // fields), which would cancel a stored Task mid-flight.
+        cx.spawn(async move |this, cx| {
             let result = Self::do_connect(
+                landing_window,
                 connection_options,
+                project_path,
+                index,
                 delegate.clone(),
                 app_state,
                 cx,
             )
             .await;
 
-            match result {
-                Ok(()) => {
-                    this.update(cx, |this, cx| {
+            if let Err(error) = result {
+                let error_message = format!("{error:#}");
+                log::error!("[zed-ios] SSH connection failed: {error_message}");
+
+                // Try updating the original ConnectionLanding (pre-replace_root
+                // errors). If it's been dropped, navigate back to a fresh landing
+                // screen with the error.
+                let updated = this
+                    .update(cx, |this, cx| {
                         if let Some(host) = this.saved_hosts.get_mut(index) {
                             host.status =
-                                ConnectionStatus::Connected { project_count: 0 };
+                                ConnectionStatus::Error(SharedString::from(error_message.clone()));
                             cx.notify();
                         }
                     })
-                    .log_err();
-                }
-                Err(error) => {
-                    log::error!("[zed-ios] SSH connection failed: {error:#}");
-                    this.update(cx, |this, cx| {
-                        if let Some(host) = this.saved_hosts.get_mut(index) {
-                            host.status = ConnectionStatus::Error(
-                                SharedString::from(format!("{error:#}")),
-                            );
-                            cx.notify();
-                        }
-                    })
-                    .log_err();
+                    .is_ok();
+
+                if !updated {
+                    cx.update(|cx| Self::navigate_to_landing(landing_window, cx));
                 }
             }
-        }));
+        })
+        .detach();
     }
 
     async fn do_connect(
+        landing_window: AnyWindowHandle,
         connection_options: SshConnectionOptions,
+        project_path: Option<String>,
+        _host_index: usize,
         delegate: Arc<dyn remote::RemoteClientDelegate>,
         app_state: Arc<workspace::AppState>,
         cx: &mut AsyncApp,
     ) -> anyhow::Result<()> {
         use remote::RusshRemoteConnection;
 
-        let connection = RusshRemoteConnection::new(
-            connection_options.clone(),
-            delegate.clone(),
-            cx,
-        )
-        .await?;
+        let path = project_path.as_deref().ok_or_else(|| {
+            anyhow::anyhow!("No project path specified. Edit the host to add one.")
+        })?;
+
+        // 1. Establish SSH connection (landing screen stays visible).
+        let connection =
+            RusshRemoteConnection::new(connection_options.clone(), delegate.clone(), cx).await?;
 
         let remote_connection: Arc<dyn remote::RemoteConnection> = Arc::new(connection);
 
-        // Open a new workspace window with the remote project
         let (cancel_tx, cancel_rx) = futures::channel::oneshot::channel::<()>();
-        // Keep cancel_tx alive so the connection isn't cancelled
         std::mem::forget(cancel_tx);
 
-        let window = cx.open_window(WindowOptions::default(), |window, cx| {
-            let project = project::Project::local(
+        // 2. Create RemoteClient session.
+        log::info!("[zed-ios] creating remote client session");
+        let session = match cx
+            .update(|cx| {
+                remote::RemoteClient::new(
+                    remote::ConnectionIdentifier::Setup(1),
+                    remote_connection,
+                    cancel_rx,
+                    delegate.clone(),
+                    cx,
+                )
+            })
+            .await?
+        {
+            Some(session) => session,
+            None => anyhow::bail!("SSH connection was cancelled"),
+        };
+
+        // 3. Create remote Project.
+        log::info!("[zed-ios] creating remote project");
+        let project = cx.update(|cx| {
+            project::Project::remote(
+                session,
                 app_state.client.clone(),
                 app_state.node_runtime.clone(),
                 app_state.user_store.clone(),
                 app_state.languages.clone(),
                 app_state.fs.clone(),
-                None,
-                project::LocalProjectFlags::default(),
-                cx,
-            );
-            let workspace_entity =
-                cx.new(|cx| workspace::Workspace::new(None, project, app_state.clone(), window, cx));
-            cx.new(|cx| workspace::MultiWorkspace::new(workspace_entity, window, cx))
-        })?;
-
-        // Open the remote project in the new window using
-        // the home directory on the remote as initial path
-        let paths = vec![PathBuf::from("~")];
-        cx.update(|cx| {
-            workspace::open_remote_project_with_new_connection(
-                window,
-                remote_connection,
-                cancel_rx,
-                delegate,
-                app_state,
-                paths,
+                true,
                 cx,
             )
-        })
-        .await?;
+        });
 
+        // 4. Resolve the project path into a worktree to confirm it exists
+        //    before showing the workspace.
+        log::info!("[zed-ios] resolving project path: {path}");
+        let project_path_result = cx
+            .update(|cx| {
+                workspace::Workspace::project_path_for_path(
+                    project.clone(),
+                    &PathBuf::from(path),
+                    true,
+                    cx,
+                )
+            })
+            .await;
+
+        let (_worktree_id, project_path) = match project_path_result {
+            Ok(result) => result,
+            Err(error) => {
+                log::error!("[zed-ios] project path resolution failed: {error:#}");
+                anyhow::bail!("Could not open '{path}': {error:#}");
+            }
+        };
+
+        // 5. Create the workspace with the remote project and replace_root.
+        log::info!("[zed-ios] replacing root with remote workspace");
+        let app_state_for_workspace = app_state.clone();
+        let project_for_workspace = project.clone();
+        let workspace_entity = landing_window.update(cx, |_, window, cx| {
+            window.replace_root(cx, |window, cx| {
+                workspace::Workspace::new(
+                    None,
+                    project_for_workspace,
+                    app_state_for_workspace,
+                    window,
+                    cx,
+                )
+            })
+        })?;
+        log::info!("[zed-ios] remote workspace is now the root");
+
+        // 6. Open the resolved project path if it points to a file.
+        if !project_path.path.is_empty() {
+            log::info!("[zed-ios] opening project path: {:?}", project_path);
+            let open_result = landing_window.update(cx, |_, window, cx| {
+                workspace_entity.update(cx, |workspace, cx| {
+                    workspace.open_path(project_path, None, true, window, cx)
+                })
+            })?;
+            match open_result.await {
+                Ok(_) => log::info!("[zed-ios] opened file successfully"),
+                Err(error) => log::error!("[zed-ios] failed to open file: {error:#}"),
+            }
+        } else {
+            log::info!("[zed-ios] project path is a directory, no file to open");
+        }
+
+        // 7. Subscribe to project::Event::Closed to navigate back to the
+        //    landing screen if the remote connection drops.  The navigation
+        //    is deferred so the replace_root (which drops the workspace and
+        //    project) runs outside the emit/update stack.
+        landing_window
+            .update(cx, |_, _window, cx| {
+                cx.subscribe(&project, {
+                    let landing_window = landing_window;
+                    move |_, event: &project::Event, cx| {
+                        if matches!(event, project::Event::Closed) {
+                            log::info!("[zed-ios] project closed, returning to landing screen");
+                            let landing_window = landing_window;
+                            cx.defer(move |cx| {
+                                Self::navigate_to_landing(landing_window, cx);
+                            });
+                        }
+                    }
+                })
+                .detach();
+            })
+            .log_err();
+
+        log::info!("[zed-ios] remote project opened successfully");
         Ok(())
+    }
+
+    /// Replace the window root with a fresh ConnectionLanding screen.
+    fn navigate_to_landing(window: AnyWindowHandle, cx: &mut App) {
+        window
+            .update(cx, |_, window, cx| {
+                let landing = window.replace_root(cx, |window, cx| {
+                    ConnectionLanding::new(window, cx)
+                });
+                landing.focus_handle(cx).focus(window, cx);
+            })
+            .log_err();
     }
 
     fn toggle_editing_hosts(
@@ -438,6 +645,105 @@ impl ConnectionLanding {
     ) {
         self.editing_hosts = !self.editing_hosts;
         cx.notify();
+    }
+
+    fn show_password_prompt(
+        &mut self,
+        prompt: String,
+        tx: futures::channel::oneshot::Sender<EncryptedPassword>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text("enter password", window, cx);
+            editor.set_masked(true, cx);
+            editor
+        });
+        editor.focus_handle(cx).focus(window, cx);
+        self.password_prompt = Some(PasswordPromptState {
+            prompt_text: SharedString::from(prompt),
+            editor,
+            tx: Some(tx),
+        });
+        cx.notify();
+    }
+
+    fn submit_password(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(ref mut state) = self.password_prompt {
+            if let Some(tx) = state.tx.take() {
+                let password_text = state.editor.read(cx).text(cx);
+                match EncryptedPassword::try_from(password_text.as_ref()) {
+                    Ok(encrypted) => {
+                        tx.send(encrypted).ok();
+                    }
+                    Err(error) => {
+                        log::error!("[zed-ios] failed to encrypt password: {error}");
+                    }
+                }
+            }
+        }
+        self.password_prompt = None;
+        self.focus_handle.focus(window, cx);
+        cx.notify();
+    }
+
+    fn cancel_password(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(ref mut state) = self.password_prompt {
+            state.tx.take();
+        }
+        self.password_prompt = None;
+        self.focus_handle.focus(window, cx);
+        cx.notify();
+    }
+
+    fn render_password_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let state = self
+            .password_prompt
+            .as_ref()
+            .expect("called without prompt");
+        let colors = cx.theme().colors();
+
+        div()
+            .id("password-overlay")
+            .absolute()
+            .size_full()
+            .bg(colors.background.opacity(0.9))
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap_4()
+            .child(Label::new(state.prompt_text.clone()).color(Color::Default))
+            .child(
+                div()
+                    .w_80()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(colors.border)
+                    .bg(colors.editor_background)
+                    .px_2()
+                    .py_1()
+                    .child(state.editor.clone()),
+            )
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        ui::Button::new("pw-cancel", "Cancel")
+                            .style(ButtonStyle::Subtle)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.cancel_password(window, cx);
+                            })),
+                    )
+                    .child(
+                        ui::Button::new("pw-submit", "Submit")
+                            .style(ButtonStyle::Filled)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.submit_password(window, cx);
+                            })),
+                    ),
+            )
     }
 
     fn remove_host(&mut self, index: usize, _window: &mut Window, cx: &mut Context<Self>) {
@@ -458,19 +764,15 @@ impl ConnectionLanding {
                     .gap_4()
                     .child(Vector::square(VectorName::ZedLogo, rems_from_px(45.)))
                     .child(
-                        v_flex()
-                            .child(Headline::new("Welcome to Zed"))
-                            .child(
-                                Label::new("The editor for what's next")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted)
-                                    .italic(),
-                            ),
+                        v_flex().child(Headline::new("Welcome to Zed")).child(
+                            Label::new("The editor for what's next")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted)
+                                .italic(),
+                        ),
                     ),
             )
-            .child(
-                Label::new("Connect to a remote host to start editing").color(Color::Muted),
-            )
+            .child(Label::new("Connect to a remote host to start editing").color(Color::Muted))
     }
 
     fn render_host_entry(
@@ -482,12 +784,15 @@ impl ConnectionLanding {
         let colors = cx.theme().colors();
         let display_name = host.display_name();
         let address_line = host.address_line();
+        let project_path = host.project_path.clone().map(SharedString::from);
         let status_color = host.status_color();
         let status_label = host.status_label();
-        let is_connectable = matches!(
-            host.status,
-            ConnectionStatus::Disconnected | ConnectionStatus::Error(_)
-        );
+        let is_editing = self.editing_hosts;
+        let is_connectable = !is_editing
+            && matches!(
+                host.status,
+                ConnectionStatus::Disconnected | ConnectionStatus::Error(_)
+            );
 
         let hover_bg = colors.ghost_element_hover;
         let focus_border = colors.border_focused;
@@ -512,6 +817,11 @@ impl ConnectionLanding {
                     this.connect_host(index, window, cx);
                 }))
             })
+            .when(is_editing, |this| {
+                this.on_click(cx.listener(move |this, _event, window, cx| {
+                    this.switch_to_edit_host(index, window, cx);
+                }))
+            })
             .child(
                 h_flex()
                     .gap_3()
@@ -530,7 +840,12 @@ impl ConnectionLanding {
                                 Label::new(address_line)
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
-                            ),
+                            )
+                            .when_some(project_path, |this, path| {
+                                this.child(
+                                    Label::new(path).size(LabelSize::XSmall).color(Color::Muted),
+                                )
+                            }),
                     ),
             )
             .child(
@@ -553,9 +868,11 @@ impl ConnectionLanding {
                             .icon_size(IconSize::Small)
                             .icon_color(Color::Muted)
                             .style(ButtonStyle::Transparent)
-                            .on_click(cx.listener(move |this, _event, window, cx| {
-                                this.remove_host(index, window, cx);
-                            })),
+                            .on_click(cx.listener(
+                                move |this, _event, window, cx| {
+                                    this.remove_host(index, window, cx);
+                                },
+                            )),
                         )
                     }),
             )
@@ -615,14 +932,15 @@ impl ConnectionLanding {
                 if index > 0 {
                     entries = entries.child(div().mx_4().h_px().bg(border));
                 }
-                entries = entries.child(self.render_host_entry(index, &self.saved_hosts[index], cx));
+                entries =
+                    entries.child(self.render_host_entry(index, &self.saved_hosts[index], cx));
             }
 
             list = list.child(entries);
         }
 
         list.child(
-            ui::Button::new("add-host-btn", "Connect SSH Server")
+            ui::Button::new("add-host-btn", "Add Remote Host")
                 .tab_index(host_count as isize)
                 .start_icon(Icon::new(IconName::Plus))
                 .full_width()
@@ -631,20 +949,60 @@ impl ConnectionLanding {
         )
     }
 
-    fn render_add_host_form(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_add_host_form(
+        &self,
+        editing_index: Option<usize>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let colors = cx.theme().colors();
-        let name_focus = self.name_editor.focus_handle(cx).tab_index(0).tab_stop(true);
-        let host_focus = self.host_editor.focus_handle(cx).tab_index(1).tab_stop(true);
-        let username_focus = self.username_editor.focus_handle(cx).tab_index(2).tab_stop(true);
-        let port_focus = self.port_editor.focus_handle(cx).tab_index(3).tab_stop(true);
-        let password_focus = self.password_editor.focus_handle(cx).tab_index(4).tab_stop(true);
+        let name_focus = self
+            .name_editor
+            .focus_handle(cx)
+            .tab_index(0)
+            .tab_stop(true);
+        let host_focus = self
+            .host_editor
+            .focus_handle(cx)
+            .tab_index(1)
+            .tab_stop(true);
+        let username_focus = self
+            .username_editor
+            .focus_handle(cx)
+            .tab_index(2)
+            .tab_stop(true);
+        let port_focus = self
+            .port_editor
+            .focus_handle(cx)
+            .tab_index(3)
+            .tab_stop(true);
+        let password_focus = self
+            .password_editor
+            .focus_handle(cx)
+            .tab_index(4)
+            .tab_stop(true);
+        let project_path_focus = self
+            .project_path_editor
+            .focus_handle(cx)
+            .tab_index(5)
+            .tab_stop(true);
+
+        let form_title = if editing_index.is_some() {
+            "EDIT CONNECTION"
+        } else {
+            "NEW CONNECTION"
+        };
+        let confirm_label = if editing_index.is_some() {
+            "Save"
+        } else {
+            "Add Host"
+        };
 
         v_flex()
             .id("add-host-form")
             .w_96()
             .gap_4()
             .child(
-                Label::new("NEW CONNECTION")
+                Label::new(form_title)
                     .size(LabelSize::XSmall)
                     .color(Color::Muted),
             )
@@ -764,6 +1122,27 @@ impl ConnectionLanding {
                                     .py_1()
                                     .child(self.password_editor.clone()),
                             ),
+                    )
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(
+                                Label::new("Project Path")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                div()
+                                    .id("project-path-field")
+                                    .track_focus(&project_path_focus)
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(colors.border)
+                                    .bg(colors.editor_background)
+                                    .px_2()
+                                    .py_1()
+                                    .child(self.project_path_editor.clone()),
+                            ),
                     ),
             )
             .child(
@@ -772,13 +1151,13 @@ impl ConnectionLanding {
                     .justify_end()
                     .child(
                         ui::Button::new("cancel-btn", "Cancel")
-                            .tab_index(5_isize)
+                            .tab_index(6_isize)
                             .style(ButtonStyle::Subtle)
                             .on_click(cx.listener(Self::cancel_add_host)),
                     )
                     .child(
-                        ui::Button::new("connect-btn", "Connect")
-                            .tab_index(6_isize)
+                        ui::Button::new("add-host-confirm-btn", confirm_label)
+                            .tab_index(7_isize)
                             .style(ButtonStyle::Filled)
                             .on_click(cx.listener(Self::confirm_add_host)),
                     ),
@@ -813,8 +1192,15 @@ impl Render for ConnectionLanding {
                 content = content.child(self.render_hosts_list(cx));
             }
             LandingMode::AddHost => {
-                content = content.child(self.render_add_host_form(cx));
+                content = content.child(self.render_add_host_form(None, cx));
             }
+            LandingMode::EditHost(index) => {
+                content = content.child(self.render_add_host_form(Some(*index), cx));
+            }
+        }
+
+        if self.password_prompt.is_some() {
+            content = content.child(self.render_password_overlay(cx));
         }
 
         content
@@ -827,123 +1213,9 @@ impl gpui::Focusable for ConnectionLanding {
     }
 }
 
-/// A simple password prompt that opens in its own window.
-/// Used by the SSH delegate when key auth fails and no saved password exists.
-struct PasswordPromptView {
-    prompt_text: SharedString,
-    editor: Entity<Editor>,
-    focus_handle: gpui::FocusHandle,
-    tx: Option<futures::channel::oneshot::Sender<EncryptedPassword>>,
+struct IosRemoteClientDelegate {
+    window: AnyWindowHandle,
 }
-
-impl PasswordPromptView {
-    fn open(
-        prompt: String,
-        tx: futures::channel::oneshot::Sender<EncryptedPassword>,
-        cx: &mut App,
-    ) -> anyhow::Result<()> {
-        cx.open_window(WindowOptions::default(), |window, cx| {
-            let view = cx.new(|cx| {
-                let editor = cx.new(|cx| {
-                    let mut editor = Editor::single_line(window, cx);
-                    editor.set_placeholder_text("enter password", window, cx);
-                    editor.set_masked(true, cx);
-                    editor
-                });
-
-                let focus_handle = cx.focus_handle();
-                editor.focus_handle(cx).focus(window, cx);
-
-                Self {
-                    prompt_text: SharedString::from(prompt),
-                    editor,
-                    focus_handle,
-                    tx: Some(tx),
-                }
-            });
-            view
-        })?;
-        Ok(())
-    }
-
-    fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(tx) = self.tx.take() {
-            let password_text = self.editor.read(cx).text(cx);
-            match EncryptedPassword::try_from(password_text.as_ref()) {
-                Ok(encrypted) => {
-                    tx.send(encrypted).ok();
-                }
-                Err(error) => {
-                    log::error!("[zed-ios] Failed to encrypt password: {error}");
-                }
-            }
-        }
-        window.remove_window();
-    }
-
-    fn cancel(&mut self, window: &mut Window, _cx: &mut Context<Self>) {
-        self.tx.take();
-        window.remove_window();
-    }
-}
-
-impl Render for PasswordPromptView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let colors = cx.theme().colors();
-        let _editor_focus = self.editor.focus_handle(cx);
-
-        div()
-            .id("password-prompt")
-            .track_focus(&self.focus_handle)
-            .size_full()
-            .bg(colors.background)
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_center()
-            .gap_4()
-            .child(
-                Label::new(self.prompt_text.clone()).color(Color::Default),
-            )
-            .child(
-                div()
-                    .w_80()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(colors.border)
-                    .bg(colors.editor_background)
-                    .px_2()
-                    .py_1()
-                    .child(self.editor.clone()),
-            )
-            .child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        ui::Button::new("pw-cancel", "Cancel")
-                            .style(ButtonStyle::Subtle)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.cancel(window, cx);
-                            })),
-                    )
-                    .child(
-                        ui::Button::new("pw-submit", "Submit")
-                            .style(ButtonStyle::Filled)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.submit(window, cx);
-                            })),
-                    ),
-            )
-    }
-}
-
-impl gpui::Focusable for PasswordPromptView {
-    fn focus_handle(&self, _cx: &App) -> gpui::FocusHandle {
-        self.focus_handle.clone()
-    }
-}
-
-struct IosRemoteClientDelegate;
 
 impl remote::RemoteClientDelegate for IosRemoteClientDelegate {
     fn ask_password(
@@ -953,11 +1225,17 @@ impl remote::RemoteClientDelegate for IosRemoteClientDelegate {
         cx: &mut AsyncApp,
     ) {
         log::info!("[zed-ios] Password prompt requested: {prompt}");
-        let result = cx.update(|cx| {
-            PasswordPromptView::open(prompt, tx, cx)
+        let result = self.window.update(cx, |_, window, cx| {
+            if let Some(Some(landing)) = window.root::<ConnectionLanding>() {
+                landing.update(cx, |landing, cx| {
+                    landing.show_password_prompt(prompt, tx, window, cx);
+                });
+            } else {
+                log::error!("[zed-ios] cannot show password prompt: landing screen not active");
+            }
         });
         if let Err(error) = result {
-            log::error!("[zed-ios] Failed to show password prompt: {error:#}");
+            log::error!("[zed-ios] failed to show password prompt: {error:#}");
         }
     }
 

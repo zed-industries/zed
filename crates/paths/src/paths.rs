@@ -92,6 +92,10 @@ pub fn config_dir() -> &'static PathBuf {
                 dirs::config_dir().expect("failed to determine XDG_CONFIG_HOME directory")
             }
             .join("zed")
+        } else if cfg!(target_os = "ios") {
+            // On iOS the app sandbox blocks creating dotfile directories.
+            // Use Library/Application Support/Zed instead.
+            home_dir().join("Library").join("Application Support").join("Zed")
         } else {
             home_dir().join(".config").join("zed")
         }

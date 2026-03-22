@@ -1600,6 +1600,18 @@ impl Window {
 
     /// Close this window.
     pub fn remove_window(&mut self) {
+        // iOS has a single window that cannot be recreated. Removing it
+        // would leave the app with a blank screen and no recovery path.
+        // Callers should use Window::replace_root to navigate instead.
+        #[cfg(target_os = "ios")]
+        {
+            log::error!(
+                "remove_window() called on iOS — ignoring to prevent blank screen. \
+                 Use Window::replace_root to change content."
+            );
+            return;
+        }
+
         self.removed = true;
     }
 

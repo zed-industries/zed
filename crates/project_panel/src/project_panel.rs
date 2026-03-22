@@ -17,7 +17,9 @@ use feature_flags::{FeatureFlagAppExt, ProjectPanelUndoRedoFeatureFlag};
 use file_icons::FileIcons;
 use git;
 use git::status::GitSummary;
+#[cfg(not(target_os = "ios"))]
 use git_ui;
+#[cfg(not(target_os = "ios"))]
 use git_ui::file_diff_view::FileDiffView;
 use gpui::{
     Action, AnyElement, App, AsyncWindowContext, Bounds, ClipboardEntry as GpuiClipboardEntry,
@@ -524,6 +526,7 @@ pub fn init(cx: &mut App) {
             }
         });
 
+        #[cfg(not(target_os = "ios"))]
         workspace.register_action(|workspace, _: &git::FileHistory, window, cx| {
             // First try to get from project panel if it's focused
             if let Some(panel) = workspace.panel::<ProjectPanel>(cx) {
@@ -683,14 +686,21 @@ impl ProjectPanel {
                         }
                     }
                     project::Event::ActiveEntryChanged(None) => {
-                        let is_active_item_file_diff_view = this
-                            .workspace
-                            .upgrade()
-                            .and_then(|ws| ws.read(cx).active_item(cx))
-                            .map(|item| {
-                                item.act_as_type(TypeId::of::<FileDiffView>(), cx).is_some()
-                            })
-                            .unwrap_or(false);
+                        let is_active_item_file_diff_view = {
+                            #[cfg(not(target_os = "ios"))]
+                            {
+                                this.workspace
+                                    .upgrade()
+                                    .and_then(|ws| ws.read(cx).active_item(cx))
+                                    .map(|item| {
+                                        item.act_as_type(TypeId::of::<FileDiffView>(), cx)
+                                            .is_some()
+                                    })
+                                    .unwrap_or(false)
+                            }
+                            #[cfg(target_os = "ios")]
+                            false
+                        };
                         if !is_active_item_file_diff_view {
                             this.marked_entries.clear();
                         }
@@ -3475,17 +3485,26 @@ impl ProjectPanel {
     fn compare_marked_files(
         &mut self,
         _: &CompareMarkedFiles,
-        window: &mut Window,
-        cx: &mut Context<Self>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
     ) {
-        let selected_files = self.file_abs_paths_to_diff(cx);
-        if let Some((file_path1, file_path2)) = selected_files {
-            self.workspace
-                .update(cx, |workspace, cx| {
-                    FileDiffView::open(file_path1, file_path2, workspace.weak_handle(), window, cx)
+        #[cfg(not(target_os = "ios"))]
+        {
+            let selected_files = self.file_abs_paths_to_diff(_cx);
+            if let Some((file_path1, file_path2)) = selected_files {
+                self.workspace
+                    .update(_cx, |workspace, cx| {
+                        FileDiffView::open(
+                            file_path1,
+                            file_path2,
+                            workspace.weak_handle(),
+                            _window,
+                            cx,
+                        )
                         .detach_and_log_err(cx);
-                })
-                .ok();
+                    })
+                    .ok();
+            }
         }
     }
 
@@ -6263,14 +6282,17 @@ impl ProjectPanel {
             cx.notify();
             return Ok(());
         }
-        let is_active_item_file_diff_view = self
-            .workspace
-            .upgrade()
-            .and_then(|ws| ws.read(cx).active_item(cx))
-            .map(|item| item.act_as_type(TypeId::of::<FileDiffView>(), cx).is_some())
-            .unwrap_or(false);
-        if is_active_item_file_diff_view {
-            return Ok(());
+        #[cfg(not(target_os = "ios"))]
+        {
+            let is_active_item_file_diff_view = self
+                .workspace
+                .upgrade()
+                .and_then(|ws| ws.read(cx).active_item(cx))
+                .map(|item| item.act_as_type(TypeId::of::<FileDiffView>(), cx).is_some())
+                .unwrap_or(false);
+            if is_active_item_file_diff_view {
+                return Ok(());
+            }
         }
 
         self.expand_entry(worktree_id, entry_id, cx);

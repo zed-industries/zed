@@ -378,17 +378,37 @@ mod ios {
                     session,
                 });
 
+                editor::init(cx);
                 workspace::init(app_state.clone(), cx);
+                project_panel::init(cx);
                 recent_projects::init(cx);
 
                 // Register no-op path prompts. The thin client doesn't open local
                 // projects — all file access goes through the remote host. Without
                 // this, clicking "Open Project" panics on unwrap().
-                cx.observe_new(|workspace: &mut workspace::Workspace, _window, _cx| {
+                cx.observe_new(|workspace: &mut workspace::Workspace, window, cx| {
                     workspace.set_prompt_for_open_path(Box::new(|_, _, _, _| {
                         let (_tx, rx) = futures::channel::oneshot::channel();
                         rx
                     }));
+
+                    // Create and add the project panel to the left dock.
+                    let Some(window) = window else { return };
+                    let panels_task = cx.spawn_in(window, async move |workspace_handle, cx| {
+                        let project_panel = project_panel::ProjectPanel::load(
+                            workspace_handle.clone(),
+                            cx.clone(),
+                        );
+                        if let Some(panel) = project_panel.await.log_err() {
+                            workspace_handle
+                                .update_in(&mut cx.clone(), |workspace, window, cx| {
+                                    workspace.add_panel(panel, window, cx);
+                                })
+                                .log_err();
+                        }
+                        anyhow::Ok(())
+                    });
+                    workspace.set_panels_task(panels_task);
                 })
                 .detach();
 

@@ -23328,6 +23328,7 @@ dependencies = [
  "node_runtime",
  "paths",
  "project",
+ "project_panel",
  "recent_projects",
  "release_channel",
  "remote",

@@ -773,7 +773,14 @@ fn video_frame_buffer_to_webrtc(frame: ScreenCaptureFrame) -> Option<impl AsRef<
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "ios")]
+fn video_frame_buffer_to_webrtc(
+    _frame: ScreenCaptureFrame,
+) -> Option<livekit::webrtc::prelude::NV12Buffer> {
+    None
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
 fn video_frame_buffer_to_webrtc(frame: ScreenCaptureFrame) -> Option<impl AsRef<dyn VideoBuffer>> {
     use libwebrtc::native::yuv_helper::{abgr_to_nv12, argb_to_nv12};
     use livekit::webrtc::prelude::NV12Buffer;

@@ -44,6 +44,7 @@ type SessionHandle = russh::client::Handle<ClientHandler>;
 pub struct RusshRemoteConnection {
     session: Arc<tokio::sync::Mutex<SessionHandle>>,
     connection_options: SshConnectionOptions,
+    remote_binary_path: String,
     remote_platform: RemotePlatform,
     remote_shell: String,
     default_system_shell: String,
@@ -160,6 +161,33 @@ async fn try_key_auth(
     false
 }
 
+/// Resolve the remote server binary path in `~/.zed_server/`.
+/// The desktop SSH transport uploads a versioned binary there; we find
+/// the newest one that's already present on the remote.
+async fn resolve_remote_binary(
+    session: &Arc<tokio::sync::Mutex<SessionHandle>>,
+) -> Result<String> {
+    // List executables in ~/.zed_server/, sorted newest-first.
+    // The binary names look like: zed-remote-server-stable-0.217.3
+    let output = exec_remote_command(
+        session,
+        "ls -t ~/.zed_server/zed-remote-server-* 2>/dev/null | head -1",
+    )
+    .await
+    .unwrap_or_default();
+    let path = output.trim();
+    if !path.is_empty() && !path.contains("No such file") {
+        log::info!("[russh] resolved remote server binary: {path}");
+        return Ok(path.to_string());
+    }
+
+    Err(anyhow!(
+        "Could not find the Zed remote server binary on the remote host. \
+         Connect to this host from a desktop Zed client first to install it, \
+         or manually place the binary in ~/.zed_server/"
+    ))
+}
+
 impl RusshRemoteConnection {
     pub async fn new(
         connection_options: SshConnectionOptions,
@@ -270,9 +298,21 @@ impl RusshRemoteConnection {
         .await?;
         let remote_shell = parse_shell(&shell_output, DEFAULT_SHELL);
 
+        // Resolve the full path to the `zed` binary on the remote.
+        // SSH non-login sessions may not have the user's PATH configured,
+        // so we probe with a login shell and fall back to known locations.
+        let remote_binary_path = Tokio::spawn_result(cx, {
+            let session = session.clone();
+            async move {
+                resolve_remote_binary(&session).await
+            }
+        })
+        .await?;
+
         Ok(Self {
             session,
             connection_options,
+            remote_binary_path,
             remote_platform,
             remote_shell: remote_shell.clone(),
             default_system_shell: remote_shell,
@@ -297,7 +337,7 @@ impl RemoteConnection for RusshRemoteConnection {
 
         let session = self.session.clone();
 
-        let mut proxy_command = String::from("zed --headless proxy");
+        let mut proxy_command = format!("{} proxy", self.remote_binary_path);
         proxy_command.push_str(&format!(" --identifier {}", unique_identifier));
         if reconnect {
             proxy_command.push_str(" --reconnect");
