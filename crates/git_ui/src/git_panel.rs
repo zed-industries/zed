@@ -7326,15 +7326,30 @@ mod tests {
         });
         cx.run_until_parked();
 
-        workspace.update_in(cx, |workspace, _window, cx| {
-            let active_path = workspace
+        workspace.update_in(cx, |workspace, window, cx| {
+            let project_diff = workspace
                 .item_of_type::<ProjectDiff>(cx)
-                .expect("ProjectDiff should exist")
+                .expect("ProjectDiff should exist");
+
+            let active_path = project_diff
                 .read(cx)
                 .active_path(cx)
                 .expect("active_path should exist");
 
             assert_eq!(active_path.path, rel_path("untracked").into_arc());
+
+            // Verify that focus moved to the ProjectDiff editor, not the Git panel.
+            assert!(
+                project_diff.focus_handle(cx).is_focused(window),
+                "ProjectDiff should be focused after open_diff"
+            );
+        });
+
+        panel.update_in(cx, |panel, window, _cx| {
+            assert!(
+                !panel.focus_handle.is_focused(window),
+                "Git panel should not be focused after open_diff"
+            );
         });
     }
 
