@@ -664,7 +664,10 @@ impl DBusMenuServer {
     async fn about_to_show(&self, id: i32) -> zbus::fdo::Result<bool> {
         let sender = match self.about_to_show_sender.lock() {
             Ok(sender) => sender.clone(),
-            Err(_) => return Ok(false),
+            Err(_) => {
+                log::debug!("about_to_show({id}): sender lock poisoned");
+                return Ok(false);
+            }
         };
         let Some(sender) = sender else {
             return Ok(false);
@@ -678,19 +681,26 @@ impl DBusMenuServer {
             })
             .is_err()
         {
+            log::debug!("about_to_show({id}): main thread channel closed");
             return Ok(false);
         }
 
         match responded_rx.recv_timeout(Duration::from_millis(50)) {
             Ok(response) => Ok(!response.updated_ids.is_empty()),
-            Err(_) => Ok(false),
+            Err(_) => {
+                log::debug!("about_to_show({id}): timed out waiting for main thread");
+                Ok(false)
+            }
         }
     }
 
     async fn about_to_show_group(&self, ids: Vec<i32>) -> zbus::fdo::Result<(Vec<i32>, Vec<i32>)> {
         let sender = match self.about_to_show_sender.lock() {
             Ok(sender) => sender.clone(),
-            Err(_) => return Ok((Vec::new(), Vec::new())),
+            Err(_) => {
+                log::debug!("about_to_show_group({ids:?}): sender lock poisoned");
+                return Ok((Vec::new(), Vec::new()));
+            }
         };
         let Some(sender) = sender else {
             return Ok((Vec::new(), Vec::new()));
@@ -704,15 +714,20 @@ impl DBusMenuServer {
             })
             .is_err()
         {
+            log::debug!("about_to_show_group: main thread channel closed");
             return Ok((Vec::new(), Vec::new()));
         }
 
-        let response = responded_rx
-            .recv_timeout(Duration::from_millis(50))
-            .unwrap_or(AboutToShowResponse {
-                updated_ids: Vec::new(),
-                id_errors: Vec::new(),
-            });
+        let response = match responded_rx.recv_timeout(Duration::from_millis(50)) {
+            Ok(response) => response,
+            Err(_) => {
+                log::debug!("about_to_show_group: timed out waiting for main thread");
+                AboutToShowResponse {
+                    updated_ids: Vec::new(),
+                    id_errors: Vec::new(),
+                }
+            }
+        };
 
         Ok((response.updated_ids, response.id_errors))
     }
@@ -924,8 +939,13 @@ fn collect_layout_node_filtered(
                 collect_layout_node_filtered(state, child_id, remaining_depth - 1, filter)
             {
                 let variant = Value::from(zbus::zvariant::Structure::from(child_node)).try_into();
-                if let Ok(value) = variant {
-                    result.push(value);
+                match variant {
+                    Ok(value) => result.push(value),
+                    Err(error) => {
+                        log::error!(
+                            "Failed to convert layout node for child {child_id} to OwnedValue: {error}"
+                        );
+                    }
                 }
             }
         }
