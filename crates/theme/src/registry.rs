@@ -124,6 +124,12 @@ impl ThemeRegistry {
         }
     }
 
+    /// Registers theme families for use in tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn register_test_themes(&self, families: impl IntoIterator<Item = ThemeFamily>) {
+        self.insert_theme_families(families);
+    }
+
     fn insert_themes(&self, themes: impl IntoIterator<Item = Theme>) {
         let mut state = self.state.write();
         for theme in themes.into_iter() {
