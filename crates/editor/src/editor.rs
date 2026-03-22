@@ -4789,10 +4789,11 @@ impl Editor {
                                     .reversed_chars_at(selection.start)
                                     .next()
                                     .is_none_or(|c| {
-                                        bracket_pair.start != bracket_pair.end
-                                            || !snapshot
-                                                .char_classifier_at(selection.start)
-                                                .is_word(c)
+                                        c != '\\'
+                                            && (bracket_pair.start != bracket_pair.end
+                                                || !snapshot
+                                                    .char_classifier_at(selection.start)
+                                                    .is_word(c))
                                     });
 
                             let is_closing_quote = if bracket_pair.end == bracket_pair.start
