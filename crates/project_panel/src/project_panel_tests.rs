@@ -10311,7 +10311,11 @@ fn test_sort_by_modified_time_with_mixed_known_and_missing_mtimes_is_stable() {
     let mut entries = vec![
         test_git_entry("alpha.txt", true, Some(MTime::from_seconds_and_nanos(1, 0))),
         test_git_entry("beta.txt", true, None),
-        test_git_entry("charlie.txt", true, Some(MTime::from_seconds_and_nanos(2, 0))),
+        test_git_entry(
+            "charlie.txt",
+            true,
+            Some(MTime::from_seconds_and_nanos(2, 0)),
+        ),
     ];
 
     sort_worktree_entries(

@@ -1,7 +1,10 @@
 use criterion::{Criterion, criterion_group, criterion_main};
+use fs::MTime;
 use project::{Entry, EntryKind, GitEntry, ProjectEntryId};
 use project_panel::par_sort_worktree_entries;
-use settings::{ProjectPanelSortMode, ProjectPanelSortOrder};
+use settings::{
+    ProjectPanelSortBy, ProjectPanelSortDirection, ProjectPanelSortMode, ProjectPanelSortOrder,
+};
 use std::sync::Arc;
 use util::rel_path::RelPath;
 
@@ -42,8 +45,27 @@ fn load_linux_repo_snapshot() -> Vec<GitEntry> {
         })
         .collect()
 }
+
+fn with_assigned_mtimes(snapshot: &[GitEntry], include_missing: bool) -> Vec<GitEntry> {
+    snapshot
+        .iter()
+        .enumerate()
+        .map(|(ix, entry)| {
+            let mut entry = entry.clone();
+            entry.entry.mtime = if include_missing && ix % 4 == 0 {
+                None
+            } else {
+                Some(MTime::from_seconds_and_nanos((ix as u64) + 1, 0))
+            };
+            entry
+        })
+        .collect()
+}
+
 fn criterion_benchmark(c: &mut Criterion) {
     let snapshot = load_linux_repo_snapshot();
+    let snapshot_with_mtimes = with_assigned_mtimes(&snapshot, false);
+    let snapshot_with_mixed_mtimes = with_assigned_mtimes(&snapshot, true);
 
     let modes = [
         ("DirectoriesFirst", ProjectPanelSortMode::DirectoriesFirst),
@@ -64,13 +86,59 @@ fn criterion_benchmark(c: &mut Criterion) {
                 |b| {
                     b.iter_batched(
                         || snapshot.clone(),
-                        |mut snapshot| par_sort_worktree_entries(&mut snapshot, *mode, *order),
+                        |mut snapshot| {
+                            par_sort_worktree_entries(
+                                &mut snapshot,
+                                *mode,
+                                *order,
+                                ProjectPanelSortBy::Name,
+                                ProjectPanelSortDirection::Ascending,
+                            )
+                        },
                         criterion::BatchSize::LargeInput,
                     );
                 },
             );
         }
     }
+
+    c.bench_function(
+        "Sort linux worktree snapshot (ModifiedTime Descending)",
+        |b| {
+            b.iter_batched(
+                || snapshot_with_mtimes.clone(),
+                |mut snapshot| {
+                    par_sort_worktree_entries(
+                        &mut snapshot,
+                        ProjectPanelSortMode::DirectoriesFirst,
+                        ProjectPanelSortOrder::Default,
+                        ProjectPanelSortBy::ModifiedTime,
+                        ProjectPanelSortDirection::Descending,
+                    )
+                },
+                criterion::BatchSize::LargeInput,
+            );
+        },
+    );
+
+    c.bench_function(
+        "Sort linux worktree snapshot (ModifiedTime Descending, Mixed Missing)",
+        |b| {
+            b.iter_batched(
+                || snapshot_with_mixed_mtimes.clone(),
+                |mut snapshot| {
+                    par_sort_worktree_entries(
+                        &mut snapshot,
+                        ProjectPanelSortMode::DirectoriesFirst,
+                        ProjectPanelSortOrder::Default,
+                        ProjectPanelSortBy::ModifiedTime,
+                        ProjectPanelSortDirection::Descending,
+                    )
+                },
+                criterion::BatchSize::LargeInput,
+            );
+        },
+    );
 }
 
 criterion_group!(benches, criterion_benchmark);
