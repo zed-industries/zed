@@ -440,7 +440,12 @@ impl Drop for WaylandClient {
                     state.common.dbus_menu_server.clone(),
                     state.dbus_menu_thread.take(),
                 ),
-                Err(_) => (None, None),
+                Err(_) => {
+                    log::warn!(
+                        "Failed to borrow WaylandClient inner in Drop; DBusMenu resources may leak"
+                    );
+                    (None, None)
+                }
             };
 
             if let Some(dbus_menu_server) = dbus_menu_server {

@@ -322,6 +322,9 @@ impl DBusMenuServer {
                             }
                         }
                     }
+
+                    dbus_menu_server.mark_disconnected();
+                    log::info!("DBusMenu server stopped");
                 });
             })
             .log_err()
@@ -408,6 +411,16 @@ impl DBusMenuServer {
         self.connected.load(Ordering::SeqCst)
     }
 
+    pub fn mark_disconnected(&self) {
+        self.connected.store(false, Ordering::SeqCst);
+        if let Ok(mut sender) = self.command_sender.lock() {
+            *sender = None;
+        }
+        if let Ok(mut sender) = self.about_to_show_sender.lock() {
+            *sender = None;
+        }
+    }
+
     pub fn set_action_callback(&self, callback: Box<ActionCallback>) {
         if let Ok(mut slot) = self.action_callback.lock() {
             *slot = Some(callback);
@@ -462,18 +475,22 @@ impl DBusMenuServer {
 
     pub fn shutdown(&self) {
         let sender = match self.command_sender.lock() {
-            Ok(sender) => sender.clone(),
+            Ok(mut sender) => sender.take(),
             Err(error) => {
                 log::error!("Failed to read DBusMenu command sender: {error}");
-                return;
+                None
             }
         };
-        let Some(sender) = sender else {
-            return;
-        };
 
-        if let Err(error) = sender.try_send(DBusMenuCommand::Shutdown) {
-            log::error!("Failed to queue DBusMenu shutdown request: {error}");
+        self.connected.store(false, Ordering::SeqCst);
+        if let Ok(mut slot) = self.about_to_show_sender.lock() {
+            *slot = None;
+        }
+
+        if let Some(sender) = sender {
+            if let Err(error) = sender.try_send(DBusMenuCommand::Shutdown) {
+                log::error!("Failed to queue DBusMenu shutdown request: {error}");
+            }
         }
     }
 
