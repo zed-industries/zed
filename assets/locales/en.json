@@ -139,5 +139,18 @@
   "editor_layout": "Editor Layout",
   "services": "Services",
   "extensions": "Extensions",
-  "install_cli": "Install CLI"
+  "install_cli": "Install CLI",
+  "common": {
+    "cancel": "Cancel",
+    "ok": "OK",
+    "close": "Close",
+    "save": "Save",
+    "delete": "Delete",
+    "confirm": "Confirm",
+    "error": "Error",
+    "warning": "Warning",
+    "info": "Information",
+    "yes": "Yes",
+    "no": "No"
+  }
 }

@@ -139,5 +139,18 @@
   "editor_layout": "编辑器布局",
   "services": "服务",
   "extensions": "扩展",
-  "install_cli": "安装 CLI"
+  "install_cli": "安装 CLI",
+  "common": {
+    "cancel": "取消",
+    "ok": "确定",
+    "close": "关闭",
+    "save": "保存",
+    "delete": "删除",
+    "confirm": "确认",
+    "error": "错误",
+    "warning": "警告",
+    "info": "信息",
+    "yes": "是",
+    "no": "否"
+  }
 }
