@@ -78,6 +78,20 @@ pub trait AgentConnection {
         None
     }
 
+    fn session_file_path(&self, _session_id: &acp::SessionId) -> Option<PathBuf> {
+        None
+    }
+
+    fn swap_session(
+        &self,
+        _old_session_id: &acp::SessionId,
+        _new_session_id: acp::SessionId,
+        _thread: gpui::WeakEntity<AcpThread>,
+        _cx: &mut App,
+    ) -> Task<Result<()>> {
+        Task::ready(Err(anyhow::anyhow!("not supported")))
+    }
+
     fn set_title(
         &self,
         _session_id: &acp::SessionId,

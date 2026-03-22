@@ -9,7 +9,7 @@ use agent::{NativeAgentServer, NativeAgentSessionList, SharedThread, ThreadStore
 use agent_client_protocol::{self as acp, PromptCapabilities};
 use agent_servers::{AgentServer, AgentServerDelegate};
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use arrayvec::ArrayVec;
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
@@ -1755,6 +1755,74 @@ impl AcpThreadView {
         .detach_and_log_err(cx);
     }
 
+    fn fork_conversation(
+        &mut self,
+        entry_ix: usize,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(thread) = self.thread().cloned() else {
+            return;
+        };
+
+        let connection = thread.read(cx).connection().clone();
+        let session_id = thread.read(cx).session_id().clone();
+        let Some(file_path) = connection.session_file_path(&session_id) else {
+            return;
+        };
+
+        let kept_count = entry_ix + 1;
+        let workspace = self.workspace.clone();
+
+        cx.spawn(async move |_this, cx| {
+            let content = smol::fs::read_to_string(&file_path).await?;
+            let lines: Vec<&str> = content.lines().collect();
+
+            let mut visible_count = 0;
+            let mut truncate_at_line = lines.len();
+            for (i, line) in lines.iter().enumerate() {
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
+                    let msg_type = value.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                    let is_visible = matches!(msg_type, "user" | "assistant")
+                        || (msg_type == "response_item"
+                            && matches!(
+                                value.pointer("/payload/role").and_then(|r| r.as_str()),
+                                Some("user") | Some("assistant")
+                            ));
+                    if is_visible {
+                        visible_count += 1;
+                        if visible_count > kept_count {
+                            truncate_at_line = i;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            let kept = lines[..truncate_at_line].join("\n") + "\n";
+            let new_session_id = uuid::Uuid::new_v4().to_string();
+            let new_file_path = file_path
+                .parent()
+                .context("session file has no parent directory")?
+                .join(format!("{}.jsonl", new_session_id));
+            smol::fs::write(&new_file_path, kept.as_bytes()).await?;
+
+            workspace.update(cx, |workspace, cx| {
+                let short_id: String = new_session_id.chars().take(8).collect();
+                workspace.show_toast(
+                    Toast::new(
+                        NotificationId::unique::<Self>(),
+                        format!("Forked conversation saved ({}). Open it from the history panel.", short_id),
+                    ),
+                    cx,
+                );
+            })?;
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
     fn open_edited_buffer(
         &mut self,
         buffer: &Entity<Buffer>,
@@ -2501,6 +2569,22 @@ impl AcpThreadView {
                                                     .icon_color(Color::Error)
                                                     .icon_size(IconSize::XSmall)
                                                     .on_click(cx.listener(Self::cancel_editing))
+                                            )
+                                            .child(
+                                                IconButton::new("fork", IconName::Split)
+                                                    .disabled(self.is_loading_contents)
+                                                    .icon_color(Color::Muted)
+                                                    .icon_size(IconSize::XSmall)
+                                                    .tooltip(Tooltip::text(
+                                                        "Fork conversation from this point into a new thread."
+                                                    ))
+                                                    .on_click(cx.listener(
+                                                        move |this, _, window, cx| {
+                                                            this.fork_conversation(
+                                                                entry_ix, window, cx,
+                                                            );
+                                                        }
+                                                    ))
                                             )
                                             .child(
                                                 if self.is_loading_contents {

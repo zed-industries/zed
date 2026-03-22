@@ -24,7 +24,9 @@ use thiserror::Error;
 use anyhow::{Context as _, Result};
 use gpui::{App, AppContext as _, AsyncApp, Entity, SharedString, Task, WeakEntity};
 
-use acp_thread::{AcpThread, AuthRequired, LoadError, TerminalProviderEvent};
+use acp_thread::{
+    AcpThread, AgentSessionTruncate, AuthRequired, LoadError, TerminalProviderEvent, UserMessageId,
+};
 use terminal::TerminalBuilder;
 use terminal::terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
 
@@ -814,6 +816,83 @@ impl AgentConnection for AcpConnection {
             .detach();
     }
 
+    fn truncate(
+        &self,
+        _session_id: &acp::SessionId,
+        _cx: &App,
+    ) -> Option<Rc<dyn AgentSessionTruncate>> {
+        Some(Rc::new(AcpSessionTruncator))
+    }
+
+    fn session_file_path(&self, session_id: &acp::SessionId) -> Option<PathBuf> {
+        let home = dirs::home_dir()?;
+        if self.server_name.contains("Claude") {
+            let folder = self.root_dir.to_string_lossy().replace('/', "-");
+            let dir = home.join(".claude/projects").join(&folder);
+            Some(dir.join(format!("{}.jsonl", session_id.0)))
+        } else if self.server_name.to_lowercase().contains("codex") {
+            find_codex_session_file(&home.join(".codex/sessions"), &session_id.0)
+        } else {
+            None
+        }
+    }
+
+    fn swap_session(
+        &self,
+        old_session_id: &acp::SessionId,
+        new_session_id: acp::SessionId,
+        thread: WeakEntity<AcpThread>,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        let conn = self.connection.clone();
+        let sessions = self.sessions.clone();
+        let cwd = self.root_dir.clone();
+        let old_session_id = old_session_id.clone();
+        let use_load_session = self.agent_capabilities.load_session;
+
+        cx.foreground_executor().spawn(async move {
+            let (modes, models, config_options) = if use_load_session {
+                let response = conn
+                    .load_session(
+                        acp::LoadSessionRequest::new(new_session_id.clone(), cwd),
+                    )
+                    .await
+                    .map_err(|err| anyhow!(err))?;
+                (
+                    response.modes.map(|m| Rc::new(RefCell::new(m))),
+                    response.models.map(|m| Rc::new(RefCell::new(m))),
+                    response.config_options.map(|o| ConfigOptions::new(Rc::new(RefCell::new(o)))),
+                )
+            } else {
+                let response = conn
+                    .resume_session(
+                        acp::ResumeSessionRequest::new(new_session_id.clone(), cwd),
+                    )
+                    .await
+                    .map_err(|err| anyhow!(err))?;
+                (
+                    response.modes.map(|m| Rc::new(RefCell::new(m))),
+                    response.models.map(|m| Rc::new(RefCell::new(m))),
+                    None,
+                )
+            };
+
+            let session = AcpSession {
+                thread,
+                suppress_abort_err: false,
+                session_modes: modes,
+                models,
+                config_options,
+            };
+
+            let mut sessions = sessions.borrow_mut();
+            sessions.remove(&old_session_id);
+            sessions.insert(new_session_id, session);
+
+            Ok(())
+        })
+    }
+
     fn session_modes(
         &self,
         session_id: &acp::SessionId,
@@ -878,6 +957,14 @@ impl AgentConnection for AcpConnection {
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
         self
+    }
+}
+
+struct AcpSessionTruncator;
+
+impl AgentSessionTruncate for AcpSessionTruncator {
+    fn run(&self, _message_id: UserMessageId, _cx: &mut App) -> Task<Result<()>> {
+        Task::ready(Ok(()))
     }
 }
 
@@ -1337,6 +1424,27 @@ impl acp::Client for ClientDelegate {
 
         Ok(acp::WaitForTerminalExitResponse::new(exit_status))
     }
+}
+
+fn find_codex_session_file(sessions_dir: &Path, session_id: &str) -> Option<PathBuf> {
+    fn scan_dir(dir: &Path, session_id: &str) -> Option<PathBuf> {
+        for entry in std::fs::read_dir(dir).ok()?.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if let Some(found) = scan_dir(&path, session_id) {
+                    return Some(found);
+                }
+            } else if path.extension().map_or(false, |e| e == "jsonl") {
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    if stem.ends_with(session_id) {
+                        return Some(path);
+                    }
+                }
+            }
+        }
+        None
+    }
+    scan_dir(sessions_dir, session_id)
 }
 
 impl ClientDelegate {

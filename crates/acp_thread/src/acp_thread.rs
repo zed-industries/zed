@@ -2086,12 +2086,14 @@ impl AcpThread {
             return Task::ready(Err(anyhow!("not supported")));
         };
 
+        let session_file_path = self.connection.session_file_path(&self.session_id);
         let telemetry = ActionLogTelemetry::from(&*self);
         cx.spawn(async move |this, cx| {
             cx.update(|cx| truncate.run(id.clone(), cx)).await?;
-            this.update(cx, |this, cx| {
+
+            let (reload_info, reject_task) = this.update(cx, |this, cx| {
+                let mut kept_count = None;
                 if let Some((ix, _)) = this.user_message_mut(&id) {
-                    // Collect all terminals from entries that will be removed
                     let terminals_to_remove: Vec<acp::TerminalId> = this.entries[ix..]
                         .iter()
                         .flat_map(|entry| entry.terminals())
@@ -2102,7 +2104,6 @@ impl AcpThread {
                     this.entries.truncate(ix);
                     cx.emit(AcpThreadEvent::EntriesRemoved(range));
 
-                    // Kill and remove the terminals
                     for terminal_id in terminals_to_remove {
                         if let Some(terminal) = this.terminals.remove(&terminal_id) {
                             terminal.update(cx, |terminal, cx| {
@@ -2110,12 +2111,41 @@ impl AcpThread {
                             });
                         }
                     }
+
+                    kept_count = Some(ix);
                 }
-                this.action_log().update(cx, |action_log, cx| {
+                let reject = this.action_log().update(cx, |action_log, cx| {
                     action_log.reject_all_edits(Some(telemetry), cx)
-                })
-            })?
-            .await;
+                });
+                (kept_count, reject)
+            })?;
+            reject_task.await;
+
+            if let (Some(kept_count), Some(file_path)) = (reload_info, session_file_path) {
+                truncate_session_file(&file_path, kept_count).await?;
+
+                let new_session_id =
+                    acp::SessionId::new(Uuid::new_v4().to_string());
+                let new_file_path = file_path
+                    .parent()
+                    .context("session file has no parent directory")?
+                    .join(format!("{}.jsonl", new_session_id.0));
+
+                smol::fs::rename(&file_path, &new_file_path).await?;
+
+                let swap_task = this.update(cx, |this, cx| {
+                    let old_id =
+                        mem::replace(&mut this.session_id, new_session_id.clone());
+                    this.connection.swap_session(
+                        &old_id,
+                        new_session_id,
+                        cx.weak_entity(),
+                        cx,
+                    )
+                })?;
+                swap_task.await?;
+            }
+
             Ok(())
         })
     }
@@ -2565,6 +2595,39 @@ fn markdown_for_raw_output(
             )
         })),
     }
+}
+
+async fn truncate_session_file(
+    file_path: &std::path::Path,
+    keep_entry_count: usize,
+) -> Result<()> {
+    let content = smol::fs::read_to_string(file_path).await?;
+    let lines: Vec<&str> = content.lines().collect();
+
+    let mut visible_count = 0;
+    let mut truncate_at_line = lines.len();
+    for (i, line) in lines.iter().enumerate() {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
+            let msg_type = value.get("type").and_then(|t| t.as_str()).unwrap_or("");
+            let is_visible = matches!(msg_type, "user" | "assistant")
+                || (msg_type == "response_item"
+                    && matches!(
+                        value.pointer("/payload/role").and_then(|r| r.as_str()),
+                        Some("user") | Some("assistant")
+                    ));
+            if is_visible {
+                visible_count += 1;
+                if visible_count > keep_entry_count {
+                    truncate_at_line = i;
+                    break;
+                }
+            }
+        }
+    }
+
+    let kept = lines[..truncate_at_line].join("\n") + "\n";
+    smol::fs::write(file_path, kept.as_bytes()).await?;
+    Ok(())
 }
 
 #[cfg(test)]
