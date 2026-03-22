@@ -29,7 +29,7 @@ pub use theme::*;
 pub use workspace::*;
 
 use collections::{HashMap, IndexMap};
-use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
+use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
 
@@ -343,12 +343,7 @@ fn window_button_layout_schema(_: &mut SchemaGenerator) -> Schema {
     })
 }
 
-
 impl WindowButtonLayoutContent {
-    /// Convert this setting into the runtime type used by the title bar.
-    ///
-    /// `Auto` corresponds to `None` (system-controlled).
-    /// `Default` corresponds to `WindowButtonLayout::default()`.
     pub fn into_layout(self) -> Option<gpui::WindowButtonLayout> {
         match self {
             Self::Auto => None,

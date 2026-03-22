@@ -26,10 +26,7 @@ impl Settings for TitleBarSettings {
             show_sign_in: content.show_sign_in.unwrap(),
             show_user_menu: content.show_user_menu.unwrap(),
             show_menus: content.show_menus.unwrap(),
-            button_layout: content
-                .button_layout
-                .unwrap_or_default()
-                .into_layout(),
+            button_layout: content.button_layout.unwrap_or_default().into_layout(),
         }
     }
 }
