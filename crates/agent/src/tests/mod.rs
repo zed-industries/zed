@@ -6,6 +6,7 @@ use acp_thread::{
 use agent_client_protocol::{self as acp};
 use agent_settings::AgentProfileId;
 use anyhow::Result;
+use chrono::Utc;
 use client::{Client, RefreshLlmTokenListener, UserStore};
 use collections::IndexMap;
 use context_server::{ContextServer, ContextServerCommand, ContextServerId};
@@ -26,10 +27,11 @@ use gpui::{
 use indoc::indoc;
 use language_model::{
     CompletionIntent, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelId, LanguageModelProviderName, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelToolResult, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, MessageContent, Role, StopReason, TokenUsage,
-    fake_provider::FakeLanguageModel,
+    LanguageModelId, LanguageModelProviderId, LanguageModelProviderName, LanguageModelRegistry,
+    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelToolResult,
+    LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent, Role, StopReason,
+    TokenUsage,
+    fake_provider::{FakeLanguageModel, FakeLanguageModelProvider},
 };
 use pretty_assertions::assert_eq;
 use project::{
@@ -40,7 +42,7 @@ use reqwest_client::ReqwestClient;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use settings::{Settings, SettingsStore};
+use settings::{LanguageModelProviderSetting, LanguageModelSelection, Settings, SettingsStore};
 use std::{
     path::Path,
     pin::Pin,
@@ -61,6 +63,124 @@ pub(crate) fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
+    });
+}
+
+fn test_selection(provider: &str, model: &str) -> LanguageModelSelection {
+    LanguageModelSelection {
+        provider: LanguageModelProviderSetting(provider.to_string()),
+        model: model.to_string(),
+        enable_thinking: false,
+        effort: None,
+        speed: None,
+    }
+}
+
+fn install_test_language_models(
+    cx: &mut TestAppContext,
+) -> (LanguageModelSelection, LanguageModelSelection) {
+    let (global_selection, profile_selection, _global_model, _profile_model) =
+        install_test_language_models_with_handles(cx);
+    (global_selection, profile_selection)
+}
+
+fn install_test_language_models_with_handles(
+    cx: &mut TestAppContext,
+) -> (
+    LanguageModelSelection,
+    LanguageModelSelection,
+    Arc<FakeLanguageModel>,
+    Arc<FakeLanguageModel>,
+) {
+    let provider_id = "test-provider";
+    let global_selection = test_selection(provider_id, "global-model");
+    let profile_selection = test_selection(provider_id, "profile-model");
+    let global_model = Arc::new(FakeLanguageModel::with_id_and_thinking(
+        provider_id,
+        "global-model",
+        "Global Model",
+        false,
+    ));
+    let profile_model = Arc::new(FakeLanguageModel::with_id_and_thinking(
+        provider_id,
+        "profile-model",
+        "Profile Model",
+        false,
+    ));
+
+    cx.update(|cx| {
+        LanguageModelRegistry::test(cx);
+        let provider = Arc::new(
+            FakeLanguageModelProvider::new(
+                LanguageModelProviderId::from(provider_id.to_string()),
+                LanguageModelProviderName::from("Test Provider".to_string()),
+            )
+            .with_models(vec![global_model.clone(), profile_model.clone()]),
+        );
+
+        LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+            registry.register_provider(provider, cx);
+        });
+    });
+
+    (
+        global_selection,
+        profile_selection,
+        global_model,
+        profile_model,
+    )
+}
+
+fn override_profile_and_global_models(
+    global_selection: LanguageModelSelection,
+    profile_selection: Option<LanguageModelSelection>,
+    cx: &mut TestAppContext,
+) {
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.default_profile = AgentProfileId("profile-a".into());
+        settings.default_model = Some(global_selection.clone());
+        settings.profiles.insert(
+            AgentProfileId("profile-a".into()),
+            agent_settings::AgentProfileSettings {
+                name: "Profile A".into(),
+                tools: Default::default(),
+                enable_all_context_servers: false,
+                context_servers: Default::default(),
+                default_model: profile_selection,
+            },
+        );
+        agent_settings::AgentSettings::override_global(settings, cx);
+
+        let selected = language_model::SelectedModel {
+            provider: LanguageModelProviderId::from(global_selection.provider.0.clone()),
+            model: LanguageModelId::from(global_selection.model.clone()),
+        };
+        LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+            registry.select_default_model(Some(&selected), cx);
+        });
+    });
+}
+
+fn insert_test_profile(
+    profile_id: &str,
+    name: &str,
+    default_model: Option<LanguageModelSelection>,
+    cx: &mut TestAppContext,
+) {
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.profiles.insert(
+            AgentProfileId(profile_id.to_string().into()),
+            agent_settings::AgentProfileSettings {
+                name: name.to_string().into(),
+                tools: Default::default(),
+                enable_all_context_servers: false,
+                context_servers: Default::default(),
+                default_model,
+            },
+        );
+        agent_settings::AgentSettings::override_global(settings, cx);
     });
 }
 
@@ -4083,6 +4203,213 @@ fn stop_events(result_events: Vec<Result<ThreadEvent>>) -> Vec<acp::StopReason> 
             _ => None,
         })
         .collect()
+}
+
+#[gpui::test]
+async fn test_from_db_prefers_profile_default_model_over_global_default(cx: &mut TestAppContext) {
+    init_test(cx);
+    let (global_selection, profile_selection) = install_test_language_models(cx);
+    override_profile_and_global_models(global_selection, Some(profile_selection), cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/test", json!({})).await;
+    let project = Project::test(fs.clone(), [Path::new("/test")], cx).await;
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+
+    let db_thread = DbThread {
+        title: "Thread".into(),
+        messages: Vec::new(),
+        updated_at: Utc::now(),
+        detailed_summary: None,
+        initial_project_snapshot: None,
+        cumulative_token_usage: Default::default(),
+        request_token_usage: Default::default(),
+        model: None,
+        profile: Some(AgentProfileId("profile-a".into())),
+        imported: false,
+        subagent_context: None,
+        speed: None,
+        thinking_enabled: true,
+        thinking_effort: Some("high".to_string()),
+        draft_prompt: None,
+        ui_scroll_position: None,
+    };
+
+    let thread = cx.new(|cx| {
+        Thread::from_db(
+            acp::SessionId::new("session-1".to_string()),
+            db_thread,
+            project.clone(),
+            project_context,
+            context_server_registry,
+            Templates::new(),
+            cx,
+        )
+    });
+
+    cx.update(|cx| {
+        let thread = thread.read(cx);
+        let model = thread.model().expect("thread should have a model");
+        assert_eq!(model.id().0.as_ref(), "profile-model");
+        assert!(
+            thread.thinking_enabled(),
+            "from_db should preserve stored thinking_enabled"
+        );
+        assert_eq!(
+            thread.thinking_effort().map(|effort| effort.as_str()),
+            Some("high"),
+            "from_db should preserve stored thinking_effort"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_profile_switch_updates_model_selector_watch(cx: &mut TestAppContext) {
+    init_test(cx);
+    let (global_selection, profile_selection) = install_test_language_models(cx);
+    override_profile_and_global_models(global_selection, Some(profile_selection.clone()), cx);
+    insert_test_profile("profile-b", "Profile B", Some(profile_selection), cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/test", json!({})).await;
+    let project = Project::test(fs.clone(), [Path::new("/test")], cx).await;
+    let thread_store = cx.new(|cx| ThreadStore::new(cx));
+    let agent = cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), None, fs, cx));
+    let connection = Rc::new(NativeAgentConnection(agent.clone()));
+
+    let acp_thread = cx
+        .update(|cx| {
+            connection.clone().new_session(
+                project.clone(),
+                PathList::new(&[Path::new("/test")]),
+                cx,
+            )
+        })
+        .await
+        .expect("new session should succeed");
+    let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+
+    let selector = connection
+        .model_selector(&session_id)
+        .expect("model selector should exist");
+    let initial_model = cx
+        .update(|cx| selector.selected_model(cx))
+        .await
+        .expect("initial selected model should be available");
+    assert_eq!(initial_model.id.0.as_ref(), "test-provider/global-model");
+    let mut updates = cx.update(|cx| selector.watch(cx).expect("watch receiver should exist"));
+
+    let thread = agent.read_with(cx, |agent, _| {
+        agent
+            .sessions
+            .get(&session_id)
+            .expect("session should exist")
+            .thread
+            .clone()
+    });
+    thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("profile-b".into()), cx);
+    });
+
+    let timeout = cx.background_executor.timer(Duration::from_secs(5));
+    futures::select! {
+        update = updates.recv().fuse() => {
+            update.expect("profile switch should notify model selector watchers");
+        }
+        _ = timeout.fuse() => {
+            panic!("timed out waiting for model selector watch after switching profiles");
+        }
+    }
+
+    let selected_model = cx
+        .update(|cx| selector.selected_model(cx))
+        .await
+        .expect("selected model should be available");
+    assert_eq!(selected_model.id.0.as_ref(), "test-provider/profile-model");
+}
+
+#[gpui::test]
+async fn test_profile_without_default_model_persists_across_reload(cx: &mut TestAppContext) {
+    init_test(cx);
+    let (global_selection, profile_selection, global_model, _profile_model) =
+        install_test_language_models_with_handles(cx);
+    override_profile_and_global_models(global_selection, Some(profile_selection), cx);
+    insert_test_profile("profile-b", "Profile B", None, cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/test", json!({})).await;
+    let project = Project::test(fs.clone(), [Path::new("/test")], cx).await;
+    let thread_store = cx.new(|cx| ThreadStore::new(cx));
+    let agent = cx.update(|cx| {
+        NativeAgent::new(thread_store.clone(), Templates::new(), None, fs.clone(), cx)
+    });
+    let connection = Rc::new(NativeAgentConnection(agent.clone()));
+
+    let acp_thread = cx
+        .update(|cx| {
+            connection.clone().new_session(
+                project.clone(),
+                PathList::new(&[Path::new("/test")]),
+                cx,
+            )
+        })
+        .await
+        .expect("new session should succeed");
+    let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+    let thread = agent.read_with(cx, |agent, _| {
+        agent
+            .sessions
+            .get(&session_id)
+            .expect("session should exist")
+            .thread
+            .clone()
+    });
+
+    let send = thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["hello"], cx)
+        })
+        .expect("send should start");
+    cx.run_until_parked();
+    global_model.send_last_completion_stream_text_chunk("done");
+    global_model.end_last_completion_stream();
+    send.collect::<Vec<_>>().await;
+    cx.run_until_parked();
+
+    thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("profile-b".into()), cx);
+    });
+    cx.run_until_parked();
+
+    cx.update(|cx| connection.clone().close_session(&session_id, cx))
+        .await
+        .expect("close should succeed");
+
+    let reopened_acp_thread = agent
+        .update(cx, |agent, cx| {
+            agent.open_thread(session_id.clone(), project.clone(), cx)
+        })
+        .await
+        .expect("reopen should succeed");
+    let reopened_thread = agent.read_with(cx, |agent, _| {
+        agent
+            .sessions
+            .get(&session_id)
+            .expect("reopened session should exist")
+            .thread
+            .clone()
+    });
+
+    reopened_thread.read_with(cx, |thread, _| {
+        assert_eq!(thread.profile().as_str(), "profile-b");
+        let model = thread.model().expect("saved model should be restored");
+        assert_eq!(model.id().0.as_ref(), "global-model");
+    });
+
+    drop(reopened_acp_thread);
 }
 
 struct ThreadTest {

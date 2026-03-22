@@ -708,7 +708,12 @@ fn update_active_language_model_from_settings(cx: &mut App) {
         }
     }
 
-    let default = settings.default_model.as_ref().map(to_selected_model);
+    let default = settings
+        .profiles
+        .get(&settings.default_profile)
+        .and_then(|profile| profile.default_model.as_ref())
+        .or(settings.default_model.as_ref())
+        .map(to_selected_model);
     let inline_assistant = settings
         .inline_assistant_model
         .as_ref()
@@ -739,15 +744,110 @@ fn update_active_language_model_from_settings(cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use acp_thread::AgentConnection;
+    use agent::{NativeAgent, NativeAgentConnection, Templates, ThreadStore};
+    use agent_settings::AgentProfileSettings;
     use agent_settings::{AgentProfileId, AgentSettings};
     use command_palette_hooks::CommandPaletteFilter;
     use db::kvp::KeyValueStore;
     use editor::actions::AcceptEditPrediction;
+    use fs::FakeFs;
     use gpui::{BorrowAppContext, TestAppContext, px};
-    use project::DisableAiSettings;
-    use settings::{
-        DockPosition, NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, Settings, SettingsStore,
+    use language_model::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
+    use language_model::{
+        LanguageModelProviderId, LanguageModelProviderName, LanguageModelRegistry,
     };
+    use project::DisableAiSettings;
+    use project::Project;
+    use serde_json::json;
+    use settings::{
+        DockPosition, LanguageModelProviderSetting, NotifyWhenAgentWaiting, PlaySoundWhenAgentDone,
+        Settings, SettingsStore,
+    };
+    use std::path::Path;
+    use std::rc::Rc;
+    use std::sync::Arc;
+
+    fn init_agent_settings_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            AgentSettings::register(cx);
+            DisableAiSettings::register(cx);
+            AllLanguageSettings::register(cx);
+            LanguageModelRegistry::test(cx);
+        });
+    }
+
+    fn test_selection(provider: &str, model: &str) -> LanguageModelSelection {
+        LanguageModelSelection {
+            provider: LanguageModelProviderSetting(provider.to_string()),
+            model: model.to_string(),
+            enable_thinking: false,
+            effort: None,
+            speed: None,
+        }
+    }
+
+    fn install_test_language_models(
+        cx: &mut TestAppContext,
+    ) -> (LanguageModelSelection, LanguageModelSelection) {
+        let provider_id = "test-provider";
+        let global_selection = test_selection(provider_id, "global-model");
+        let profile_selection = test_selection(provider_id, "profile-model");
+
+        cx.update(|cx| {
+            let provider = Arc::new(
+                FakeLanguageModelProvider::new(
+                    LanguageModelProviderId::from(provider_id.to_string()),
+                    LanguageModelProviderName::from("Test Provider".to_string()),
+                )
+                .with_models(vec![
+                    Arc::new(FakeLanguageModel::with_id_and_thinking(
+                        provider_id,
+                        "global-model",
+                        "Global Model",
+                        false,
+                    )),
+                    Arc::new(FakeLanguageModel::with_id_and_thinking(
+                        provider_id,
+                        "profile-model",
+                        "Profile Model",
+                        false,
+                    )),
+                ]),
+            );
+
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(provider, cx);
+            });
+        });
+
+        (global_selection, profile_selection)
+    }
+
+    fn override_profile_and_global_models(
+        global_selection: LanguageModelSelection,
+        profile_selection: Option<LanguageModelSelection>,
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            let mut settings = AgentSettings::get_global(cx).clone();
+            settings.default_profile = AgentProfileId("profile-a".into());
+            settings.default_model = Some(global_selection);
+            settings.profiles.insert(
+                AgentProfileId("profile-a".into()),
+                AgentProfileSettings {
+                    name: "Profile A".into(),
+                    tools: Default::default(),
+                    enable_all_context_servers: false,
+                    context_servers: Default::default(),
+                    default_model: profile_selection,
+                },
+            );
+            AgentSettings::override_global(settings, cx);
+        });
+    }
 
     #[gpui::test]
     fn test_agent_command_palette_visibility(cx: &mut TestAppContext) {
@@ -973,6 +1073,86 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    fn test_update_active_language_model_from_settings_prefers_profile_default(
+        cx: &mut TestAppContext,
+    ) {
+        init_agent_settings_test(cx);
+        let (global_selection, profile_selection) = install_test_language_models(cx);
+        override_profile_and_global_models(global_selection, Some(profile_selection), cx);
+
+        cx.update(update_active_language_model_from_settings);
+
+        cx.update(|cx| {
+            let default_model = LanguageModelRegistry::read_global(cx)
+                .default_model()
+                .expect("registry default model should be set");
+            assert_eq!(default_model.model.id().0.as_ref(), "profile-model");
+        });
+    }
+
+    #[gpui::test]
+    fn test_update_active_language_model_from_settings_falls_back_to_global_default(
+        cx: &mut TestAppContext,
+    ) {
+        init_agent_settings_test(cx);
+        let (global_selection, _profile_selection) = install_test_language_models(cx);
+        override_profile_and_global_models(global_selection, None, cx);
+
+        cx.update(update_active_language_model_from_settings);
+
+        cx.update(|cx| {
+            let default_model = LanguageModelRegistry::read_global(cx)
+                .default_model()
+                .expect("registry default model should be set");
+            assert_eq!(default_model.model.id().0.as_ref(), "global-model");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_new_session_uses_profile_default_model_after_registry_sync(
+        cx: &mut TestAppContext,
+    ) {
+        init_agent_settings_test(cx);
+        let (global_selection, profile_selection) = install_test_language_models(cx);
+        override_profile_and_global_models(global_selection, Some(profile_selection), cx);
+        cx.update(update_active_language_model_from_settings);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/test", json!({})).await;
+        let project = Project::test(fs.clone(), [Path::new("/test")], cx).await;
+
+        let thread_store = cx.update(|cx| {
+            ThreadStore::init_global(cx);
+            ThreadStore::global(cx)
+        });
+        let agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), None, fs.clone(), cx));
+        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let acp_thread = cx
+            .update(|cx| {
+                connection.clone().new_session(
+                    project.clone(),
+                    util::path_list::PathList::new(&[Path::new("/test")]),
+                    cx,
+                )
+            })
+            .await
+            .expect("new session should succeed");
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+
+        let selected_model = cx
+            .update(|cx| {
+                connection
+                    .model_selector(&session_id)
+                    .expect("model selector should exist")
+                    .selected_model(cx)
+            })
+            .await
+            .expect("selected model should be available");
+
+        assert_eq!(selected_model.id.0.as_ref(), "test-provider/profile-model");
+    }
     #[test]
     fn test_deserialize_external_agent_variants() {
         assert_eq!(

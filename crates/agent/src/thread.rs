@@ -1044,20 +1044,15 @@ impl Thread {
         action_log: Entity<ActionLog>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let settings = AgentSettings::get_global(cx);
-        let profile_id = settings.default_profile.clone();
-        let enable_thinking = settings
-            .default_model
+        let profile_id = AgentSettings::get_global(cx).default_profile.clone();
+        let default_selection = Self::default_model_selection(&profile_id, cx);
+        let enable_thinking = default_selection
             .as_ref()
             .is_some_and(|model| model.enable_thinking);
-        let thinking_effort = settings
-            .default_model
+        let thinking_effort = default_selection
             .as_ref()
             .and_then(|model| model.effort.clone());
-        let speed = settings
-            .default_model
-            .as_ref()
-            .and_then(|model| model.speed);
+        let speed = default_selection.as_ref().and_then(|model| model.speed);
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(model.as_deref()));
         Self {
@@ -1273,7 +1268,6 @@ impl Thread {
                     };
                     registry.select_model(&model, cx)
                 })
-                .or_else(|| registry.default_model())
                 .map(|model| model.model)
         });
 
@@ -1441,6 +1435,7 @@ impl Thread {
                 .ok();
         }
 
+        cx.emit(ModelChanged);
         cx.notify()
     }
 
@@ -1604,14 +1599,20 @@ impl Thread {
         self.profile_id = profile_id.clone();
 
         // Swap to the profile's preferred model when available.
+        let mut notified = false;
         if let Some(model) = Self::resolve_profile_model(&self.profile_id, cx) {
             self.set_model(model, cx);
+            notified = true;
         }
 
         for subagent in &self.running_subagents {
             subagent
                 .update(cx, |thread, cx| thread.set_profile(profile_id.clone(), cx))
                 .ok();
+        }
+
+        if !notified {
+            cx.notify();
         }
     }
 
@@ -1732,6 +1733,20 @@ impl Thread {
             .default_model
             .clone()?;
         Self::resolve_model_from_selection(&selection, cx)
+    }
+
+    /// Keep startup reasoning defaults aligned with the same profile-or-global selection used for
+    /// the thread's default model.
+    fn default_model_selection(
+        profile_id: &AgentProfileId,
+        cx: &App,
+    ) -> Option<LanguageModelSelection> {
+        let settings = AgentSettings::get_global(cx);
+        settings
+            .profiles
+            .get(profile_id)
+            .and_then(|profile| profile.default_model.clone())
+            .or_else(|| settings.default_model.clone())
     }
 
     /// Translate a stored model selection into the configured model from the registry.
@@ -3177,6 +3192,10 @@ impl RunningTurn {
 pub struct TokenUsageUpdated(pub Option<acp_thread::TokenUsage>);
 
 impl EventEmitter<TokenUsageUpdated> for Thread {}
+
+pub struct ModelChanged;
+
+impl EventEmitter<ModelChanged> for Thread {}
 
 pub struct TitleUpdated;
 
