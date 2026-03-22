@@ -1335,7 +1335,7 @@ impl PlatformWindow for WaylandWindow {
         self.0.callbacks.borrow_mut().appearance_changed = Some(callback);
     }
 
-    fn draw(&self, scene: &Scene) {
+    fn draw(&self, scene: &Scene) -> bool {
         let mut state = self.borrow_mut();
 
         if state.renderer.device_lost() {
@@ -1359,10 +1359,10 @@ impl PlatformWindow for WaylandWindow {
 
             // The current scene references atlas textures that were cleared during recovery.
             // Skip this frame and let the next frame rebuild the scene with fresh textures.
-            return;
+            return false;
         }
 
-        state.renderer.draw(scene);
+        state.renderer.draw(scene)
     }
 
     fn completed_frame(&self) {

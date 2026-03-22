@@ -663,7 +663,7 @@ impl PlatformWindow for WebWindow {
         self.inner.callbacks.borrow_mut().appearance_changed = Some(callback);
     }
 
-    fn draw(&self, scene: &Scene) {
+    fn draw(&self, scene: &Scene) -> bool {
         if let Some((width, height)) = self.inner.pending_physical_size.take() {
             if self.inner.canvas.width() != width || self.inner.canvas.height() != height {
                 self.inner.canvas.set_width(width);
@@ -678,7 +678,7 @@ impl PlatformWindow for WebWindow {
             drop(state);
         }
 
-        self.inner.state.borrow_mut().renderer.draw(scene);
+        self.inner.state.borrow_mut().renderer.draw(scene)
     }
 
     fn completed_frame(&self) {

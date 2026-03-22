@@ -1545,9 +1545,10 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().toggle_tab_bar_callback = Some(callback);
     }
 
-    fn draw(&self, scene: &gpui::Scene) {
+    fn draw(&self, scene: &gpui::Scene) -> bool {
         let mut this = self.0.lock();
         this.renderer.draw(scene);
+        true
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {

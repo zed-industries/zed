@@ -1036,7 +1036,7 @@ impl WgpuRenderer {
         self.max_texture_size
     }
 
-    pub fn draw(&mut self, scene: &Scene) {
+    pub fn draw(&mut self, scene: &Scene) -> bool {
         let last_error = self.last_error.lock().unwrap().take();
         if let Some(error) = last_error {
             self.failed_frame_count += 1;
@@ -1063,7 +1063,9 @@ impl WgpuRenderer {
                 resources
                     .surface
                     .configure(&resources.device, &surface_config);
-                return;
+                // Surface was reconfigured but no frame was submitted — caller
+                // should retry on the next frame callback.
+                return false;
             }
             wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
                 let surface_config = self.surface_config.clone();
@@ -1071,15 +1073,19 @@ impl WgpuRenderer {
                 resources
                     .surface
                     .configure(&resources.device, &surface_config);
-                return;
+                // Surface was reconfigured but no frame was submitted — caller
+                // should retry on the next frame callback.
+                return false;
             }
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
-                return;
+                // Window is hidden or timed out — no retry needed; the frame
+                // loop will resume naturally when the compositor requests it.
+                return true;
             }
             wgpu::CurrentSurfaceTexture::Validation => {
                 *self.last_error.lock().unwrap() =
                     Some("Surface texture validation error".to_string());
-                return;
+                return true;
             }
         };
 
@@ -1269,7 +1275,7 @@ impl WgpuRenderer {
                 .queue
                 .submit(std::iter::once(encoder.finish()));
             frame.present();
-            return;
+            return true;
         }
     }
 

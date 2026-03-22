@@ -1602,7 +1602,7 @@ impl PlatformWindow for X11Window {
         self.0.callbacks.borrow_mut().appearance_changed = Some(callback);
     }
 
-    fn draw(&self, scene: &Scene) {
+    fn draw(&self, scene: &Scene) -> bool {
         let mut inner = self.0.state.borrow_mut();
 
         if inner.renderer.device_lost() {
@@ -1624,10 +1624,10 @@ impl PlatformWindow for X11Window {
 
             // The current scene references atlas textures that were cleared during recovery.
             // Skip this frame and let the next frame rebuild the scene with fresh textures.
-            return;
+            return false;
         }
 
-        inner.renderer.draw(scene);
+        inner.renderer.draw(scene)
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {

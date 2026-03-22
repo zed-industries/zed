@@ -2310,8 +2310,15 @@ impl Window {
 
     #[profiling::function]
     fn present(&self) {
-        self.platform_window.draw(&self.rendered_frame.scene);
-        self.needs_present.set(false);
+        let frame_presented = self.platform_window.draw(&self.rendered_frame.scene);
+        // Only clear needs_present if the frame was actually submitted for display.
+        // If the GPU surface was outdated/lost and needed reconfiguring, the renderer
+        // returns false and we keep needs_present=true so the next frame callback
+        // will retry presentation. This fixes UI freezes on Wayland/NVIDIA when
+        // switching windows via Alt+Tab causes a Vulkan swapchain Outdated error.
+        if frame_presented {
+            self.needs_present.set(false);
+        }
         profiling::finish_frame!();
     }
 

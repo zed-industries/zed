@@ -914,12 +914,13 @@ impl PlatformWindow for WindowsWindow {
             .set(Some(callback));
     }
 
-    fn draw(&self, scene: &Scene) {
+    fn draw(&self, scene: &Scene) -> bool {
         self.state
             .renderer
             .borrow_mut()
             .draw(scene, self.state.background_appearance.get())
             .log_err();
+        true
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
