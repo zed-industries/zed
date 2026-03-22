@@ -605,3 +605,56 @@ async fn test_toggle_all_stays_open_after_closing_last_tab_in_active_pane(
         let _ = cx;
     });
 }
+
+#[gpui::test]
+async fn test_ignore_shift_modifier_release(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "1.txt": "First file",
+                "2.txt": "Second file",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    let _tab_1 = open_buffer("1.txt", &workspace, cx).await;
+    let _tab_2 = open_buffer("2.txt", &workspace, cx).await;
+
+    cx.simulate_modifiers_change(gpui::Modifiers {
+        control: true,
+        shift: true,
+        ..Default::default()
+    });
+
+    let tab_switcher = open_tab_switcher(false, &workspace, cx);
+    tab_switcher.update(cx, |tab_switcher, _| {
+        assert_eq!(tab_switcher.delegate.matches.len(), 2);
+    });
+
+    cx.simulate_modifiers_change(gpui::Modifiers {
+        control: true,
+        shift: false,
+        ..Default::default()
+    });
+
+    workspace.update(cx, |workspace, cx| {
+        assert!(
+            workspace.active_modal::<TabSwitcher>(cx).is_some(),
+            "tab switcher closed prematurely when shift was released"
+        );
+    });
+
+    cx.simulate_modifiers_change(gpui::Modifiers::none());
+
+    assert_tab_switcher_is_closed(workspace, cx);
+}

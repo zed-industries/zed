@@ -8,9 +8,10 @@ use editor::items::{
 use fuzzy_nucleo::StringMatchCandidate;
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, Modifiers, ModifiersChangedEvent, MouseButton, MouseUpEvent, ParentElement, Point,
+    Focusable, ModifiersChangedEvent, MouseButton, MouseUpEvent, ParentElement, Point,
     Render, Styled, Task, TaskExt, WeakEntity, Window, actions, rems,
 };
+// #[cfg(test)]
 use picker::{Picker, PickerDelegate};
 use project::Project;
 use schemars::JsonSchema;
@@ -29,6 +30,13 @@ use workspace::{
 };
 
 const PANEL_WIDTH_REMS: f32 = 28.;
+
+#[derive(Copy, Clone, PartialEq)]
+enum AnchorModifier {
+    Platform,
+    Control,
+    Alt,
+}
 
 /// Toggles the tab switcher interface.
 #[derive(PartialEq, Clone, Deserialize, JsonSchema, Default, Action)]
@@ -53,7 +61,7 @@ actions!(
 
 pub struct TabSwitcher {
     picker: Entity<Picker<TabSwitcherDelegate>>,
-    init_modifiers: Option<Modifiers>,
+    anchor_modifier: Option<AnchorModifier>,
 }
 
 impl ModalView for TabSwitcher {}
@@ -164,10 +172,19 @@ impl TabSwitcher {
         is_global: bool,
         cx: &mut Context<Self>,
     ) -> Self {
-        let init_modifiers = if is_global {
+        let anchor_modifier = if is_global {
             None
         } else {
-            window.modifiers().modified().then_some(window.modifiers())
+            let mods = window.modifiers();
+            if mods.platform {
+                Some(AnchorModifier::Platform)
+            } else if mods.control {
+                Some(AnchorModifier::Control)
+            } else if mods.alt {
+                Some(AnchorModifier::Alt)
+            } else {
+                None
+            }
         };
         Self {
             picker: cx.new(|cx| {
@@ -177,7 +194,7 @@ impl TabSwitcher {
                     Picker::nonsearchable_list(delegate, window, cx)
                 }
             }),
-            init_modifiers,
+            anchor_modifier,
         }
     }
 
@@ -187,11 +204,18 @@ impl TabSwitcher {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(init_modifiers) = self.init_modifiers else {
+        let Some(anchor) = self.anchor_modifier else {
             return;
         };
-        if !event.modified() || !init_modifiers.is_subset_of(event) {
-            self.init_modifiers = None;
+
+        let released = match anchor {
+            AnchorModifier::Platform => !event.platform,
+            AnchorModifier::Alt => !event.alt,
+            AnchorModifier::Control => !event.control,
+        };
+
+        if released {
+            self.anchor_modifier = None;
             if self.picker.read(cx).delegate.matches.is_empty() {
                 cx.emit(DismissEvent)
             } else {
