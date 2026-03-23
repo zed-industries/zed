@@ -1064,8 +1064,8 @@ impl AgentPanel {
                         // keeps observing the stale entity from state restoration while the
                         // new entity receives live updates — causing a "brain split" where
                         // Helix sees updates but Zed's display is frozen.
-                        if let ActiveView::AgentThread { server_view } = &this.active_view {
-                            if let Some(active_thread) = server_view.read(cx).active_thread() {
+                        if let ActiveView::AgentThread { conversation_view } = &this.active_view {
+                            if let Some(active_thread) = conversation_view.read(cx).active_thread() {
                                 if active_thread.read(cx).thread == notification.thread_entity {
                                     eprintln!("🔄 [AGENT_PANEL] Already showing thread {} with same entity, skipping", incoming_session_id);
 
@@ -1118,7 +1118,7 @@ impl AgentPanel {
                         });
 
                         this.set_active_view(
-                            ActiveView::AgentThread { server_view },
+                            ActiveView::AgentThread { conversation_view: server_view },
                             true,
                             window,
                             cx,
@@ -1130,8 +1130,8 @@ impl AgentPanel {
                         // Activate following for externally-initiated threads.
                         // AcpThreadView defaults should_be_following to true, so new
                         // threads from Helix will auto-follow the agent's location.
-                        if let ActiveView::AgentThread { server_view } = &this.active_view {
-                            if let Some(active_thread) = server_view.read(cx).active_thread() {
+                        if let ActiveView::AgentThread { conversation_view } = &this.active_view {
+                            if let Some(active_thread) = conversation_view.read(cx).active_thread() {
                                 let should_follow = active_thread.read(cx).should_be_following;
                                 if should_follow {
                                     eprintln!("🔄 [AGENT_PANEL] Activating auto-follow for new external thread");
@@ -1174,8 +1174,8 @@ impl AgentPanel {
                     let query_id = query.query_id.clone();
                     this.update(cx, |this, cx| {
                         let (active_view_str, thread_id, entry_count, active_model) = match &this.active_view {
-                            ActiveView::AgentThread { server_view } => {
-                                if let Some(acp_thread_view) = server_view.read(cx).active_thread() {
+                            ActiveView::AgentThread { conversation_view } => {
+                                if let Some(acp_thread_view) = conversation_view.read(cx).active_thread() {
                                     let active_thread = acp_thread_view.read(cx);
                                     let thread_entity = &active_thread.thread;
                                     let thread = thread_entity.read(cx);

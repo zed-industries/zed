@@ -173,10 +173,14 @@ impl AgentConnection for HeadlessConnection {
         "headless".into()
     }
 
+    fn agent_id(&self) -> AgentId {
+        AgentId::new("headless")
+    }
+
     fn new_session(
         self: Rc<Self>,
         _project: Entity<Project>,
-        _cwd: &std::path::Path,
+        _work_dirs: workspace::PathList,
         _cx: &mut gpui::App,
     ) -> Task<Result<Entity<AcpThread>>> {
         Task::ready(Err(anyhow!("headless connection cannot create sessions")))
@@ -978,7 +982,7 @@ impl ConversationView {
                         });
 
                         #[cfg(feature = "external_websocket_sync")]
-                        let is_resume = resume_thread.is_some();
+                        let is_resume = load_session_id.is_some();
 
                         let current = this.new_thread_view(
                             None,
@@ -1606,7 +1610,9 @@ impl ConversationView {
                 // Stopped handler in thread_service.rs (create_new_thread_sync /
                 // load_thread_from_agent). No action needed here.
 
-                self.history.update(cx, |history, cx| history.refresh(cx));
+                if let Some(history) = self.history() {
+                    history.update(cx, |history, cx| history.refresh(cx));
+                }
             }
             AcpThreadEvent::Refusal => {
                 let error = ThreadError::Refusal;
