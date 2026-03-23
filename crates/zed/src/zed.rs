@@ -14,7 +14,7 @@ pub mod visual_tests;
 #[cfg(target_os = "windows")]
 pub(crate) mod windows_only_instance;
 
-use crate::i18n::t;
+use self::i18n::t;
 
 use agent_ui::{AgentDiffToolbar, AgentPanelDelegate};
 use anyhow::Context as _;
@@ -1329,7 +1329,7 @@ fn quit(_: &Quit, cx: &mut App) {
                 .update(cx, |_, window, cx| {
                     window.prompt(
                         PromptLevel::Info,
-                        t("message.quit_confirm"),
+                        &t("message.quit_confirm"),
                         None,
                         &[t("message.quit").as_str(), t("common.cancel").as_str()],
                         cx,

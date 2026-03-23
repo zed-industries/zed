@@ -163,7 +163,7 @@ impl TerminalPanel {
                         PopoverMenu::new("terminal-tab-bar-popover-menu")
                             .trigger_with_tooltip(
                                 IconButton::new("plus", IconName::Plus).icon_size(IconSize::Small),
-                                Tooltip::text(&t("tooltip.new")),
+                                Tooltip::text(t("tooltip.new")),
                             )
                             .anchor(Corner::TopRight)
                             .with_handle(pane.new_item_context_menu_handle.clone())
@@ -190,7 +190,7 @@ impl TerminalPanel {
                             .trigger_with_tooltip(
                                 IconButton::new("terminal-pane-split", IconName::Split)
                                     .icon_size(IconSize::Small),
-                                Tooltip::text(&t("tooltip.split_pane")),
+                                Tooltip::text(t("tooltip.split_pane")),
                             )
                             .anchor(Corner::TopRight)
                             .with_handle(pane.split_item_context_menu_handle.clone())

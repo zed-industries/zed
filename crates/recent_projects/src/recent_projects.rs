@@ -1149,7 +1149,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         } else {
             t("recent_projects.no_matches")
         };
-        Some(text)
+        Some(text.into())
     }
 
     fn render_match(

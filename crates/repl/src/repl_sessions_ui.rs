@@ -192,7 +192,7 @@ impl Item for ReplSessionsPage {
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
-        Some(zed_i18n::t("repl.repl_session_started"))
+        Some("repl_session_started")
     }
 
     fn show_toolbar(&self) -> bool {

@@ -445,7 +445,7 @@ impl Output {
                 },
             },
             // Any other media types are not supported
-            Err(_) => Output::Message(zed_i18n::t("repl.unsupported_media_type")),
+            Some(_) | None => Output::Message(zed_i18n::t("repl.unsupported_media_type")),
         }
     }
 }

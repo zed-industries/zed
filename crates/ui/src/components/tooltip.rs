@@ -289,7 +289,7 @@ impl Component for Tooltip {
             example_group(vec![single_example(
                 "Text only",
                 Button::new("delete-example", "Delete")
-                    .tooltip(Tooltip::text(&t("tooltip.this_is_tooltip")))
+                    .tooltip(Tooltip::text(t("tooltip.this_is_tooltip")))
                     .into_any_element(),
             )])
             .into_any_element(),

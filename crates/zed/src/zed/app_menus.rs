@@ -4,7 +4,7 @@ use release_channel::ReleaseChannel;
 use terminal_view::terminal_panel;
 use zed_actions::{debug_panel, dev};
 
-use super::super::i18n::t;
+use super::i18n::t;
 
 pub fn app_menus(cx: &mut App) -> Vec<Menu> {
     use zed_actions::Quit;

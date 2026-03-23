@@ -5514,6 +5514,7 @@ dependencies = [
  "vim_mode_setting",
  "workspace",
  "zed_actions",
+ "zed_i18n",
  "zlog",
  "ztracing",
 ]
@@ -15970,6 +15971,7 @@ dependencies = [
  "vim_mode_setting",
  "workspace",
  "zed_actions",
+ "zed_i18n",
 ]
 
 [[package]]
@@ -18750,6 +18752,7 @@ dependencies = [
  "ui_macros",
  "util",
  "windows 0.61.3",
+ "zed_i18n",
 ]
 
 [[package]]

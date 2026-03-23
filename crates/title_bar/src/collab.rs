@@ -25,6 +25,7 @@ use workspace::{ParticipantLocation, notifications::DetachAndPromptErr};
 use zed_actions::ShowCallStats;
 
 use crate::TitleBar;
+use zed_i18n::t;
 
 fn format_stat(value: Option<f64>, format: impl Fn(f64) -> String) -> String {
     match value {

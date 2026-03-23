@@ -17,8 +17,12 @@ rustflags = [
 ]
 
 # We need lld to link libwebrtc.a successfully on aarch64-linux
+# +fp16 is needed for gemm-f16 (used by candle-core/denoise) on aarch64
+# -larm_sme_stub provides stub implementations of ARM SME runtime functions missing in GCC 11
 [target.aarch64-unknown-linux-gnu]
-rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+rustflags = ["-C", "link-arg=-fuse-ld=lld", "-C", "target-feature=+fp16", "-C", "link-arg=-L/home/hyx/.local/lib", "-C", "link-arg=-larm_sme_stub"]
 
 [env]
 MACOSX_DEPLOYMENT_TARGET = "10.15.7"
+RUST_FONTCONFIG_DLOPEN = "1"
+LIBRARY_PATH = "/home/hyx/.local/lib:/usr/lib/aarch64-linux-gnu"
