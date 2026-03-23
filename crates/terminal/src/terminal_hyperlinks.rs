@@ -11,7 +11,6 @@ use alacritty_terminal::{
 use log::{info, warn};
 use regex::Regex;
 use std::{
-    iter::{once, once_with},
     ops::{Index, Range},
     time::{Duration, Instant},
 };
@@ -237,16 +236,10 @@ fn path_match<T>(
     let first_cell = &term.grid()[line_start];
     let mut prev_len = 0;
     line.push(first_cell.c);
-    let mut prev_char_is_space = first_cell.c == ' ';
     let mut hovered_point_byte_offset = None;
-    let mut hovered_word_start_offset = None;
-    let mut hovered_word_end_offset = None;
 
     if line_start == hovered {
         hovered_point_byte_offset = Some(0);
-        if first_cell.c != ' ' {
-            hovered_word_start_offset = Some(0);
-        }
     }
 
     for cell in term.grid().iter_from(line_start) {
@@ -257,22 +250,8 @@ fn path_match<T>(
         if !cell.flags.intersects(WIDE_CHAR_SPACERS) {
             prev_len = line.len();
             match cell.c {
-                ' ' | '\t' => {
-                    if hovered_point_byte_offset.is_some() && !prev_char_is_space {
-                        if hovered_word_end_offset.is_none() {
-                            hovered_word_end_offset = Some(line.len());
-                        }
-                    }
-                    line.push(' ');
-                    prev_char_is_space = true;
-                }
-                c @ _ => {
-                    if hovered_point_byte_offset.is_none() && prev_char_is_space {
-                        hovered_word_start_offset = Some(line.len());
-                    }
-                    line.push(c);
-                    prev_char_is_space = false;
-                }
+                ' ' | '\t' => line.push(' '),
+                c => line.push(c),
             }
         }
 
@@ -283,11 +262,6 @@ fn path_match<T>(
     }
     let line = line.trim_ascii_end();
     let hovered_point_byte_offset = hovered_point_byte_offset?;
-    let hovered_word_range = {
-        let word_start_offset = hovered_word_start_offset.unwrap_or(0);
-        (word_start_offset != 0)
-            .then_some(word_start_offset..hovered_word_end_offset.unwrap_or(line.len()))
-    };
     if line.len() <= hovered_point_byte_offset {
         return None;
     }
@@ -336,23 +310,9 @@ fn path_match<T>(
     for regex in path_hyperlink_regexes {
         let mut path_found = false;
 
-        for (line_start_offset, captures) in once(
-            regex
-                .captures_iter(&line)
-                .next()
-                .map(|captures| (0, captures)),
-        )
-        .chain(once_with(|| {
-            if let Some(hovered_word_range) = &hovered_word_range {
-                regex
-                    .captures_iter(&line[hovered_word_range.clone()])
-                    .next()
-                    .map(|captures| (hovered_word_range.start, captures))
-            } else {
-                None
-            }
-        }))
-        .flatten()
+        for (line_start_offset, captures) in regex
+            .captures_iter(&line)
+            .map(|captures| (0usize, captures))
         {
             path_found = true;
             let match_range = captures.get(0).unwrap().range();
@@ -649,6 +609,12 @@ mod tests {
             test_path!("    Compiling Cool 👉(/test/Cool)");
             test_path!("    Compiling Cool (‹«/👉test/Cool»›)");
             test_path!("    Compiling Cool (/test/Cool👉)");
+
+            // Tool output with path inside parens (e.g. Claude Code)
+            test_path!("Update👉(src/cool.rs)");
+            test_path!("Update(‹«src/👉cool.rs»›)");
+            test_path!("Update(src/cool.rs👉)");
+            test_path!("Write(‹«/👉test/Cool»›)");
 
             // Python
             test_path!("‹«awe👉some.py»›");
