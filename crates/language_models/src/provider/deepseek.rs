@@ -395,6 +395,8 @@ pub fn into_deepseek(
         }
     }
 
+    dbg!(&messages[1..]);
+
     deepseek::Request {
         model: model.id().to_string(),
         messages,
@@ -455,7 +457,9 @@ impl DeepSeekEventMapper {
         };
 
         let mut events = Vec::new();
-        if let Some(content) = choice.delta.content.clone() {
+        if let Some(content) = choice.delta.content.clone()
+            && !content.is_empty()
+        {
             events.push(Ok(LanguageModelCompletionEvent::Text(content)));
         }
 
