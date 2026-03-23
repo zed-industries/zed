@@ -64,7 +64,7 @@ impl SyntaxTheme {
     pub fn style_for_name(&self, name: &str) -> Option<HighlightStyle> {
         self.capture_name_map
             .get(name)
-            .map(|higlight_idx| self.highlights[*higlight_idx])
+            .map(|highlight_idx| self.highlights[*highlight_idx])
     }
 
     pub fn get_capture_name(&self, idx: usize) -> Option<&str> {
