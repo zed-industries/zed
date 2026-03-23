@@ -3849,7 +3849,6 @@ impl ThreadView {
                     .children(rules_item)
                     .when(is_editable && (has_checkpoint_button || entry_ix > 0), |this| {
                         this.children(message.id.clone().map(|message_id| {
-                            let fork_message_id = message_id.clone();
                             h_flex()
                                 .px_3()
                                 .gap_2()
@@ -3868,6 +3867,7 @@ impl ThreadView {
                                     )
                                 })
                                 .when(entry_ix > 0, |this| {
+                                    let fork_message_id = message_id.clone();
                                     this.child(
                                         Button::new("fork-thread", "Fork Thread")
                                             .start_icon(Icon::new(IconName::GitBranch).size(IconSize::XSmall).color(Color::Muted))
