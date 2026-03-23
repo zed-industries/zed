@@ -695,6 +695,8 @@ fn main() {
 
         editor::init(cx);
         image_viewer::init(cx);
+        #[cfg(feature = "web-view")]
+        web_view::init(cx);
         repl::notebook::init(cx);
         diagnostics::init(cx);
 
