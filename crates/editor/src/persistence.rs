@@ -226,7 +226,7 @@ impl Domain for EditorDb {
     ];
 }
 
-db::static_connection!(EditorDb, [WorkspaceDb]);
+db::static_connection!(DB, EditorDb, [WorkspaceDb]);
 
 // https://www.sqlite.org/limits.html
 // > <..> the maximum value of a host parameter number is SQLITE_MAX_VARIABLE_NUMBER,
@@ -415,10 +415,8 @@ mod tests {
     use super::*;
 
     #[gpui::test]
-    async fn test_save_and_get_serialized_editor(cx: &mut gpui::TestAppContext) {
-        let db = cx.update(|cx| workspace::WorkspaceDb::global(cx));
-        let workspace_id = db.next_id().await.unwrap();
-        let editor_db = cx.update(|cx| EditorDb::global(cx));
+    async fn test_save_and_get_serialized_editor() {
+        let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 
         let serialized_editor = SerializedEditor {
             abs_path: Some(PathBuf::from("testing.txt")),
@@ -427,12 +425,11 @@ mod tests {
             mtime: None,
         };
 
-        editor_db
-            .save_serialized_editor(1234, workspace_id, serialized_editor.clone())
+        DB.save_serialized_editor(1234, workspace_id, serialized_editor.clone())
             .await
             .unwrap();
 
-        let have = editor_db
+        let have = DB
             .get_serialized_editor(1234, workspace_id)
             .unwrap()
             .unwrap();
@@ -446,12 +443,11 @@ mod tests {
             mtime: None,
         };
 
-        editor_db
-            .save_serialized_editor(1234, workspace_id, serialized_editor.clone())
+        DB.save_serialized_editor(1234, workspace_id, serialized_editor.clone())
             .await
             .unwrap();
 
-        let have = editor_db
+        let have = DB
             .get_serialized_editor(1234, workspace_id)
             .unwrap()
             .unwrap();
@@ -465,12 +461,11 @@ mod tests {
             mtime: None,
         };
 
-        editor_db
-            .save_serialized_editor(1234, workspace_id, serialized_editor.clone())
+        DB.save_serialized_editor(1234, workspace_id, serialized_editor.clone())
             .await
             .unwrap();
 
-        let have = editor_db
+        let have = DB
             .get_serialized_editor(1234, workspace_id)
             .unwrap()
             .unwrap();
@@ -484,12 +479,11 @@ mod tests {
             mtime: Some(MTime::from_seconds_and_nanos(100, 42)),
         };
 
-        editor_db
-            .save_serialized_editor(1234, workspace_id, serialized_editor.clone())
+        DB.save_serialized_editor(1234, workspace_id, serialized_editor.clone())
             .await
             .unwrap();
 
-        let have = editor_db
+        let have = DB
             .get_serialized_editor(1234, workspace_id)
             .unwrap()
             .unwrap();
@@ -505,10 +499,8 @@ mod tests {
     // The search uses contains_str_at() to find fingerprints in the buffer.
 
     #[gpui::test]
-    async fn test_save_and_get_file_folds(cx: &mut gpui::TestAppContext) {
-        let db = cx.update(|cx| workspace::WorkspaceDb::global(cx));
-        let workspace_id = db.next_id().await.unwrap();
-        let editor_db = cx.update(|cx| EditorDb::global(cx));
+    async fn test_save_and_get_file_folds() {
+        let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 
         // file_folds table uses path as key (no FK to editors table)
         let file_path: Arc<Path> = Arc::from(Path::new("/tmp/test_file_folds.rs"));
@@ -528,13 +520,12 @@ mod tests {
                 "} // end Foo".to_string(),
             ),
         ];
-        editor_db
-            .save_file_folds(workspace_id, file_path.clone(), folds.clone())
+        DB.save_file_folds(workspace_id, file_path.clone(), folds.clone())
             .await
             .unwrap();
 
         // Retrieve and verify fingerprints are preserved
-        let retrieved = editor_db.get_file_folds(workspace_id, &file_path).unwrap();
+        let retrieved = DB.get_file_folds(workspace_id, &file_path).unwrap();
         assert_eq!(retrieved.len(), 2);
         assert_eq!(
             retrieved[0],
@@ -562,12 +553,11 @@ mod tests {
             "impl Bar {".to_string(),
             "} // end impl".to_string(),
         )];
-        editor_db
-            .save_file_folds(workspace_id, file_path.clone(), new_folds)
+        DB.save_file_folds(workspace_id, file_path.clone(), new_folds)
             .await
             .unwrap();
 
-        let retrieved = editor_db.get_file_folds(workspace_id, &file_path).unwrap();
+        let retrieved = DB.get_file_folds(workspace_id, &file_path).unwrap();
         assert_eq!(retrieved.len(), 1);
         assert_eq!(
             retrieved[0],
@@ -580,11 +570,10 @@ mod tests {
         );
 
         // Test delete
-        editor_db
-            .delete_file_folds(workspace_id, file_path.clone())
+        DB.delete_file_folds(workspace_id, file_path.clone())
             .await
             .unwrap();
-        let retrieved = editor_db.get_file_folds(workspace_id, &file_path).unwrap();
+        let retrieved = DB.get_file_folds(workspace_id, &file_path).unwrap();
         assert!(retrieved.is_empty());
 
         // Test multiple files don't interfere
@@ -593,21 +582,15 @@ mod tests {
         let folds_a = vec![(10, 20, "a_start".to_string(), "a_end".to_string())];
         let folds_b = vec![(30, 40, "b_start".to_string(), "b_end".to_string())];
 
-        editor_db
-            .save_file_folds(workspace_id, file_path_a.clone(), folds_a)
+        DB.save_file_folds(workspace_id, file_path_a.clone(), folds_a)
             .await
             .unwrap();
-        editor_db
-            .save_file_folds(workspace_id, file_path_b.clone(), folds_b)
+        DB.save_file_folds(workspace_id, file_path_b.clone(), folds_b)
             .await
             .unwrap();
 
-        let retrieved_a = editor_db
-            .get_file_folds(workspace_id, &file_path_a)
-            .unwrap();
-        let retrieved_b = editor_db
-            .get_file_folds(workspace_id, &file_path_b)
-            .unwrap();
+        let retrieved_a = DB.get_file_folds(workspace_id, &file_path_a).unwrap();
+        let retrieved_b = DB.get_file_folds(workspace_id, &file_path_b).unwrap();
 
         assert_eq!(retrieved_a.len(), 1);
         assert_eq!(retrieved_b.len(), 1);

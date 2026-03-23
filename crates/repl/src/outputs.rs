@@ -253,8 +253,18 @@ impl Output {
         )
     }
 
-    pub fn content(&self, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
-        match self {
+    pub fn render(
+        &self,
+        workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<ExecutionView>,
+    ) -> impl IntoElement + use<> {
+        let max_width = plain::max_width_for_columns(
+            ReplSettings::get_global(cx).output_max_width_columns,
+            window,
+            cx,
+        );
+        let content = match self {
             Self::Plain { content, .. } => Some(content.clone().into_any_element()),
             Self::Markdown { content, .. } => Some(content.clone().into_any_element()),
             Self::Stream { content, .. } => Some(content.clone().into_any_element()),
@@ -264,36 +274,21 @@ impl Output {
             Self::Json { content, .. } => Some(content.clone().into_any_element()),
             Self::ErrorOutput(error_view) => error_view.render(window, cx),
             Self::ClearOutputWaitMarker => None,
-        }
-    }
+        };
 
-    pub fn render(
-        &self,
-        workspace: WeakEntity<Workspace>,
-        window: &mut Window,
-        cx: &mut Context<ExecutionView>,
-    ) -> impl IntoElement + use<> {
-        let max_width =
-            plain::max_width_for_columns(ReplSettings::get_global(cx).max_columns, window, cx);
-        let content = self.content(window, cx);
-
-        let needs_horizontal_scroll = matches!(self, Self::Table { .. });
+        let needs_horizontal_scroll = matches!(self, Self::Table { .. } | Self::Image { .. });
 
         h_flex()
             .id("output-content")
             .w_full()
-            .when_else(
-                needs_horizontal_scroll,
-                |this| this.overflow_x_scroll(),
-                |this| this.overflow_x_hidden(),
-            )
+            .when_some(max_width, |this, max_w| this.max_w(max_w))
+            .overflow_x_scroll()
             .items_start()
             .child(
                 div()
                     .when(!needs_horizontal_scroll, |el| {
                         el.flex_1().w_full().overflow_x_hidden()
                     })
-                    .when_some(max_width, |el, max_width| el.max_w(max_width))
                     .children(content),
             )
             .children(match self {

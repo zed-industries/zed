@@ -81,7 +81,8 @@ impl RenderOnce for Chip {
 
         h_flex()
             .when_some(self.height, |this, h| this.h(h))
-            .flex_none()
+            .min_w_0()
+            .flex_initial()
             .px_1()
             .border_1()
             .rounded_sm()

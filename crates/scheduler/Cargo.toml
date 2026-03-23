@@ -23,4 +23,3 @@ flume = "0.11"
 futures.workspace = true
 parking_lot.workspace = true
 rand.workspace = true
-web-time.workspace = true

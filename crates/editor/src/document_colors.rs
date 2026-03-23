@@ -145,7 +145,7 @@ impl Editor {
         _: &Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.lsp_data_enabled() {
+        if !self.mode().is_full() {
             return;
         }
         let Some(project) = self.project.as_ref() else {

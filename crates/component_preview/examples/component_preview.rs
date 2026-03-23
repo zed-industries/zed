@@ -48,10 +48,7 @@ fn main() {
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
         let session_id = uuid::Uuid::new_v4().to_string();
-        let kvp = db::kvp::KeyValueStore::global(cx);
-        let session = cx
-            .foreground_executor()
-            .block_on(Session::new(session_id, kvp));
+        let session = cx.foreground_executor().block_on(Session::new(session_id));
         let session = cx.new(|cx| AppSession::new(session, cx));
         let node_runtime = NodeRuntime::unavailable();
 

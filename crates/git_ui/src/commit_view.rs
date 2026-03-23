@@ -524,11 +524,10 @@ impl CommitView {
             .when(self.stash.is_none(), |this| {
                 this.child(
                     Button::new("sha", "Commit SHA")
-                        .start_icon(
-                            Icon::new(copy_icon)
-                                .size(IconSize::Small)
-                                .color(copy_icon_color),
-                        )
+                        .icon(copy_icon)
+                        .icon_color(copy_icon_color)
+                        .icon_position(IconPosition::Start)
+                        .icon_size(IconSize::Small)
                         .tooltip({
                             let commit_sha = commit_sha.clone();
                             move |_, cx| {

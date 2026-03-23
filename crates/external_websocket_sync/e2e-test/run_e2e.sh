@@ -166,21 +166,18 @@ AGENTEOF
     echo "[setup] Claude Code agent configured with API key"
 fi
 
-ANTHROPIC_API_URL="${ANTHROPIC_BASE_URL:-https://api.anthropic.com}"
-# Default model: use sonnet for cost efficiency unless overridden
-AGENT_MODEL="${AGENT_MODEL:-claude-sonnet-4-5-latest}"
 cat > "$ZED_CONFIG_DIR/settings.json" << JSONEOF
 {
 ${AGENT_SERVERS_JSON}
   "language_models": {
     "anthropic": {
-      "api_url": "${ANTHROPIC_API_URL}"
+      "api_url": "https://api.anthropic.com"
     }
   },
   "agent": {
     "default_model": {
       "provider": "anthropic",
-      "model": "${AGENT_MODEL}"
+      "model": "claude-sonnet-4-5-latest"
     },
     "always_allow_tool_actions": true,
     "show_onboarding": false,
@@ -202,7 +199,6 @@ echo "[zed]   ZED_HELIX_URL=$ZED_HELIX_URL"
 echo "[zed]   ZED_EXTERNAL_SYNC_ENABLED=$ZED_EXTERNAL_SYNC_ENABLED"
 echo "[zed]   ZED_STATELESS=${ZED_STATELESS:-not set}"
 echo "[zed]   ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:+set (${#ANTHROPIC_API_KEY} chars)}"
-echo "[zed]   ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-not set (using https://api.anthropic.com)}"
 echo "[zed]   E2E_AGENTS=$E2E_AGENTS"
 echo ""
 

@@ -336,10 +336,9 @@ impl Render for CommitTooltip {
                                                     format!("#{}", pr.number),
                                                 )
                                                 .color(Color::Muted)
-                                                .start_icon(
-                                                    Icon::new(IconName::PullRequest)
-                                                        .color(Color::Muted),
-                                                )
+                                                .icon(IconName::PullRequest)
+                                                .icon_color(Color::Muted)
+                                                .icon_position(IconPosition::Start)
                                                 .style(ButtonStyle::Subtle)
                                                 .on_click(move |_, _, cx| {
                                                     cx.stop_propagation();
@@ -355,9 +354,9 @@ impl Render for CommitTooltip {
                                             )
                                             .style(ButtonStyle::Subtle)
                                             .color(Color::Muted)
-                                            .start_icon(
-                                                Icon::new(IconName::FileGit).color(Color::Muted),
-                                            )
+                                            .icon(IconName::FileGit)
+                                            .icon_color(Color::Muted)
+                                            .icon_position(IconPosition::Start)
                                             .on_click(
                                                 move |_, window, cx| {
                                                     CommitView::open(

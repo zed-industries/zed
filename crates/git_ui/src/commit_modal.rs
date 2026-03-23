@@ -366,12 +366,11 @@ impl CommitModal {
             .unwrap_or_else(|| "<no branch>".to_owned());
 
         let branch_picker_button = panel_button(branch)
-            .start_icon(
-                Icon::new(IconName::GitBranch)
-                    .size(IconSize::Small)
-                    .color(Color::Placeholder),
-            )
+            .icon(IconName::GitBranch)
+            .icon_size(IconSize::Small)
+            .icon_color(Color::Placeholder)
             .color(Color::Muted)
+            .icon_position(IconPosition::Start)
             .on_click(cx.listener(|_, _, window, cx| {
                 window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
             }))

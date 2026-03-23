@@ -1,96 +1,82 @@
-[
-  "break"
-  "case"
-  "const"
-  "continue"
-  "default"
-  "do"
-  "else"
-  "enum"
-  "extern"
-  "for"
-  "if"
-  "inline"
-  "return"
-  "sizeof"
-  "static"
-  "struct"
-  "switch"
-  "typedef"
-  "union"
-  "volatile"
-  "while"
-  "#define"
-  "#elif"
-  "#else"
-  "#endif"
-  "#if"
-  "#ifdef"
-  "#ifndef"
-  "#include"
-  (preproc_directive)
-] @keyword
+"break" @keyword
+"case" @keyword
+"const" @keyword
+"continue" @keyword
+"default" @keyword
+"do" @keyword
+"else" @keyword
+"enum" @keyword
+"extern" @keyword
+"for" @keyword
+"if" @keyword
+"inline" @keyword
+"return" @keyword
+"sizeof" @keyword
+"static" @keyword
+"struct" @keyword
+"switch" @keyword
+"typedef" @keyword
+"union" @keyword
+"volatile" @keyword
+"while" @keyword
 
-[
-  "--"
-  "-"
-  "-="
-  "->"
-  "="
-  "!="
-  "*"
-  "&"
-  "&&"
-  "+"
-  "++"
-  "+="
-  "<"
-  "=="
-  ">"
-  "||"
-  "."
-  ";"
-] @operator
+"#define" @keyword
+"#elif" @keyword
+"#else" @keyword
+"#endif" @keyword
+"#if" @keyword
+"#ifdef" @keyword
+"#ifndef" @keyword
+"#include" @keyword
+(preproc_directive) @keyword
 
-[
-  (string_literal)
-  (system_lib_string)
-] @string
+"--" @operator
+"-" @operator
+"-=" @operator
+"->" @operator
+"=" @operator
+"!=" @operator
+"*" @operator
+"&" @operator
+"&&" @operator
+"+" @operator
+"++" @operator
+"+=" @operator
+"<" @operator
+"==" @operator
+">" @operator
+"||" @operator
 
-(null) @constant.builtin
+"." @delimiter
+";" @delimiter
 
-[
-  (number_literal)
-  (char_literal)
-] @number
+(string_literal) @string
+(system_lib_string) @string
+
+(null) @constant
+(number_literal) @number
+(char_literal) @number
 
 (identifier) @variable
 
 (field_identifier) @property
-
 (statement_identifier) @label
-
-[
-  (type_identifier)
-  (primitive_type)
-  (sized_type_specifier)
-] @type
+(type_identifier) @type
+(primitive_type) @type
+(sized_type_specifier) @type
 
 (call_expression
   function: (identifier) @function)
-
 (call_expression
   function: (field_expression
     field: (field_identifier) @function))
-
 (function_declarator
   declarator: (identifier) @function)
-
 (preproc_function_def
   name: (identifier) @function.special)
 
 ((identifier) @constant
-  (#match? @constant "^[A-Z][A-Z\\d_]*$"))
+ (#match? @constant "^[A-Z][A-Z\\d_]*$"))
 
 (comment) @comment
 
@@ -125,5 +111,7 @@
 
 (extension_storage_class) @storageclass
 
-((identifier) @variable.builtin
-  (#match? @variable.builtin "^gl_"))
+(
+  (identifier) @variable.builtin
+  (#match? @variable.builtin "^gl_")
+)

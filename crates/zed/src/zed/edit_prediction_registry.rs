@@ -2,18 +2,20 @@ use client::{Client, UserStore};
 use codestral::{CodestralEditPredictionDelegate, load_codestral_api_key};
 use collections::HashMap;
 use copilot::CopilotEditPredictionDelegate;
-use edit_prediction::{EditPredictionModel, ZedEditPredictionDelegate};
+use edit_prediction::{EditPredictionModel, ZedEditPredictionDelegate, Zeta2FeatureFlag};
 use editor::Editor;
+use feature_flags::FeatureFlagAppExt;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 use language::language_settings::{EditPredictionProvider, all_language_settings};
 
-use settings::{EditPredictionPromptFormat, SettingsStore};
+use settings::{
+    EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME, EditPredictionPromptFormat, SettingsStore,
+};
 use std::{cell::RefCell, rc::Rc, sync::Arc};
+use supermaven::{Supermaven, SupermavenEditPredictionDelegate};
 use ui::Window;
 
 pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
-    edit_prediction::EditPredictionStore::global(&client, &user_store, cx);
-
     let editors: Rc<RefCell<HashMap<WeakEntity<Editor>, AnyWindowHandle>>> = Rc::default();
     cx.observe_new({
         let editors = editors.clone();
@@ -78,6 +80,9 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     .detach();
 
     cx.observe_global::<SettingsStore>({
+        let editors = editors.clone();
+        let client = client.clone();
+        let user_store = user_store.clone();
         let mut previous_config = edit_prediction_provider_config_for_settings(cx);
         move |cx| {
             let new_provider_config = edit_prediction_provider_config_for_settings(cx);
@@ -101,6 +106,24 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
         }
     })
     .detach();
+
+    cx.observe_flag::<Zeta2FeatureFlag, _>({
+        let mut previous_config = edit_prediction_provider_config_for_settings(cx);
+        move |_is_enabled, cx| {
+            let new_provider_config = edit_prediction_provider_config_for_settings(cx);
+            if new_provider_config != previous_config {
+                previous_config = new_provider_config;
+                assign_edit_prediction_providers(
+                    &editors,
+                    new_provider_config,
+                    &client,
+                    user_store.clone(),
+                    cx,
+                );
+            }
+        }
+    })
+    .detach();
 }
 
 fn edit_prediction_provider_config_for_settings(cx: &App) -> Option<EditPredictionProviderConfig> {
@@ -109,9 +132,10 @@ fn edit_prediction_provider_config_for_settings(cx: &App) -> Option<EditPredicti
     match provider {
         EditPredictionProvider::None => None,
         EditPredictionProvider::Copilot => Some(EditPredictionProviderConfig::Copilot),
-        EditPredictionProvider::Zed => {
-            Some(EditPredictionProviderConfig::Zed(EditPredictionModel::Zeta))
-        }
+        EditPredictionProvider::Supermaven => Some(EditPredictionProviderConfig::Supermaven),
+        EditPredictionProvider::Zed => Some(EditPredictionProviderConfig::Zed(
+            EditPredictionModel::Zeta1,
+        )),
         EditPredictionProvider::Codestral => Some(EditPredictionProviderConfig::Codestral),
         EditPredictionProvider::Ollama | EditPredictionProvider::OpenAiCompatibleApi => {
             let custom_settings = if provider == EditPredictionProvider::Ollama {
@@ -130,11 +154,10 @@ fn edit_prediction_provider_config_for_settings(cx: &App) -> Option<EditPredicti
                 }
             }
 
-            if matches!(
-                format,
-                EditPredictionPromptFormat::Zeta | EditPredictionPromptFormat::Zeta2
-            ) {
-                Some(EditPredictionProviderConfig::Zed(EditPredictionModel::Zeta))
+            if format == EditPredictionPromptFormat::Zeta {
+                Some(EditPredictionProviderConfig::Zed(
+                    EditPredictionModel::Zeta1,
+                ))
             } else {
                 Some(EditPredictionProviderConfig::Zed(
                     EditPredictionModel::Fim { format },
@@ -147,7 +170,17 @@ fn edit_prediction_provider_config_for_settings(cx: &App) -> Option<EditPredicti
         EditPredictionProvider::Mercury => Some(EditPredictionProviderConfig::Zed(
             EditPredictionModel::Mercury,
         )),
-        EditPredictionProvider::Experimental(_) => None,
+        EditPredictionProvider::Experimental(name) => {
+            if name == EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME
+                && cx.has_flag::<Zeta2FeatureFlag>()
+            {
+                Some(EditPredictionProviderConfig::Zed(
+                    EditPredictionModel::Zeta2,
+                ))
+            } else {
+                None
+            }
+        }
     }
 }
 
@@ -171,6 +204,7 @@ fn infer_prompt_format(model: &str) -> Option<EditPredictionPromptFormat> {
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum EditPredictionProviderConfig {
     Copilot,
+    Supermaven,
     Codestral,
     Zed(EditPredictionModel),
 }
@@ -179,9 +213,11 @@ impl EditPredictionProviderConfig {
     fn name(&self) -> &'static str {
         match self {
             EditPredictionProviderConfig::Copilot => "Copilot",
+            EditPredictionProviderConfig::Supermaven => "Supermaven",
             EditPredictionProviderConfig::Codestral => "Codestral",
             EditPredictionProviderConfig::Zed(model) => match model {
-                EditPredictionModel::Zeta => "Zeta",
+                EditPredictionModel::Zeta1 => "Zeta1",
+                EditPredictionModel::Zeta2 => "Zeta2",
                 EditPredictionModel::Fim { .. } => "FIM",
                 EditPredictionModel::Sweep => "Sweep",
                 EditPredictionModel::Mercury => "Mercury",
@@ -270,6 +306,12 @@ fn assign_edit_prediction_provider(
                 editor.set_edit_prediction_provider(Some(provider), window, cx);
             }
         }
+        Some(EditPredictionProviderConfig::Supermaven) => {
+            if let Some(supermaven) = Supermaven::global(cx) {
+                let provider = cx.new(|_| SupermavenEditPredictionDelegate::new(supermaven));
+                editor.set_edit_prediction_provider(Some(provider), window, cx);
+            }
+        }
         Some(EditPredictionProviderConfig::Codestral) => {
             let http_client = client.http_client();
             let provider = cx.new(|_| CodestralEditPredictionDelegate::new(http_client));
@@ -279,23 +321,26 @@ fn assign_edit_prediction_provider(
             let ep_store = edit_prediction::EditPredictionStore::global(client, &user_store, cx);
 
             if let Some(project) = editor.project() {
-                ep_store.update(cx, |ep_store, cx| {
+                let has_model = ep_store.update(cx, |ep_store, cx| {
                     ep_store.set_edit_prediction_model(model);
                     if let Some(buffer) = &singleton_buffer {
                         ep_store.register_buffer(buffer, project, cx);
                     }
+                    true
                 });
 
-                let provider = cx.new(|cx| {
-                    ZedEditPredictionDelegate::new(
-                        project.clone(),
-                        singleton_buffer,
-                        &client,
-                        &user_store,
-                        cx,
-                    )
-                });
-                editor.set_edit_prediction_provider(Some(provider), window, cx);
+                if has_model {
+                    let provider = cx.new(|cx| {
+                        ZedEditPredictionDelegate::new(
+                            project.clone(),
+                            singleton_buffer,
+                            &client,
+                            &user_store,
+                            cx,
+                        )
+                    });
+                    editor.set_edit_prediction_provider(Some(provider), window, cx);
+                }
             }
         }
     }
@@ -316,7 +361,7 @@ mod tests {
         let app_state = cx.update(|cx| {
             let app_state = AppState::test(cx);
             client::init(&app_state.client, cx);
-            language_model::init(app_state.user_store.clone(), app_state.client.clone(), cx);
+            language_model::init(app_state.client.clone(), cx);
             editor::init(cx);
             app_state
         });

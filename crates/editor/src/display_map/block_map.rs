@@ -78,7 +78,6 @@ pub struct BlockSnapshot {
     custom_blocks_by_id: TreeMap<CustomBlockId, Arc<CustomBlock>>,
     pub(super) buffer_header_height: u32,
     pub(super) excerpt_header_height: u32,
-    pub(super) buffers_with_disabled_headers: HashSet<BufferId>,
 }
 
 impl Deref for BlockSnapshot {
@@ -266,10 +265,6 @@ impl<P: Debug> Debug for BlockProperties<P> {
 pub enum BlockStyle {
     Fixed,
     Flex,
-    /// Like `Flex` but doesn't use the gutter:
-    /// - block content scrolls with buffer content
-    /// - doesn't paint in gutter
-    Spacer,
     Sticky,
 }
 
@@ -277,7 +272,6 @@ pub enum BlockStyle {
 pub struct EditorMargins {
     pub gutter: GutterDimensions,
     pub right: Pixels,
-    pub extended_right: Pixels,
 }
 
 #[derive(gpui::AppContext, gpui::VisualContext)]
@@ -295,7 +289,6 @@ pub struct BlockContext<'a, 'b> {
     pub height: u32,
     pub selected: bool,
     pub editor_style: &'b EditorStyle,
-    pub indent_guide_padding: Pixels,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Hash)]
@@ -400,8 +393,8 @@ impl Block {
             Block::Custom(block) => block.style,
             Block::ExcerptBoundary { .. }
             | Block::FoldedBuffer { .. }
-            | Block::BufferHeader { .. } => BlockStyle::Sticky,
-            Block::Spacer { .. } => BlockStyle::Spacer,
+            | Block::BufferHeader { .. }
+            | Block::Spacer { .. } => BlockStyle::Sticky,
         }
     }
 
@@ -658,7 +651,6 @@ impl BlockMap {
                 custom_blocks_by_id: self.custom_blocks_by_id.clone(),
                 buffer_header_height: self.buffer_header_height,
                 excerpt_header_height: self.excerpt_header_height,
-                buffers_with_disabled_headers: self.buffers_with_disabled_headers.clone(),
             },
         }
     }
@@ -1091,29 +1083,23 @@ impl BlockMap {
                 };
 
                 let rows_before_block;
-                let input_rows = new_transforms.summary().input_rows;
-                match &block_placement {
-                    &BlockPlacement::Above(position) => {
-                        let Some(delta) = position.checked_sub(input_rows) else {
-                            continue;
-                        };
-                        rows_before_block = delta;
+                match block_placement {
+                    BlockPlacement::Above(position) => {
+                        rows_before_block = position - new_transforms.summary().input_rows;
                         just_processed_folded_buffer = false;
                     }
-                    &BlockPlacement::Near(position) | &BlockPlacement::Below(position) => {
+                    BlockPlacement::Near(position) | BlockPlacement::Below(position) => {
                         if just_processed_folded_buffer {
                             continue;
                         }
-                        let Some(delta) = (position + RowDelta(1)).checked_sub(input_rows) else {
+                        if position + RowDelta(1) < new_transforms.summary().input_rows {
                             continue;
-                        };
-                        rows_before_block = delta;
+                        }
+                        rows_before_block =
+                            (position + RowDelta(1)) - new_transforms.summary().input_rows;
                     }
-                    BlockPlacement::Replace(range) => {
-                        let Some(delta) = range.start().checked_sub(input_rows) else {
-                            continue;
-                        };
-                        rows_before_block = delta;
+                    BlockPlacement::Replace(ref range) => {
+                        rows_before_block = *range.start() - new_transforms.summary().input_rows;
                         summary.input_rows = WrapRow(1) + (*range.end() - *range.start());
                         just_processed_folded_buffer = matches!(block, Block::FoldedBuffer { .. });
                     }
@@ -1716,13 +1702,12 @@ pub(crate) fn balancing_block(
     Some(BlockProperties {
         placement: their_placement,
         height: my_block.height,
-        style: BlockStyle::Spacer,
+        style: BlockStyle::Sticky,
         render: Arc::new(move |cx| {
             crate::EditorElement::render_spacer_block(
                 cx.block_id,
                 cx.height,
                 cx.line_height,
-                cx.indent_guide_padding,
                 cx.window,
                 cx.app,
             )
@@ -2860,8 +2845,8 @@ mod tests {
     use buffer_diff::BufferDiff;
     use gpui::{App, AppContext as _, Element, div, font, px};
     use itertools::Itertools;
-    use language::{Buffer, Capability, Point};
-    use multi_buffer::{MultiBuffer, PathKey};
+    use language::{Buffer, Capability};
+    use multi_buffer::{ExcerptRange, MultiBuffer};
     use rand::prelude::*;
     use settings::SettingsStore;
     use std::env;
@@ -3071,32 +3056,27 @@ mod tests {
         let buffer2 = cx.new(|cx| Buffer::local("Buffer 2", cx));
         let buffer3 = cx.new(|cx| Buffer::local("Buffer 3", cx));
 
+        let mut excerpt_ids = Vec::new();
         let multi_buffer = cx.new(|cx| {
             let mut multi_buffer = MultiBuffer::new(Capability::ReadWrite);
-            multi_buffer.set_excerpts_for_path(
-                PathKey::sorted(0),
+            excerpt_ids.extend(multi_buffer.push_excerpts(
                 buffer1.clone(),
-                [Point::zero()..buffer1.read(cx).max_point()],
-                0,
+                [ExcerptRange::new(0..buffer1.read(cx).len())],
                 cx,
-            );
-            multi_buffer.set_excerpts_for_path(
-                PathKey::sorted(1),
+            ));
+            excerpt_ids.extend(multi_buffer.push_excerpts(
                 buffer2.clone(),
-                [Point::zero()..buffer2.read(cx).max_point()],
-                0,
+                [ExcerptRange::new(0..buffer2.read(cx).len())],
                 cx,
-            );
-            multi_buffer.set_excerpts_for_path(
-                PathKey::sorted(2),
+            ));
+            excerpt_ids.extend(multi_buffer.push_excerpts(
                 buffer3.clone(),
-                [Point::zero()..buffer3.read(cx).max_point()],
-                0,
+                [ExcerptRange::new(0..buffer3.read(cx).len())],
                 cx,
-            );
+            ));
+
             multi_buffer
         });
-        let excerpt_ids = multi_buffer.read_with(cx, |mb, _| mb.excerpt_ids());
 
         let font = test_font();
         let font_size = px(14.);
@@ -3423,32 +3403,30 @@ mod tests {
     fn test_custom_blocks_inside_buffer_folds(cx: &mut gpui::TestAppContext) {
         cx.update(init_test);
 
-        let text = "111\n\n222\n\n333\n\n444\n\n555\n\n666";
+        let text = "111\n222\n333\n444\n555\n666";
 
         let buffer = cx.update(|cx| {
-            let multibuffer = MultiBuffer::build_multi(
+            MultiBuffer::build_multi(
                 [
                     (text, vec![Point::new(0, 0)..Point::new(0, 3)]),
                     (
                         text,
                         vec![
+                            Point::new(1, 0)..Point::new(1, 3),
                             Point::new(2, 0)..Point::new(2, 3),
-                            Point::new(4, 0)..Point::new(4, 3),
-                            Point::new(6, 0)..Point::new(6, 3),
+                            Point::new(3, 0)..Point::new(3, 3),
                         ],
                     ),
                     (
                         text,
                         vec![
-                            Point::new(8, 0)..Point::new(8, 3),
-                            Point::new(10, 0)..Point::new(10, 3),
+                            Point::new(4, 0)..Point::new(4, 3),
+                            Point::new(5, 0)..Point::new(5, 3),
                         ],
                     ),
                 ],
                 cx,
-            );
-            assert_eq!(multibuffer.read(cx).excerpt_ids().len(), 6);
-            multibuffer
+            )
         });
         let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
         let buffer_ids = buffer_snapshot
@@ -3484,16 +3462,16 @@ mod tests {
                 Some(0),
                 None,
                 None,
+                Some(1),
+                None,
                 Some(2),
+                None,
+                Some(3),
+                None,
                 None,
                 Some(4),
                 None,
-                Some(6),
-                None,
-                None,
-                Some(8),
-                None,
-                Some(10),
+                Some(5),
             ]
         );
 
@@ -3555,19 +3533,19 @@ mod tests {
                 None,
                 None,
                 None,
+                Some(1),
+                None,
+                None,
                 Some(2),
+                None,
+                Some(3),
+                None,
+                None,
                 None,
                 None,
                 Some(4),
                 None,
-                Some(6),
-                None,
-                None,
-                None,
-                None,
-                Some(8),
-                None,
-                Some(10),
+                Some(5),
                 None,
             ]
         );
@@ -3623,19 +3601,19 @@ mod tests {
                 None,
                 None,
                 None,
+                Some(1),
+                None,
+                None,
                 Some(2),
+                None,
+                Some(3),
+                None,
+                None,
                 None,
                 None,
                 Some(4),
                 None,
-                Some(6),
-                None,
-                None,
-                None,
-                None,
-                Some(8),
-                None,
-                Some(10),
+                Some(5),
                 None,
             ]
         );
@@ -3686,9 +3664,9 @@ mod tests {
                 None,
                 None,
                 None,
-                Some(8),
+                Some(4),
                 None,
-                Some(10),
+                Some(5),
                 None,
             ]
         );
@@ -3742,9 +3720,9 @@ mod tests {
                 None,
                 None,
                 None,
-                Some(8),
+                Some(4),
                 None,
-                Some(10),
+                Some(5),
                 None,
             ]
         );
@@ -4612,10 +4590,9 @@ mod tests {
 
         let lhs_multibuffer = cx.new(|cx| {
             let mut mb = MultiBuffer::new(Capability::ReadWrite);
-            mb.set_excerpts_for_buffer(
+            mb.push_excerpts(
                 lhs_buffer.clone(),
-                [Point::zero()..lhs_buffer.read(cx).max_point()],
-                0,
+                [ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
                 cx,
             );
             mb.add_inverted_diff(diff.clone(), rhs_buffer.clone(), cx);
@@ -4623,10 +4600,9 @@ mod tests {
         });
         let rhs_multibuffer = cx.new(|cx| {
             let mut mb = MultiBuffer::new(Capability::ReadWrite);
-            mb.set_excerpts_for_buffer(
+            mb.push_excerpts(
                 rhs_buffer.clone(),
-                [Point::zero()..rhs_buffer.read(cx).max_point()],
-                0,
+                [ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
                 cx,
             );
             mb.add_diff(diff.clone(), cx);

@@ -1,4 +1,5 @@
 mod button;
+mod button_icon;
 mod button_like;
 mod button_link;
 mod copy_button;

@@ -378,14 +378,14 @@ pub fn set_mode(content: &mut SettingsContent, mode: ThemeAppearanceMode) {
 
     if let Some(selection) = theme.theme.as_mut() {
         match selection {
-            settings::ThemeSelection::Static(_) => {
+            settings::ThemeSelection::Static(theme) => {
                 // If the theme was previously set to a single static theme,
-                // reset to the default dynamic light/dark pair and let users
-                // customize light/dark themes explicitly afterward.
+                // we don't know whether it was a light or dark theme, so we
+                // just use it for both.
                 *selection = settings::ThemeSelection::Dynamic {
-                    mode: ThemeAppearanceMode::System,
-                    light: ThemeName(settings::DEFAULT_LIGHT_THEME.into()),
-                    dark: ThemeName(settings::DEFAULT_DARK_THEME.into()),
+                    mode,
+                    light: theme.clone(),
+                    dark: theme.clone(),
                 };
             }
             settings::ThemeSelection::Dynamic {

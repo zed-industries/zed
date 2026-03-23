@@ -6,11 +6,9 @@ use std::{
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use collections::HashMap;
 
-use gpui::{
-    Action, AppContext as _, Entity, EventEmitter, Focusable, Font, Subscription, WeakEntity,
-};
+use gpui::{Action, AppContext as _, Entity, EventEmitter, Focusable, Subscription, WeakEntity};
 use itertools::Itertools;
-use language::{Buffer, Capability, HighlightedText};
+use language::{Buffer, Capability};
 use multi_buffer::{
     Anchor, BufferOffset, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer,
     MultiBufferDiffHunk, MultiBufferPoint, MultiBufferSnapshot, PathKey,
@@ -31,7 +29,7 @@ use crate::{
 };
 use workspace::{
     ActivatePaneLeft, ActivatePaneRight, Item, ToolbarItemLocation, Workspace,
-    item::{ItemBufferKind, ItemEvent, SaveOptions, TabContentParams},
+    item::{BreadcrumbText, ItemBufferKind, ItemEvent, SaveOptions, TabContentParams},
     searchable::{SearchEvent, SearchToken, SearchableItem, SearchableItemHandle},
 };
 
@@ -448,9 +446,6 @@ impl SplittableEditor {
             let mut editor =
                 Editor::for_multibuffer(rhs_multibuffer.clone(), Some(project.clone()), window, cx);
             editor.set_expand_all_diff_hunks(cx);
-            editor.disable_runnables();
-            editor.disable_diagnostics(cx);
-            editor.set_minimap_visibility(crate::MinimapVisibility::Disabled, window, cx);
             editor
         });
         // TODO(split-diff) we might want to tag editor events with whether they came from rhs/lhs
@@ -1111,11 +1106,13 @@ impl SplittableEditor {
         SearchToken::new(self.focused_side() as u64)
     }
 
-    fn editor_for_token(&self, token: SearchToken) -> Option<&Entity<Editor>> {
+    fn editor_for_token(&self, token: SearchToken) -> &Entity<Editor> {
         if token.value() == SplitSide::Left as u64 {
-            return self.lhs.as_ref().map(|lhs| &lhs.editor);
+            if let Some(lhs) = &self.lhs {
+                return &lhs.editor;
+            }
         }
-        Some(&self.rhs_editor)
+        &self.rhs_editor
     }
 
     fn companion(&self, cx: &App) -> Option<Entity<Companion>> {
@@ -1170,8 +1167,8 @@ impl SplittableEditor {
                 let lhs_ranges: Vec<ExcerptRange<Point>> = rhs_multibuffer
                     .excerpts_for_buffer(main_buffer_snapshot.remote_id(), cx)
                     .into_iter()
-                    .filter(|(id, _, _)| rhs_excerpt_ids.contains(id))
-                    .map(|(_, _, excerpt_range)| {
+                    .filter(|(id, _)| rhs_excerpt_ids.contains(id))
+                    .map(|(_, excerpt_range)| {
                         let to_base_text = |range: Range<Point>| {
                             let start = diff_snapshot
                                 .buffer_point_to_base_text_range(
@@ -1855,27 +1852,12 @@ impl Item for SplittableEditor {
         self.rhs_editor.read(cx).breadcrumb_location(cx)
     }
 
-    fn breadcrumbs(&self, cx: &App) -> Option<(Vec<HighlightedText>, Option<Font>)> {
+    fn breadcrumbs(&self, cx: &App) -> Option<Vec<BreadcrumbText>> {
         self.rhs_editor.read(cx).breadcrumbs(cx)
     }
 
     fn pixel_position_of_cursor(&self, cx: &App) -> Option<gpui::Point<gpui::Pixels>> {
         self.focused_editor().read(cx).pixel_position_of_cursor(cx)
-    }
-
-    fn act_as_type<'a>(
-        &'a self,
-        type_id: std::any::TypeId,
-        self_handle: &'a Entity<Self>,
-        _: &'a App,
-    ) -> Option<gpui::AnyEntity> {
-        if type_id == std::any::TypeId::of::<Self>() {
-            Some(self_handle.clone().into())
-        } else if type_id == std::any::TypeId::of::<Editor>() {
-            Some(self.rhs_editor.clone().into())
-        } else {
-            None
-        }
     }
 }
 
@@ -1901,10 +1883,7 @@ impl SearchableItem for SplittableEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(target) = self.editor_for_token(token) else {
-            return;
-        };
-        target.update(cx, |editor, cx| {
+        self.editor_for_token(token).update(cx, |editor, cx| {
             editor.update_matches(matches, active_match_index, token, window, cx);
         });
     }
@@ -1950,10 +1929,7 @@ impl SearchableItem for SplittableEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(target) = self.editor_for_token(token) else {
-            return;
-        };
-        target.update(cx, |editor, cx| {
+        self.editor_for_token(token).update(cx, |editor, cx| {
             editor.activate_match(index, matches, token, window, cx);
         });
     }
@@ -1965,10 +1941,7 @@ impl SearchableItem for SplittableEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(target) = self.editor_for_token(token) else {
-            return;
-        };
-        target.update(cx, |editor, cx| {
+        self.editor_for_token(token).update(cx, |editor, cx| {
             editor.select_matches(matches, token, window, cx);
         });
     }
@@ -1981,10 +1954,7 @@ impl SearchableItem for SplittableEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(target) = self.editor_for_token(token) else {
-            return;
-        };
-        target.update(cx, |editor, cx| {
+        self.editor_for_token(token).update(cx, |editor, cx| {
             editor.replace(identifier, query, token, window, cx);
         });
     }
@@ -2028,7 +1998,7 @@ impl SearchableItem for SplittableEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<usize> {
-        self.editor_for_token(token)?.update(cx, |editor, cx| {
+        self.editor_for_token(token).update(cx, |editor, cx| {
             editor.active_match_index(direction, matches, token, window, cx)
         })
     }
@@ -2084,7 +2054,7 @@ impl Render for SplittableEditor {
 
 #[cfg(test)]
 mod tests {
-    use std::{any::TypeId, sync::Arc};
+    use std::sync::Arc;
 
     use buffer_diff::BufferDiff;
     use collections::{HashMap, HashSet};
@@ -2100,14 +2070,14 @@ mod tests {
     use settings::{DiffViewStyle, SettingsStore};
     use ui::{VisualContext as _, div, px};
     use util::rel_path::rel_path;
-    use workspace::{Item, MultiWorkspace};
+    use workspace::MultiWorkspace;
 
+    use crate::SplittableEditor;
     use crate::display_map::{
         BlockPlacement, BlockProperties, BlockStyle, Crease, FoldPlaceholder,
     };
     use crate::inlays::Inlay;
     use crate::test::{editor_content_with_blocks_and_width, set_block_content_for_tests};
-    use crate::{Editor, SplittableEditor};
     use multi_buffer::MultiBufferOffset;
 
     async fn init_test(
@@ -6044,18 +6014,5 @@ mod tests {
         });
 
         cx.run_until_parked();
-    }
-
-    #[gpui::test]
-    async fn test_act_as_type(cx: &mut gpui::TestAppContext) {
-        let (splittable_editor, cx) = init_test(cx, SoftWrap::None, DiffViewStyle::Split).await;
-        let editor = splittable_editor.read_with(cx, |editor, cx| {
-            editor.act_as_type(TypeId::of::<Editor>(), &splittable_editor, cx)
-        });
-
-        assert!(
-            editor.is_some(),
-            "SplittableEditor should be able to act as Editor"
-        );
     }
 }

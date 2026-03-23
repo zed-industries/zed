@@ -12,10 +12,8 @@ use gpui::{
 };
 use settings::SettingsStore;
 use std::sync::Arc;
-use ui::{
-    ContextMenu, CountBadge, Divider, DividerColor, IconButton, Tooltip, prelude::*,
-    right_click_menu,
-};
+use ui::{ContextMenu, Divider, DividerColor, IconButton, Tooltip, h_flex};
+use ui::{prelude::*, right_click_menu};
 use util::ResultExt as _;
 
 pub(crate) const RESIZE_HANDLE_SIZE: Pixels = px(6.);
@@ -942,7 +940,6 @@ impl Render for PanelButtons {
                 };
 
                 let focus_handle = dock.focus_handle(cx);
-                let icon_label = entry.panel.icon_label(window, cx);
 
                 Some(
                     right_click_menu(name)
@@ -976,7 +973,7 @@ impl Render for PanelButtons {
                         .trigger(move |is_active, _window, _cx| {
                             // Include active state in element ID to invalidate the cached
                             // tooltip when panel state changes (e.g., via keyboard shortcut)
-                            let button = IconButton::new((name, is_active_button as u64), icon)
+                            IconButton::new((name, is_active_button as u64), icon)
                                 .icon_size(IconSize::Small)
                                 .toggle_state(is_active_button)
                                 .on_click({
@@ -990,15 +987,7 @@ impl Render for PanelButtons {
                                     this.tooltip(move |_window, cx| {
                                         Tooltip::for_action(tooltip.clone(), &*action, cx)
                                     })
-                                });
-
-                            div().relative().child(button).when_some(
-                                icon_label
-                                    .clone()
-                                    .filter(|_| !is_active_button)
-                                    .and_then(|label| label.parse::<usize>().ok()),
-                                |this, count| this.child(CountBadge::new(count)),
-                            )
+                                })
                         }),
                 )
             })

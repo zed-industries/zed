@@ -35,4 +35,5 @@ ctor.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 rand.workspace = true
 util = { workspace = true, features = ["test-support"] }
+http_client = { workspace = true, features = ["test-support"] }
 zlog.workspace = true

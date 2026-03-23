@@ -13,11 +13,10 @@ pub mod fake_provider;
 use anthropic::{AnthropicError, parse_prompt_too_long};
 use anyhow::{Result, anyhow};
 use client::Client;
-use client::UserStore;
 use cloud_llm_client::CompletionRequestStatus;
 use futures::FutureExt;
 use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, App, AsyncApp, Entity, SharedString, Task, Window};
+use gpui::{AnyView, App, AsyncApp, SharedString, Task, Window};
 use http_client::{StatusCode, http};
 use icons::IconName;
 use open_router::OpenRouterError;
@@ -62,9 +61,9 @@ pub const ZED_CLOUD_PROVIDER_ID: LanguageModelProviderId = LanguageModelProvider
 pub const ZED_CLOUD_PROVIDER_NAME: LanguageModelProviderName =
     LanguageModelProviderName::new("Zed");
 
-pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
+pub fn init(client: Arc<Client>, cx: &mut App) {
     init_settings(cx);
-    RefreshLlmTokenListener::register(client, user_store, cx);
+    RefreshLlmTokenListener::register(client, cx);
 }
 
 pub fn init_settings(cx: &mut App) {
@@ -611,10 +610,6 @@ pub trait LanguageModel: Send + Sync {
 
     /// Whether this model supports thinking.
     fn supports_thinking(&self) -> bool {
-        false
-    }
-
-    fn supports_fast_mode(&self) -> bool {
         false
     }
 

@@ -317,12 +317,18 @@ If you’re used to GitHub Copilot in VS Code, you can do the same in Zed. You c
 
 #### Configuring GitHub Copilot
 
-1. Open Settings with `Cmd+,` (macOS) or `Ctrl+,` (Linux/Windows)
-2. Navigate to **AI → Edit Predictions**
-3. Click **Configure** next to "Configure Providers"
-4. Under **GitHub Copilot**, click **Sign in to GitHub**
+You should be able to sign-in to GitHub Copilot by clicking on the Zeta icon in the status bar and following the setup instructions.
+You can also add this to your settings:
 
-Once signed in, just start typing. Zed will offer suggestions inline for you to accept.
+```json
+{
+  "features": {
+    "edit_prediction_provider": "copilot"
+  }
+}
+```
+
+To invoke completions, just start typing. Zed will offer suggestions inline for you to accept.
 
 #### Additional AI Options
 

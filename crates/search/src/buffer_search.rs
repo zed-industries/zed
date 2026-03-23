@@ -6,9 +6,8 @@ use crate::{
     ToggleCaseSensitive, ToggleRegex, ToggleReplace, ToggleSelection, ToggleWholeWord,
     buffer_search::registrar::WithResultsOrExternalQuery,
     search_bar::{
-        ActionButtonState, HistoryNavigationDirection, alignment_element,
-        filter_search_results_input, input_base_styles, render_action_button, render_text_input,
-        should_navigate_history,
+        ActionButtonState, alignment_element, filter_search_results_input, input_base_styles,
+        render_action_button, render_text_input,
     },
 };
 use any_vec::AnyVec;
@@ -16,11 +15,10 @@ use collections::HashMap;
 use editor::{
     Editor, EditorSettings, MultiBufferOffset, SplittableEditor, ToggleSplitDiff,
     actions::{Backtab, FoldAll, Tab, ToggleFoldAll, UnfoldAll},
-    scroll::Autoscroll,
 };
 use futures::channel::oneshot;
 use gpui::{
-    App, ClickEvent, Context, Entity, EventEmitter, Focusable, InteractiveElement as _,
+    Action, App, ClickEvent, Context, Entity, EventEmitter, Focusable, InteractiveElement as _,
     IntoElement, KeyContext, ParentElement as _, Render, ScrollHandle, Styled, Subscription, Task,
     WeakEntity, Window, div,
 };
@@ -119,17 +117,18 @@ impl Render for BufferSearchBar {
                                 .toggle_state(!is_split)
                                 .tooltip(Tooltip::element(move |_, cx| {
                                     v_flex()
-                                        .child("Unified")
+                                        .gap_1()
+                                        .child(Label::new("Unified"))
                                         .child(
                                             h_flex()
                                                 .gap_0p5()
-                                                .text_ui_sm(cx)
+                                                .text_sm()
                                                 .text_color(Color::Muted.color(cx))
                                                 .children(render_modifiers(
                                                     &gpui::Modifiers::secondary_key(),
                                                     PlatformStyle::platform(),
                                                     None,
-                                                    Some(TextSize::Small.rems(cx).into()),
+                                                    Some(TextSize::Default.rems(cx).into()),
                                                     false,
                                                 ))
                                                 .child("click to set as default"),
@@ -169,17 +168,18 @@ impl Render for BufferSearchBar {
                                 .toggle_state(is_split)
                                 .tooltip(Tooltip::element(move |_, cx| {
                                     v_flex()
-                                        .child("Split")
+                                        .gap_1()
+                                        .child(Label::new("Split"))
                                         .child(
                                             h_flex()
                                                 .gap_0p5()
-                                                .text_ui_sm(cx)
+                                                .text_sm()
                                                 .text_color(Color::Muted.color(cx))
                                                 .children(render_modifiers(
                                                     &gpui::Modifiers::secondary_key(),
                                                     PlatformStyle::platform(),
                                                     None,
-                                                    Some(TextSize::Small.rems(cx).into()),
+                                                    Some(TextSize::Default.rems(cx).into()),
                                                     false,
                                                 ))
                                                 .child("click to set as default"),
@@ -245,9 +245,9 @@ impl Render for BufferSearchBar {
                             cx,
                         )
                     })
-                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                        this.toggle_fold_all(&ToggleFoldAll, window, cx);
-                    }))
+                    .on_click(|_event, window, cx| {
+                        window.dispatch_action(ToggleFoldAll.boxed_clone(), cx)
+                    })
             };
 
             if self.dismissed {
@@ -339,11 +339,13 @@ impl Render for BufferSearchBar {
         };
 
         let query_column = input_style
-            .child(div().flex_1().min_w_0().py_1().child(render_text_input(
-                &self.query_editor,
-                color_override,
-                cx,
-            )))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .overflow_hidden()
+                    .child(render_text_input(&self.query_editor, color_override, cx)),
+            )
             .child(
                 h_flex()
                     .flex_none()
@@ -484,42 +486,39 @@ impl Render for BufferSearchBar {
             .child(query_column)
             .child(mode_column);
 
-        let replace_line = should_show_replace_input.then(|| {
-            let replace_column = input_base_styles(replacement_border).child(
-                div()
-                    .flex_1()
-                    .py_1()
-                    .child(render_text_input(&self.replacement_editor, None, cx)),
-            );
-            let focus_handle = self.replacement_editor.read(cx).focus_handle(cx);
+        let replace_line =
+            should_show_replace_input.then(|| {
+                let replace_column = input_base_styles(replacement_border)
+                    .child(render_text_input(&self.replacement_editor, None, cx));
+                let focus_handle = self.replacement_editor.read(cx).focus_handle(cx);
 
-            let replace_actions = h_flex()
-                .min_w_64()
-                .gap_1()
-                .child(render_action_button(
-                    "buffer-search-replace-button",
-                    IconName::ReplaceNext,
-                    Default::default(),
-                    "Replace Next Match",
-                    &ReplaceNext,
-                    focus_handle.clone(),
-                ))
-                .child(render_action_button(
-                    "buffer-search-replace-button",
-                    IconName::ReplaceAll,
-                    Default::default(),
-                    "Replace All Matches",
-                    &ReplaceAll,
-                    focus_handle,
-                ));
+                let replace_actions = h_flex()
+                    .min_w_64()
+                    .gap_1()
+                    .child(render_action_button(
+                        "buffer-search-replace-button",
+                        IconName::ReplaceNext,
+                        Default::default(),
+                        "Replace Next Match",
+                        &ReplaceNext,
+                        focus_handle.clone(),
+                    ))
+                    .child(render_action_button(
+                        "buffer-search-replace-button",
+                        IconName::ReplaceAll,
+                        Default::default(),
+                        "Replace All Matches",
+                        &ReplaceAll,
+                        focus_handle,
+                    ));
 
-            h_flex()
-                .w_full()
-                .gap_2()
-                .when(has_collapse_button, |this| this.child(alignment_element()))
-                .child(replace_column)
-                .child(replace_actions)
-        });
+                h_flex()
+                    .w_full()
+                    .gap_2()
+                    .when(has_collapse_button, |this| this.child(alignment_element()))
+                    .child(replace_column)
+                    .child(replace_actions)
+            });
 
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("BufferSearchBar");
@@ -834,13 +833,13 @@ impl BufferSearchBar {
         cx: &mut Context<Self>,
     ) -> Self {
         let query_editor = cx.new(|cx| {
-            let mut editor = Editor::auto_height(1, 4, window, cx);
+            let mut editor = Editor::single_line(window, cx);
             editor.set_use_autoclose(false);
             editor
         });
         cx.subscribe_in(&query_editor, window, Self::on_query_editor_event)
             .detach();
-        let replacement_editor = cx.new(|cx| Editor::auto_height(1, 4, window, cx));
+        let replacement_editor = cx.new(|cx| Editor::single_line(window, cx));
         cx.subscribe(&replacement_editor, Self::on_replacement_editor_event)
             .detach();
 
@@ -1189,7 +1188,6 @@ impl BufferSearchBar {
                     let len = query_buffer.len(cx);
                     query_buffer.edit([(MultiBufferOffset(0)..len, query)], None, cx);
                 });
-                query_editor.request_autoscroll(Autoscroll::fit(), cx);
             });
             self.set_search_options(options, cx);
             self.clear_matches(window, cx);
@@ -1708,19 +1706,15 @@ impl BufferSearchBar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !should_navigate_history(&self.query_editor, HistoryNavigationDirection::Next, cx) {
-            cx.propagate();
-            return;
-        }
-
         if let Some(new_query) = self
             .search_history
             .next(&mut self.search_history_cursor)
             .map(str::to_string)
         {
             drop(self.search(&new_query, Some(self.search_options), false, window, cx));
-        } else if let Some(draft) = self.search_history_cursor.take_draft() {
-            drop(self.search(&draft, Some(self.search_options), false, window, cx));
+        } else {
+            self.search_history_cursor.reset();
+            drop(self.search("", Some(self.search_options), false, window, cx));
         }
     }
 
@@ -1730,11 +1724,6 @@ impl BufferSearchBar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !should_navigate_history(&self.query_editor, HistoryNavigationDirection::Previous, cx) {
-            cx.propagate();
-            return;
-        }
-
         if self.query(cx).is_empty()
             && let Some(new_query) = self
                 .search_history
@@ -1745,10 +1734,9 @@ impl BufferSearchBar {
             return;
         }
 
-        let current_query = self.query(cx);
         if let Some(new_query) = self
             .search_history
-            .previous(&mut self.search_history_cursor, &current_query)
+            .previous(&mut self.search_history_cursor)
             .map(str::to_string)
         {
             drop(self.search(&new_query, Some(self.search_options), false, window, cx));
@@ -1888,7 +1876,7 @@ mod tests {
 
     use super::*;
     use editor::{
-        DisplayPoint, Editor, MultiBuffer, PathKey, SearchSettings, SelectionEffects,
+        DisplayPoint, Editor, ExcerptRange, MultiBuffer, SearchSettings, SelectionEffects,
         display_map::DisplayRow, test::editor_test_context::EditorTestContext,
     };
     use gpui::{Hsla, TestAppContext, UpdateGlobal, VisualTestContext};
@@ -1946,18 +1934,14 @@ mod tests {
             let mut buffer = MultiBuffer::new(language::Capability::ReadWrite);
 
             //[ExcerptRange::new(Point::new(0, 0)..Point::new(2, 0))]
-            buffer.set_excerpts_for_path(
-                PathKey::sorted(0),
+            buffer.push_excerpts(
                 buffer1,
-                [Point::new(0, 0)..Point::new(3, 0)],
-                0,
+                [ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0))],
                 cx,
             );
-            buffer.set_excerpts_for_path(
-                PathKey::sorted(1),
+            buffer.push_excerpts(
                 buffer2,
-                [Point::new(0, 0)..Point::new(1, 0)],
-                0,
+                [ExcerptRange::new(Point::new(0, 0)..Point::new(1, 0))],
                 cx,
             );
 
@@ -2730,13 +2714,13 @@ mod tests {
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
         });
 
-        // Next history query after the latest should preserve the current query.
+        // Next history query after the latest should set the query to the empty string.
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.next_history_query(&NextHistoryQuery, window, cx);
         });
         cx.background_executor.run_until_parked();
         search_bar.update(cx, |search_bar, cx| {
-            assert_eq!(search_bar.query(cx), "c");
+            assert_eq!(search_bar.query(cx), "");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
         });
         search_bar.update_in(cx, |search_bar, window, cx| {
@@ -2744,17 +2728,17 @@ mod tests {
         });
         cx.background_executor.run_until_parked();
         search_bar.update(cx, |search_bar, cx| {
-            assert_eq!(search_bar.query(cx), "c");
+            assert_eq!(search_bar.query(cx), "");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
         });
 
-        // Previous query should navigate backwards through history.
+        // First previous query for empty current query should set the query to the latest.
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.previous_history_query(&PreviousHistoryQuery, window, cx);
         });
         cx.background_executor.run_until_parked();
         search_bar.update(cx, |search_bar, cx| {
-            assert_eq!(search_bar.query(cx), "b");
+            assert_eq!(search_bar.query(cx), "c");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
         });
 
@@ -2764,7 +2748,7 @@ mod tests {
         });
         cx.background_executor.run_until_parked();
         search_bar.update(cx, |search_bar, cx| {
-            assert_eq!(search_bar.query(cx), "a");
+            assert_eq!(search_bar.query(cx), "b");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
         });
 
@@ -2845,68 +2829,8 @@ mod tests {
         });
         cx.background_executor.run_until_parked();
         search_bar.update(cx, |search_bar, cx| {
-            assert_eq!(search_bar.query(cx), "ba");
+            assert_eq!(search_bar.query(cx), "");
             assert_eq!(search_bar.search_options, SearchOptions::NONE);
-        });
-    }
-
-    #[perf]
-    #[gpui::test]
-    async fn test_search_query_history_autoscroll(cx: &mut TestAppContext) {
-        let (_editor, search_bar, cx) = init_test(cx);
-
-        // Add a long multi-line query that exceeds the editor's max
-        // visible height (4 lines), then a short query.
-        let long_query = "line1\nline2\nline3\nline4\nline5\nline6";
-        search_bar
-            .update_in(cx, |search_bar, window, cx| {
-                search_bar.search(long_query, None, true, window, cx)
-            })
-            .await
-            .unwrap();
-        search_bar
-            .update_in(cx, |search_bar, window, cx| {
-                search_bar.search("short", None, true, window, cx)
-            })
-            .await
-            .unwrap();
-
-        // Navigate back to the long entry. Since "short" is single-line,
-        // the history navigation is allowed.
-        search_bar.update_in(cx, |search_bar, window, cx| {
-            search_bar.previous_history_query(&PreviousHistoryQuery, window, cx);
-        });
-        cx.background_executor.run_until_parked();
-        search_bar.update(cx, |search_bar, cx| {
-            assert_eq!(search_bar.query(cx), long_query);
-        });
-
-        // The cursor should be scrolled into view despite the content
-        // exceeding the editor's max visible height.
-        search_bar.update_in(cx, |search_bar, window, cx| {
-            let snapshot = search_bar
-                .query_editor
-                .update(cx, |editor, cx| editor.snapshot(window, cx));
-            let cursor_row = search_bar
-                .query_editor
-                .read(cx)
-                .selections
-                .newest_display(&snapshot)
-                .head()
-                .row();
-            let scroll_top = search_bar
-                .query_editor
-                .update(cx, |editor, cx| editor.scroll_position(cx).y);
-            let visible_lines = search_bar
-                .query_editor
-                .read(cx)
-                .visible_line_count()
-                .unwrap_or(0.0);
-            let scroll_bottom = scroll_top + visible_lines;
-            assert!(
-                (cursor_row.0 as f64) < scroll_bottom,
-                "cursor row {cursor_row:?} should be visible (scroll range {scroll_top}..{scroll_bottom})"
-            );
         });
     }
 

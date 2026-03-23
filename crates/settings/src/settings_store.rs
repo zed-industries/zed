@@ -241,11 +241,6 @@ impl LocalSettingsPath {
 
 impl Global for SettingsStore {}
 
-#[derive(Default)]
-pub struct DefaultSemanticTokenRules(pub SemanticTokenRules);
-
-impl gpui::Global for DefaultSemanticTokenRules {}
-
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct SettingValue<T> {
@@ -280,22 +275,29 @@ pub struct SettingsJsonSchemaParams<'a> {
 
 impl SettingsStore {
     pub fn new(cx: &mut App, default_settings: &str) -> Self {
-        Self::new_with_semantic_tokens(cx, default_settings)
+        Self::new_with_semantic_tokens(cx, default_settings, &crate::default_semantic_token_rules())
     }
 
-    pub fn new_with_semantic_tokens(cx: &mut App, default_settings: &str) -> Self {
+    pub fn new_with_semantic_tokens(
+        cx: &mut App,
+        default_settings: &str,
+        default_semantic_tokens: &str,
+    ) -> Self {
         let (setting_file_updates_tx, mut setting_file_updates_rx) = mpsc::unbounded();
-        let default_settings: SettingsContent =
+        let mut default_settings: SettingsContent =
             SettingsContent::parse_json_with_comments(default_settings).unwrap();
-        if !cx.has_global::<DefaultSemanticTokenRules>() {
-            cx.set_global::<DefaultSemanticTokenRules>(
-                crate::parse_json_with_comments::<SemanticTokenRules>(
-                    &crate::default_semantic_token_rules(),
-                )
-                .map(DefaultSemanticTokenRules)
-                .unwrap_or_default(),
-            );
+        if let Ok(semantic_token_rules) =
+            crate::parse_json_with_comments::<SemanticTokenRules>(default_semantic_tokens)
+        {
+            let global_lsp = default_settings
+                .global_lsp_settings
+                .get_or_insert_with(Default::default);
+            let existing_rules = global_lsp
+                .semantic_token_rules
+                .get_or_insert_with(Default::default);
+            existing_rules.rules.extend(semantic_token_rules.rules);
         }
+
         let default_settings: Rc<SettingsContent> = default_settings.into();
         let mut this = Self {
             setting_values: Default::default(),
@@ -866,30 +868,18 @@ impl SettingsStore {
     /// Sets language-specific semantic token rules.
     ///
     /// These rules are registered by language modules (e.g. the Rust language module)
-    /// or by third-party extensions (via `semantic_token_rules.json` in their language
-    /// directories). They are stored separately from the global rules and are only
-    /// applied to buffers of the matching language by the `SemanticTokenStylizer`.
+    /// and are stored separately from the global rules. They are only applied to
+    /// buffers of the matching language by the `SemanticTokenStylizer`.
     ///
-    /// This triggers a settings recomputation so that observers (e.g. `LspStore`)
-    /// are notified and can invalidate cached stylizers.
+    /// These should be registered before any `SemanticTokenStylizer` instances are
+    /// created (typically during `languages::init`), as existing cached stylizers
+    /// are not automatically invalidated.
     pub fn set_language_semantic_token_rules(
         &mut self,
         language: SharedString,
         rules: SemanticTokenRules,
-        cx: &mut App,
     ) {
         self.language_semantic_token_rules.insert(language, rules);
-        self.recompute_values(None, cx);
-    }
-
-    /// Removes language-specific semantic token rules for the given language.
-    ///
-    /// This should be called when an extension that registered rules for a language
-    /// is unloaded. Triggers a settings recomputation so that observers (e.g.
-    /// `LspStore`) are notified and can invalidate cached stylizers.
-    pub fn remove_language_semantic_token_rules(&mut self, language: &str, cx: &mut App) {
-        self.language_semantic_token_rules.remove(language);
-        self.recompute_values(None, cx);
     }
 
     /// Returns the language-specific semantic token rules for the given language,
@@ -1706,7 +1696,7 @@ mod tests {
             r#"{
                 "languages": {
                     "JSON": {
-                        "auto_indent": "syntax_aware"
+                        "auto_indent": true
                     }
                 }
             }"#
@@ -1716,12 +1706,12 @@ mod tests {
                     .languages_mut()
                     .get_mut("JSON")
                     .unwrap()
-                    .auto_indent = Some(crate::AutoIndentMode::None);
+                    .auto_indent = Some(false);
 
                 settings.languages_mut().insert(
                     "Rust".into(),
                     LanguageSettingsContent {
-                        auto_indent: Some(crate::AutoIndentMode::SyntaxAware),
+                        auto_indent: Some(true),
                         ..Default::default()
                     },
                 );
@@ -1729,10 +1719,10 @@ mod tests {
             r#"{
                 "languages": {
                     "Rust": {
-                        "auto_indent": "syntax_aware"
+                        "auto_indent": true
                     },
                     "JSON": {
-                        "auto_indent": "none"
+                        "auto_indent": false
                     }
                 }
             }"#

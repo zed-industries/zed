@@ -1,9 +1,6 @@
 (emphasis) @emphasis.markup
-
 (strong_emphasis) @emphasis.strong.markup
-
 (code_span) @text.literal.markup
-
 (strikethrough) @strikethrough.markup
 
 [
@@ -16,18 +13,8 @@
   (link_label)
 ] @link_text.markup
 
-(inline_link
-  [
-    "("
-    ")"
-  ] @link_uri.markup)
-
-(image
-  [
-    "("
-    ")"
-  ] @link_uri.markup)
-
+(inline_link ["(" ")"] @link_uri.markup)
+(image ["(" ")"] @link_uri.markup)
 [
   (link_destination)
   (uri_autolink)

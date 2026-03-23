@@ -1,4 +1,3 @@
-#![cfg_attr(target_family = "wasm", no_main)]
 //! Example demonstrating GPUI's testing infrastructure.
 //!
 //! When run normally, this displays an interactive counter window.
@@ -177,7 +176,7 @@ impl Render for Counter {
     }
 }
 
-fn run_example() {
+fn main() {
     application().run(|cx: &mut App| {
         cx.bind_keys([
             gpui::KeyBinding::new("up", Increment, Some("Counter")),
@@ -198,18 +197,6 @@ fn run_example() {
         )
         .unwrap();
     });
-}
-
-#[cfg(not(target_family = "wasm"))]
-fn main() {
-    run_example();
-}
-
-#[cfg(target_family = "wasm")]
-#[wasm_bindgen::prelude::wasm_bindgen(start)]
-pub fn start() {
-    gpui_platform::web_init();
-    run_example();
 }
 
 #[cfg(test)]

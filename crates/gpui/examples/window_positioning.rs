@@ -1,5 +1,3 @@
-#![cfg_attr(target_family = "wasm", no_main)]
-
 use gpui::{
     App, Bounds, Context, DisplayId, Hsla, Pixels, SharedString, Size, Window,
     WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions, div, point, prelude::*,
@@ -70,7 +68,7 @@ fn build_window_options(display_id: DisplayId, bounds: Bounds<Pixels>) -> Window
     }
 }
 
-fn run_example() {
+fn main() {
     application().run(|cx: &mut App| {
         // Create several new windows, positioned in the top right corner of each screen
         let size = Size {
@@ -219,16 +217,4 @@ fn run_example() {
             .unwrap();
         }
     });
-}
-
-#[cfg(not(target_family = "wasm"))]
-fn main() {
-    run_example();
-}
-
-#[cfg(target_family = "wasm")]
-#[wasm_bindgen::prelude::wasm_bindgen(start)]
-pub fn start() {
-    gpui_platform::web_init();
-    run_example();
 }

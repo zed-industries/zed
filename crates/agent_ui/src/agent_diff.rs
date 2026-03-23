@@ -686,11 +686,10 @@ impl Render for AgentDiffPane {
                         .child(
                             Button::new("continue-iterating", "Continue Iterating")
                                 .style(ButtonStyle::Filled)
-                                .start_icon(
-                                    Icon::new(IconName::ForwardArrow)
-                                        .size(IconSize::Small)
-                                        .color(Color::Muted),
-                                )
+                                .icon(IconName::ForwardArrow)
+                                .icon_position(IconPosition::Start)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Muted)
                                 .full_width()
                                 .key_binding(KeyBinding::for_action_in(
                                     &ToggleFocus,
@@ -832,7 +831,6 @@ fn render_diff_hunk_controls(
                                         &snapshot,
                                         position,
                                         Direction::Next,
-                                        true,
                                         window,
                                         cx,
                                     );
@@ -868,7 +866,6 @@ fn render_diff_hunk_controls(
                                         &snapshot,
                                         point,
                                         Direction::Prev,
-                                        true,
                                         window,
                                         cx,
                                     );
@@ -1406,7 +1403,7 @@ impl AgentDiff {
                     self.update_reviewing_editors(workspace, window, cx);
                 }
             }
-            AcpThreadEvent::Stopped(_) => {
+            AcpThreadEvent::Stopped => {
                 self.update_reviewing_editors(workspace, window, cx);
             }
             AcpThreadEvent::Error | AcpThreadEvent::LoadError(_) | AcpThreadEvent::Refusal => {
@@ -1805,7 +1802,7 @@ mod tests {
     use settings::SettingsStore;
     use std::{path::Path, rc::Rc};
     use util::path;
-    use workspace::{MultiWorkspace, PathList};
+    use workspace::MultiWorkspace;
 
     #[gpui::test]
     async fn test_multibuffer_agent_diff(cx: &mut TestAppContext) {
@@ -1833,11 +1830,9 @@ mod tests {
         let connection = Rc::new(acp_thread::StubAgentConnection::new());
         let thread = cx
             .update(|cx| {
-                connection.clone().new_session(
-                    project.clone(),
-                    PathList::new(&[Path::new(path!("/test"))]),
-                    cx,
-                )
+                connection
+                    .clone()
+                    .new_session(project.clone(), Path::new(path!("/test")), cx)
             })
             .await
             .unwrap();
@@ -2026,11 +2021,9 @@ mod tests {
         let connection = Rc::new(acp_thread::StubAgentConnection::new());
         let thread = cx
             .update(|_, cx| {
-                connection.clone().new_session(
-                    project.clone(),
-                    PathList::new(&[Path::new(path!("/test"))]),
-                    cx,
-                )
+                connection
+                    .clone()
+                    .new_session(project.clone(), Path::new(path!("/test")), cx)
             })
             .await
             .unwrap();

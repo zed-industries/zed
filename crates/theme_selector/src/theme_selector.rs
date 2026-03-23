@@ -497,11 +497,10 @@ impl PickerDelegate for ThemeSelectorDelegate {
                 .border_color(cx.theme().colors().border_variant)
                 .child(
                     Button::new("docs", "View Theme Docs")
-                        .end_icon(
-                            Icon::new(IconName::ArrowUpRight)
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
-                        )
+                        .icon(IconName::ArrowUpRight)
+                        .icon_position(IconPosition::End)
+                        .icon_size(IconSize::Small)
+                        .icon_color(Color::Muted)
                         .on_click(cx.listener(|_, _, _, cx| {
                             cx.open_url("https://zed.dev/docs/themes");
                         })),

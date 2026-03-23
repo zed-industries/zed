@@ -161,7 +161,6 @@
 - [Debugger Extensions](./extensions/debugger-extensions.md)
 - [Theme Extensions](./extensions/themes.md)
 - [Icon Theme Extensions](./extensions/icon-themes.md)
-- [Snippets Extensions](./extensions/snippets.md)
 - [Slash Command Extensions](./extensions/slash-commands.md)
 - [Agent Server Extensions](./extensions/agent-servers.md)
 - [MCP Server Extensions](./extensions/mcp-extensions.md)
@@ -183,7 +182,6 @@
 # Account & Privacy
 
 - [Authenticate](./authentication.md)
-- [Roles](./roles.md)
 - [Privacy and Security](./ai/privacy-and-security.md)
   - [Worktree Trust](./worktree-trust.md)
   - [AI Improvement](./ai/ai-improvement.md)

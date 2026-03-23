@@ -564,7 +564,6 @@ impl ExampleInstance {
                 stop: Vec::new(),
                 thinking_allowed: true,
                 thinking_effort: None,
-                speed: None,
             };
 
             let model = model.clone();
@@ -683,7 +682,9 @@ impl agent::ThreadEnvironment for EvalThreadEnvironment {
 
     fn create_subagent(
         &self,
+        _parent_thread: Entity<agent::Thread>,
         _label: String,
+        _initial_prompt: String,
         _cx: &mut App,
     ) -> Result<Rc<dyn agent::SubagentHandle>> {
         unimplemented!()

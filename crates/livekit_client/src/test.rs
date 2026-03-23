@@ -10,7 +10,7 @@ use parking_lot::Mutex;
 use postage::{mpsc, sink::Sink};
 use std::sync::{
     Arc, Weak,
-    atomic::{AtomicBool, AtomicU64, Ordering::SeqCst},
+    atomic::{AtomicBool, Ordering::SeqCst},
 };
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
@@ -39,15 +39,6 @@ pub enum ConnectionState {
     Connected,
     Disconnected,
 }
-
-#[derive(Clone, Debug, Default)]
-pub struct SessionStats {
-    pub publisher_stats: Vec<RtcStats>,
-    pub subscriber_stats: Vec<RtcStats>,
-}
-
-#[derive(Clone, Debug)]
-pub enum RtcStats {}
 
 static SERVERS: Mutex<BTreeMap<String, Arc<TestServer>>> = Mutex::new(BTreeMap::new());
 
@@ -748,16 +739,8 @@ impl Room {
         _track_name: String,
         _is_staff: bool,
         cx: &mut AsyncApp,
-    ) -> Result<(LocalTrackPublication, AudioStream, Arc<AtomicU64>)> {
+    ) -> Result<(LocalTrackPublication, AudioStream)> {
         self.local_participant().publish_microphone_track(cx).await
-    }
-
-    pub async fn get_stats(&self) -> Result<SessionStats> {
-        Ok(SessionStats::default())
-    }
-
-    pub fn stats_task(&self, _cx: &impl gpui::AppContext) -> gpui::Task<Result<SessionStats>> {
-        gpui::Task::ready(Ok(SessionStats::default()))
     }
 }
 

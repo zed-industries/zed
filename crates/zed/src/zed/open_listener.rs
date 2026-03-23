@@ -1,11 +1,10 @@
 use crate::handle_open_request;
 use crate::restore_or_create_workspace;
-use agent_ui::ExternalSourcePrompt;
 use anyhow::{Context as _, Result, anyhow};
 use cli::{CliRequest, CliResponse, ipc::IpcSender};
 use cli::{IpcHandshake, ipc};
 use client::{ZedLink, parse_zed_link};
-use db::kvp::KeyValueStore;
+use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use fs::Fs;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -29,7 +28,7 @@ use util::ResultExt;
 use util::paths::PathWithPosition;
 use workspace::PathList;
 use workspace::item::ItemHandle;
-use workspace::{AppState, MultiWorkspace, OpenOptions, OpenResult, SerializedWorkspaceLocation};
+use workspace::{AppState, MultiWorkspace, OpenOptions, SerializedWorkspaceLocation};
 
 #[derive(Default, Debug)]
 pub struct OpenRequest {
@@ -49,7 +48,7 @@ pub enum OpenRequestKind {
         extension_id: String,
     },
     AgentPanel {
-        external_source_prompt: Option<ExternalSourcePrompt>,
+        initial_prompt: Option<String>,
     },
     SharedAgentThread {
         session_id: String,
@@ -111,6 +110,8 @@ impl OpenRequest {
                 this.kind = Some(OpenRequestKind::Extension {
                     extension_id: extension_id.to_string(),
                 });
+            } else if let Some(agent_path) = url.strip_prefix("zed://agent") {
+                this.parse_agent_url(agent_path)
             } else if let Some(session_id_str) = url.strip_prefix("zed://agent/shared/") {
                 if uuid::Uuid::parse_str(session_id_str).is_ok() {
                     this.kind = Some(OpenRequestKind::SharedAgentThread {
@@ -119,8 +120,6 @@ impl OpenRequest {
                 } else {
                     log::error!("Invalid session ID in URL: {}", session_id_str);
                 }
-            } else if let Some(agent_path) = url.strip_prefix("zed://agent") {
-                this.parse_agent_url(agent_path)
             } else if let Some(schema_path) = url.strip_prefix("zed://schemas/") {
                 this.kind = Some(OpenRequestKind::BuiltinJsonSchema {
                     schema_path: schema_path.to_string(),
@@ -165,14 +164,13 @@ impl OpenRequest {
 
     fn parse_agent_url(&mut self, agent_path: &str) {
         // Format: "" or "?prompt=<text>"
-        let external_source_prompt = agent_path.strip_prefix('?').and_then(|query| {
+        let initial_prompt = agent_path.strip_prefix('?').and_then(|query| {
             url::form_urlencoded::parse(query.as_bytes())
                 .find_map(|(key, value)| (key == "prompt").then_some(value))
-                .and_then(|prompt| ExternalSourcePrompt::new(prompt.as_ref()))
+                .filter(|s| !s.is_empty())
+                .map(|s| s.into_owned())
         });
-        self.kind = Some(OpenRequestKind::AgentPanel {
-            external_source_prompt,
-        });
+        self.kind = Some(OpenRequestKind::AgentPanel { initial_prompt });
     }
 
     fn parse_git_clone_url(&mut self, clone_path: &str) -> Result<()> {
@@ -345,11 +343,7 @@ pub async fn open_paths_with_positions(
         .map(|path_with_position| path_with_position.path.clone())
         .collect::<Vec<_>>();
 
-    let OpenResult {
-        window: multi_workspace,
-        opened_items: mut items,
-        ..
-    } = cx
+    let (multi_workspace, mut items) = cx
         .update(|cx| workspace::open_paths(&paths, app_state, open_options, cx))
         .await?;
 
@@ -491,8 +485,7 @@ async fn open_workspaces(
 
     if grouped_locations.is_empty() {
         // If we have no paths to open, show the welcome screen if this is the first launch
-        let kvp = cx.update(|cx| KeyValueStore::global(cx));
-        if matches!(kvp.read_kvp(FIRST_OPEN), Ok(None)) {
+        if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
             cx.update(|cx| show_onboarding_view(app_state, cx).detach());
         }
         // If not the first launch, show an empty window with empty editor
@@ -777,137 +770,6 @@ mod tests {
             })
         );
         assert_eq!(request.open_paths, vec!["/"]);
-    }
-
-    #[gpui::test]
-    fn test_parse_agent_url(cx: &mut TestAppContext) {
-        let _app_state = init_test(cx);
-
-        let request = cx.update(|cx| {
-            OpenRequest::parse(
-                RawOpenRequest {
-                    urls: vec!["zed://agent".into()],
-                    ..Default::default()
-                },
-                cx,
-            )
-            .unwrap()
-        });
-
-        match request.kind {
-            Some(OpenRequestKind::AgentPanel {
-                external_source_prompt,
-            }) => {
-                assert_eq!(external_source_prompt, None);
-            }
-            _ => panic!("Expected AgentPanel kind"),
-        }
-    }
-
-    fn agent_url_with_prompt(prompt: &str) -> String {
-        let mut serializer = url::form_urlencoded::Serializer::new("zed://agent?".to_string());
-        serializer.append_pair("prompt", prompt);
-        serializer.finish()
-    }
-
-    #[gpui::test]
-    fn test_parse_agent_url_with_prompt(cx: &mut TestAppContext) {
-        let _app_state = init_test(cx);
-        let prompt = "Write me a script\nThanks";
-
-        let request = cx.update(|cx| {
-            OpenRequest::parse(
-                RawOpenRequest {
-                    urls: vec![agent_url_with_prompt(prompt)],
-                    ..Default::default()
-                },
-                cx,
-            )
-            .unwrap()
-        });
-
-        match request.kind {
-            Some(OpenRequestKind::AgentPanel {
-                external_source_prompt,
-            }) => {
-                assert_eq!(
-                    external_source_prompt
-                        .as_ref()
-                        .map(ExternalSourcePrompt::as_str),
-                    Some("Write me a script\nThanks")
-                );
-            }
-            _ => panic!("Expected AgentPanel kind"),
-        }
-    }
-
-    #[gpui::test]
-    fn test_parse_agent_url_with_empty_prompt(cx: &mut TestAppContext) {
-        let _app_state = init_test(cx);
-
-        let request = cx.update(|cx| {
-            OpenRequest::parse(
-                RawOpenRequest {
-                    urls: vec![agent_url_with_prompt("")],
-                    ..Default::default()
-                },
-                cx,
-            )
-            .unwrap()
-        });
-
-        match request.kind {
-            Some(OpenRequestKind::AgentPanel {
-                external_source_prompt,
-            }) => {
-                assert_eq!(external_source_prompt, None);
-            }
-            _ => panic!("Expected AgentPanel kind"),
-        }
-    }
-
-    #[gpui::test]
-    fn test_parse_shared_agent_thread_url(cx: &mut TestAppContext) {
-        let _app_state = init_test(cx);
-        let session_id = "123e4567-e89b-12d3-a456-426614174000";
-
-        let request = cx.update(|cx| {
-            OpenRequest::parse(
-                RawOpenRequest {
-                    urls: vec![format!("zed://agent/shared/{session_id}")],
-                    ..Default::default()
-                },
-                cx,
-            )
-            .unwrap()
-        });
-
-        match request.kind {
-            Some(OpenRequestKind::SharedAgentThread {
-                session_id: parsed_session_id,
-            }) => {
-                assert_eq!(parsed_session_id, session_id);
-            }
-            _ => panic!("Expected SharedAgentThread kind"),
-        }
-    }
-
-    #[gpui::test]
-    fn test_parse_shared_agent_thread_url_with_invalid_uuid(cx: &mut TestAppContext) {
-        let _app_state = init_test(cx);
-
-        let request = cx.update(|cx| {
-            OpenRequest::parse(
-                RawOpenRequest {
-                    urls: vec!["zed://agent/shared/not-a-uuid".into()],
-                    ..Default::default()
-                },
-                cx,
-            )
-            .unwrap()
-        });
-
-        assert!(request.kind.is_none());
     }
 
     #[gpui::test]

@@ -1,13 +1,12 @@
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
-use db::kvp::KeyValueStore;
+use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use extension_host::ExtensionStore;
 use gpui::{AppContext as _, Context, Entity, SharedString, Window};
 use language::Buffer;
 use ui::prelude::*;
-use util::ResultExt;
 use util::rel_path::RelPath;
 use workspace::notifications::simple_message_notification::MessageNotification;
 use workspace::{Workspace, notifications::NotificationId};
@@ -148,8 +147,7 @@ pub(crate) fn suggest(buffer: Entity<Buffer>, window: &mut Window, cx: &mut Cont
     };
 
     let key = language_extension_key(&extension_id);
-    let kvp = KeyValueStore::global(cx);
-    let Ok(None) = kvp.read_kvp(&key) else {
+    let Ok(None) = KEY_VALUE_STORE.read_kvp(&key) else {
         return;
     };
 
@@ -195,11 +193,9 @@ pub(crate) fn suggest(buffer: Entity<Buffer>, window: &mut Window, cx: &mut Cont
                 .secondary_icon_color(Color::Error)
                 .secondary_on_click(move |_window, cx| {
                     let key = language_extension_key(&extension_id);
-                    let kvp = KeyValueStore::global(cx);
-                    cx.background_spawn(async move {
-                        kvp.write_kvp(key, "dismissed".to_string()).await.log_err()
-                    })
-                    .detach();
+                    db::write_and_log(cx, move || {
+                        KEY_VALUE_STORE.write_kvp(key, "dismissed".to_string())
+                    });
                 })
             })
         });

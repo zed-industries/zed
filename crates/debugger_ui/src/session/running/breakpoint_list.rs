@@ -6,7 +6,7 @@ use std::{
 };
 
 use dap::{Capabilities, ExceptionBreakpointsFilter, adapters::DebugAdapterName};
-use db::kvp::KeyValueStore;
+use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use gpui::{
     Action, AppContext, ClickEvent, Entity, FocusHandle, Focusable, MouseButton, ScrollStrategy,
@@ -520,9 +520,8 @@ impl BreakpointList {
             });
             let value = serde_json::to_string(&settings);
 
-            let kvp = KeyValueStore::global(cx);
             cx.background_executor()
-                .spawn(async move { kvp.write_kvp(key, value?).await })
+                .spawn(async move { KEY_VALUE_STORE.write_kvp(key, value?).await })
         } else {
             Task::ready(Result::Ok(()))
         }
@@ -533,7 +532,7 @@ impl BreakpointList {
         adapter_name: DebugAdapterName,
         cx: &mut Context<Self>,
     ) -> anyhow::Result<()> {
-        let Some(val) = KeyValueStore::global(cx).read_kvp(&Self::kvp_key(&adapter_name))? else {
+        let Some(val) = KEY_VALUE_STORE.read_kvp(&Self::kvp_key(&adapter_name))? else {
             return Ok(());
         };
         let value: PersistedAdapterOptions = serde_json::from_str(&val)?;

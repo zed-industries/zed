@@ -106,17 +106,18 @@ impl IClassFactory_Impl for ExplorerCommandInjectorFactory_Impl {
         riid: *const windows_core::GUID,
         ppvobject: *mut *mut core::ffi::c_void,
     ) -> Result<()> {
-        if ppvobject.is_null() || riid.is_null() {
-            return Err(windows::Win32::Foundation::E_POINTER.into());
-        }
-
         unsafe {
             *ppvobject = std::ptr::null_mut();
         }
-
         if punkouter.is_none() {
             let factory: IExplorerCommand = ExplorerCommandInjector {}.into();
-            unsafe { factory.query(riid, ppvobject).ok() }
+            let ret = unsafe { factory.query(riid, ppvobject).ok() };
+            if ret.is_ok() {
+                unsafe {
+                    *ppvobject = factory.into_raw();
+                }
+            }
+            ret
         } else {
             Err(E_INVALIDARG.into())
         }
@@ -144,17 +145,19 @@ extern "system" fn DllGetClassObject(
     iid: *const GUID,
     out: *mut *mut std::ffi::c_void,
 ) -> HRESULT {
-    if out.is_null() || class_id.is_null() || iid.is_null() {
-        return E_INVALIDARG;
-    }
-
     unsafe {
         *out = std::ptr::null_mut();
     }
     let class_id = unsafe { *class_id };
     if class_id == MODULE_ID {
         let instance: IClassFactory = ExplorerCommandInjectorFactory {}.into();
-        unsafe { instance.query(iid, out) }
+        let ret = unsafe { instance.query(iid, out) };
+        if ret.is_ok() {
+            unsafe {
+                *out = instance.into_raw();
+            }
+        }
+        ret
     } else {
         CLASS_E_CLASSNOTAVAILABLE
     }

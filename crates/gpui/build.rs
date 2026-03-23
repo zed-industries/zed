@@ -1,17 +1,14 @@
 #![allow(clippy::disallowed_methods, reason = "build scripts are exempt")]
+#![cfg_attr(not(target_os = "macos"), allow(unused))]
 
 fn main() {
     println!("cargo::rustc-check-cfg=cfg(gles)");
 
-    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-
-    if target_os == "windows" {
-        #[cfg(feature = "windows-manifest")]
-        embed_resource();
-    }
+    #[cfg(all(target_os = "windows", feature = "windows-manifest"))]
+    embed_resource();
 }
 
-#[cfg(feature = "windows-manifest")]
+#[cfg(all(target_os = "windows", feature = "windows-manifest"))]
 fn embed_resource() {
     let manifest = std::path::Path::new("resources/windows/gpui.manifest.xml");
     let rc_file = std::path::Path::new("resources/windows/gpui.rc");

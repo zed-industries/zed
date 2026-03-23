@@ -1,15 +1,14 @@
 use gpui::{
-    AnyElement, App, Context, EventEmitter, Font, Global, IntoElement, Render, Subscription, Window,
+    AnyElement, App, Context, EventEmitter, Global, IntoElement, Render, Subscription, Window,
 };
 use ui::prelude::*;
 use workspace::{
     ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
-    item::{HighlightedText, ItemEvent, ItemHandle},
+    item::{BreadcrumbText, ItemEvent, ItemHandle},
 };
 
 type RenderBreadcrumbTextFn = fn(
-    Vec<HighlightedText>,
-    Option<Font>,
+    Vec<BreadcrumbText>,
     Option<AnyElement>,
     &dyn ItemHandle,
     bool,
@@ -58,7 +57,7 @@ impl Render for Breadcrumbs {
             return element.into_any_element();
         };
 
-        let Some((segments, breadcrumb_font)) = active_item.breadcrumbs(cx) else {
+        let Some(segments) = active_item.breadcrumbs(cx) else {
             return element.into_any_element();
         };
 
@@ -67,7 +66,6 @@ impl Render for Breadcrumbs {
         if let Some(render_fn) = cx.try_global::<RenderBreadcrumbText>() {
             (render_fn.0)(
                 segments,
-                breadcrumb_font,
                 prefix_element,
                 active_item.as_ref(),
                 false,

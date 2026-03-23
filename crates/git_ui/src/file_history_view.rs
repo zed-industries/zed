@@ -429,11 +429,10 @@ impl Render for FileHistoryView {
                                     Button::new("load-more", "Load More")
                                         .disabled(self.loading_more)
                                         .label_size(LabelSize::Small)
-                                        .start_icon(
-                                            Icon::new(IconName::ArrowCircle)
-                                                .size(IconSize::Small)
-                                                .color(Color::Muted),
-                                        )
+                                        .icon(IconName::ArrowCircle)
+                                        .icon_size(IconSize::Small)
+                                        .icon_color(Color::Muted)
+                                        .icon_position(IconPosition::Start)
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.load_more(window, cx);
                                         })),
@@ -566,10 +565,7 @@ impl Item for FileHistoryView {
         false
     }
 
-    fn breadcrumbs(
-        &self,
-        _cx: &App,
-    ) -> Option<(Vec<workspace::item::HighlightedText>, Option<gpui::Font>)> {
+    fn breadcrumbs(&self, _cx: &App) -> Option<Vec<workspace::item::BreadcrumbText>> {
         None
     }
 

@@ -19,6 +19,3 @@ time.workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation.workspace = true
 core-foundation-sys.workspace = true
-
-[target.'cfg(target_os = "windows")'.dependencies]
-windows.workspace = true

@@ -4,9 +4,6 @@ ignore-hidden = false
 extend-exclude = [
     ".git/",
 
-    # Typewriter model names used for agent branch names aren't typos.
-    "crates/agent_ui/src/branch_names.rs",
-
     # Contributor names aren't typos.
     ".mailmap",
 
@@ -45,8 +42,6 @@ extend-exclude = [
     "crates/gpui_windows/src/window.rs",
     # Some typos in the base mdBook CSS.
     "docs/theme/css/",
-    # Automatically generated JS.
-    "docs/theme/c15t@*.js",
     # Spellcheck triggers on `|Fixe[sd]|` regex part.
     "script/danger/dangerfile.ts",
     # Eval examples for prompts and criteria
@@ -92,8 +87,6 @@ extend-ignore-re = [
     # AMD GPU Services
     "ags",
     # AMD GPU Services
-    "AGS",
-    # Yarn Plug'n'Play
-    "PnP"
+    "AGS"
 ]
 check-filename = true

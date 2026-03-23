@@ -95,8 +95,11 @@ impl zed::Extension for HtmlExtension {
         server_id: &LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<Option<zed::serde_json::Value>> {
-        LspSettings::for_worktree(server_id.as_ref(), worktree)
-            .map(|lsp_settings| lsp_settings.settings)
+        let settings = LspSettings::for_worktree(server_id.as_ref(), worktree)
+            .ok()
+            .and_then(|lsp_settings| lsp_settings.settings)
+            .unwrap_or_default();
+        Ok(Some(settings))
     }
 
     fn language_server_initialization_options(

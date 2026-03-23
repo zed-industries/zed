@@ -6,8 +6,7 @@ use agent_settings::AgentSettings;
 use anyhow::Result;
 use collections::HashSet;
 use fs::Fs;
-use gpui::{App, Entity, Task};
-use project::{AgentId, Project};
+use gpui::{App, Entity, SharedString, Task};
 use prompt_store::PromptStore;
 use settings::{LanguageModelSelection, Settings as _, update_settings_file};
 
@@ -26,8 +25,8 @@ impl NativeAgentServer {
 }
 
 impl AgentServer for NativeAgentServer {
-    fn agent_id(&self) -> AgentId {
-        crate::ZED_AGENT_ID.clone()
+    fn name(&self) -> SharedString {
+        "Zed Agent".into()
     }
 
     fn logo(&self) -> ui::IconName {
@@ -36,11 +35,16 @@ impl AgentServer for NativeAgentServer {
 
     fn connect(
         &self,
-        _delegate: AgentServerDelegate,
-        _project: Entity<Project>,
+        delegate: AgentServerDelegate,
         cx: &mut App,
-    ) -> Task<Result<Rc<dyn acp_thread::AgentConnection>>> {
+    ) -> Task<
+        Result<(
+            Rc<dyn acp_thread::AgentConnection>,
+            Option<task::SpawnInTerminal>,
+        )>,
+    > {
         log::debug!("NativeAgentServer::connect");
+        let project = delegate.project().clone();
         let fs = self.fs.clone();
         let thread_store = self.thread_store.clone();
         let prompt_store = PromptStore::global(cx);
@@ -50,14 +54,18 @@ impl AgentServer for NativeAgentServer {
             let prompt_store = prompt_store.await?;
 
             log::debug!("Creating native agent entity");
-            let agent = cx
-                .update(|cx| NativeAgent::new(thread_store, templates, Some(prompt_store), fs, cx));
+            let agent =
+                NativeAgent::new(project, thread_store, templates, Some(prompt_store), fs, cx)
+                    .await?;
 
             // Create the connection wrapper
             let connection = NativeAgentConnection(agent);
             log::debug!("NativeAgentServer connection established successfully");
 
-            Ok(Rc::new(connection) as Rc<dyn acp_thread::AgentConnection>)
+            Ok((
+                Rc::new(connection) as Rc<dyn acp_thread::AgentConnection>,
+                None,
+            ))
         })
     }
 

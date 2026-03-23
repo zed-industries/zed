@@ -1,5 +1,4 @@
 use client::{Client, ProxySettings, UserStore};
-use db::AppDatabase;
 use extension::ExtensionHostProxy;
 use fs::RealFs;
 use gpui::http_client::read_proxy_from_env;
@@ -62,9 +61,6 @@ pub fn init(cx: &mut App) -> EpAppState {
     let client = Client::production(cx);
     cx.set_http_client(client.http_client());
 
-    let app_db = AppDatabase::new();
-    cx.set_global(app_db);
-
     let git_binary_path = None;
     let fs = Arc::new(RealFs::new(
         git_binary_path,
@@ -109,7 +105,7 @@ pub fn init(cx: &mut App) -> EpAppState {
 
     debug_adapter_extension::init(extension_host_proxy.clone(), cx);
     language_extension::init(LspAccess::Noop, extension_host_proxy, languages.clone());
-    language_model::init(user_store.clone(), client.clone(), cx);
+    language_model::init(client.clone(), cx);
     language_models::init(user_store.clone(), client.clone(), cx);
     languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
     prompt_store::init(cx);

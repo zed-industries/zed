@@ -1,6 +1,6 @@
 use crate::{
-    AudioStream, ConnectionQuality, LocalAudioTrack, LocalTrackPublication, LocalVideoTrack,
-    Participant, ParticipantIdentity, RemoteTrack, RemoteTrackPublication, TrackSid,
+    AudioStream, LocalAudioTrack, LocalTrackPublication, LocalVideoTrack, Participant,
+    ParticipantIdentity, RemoteTrack, RemoteTrackPublication, TrackSid,
     test::{Room, WeakRoom},
 };
 use anyhow::Result;
@@ -8,7 +8,6 @@ use collections::HashMap;
 use gpui::{
     AsyncApp, DevicePixels, ScreenCaptureSource, ScreenCaptureStream, SourceMetadata, size,
 };
-use std::sync::{Arc, atomic::AtomicU64};
 
 #[derive(Clone, Debug)]
 pub struct LocalParticipant {
@@ -29,31 +28,9 @@ impl Participant {
             Participant::Remote(participant) => participant.identity.clone(),
         }
     }
-
-    pub fn connection_quality(&self) -> ConnectionQuality {
-        match self {
-            Participant::Local(p) => p.connection_quality(),
-            Participant::Remote(p) => p.connection_quality(),
-        }
-    }
-
-    pub fn audio_level(&self) -> f32 {
-        match self {
-            Participant::Local(p) => p.audio_level(),
-            Participant::Remote(p) => p.audio_level(),
-        }
-    }
 }
 
 impl LocalParticipant {
-    pub fn connection_quality(&self) -> ConnectionQuality {
-        ConnectionQuality::Excellent
-    }
-
-    pub fn audio_level(&self) -> f32 {
-        0.0
-    }
-
     pub async fn unpublish_track(&self, track: TrackSid, _cx: &AsyncApp) -> Result<()> {
         self.room
             .test_server()
@@ -64,7 +41,7 @@ impl LocalParticipant {
     pub(crate) async fn publish_microphone_track(
         &self,
         _cx: &AsyncApp,
-    ) -> Result<(LocalTrackPublication, AudioStream, Arc<AtomicU64>)> {
+    ) -> Result<(LocalTrackPublication, AudioStream)> {
         let this = self.clone();
         let server = this.room.test_server();
         let sid = server
@@ -77,7 +54,6 @@ impl LocalParticipant {
                 sid,
             },
             AudioStream {},
-            Arc::new(AtomicU64::new(0)),
         ))
     }
 
@@ -99,42 +75,9 @@ impl LocalParticipant {
             Box::new(TestScreenCaptureStream {}),
         ))
     }
-
-    #[cfg(target_os = "linux")]
-    pub async fn publish_screenshare_track_wayland(
-        &self,
-        _cx: &mut AsyncApp,
-    ) -> Result<(
-        LocalTrackPublication,
-        Box<dyn ScreenCaptureStream>,
-        futures::channel::oneshot::Receiver<()>,
-    )> {
-        let (_failure_tx, failure_rx) = futures::channel::oneshot::channel();
-        let this = self.clone();
-        let server = this.room.test_server();
-        let sid = server
-            .publish_video_track(this.room.token(), LocalVideoTrack {})
-            .await?;
-        Ok((
-            LocalTrackPublication {
-                room: self.room.downgrade(),
-                sid,
-            },
-            Box::new(TestWaylandScreenCaptureStream::new()),
-            failure_rx,
-        ))
-    }
 }
 
 impl RemoteParticipant {
-    pub fn connection_quality(&self) -> ConnectionQuality {
-        ConnectionQuality::Excellent
-    }
-
-    pub fn audio_level(&self) -> f32 {
-        0.0
-    }
-
     pub fn track_publications(&self) -> HashMap<TrackSid, RemoteTrackPublication> {
         if let Some(room) = self.room.upgrade() {
             let server = room.test_server();
@@ -185,35 +128,6 @@ impl ScreenCaptureStream for TestScreenCaptureStream {
     fn metadata(&self) -> Result<SourceMetadata> {
         Ok(SourceMetadata {
             id: 0,
-            is_main: None,
-            label: None,
-            resolution: size(DevicePixels(1), DevicePixels(1)),
-        })
-    }
-}
-
-#[cfg(target_os = "linux")]
-static NEXT_TEST_WAYLAND_SHARE_ID: AtomicU64 = AtomicU64::new(1);
-
-#[cfg(target_os = "linux")]
-struct TestWaylandScreenCaptureStream {
-    id: u64,
-}
-
-#[cfg(target_os = "linux")]
-impl TestWaylandScreenCaptureStream {
-    fn new() -> Self {
-        Self {
-            id: NEXT_TEST_WAYLAND_SHARE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-        }
-    }
-}
-
-#[cfg(target_os = "linux")]
-impl ScreenCaptureStream for TestWaylandScreenCaptureStream {
-    fn metadata(&self) -> Result<SourceMetadata> {
-        Ok(SourceMetadata {
-            id: self.id,
             is_main: None,
             label: None,
             resolution: size(DevicePixels(1), DevicePixels(1)),

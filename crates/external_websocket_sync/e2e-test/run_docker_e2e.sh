@@ -87,37 +87,11 @@ if [ -d "$CLAUDE_ACP_DIR/dist" ] && echo "$E2E_AGENTS" | grep -q "claude"; then
     echo "[setup] Mounting local claude-agent-acp from $CLAUDE_ACP_DIR"
 fi
 
-EXTRA_DOCKER_ARGS=""
-if [ -n "${ANTHROPIC_BASE_URL:-}" ]; then
-    # Resolve the API hostname on the host and inject it into the container via --add-host.
-    # This ensures the container uses the host-side reverse proxy (with auth middleware),
-    # not the internal container IP which bypasses auth.
-    API_HOST=$(echo "${ANTHROPIC_BASE_URL}" | sed 's|https\?://||; s|:.*||')
-
-    if [ "$API_HOST" = "host.docker.internal" ]; then
-        # On Linux, host.docker.internal is not automatically resolvable inside containers.
-        # Use the Docker bridge gateway IP (the host's IP on the default bridge network).
-        BRIDGE_GW=$(docker network inspect bridge --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}' 2>/dev/null)
-        if [ -n "$BRIDGE_GW" ]; then
-            EXTRA_DOCKER_ARGS="--add-host host.docker.internal:${BRIDGE_GW}"
-            echo "[setup] Mapped host.docker.internal → ${BRIDGE_GW} (Docker bridge gateway)"
-        fi
-    else
-        API_HOST_IP=$(getent hosts "$API_HOST" 2>/dev/null | awk '{print $1; exit}')
-        if [ -n "$API_HOST_IP" ]; then
-            EXTRA_DOCKER_ARGS="--add-host ${API_HOST}:${API_HOST_IP}"
-            echo "[setup] Mapped ${API_HOST} → ${API_HOST_IP}"
-        fi
-    fi
-fi
-
 docker run --rm \
     -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
-    ${ANTHROPIC_BASE_URL:+-e ANTHROPIC_BASE_URL="$ANTHROPIC_BASE_URL"} \
     -e E2E_AGENTS="$E2E_AGENTS" \
     -v "$SCREENSHOTS_DIR:/test/screenshots" \
     $CLAUDE_ACP_MOUNT \
-    $EXTRA_DOCKER_ARGS \
     zed-ws-e2e
 
 # Report screenshots

@@ -249,13 +249,10 @@ fn render_tool_list_item(
 
     h_flex()
         .w_full()
-        .min_w_0()
         .py_3()
         .justify_between()
         .child(
             v_flex()
-                .w_full()
-                .min_w_0()
                 .child(h_flex().gap_1().child(Label::new(tool.name)).when_some(
                     rule_summary,
                     |this, summary| {
@@ -278,11 +275,10 @@ fn render_tool_list_item(
                 .tab_index(tool_index as isize)
                 .style(ButtonStyle::OutlinedGhost)
                 .size(ButtonSize::Medium)
-                .end_icon(
-                    Icon::new(IconName::ChevronRight)
-                        .size(IconSize::Small)
-                        .color(Color::Muted),
-                )
+                .icon(IconName::ChevronRight)
+                .icon_position(IconPosition::End)
+                .icon_color(Color::Muted)
+                .icon_size(IconSize::Small)
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.push_dynamic_sub_page(
                         tool_name,
@@ -1075,12 +1071,9 @@ fn render_global_default_mode_section(current_mode: ToolPermissionMode) -> AnyEl
 
     h_flex()
         .my_4()
-        .min_w_0()
         .justify_between()
         .child(
             v_flex()
-                .w_full()
-                .min_w_0()
                 .child(Label::new("Default Permission"))
                 .child(
                     Label::new(
@@ -1097,7 +1090,9 @@ fn render_global_default_mode_section(current_mode: ToolPermissionMode) -> AnyEl
                         .tab_index(0_isize)
                         .style(ButtonStyle::Outlined)
                         .size(ButtonSize::Medium)
-                        .end_icon(Icon::new(IconName::ChevronDown).size(IconSize::Small)),
+                        .icon(IconName::ChevronDown)
+                        .icon_position(IconPosition::End)
+                        .icon_size(IconSize::Small),
                 )
                 .menu(move |window, cx| {
                     Some(ContextMenu::build(window, cx, move |menu, _, _| {
@@ -1131,18 +1126,13 @@ fn render_default_mode_section(
     let tool_id_owned = tool_id.to_string();
 
     h_flex()
-        .min_w_0()
         .justify_between()
         .child(
-            v_flex()
-                .w_full()
-                .min_w_0()
-                .child(Label::new("Default Action"))
-                .child(
-                    Label::new("Action to take when no patterns match.")
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                ),
+            v_flex().child(Label::new("Default Action")).child(
+                Label::new("Action to take when no patterns match.")
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            ),
         )
         .child(
             PopoverMenu::new(format!("default-mode-{}", tool_id))
@@ -1151,7 +1141,9 @@ fn render_default_mode_section(
                         .tab_index(0_isize)
                         .style(ButtonStyle::Outlined)
                         .size(ButtonSize::Medium)
-                        .end_icon(Icon::new(IconName::ChevronDown).size(IconSize::Small)),
+                        .icon(IconName::ChevronDown)
+                        .icon_position(IconPosition::End)
+                        .icon_size(IconSize::Small),
                 )
                 .menu(move |window, cx| {
                     let tool_id = tool_id_owned.clone();
@@ -1421,9 +1413,6 @@ mod tests {
             // Subagent permission checks happen at the level of individual
             // tool calls within the subagent, not at the spawning level.
             "spawn_agent",
-            // update_plan updates UI-visible planning state but does not use
-            // tool permission rules.
-            "update_plan",
         ];
 
         let tool_info_ids: Vec<&str> = TOOLS.iter().map(|t| t.id).collect();

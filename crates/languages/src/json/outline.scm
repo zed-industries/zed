@@ -1,3 +1,2 @@
 (pair
-  key: (string
-    (string_content) @name)) @item
+  key: (string (string_content) @name)) @item

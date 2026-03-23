@@ -1,33 +1,56 @@
 ; Variables
+
 (identifier) @variable
 
 (call_expression
   function: (member_expression
     object: (identifier) @type
-    (#any-of? @type
-      "Promise" "Array" "Object" "Map" "Set" "WeakMap" "WeakSet" "Date" "Error" "TypeError"
-      "RangeError" "SyntaxError" "ReferenceError" "EvalError" "URIError" "RegExp" "Function"
-      "Number" "String" "Boolean" "Symbol" "BigInt" "Proxy" "ArrayBuffer" "DataView")))
+    (#any-of?
+      @type
+      "Promise"
+      "Array"
+      "Object"
+      "Map"
+      "Set"
+      "WeakMap"
+      "WeakSet"
+      "Date"
+      "Error"
+      "TypeError"
+      "RangeError"
+      "SyntaxError"
+      "ReferenceError"
+      "EvalError"
+      "URIError"
+      "RegExp"
+      "Function"
+      "Number"
+      "String"
+      "Boolean"
+      "Symbol"
+      "BigInt"
+      "Proxy"
+      "ArrayBuffer"
+      "DataView"
+    )
+  )
+)
 
 ; Properties
+
 (property_identifier) @property
-
 (shorthand_property_identifier) @property
-
 (shorthand_property_identifier_pattern) @property
-
 (private_property_identifier) @property
 
 ; Function and method calls
+
 (call_expression
   function: (identifier) @function)
 
 (call_expression
   function: (member_expression
-    property: [
-      (property_identifier)
-      (private_property_identifier)
-    ] @function.method))
+    property: [(property_identifier) (private_property_identifier)] @function.method))
 
 (new_expression
   constructor: (identifier) @type)
@@ -36,58 +59,36 @@
   module: (identifier) @type)
 
 ; Function and method definitions
+
 (function_expression
   name: (identifier) @function)
-
 (function_declaration
   name: (identifier) @function)
-
 (method_definition
-  name: [
-    (property_identifier)
-    (private_property_identifier)
-  ] @function.method)
-
+  name: [(property_identifier) (private_property_identifier)] @function.method)
 (method_definition
-  name: (property_identifier) @constructor
-  (#eq? @constructor "constructor"))
+    name: (property_identifier) @constructor
+    (#eq? @constructor "constructor"))
 
 (pair
-  key: [
-    (property_identifier)
-    (private_property_identifier)
-  ] @function.method
-  value: [
-    (function_expression)
-    (arrow_function)
-  ])
+  key: [(property_identifier) (private_property_identifier)] @function.method
+  value: [(function_expression) (arrow_function)])
 
 (assignment_expression
   left: (member_expression
-    property: [
-      (property_identifier)
-      (private_property_identifier)
-    ] @function.method)
-  right: [
-    (function_expression)
-    (arrow_function)
-  ])
+    property: [(property_identifier) (private_property_identifier)] @function.method)
+  right: [(function_expression) (arrow_function)])
 
 (variable_declarator
   name: (identifier) @function
-  value: [
-    (function_expression)
-    (arrow_function)
-  ])
+  value: [(function_expression) (arrow_function)])
 
 (assignment_expression
   left: (identifier) @function
-  right: [
-    (function_expression)
-    (arrow_function)
-  ])
+  right: [(function_expression) (arrow_function)])
 
 ; Parameters
+
 (required_parameter
   (identifier) @variable.parameter)
 
@@ -121,10 +122,9 @@
   name: (identifier) @variable.parameter)
 
 ; Special identifiers
+
 (type_annotation) @type
-
 (type_identifier) @type
-
 (predefined_type) @type.builtin
 
 (type_alias_declaration
@@ -153,12 +153,12 @@
   (identifier)
   (shorthand_property_identifier)
   (shorthand_property_identifier_pattern)
-] @constant
-  (#match? @constant "^_*[A-Z_][A-Z\\d_]*$"))
+ ] @constant
+ (#match? @constant "^_*[A-Z_][A-Z\\d_]*$"))
 
 ; Literals
-(this) @variable.special
 
+(this) @variable.special
 (super) @variable.special
 
 [
@@ -182,12 +182,11 @@
 (escape_sequence) @string.escape
 
 (regex) @string.regex
-
 (regex_flags) @keyword.operator.regex
-
 (number) @number
 
 ; Tokens
+
 [
   ";"
   "?."
@@ -245,8 +244,7 @@
   "..."
 ] @operator
 
-(regex
-  "/" @string.regex)
+(regex "/" @string.regex)
 
 [
   "("
@@ -255,13 +253,14 @@
   "]"
   "{"
   "}"
-] @punctuation.bracket
+]  @punctuation.bracket
 
 (ternary_expression
   [
     "?"
     ":"
-  ] @operator)
+  ] @operator
+)
 
 ; Keywords
 [
@@ -335,8 +334,7 @@
   "yield"
 ] @keyword.control
 
-(switch_default
-  "default" @keyword.control)
+(switch_default "default" @keyword.control)
 
 (template_substitution
   "${" @punctuation.special
@@ -354,32 +352,31 @@
   "<" @punctuation.bracket
   ">" @punctuation.bracket)
 
-(decorator
-  "@" @punctuation.special)
+(decorator "@" @punctuation.special)
 
 (union_type
-  "|" @punctuation.special)
+  ("|") @punctuation.special)
 
 (intersection_type
-  "&" @punctuation.special)
+  ("&") @punctuation.special)
 
 (type_annotation
-  ":" @punctuation.special)
+  (":") @punctuation.special)
 
 (index_signature
-  ":" @punctuation.special)
+  (":") @punctuation.special)
 
 (type_predicate_annotation
-  ":" @punctuation.special)
+  (":") @punctuation.special)
 
 (public_field_definition
-  "?" @punctuation.special)
+  ("?") @punctuation.special)
 
 (property_signature
-  "?" @punctuation.special)
+  ("?") @punctuation.special)
 
 (method_signature
-  "?" @punctuation.special)
+  ("?") @punctuation.special)
 
 (optional_parameter
   ([
@@ -387,66 +384,44 @@
     ":"
   ]) @punctuation.special)
 
+
+
 (jsx_opening_element
   [
     (identifier) @type
     (member_expression
       object: (identifier) @type
-      property: (property_identifier) @type)
-  ])
-
+      property: (property_identifier) @type
+    )
+  ]
+)
 (jsx_closing_element
   [
     (identifier) @type
     (member_expression
       object: (identifier) @type
-      property: (property_identifier) @type)
-  ])
-
+      property: (property_identifier) @type
+    )
+  ]
+)
 (jsx_self_closing_element
   [
     (identifier) @type
     (member_expression
       object: (identifier) @type
-      property: (property_identifier) @type)
-  ])
+      property: (property_identifier) @type
+    )
+  ]
+)
 
-(jsx_opening_element
-  (identifier) @tag.jsx
-  (#match? @tag.jsx "^[a-z][^.]*$"))
+(jsx_opening_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
+(jsx_closing_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
+(jsx_self_closing_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
 
-(jsx_closing_element
-  (identifier) @tag.jsx
-  (#match? @tag.jsx "^[a-z][^.]*$"))
-
-(jsx_self_closing_element
-  (identifier) @tag.jsx
-  (#match? @tag.jsx "^[a-z][^.]*$"))
-
-(jsx_attribute
-  (property_identifier) @attribute.jsx)
-
-(jsx_opening_element
-  ([
-    "<"
-    ">"
-  ]) @punctuation.bracket.jsx)
-
-(jsx_closing_element
-  ([
-    "</"
-    ">"
-  ]) @punctuation.bracket.jsx)
-
-(jsx_self_closing_element
-  ([
-    "<"
-    "/>"
-  ]) @punctuation.bracket.jsx)
-
-(jsx_attribute
-  "=" @punctuation.delimiter.jsx)
-
+(jsx_attribute (property_identifier) @attribute.jsx)
+(jsx_opening_element (["<" ">"]) @punctuation.bracket.jsx)
+(jsx_closing_element (["</" ">"]) @punctuation.bracket.jsx)
+(jsx_self_closing_element (["<" "/>"]) @punctuation.bracket.jsx)
+(jsx_attribute "=" @punctuation.delimiter.jsx)
 (jsx_text) @text.jsx
-
 (html_character_reference) @string.special

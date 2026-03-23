@@ -568,10 +568,6 @@ actions!(
         GoToParentModule,
         /// Goes to the previous change in the file.
         GoToPreviousChange,
-        /// Goes to the next symbol.
-        GoToNextSymbol,
-        /// Goes to the previous symbol.
-        GoToPreviousSymbol,
         /// Goes to the next reference to the symbol under the cursor.
         GoToNextReference,
         /// Goes to the previous reference to the symbol under the cursor.
@@ -699,6 +695,8 @@ actions!(
         Rename,
         /// Restarts the language server for the current file.
         RestartLanguageServer,
+        /// Reveals the current file in the system file manager.
+        RevealInFileManager,
         /// Reverses the order of selected lines.
         ReverseLines,
         /// Reloads the file from disk.
@@ -881,8 +879,6 @@ actions!(
         UnwrapSyntaxNode,
         /// Wraps selections in tag specified by language.
         WrapSelectionsInTag,
-        /// Aligns selections from different rows into the same column
-        AlignSelections,
     ]
 );
 
