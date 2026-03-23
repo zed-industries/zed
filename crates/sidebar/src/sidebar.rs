@@ -2058,6 +2058,33 @@ impl Sidebar {
 
         cx.spawn_in(window, async move |this, cx| {
             let workspace = open_task.await?;
+
+            //
+            workspace
+                .update(cx, |workspace, cx| {
+                    workspace.project().read(cx).wait_for_initial_scan(cx)
+                })
+                .await;
+
+            workspace
+                .update(cx, |workspace, cx| {
+                    let repos = workspace
+                        .project()
+                        .read(cx)
+                        .git_store()
+                        .read(cx)
+                        .repositories()
+                        .values()
+                        .cloned()
+                        .collect::<Vec<_>>();
+
+                    let tasks = repos
+                        .into_iter()
+                        .map(|repo| repo.update(cx, |repo, _| repo.barrier()));
+                    futures::future::join_all(tasks)
+                })
+                .await;
+
             this.update_in(cx, |this, window, cx| {
                 this.activate_thread(agent, session_info, &workspace, window, cx);
             })?;
