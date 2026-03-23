@@ -143,8 +143,9 @@ pub fn migrate_keymap(text: &str) -> Result<Option<String>> {
             migrations::m_2025_12_08::KEYMAP_PATTERNS,
             &KEYMAP_QUERY_2025_12_08,
         ),
-        MigrationType::Json(
-            migrations::m_2026_03_23::replace_edit_prediction_conflict_with_expanded_version,
+        MigrationType::TreeSitter(
+            migrations::m_2026_03_23::KEYMAP_PATTERNS,
+            &KEYMAP_QUERY_2026_03_23,
         ),
     ];
     run_migrations(text, migrations)
@@ -375,6 +376,10 @@ define_query!(
 define_query!(
     SETTINGS_QUERY_2025_12_15,
     migrations::m_2025_12_15::SETTINGS_PATTERNS
+);
+define_query!(
+    KEYMAP_QUERY_2026_03_23,
+    migrations::m_2026_03_23::KEYMAP_PATTERNS
 );
 
 // custom query
@@ -4326,8 +4331,9 @@ mod tests {
     #[test]
     fn test_migrate_edit_prediction_conflict_context() {
         assert_migrate_with_migrations(
-            &[MigrationType::Json(
-                migrations::m_2026_03_23::replace_edit_prediction_conflict_with_expanded_version,
+            &[MigrationType::TreeSitter(
+                migrations::m_2026_03_23::KEYMAP_PATTERNS,
+                &KEYMAP_QUERY_2026_03_23,
             )],
             &r#"
             [
@@ -4345,11 +4351,124 @@ mod tests {
                     {
                         "context": "Editor && (edit_prediction && (showing_completions || in_leading_whitespace))",
                         "bindings": {
-                            "ctrl-enter": "editor::AcceptEditPrediction" Example of a modified keybinding
+                            "ctrl-enter": "editor::AcceptEditPrediction" // Example of a modified keybinding
                         }
                     }
                 ]
                 "#.unindent(),
+            ),
+        );
+
+        assert_migrate_with_migrations(
+            &[MigrationType::TreeSitter(
+                migrations::m_2026_03_23::KEYMAP_PATTERNS,
+                &KEYMAP_QUERY_2026_03_23,
+            )],
+            &r#"
+            [
+                {
+                    "context": "Editor && edit_prediction_conflict && !showing_completions",
+                    "bindings": {
+                        // Here we don't require a modifier unless there's a language server completion
+                        "tab": "editor::AcceptEditPrediction"
+                    }
+                }
+            ]
+            "#.unindent(),
+            Some(
+                &r#"
+                [
+                    {
+                        "context": "Editor && (edit_prediction && in_leading_whitespace)",
+                        "bindings": {
+                            // Here we don't require a modifier unless there's a language server completion
+                            "tab": "editor::AcceptEditPrediction"
+                        }
+                    }
+                ]
+                "#.unindent(),
+            ),
+        );
+
+        assert_migrate_with_migrations(
+            &[MigrationType::TreeSitter(
+                migrations::m_2026_03_23::KEYMAP_PATTERNS,
+                &KEYMAP_QUERY_2026_03_23,
+            )],
+            &r#"
+            [
+                {
+                    "context": "Editor && edit_prediction_conflict && showing_completions",
+                    "bindings": {
+                        "tab": "editor::AcceptEditPrediction"
+                    }
+                }
+            ]
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                [
+                    {
+                        "context": "Editor && (edit_prediction && showing_completions)",
+                        "bindings": {
+                            "tab": "editor::AcceptEditPrediction"
+                        }
+                    }
+                ]
+                "#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_with_migrations(
+            &[MigrationType::TreeSitter(
+                migrations::m_2026_03_23::KEYMAP_PATTERNS,
+                &KEYMAP_QUERY_2026_03_23,
+            )],
+            &r#"
+            [
+                {
+                    "context": "Editor && edit_prediction",
+                    "bindings": {
+                        "tab": "editor::AcceptEditPrediction",
+                        // Optional: This makes the default `alt-l` binding do nothing.
+                        "alt-l": null
+                    }
+                },
+                {
+                    "context": "Editor && edit_prediction_conflict",
+                    "bindings": {
+                        "alt-tab": "editor::AcceptEditPrediction",
+                        // Optional: This makes the default `alt-l` binding do nothing.
+                        "alt-l": null
+                    }
+                },
+            ]
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                    [
+                        {
+                            "context": "Editor && edit_prediction",
+                            "bindings": {
+                                "tab": "editor::AcceptEditPrediction",
+                                // Optional: This makes the default `alt-l` binding do nothing.
+                                "alt-l": null
+                            }
+                        },
+                        {
+                            "context": "Editor && (edit_prediction && (showing_completions || in_leading_whitespace))",
+                            "bindings": {
+                                "alt-tab": "editor::AcceptEditPrediction",
+                                // Optional: This makes the default `alt-l` binding do nothing.
+                                "alt-l": null
+                            }
+                        },
+                    ]
+                "#
+                .unindent(),
             ),
         );
     }

@@ -308,5 +308,5 @@ pub(crate) mod m_2026_02_25 {
 pub(crate) mod m_2026_03_23 {
     mod keymap;
 
-    pub(crate) use keymap::replace_edit_prediction_conflict_with_expanded_version;
+    pub(crate) use keymap::KEYMAP_PATTERNS;
 }
