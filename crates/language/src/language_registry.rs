@@ -1082,7 +1082,7 @@ impl LanguageRegistryState {
             LanguageSettingsContent {
                 tab_size: language.config.tab_size,
                 hard_tabs: language.config.hard_tabs,
-                soft_wrap: language.config.soft_wrap,
+                soft_wrap: language.config.soft_wrap.map(crate::to_settings_soft_wrap),
                 auto_indent_on_paste: language.config.auto_indent_on_paste,
                 ..Default::default()
             },

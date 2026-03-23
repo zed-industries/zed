@@ -9463,7 +9463,6 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "settings_content",
  "toml 0.8.23",
  "tree-sitter",
  "util",
