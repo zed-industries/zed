@@ -81,8 +81,7 @@ mod tests {
                 ("variable", rgba(0x600000ff)),
             ]
             .iter()
-            .map(|(name, color)| (name.to_string(), (*color).into()))
-            .collect(),
+            .map(|(name, color)| (name.to_string(), (*color).into())),
         );
 
         let capture_names = &[

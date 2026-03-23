@@ -4,19 +4,13 @@ use language::HighlightMap;
 use theme::SyntaxTheme;
 
 fn syntax_theme(highlight_names: &[&str]) -> SyntaxTheme {
-    SyntaxTheme::new(
-        highlight_names
-            .iter()
-            .enumerate()
-            .map(|(i, name)| {
-                let r = ((i * 37) % 256) as u8;
-                let g = ((i * 53) % 256) as u8;
-                let b = ((i * 71) % 256) as u8;
-                let color = rgba(u32::from_be_bytes([r, g, b, 0xff]));
-                (name.to_string(), color.into())
-            })
-            .collect(),
-    )
+    SyntaxTheme::new(highlight_names.iter().enumerate().map(|(i, name)| {
+        let r = ((i * 37) % 256) as u8;
+        let g = ((i * 53) % 256) as u8;
+        let b = ((i * 71) % 256) as u8;
+        let color = rgba(u32::from_be_bytes([r, g, b, 0xff]));
+        (name.to_string(), color.into())
+    }))
 }
 
 static SMALL_THEME_KEYS: &[&str] = &[

@@ -16,7 +16,7 @@ pub struct SyntaxTheme {
 }
 
 impl SyntaxTheme {
-    pub fn new(highlights: Vec<(String, HighlightStyle)>) -> Self {
+    pub fn new(highlights: impl IntoIterator<Item = (String, HighlightStyle)>) -> Self {
         let (capture_names, highlights) = highlights.into_iter().unzip();
 
         Self {
@@ -53,8 +53,7 @@ impl SyntaxTheme {
         Self::new(
             colors
                 .into_iter()
-                .map(|(key, style)| (key.to_owned(), style))
-                .collect(),
+                .map(|(key, style)| (key.to_owned(), style)),
         )
     }
 
