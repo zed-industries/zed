@@ -250,6 +250,7 @@ pub struct Callbacks {
     should_close: Option<Box<dyn FnMut() -> bool>>,
     close: Option<Box<dyn FnOnce()>>,
     appearance_changed: Option<Box<dyn FnMut()>>,
+    button_layout_changed: Option<Box<dyn FnMut()>>,
 }
 
 pub struct X11WindowState {
@@ -1256,6 +1257,14 @@ impl X11WindowStatePtr {
             self.callbacks.borrow_mut().appearance_changed = Some(fun);
         }
     }
+
+    pub fn set_button_layout(&self) {
+        let callback = self.callbacks.borrow_mut().button_layout_changed.take();
+        if let Some(mut fun) = callback {
+            fun();
+            self.callbacks.borrow_mut().button_layout_changed = Some(fun);
+        }
+    }
 }
 
 impl PlatformWindow for X11Window {
@@ -1600,6 +1609,10 @@ impl PlatformWindow for X11Window {
 
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
         self.0.callbacks.borrow_mut().appearance_changed = Some(callback);
+    }
+
+    fn on_button_layout_changed(&self, callback: Box<dyn FnMut()>) {
+        self.0.callbacks.borrow_mut().button_layout_changed = Some(callback);
     }
 
     fn draw(&self, scene: &Scene) {

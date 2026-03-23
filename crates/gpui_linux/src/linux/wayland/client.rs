@@ -572,17 +572,11 @@ impl WaylandClient {
                             let layout = WindowButtonLayout::parse(&layout_str)
                                 .log_err()
                                 .unwrap_or_default();
-                            let windows = {
-                                let mut client = client.borrow_mut();
-                                client.common.button_layout = layout;
-                                client.windows.values().cloned().collect::<Vec<_>>()
-                            };
+                            let mut client = client.borrow_mut();
+                            client.common.button_layout = layout;
 
-                            for window in windows {
-                                window.refresh(RequestFrameOptions {
-                                    require_presentation: false,
-                                    force_render: true,
-                                });
+                            for window in client.windows.values_mut() {
+                                window.set_button_layout();
                             }
                         }
                     }

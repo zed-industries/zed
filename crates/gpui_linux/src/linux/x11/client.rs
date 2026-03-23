@@ -477,19 +477,13 @@ impl X11Client {
                             .log_err()
                             .unwrap_or_default();
                         client.with_common(|common| common.button_layout = layout);
-                        let window_ids: Vec<_> =
-                            client.0.borrow().windows.keys().copied().collect();
-                        for window_id in window_ids {
-                            if let Some(window) = client.0.borrow_mut().windows.get_mut(&window_id)
-                            {
-                                window.window.refresh(RequestFrameOptions {
-                                    require_presentation: false,
-                                    force_render: true,
-                                });
-                            }
+                        for window in client.0.borrow_mut().windows.values_mut() {
+                            window.window.set_button_layout();
                         }
                     }
-                    XDPEvent::CursorTheme(_) | XDPEvent::CursorSize(_) => {}
+                    XDPEvent::CursorTheme(_) | XDPEvent::CursorSize(_) => {
+                        // noop, X11 manages this for us.
+                    }
                 }
             })
             .map_err(|err| anyhow!("Failed to initialize XDP event source: {err:?}"))?;
