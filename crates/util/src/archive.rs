@@ -6,7 +6,6 @@ use async_zip::base::read;
 use futures::AsyncSeek;
 use futures::{AsyncRead, io::BufReader};
 
-#[cfg(any(unix, windows))]
 fn archive_path_is_normal(filename: &str) -> bool {
     Path::new(filename).components().all(|c| {
         matches!(
@@ -65,7 +64,7 @@ pub async fn extract_zip<R: AsyncRead + Unpin>(destination: &Path, reader: R) ->
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(not(windows))]
 pub async fn extract_zip<R: AsyncRead + Unpin>(destination: &Path, reader: R) -> Result<()> {
     // Unix needs file permissions copied when extracting.
     // This is only possible to do when a reader impls `AsyncSeek` and `seek::ZipFileReader` is used.
@@ -82,7 +81,7 @@ pub async fn extract_zip<R: AsyncRead + Unpin>(destination: &Path, reader: R) ->
     extract_seekable_zip(destination, file).await
 }
 
-#[cfg(unix)]
+#[cfg(not(windows))]
 pub async fn extract_seekable_zip<R: AsyncRead + AsyncSeek + Unpin>(
     destination: &Path,
     reader: R,

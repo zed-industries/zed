@@ -41,10 +41,6 @@ macro_rules! impl_for_row_types {
             pub fn saturating_sub(self, other: $row_delta) -> $row {
                 $row(self.0.saturating_sub(other.0))
             }
-
-            pub fn checked_sub(self, other: $row) -> Option<$row_delta> {
-                self.0.checked_sub(other.0).map($row_delta)
-            }
         }
 
         impl ::std::ops::Add for $row {

@@ -533,7 +533,7 @@ impl LspCommand for PerformRename {
             .rename_provider
             .is_some_and(|capability| match capability {
                 OneOf::Left(enabled) => enabled,
-                OneOf::Right(_) => true,
+                OneOf::Right(_options) => true,
             })
     }
 
@@ -2636,10 +2636,11 @@ impl LspCommand for GetCodeActions {
             relevant_diagnostics.push(entry.to_lsp_diagnostic_stub()?);
         }
 
+        let supported =
+            Self::supported_code_action_kinds(language_server.adapter_server_capabilities());
+
         let only = if let Some(requested) = &self.kinds {
-            if let Some(supported_kinds) =
-                Self::supported_code_action_kinds(language_server.adapter_server_capabilities())
-            {
+            if let Some(supported_kinds) = supported {
                 let filtered = requested
                     .iter()
                     .filter(|requested_kind| {
@@ -2654,7 +2655,7 @@ impl LspCommand for GetCodeActions {
                 Some(requested.clone())
             }
         } else {
-            None
+            supported
         };
 
         Ok(lsp::CodeActionParams {
@@ -4856,14 +4857,9 @@ impl LspCommand for GetFoldingRanges {
         self,
         message: proto::GetFoldingRangesResponse,
         _: Entity<LspStore>,
-        buffer: Entity<Buffer>,
-        mut cx: AsyncApp,
+        _: Entity<Buffer>,
+        _: AsyncApp,
     ) -> Result<Self::Response> {
-        buffer
-            .update(&mut cx, |buffer, _| {
-                buffer.wait_for_version(deserialize_version(&message.version))
-            })
-            .await?;
         message
             .ranges
             .into_iter()

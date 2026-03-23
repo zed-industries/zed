@@ -1,37 +1,43 @@
 +++
 repository_url = "git@github.com:zed-industries/zed"
-revision = "b7090c9fae7390a82021b994994c0f587744d96c"
+revision = "780a87dd98f26816876d12e2728933b17faca78d"
 +++
-
-This example shows the model's preference for making conservative predictions, and ability to place
-the cursor within the predicted output.
 
 ## Edit History
 
 ```diff
 --- a/crates/edit_prediction_ui/src/rate_prediction_modal.rs
 +++ b/crates/edit_prediction_ui/src/rate_prediction_modal.rs
-@@ -144,7 +144,7 @@
-     fn select_next_edit(&mut self, _: &NextEdit, _: &mut Window, cx: &mut Context<Self>) {
+@@ -206,6 +206,7 @@
+         self.select_next_edit(&Default::default(), window, cx);
+         self.confirm(&Default::default(), window, cx);
+
 +        epr
-         let next_index = self
-             .ep_store
-             .read(cx)
+         cx.notify();
+     }
+
 ```
 
 ## Cursor Position
 
 ```crates/edit_prediction_ui/src/rate_prediction_modal.rs
-    fn select_next_edit(&mut self, _: &NextEdit, _: &mut Window, cx: &mut Context<Self>) {
+        let current_completion = self
+            .active_prediction
+            .as_ref()
+            .map(|completion| completion.prediction.clone());
+        self.select_completion(current_completion, false, window, cx);
+        self.select_next_edit(&Default::default(), window, cx);
+        self.confirm(&Default::default(), window, cx);
+
         epr
         // ^[CURSOR_POSITION]
-        let next_index = self
-            .ep_store
-            .read(cx)
-            .shown_predictions()
-            .skip(self.selected_index)
-            .enumerate()
-            .skip(1) // Skip straight to the next item
+        cx.notify();
+    }
+
+    pub fn thumbs_down_active(
+        &mut self,
+        _: &ThumbsDownActivePrediction,
+        window: &mut Window,
 ```
 
 ## Expected Patch
@@ -39,16 +45,12 @@ the cursor within the predicted output.
 ```diff
 --- a/crates/edit_prediction_ui/src/rate_prediction_modal.rs
 +++ b/crates/edit_prediction_ui/src/rate_prediction_modal.rs
-@@ -144,14 +144,14 @@
-     fn select_next_edit(&mut self, _: &NextEdit, _: &mut Window, cx: &mut Context<Self>) {
+@@ -201,16 +201,16 @@
+         self.confirm(&Default::default(), window, cx);
+
 -        epr
 +        eprintln!("");
 #                   ^[CURSOR_POSITION]
-         let next_index = self
-             .ep_store
-             .read(cx)
-             .shown_predictions()
-             .skip(self.selected_index)
-             .enumerate()
-             .skip(1) // Skip straight to the next item
+         cx.notify();
+     }
 ```

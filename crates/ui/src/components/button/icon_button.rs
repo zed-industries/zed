@@ -1,10 +1,10 @@
 use gpui::{AnyView, DefiniteLength, Hsla};
 
 use super::button_like::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle};
-use crate::{
-    ElevationIndex, Icon, IconWithIndicator, Indicator, SelectableButton, TintColor, prelude::*,
-};
+use crate::{ElevationIndex, Indicator, SelectableButton, TintColor, prelude::*};
 use crate::{IconName, IconSize};
+
+use super::button_icon::ButtonIcon;
 
 /// The shape of an [`IconButton`].
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
@@ -22,7 +22,6 @@ pub struct IconButton {
     icon_color: Color,
     selected_icon: Option<IconName>,
     selected_icon_color: Option<Color>,
-    selected_style: Option<ButtonStyle>,
     indicator: Option<Indicator>,
     indicator_border_color: Option<Hsla>,
     alpha: Option<f32>,
@@ -38,7 +37,6 @@ impl IconButton {
             icon_color: Color::Default,
             selected_icon: None,
             selected_icon_color: None,
-            selected_style: None,
             indicator: None,
             indicator_border_color: None,
             alpha: None,
@@ -114,7 +112,6 @@ impl Toggleable for IconButton {
 
 impl SelectableButton for IconButton {
     fn selected_style(mut self, style: ButtonStyle) -> Self {
-        self.selected_style = Some(style);
         self.base = self.base.selected_style(style);
         self
     }
@@ -195,25 +192,9 @@ impl RenderOnce for IconButton {
     fn render(self, window: &mut Window, cx: &mut App) -> ButtonLike {
         let is_disabled = self.base.disabled;
         let is_selected = self.base.selected;
+        let selected_style = self.base.selected_style;
 
-        let icon = self
-            .selected_icon
-            .filter(|_| is_selected)
-            .unwrap_or(self.icon);
-
-        let icon_color = if is_disabled {
-            Color::Disabled
-        } else if self.selected_style.is_some() && is_selected {
-            self.selected_style.unwrap().into()
-        } else if is_selected {
-            self.selected_icon_color.unwrap_or(Color::Selected)
-        } else {
-            let base_color = self.icon_color.color(cx);
-            Color::Custom(base_color.opacity(self.alpha.unwrap_or(1.0)))
-        };
-
-        let icon_element = Icon::new(icon).size(self.icon_size).color(icon_color);
-
+        let color = self.icon_color.color(cx).opacity(self.alpha.unwrap_or(1.0));
         self.base
             .map(|this| match self.shape {
                 IconButtonShape::Square => {
@@ -222,12 +203,20 @@ impl RenderOnce for IconButton {
                 }
                 IconButtonShape::Wide => this,
             })
-            .child(match self.indicator {
-                Some(indicator) => IconWithIndicator::new(icon_element, Some(indicator))
-                    .indicator_border_color(self.indicator_border_color)
-                    .into_any_element(),
-                None => icon_element.into_any_element(),
-            })
+            .child(
+                ButtonIcon::new(self.icon)
+                    .disabled(is_disabled)
+                    .toggle_state(is_selected)
+                    .selected_icon(self.selected_icon)
+                    .selected_icon_color(self.selected_icon_color)
+                    .when_some(selected_style, |this, style| this.selected_style(style))
+                    .when_some(self.indicator, |this, indicator| {
+                        this.indicator(indicator)
+                            .indicator_border_color(self.indicator_border_color)
+                    })
+                    .size(self.icon_size)
+                    .color(Color::Custom(color)),
+            )
     }
 }
 

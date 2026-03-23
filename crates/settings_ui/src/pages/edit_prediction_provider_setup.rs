@@ -2,7 +2,6 @@ use codestral::{CODESTRAL_API_URL, codestral_api_key_state, codestral_api_url};
 use edit_prediction::{
     ApiKeyState,
     mercury::{MERCURY_CREDENTIALS_URL, mercury_api_token},
-    open_ai_compatible::{open_ai_compatible_api_token, open_ai_compatible_api_url},
     sweep_ai::{SWEEP_CREDENTIALS_URL, sweep_api_token},
 };
 use edit_prediction_ui::{get_available_providers, set_completion_provider};
@@ -34,9 +33,7 @@ pub(crate) fn render_edit_prediction_setup_page(
             render_api_key_provider(
                 IconName::Inception,
                 "Mercury",
-                ApiKeyDocs::Link {
-                    dashboard_url: "https://platform.inceptionlabs.ai/dashboard/api-keys".into(),
-                },
+                "https://platform.inceptionlabs.ai/dashboard/api-keys".into(),
                 mercury_api_token(cx),
                 |_cx| MERCURY_CREDENTIALS_URL,
                 None,
@@ -49,9 +46,7 @@ pub(crate) fn render_edit_prediction_setup_page(
             render_api_key_provider(
                 IconName::SweepAi,
                 "Sweep",
-                ApiKeyDocs::Link {
-                    dashboard_url: "https://app.sweep.dev/".into(),
-                },
+                "https://app.sweep.dev/".into(),
                 sweep_api_token(cx),
                 |_cx| SWEEP_CREDENTIALS_URL,
                 Some(
@@ -73,9 +68,7 @@ pub(crate) fn render_edit_prediction_setup_page(
             render_api_key_provider(
                 IconName::AiMistral,
                 "Codestral",
-                ApiKeyDocs::Link {
-                    dashboard_url: "https://console.mistral.ai/codestral".into(),
-                },
+                "https://console.mistral.ai/codestral".into(),
                 codestral_api_key_state(cx),
                 |cx| codestral_api_url(cx),
                 Some(
@@ -94,30 +87,7 @@ pub(crate) fn render_edit_prediction_setup_page(
             .into_any_element(),
         ),
         Some(render_ollama_provider(settings_window, window, cx).into_any_element()),
-        Some(
-            render_api_key_provider(
-                IconName::AiOpenAiCompat,
-                "OpenAI Compatible API",
-                ApiKeyDocs::Custom {
-                    message: "The API key sent as Authorization: Bearer {key}.".into(),
-                },
-                open_ai_compatible_api_token(cx),
-                |cx| open_ai_compatible_api_url(cx),
-                Some(
-                    settings_window
-                        .render_sub_page_items_section(
-                            open_ai_compatible_settings().iter().enumerate(),
-                            true,
-                            window,
-                            cx,
-                        )
-                        .into_any_element(),
-                ),
-                window,
-                cx,
-            )
-            .into_any_element(),
-        ),
+        Some(render_open_ai_compatible_provider(settings_window, window, cx).into_any_element()),
     ];
 
     div()
@@ -171,12 +141,10 @@ fn render_provider_dropdown(window: &mut Window, cx: &mut App) -> AnyElement {
             h_flex()
                 .pt_2p5()
                 .w_full()
-                .min_w_0()
                 .justify_between()
                 .child(
                     v_flex()
                         .w_full()
-                        .min_w_0()
                         .max_w_1_2()
                         .child(Label::new("Provider"))
                         .child(
@@ -194,15 +162,10 @@ fn render_provider_dropdown(window: &mut Window, cx: &mut App) -> AnyElement {
         .into_any_element()
 }
 
-enum ApiKeyDocs {
-    Link { dashboard_url: SharedString },
-    Custom { message: SharedString },
-}
-
 fn render_api_key_provider(
     icon: IconName,
     title: &'static str,
-    docs: ApiKeyDocs,
+    link: SharedString,
     api_key_state: Entity<ApiKeyState>,
     current_url: fn(&mut App) -> SharedString,
     additional_fields: Option<AnyElement>,
@@ -246,34 +209,25 @@ fn render_api_key_provider(
         .icon(icon)
         .no_padding(true);
     let button_link_label = format!("{} dashboard", title);
-    let description = match docs {
-        ApiKeyDocs::Custom { message } => div().min_w_0().w_full().child(
-            Label::new(message)
+    let description = h_flex()
+        .min_w_0()
+        .gap_0p5()
+        .child(
+            Label::new("Visit the")
                 .size(LabelSize::Small)
                 .color(Color::Muted),
-        ),
-        ApiKeyDocs::Link { dashboard_url } => h_flex()
-            .w_full()
-            .min_w_0()
-            .flex_wrap()
-            .gap_0p5()
-            .child(
-                Label::new("Visit the")
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-            )
-            .child(
-                ButtonLink::new(button_link_label, dashboard_url)
-                    .no_icon(true)
-                    .label_size(LabelSize::Small)
-                    .label_color(Color::Muted),
-            )
-            .child(
-                Label::new("to generate an API key.")
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-            ),
-    };
+        )
+        .child(
+            ButtonLink::new(button_link_label, link)
+                .no_icon(true)
+                .label_size(LabelSize::Small)
+                .label_color(Color::Muted),
+        )
+        .child(
+            Label::new("to generate an API key.")
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+        );
     let configured_card_label = if is_from_env_var {
         "API Key Set in Environment Variable"
     } else {
@@ -303,12 +257,10 @@ fn render_api_key_provider(
             h_flex()
                 .pt_2p5()
                 .w_full()
-                .min_w_0()
                 .justify_between()
                 .child(
                     v_flex()
                         .w_full()
-                        .min_w_0()
                         .max_w_1_2()
                         .child(Label::new("API Key"))
                         .child(description)
@@ -471,7 +423,7 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Prompt Format",
-            description: "The prompt format to use when requesting predictions. Set to Infer to have the format inferred based on the model name.",
+            description: "The prompt format to use when requesting predictions. Set to Infer to have the format inferred based on the model name",
             field: Box::new(SettingField {
                 pick: |settings| {
                     settings
@@ -530,6 +482,34 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
             files: USER,
         }),
     ])
+}
+
+fn render_open_ai_compatible_provider(
+    settings_window: &SettingsWindow,
+    window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) -> impl IntoElement {
+    let open_ai_compatible_settings = open_ai_compatible_settings();
+    let additional_fields = settings_window
+        .render_sub_page_items_section(
+            open_ai_compatible_settings.iter().enumerate(),
+            true,
+            window,
+            cx,
+        )
+        .into_any_element();
+
+    v_flex()
+        .id("open-ai-compatible")
+        .min_w_0()
+        .pt_8()
+        .gap_1p5()
+        .child(
+            SettingsSectionHeader::new("OpenAI Compatible API")
+                .icon(IconName::AiOpenAiCompat)
+                .no_padding(true),
+        )
+        .child(div().px_neg_8().child(additional_fields))
 }
 
 fn open_ai_compatible_settings() -> Box<[SettingsPageItem]> {
@@ -602,7 +582,7 @@ fn open_ai_compatible_settings() -> Box<[SettingsPageItem]> {
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Prompt Format",
-            description: "The prompt format to use when requesting predictions. Set to Infer to have the format inferred based on the model name.",
+            description: "The prompt format to use when requesting predictions. Set to Infer to have the format inferred based on the model name",
             field: Box::new(SettingField {
                 pick: |settings| {
                     settings

@@ -2,7 +2,6 @@ use crate::{DbThread, DbThreadMetadata, ThreadsDatabase};
 use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
 use gpui::{App, Context, Entity, Global, Task, prelude::*};
-use util::path_list::PathList;
 
 struct GlobalThreadStore(Entity<ThreadStore>);
 
@@ -20,10 +19,6 @@ impl ThreadStore {
 
     pub fn global(cx: &App) -> Entity<Self> {
         cx.global::<GlobalThreadStore>().0.clone()
-    }
-
-    pub fn try_global(cx: &App) -> Option<Entity<Self>> {
-        cx.try_global::<GlobalThreadStore>().map(|g| g.0.clone())
     }
 
     pub fn new(cx: &mut Context<Self>) -> Self {
@@ -54,13 +49,12 @@ impl ThreadStore {
         &mut self,
         id: acp::SessionId,
         thread: crate::DbThread,
-        folder_paths: PathList,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let database_future = ThreadsDatabase::connect(cx);
         cx.spawn(async move |this, cx| {
             let database = database_future.await.map_err(|err| anyhow!(err))?;
-            database.save_thread(id, thread, folder_paths).await?;
+            database.save_thread(id, thread).await?;
             this.update(cx, |this, cx| this.reload(cx))
         })
     }
@@ -91,15 +85,14 @@ impl ThreadStore {
         let database_connection = ThreadsDatabase::connect(cx);
         cx.spawn(async move |this, cx| {
             let database = database_connection.await.map_err(|err| anyhow!(err))?;
-            let all_threads = database.list_threads().await?;
+            let threads = database
+                .list_threads()
+                .await?
+                .into_iter()
+                .filter(|thread| thread.parent_session_id.is_none())
+                .collect::<Vec<_>>();
             this.update(cx, |this, cx| {
-                this.threads.clear();
-                for thread in all_threads {
-                    if thread.parent_session_id.is_some() {
-                        continue;
-                    }
-                    this.threads.push(thread);
-                }
+                this.threads = threads;
                 cx.notify();
             })
         })
@@ -140,11 +133,6 @@ mod tests {
             profile: None,
             imported: false,
             subagent_context: None,
-            speed: None,
-            thinking_enabled: false,
-            thinking_effort: None,
-            draft_prompt: None,
-            ui_scroll_position: None,
         }
     }
 
@@ -166,12 +154,12 @@ mod tests {
         );
 
         let save_older = thread_store.update(cx, |store, cx| {
-            store.save_thread(older_id.clone(), older_thread, PathList::default(), cx)
+            store.save_thread(older_id.clone(), older_thread, cx)
         });
         save_older.await.unwrap();
 
         let save_newer = thread_store.update(cx, |store, cx| {
-            store.save_thread(newer_id.clone(), newer_thread, PathList::default(), cx)
+            store.save_thread(newer_id.clone(), newer_thread, cx)
         });
         save_newer.await.unwrap();
 
@@ -194,9 +182,8 @@ mod tests {
             Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
         );
 
-        let save_task = thread_store.update(cx, |store, cx| {
-            store.save_thread(thread_id, thread, PathList::default(), cx)
-        });
+        let save_task =
+            thread_store.update(cx, |store, cx| store.save_thread(thread_id, thread, cx));
         save_task.await.unwrap();
 
         cx.run_until_parked();
@@ -227,11 +214,11 @@ mod tests {
         );
 
         let save_first = thread_store.update(cx, |store, cx| {
-            store.save_thread(first_id.clone(), first_thread, PathList::default(), cx)
+            store.save_thread(first_id.clone(), first_thread, cx)
         });
         save_first.await.unwrap();
         let save_second = thread_store.update(cx, |store, cx| {
-            store.save_thread(second_id.clone(), second_thread, PathList::default(), cx)
+            store.save_thread(second_id.clone(), second_thread, cx)
         });
         save_second.await.unwrap();
         cx.run_until_parked();
@@ -264,11 +251,11 @@ mod tests {
         );
 
         let save_first = thread_store.update(cx, |store, cx| {
-            store.save_thread(first_id.clone(), first_thread, PathList::default(), cx)
+            store.save_thread(first_id.clone(), first_thread, cx)
         });
         save_first.await.unwrap();
         let save_second = thread_store.update(cx, |store, cx| {
-            store.save_thread(second_id.clone(), second_thread, PathList::default(), cx)
+            store.save_thread(second_id.clone(), second_thread, cx)
         });
         save_second.await.unwrap();
         cx.run_until_parked();
@@ -278,7 +265,7 @@ mod tests {
             Utc.with_ymd_and_hms(2024, 1, 3, 0, 0, 0).unwrap(),
         );
         let update_task = thread_store.update(cx, |store, cx| {
-            store.save_thread(first_id.clone(), updated_first, PathList::default(), cx)
+            store.save_thread(first_id.clone(), updated_first, cx)
         });
         update_task.await.unwrap();
         cx.run_until_parked();

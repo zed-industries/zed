@@ -5,16 +5,11 @@ use futures::StreamExt;
 use gpui::{App, AsyncApp, Task};
 use http_client::github::latest_github_release;
 pub use language::*;
-use language::{
-    LanguageName, LanguageToolchainStore, LspAdapterDelegate, LspInstaller,
-    language_settings::language_settings,
-};
+use language::{LanguageToolchainStore, LspAdapterDelegate, LspInstaller};
 use lsp::{LanguageServerBinary, LanguageServerName};
 
-use project::lsp_store::language_server_settings;
 use regex::Regex;
-use serde_json::{Value, json};
-use settings::SemanticTokenRules;
+use serde_json::json;
 use smol::fs;
 use std::{
     borrow::Cow,
@@ -29,17 +24,7 @@ use std::{
     },
 };
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
-use util::{ResultExt, fs::remove_matching, maybe, merge_json_value_into};
-
-use crate::LanguageDir;
-
-pub(crate) fn semantic_token_rules() -> SemanticTokenRules {
-    let content = LanguageDir::get("go/semantic_token_rules.json")
-        .expect("missing go/semantic_token_rules.json");
-    let json = std::str::from_utf8(&content.data).expect("invalid utf-8 in semantic_token_rules");
-    settings::parse_json_with_comments::<SemanticTokenRules>(json)
-        .expect("failed to parse go semantic_token_rules.json")
-}
+use util::{ResultExt, fs::remove_matching, maybe};
 
 fn server_binary_arguments() -> Vec<OsString> {
     vec!["-mode=stdio".into()]
@@ -207,16 +192,9 @@ impl LspAdapter for GoLspAdapter {
 
     async fn initialization_options(
         self: Arc<Self>,
-        delegate: &Arc<dyn LspAdapterDelegate>,
-        cx: &mut AsyncApp,
+        _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<serde_json::Value>> {
-        let semantic_tokens_enabled = cx.update(|cx| {
-            language_settings(Some(LanguageName::new("Go")), None, cx)
-                .semantic_tokens
-                .enabled()
-        });
-
-        let mut default_config = json!({
+        Ok(Some(json!({
             "usePlaceholders": false,
             "hints": {
                 "assignVariableTypes": true,
@@ -226,35 +204,8 @@ impl LspAdapter for GoLspAdapter {
                 "functionTypeParameters": true,
                 "parameterNames": true,
                 "rangeVariableTypes": true
-            },
-            "semanticTokens": semantic_tokens_enabled
-        });
-
-        let project_initialization_options = cx.update(|cx| {
-            language_server_settings(delegate.as_ref(), &self.name(), cx)
-                .and_then(|s| s.initialization_options.clone())
-        });
-
-        if let Some(override_options) = project_initialization_options {
-            merge_json_value_into(override_options, &mut default_config);
-        }
-
-        Ok(Some(default_config))
-    }
-
-    async fn workspace_configuration(
-        self: Arc<Self>,
-        delegate: &Arc<dyn LspAdapterDelegate>,
-        _: Option<Toolchain>,
-        _: Option<lsp::Uri>,
-        cx: &mut AsyncApp,
-    ) -> Result<Value> {
-        Ok(cx
-            .update(|cx| {
-                language_server_settings(delegate.as_ref(), &self.name(), cx)
-                    .and_then(|settings| settings.settings.clone())
-            })
-            .unwrap_or_default())
+            }
+        })))
     }
 
     async fn label_for_completion(

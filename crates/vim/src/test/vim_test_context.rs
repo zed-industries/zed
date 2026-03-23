@@ -30,7 +30,6 @@ impl VimTestContext {
             theme::init(theme::LoadThemes::JustBase, cx);
             settings_ui::init(cx);
             markdown_preview::init(cx);
-            zed_actions::init();
         });
     }
 

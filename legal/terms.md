@@ -1,254 +1,197 @@
 ---
-title: Terms of Service
+title: Zed End User Terms
 slug: terms
 ---
 
-**Last Updated**: March 2, 2026
+PLEASE READ THESE TERMS AND CONDITIONS CAREFULLY BEFORE USING THE SERVICE OR SOFTWARE OFFERED BY ZED INDUSTRIES, INC. ("ZED", OR "WE"). BY ACCESSING OR USING THE SOLUTION (AS DEFINED BELOW) IN ANY MANNER, YOU ("YOU" OR "CUSTOMER") AGREE TO BE BOUND BY THESE TERMS (THE "AGREEMENT") TO THE EXCLUSION OF ALL OTHER TERMS. YOU REPRESENT AND WARRANT THAT YOU HAVE THE AUTHORITY TO ENTER INTO THIS AGREEMENT; IF YOU ARE ENTERING INTO THIS AGREEMENT ON BEHALF OF AN ORGANIZATION OR ENTITY, REFERENCES TO "CUSTOMER" AND "YOU" IN THIS AGREEMENT, REFER TO THAT ORGANIZATION OR ENTITY. IF YOU DO NOT AGREE TO ALL OF THE FOLLOWING, YOU MAY NOT USE OR ACCESS THE SOLUTION IN ANY MANNER. IF THE TERMS OF THIS AGREEMENT ARE CONSIDERED AN OFFER, ACCEPTANCE IS EXPRESSLY LIMITED TO SUCH TERMS.
 
-Welcome, and thank you for your interest in Zed Industries, Inc. (“**Zed**,” “**we**,” or “**us**”) and our website at [www.zed.dev](https://www.zed.dev), along with our downloadable Zed software (the “**Software**”) and related subscription service (the “**Service**”). These Terms of Service are a legally binding contract between you and Zed regarding your use of the Service.
+## 1. ACCESS TO AND USE OF THE SOLUTION
 
-Please read the following Terms carefully.
+Subject to the terms and conditions of this Agreement, Zed hereby grants to You, and You hereby accept from Zed, a term-limited, non-exclusive, non-transferable, non-assignable and non-sublicensable license to make use of the Editor for Your internal use only, and subject to the use limitations in Section 2.2.
 
-**By accessing or using the Service, you (“You” or “Customer”) agree to these Terms of Service, the Data Processing Addendum (“DPA”), available upon request, and Zed’s [Privacy Policy](/privacy-policy) (collectively, the “Terms”).**
+## 2. TERMS APPLICABLE TO THE EDITOR
 
-If you are not eligible, or do not agree to the Terms, you may not access or use the Service.
+### 2.1. License Grant
 
-By using the Service, you confirm that you have read and understand these Terms and that they form a binding agreement between you and Zed.
+Subject to the terms and conditions of this Agreement, Zed hereby grants to You, and You hereby accept from Zed, a term-limited, non-exclusive, non-transferable, non-assignable and non-sublicensable license to make use of the Editor for Your internal use only, and subject to the use limitations in Section 2.2.
 
-**ARBITRATION NOTICE**. Except for certain kinds of disputes described in Section 15.2 (Dispute Resolution and Arbitration), you agree that disputes arising under these Terms will be resolved by binding, individual arbitration, and BY ACCEPTING THESE TERMS, YOU AND ZED ARE EACH WAIVING THE RIGHT TO A TRIAL BY JURY OR TO PARTICIPATE IN ANY CLASS ACTION OR REPRESENTATIVE PROCEEDING. ALTERNATIVELY, CUSTOMER MAY OPT OUT OF ARBITRATION PER SECTION 17.2(a).
+### 2.2. License Limitations
 
-## 1. Overview
+You agree that You shall not: (a) exceed the scope of the licenses granted in Section 2.1; (b) make copies of the Editor; (c) distribute, sublicense, assign, delegate, rent, lease, sell, time-share or otherwise transfer the benefits of, use under, or rights to, the license granted in Section 2.1; (d) reverse engineer, decompile, disassemble or otherwise attempt to learn the source code, structure or algorithms underlying the Editor, except to the extent required to be permitted under applicable law; (e) modify, translate or create derivative works of the Editor; or (f) remove any copyright, trademark, patent or other proprietary notice that appears on the Editor or copies thereof.
 
-Subject to these Terms, Zed will permit Customer to access and use Zed’s AI-enabled software-as-a-service offering (the “**Service**”), which enables certain additional features and functionality (including artificial intelligence and collaboration features) in Zed’s open source code editing software (“**Software**”).
+### 2.3. Open Source Software
 
-## 2. Service
+Zed makes certain versions of the Editor and related software available at the Zed GitHub Repository: [https://github.com/zed-industries/zed](https://github.com/zed-industries/zed) (the "Repo"). Your use of such software is subject to the open source software licenses declared in the Repo.
 
-### 2.1. Eligibility
+## 3. TERMS APPLICABLE TO THE ZED SERVICE
 
-Customer must be at least 18 years old to use the Service. By agreeing to these Terms, Customer represents and warrants to Zed that: (a) Customer is at least 18 years old; (b) Customer has not previously been suspended or removed from the Service; and (c) Customer’s registration and use of the Service is in compliance with any and all applicable laws and regulations. If Customer is an entity, organization, or company, the individual accepting these Terms on Customer’s behalf represents and warrants that they have authority to bind Customer to these Terms and Customer agrees to be bound by these Terms.
+### 3.1. Access to and Scope of Zed Service
 
-### 2.2. Access Grant
+If you have elected to use the Zed Service by enabling or activating the Zed Service, Zed will use commercially reasonable efforts to make the Zed Service available to You as set forth in this Agreement. Once you elected to use the Zed Service, You may access and use the Zed Service during the Term, subject to Your compliance with the terms and conditions of the Agreement.
 
-During the Term, subject to Customer’s compliance with the terms of the Terms, Customer may access and use the Service only for Customer’s internal business purposes or for individuals, for personal non-commercial purposes, in accordance with the then-current version of Zed’s usage guidelines and standard technical documentation for the Service that Zed makes generally available to its customers (“**Documentation**”), the Terms, and any terms set forth in the applicable Subscription Service (as defined in Section 3.4 below). Customer agrees to access the Service only through the mechanisms designated by Zed. Without limiting the foregoing, to access the Service, Customer may be required to associate an existing third-party account with the Service to enable authentication (e.g., via OAuth). Customer will be responsible for the acts and omissions of all persons who access the Service through Customer’s account as though such acts and omissions were Customer’s own. Customer will promptly notify Zed if it becomes aware of any compromise to its Zed account.
+### 3.2. Restrictions
 
-### 2.3. Acceptable Use
+You will use the Zed Service only in accordance with all applicable laws, including, but not limited to, laws related to data (whether applicable within the United States, the European Union, or otherwise). You agree not to (and will not allow any third party to): (i) remove or otherwise alter any proprietary notices or labels from the Zed Service or any portion thereof; (ii) reverse engineer, decompile, disassemble, or otherwise attempt to discover the underlying structure, ideas, or algorithms of the Zed Service or any software used to provide or make the Zed Service available; or (iii) rent, resell or otherwise allow any third party access to or use of the Zed Service. Zed may suspend Your access to or use of the Zed Service as follows: (a) immediately if Zed reasonably believes Your use of the Zed Service may pose a security risk to or may adversely impact the Zed Service; or (b) if You are in breach of this Agreement.
 
-The Service uses technology provided by multiple third party AI subprocessors (the “AI Providers”) including but not limited to: Anthropic, PBC (“Anthropic”), Google LLC (“Google”), LiveKit Incorporated, OpenAI, LLC (“OpenAI”) etc., as may be updated from time to time. Customer may not use the Service in a manner that violates any applicable AI Provider policy which are listed on [https://zed.dev/acceptable-use-policies](https://zed.dev/acceptable-use-policies), including Anthropic’s [Usage Policy](https://www.anthropic.com/legal/aup), Google Gemini’s [Generative AI Prohibited Use Policy](https://policies.google.com/terms/generative-ai/use-policy), GitHub's [Acceptable Use Policy](https://docs.github.com/en/site-policy/acceptable-use-policies/github-acceptable-use-policies), LiveKit’s [Acceptable Use Policy](https://livekit.io/legal/acceptable-use-policy); OpenAI’s [Usage Policies](https://openai.com/policies/usage-policies/) or [Sharing and Publication Policy](https://openai.com/api/policies/sharing-publication/); and [Community Guidelines](https://openai.com/api/policies/community-guidelines/); each of which may be updated from time to time and are expressly incorporated by reference. Customer is solely responsible to check for updates to the applicable AI Provider policy from time to time.
+### 3.3. Customer Data
 
-### 2.4. Restrictions
+You are solely responsible for Customer Data including, but not limited to: (a) compliance with all applicable laws and this Agreement; (b) any claims relating to Customer Data; and (c) any claims that Customer Data infringes, misappropriates, or otherwise violates the rights of any third party. You agree and acknowledge that Customer Data may be irretrievably deleted if Your account is terminated. For purposes of this Agreement, "Customer Data" shall mean any data, information or other material provided, uploaded, or submitted by You to the Zed Service in the course of using the Zed Service. Notwithstanding anything to the contrary, You represent and warrant that You will not transfer or make available to Zed any personally identifiable information or related information subject to applicable data privacy laws or regulations, unless otherwise agreed to in writing by Zed.
 
-Customer will not (and will not permit anyone else to), directly or indirectly, do any of the following: (a) provide access to, distribute, sell, or sublicense the Service to a third party; (b) seek to access non-public APIs associated with the Service; (c) copy any element of the Service; (d) interfere with the operation of the Service, circumvent any access restrictions, or conduct any security or vulnerability test of the Service; (e) transmit any viruses or other harmful materials to the Service or others; (f) take any action that risks harm to others or to the security, availability, or integrity of the Service except for the purposes of legitimate security or malware research; or (g) access or use the Service or Output in a manner that violates any applicable relevant local, state, federal or international laws, regulations, or conventions, including those related to data privacy or data transfer, international communications, or export of data (collectively, “**Laws**”), or the Terms. The Service incorporates functionality provided by third-party services, the use of which is subject to additional terms. Customer agrees that if Customer accesses or uses services, features or functionality in the Software or Service that are provided by a third party, Customer will comply with any applicable terms promulgated by that third party, including as set forth at [https://zed.dev/acceptable-use-policies](/acceptable-use-policies) (as may be updated from time to time). Customer further acknowledges that certain components of the Software or Service may be covered by open source licenses ("**Open Source Component**"), including but not limited to Apache License, Version 2.0, GNU General Public License v3.0, and the GNU Affero General Public License v3.0. To the extent required by such open source license for the applicable Open Source Component, the terms of such license will apply to such Open Source Component in lieu of the relevant provisions of these Terms. If such open source license prohibits any of the restrictions in these Terms, such restrictions will not apply to such Open Source Component. Zed shall provide Customer with a list of Open Source Components upon Customer's request.
+#### 3.3.1. Customer Data Made Available to Zed
 
-## 3. General Payment Terms
+To the extent You elect to make Customer Data available to Zed, the same may only be used by Zed according to the Customer Data type and the use rights regarding the same as described herein:
 
-Accessing certain features and tiers of the Service requires Customer to pay fees. Before Customer pays any fees, Customer will have an opportunity to review and accept the fees that Customer will be charged. Unless otherwise specifically provided for in these Terms, all fees are in U.S. Dollars and are non-refundable, except as required by law.
+#### 3.3.2. Usage Data
 
-### 3.1. Price
+To improve the Editor and understand how You use it, Zed optionally collects the following usage data:
 
-Zed reserves the right to determine pricing for the Service. Zed will make reasonable efforts to keep pricing information published on our pricing page at [https://zed.dev/pricing](https://zed.dev/pricing) up to date. Zed encourages Customer to check Zed’s pricing page periodically for current pricing information. Zed may change the fees for any feature of the Service, including by adding fees or charges, if Zed gives Customer advance notice of changes before they apply.
+- (a) file extensions of opened files;
+- (b) features and tools You use within the Editor;
+- (c) project statistics (e.g., number of files); and
+- (d) frameworks detected in Your projects
 
-### 3.2. Taxes
+(a-d collectively, "Usage Data"). Usage Data does not include any of Your software code or sensitive project details. You may change Your preferences disabling the collection of Usage Data and You can audit Usage Data collected by the Editor at any time. See [https://zed.dev/docs/telemetry](https://zed.dev/docs/telemetry) for more.
 
-Customer is responsible for any sales, use, GST, value-added, withholding, or similar taxes or levies that apply to Orders, whether domestic or foreign, other than Zed’s income tax (“**Taxes**”). Fees are exclusive of all Taxes. If Customer is compelled to make a deduction or set-off for any such Taxes, Customer will pay Zed such additional amounts as necessary to ensure receipt by Zed of the full amount Zed would have received but for the deduction.
+Usage Data is associated with a secure random telemetry ID which may be linked to Your email address. This linkage currently serves two purposes: (1) it allows Zed to analyze usage patterns over time while maintaining Your privacy; and (2) it enables Zed to reach out to specific user groups for feedback and improvement suggestions. Zed may contact You based on Your usage patterns to better understand your needs and improve the Solution. If You delete Your account, the link between Your telemetry ID and Your email address will be permanently removed. By continuing to use Editor or Solution with this feature enabled You agree to this Usage Data collection.
 
-### 3.3. Authorization
+#### 3.3.3. Crash Reports
 
-Customer authorizes Zed to charge all sums for the orders that Customer makes, the level of Service that Customer selects, and Customer’s submission of prompts or other Customer Data (defined below) to the Service to generate Output (defined below) as described in these Terms or published by Zed, including all applicable taxes, to the payment method specified in Customer’s account. If Customer pays any fees with a credit card, then Zed may seek pre-authorization of Customer’s credit card account prior to Customer’s purchase to verify that the credit card is valid and has the necessary funds or credit available to cover Customer’s purchase.
+Customer Data consisting of data related to the behavior of the Solution prior to a crash or failure, such as stack traces are collected and classified as "Crash Reports". Zed will use commercially reasonable efforts to exclude any personally identifiable information from Crash Reports, but due to the nature of a crash, Zed does not ensure that information such as paths will be excluded from Crash Reports. Crash Reports will be used solely for Zed's internal purposes in connection with diagnosing defects in the Solution that led to the crash. You may grant us permission to capture Crash Reports when installing or activating the Solution, and You may change Your preferences at any time in the settings feature of the Solution. Once You grant us this permission, Zed will retain the Crash Reports indefinitely.
 
-### 3.4. Subscription Service
+#### 3.3.4. User Content
 
-The Service may include certain subscription-based plans with automatically recurring payments for periodic charges ("**Subscription Service**"). The "**Subscription Billing Date**" is the date when Customer purchases its first subscription to the Service. The Subscription Service will begin on the Subscription Billing Date and continue for the subscription period that Customer selects on its account (such period, the "**Initial Subscription Period**"), and will automatically renew for successive periods of the same duration as the Initial Subscription Period (the Initial Subscription Period and each such renewal period, each a "**Subscription Period**") unless Customer cancels the Subscription Service or Zed terminates it. If Customer activates a Subscription Service, then Customer authorizes Zed or its third-party payment processors to periodically charge, on a going-forward basis and until cancellation of the Subscription Service, all accrued sums on or before the payment due date. For information on the "Subscription Fee", please see Zed’s pricing page at [https://zed.dev/pricing](https://zed.dev/pricing). Customer’s account will be charged automatically on the Subscription Billing Date and thereafter on the renewal date of its Subscription Service for all applicable fees and taxes for the next Subscription Period. Customer must cancel its Subscription Service before it renews in order to avoid billing of the next periodic Subscription Fee to Customer’s account. Zed or its third-party payment processor will bill the periodic Subscription Fee to the payment method associated with Customer’s account or that Customer otherwise provides to Zed. Customer may cancel the Subscription Service from the account page at https://zed.dev/account or by contacting us at [billing-support@zed.dev](mailto:billing-support@zed.dev). **YOUR CANCELLATION MUST BE RECEIVED BEFORE THE RENEWAL DATE IN ORDER TO AVOID BEING CHARGED FOR THE NEXT SUBSCRIPTION PERIOD.**
+• You may access, modify or create certain data or information in connection with your access or use of the Zed Editor or the Solution. Such data and information may include, but is not limited to any of the following:
 
-### 3.5. Consumption Fees
+- (a) file contents and associated metadata (e.g., filename, paths, size, timestamps);
+- (b) source control history, comments and metadata (e.g., git history, commit messages);
+- (c) configuration data (e.g., settings, keymaps);
+- (d) anything typed, pasted and/or displayed on screen while using the Editor;
+- (e) derivative works of the above generated by the Editor (e.g., format conversions, summaries, indexes, caches);
+- (f) metadata, code and other derivative works of the above returned by language servers and other local tooling; and
+- (g) metadata, code and other derivative works of the above returned by services integrated with the Zed Editor
 
-Customer’s subscription to the Service may permit Customer to submit prompts or other Customer Data for the purpose of generating Output, at no additional charge for a certain number of times each month. If Customer elects to submit a volume of prompts in excess of the quantity included in its Subscription Fee, then Customer authorizes Zed to charge, and Customer will be charged, a fee for each additional prompt at the rates set forth at [https://zed.dev/docs/ai/models](https://zed.dev/docs/ai/models).
+(a-g collectively, "User Content").
 
-### 3.6. Delinquent Accounts
+#### 3.3.5. Handling of User Content
 
-Zed may suspend or terminate access to the Service, including fee-based portions of the Service, for any account for which any amount is due but unpaid. In addition to the amount due for the Service, a delinquent account will be charged with fees or charges that are incidental to any chargeback or collection of any unpaid amount, including collection fees. If your payment method is no longer valid at the time a renewal Subscription Fee is due, then Zed reserves the right to delete your account and any information or Customer Data associated with your account without any liability to Customer.
+Zed will make use of or transfer User Content only as specified in this Agreement, or as necessary to comply with applicable law.
 
-## 4. Data
+#### 3.3.5.1. Zed Collaboration Services
 
-### 4.1. Zed's Use of Customer Data
+When using Zed Collaboration Services, User Content is transmitted from Your environment only if You collaborate with other Zed users by electing to share a project in the Editor. Once You share a project, Zed may transmit User Content consisting of file paths, file contents, and metadata regarding the code returned by language servers. Currently, Zed does not persist any User Content beyond the Your collaboration session. If You unshare a project or disconnect from the Solution, all information associated with such project will be deleted from Zed servers. In the future, Zed may save User Content regarding projects beyond the scope of a single collaboration session. We may share such User Content with those users You elected to grant access to. Zed's access to such User Content is limited to debugging and making improvements to the Solution.
 
-Customer hereby grants Zed a non-exclusive, worldwide, royalty-free, fully paid-up, non-sublicensable (except to service providers and Customer’s designees), non-transferable (except as set forth in Section 15.1) right to use, copy, store, disclose, transmit, transfer, display, modify, create derivative works from, collect, access, store, host, or otherwise process (“**Process**”) any materials that Customer inputs into or otherwise makes available to the Service (including prompts and other written content) (collectively, “**Customer Data**”) solely: (a) to perform its obligations set forth in the Terms, including its Support obligations as applicable; (b) to derive and generate Telemetry (see Section 4.4); and (c) as necessary to comply with applicable Laws. Except as required by applicable Laws, Zed will not provide Customer Data to any person or entity other than Customer’s designees (including pursuant to Section 7) or service providers. In the event that autocomplete suggestions are turned on, Customer understands and agrees that the Service will periodically send Customer Data in the background to an AI Provider for the purpose of generating autocomplete input suggestions in the Services. Autocomplete features can be turned off at any time, in which case Customer Data will not be sent.
+#### 3.3.5.2. Other Services
 
-### 4.2. Customer's Ownership of Output
+The Zed Editor supports integration with API-based services maintained and not operated by Zed (the "Other Services"). By way of example, Other Services includes those made available by GitHub, Anthropic, OpenAI, and similar providers, or those You host or manage directly. You may configure the Zed Editor to interoperate, communicate with, and exchange data (including User Content) directly with the Other Services. Zed is not responsible or otherwise liable with respect to Your use of any Other Service, including but not limited to the exchange of data between the Other Service and the Zed Editor. The terms and conditions, including the applicable privacy policy, with respect to the Other Service are those made available by the applicable Other Service, not these Terms.
 
-The Service may generate specifically for, and make available to, Customer text and written content based on or in response to Customer Data input into the Service (collectively, “**Output**”), including through the use of technologies that incorporate or rely upon artificial intelligence, machine learning techniques, and other similar technology and features. As between the Parties, to the greatest extent permitted by applicable Laws, Customer owns all Output and Zed hereby irrevocably assigns to Customer all right, title, and interest in and to the Output that Zed may possess. **For the avoidance of doubt, Zed and its AI Providers will not retain or use Customer Data for the purpose of improving or training the Service or any AI Provider products, except to the extent Customer explicitly opts-in on Zed’s specific feature to allow training and/or such improvement (such as fine-tuning) and is solely for the benefit of Customer.**
+#### 3.3.5.3. Zed AI Services
 
-### 4.3. Zed's Collection of Output Rating
+The Zed Editor supports integration with API-based services maintained and operated by Zed (the "Zed AI Services"). You may elect to use Zed AI Services as the provider for various Zed Editor features (e.g., Agent Panel, Inline Assistant, Edit Predictions, and similar features). In connection with Your use of these features, the Zed Editor and Zed AI Services may make use of User Content to generate contextually relevant responses (the “Output”). Other than as specified in Section 3.3.5.4 of these Terms, Zed will not use User Content for training of its models, or disclose User Content.
 
-The Service may enable Customer, at its option, to rate or otherwise provide feedback with respect to Output generated through the Service. If Customer opts in to provide feedback concerning Output using the features of the Software or Service (e.g., by clicking an Output rating button), then Customer agrees that Zed may Process that Output and associated Customer Data for the purpose of product development and improvement (“Output Rating”). For clarity, Customer’s decision to opt in to provide Output Rating is specific to the corresponding Output. Your decision to provide Output Rating with respect to one instance of Output does not give Zed the right to use any other Output for Output Rating purposes.
+Output is provided "as is" without any warranties or guarantees of functionality, security, or fitness for a particular purpose. While efforts are made to ensure the accuracy and reliability, Output may include errors, vulnerabilities, and defects. You are responsible for reviewing, testing, and validating Output before use in any production or critical environment. Zed assumes no liability for any damages, losses, or liability arising from the use, modification, reliance on, or deployment of Output. Any such use is at Your own risk.
 
-### 4.4. Telemetry
+#### 3.3.5.4. Improvement Feedback
 
-Zed may collect, generate, and Process information, including technical logs, metrics, and data and learnings, related to the Software and Service (“**Telemetry**”) to improve and support the Services and for other lawful business purposes. Customer may configure the Software to opt out of the collection of certain Telemetry Processed locally by the Software itself, but Zed may still collect, generate, and Process Telemetry on Zed’s servers. Zed may not disclose Telemetry to any third-party other than Zed’s Representatives unless it is de-identified so that it does not identify Customer as the source thereof and is aggregated with data across other customers. **For avoidance of doubt, Telemetry expressly does not include Customer Data.**
+When using Zed AI Services to provide Edit Predictions in connection with certain open source software projects, You may elect to share requests, responses and feedback comments (collectively "Model Improvement Feedback") with Zed, and Zed may use the same to improve Zed Edit Predictions models. You may opt-out of sharing Model Improvement Feedback at any time.
 
-## 5. Customer Obligations
+For more information on Zed Edit Predictions please see: [https://zed.dev/docs/ai/ai-improvement](https://zed.dev/docs/ai/ai-improvement)
 
-Customer is responsible for its Customer Data and will comply with applicable Laws when using the Service. Customer represents and warrants that it has obtained all rights, consents, and permissions necessary for Zed to Process Customer Data and exercise the rights granted to it in the Terms without violating or infringing Laws or third-party rights. Customer Data shall not contain: (a) any “protected health information” or “PHI” as defined under HIPAA (including 45 C.F.R. Parts 160 and 164); or (b) any payment card or cardholder data subject to PCI DSS (including primary account numbers, full track or chip data, CVV/CVC codes, PINs, or similar payment card security data). Customer is solely responsible for ensuring compliance with this restriction and shall be liable for, and shall indemnify Zed against, any claims, fines, or penalties arising from Customer’s breach of this Section. Zed disclaims any and all liability in connection with Customer Data.
+When using Zed AI Services in connection with the Agent Panel, You may elect to share with Zed requests, responses and feedback regarding the Agent Panel and related Output (the “Agent Improvement Feedback”) with Zed, and Zed may use the same to improve the Agent Panel and related Output. Zed will only collect Agent Improvement Feedback when You elect to share the same.
 
-## 6. Suspension of Service
+For more information regarding the Agent Panel please see: [https://zed.dev/docs/ai/ai-improvement](https://zed.dev/docs/ai/ai-improvement)
 
-Zed may immediately suspend Customer’s access to any or all of the Service if: (a) Customer breaches Section 2.2 - 2.4 or Section 5; (b) any payments required under the Terms are overdue by 30 days or more; (c) changes to Laws or new Laws require that Zed suspend the Service or otherwise may impose additional liability on Zed in connection with its provision of the Service to Customer; or (d) Customer’s breach of the Terms risks harm to any of Zed’s other customers or the security, availability, or integrity of the Service or other services and entities. Where practicable, Zed will use reasonable efforts to provide Customer with prior notice of the suspension (email sufficing). If the issue that led to the suspension is resolved, Zed will restore Customer’s access to the Service.
+#### 3.4. Privacy Policy
 
-## 7. Data Sharing and Third-Party Integrations
+You and Zed are bound by the terms and conditions contained in the Zed Privacy Policy which is incorporated by reference hereto. The Zed Privacy Policy is available at the following URL: [https://zed.dev/privacy-policy](https://zed.dev/privacy-policy).
 
-### 7.1. Collaboration Services
+## 4. FEE BASED SERVICES, FEES AND PAYMENT TERMS
 
-Certain features of the Service may allow Customer to share data between accounts on the Service, including accounts controlled by persons and entities not associated with Customer (“**Collaboration Features**”). If Customer elects to use Collaboration Features, Customer acknowledges and agrees that Zed will, and authorizes Zed to, make available Customer Data consisting of file paths, file contents, and metadata regarding the code returned by language servers to the third parties designated by Customer, and that Zed exercises no control over, and has no liability for, the acts or omissions of such third parties (including in connection with the Customer Data). Currently, with the exception of the Channel notes feature, Zed does not persist any shared Customer Data beyond the designated Collaboration Feature session.
+### 4.1. Fee Based Services
 
-### 7.2. Third-Party Integrations
+The Zed AI Services is made available with additional usage benefits (the “Enhanced Use ”) as described in the table published at [zed.dev/pricing](https://zed.dev/pricing) (the “Pricing Table”), subject to the requirements and limitations set forth in the Pricing Table and these Terms. In order to make use of the Enhanced Use, Customer must access the Zed AI Services through a Zed registered account.
 
-The Service may support integration with third-party platforms, add-ons, services, or products not provided by Zed (“**Third-Party Platforms**”). Use of any Third-Party Platforms integrated with or made available through the Service is subject to Customer’s agreement with the relevant provider and not these Terms. Zed does not control and has no liability for Third-Party Platforms, including their security, functionality, operation, availability, or interoperability with the Service. By enabling a Third-Party Platform to interact with the Service, Customer authorizes Zed to access and exchange Customer Data with such Third-Party Platform on Customer’s behalf.
+### 4.2. Fees
 
-## 8. Disclaimers; No Warranties by Zed
+Customer shall pay to Zed the applicable fees set forth in Pricing Table, together with any applicable taxes and shipping and handling (collectively, the “Fees”). Customer shall have no right of return, and all Fees shall be non-refundable.
 
-THE SOFTWARE, SERVICE, OUTPUT, AND ALL OTHER ZED SERVICES ARE PROVIDED “AS IS” AND “AS AVAILABLE”. ZED, ON ITS OWN BEHALF AND ON BEHALF OF ITS SUPPLIERS AND LICENSORS, MAKES NO OTHER WARRANTIES, WHETHER EXPRESS, IMPLIED, STATUTORY, OR OTHERWISE, INCLUDING WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, OR NONINFRINGEMENT. ZED DOES NOT WARRANT THAT CUSTOMER’S USE OF THE SOFTWARE OR SERVICE WILL BE UNINTERRUPTED OR ERROR-FREE OR THAT IT WILL MAINTAIN CUSTOMER DATA WITHOUT LOSS. ZED IS NOT LIABLE FOR DELAYS, FAILURES, OR PROBLEMS INHERENT IN USE OF THE INTERNET AND ELECTRONIC COMMUNICATIONS OR OTHER SYSTEMS OUTSIDE OF ZED’S CONTROL. ZED IS NOT RESPONSIBLE FOR ANY DAMAGE THAT MAY RESULT FROM THE SOFTWARE OR SERVICE OR OUTPUT OR CUSTOMER’S DEALING WITH ANY OTHER SERVICE USER. Without limiting the foregoing, Customer acknowledges and agrees that: (a) the Service may produce inaccurate or erroneous Output; (b) Customer is responsible for independently evaluating the Output and any other information Customer receives from the Service; and (c) due to the nature of the Service and artificial intelligence technologies generally, Output may not be unique and other users of the Service may receive output from the Service that is similar or identical to the Output (and, notwithstanding anything to the contrary, such similar or identical output will not be understood to be Output).
+### 4.3. Payment Terms
 
-THE LIMITATIONS, EXCLUSIONS AND DISCLAIMERS IN THIS SECTION 8 (DISCLAIMERS; NO WARRANTIES BY ZED) APPLY TO THE FULLEST EXTENT PERMITTED BY LAW. Zed does not disclaim any warranty or other right that Zed is prohibited from disclaiming under applicable law.
+All amounts payable to Zed under this Agreement shall be paid in United States dollars and paid Zed according to the method of payment, frequency and calculated as set forth in the Pricing Table.
 
-## 9. Term, Termination, and Modification of the Service
+### 4.4. Taxes; Set-offs
 
-### 9.1. Term
+Any and all payments made by Customer in accordance with this Agreement are exclusive of any taxes that might be assessed by any jurisdiction. Customer shall pay or reimburse Zed for all sales, use, property and similar taxes; all customs duties, import fees, stamp duties, license fees and similar charges; and all other mandatory payments to government agencies of whatever kind, except taxes imposed on the net or gross income of Zed. All amounts payable to Zed under this Agreement shall be without set-off and without deduction of any taxes, levies, imposts, charges, withholdings and/or duties of any nature which may be levied or imposed, including without limitation, value added tax, customs duty and withholding tax.
 
-These Terms are effective beginning when Customer accepts the Terms or first downloads, installs, accesses, or uses the Service, and ending when terminated as described in Section 9.2 (Termination).
+## 5. TERM AND TERMINATION
 
-### 9.2. Termination
+### 5.1. Term
 
-If Customer violates any provision of these Terms, then Customer is not authorized to access the Service and these Terms automatically terminate. In addition, Zed may, at its sole discretion, terminate these Terms or Customer’s account on the Service, or suspend or terminate Customer’s access to the Service, at any time for any reason or no reason, with or without notice, and without any liability to Customer arising from such termination. Customer may terminate its account and these Terms at any time by contacting Zed at [hi@zed.dev](mailto:hi@zed.dev).
+The term of this Agreement shall commence on the date You first download the Editor or use the Zed Service (the "Effective Date"), and unless terminated earlier according to this Section 3, will end pursuant to this Section 5 (the "Term").
 
-### 9.3. Effect of Termination
+### 5.2. Termination
 
-Upon termination of these Terms: a) Customer’s license to access and use the Service will terminate and Customer must immediately cease all use of the Service; b) Customer will no longer be authorized to access its account or the Service; c) Customer must pay Zed any unpaid amount that was due prior to termination; and d) all payment obligations accrued prior to termination and Section(s) 2.4 (Restrictions), 3 (General Payment Terms) with the exception of 3.4 (Subscription Service), 4.2 (Customer’s Ownership of Output), 4.4 (Telemetry), 8 (Disclaimers; No Warranties by Zed), 9.3 (Effect of Termination), 10 (Ownership; Feedback), 11 (Limitations of Liability), 12 (Indemnity), 15 (Governing Law, Dispute Resolution and Arbitration); and 16 (General Terms), will survive. If Customer’s account has been terminated for a breach of these Terms, then Customer is prohibited from creating a new account on the Service.
+This Agreement may be terminated: (a) by either party if the other has materially breached this Agreement; or (b) by Zed at any time and for any reason upon notice to Customer. You acknowledge that Zed is under no obligation to continue to operate the Zed Service or make the Editor available, and We may end any programs in connection with the same at any time.
 
-### 9.4. Modification of the Service
+### 5.3. Effect of Termination and Survival
 
-Zed reserves the right to modify or discontinue all or any portion of the Service at any time (including by limiting or discontinuing certain features of the Service), temporarily or permanently, without notice to Customer. Zed will have no liability to Customer for any change to the Service.
+Upon any expiration or termination of this Agreement, Customer shall (i) immediately cease use of the Zed Service, and (ii) return all Zed Confidential Information and other materials provided by Zed. The following provisions will survive termination of this Agreement: Sections 3.3 (Customer Data), Section 3.4 (Privacy Policy), Section 5.3 (Effect of Termination and Survival), Section 6 (Ownership), Section 7 (Indemnification), Section 9 (Limitation of Liability), Section 10 (Third Party Services), and Section 11 (Miscellaneous).
 
-## 10. Ownership; Feedback
+## 6. OWNERSHIP
 
-Neither Party grants the other Party any rights or licenses not expressly set out in the Terms. Except as expressly provided in the Terms, as between the Parties, Customer retains all intellectual property rights and other rights in and to the Customer Data and Output. Except for the rights and licenses granted in the Terms, Zed and its licensors retain all intellectual property rights in and to the Service and Software. To the extent Customer provides Zed with feedback (including suggestions and comments for enhancements or new functionality) regarding the Service or Software, Output, or Zed’s products, services, or other technology (“**Feedback**”), Zed has the full and unrestricted right (but no obligation) to use or incorporate Feedback in any manner, including to improve and develop any of its products, services, technology, or other materials without attribution to Customer.
+Zed retains all right, title, and interest in and to the Zed Service, Editor, and any software, products, works or other intellectual property created, used, provided, or made available by Zed under or in connection with the Zed Service or Editor. Customer may from time to time provide suggestions, comments, or other feedback to Zed with respect to the Zed Service or Editor ("Feedback"). Customer shall, and hereby does, grant to Zed a nonexclusive, worldwide, perpetual, irrevocable, transferable, sublicensable, royalty-free, fully paid-up license to use and exploit the Feedback for any purpose. You retain all right, title and interest in and to the Customer Data, including all intellectual property rights therein. No intellectual property rights with respect to any software code you develop or modify with the Editor or Zed Service (collectively, the “Output”) are transferred or assigned to Zed hereunder.
 
-## 11. Limitations of Liability
+## 7. INDEMNIFICATION
 
-### 11.1.
+Customer will defend, indemnify, and hold Zed, its affiliates, suppliers and licensors harmless and each of their respective officers, directors, employees and representatives from and against any claims, damages, losses, liabilities, costs, and expenses (including reasonable attorneys' fees) arising out of or relating to any third party claim with respect to: (a) Customer Data; (b) breach of this Agreement or violation of applicable law by Customer; or (c) alleged infringement or misappropriation of third-party's intellectual property rights resulting from Customer Data.
 
-TO THE FULLEST EXTENT PERMITTED BY LAW, IN NO EVENT WILL THE ZED ENTITIES BE LIABLE TO CUSTOMER FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES (INCLUDING DAMAGES FOR LOSS OF PROFITS, GOODWILL, OR ANY OTHER INTANGIBLE LOSS) ARISING OUT OF OR RELATING TO YOUR ACCESS TO OR USE OF, OR YOUR INABILITY TO ACCESS OR USE, THE SERVICE OR ANY MATERIALS OR CONTENT ON THE SERVICE, WHETHER BASED ON WARRANTY, CONTRACT, TORT (INCLUDING NEGLIGENCE), STATUTE, OR ANY OTHER LEGAL THEORY, AND WHETHER OR NOT ANY ZED ENTITY HAS BEEN INFORMED OF THE POSSIBILITY OF DAMAGE.
+## 8. WARRANTY
 
-### 11.2.
+Zed does not represent or warrant that the operation of the Zed Service or Editor (or any portion thereof) will be uninterrupted or error free, or that the Zed Service or Editor (or any portion thereof) will operate in combination with other hardware, software, systems or data not provided by Zed. CUSTOMER ACKNOWLEDGES THAT, ZED MAKES NO EXPRESS OR IMPLIED REPRESENTATIONS OR WARRANTIES OF ANY KIND WITH RESPECT TO THE SERVICE OR SOFTWARE, OR THEIR CONDITION. ZED HEREBY EXPRESSLY EXCLUDES, ANY AND ALL OTHER EXPRESS OR IMPLIED REPRESENTATIONS OR WARRANTIES, WHETHER UNDER COMMON LAW, STATUTE OR OTHERWISE, INCLUDING WITHOUT LIMITATION ANY AND ALL WARRANTIES AS TO MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, SATISFACTORY QUALITY OR NON-INFRINGEMENT OF THIRD-PARTY RIGHTS.
 
-TO THE FULLEST EXTENT PERMITTED BY LAW, THE AGGREGATE LIABILITY OF THE ZED ENTITIES TO CUSTOMER FOR ALL CLAIMS ARISING OUT OF OR RELATING TO THE USE OF OR ANY INABILITY TO USE ANY PORTION OF THE SERVICE, OR OTHERWISE ARISING UNDER THESE TERMS, WHETHER IN CONTRACT, TORT, OR OTHERWISE, IS LIMITED TO THE GREATER OF:  THE AMOUNT CUSTOMER HAS PAID TO ZED FOR ACCESS TO AND USE OF THE SERVICE IN THE 12 MONTHS PRIOR TO THE EVENT OR CIRCUMSTANCE GIVING RISE TO THE CLAIM OR US$100.
+## 9. LIMITATIONS OF LIABILITY
 
-### 11.3.
+IN NO EVENT SHALL ZED BE LIABLE FOR ANY LOST DATA, LOST PROFITS, BUSINESS INTERRUPTION, REPLACEMENT SERVICE OR OTHER SPECIAL, INCIDENTAL, CONSEQUENTIAL, PUNITIVE OR INDIRECT DAMAGES, HOWEVER CAUSED AND REGARDLESS OF THEORY OF LIABILITY. ZED'S LIABILITY FOR ALL CLAIMS ARISING UNDER THIS AGREEMENT, WHETHER IN CONTRACT, TORT OR OTHERWISE, SHALL NOT EXCEED THE GREATER OF: THE FEES PAID TO ZED BY CUSTOMER DURING THE TWELVE (12) MONTH PERIOD PRECEDING THE DATE OF THE CLAIM, OR ONE THOUSAND US DOLLARS ($1,000).
 
-EACH PROVISION OF THESE TERMS THAT PROVIDES FOR A LIMITATION OF LIABILITY, DISCLAIMER OF WARRANTIES, OR EXCLUSION OF DAMAGES IS INTENDED TO AND DOES ALLOCATE THE RISKS BETWEEN THE PARTIES UNDER THESE TERMS. THIS ALLOCATION IS AN ESSENTIAL ELEMENT OF THE BASIS OF THE BARGAIN BETWEEN THE PARTIES. EACH OF THESE PROVISIONS IS SEVERABLE AND INDEPENDENT OF ALL OTHER PROVISIONS OF THESE TERMS. THE LIMITATIONS IN THIS SECTION 11 (LIMITATION OF LIABILITY) WILL APPLY EVEN IF ANY LIMITED REMEDY FAILS OF ITS ESSENTIAL PURPOSE.
+## 10. Third Party Services
 
-## 12. Indemnity
+Zed may make certain third party services available to You within the Editor or the Zed Service (each a "Third Party Service"). You acknowledge and agree that (a) use of each Third Party Service is subject to the corresponding terms and conditions available at the following URL: [https://zed.dev/third-party-terms](https://zed.dev/third-party-terms) and/or presented in connection with Your use of such Third Party Service; (b) the terms and conditions of this Agreement do not apply with respect to Your use of any Third Party Service; and (c) Zed is not liable in any way regarding Your use of any Third Party Service.
 
-To the fullest extent permitted by law, Customer is responsible for its use of the Service, and Customer will defend and indemnify Zed, its affiliates, and their respective shareholders, directors, managers, members, officers, employees, consultants, and agents (together, the "Zed Entities") from and against every claim brought by a third party, and any related liability, damage, loss, and expense, including attorneys' fees and costs, arising out of or connected with: (1) Customer’s unauthorized use of, or misuse of, the Service; (2) the Customer Data; (3) Customer’s use of Output; (4) Customer’s violation or alleged violation of any portion of these Terms, any representation, warranty, or agreement referenced in these Terms, or any applicable law or regulation; (5) Customer’s violation or alleged violation of any third-party right, including any intellectual property right or publicity, confidentiality, other property, or privacy right; or (6) any dispute or issue between Customer and any third party. Zed reserves the right, at Zed’s own expense, to assume the exclusive defense and control of any matter otherwise subject to indemnification by Customer (without limiting Customer’s indemnification obligations with respect to that matter), and in that case, Customer agrees to cooperate with our defense of those claims.
+## 11. MISCELLANEOUS
 
-## 13. Confidentiality
+### 11.1. Export Control
 
-### 13.1. Definition
+You hereby certify that You will comply with all current US Export Control laws. You agree to defend, indemnify and hold Zed harmless from any liability for Your violation of U.S. Export Control laws.
 
-“**Confidential Information**” means information disclosed to the receiving Party (“**Recipient**”) under the Terms that is designated by the disclosing Party (“**Discloser**”) as proprietary or confidential or that should be reasonably understood to be proprietary or confidential due to its nature and the circumstances of its disclosure. Zed’s Confidential Information includes the terms and conditions of the Terms and the Service (including any technical or performance information about the Service).
+### 11.2. Compliance with Laws
 
-### 13.2. Obligations
+You shall comply with all applicable laws and regulations in its use of the Solution, including without limitation the unlawful gathering or collecting, or assisting in the gathering or collecting of information in violation of any privacy laws or regulations. You shall, at its own expense, defend, indemnify and hold harmless Zed from and against any and all claims, losses, liabilities, damages, judgments, government or federal sanctions, costs and expenses (including attorneys' fees) incurred by Zed arising from any claim or assertion by any third party of violation of privacy laws or regulations by You or any of its agents, officers, directors or employees.
 
-As Recipient, each Party will: (a) hold Confidential Information in confidence and not disclose it to third parties except as permitted in the Terms, including Section 4.1; and (b) only use Confidential Information to fulfill its obligations and exercise its rights under the Terms. Recipient may disclose Confidential Information to its employees, agents, contractors, and other representatives having a legitimate need to know (including, for Zed, the subcontractors referenced in Section 16.5) (“**Representatives**”), provided Recipient remains responsible for its respective Representatives’ compliance with this Section 13 and such Representatives are bound by written agreements (or, in the case of professional advisers like attorneys and accountants, ethical duties) imposing confidentiality and non-use obligations no less protective than this Section 13.
+### 11.3. Assignment
 
-### 13.3. Exclusions
+Neither party may transfer and assign its rights and obligations under this Agreement without the prior written consent of the other party. Notwithstanding the foregoing, Zed may transfer and assign its rights under this Agreement without consent from the other party in connection with a change in control, acquisition or sale of all or substantially all of its assets.
 
-These confidentiality obligations do not apply to information that Recipient can document: (a) is or becomes public knowledge through no fault of Recipient or its Representatives; (b) it rightfully knew or possessed prior to receipt under the Terms; (c) it rightfully received from a third party without breach of confidentiality obligations; or (d) it independently developed without using Confidential Information.
+### 11.4. Force Majeure
 
-### 13.4. Remedies
+Neither party shall be responsible for failure or delay in performance by events out of their reasonable control, including but not limited to, acts of God, Internet outage, terrorism, war, fires, earthquakes and other disasters (each a "Force Majeure"). Notwithstanding the foregoing: if a Force Majeure continues for more than thirty (30) days, either party may to terminate this agreement by written notice to the other party.
 
-Unauthorized use or disclosure of Confidential Information may cause substantial harm for which damages alone are an insufficient remedy. Discloser may seek appropriate equitable relief, in addition to other available remedies, for breach or threatened breach of this Section 13, without the  necessity of posting a bond or proving actual damages.
+### 11.5. Notice
 
-### 13.5. Required Disclosures
+All notices between the parties shall be in writing and shall be deemed to have been given if personally delivered or sent by registered or certified mail (return receipt), or by recognized courier service.
 
-Nothing in the Terms prohibits Recipient from making disclosures, including of Customer Data and other Confidential Information, if required by Laws, subpoena, or court order, provided (if permitted by Laws) it notifies Discloser in advance and cooperates in any effort to obtain confidential treatment.
+### 11.6. No Agency
 
-## 14. Publicity
+Both parties agree that no agency, partnership, joint venture, or employment is created as a result of this Agreement. You do not have any authority of any kind to bind Zed.
 
-Neither Party may publicly announce that the Parties have entered into the Terms, except with the other Party’s prior consent or as required by Laws. However, Zed may use the name, brand, or logo of Customer (or Customer’s parent company) for the purpose of identifying Customer as a licensee or customer on Zed’s website or in other promotional materials. Zed will cease further use at Customer’s written request.
+### 11.7. Governing Law
 
-## 15. Governing Law, Dispute Resolution and Arbitration
+This Agreement shall be governed exclusively by, and construed exclusively in accordance with, the laws of the United States and the State of California, without regard to its conflict of laws provisions. The federal courts of the United States in the Northern District of California and the state courts of the State of California shall have exclusive jurisdiction to adjudicate any dispute arising out of or relating to this Agreement. Each party hereby consents to the jurisdiction of such courts and waives any right it may otherwise have to challenge the appropriateness of such forums, whether on the basis of the doctrine of forum non conveniens or otherwise. The United Nations Convention on Contracts for the International Sale of Goods shall not apply to this Agreement or any Purchase Order issued under this Agreement.
 
-### 15.1. Governing Law, Jurisdiction and Venue
+### 11.8. Updated Agreement
 
-The Terms are governed by the laws of the State of Delaware and the United States without regard to conflicts of laws provisions that would result in the application of the laws of another jurisdiction and without regard to the United Nations Convention on the International Sale of Goods. The parties further agree that except as stated below in the Arbitration provision, and for any claims under Section 15.2 (b), each party irrevocably consents to the exclusive jurisdiction and venue of the state and federal courts located in New Castle County, Delaware, for any action arising out of or relating to these Terms, and waive any objection based on venue or forum non conveniens. ANY CAUSE OF ACTION OR CLAIM CUSTOMER MAY HAVE ARISING OUT OF OR RELATING TO THESE TERMS MUST BE COMMENCED WITHIN ONE (1) YEAR AFTER THE CAUSE OF ACTION OR CLAIM ACCRUES, OTHERWISE, SUCH CAUSE OF ACTION OR CLAIM IS PERMANENTLY BARRED.
+Zed reserves the right to update this Agreement at any time. The terms and conditions of the updated version of the Agreement shall apply to the Zed Service and Editor downloaded, or accessed following the date of publication of the updated version. If You do not agree with any terms of the updated Agreement, You may not use or access the Zed Service or Editor in any manner. Zed may from time-to-time provide release notes applicable to the Editor or Zed Service, and such release notes may contain additional use restrictions or terms applicable to Customer Data. Your use of the Editor or Zed Service after the applicable release notes are made available shall be subject to the additional use restrictions or terms applicable to Customer Data.
 
-### 15.2. Dispute Resolution and Arbitration
+### 11.9. Entire Agreement
 
-ANY CONTROVERSY OR CLAIM ARISING OUT OF OR RELATING TO THESE TERMS, OR THE BREACH THEREOF, SHALL BE SETTLED BY ARBITRATION AND JUDGMENT ON THE AWARD RENDERED BY THE ARBITRATOR MAY BE ENTERED IN ANY COURT HAVING JURISDICTION THEREOF. IF THERE IS A DISPUTE ABOUT WHETHER THIS ARBITRATION AGREEMENT CAN BE ENFORCED OR APPLIES TO THE DISPUTE, CUSTOMER AND ZED AGREE THAT THE ARBITRATOR WILL DECIDE THAT ISSUE.
+This Agreement is the complete and exclusive statement of the mutual understanding of the parties and supersedes and cancels all previous written and oral agreements, communications, and other understandings relating to the subject matter of this Agreement, and all waivers and modifications must be in a writing signed by both parties, except as otherwise provided herein. Any term or provision of this Agreement held to be illegal or unenforceable shall be, to the fullest extent possible, interpreted so as to be construed as valid, but in any event the validity or enforceability of the remainder hereof shall not be affected.
 
-**a. Opt-Out.** If Customer does not wish to resolve disputes by binding arbitration, Customer may opt out of the provisions of this Section 17.2 (Dispute Resolution and Arbitration) within 30 days after the date that Customer agrees to these Terms by sending an email to [arbitration-opt-out@zed.dev](mailto:arbitration-opt-out@zed.dev) or a letter to Zed Industries, Inc., Attention: Legal Department – Arbitration Opt-Out, 2590 Welton Street, Suite 200, PMB 1916, Denver, CO 80205 that specifies: Customer’s full legal name, the email address associated with Customer’s account on the Service, and a statement that Customer wishes to opt out of arbitration (“**Opt-Out Notice**”). Once Zed receives Customer’s Opt-Out Notice, this Section 15.2 (Dispute Resolution and Arbitration) will be void and any action arising out of these Terms will be resolved as set forth in Section 15.1 (Governing Law). The remaining provisions of these Terms will not be affected by Customer’s Opt-Out Notice.
-
-**b. Pre-Arbitration Dispute Resolution and Notification.** Prior to initiating an arbitration, Customer and Zed each agree to notify the other party of the dispute and attempt to negotiate an informal resolution to it first. Zed will contact Customer at the email address Customer has provided to Zed; Customer can contact Zed by email at [legal@zed.dev](mailto:legal@zed.dev). If after a good faith effort to negotiate, one party feels the dispute has not and cannot be resolved informally, the party intending to pursue arbitration agrees to notify the other party via email prior to initiating the arbitration.
-
-**c. Exceptions to Arbitration.** Customer and Zed each agree that the following claims are exceptions to arbitration and will be brought in a judicial proceeding in a court of competent jurisdiction: (i) Any claim related to actual or threatened infringement, misappropriation or violation of a party’s copyrights, trademarks, trade secrets, patents, or other intellectual property rights; or (ii) Any claim seeking emergency injunctive relief based on exigent circumstances (e.g., imminent danger or commission of a crime, hacking, cyber-attack).
-
-**d. Arbitration Rules.** (1) If Customer is domiciled in the U.S. - Any controversy or claim arising out of or relating to this contract, or the breach thereof, shall be settled by arbitration administered by the American Arbitration Association in accordance with its Commercial Arbitration Rules, and judgment on the award rendered by the arbitrator may be entered in any court having jurisdiction thereof. (2) If Customer is domiciled internationally outside the U.S. - Any controversy or claim arising out of or relating to this contract, or the breach thereof, shall be determined by arbitration administered by the International Centre for Dispute Resolution in accordance with its International Arbitration Rules.
-
-**e. Modification to AAA Rules - Arbitration Hearing/Location.** Customer agrees that any required arbitration hearing will be conducted in the English language by one (1) mutually agreed upon arbitrator, (a) in city/county and state of Customer’s headquarters unless both parties agree otherwise; and appearances may be made via telephonic or video hearing; and (b) for any claim or counterclaim under $25,000, by solely the submission of documents to the arbitrator.
-
-### 15.3. Waiver of Jury Trial and Class Action Waiver
-
-EACH PARTY HEREBY IRREVOCABLY WAIVES ALL RIGHT TO TRIAL BY JURY IN ANY ACTION, SUIT, PROCEEDING, CLAIM, OR COUNTERCLAIM ARISING OUT OF OR RELATING TO THESE TERMS. CUSTOMER AND ZED EACH AGREE THAT ANY SUIT, PROCEEDING, OR OTHER ACTION ARISING OUT OF OR RELATED TO THESE TERMS WILL BE CONDUCTED ONLY ON AN INDIVIDUAL BASIS AND NOT IN A CLASS, CONSOLIDATED OR REPRESENTATIVE ACTION.
-
-## 16. General Terms
-
-### 16.1.
-
-These Terms, including the Privacy Policy and any other agreements expressly incorporated by reference into these Terms, are the entire and exclusive understanding and agreement between Customer and Zed regarding your use of the Service. Customer may not assign or transfer these Terms or its rights under these Terms, in whole or in part, by operation of law or otherwise, without Zed’s prior written consent. Zed may assign these Terms and all rights granted under these Terms at any time without notice or consent. The failure to require performance of any provision will not affect Zed’s right to require performance at any other time after that, nor will a waiver by Zed of any breach or default of these Terms, or any provision of these Terms, be a waiver of any subsequent breach or default or a waiver of the provision itself. Use of Section headers in these Terms are for convenience only and will not have any impact on the interpretation of any provision. Throughout these Terms the use of the word “including” means “including but not limited to.” If any part of these Terms are held to be invalid or unenforceable, then the unenforceable part will be given effect to the greatest extent possible, and the remaining parts will remain in full force and effect.
-
-### 16.2. Notices
-
-Except as set out in the Terms, any notice or consent under the Terms must be in writing to the Customer email address on the Order and Customer shall send all notices to Zed at Zed Industries, Inc., 2590 Welton Street, Suite 200, PMB 1916, Denver, CO 80205 with cc: to [legal@zed.dev](mailto:legal@zed.dev) and will be deemed given: (a) upon receipt if by personal delivery; (b) upon receipt if by certified or registered U.S. mail (return receipt requested); or (c) one day after dispatch if by a commercial overnight delivery service. Either Party may update its address with notice to the other Party pursuant to this Section. Zed may also send operational notices to Customer by email or through the Service.
-
-### 16.3. DPA
-
-The terms of the Data Processing Agreement (“**DPA**”), available upon request, are incorporated into these Terms by reference.
-
-### 16.4. Modification of Terms
-
-Zed may, from time to time, change these Terms. Please check these Terms periodically for changes. Revisions will be effective immediately except that, for existing users, material revisions will be effective 30 days after posting or notice to Customer of the revisions unless otherwise stated. Zed may require that Customer accept modified Terms in order to continue to use the Service. If Customer does not agree to the modified Terms, then Customer should discontinue its use of the Service and notify Zed at hi@zed.dev, in which case Zed will provide a pro-rated refund of any prepaid Subscription Fee. The terms in any Customer purchase order or business form will not amend or modify the Terms and are expressly rejected by Zed; any of these Customer documents are for administrative purposes only and have no legal effect with respect to the Terms.
-
-### 16.5. Subcontractors
-
-Zed may use subcontractors and permit them to exercise Zed’s rights, but Zed remains responsible for their compliance with the Terms and for its overall performance under the Terms.
-
-### 16.6. Independent Contractors
-
-The Parties are independent contractors, not agents, partners, or joint venturers.
-
-### 16.7. Export
-
-Customer will comply with all relevant U.S. and foreign export and import Laws in using the Service. Customer: (a) represents and warrants that it is not listed on any U.S. government list of prohibited or restricted parties or located in (or a national of) a country that is subject to a U.S. government embargo or that has been designated by the U.S. government as a “terrorist supporting” country; (b) agrees not to access or use the Service in violation of any U.S. export embargo, prohibition, or restriction; and (c) will not submit to the Service any information controlled under the U.S. International Traffic in Arms Regulations.
-
-### 16.8. Government End-Users
-
-Elements of the Service may include commercial computer software. If the user or licensee of the Service is an agency, department, or other entity of the United States Government, the use, duplication, reproduction, release, modification, disclosure, or transfer of the Service or any related documentation of any kind, including technical data and manuals, is restricted by the terms of the Terms in accordance with Federal Acquisition Regulation 12.212 for civilian purposes and Defense Federal Acquisition Regulation Supplement 227.7202 for military purposes. The Service was developed fully at private expense. All other use is prohibited.
-
-### 16.9. Privacy Policy
-
-Please read the [Zed Privacy Policy](/privacy-policy) (the “**Privacy Policy**”) carefully for information relating to our collection, use, storage, and disclosure of your personal information. The Zed Privacy Policy is incorporated by this reference into, and made a part of, these Terms.
-
-### 16.10. Additional Terms
-
-Customer’s use of the Service is subject to all additional terms, policies, rules, or guidelines applicable to the Service or certain features of the Service that we may post on or link to from the Service (the “**Additional Terms**”). All Additional Terms are incorporated by this reference into, and made a part of, these Terms.
-
-### 16.11. Consent to Electronic Communications
-
-By using the Service, Customer consents to receiving certain electronic communications from Zed as further described in the Privacy Policy. Please read the Privacy Policy to learn more about Zed’s electronic communications practices. Customer agrees that any notices, agreements, disclosures, or other communications that Zed sends to Customer electronically will satisfy any legal communication requirements, including that those communications be in writing. Zed may send Customer emails concerning Zed products and services, as well as those of third parties. Customer may opt out of promotional emails by following the unsubscribe instructions in the promotional email itself.
-
-### 16.12. Contact Information
-
-The Service is offered by Zed Industries, Inc. Customer may contact Zed by sending correspondence to 2590 Welton Street, Suite 200, PMB 1916, Denver, CO 80205 with cc: to [legal@zed.dev](mailto:legal@zed.dev).
-
-### 16.13. Notice to California Residents
-
-If Customer is a California resident, then under California Civil Code Section 1789.3, Customer may contact the Complaint Assistance Unit of the Division of Consumer Services of the California Department of Consumer Affairs in writing at 1625 N. Market Blvd., Suite N 112, Sacramento, California 95834, or by telephone at +1-800-952-5210 in order to resolve a complaint regarding the Service or to receive further information regarding use of the Service.
+**DATE: May 6, 2025**

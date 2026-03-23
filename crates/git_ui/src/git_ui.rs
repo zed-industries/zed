@@ -62,7 +62,6 @@ pub fn init(cx: &mut App) {
         git_panel::register(workspace);
         repository_selector::register(workspace);
         git_picker::register(workspace);
-        conflict_view::register_conflict_notification(workspace, cx);
 
         let project = workspace.project().read(cx);
         if project.is_read_only(cx) {
@@ -295,12 +294,11 @@ pub fn resolve_active_repository(workspace: &Workspace, cx: &App) -> Option<Enti
                     git_store
                         .repositories()
                         .values()
-                        .filter(|repo| {
+                        .find(|repo| {
                             let repo_path = &repo.read(cx).work_directory_abs_path;
                             *repo_path == worktree_abs_path
                                 || worktree_abs_path.starts_with(repo_path.as_ref())
                         })
-                        .max_by_key(|repo| repo.read(cx).work_directory_abs_path.as_os_str().len())
                         .cloned()
                 })
         })
@@ -873,7 +871,8 @@ impl Render for GitCloneModal {
                     .child(
                         Button::new("learn-more", "Learn More")
                             .label_size(LabelSize::Small)
-                            .end_icon(Icon::new(IconName::ArrowUpRight).size(IconSize::XSmall))
+                            .icon(IconName::ArrowUpRight)
+                            .icon_size(IconSize::XSmall)
                             .on_click(|_, _, cx| {
                                 cx.open_url("https://github.com/git-guides/git-clone");
                             }),

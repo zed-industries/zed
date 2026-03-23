@@ -1,6 +1,4 @@
-use std::collections::BTreeMap;
-use std::sync::Arc;
-
+use crate::{Client, Connection, Credentials, EstablishConnectionError, UserStore};
 use anyhow::{Context as _, Result, anyhow};
 use cloud_api_client::{
     AuthenticatedUser, GetAuthenticatedUserResponse, KnownOrUnknown, Plan, PlanInfo,
@@ -11,8 +9,7 @@ use gpui::{AppContext as _, Entity, TestAppContext};
 use http_client::{AsyncBody, Method, Request, http};
 use parking_lot::Mutex;
 use rpc::{ConnectionId, Peer, Receipt, TypedEnvelope, proto};
-
-use crate::{Client, Connection, Credentials, EstablishConnectionError, UserStore};
+use std::sync::Arc;
 
 pub struct FakeServer {
     peer: Arc<Peer>,
@@ -269,8 +266,6 @@ pub fn make_get_authenticated_user_response(
         },
         feature_flags: vec![],
         organizations: vec![],
-        default_organization_id: None,
-        plans_by_organization: BTreeMap::new(),
         plan: PlanInfo {
             plan: KnownOrUnknown::Known(Plan::ZedPro),
             subscription_period: None,

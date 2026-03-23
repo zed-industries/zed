@@ -2,15 +2,20 @@ use crate::AcpThread;
 use agent_client_protocol::{self as acp};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use collections::{HashMap, IndexMap};
+use collections::IndexMap;
 use gpui::{Entity, SharedString, Task};
 use language_model::LanguageModelProviderId;
-use project::{AgentId, Project};
+use project::Project;
 use serde::{Deserialize, Serialize};
-use std::{any::Any, error::Error, fmt, path::PathBuf, rc::Rc, sync::Arc};
-use task::{HideStrategy, SpawnInTerminal, TaskId};
+use std::{
+    any::Any,
+    error::Error,
+    fmt,
+    path::{Path, PathBuf},
+    rc::Rc,
+    sync::Arc,
+};
 use ui::{App, IconName};
-use util::path_list::PathList;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
@@ -22,37 +27,13 @@ impl UserMessageId {
     }
 }
 
-pub fn build_terminal_auth_task(
-    id: String,
-    label: String,
-    command: String,
-    args: Vec<String>,
-    env: HashMap<String, String>,
-) -> SpawnInTerminal {
-    SpawnInTerminal {
-        id: TaskId(id),
-        full_label: label.clone(),
-        label: label.clone(),
-        command: Some(command),
-        args,
-        command_label: label,
-        env,
-        use_new_terminal: true,
-        allow_concurrent_runs: true,
-        hide: HideStrategy::Always,
-        ..Default::default()
-    }
-}
-
 pub trait AgentConnection {
-    fn agent_id(&self) -> AgentId;
-
     fn telemetry_id(&self) -> SharedString;
 
     fn new_session(
         self: Rc<Self>,
         project: Entity<Project>,
-        _work_dirs: PathList,
+        cwd: &Path,
         cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>>;
 
@@ -64,10 +45,9 @@ pub trait AgentConnection {
     /// Load an existing session by ID.
     fn load_session(
         self: Rc<Self>,
-        _session_id: acp::SessionId,
+        _session: AgentSessionInfo,
         _project: Entity<Project>,
-        _work_dirs: PathList,
-        _title: Option<SharedString>,
+        _cwd: &Path,
         _cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
         Task::ready(Err(anyhow::Error::msg("Loading sessions is not supported")))
@@ -79,11 +59,7 @@ pub trait AgentConnection {
     }
 
     /// Close an existing session. Allows the agent to free the session from memory.
-    fn close_session(
-        self: Rc<Self>,
-        _session_id: &acp::SessionId,
-        _cx: &mut App,
-    ) -> Task<Result<()>> {
+    fn close_session(&self, _session_id: &acp::SessionId, _cx: &mut App) -> Task<Result<()>> {
         Task::ready(Err(anyhow::Error::msg("Closing sessions is not supported")))
     }
 
@@ -95,10 +71,9 @@ pub trait AgentConnection {
     /// Resume an existing session by ID without replaying previous messages.
     fn resume_session(
         self: Rc<Self>,
-        _session_id: acp::SessionId,
+        _session: AgentSessionInfo,
         _project: Entity<Project>,
-        _work_dirs: PathList,
-        _title: Option<SharedString>,
+        _cwd: &Path,
         _cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
         Task::ready(Err(anyhow::Error::msg(
@@ -112,14 +87,6 @@ pub trait AgentConnection {
     }
 
     fn auth_methods(&self) -> &[acp::AuthMethod];
-
-    fn terminal_auth_task(
-        &self,
-        _method: &acp::AuthMethodId,
-        _cx: &App,
-    ) -> Option<SpawnInTerminal> {
-        None
-    }
 
     fn authenticate(&self, method: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>>;
 
@@ -279,10 +246,9 @@ impl AgentSessionListResponse {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgentSessionInfo {
     pub session_id: acp::SessionId,
-    pub work_dirs: Option<PathList>,
+    pub cwd: Option<PathBuf>,
     pub title: Option<SharedString>,
     pub updated_at: Option<DateTime<Utc>>,
-    pub created_at: Option<DateTime<Utc>>,
     pub meta: Option<acp::Meta>,
 }
 
@@ -290,10 +256,9 @@ impl AgentSessionInfo {
     pub fn new(session_id: impl Into<acp::SessionId>) -> Self {
         Self {
             session_id: session_id.into(),
-            work_dirs: None,
+            cwd: None,
             title: None,
             updated_at: None,
-            created_at: None,
             meta: None,
         }
     }
@@ -479,7 +444,6 @@ impl AgentModelList {
 pub struct PermissionOptionChoice {
     pub allow: acp::PermissionOption,
     pub deny: acp::PermissionOption,
-    pub sub_patterns: Vec<String>,
 }
 
 impl PermissionOptionChoice {
@@ -488,26 +452,10 @@ impl PermissionOptionChoice {
     }
 }
 
-/// Pairs a tool's permission pattern with its display name
-///
-/// For example, a pattern of `^cargo\\s+build(\\s|$)` would display as `cargo
-/// build`. It's handy to keep these together rather than trying to derive
-/// one from the other.
-#[derive(Debug, Clone, PartialEq)]
-pub struct PermissionPattern {
-    pub pattern: String,
-    pub display_name: String,
-}
-
 #[derive(Debug, Clone)]
 pub enum PermissionOptions {
     Flat(Vec<acp::PermissionOption>),
     Dropdown(Vec<PermissionOptionChoice>),
-    DropdownWithPatterns {
-        choices: Vec<PermissionOptionChoice>,
-        patterns: Vec<PermissionPattern>,
-        tool_name: String,
-    },
 }
 
 impl PermissionOptions {
@@ -515,7 +463,6 @@ impl PermissionOptions {
         match self {
             PermissionOptions::Flat(options) => options.is_empty(),
             PermissionOptions::Dropdown(options) => options.is_empty(),
-            PermissionOptions::DropdownWithPatterns { choices, .. } => choices.is_empty(),
         }
     }
 
@@ -534,17 +481,6 @@ impl PermissionOptions {
                     None
                 }
             }),
-            PermissionOptions::DropdownWithPatterns { choices, .. } => {
-                choices.iter().find_map(|choice| {
-                    if choice.allow.kind == kind {
-                        Some(&choice.allow)
-                    } else if choice.deny.kind == kind {
-                        Some(&choice.deny)
-                    } else {
-                        None
-                    }
-                })
-            }
         }
     }
 
@@ -569,7 +505,6 @@ mod test_support {
     //! - `create_test_png_base64` for generating test images
 
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use action_log::ActionLog;
     use collections::HashMap;
@@ -605,25 +540,16 @@ mod test_support {
         )
     }
 
-    #[derive(Clone)]
+    #[derive(Clone, Default)]
     pub struct StubAgentConnection {
         sessions: Arc<Mutex<HashMap<acp::SessionId, Session>>>,
         permission_requests: HashMap<acp::ToolCallId, PermissionOptions>,
         next_prompt_updates: Arc<Mutex<Vec<acp::SessionUpdate>>>,
-        supports_load_session: bool,
-        agent_id: AgentId,
-        telemetry_id: SharedString,
     }
 
     struct Session {
         thread: WeakEntity<AcpThread>,
         response_tx: Option<oneshot::Sender<acp::StopReason>>,
-    }
-
-    impl Default for StubAgentConnection {
-        fn default() -> Self {
-            Self::new()
-        }
     }
 
     impl StubAgentConnection {
@@ -632,9 +558,6 @@ mod test_support {
                 next_prompt_updates: Default::default(),
                 permission_requests: HashMap::default(),
                 sessions: Arc::default(),
-                supports_load_session: false,
-                agent_id: AgentId::new("stub"),
-                telemetry_id: "stub".into(),
             }
         }
 
@@ -648,59 +571,6 @@ mod test_support {
         ) -> Self {
             self.permission_requests = permission_requests;
             self
-        }
-
-        pub fn with_supports_load_session(mut self, supports_load_session: bool) -> Self {
-            self.supports_load_session = supports_load_session;
-            self
-        }
-
-        pub fn with_agent_id(mut self, agent_id: AgentId) -> Self {
-            self.agent_id = agent_id;
-            self
-        }
-
-        pub fn with_telemetry_id(mut self, telemetry_id: SharedString) -> Self {
-            self.telemetry_id = telemetry_id;
-            self
-        }
-
-        fn create_session(
-            self: Rc<Self>,
-            session_id: acp::SessionId,
-            project: Entity<Project>,
-            work_dirs: PathList,
-            title: Option<SharedString>,
-            cx: &mut gpui::App,
-        ) -> Entity<AcpThread> {
-            let action_log = cx.new(|_| ActionLog::new(project.clone()));
-            let thread_title = title.unwrap_or_else(|| SharedString::new_static("Test"));
-            let thread = cx.new(|cx| {
-                AcpThread::new(
-                    None,
-                    thread_title,
-                    Some(work_dirs),
-                    self.clone(),
-                    project,
-                    action_log,
-                    session_id.clone(),
-                    watch::Receiver::constant(
-                        acp::PromptCapabilities::new()
-                            .image(true)
-                            .audio(true)
-                            .embedded_context(true),
-                    ),
-                    cx,
-                )
-            });
-            self.sessions.lock().insert(
-                session_id,
-                Session {
-                    thread: thread.downgrade(),
-                    response_tx: None,
-                },
-            );
-            thread
         }
 
         pub fn send_update(
@@ -739,12 +609,8 @@ mod test_support {
     }
 
     impl AgentConnection for StubAgentConnection {
-        fn agent_id(&self) -> AgentId {
-            self.agent_id.clone()
-        }
-
         fn telemetry_id(&self) -> SharedString {
-            self.telemetry_id.clone()
+            "stub".into()
         }
 
         fn auth_methods(&self) -> &[acp::AuthMethod] {
@@ -761,33 +627,35 @@ mod test_support {
         fn new_session(
             self: Rc<Self>,
             project: Entity<Project>,
-            work_dirs: PathList,
+            _cwd: &Path,
             cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
-            static NEXT_SESSION_ID: AtomicUsize = AtomicUsize::new(0);
-            let session_id =
-                acp::SessionId::new(NEXT_SESSION_ID.fetch_add(1, Ordering::SeqCst).to_string());
-            let thread = self.create_session(session_id, project, work_dirs, None, cx);
-            Task::ready(Ok(thread))
-        }
-
-        fn supports_load_session(&self) -> bool {
-            self.supports_load_session
-        }
-
-        fn load_session(
-            self: Rc<Self>,
-            session_id: acp::SessionId,
-            project: Entity<Project>,
-            work_dirs: PathList,
-            title: Option<SharedString>,
-            cx: &mut App,
-        ) -> Task<Result<Entity<AcpThread>>> {
-            if !self.supports_load_session {
-                return Task::ready(Err(anyhow::Error::msg("Loading sessions is not supported")));
-            }
-
-            let thread = self.create_session(session_id, project, work_dirs, title, cx);
+            let session_id = acp::SessionId::new(self.sessions.lock().len().to_string());
+            let action_log = cx.new(|_| ActionLog::new(project.clone()));
+            let thread = cx.new(|cx| {
+                AcpThread::new(
+                    None,
+                    "Test",
+                    self.clone(),
+                    project,
+                    action_log,
+                    session_id.clone(),
+                    watch::Receiver::constant(
+                        acp::PromptCapabilities::new()
+                            .image(true)
+                            .audio(true)
+                            .embedded_context(true),
+                    ),
+                    cx,
+                )
+            });
+            self.sessions.lock().insert(
+                session_id,
+                Session {
+                    thread: thread.downgrade(),
+                    response_tx: None,
+                },
+            );
             Task::ready(Ok(thread))
         }
 

@@ -62,7 +62,7 @@ impl Element for Deferred {
     ) {
         let child = self.child.take().unwrap();
         let element_offset = window.element_offset();
-        window.defer_draw(child, element_offset, self.priority, None)
+        window.defer_draw(child, element_offset, self.priority)
     }
 
     fn paint(

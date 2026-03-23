@@ -527,10 +527,7 @@ impl LocalBufferStore {
             let new_file = if let Some(entry) = snapshot_entry {
                 File {
                     disk_state: match entry.mtime {
-                        Some(mtime) => DiskState::Present {
-                            mtime,
-                            size: entry.size,
-                        },
+                        Some(mtime) => DiskState::Present { mtime },
                         None => old_file.disk_state,
                     },
                     is_local: true,
@@ -872,6 +869,7 @@ impl BufferStore {
 
                 entry
                     .insert(
+                        // todo(lw): hot foreground spawn
                         cx.spawn(async move |this, cx| {
                             let load_result = load_buffer.await;
                             this.update(cx, |this, _cx| {

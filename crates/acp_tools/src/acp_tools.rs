@@ -14,7 +14,7 @@ use gpui::{
 };
 use language::LanguageRegistry;
 use markdown::{CodeBlockRenderer, Markdown, MarkdownElement, MarkdownStyle};
-use project::{AgentId, Project};
+use project::Project;
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{CopyButton, Tooltip, WithScrollbar, prelude::*};
@@ -48,7 +48,7 @@ pub struct AcpConnectionRegistry {
 }
 
 struct ActiveConnection {
-    agent_id: AgentId,
+    server_name: SharedString,
     connection: Weak<acp::ClientSideConnection>,
 }
 
@@ -65,12 +65,12 @@ impl AcpConnectionRegistry {
 
     pub fn set_active_connection(
         &self,
-        agent_id: AgentId,
+        server_name: impl Into<SharedString>,
         connection: &Rc<acp::ClientSideConnection>,
         cx: &mut Context<Self>,
     ) {
         self.active_connection.replace(Some(ActiveConnection {
-            agent_id,
+            server_name: server_name.into(),
             connection: Rc::downgrade(connection),
         }));
         cx.notify();
@@ -87,7 +87,7 @@ struct AcpTools {
 }
 
 struct WatchedConnection {
-    agent_id: AgentId,
+    server_name: SharedString,
     messages: Vec<WatchedConnectionMessage>,
     list_state: ListState,
     connection: Weak<acp::ClientSideConnection>,
@@ -144,7 +144,7 @@ impl AcpTools {
             });
 
             self.watched_connection = Some(WatchedConnection {
-                agent_id: active_connection.agent_id.clone(),
+                server_name: active_connection.server_name.clone(),
                 messages: vec![],
                 list_state: ListState::new(0, ListAlignment::Bottom, px(2048.)),
                 connection: active_connection.connection.clone(),
@@ -483,7 +483,7 @@ impl Item for AcpTools {
             "ACP: {}",
             self.watched_connection
                 .as_ref()
-                .map_or("Disconnected", |connection| connection.agent_id.0.as_ref())
+                .map_or("Disconnected", |connection| &connection.server_name)
         )
         .into()
     }

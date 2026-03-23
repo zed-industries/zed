@@ -387,11 +387,10 @@ impl CopilotCodeVerification {
                     .full_width()
                     .style(ButtonStyle::Outlined)
                     .size(ButtonSize::Medium)
-                    .start_icon(
-                        Icon::new(IconName::Download)
-                            .size(IconSize::Small)
-                            .color(Color::Muted),
-                    )
+                    .icon(IconName::Download)
+                    .icon_color(Color::Muted)
+                    .icon_position(IconPosition::Start)
+                    .icon_size(IconSize::Small)
                     .on_click(move |_, window, cx| {
                         reinstall_and_sign_in(copilot.clone(), window, cx)
                     }),
@@ -571,11 +570,10 @@ impl ConfigurationView {
                 }
             })
             .style(ButtonStyle::Outlined)
-            .start_icon(
-                Icon::new(IconName::Github)
-                    .size(IconSize::Small)
-                    .color(Color::Muted),
-            )
+            .icon(IconName::Github)
+            .icon_color(Color::Muted)
+            .icon_position(IconPosition::Start)
+            .icon_size(IconSize::Small)
             .when(edit_prediction, |this| this.tab_index(0isize))
             .on_click(|_, window, cx| {
                 if let Some(app_state) = AppState::global(cx).upgrade()
@@ -602,11 +600,10 @@ impl ConfigurationView {
                 }
             })
             .style(ButtonStyle::Outlined)
-            .start_icon(
-                Icon::new(IconName::Download)
-                    .size(IconSize::Small)
-                    .color(Color::Muted),
-            )
+            .icon(IconName::Download)
+            .icon_color(Color::Muted)
+            .icon_position(IconPosition::Start)
+            .icon_size(IconSize::Small)
             .on_click(|_, window, cx| {
                 if let Some(app_state) = AppState::global(cx).upgrade()
                     && let Some(copilot) = GlobalCopilotAuth::try_get_or_init(app_state, cx)

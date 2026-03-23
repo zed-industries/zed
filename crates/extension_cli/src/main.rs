@@ -11,10 +11,8 @@ use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{ExtensionManifest, ExtensionSnippets};
 use language::LanguageConfig;
 use reqwest_client::ReqwestClient;
-use settings_content::SemanticTokenRules;
 use snippet_provider::file_to_snippets;
 use snippet_provider::format::VsSnippetsFile;
-use task::TaskTemplates;
 use tokio::process::Command;
 use tree_sitter::{Language, Query, WasmStore};
 
@@ -325,8 +323,9 @@ fn test_languages(
 ) -> Result<()> {
     for relative_language_dir in &manifest.languages {
         let language_dir = extension_path.join(relative_language_dir);
-        let config_path = language_dir.join(LanguageConfig::FILE_NAME);
-        let config = LanguageConfig::load(&config_path)?;
+        let config_path = language_dir.join("config.toml");
+        let config_content = fs::read_to_string(&config_path)?;
+        let config: LanguageConfig = toml::from_str(&config_content)?;
         let grammar = if let Some(name) = &config.grammar {
             Some(
                 grammars
@@ -340,48 +339,18 @@ fn test_languages(
         let query_entries = fs::read_dir(&language_dir)?;
         for entry in query_entries {
             let entry = entry?;
-            let file_path = entry.path();
+            let query_path = entry.path();
+            if query_path.extension() == Some("scm".as_ref()) {
+                let grammar = grammar.with_context(|| {
+                    format! {
+                        "language {} provides query {} but no grammar",
+                        config.name,
+                        query_path.display()
+                    }
+                })?;
 
-            let Some(file_name) = file_path.file_name().and_then(|name| name.to_str()) else {
-                continue;
-            };
-
-            match file_name {
-                LanguageConfig::FILE_NAME => {
-                    // Loaded above
-                }
-                SemanticTokenRules::FILE_NAME => {
-                    let _token_rules = SemanticTokenRules::load(&file_path)?;
-                }
-                TaskTemplates::FILE_NAME => {
-                    let task_file_content = std::fs::read(&file_path).with_context(|| {
-                        anyhow!(
-                            "Failed to read tasks file at {path}",
-                            path = file_path.display()
-                        )
-                    })?;
-                    let _task_templates =
-                        serde_json_lenient::from_slice::<TaskTemplates>(&task_file_content)
-                            .with_context(|| {
-                                anyhow!(
-                                    "Failed to parse tasks file at {path}",
-                                    path = file_path.display()
-                                )
-                            })?;
-                }
-                _ if file_name.ends_with(".scm") => {
-                    let grammar = grammar.with_context(|| {
-                        format! {
-                            "language {} provides query {} but no grammar",
-                            config.name,
-                            file_path.display()
-                        }
-                    })?;
-
-                    let query_source = fs::read_to_string(&file_path)?;
-                    let _query = Query::new(grammar, &query_source)?;
-                }
-                _ => {}
+                let query_source = fs::read_to_string(&query_path)?;
+                let _query = Query::new(grammar, &query_source)?;
             }
         }
 

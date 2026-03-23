@@ -1,11 +1,9 @@
 mod async_body;
-#[cfg(not(target_family = "wasm"))]
 pub mod github;
-#[cfg(not(target_family = "wasm"))]
 pub mod github_download;
 
 pub use anyhow::{Result, anyhow};
-pub use async_body::{AsyncBody, Inner, Json};
+pub use async_body::{AsyncBody, Inner};
 use derive_more::Deref;
 use http::HeaderValue;
 pub use http::{self, Method, Request, Response, StatusCode, Uri, request::Builder};

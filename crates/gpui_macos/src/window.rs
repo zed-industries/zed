@@ -1,6 +1,7 @@
 use crate::{
-    BoolExt, DisplayLink, MacDisplay, NSRange, NSStringExt, events::platform_input_from_native,
-    ns_string, renderer,
+    BoolExt, DisplayLink, MacDisplay, NSRange, NSStringExt, dispatch_get_main_queue,
+    dispatcher::dispatch_sys::dispatch_async_f, events::platform_input_from_native, ns_string,
+    renderer,
 };
 #[cfg(any(test, feature = "test-support"))]
 use anyhow::Result;
@@ -21,7 +22,6 @@ use cocoa::{
         NSUserDefaults,
     },
 };
-use dispatch2::DispatchQueue;
 use gpui::{
     AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, ExternalPaths, FileDropEvent,
     ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
@@ -170,10 +170,6 @@ unsafe fn build_classes() {
                 );
                 decl.add_method(
                     sel!(mouseExited:),
-                    handle_view_event as extern "C" fn(&Object, Sel, id),
-                );
-                decl.add_method(
-                    sel!(magnifyWithEvent:),
                     handle_view_event as extern "C" fn(&Object, Sel, id),
                 );
                 decl.add_method(
@@ -1054,32 +1050,34 @@ impl PlatformWindow for MacWindow {
 
     fn merge_all_windows(&self) {
         let native_window = self.0.lock().native_window;
-        extern "C" fn merge_windows_async(context: *mut std::ffi::c_void) {
-            unsafe {
-                let native_window = context as id;
-                let _: () = msg_send![native_window, mergeAllWindows:nil];
-            }
+        unsafe extern "C" fn merge_windows_async(context: *mut std::ffi::c_void) {
+            let native_window = context as id;
+            let _: () = msg_send![native_window, mergeAllWindows:nil];
         }
 
         unsafe {
-            DispatchQueue::main()
-                .exec_async_f(native_window as *mut std::ffi::c_void, merge_windows_async);
+            dispatch_async_f(
+                dispatch_get_main_queue(),
+                native_window as *mut std::ffi::c_void,
+                Some(merge_windows_async),
+            );
         }
     }
 
     fn move_tab_to_new_window(&self) {
         let native_window = self.0.lock().native_window;
-        extern "C" fn move_tab_async(context: *mut std::ffi::c_void) {
-            unsafe {
-                let native_window = context as id;
-                let _: () = msg_send![native_window, moveTabToNewWindow:nil];
-                let _: () = msg_send![native_window, makeKeyAndOrderFront: nil];
-            }
+        unsafe extern "C" fn move_tab_async(context: *mut std::ffi::c_void) {
+            let native_window = context as id;
+            let _: () = msg_send![native_window, moveTabToNewWindow:nil];
+            let _: () = msg_send![native_window, makeKeyAndOrderFront: nil];
         }
 
         unsafe {
-            DispatchQueue::main()
-                .exec_async_f(native_window as *mut std::ffi::c_void, move_tab_async);
+            dispatch_async_f(
+                dispatch_get_main_queue(),
+                native_window as *mut std::ffi::c_void,
+                Some(move_tab_async),
+            );
         }
     }
 
@@ -1799,13 +1797,10 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
             // may need them even if there is no marked text;
             // however we skip keys with control or the input handler adds control-characters to the buffer.
             // and keys with function, as the input handler swallows them.
-            // and keys with platform (Cmd), so that Cmd+key events (e.g. Cmd+`) are not
-            // consumed by the IME on non-QWERTY / dead-key layouts.
             if is_composing
                 || (key_down_event.keystroke.key_char.is_none()
                     && !key_down_event.keystroke.modifiers.control
-                    && !key_down_event.keystroke.modifiers.function
-                    && !key_down_event.keystroke.modifiers.platform)
+                    && !key_down_event.keystroke.modifiers.function)
             {
                 {
                     let mut lock = window_state.as_ref().lock();
@@ -2070,13 +2065,11 @@ fn update_window_scale_factor(window_state: &Arc<Mutex<MacWindowState>>) {
     let scale_factor = lock.scale_factor();
     let size = lock.content_size();
     let drawable_size = size.to_device_pixels(scale_factor);
-    if let Some(layer) = lock.renderer.layer() {
-        unsafe {
-            let _: () = msg_send![
-                layer,
-                setContentsScale: scale_factor as f64
-            ];
-        }
+    unsafe {
+        let _: () = msg_send![
+            lock.renderer.layer(),
+            setContentsScale: scale_factor as f64
+        ];
     }
 
     lock.renderer.update_drawable_size(drawable_size);
@@ -2113,12 +2106,10 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
     // in theory, we're not supposed to invoke this method manually but it balances out
     // the spurious `becomeKeyWindow` event and helps us work around that bug.
     if selector == sel!(windowDidBecomeKey:) && !is_active {
-        let native_window = lock.native_window;
-        drop(lock);
         unsafe {
-            let _: () = msg_send![native_window, resignKeyWindow];
+            let _: () = msg_send![lock.native_window, resignKeyWindow];
+            return;
         }
-        return;
     }
 
     let executor = lock.foreground_executor.clone();
@@ -2261,7 +2252,7 @@ extern "C" fn display_layer(this: &Object, _: Sel, _: id) {
     }
 }
 
-extern "C" fn step(view: *mut c_void) {
+unsafe extern "C" fn step(view: *mut c_void) {
     let view = view as id;
     let window_state = unsafe { get_window_state(&*view) };
     let mut lock = window_state.lock();
@@ -2560,20 +2551,19 @@ fn send_file_drop_event(
     window_state: Arc<Mutex<MacWindowState>>,
     file_drop_event: FileDropEvent,
 ) -> bool {
-    let external_files_dragged = match file_drop_event {
-        FileDropEvent::Entered { .. } => Some(true),
-        FileDropEvent::Exited => Some(false),
-        _ => None,
-    };
+    let mut window_state = window_state.lock();
+    let window_event_callback = window_state.event_callback.as_mut();
+    if let Some(callback) = window_event_callback {
+        let external_files_dragged = match file_drop_event {
+            FileDropEvent::Entered { .. } => Some(true),
+            FileDropEvent::Exited => Some(false),
+            _ => None,
+        };
 
-    let mut lock = window_state.lock();
-    if let Some(mut callback) = lock.event_callback.take() {
-        drop(lock);
         callback(PlatformInput::FileDrop(file_drop_event));
-        let mut lock = window_state.lock();
-        lock.event_callback = Some(callback);
+
         if let Some(external_files_dragged) = external_files_dragged {
-            lock.external_files_dragged = external_files_dragged;
+            window_state.external_files_dragged = external_files_dragged;
         }
         true
     } else {

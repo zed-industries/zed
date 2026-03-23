@@ -58,12 +58,10 @@ pub enum InlayContent {
 impl Inlay {
     pub fn hint(id: InlayId, position: Anchor, hint: &InlayHint) -> Self {
         let mut text = hint.text();
-        let needs_right_padding = hint.padding_right && !text.ends_with(" ");
-        let needs_left_padding = hint.padding_left && !text.starts_with(" ");
-        if needs_right_padding {
+        if hint.padding_right && text.reversed_chars_at(text.len()).next() != Some(' ') {
             text.push(" ");
         }
-        if needs_left_padding {
+        if hint.padding_left && text.chars_at(0).next() != Some(' ') {
             text.push_front(" ");
         }
         Self {

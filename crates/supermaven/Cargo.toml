@@ -1,0 +1,44 @@
+[package]
+name = "supermaven"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/supermaven.rs"
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+client.workspace = true
+collections.workspace = true
+edit_prediction_types.workspace = true
+futures.workspace = true
+gpui.workspace = true
+language.workspace = true
+log.workspace = true
+postage.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+settings.workspace = true
+smol.workspace = true
+supermaven_api.workspace = true
+text.workspace = true
+ui.workspace = true
+unicode-segmentation.workspace = true
+util.workspace = true
+
+[dev-dependencies]
+editor = { workspace = true, features = ["test-support"] }
+env_logger.workspace = true
+gpui = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
+settings = { workspace = true, features = ["test-support"] }
+theme = { workspace = true, features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }
+http_client = { workspace = true, features = ["test-support"] }

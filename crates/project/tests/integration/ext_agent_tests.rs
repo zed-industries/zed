@@ -10,14 +10,18 @@ impl ExternalAgentServer for NoopExternalAgent {
     fn get_command(
         &mut self,
         _extra_env: HashMap<String, String>,
+        _status_tx: Option<watch::Sender<SharedString>>,
         _new_version_available_tx: Option<watch::Sender<Option<String>>>,
         _cx: &mut AsyncApp,
-    ) -> Task<Result<AgentServerCommand>> {
-        Task::ready(Ok(AgentServerCommand {
-            path: PathBuf::from("noop"),
-            args: Vec::new(),
-            env: None,
-        }))
+    ) -> Task<Result<(AgentServerCommand, Option<task::SpawnInTerminal>)>> {
+        Task::ready(Ok((
+            AgentServerCommand {
+                path: PathBuf::from("noop"),
+                args: Vec::new(),
+                env: None,
+            },
+            None,
+        )))
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
@@ -27,7 +31,7 @@ impl ExternalAgentServer for NoopExternalAgent {
 
 #[test]
 fn external_agent_server_name_display() {
-    let name = AgentId(SharedString::from("Ext: Tool"));
+    let name = ExternalAgentServerName(SharedString::from("Ext: Tool"));
     let mut s = String::new();
     write!(&mut s, "{name}").unwrap();
     assert_eq!(s, "Ext: Tool");
@@ -39,7 +43,7 @@ fn sync_extension_agents_removes_previous_extension_entries() {
 
     // Seed with a couple of agents that will be replaced by extensions
     store.external_agents.insert(
-        AgentId(SharedString::from("foo-agent")),
+        ExternalAgentServerName(SharedString::from("foo-agent")),
         ExternalAgentEntry::new(
             Box::new(NoopExternalAgent) as Box<dyn ExternalAgentServer>,
             ExternalAgentSource::Custom,
@@ -48,7 +52,7 @@ fn sync_extension_agents_removes_previous_extension_entries() {
         ),
     );
     store.external_agents.insert(
-        AgentId(SharedString::from("bar-agent")),
+        ExternalAgentServerName(SharedString::from("bar-agent")),
         ExternalAgentEntry::new(
             Box::new(NoopExternalAgent) as Box<dyn ExternalAgentServer>,
             ExternalAgentSource::Custom,
@@ -57,7 +61,7 @@ fn sync_extension_agents_removes_previous_extension_entries() {
         ),
     );
     store.external_agents.insert(
-        AgentId(SharedString::from("custom")),
+        ExternalAgentServerName(SharedString::from("custom")),
         ExternalAgentEntry::new(
             Box::new(NoopExternalAgent) as Box<dyn ExternalAgentServer>,
             ExternalAgentSource::Custom,

@@ -1,5 +1,3 @@
-#![cfg_attr(target_family = "wasm", no_main)]
-
 use gpui::{
     App, Context, Corner, Div, Hsla, Stateful, Window, WindowOptions, anchored, deferred, div,
     prelude::*, px,
@@ -56,23 +54,21 @@ impl HelloWorld {
             }))
             .when(self.secondary_open, |this| {
                 this.child(
-                    // Now GPUI supports nested deferred!
-                    deferred(
-                        anchored()
-                            .anchor(Corner::TopLeft)
-                            .snap_to_window_with_margin(px(8.))
-                            .child(
-                                popover()
-                                    .child("This is second level Popover with nested deferred!")
-                                    .bg(gpui::white())
-                                    .border_color(gpui::blue())
-                                    .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                                        this.secondary_open = false;
-                                        cx.notify();
-                                    })),
-                            ),
-                    )
-                    .priority(2),
+                    // GPUI can't support deferred here yet,
+                    // it was inside another deferred element.
+                    anchored()
+                        .anchor(Corner::TopLeft)
+                        .snap_to_window_with_margin(px(8.))
+                        .child(
+                            popover()
+                                .child("This is second level Popover")
+                                .bg(gpui::white())
+                                .border_color(gpui::blue())
+                                .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                                    this.secondary_open = false;
+                                    cx.notify();
+                                })),
+                        ),
                 )
             })
     }
@@ -165,7 +161,7 @@ impl Render for HelloWorld {
     }
 }
 
-fn run_example() {
+fn main() {
     application().run(|cx: &mut App| {
         cx.open_window(WindowOptions::default(), |_, cx| {
             cx.new(|_| HelloWorld {
@@ -176,16 +172,4 @@ fn run_example() {
         .unwrap();
         cx.activate(true);
     });
-}
-
-#[cfg(not(target_family = "wasm"))]
-fn main() {
-    run_example();
-}
-
-#[cfg(target_family = "wasm")]
-#[wasm_bindgen::prelude::wasm_bindgen(start)]
-pub fn start() {
-    gpui_platform::web_init();
-    run_example();
 }

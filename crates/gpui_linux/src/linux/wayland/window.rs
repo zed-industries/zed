@@ -12,10 +12,7 @@ use futures::channel::oneshot::Receiver;
 use raw_window_handle as rwh;
 use wayland_backend::client::ObjectId;
 use wayland_client::WEnum;
-use wayland_client::{
-    Proxy,
-    protocol::{wl_output, wl_surface},
-};
+use wayland_client::{Proxy, protocol::wl_surface};
 use wayland_protocols::wp::viewporter::client::wp_viewport;
 use wayland_protocols::xdg::decoration::zv1::client::zxdg_toplevel_decoration_v1;
 use wayland_protocols::xdg::shell::client::xdg_surface;
@@ -37,7 +34,7 @@ use gpui::{
     WindowDecorations, WindowKind, WindowParams, layer_shell::LayerShellNotSupportedError, px,
     size,
 };
-use gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig};
+use gpui_wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig};
 
 #[derive(Default)]
 pub(crate) struct Callbacks {
@@ -52,7 +49,6 @@ pub(crate) struct Callbacks {
     appearance_changed: Option<Box<dyn FnMut()>>,
 }
 
-#[derive(Debug, Clone, Copy)]
 struct RawWindow {
     window: *mut c_void,
     display: *mut c_void,
@@ -133,7 +129,6 @@ impl WaylandSurfaceState {
         globals: &Globals,
         params: &WindowParams,
         parent: Option<WaylandWindowStatePtr>,
-        target_output: Option<wl_output::WlOutput>,
     ) -> anyhow::Result<Self> {
         // For layer_shell windows, create a layer surface instead of an xdg surface
         if let WindowKind::LayerShell(options) = &params.kind {
@@ -143,7 +138,7 @@ impl WaylandSurfaceState {
 
             let layer_surface = layer_shell.get_layer_surface(
                 &surface,
-                target_output.as_ref(),
+                None,
                 super::layer_shell::wayland_layer(options.layer),
                 options.namespace.clone(),
                 &globals.qh,
@@ -322,8 +317,7 @@ impl WaylandWindowState {
         viewport: Option<wp_viewport::WpViewport>,
         client: WaylandClientStatePtr,
         globals: Globals,
-        gpu_context: gpui_wgpu::GpuContext,
-        compositor_gpu: Option<CompositorGpuHint>,
+        gpu_context: &mut Option<WgpuContext>,
         options: WindowParams,
         parent: Option<WaylandWindowStatePtr>,
     ) -> anyhow::Result<Self> {
@@ -344,19 +338,13 @@ impl WaylandWindowState {
                 },
                 transparent: true,
             };
-            WgpuRenderer::new(gpu_context, &raw_window, config, compositor_gpu)?
+            WgpuRenderer::new(gpu_context, &raw_window, config)?
         };
 
         if let WaylandSurfaceState::Xdg(ref xdg_state) = surface_state {
             if let Some(title) = options.titlebar.and_then(|titlebar| titlebar.title) {
                 xdg_state.toplevel.set_title(title.to_string());
             }
-            // Set max window size based on the GPU's maximum texture dimension.
-            // This prevents the window from being resized larger than what the GPU can render.
-            let max_texture_size = renderer.max_texture_size() as i32;
-            xdg_state
-                .toplevel
-                .set_max_size(max_texture_size, max_texture_size);
         }
 
         Ok(Self {
@@ -493,17 +481,14 @@ impl WaylandWindow {
     pub fn new(
         handle: AnyWindowHandle,
         globals: Globals,
-        gpu_context: gpui_wgpu::GpuContext,
-        compositor_gpu: Option<CompositorGpuHint>,
+        gpu_context: &mut Option<WgpuContext>,
         client: WaylandClientStatePtr,
         params: WindowParams,
         appearance: WindowAppearance,
         parent: Option<WaylandWindowStatePtr>,
-        target_output: Option<wl_output::WlOutput>,
     ) -> anyhow::Result<(Self, ObjectId)> {
         let surface = globals.compositor.create_surface(&globals.qh, ());
-        let surface_state =
-            WaylandSurfaceState::new(&surface, &globals, &params, parent.clone(), target_output)?;
+        let surface_state = WaylandSurfaceState::new(&surface, &globals, &params, parent.clone())?;
 
         if let Some(fractional_scale_manager) = globals.fractional_scale_manager.as_ref() {
             fractional_scale_manager.get_fractional_scale(&surface, &globals.qh, surface.id());
@@ -524,7 +509,6 @@ impl WaylandWindow {
                 client,
                 globals,
                 gpu_context,
-                compositor_gpu,
                 params,
                 parent,
             )?)),
@@ -601,7 +585,6 @@ impl WaylandWindowStatePtr {
                     state.tiling = configure.tiling;
                     // Limit interactive resizes to once per vblank
                     if configure.resizing && state.resize_throttle {
-                        state.surface_state.ack_configure(serial);
                         return;
                     } else if configure.resizing {
                         state.resize_throttle = true;
@@ -1259,7 +1242,6 @@ impl PlatformWindow for WaylandWindow {
         let state = client.borrow();
         state
             .gpu_context
-            .borrow()
             .as_ref()
             .is_some_and(|ctx| ctx.supports_dual_source_blending())
     }
@@ -1337,31 +1319,6 @@ impl PlatformWindow for WaylandWindow {
 
     fn draw(&self, scene: &Scene) {
         let mut state = self.borrow_mut();
-
-        if state.renderer.device_lost() {
-            let raw_window = RawWindow {
-                window: state.surface.id().as_ptr().cast::<std::ffi::c_void>(),
-                display: state
-                    .surface
-                    .backend()
-                    .upgrade()
-                    .unwrap()
-                    .display_ptr()
-                    .cast::<std::ffi::c_void>(),
-            };
-            state.renderer.recover(&raw_window).unwrap_or_else(|err| {
-                panic!(
-                    "GPU device lost and recovery failed. \
-                        This may happen after system suspend/resume. \
-                        Please restart the application.\n\nError: {err}"
-                )
-            });
-
-            // The current scene references atlas textures that were cleared during recovery.
-            // Skip this frame and let the next frame rebuild the scene with fresh textures.
-            return;
-        }
-
         state.renderer.draw(scene);
     }
 

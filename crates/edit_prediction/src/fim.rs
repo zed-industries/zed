@@ -1,17 +1,16 @@
 use crate::{
-    EditPredictionId, EditPredictionModelInput, cursor_excerpt,
-    open_ai_compatible::{self, load_open_ai_compatible_api_key_if_needed},
-    prediction::EditPredictionResult,
+    EditPredictionId, EditPredictionModelInput, cursor_excerpt, prediction::EditPredictionResult,
+    zeta,
 };
 use anyhow::{Context as _, Result, anyhow};
 use gpui::{App, AppContext as _, Entity, Task};
 use language::{
-    Anchor, Buffer, BufferSnapshot, ToOffset, ToPoint as _,
+    Anchor, Buffer, BufferSnapshot, OffsetRangeExt as _, ToOffset, ToPoint as _,
     language_settings::all_language_settings,
 };
 use settings::EditPredictionPromptFormat;
 use std::{path::Path, sync::Arc, time::Instant};
-use zeta_prompt::{ZetaPromptInput, compute_editable_and_context_ranges};
+use zeta_prompt::ZetaPromptInput;
 
 const FIM_CONTEXT_TOKENS: usize = 512;
 
@@ -19,8 +18,10 @@ struct FimRequestOutput {
     request_id: String,
     edits: Vec<(std::ops::Range<Anchor>, Arc<str>)>,
     snapshot: BufferSnapshot,
+    response_received_at: Instant,
     inputs: ZetaPromptInput,
     buffer: Entity<Buffer>,
+    buffer_snapshotted_at: Instant,
 }
 
 pub fn request_prediction(
@@ -45,7 +46,7 @@ pub fn request_prediction(
 
     let http_client = cx.http_client();
     let cursor_point = position.to_point(&snapshot);
-    let request_start = cx.background_executor().now();
+    let buffer_snapshotted_at = Instant::now();
 
     let Some(settings) = (match provider {
         settings::EditPredictionProvider::Ollama => settings.ollama.clone(),
@@ -57,58 +58,46 @@ pub fn request_prediction(
         return Task::ready(Err(anyhow!("Unsupported edit prediction provider for FIM")));
     };
 
-    let api_key = load_open_ai_compatible_api_key_if_needed(provider, cx);
-
     let result = cx.background_spawn(async move {
-        let cursor_offset = cursor_point.to_offset(&snapshot);
-        let (excerpt_point_range, excerpt_offset_range, cursor_offset_in_excerpt) =
-            cursor_excerpt::compute_cursor_excerpt(&snapshot, cursor_offset);
-        let cursor_excerpt: Arc<str> = snapshot
-            .text_for_range(excerpt_point_range.clone())
-            .collect::<String>()
-            .into();
-        let syntax_ranges =
-            cursor_excerpt::compute_syntax_ranges(&snapshot, cursor_offset, &excerpt_offset_range);
-        let (editable_range, _) = compute_editable_and_context_ranges(
-            &cursor_excerpt,
-            cursor_offset_in_excerpt,
-            &syntax_ranges,
+        let (excerpt_range, _) = cursor_excerpt::editable_and_context_ranges_for_cursor_position(
+            cursor_point,
+            &snapshot,
             FIM_CONTEXT_TOKENS,
             0,
         );
+        let excerpt_offset_range = excerpt_range.to_offset(&snapshot);
+        let cursor_offset = cursor_point.to_offset(&snapshot);
 
         let inputs = ZetaPromptInput {
             events,
-            related_files: Some(Vec::new()),
-            active_buffer_diagnostics: Vec::new(),
+            related_files: Vec::new(),
             cursor_offset_in_excerpt: cursor_offset - excerpt_offset_range.start,
+            editable_range_in_excerpt: cursor_offset - excerpt_offset_range.start
+                ..cursor_offset - excerpt_offset_range.start,
             cursor_path: full_path.clone(),
-            excerpt_start_row: Some(excerpt_point_range.start.row),
-            cursor_excerpt,
-            excerpt_ranges: Default::default(),
-            syntax_ranges: None,
-            experiment: None,
+            excerpt_start_row: Some(excerpt_range.start.row),
+            cursor_excerpt: snapshot
+                .text_for_range(excerpt_range)
+                .collect::<String>()
+                .into(),
+            excerpt_ranges: None,
+            preferred_model: None,
             in_open_source_repo: false,
             can_collect_data: false,
-            repo_url: None,
         };
 
-        let editable_text = &inputs.cursor_excerpt[editable_range.clone()];
-        let cursor_in_editable = cursor_offset_in_excerpt.saturating_sub(editable_range.start);
-        let prefix = editable_text[..cursor_in_editable].to_string();
-        let suffix = editable_text[cursor_in_editable..].to_string();
+        let prefix = inputs.cursor_excerpt[..inputs.cursor_offset_in_excerpt].to_string();
+        let suffix = inputs.cursor_excerpt[inputs.cursor_offset_in_excerpt..].to_string();
         let prompt = format_fim_prompt(prompt_format, &prefix, &suffix);
         let stop_tokens = get_fim_stop_tokens();
 
         let max_tokens = settings.max_output_tokens;
-
-        let (response_text, request_id) = open_ai_compatible::send_custom_server_request(
+        let (response_text, request_id) = zeta::send_custom_server_request(
             provider,
             &settings,
             prompt,
             max_tokens,
             stop_tokens,
-            api_key,
             &http_client,
         )
         .await?;
@@ -117,7 +106,7 @@ pub fn request_prediction(
 
         log::debug!(
             "fim: completion received ({:.2}s)",
-            (response_received_at - request_start).as_secs_f64()
+            (response_received_at - buffer_snapshotted_at).as_secs_f64()
         );
 
         let completion: Arc<str> = clean_fim_completion(&response_text).into();
@@ -133,8 +122,10 @@ pub fn request_prediction(
             request_id,
             edits,
             snapshot,
+            response_received_at,
             inputs,
             buffer,
+            buffer_snapshotted_at,
         })
     });
 
@@ -147,9 +138,9 @@ pub fn request_prediction(
                 &output.snapshot,
                 output.edits.into(),
                 None,
+                output.buffer_snapshotted_at,
+                output.response_received_at,
                 output.inputs,
-                None,
-                cx.background_executor().now() - request_start,
                 cx,
             )
             .await,

@@ -1,5 +1,3 @@
-#![cfg_attr(target_family = "wasm", no_main)]
-
 use gpui::{App, Context, Entity, EventEmitter, prelude::*};
 use gpui_platform::application;
 
@@ -13,7 +11,7 @@ struct Change {
 
 impl EventEmitter<Change> for Counter {}
 
-fn run_example() {
+fn main() {
     application().run(|cx: &mut App| {
         let counter: Entity<Counter> = cx.new(|_cx| Counter { count: 0 });
         let subscriber = cx.new(|cx: &mut Context<Counter>| {
@@ -35,16 +33,4 @@ fn run_example() {
 
         assert_eq!(subscriber.read(cx).count, 4);
     });
-}
-
-#[cfg(not(target_family = "wasm"))]
-fn main() {
-    run_example();
-}
-
-#[cfg(target_family = "wasm")]
-#[wasm_bindgen::prelude::wasm_bindgen(start)]
-pub fn start() {
-    gpui_platform::web_init();
-    run_example();
 }

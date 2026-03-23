@@ -22,14 +22,10 @@
       # Cargo build timings wrapper script
       wrappedCargo = pkgs.writeShellApplication {
         name = "cargo";
-        runtimeInputs = [ pkgs.nodejs ];
-        text =
-          let
-            pathToCargoScript = ./. + "/../../script/cargo";
-          in
-          ''
-            NIX_WRAPPER=1 CARGO=${rustToolchain}/bin/cargo ${pathToCargoScript} "$@"
-          '';
+        runtimeInputs = [pkgs.nodejs];
+        text = ''
+          NIX_WRAPPER=1 CARGO=${rustToolchain}/bin/cargo ./script/cargo "$@"
+        '';
       };
     in
     {
@@ -38,7 +34,7 @@
         inputsFrom = [ zed-editor ];
 
         packages = with pkgs; [
-          wrappedCargo # must be first, to shadow the `cargo` provided by `rustToolchain`
+          wrappedCargo  # must be first, to shadow the `cargo` provided by `rustToolchain`
           rustToolchain # cargo, rustc, and rust-toolchain.toml components included
           cargo-nextest
           cargo-hakari

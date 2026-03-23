@@ -322,14 +322,16 @@ impl ProjectDiagnosticsEditor {
             if !has_no_blocks {
                 continue;
             }
-            let Some(buffer) = self.multibuffer.read(cx).buffer(buffer_id) else {
-                continue;
-            };
-            if buffer.read(cx).is_dirty() {
+            let is_dirty = self
+                .multibuffer
+                .read(cx)
+                .buffer(buffer_id)
+                .is_none_or(|buffer| buffer.read(cx).is_dirty());
+            if is_dirty {
                 continue;
             }
             self.multibuffer.update(cx, |b, cx| {
-                b.remove_excerpts_for_path(PathKey::for_buffer(&buffer, cx), cx);
+                b.remove_excerpts_for_buffer(buffer_id, cx);
             });
         }
     }
@@ -583,7 +585,7 @@ impl ProjectDiagnosticsEditor {
                         RetainExcerpts::All | RetainExcerpts::Dirty => multi_buffer
                             .excerpts_for_buffer(buffer_id, cx)
                             .into_iter()
-                            .map(|(_, _, range)| range)
+                            .map(|(_, range)| range)
                             .sorted_by(|a, b| cmp_excerpts(&buffer_snapshot, a, b))
                             .collect(),
                     }

@@ -1,19 +1,6 @@
-("(" @open
-  ")" @close)
-
-("[" @open
-  "]" @close)
-
-("{" @open
-  "}" @close)
-
-("<" @open
-  ">" @close)
-
-(("\"" @open
-  "\"" @close)
-  (#set! rainbow.exclude))
-
-(("'" @open
-  "'" @close)
-  (#set! rainbow.exclude))
+("(" @open ")" @close)
+("[" @open "]" @close)
+("{" @open "}" @close)
+("<" @open ">" @close)
+(("\"" @open "\"" @close) (#set! rainbow.exclude))
+(("'" @open "'" @close) (#set! rainbow.exclude))

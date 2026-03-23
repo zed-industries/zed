@@ -1,6 +1,4 @@
 {
-  pkgs,
-  system,
   lib,
   stdenv,
 
@@ -26,18 +24,10 @@
   fontconfig,
   freetype,
   git,
-  glib,
-  libdrm,
-  libgbm,
   libgit2,
   libglvnd,
-  libva,
-  libxcomposite,
-  libxdamage,
-  libxext,
-  libxfixes,
   libxkbcommon,
-  libxrandr,
+  livekit-libwebrtc,
   nodejs_22,
   openssl,
   perl,
@@ -52,7 +42,6 @@
 
   withGLES ? false,
   profile ? "release",
-  commitSha ? null,
 }:
 assert withGLES -> stdenv.hostPlatform.isLinux;
 let
@@ -77,6 +66,7 @@ let
     builtins.elem firstComp topLevelIncludes;
 
   craneLib = crane.overrideToolchain rustToolchain;
+  gpu-lib = if withGLES then libglvnd else vulkan-loader;
   commonArgs =
     let
       zedCargoLock = builtins.fromTOML (builtins.readFile ../crates/zed/Cargo.toml);
@@ -84,10 +74,7 @@ let
     in
     rec {
       pname = "zed-editor";
-      version =
-        zedCargoLock.package.version
-        + "-nightly"
-        + lib.optionalString (commitSha != null) "+${builtins.substring 0 7 commitSha}";
+      version = zedCargoLock.package.version + "-nightly";
       src = builtins.path {
         path = ../.;
         filter = mkIncludeFilter ../.;
@@ -174,22 +161,11 @@ let
       ]
       ++ lib.optionals stdenv'.hostPlatform.isLinux [
         alsa-lib
-        glib
-        libva
         libxkbcommon
         wayland
-        libglvnd
-        vulkan-loader
+        gpu-lib
         xorg.libX11
         xorg.libxcb
-        libdrm
-        libgbm
-        libva
-        libxcomposite
-        libxdamage
-        libxext
-        libxfixes
-        libxrandr
       ]
       ++ lib.optionals stdenv'.hostPlatform.isDarwin [
         apple-sdk_15
@@ -224,8 +200,7 @@ let
         };
         ZED_UPDATE_EXPLANATION = "Zed has been installed using Nix. Auto-updates have thus been disabled.";
         RELEASE_VERSION = version;
-        ZED_COMMIT_SHA = lib.optionalString (commitSha != null) "${commitSha}";
-        LK_CUSTOM_WEBRTC = pkgs.callPackage ./livekit-libwebrtc/package.nix { };
+        LK_CUSTOM_WEBRTC = livekit-libwebrtc;
         PROTOC = "${protobuf}/bin/protoc";
 
         CARGO_PROFILE = profile;
@@ -236,17 +211,15 @@ let
         # about them that's special is that they're manually dlopened at runtime
         NIX_LDFLAGS = lib.optionalString stdenv'.hostPlatform.isLinux "-rpath ${
           lib.makeLibraryPath [
-            libglvnd
-            vulkan-loader
+            gpu-lib
             wayland
-            libva
           ]
         }";
 
         NIX_OUTPATH_USED_AS_RANDOM_SEED = "norebuilds";
       };
 
-      # prevent nix from removing the "unused" wayland rpaths
+      # prevent nix from removing the "unused" wayland/gpu-lib rpaths
       dontPatchELF = stdenv'.hostPlatform.isLinux;
 
       # TODO: try craneLib.cargoNextest separate output
@@ -271,16 +244,6 @@ let
             postPatch = ''
               substituteInPlace webrtc-sys/build.rs --replace-fail \
                 "cargo:rustc-link-lib=static=webrtc" "cargo:rustc-link-lib=dylib=webrtc"
-
-              substituteInPlace webrtc-sys/build.rs --replace-fail \
-                'add_gio_headers(&mut builder);' \
-                'for lib_name in ["glib-2.0", "gio-2.0"] {
-                    if let Ok(lib) = pkg_config::Config::new().cargo_metadata(false).probe(lib_name) {
-                        for path in lib.include_paths {
-                            builder.include(&path);
-                        }
-                    }
-                }'
             ''
             + lib.optionalString withGLES ''
               cat ${glesConfig} >> .cargo/config/config.toml

@@ -23,7 +23,7 @@ impl BasedPyrightBanner {
                 this.have_basedpyright = true;
             }
         });
-        let dismissed = Self::dismissed(cx);
+        let dismissed = Self::dismissed();
         Self {
             dismissed,
             have_basedpyright: false,
@@ -56,8 +56,10 @@ impl Render for BasedPyrightBanner {
                                 .gap_0p5()
                                 .child(
                                     Button::new("learn-more", "Learn More")
+                                        .icon(IconName::ArrowUpRight)
                                         .label_size(LabelSize::Small)
-                                        .end_icon(Icon::new(IconName::ArrowUpRight).size(IconSize::XSmall).color(Color::Muted))
+                                        .icon_size(IconSize::XSmall)
+                                        .icon_color(Color::Muted)
                                         .on_click(|_, _, cx| {
                                             cx.open_url("https://zed.dev/docs/languages/python")
                                         }),

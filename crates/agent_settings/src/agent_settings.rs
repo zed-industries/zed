@@ -12,7 +12,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
     DefaultAgentView, DockPosition, LanguageModelParameters, LanguageModelSelection,
-    NewThreadLocation, NotifyWhenAgentWaiting, RegisterSetting, Settings, ToolPermissionMode,
+    NotifyWhenAgentWaiting, RegisterSetting, Settings, ToolPermissionMode,
 };
 
 pub use crate::agent_profile::*;
@@ -53,7 +53,6 @@ pub struct AgentSettings {
     pub tool_permissions: ToolPermissions,
     pub show_onboarding: bool,
     pub auto_open_panel: bool,
-    pub new_thread_location: NewThreadLocation,
 }
 
 impl AgentSettings {
@@ -443,7 +442,6 @@ impl Settings for AgentSettings {
             tool_permissions: compile_tool_permissions(agent.tool_permissions),
             show_onboarding: agent.show_onboarding.unwrap(),
             auto_open_panel: agent.auto_open_panel.unwrap(),
-            new_thread_location: agent.new_thread_location.unwrap_or_default(),
         }
     }
 }

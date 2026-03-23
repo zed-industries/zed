@@ -36,12 +36,6 @@ impl PlanDefinitions {
             .child(ListBulletItem::new("Usage-based billing beyond $5"))
     }
 
-    pub fn business_plan(&self) -> impl IntoElement {
-        List::new()
-            .child(ListBulletItem::new("Unlimited edit predictions"))
-            .child(ListBulletItem::new("Usage-based billing"))
-    }
-
     pub fn student_plan(&self) -> impl IntoElement {
         List::new()
             .child(ListBulletItem::new("Unlimited edit predictions"))

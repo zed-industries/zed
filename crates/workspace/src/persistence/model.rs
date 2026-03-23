@@ -93,9 +93,9 @@ pub(crate) struct SerializedWorkspace {
 
 #[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize)]
 pub struct DockStructure {
-    pub left: DockData,
-    pub right: DockData,
-    pub bottom: DockData,
+    pub(crate) left: DockData,
+    pub(crate) right: DockData,
+    pub(crate) bottom: DockData,
 }
 
 impl RemoteConnectionKind {
@@ -143,9 +143,9 @@ impl Bind for DockStructure {
 
 #[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize)]
 pub struct DockData {
-    pub visible: bool,
-    pub active_panel: Option<String>,
-    pub zoom: bool,
+    pub(crate) visible: bool,
+    pub(crate) active_panel: Option<String>,
+    pub(crate) zoom: bool,
 }
 
 impl Column for DockData {

@@ -17,7 +17,7 @@ use multi_buffer::{
 };
 use project::InlayId;
 use std::{
-    cmp, iter,
+    cmp,
     ops::{Add, AddAssign, Range, Sub, SubAssign},
     sync::Arc,
 };
@@ -546,11 +546,8 @@ impl InlayMap {
     pub fn new(buffer: MultiBufferSnapshot) -> (Self, InlaySnapshot) {
         let version = 0;
         let snapshot = InlaySnapshot {
-            transforms: SumTree::from_iter(
-                iter::once(Transform::Isomorphic(buffer.text_summary())),
-                (),
-            ),
-            buffer,
+            buffer: buffer.clone(),
+            transforms: SumTree::from_iter(Some(Transform::Isomorphic(buffer.text_summary())), ()),
             version,
         };
 
@@ -748,7 +745,7 @@ impl InlayMap {
     }
 
     #[ztracing::instrument(skip_all)]
-    pub fn current_inlays(&self) -> impl Iterator<Item = &Inlay> + Default {
+    pub fn current_inlays(&self) -> impl Iterator<Item = &Inlay> {
         self.inlays.iter()
     }
 

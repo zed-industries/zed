@@ -15,7 +15,7 @@ use workspace::{ModalView, Workspace, pane};
 use crate::branch_picker::{self, BranchList, DeleteBranch, FilterRemotes};
 use crate::stash_picker::{self, DropStashItem, ShowStashItem, StashList};
 use crate::worktree_picker::{
-    self, DeleteWorktree, WorktreeFromDefault, WorktreeFromDefaultOnWindow, WorktreeList,
+    self, WorktreeFromDefault, WorktreeFromDefaultOnWindow, WorktreeList,
 };
 
 actions!(
@@ -25,8 +25,8 @@ actions!(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GitPickerTab {
-    Worktrees,
     Branches,
+    Worktrees,
     Stash,
 }
 
@@ -190,9 +190,9 @@ impl GitPicker {
 
     fn activate_next_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.tab = match self.tab {
-            GitPickerTab::Worktrees => GitPickerTab::Branches,
-            GitPickerTab::Branches => GitPickerTab::Stash,
-            GitPickerTab::Stash => GitPickerTab::Worktrees,
+            GitPickerTab::Branches => GitPickerTab::Worktrees,
+            GitPickerTab::Worktrees => GitPickerTab::Stash,
+            GitPickerTab::Stash => GitPickerTab::Branches,
         };
         self.ensure_active_picker(window, cx);
         self.focus_active_picker(window, cx);
@@ -201,9 +201,9 @@ impl GitPicker {
 
     fn activate_previous_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.tab = match self.tab {
-            GitPickerTab::Worktrees => GitPickerTab::Stash,
-            GitPickerTab::Branches => GitPickerTab::Worktrees,
-            GitPickerTab::Stash => GitPickerTab::Branches,
+            GitPickerTab::Branches => GitPickerTab::Stash,
+            GitPickerTab::Worktrees => GitPickerTab::Branches,
+            GitPickerTab::Stash => GitPickerTab::Worktrees,
         };
         self.ensure_active_picker(window, cx);
         self.focus_active_picker(window, cx);
@@ -241,23 +241,6 @@ impl GitPicker {
                 "git-picker-tabs",
                 [
                     ToggleButtonSimple::new(
-                        GitPickerTab::Worktrees.to_string(),
-                        cx.listener(|this, _, window, cx| {
-                            this.tab = GitPickerTab::Worktrees;
-                            this.ensure_active_picker(window, cx);
-                            this.focus_active_picker(window, cx);
-                            cx.notify();
-                        }),
-                    )
-                    .tooltip(move |_, cx| {
-                        Tooltip::for_action_in(
-                            "Toggle Worktree Picker",
-                            &ActivateWorktreesTab,
-                            &worktrees_focus_handle,
-                            cx,
-                        )
-                    }),
-                    ToggleButtonSimple::new(
                         GitPickerTab::Branches.to_string(),
                         cx.listener(|this, _, window, cx| {
                             this.tab = GitPickerTab::Branches;
@@ -271,6 +254,23 @@ impl GitPicker {
                             "Toggle Branch Picker",
                             &ActivateBranchesTab,
                             &branches_focus_handle,
+                            cx,
+                        )
+                    }),
+                    ToggleButtonSimple::new(
+                        GitPickerTab::Worktrees.to_string(),
+                        cx.listener(|this, _, window, cx| {
+                            this.tab = GitPickerTab::Worktrees;
+                            this.ensure_active_picker(window, cx);
+                            this.focus_active_picker(window, cx);
+                            cx.notify();
+                        }),
+                    )
+                    .tooltip(move |_, cx| {
+                        Tooltip::for_action_in(
+                            "Toggle Worktree Picker",
+                            &ActivateWorktreesTab,
+                            &worktrees_focus_handle,
                             cx,
                         )
                     }),
@@ -297,8 +297,8 @@ impl GitPicker {
             .style(ToggleButtonGroupStyle::Outlined)
             .auto_width()
             .selected_index(match self.tab {
-                GitPickerTab::Worktrees => 0,
-                GitPickerTab::Branches => 1,
+                GitPickerTab::Branches => 0,
+                GitPickerTab::Worktrees => 1,
                 GitPickerTab::Stash => 2,
             }),
         )
@@ -404,19 +404,6 @@ impl GitPicker {
         if let Some(worktree_list) = &self.worktree_list {
             worktree_list.update(cx, |list, cx| {
                 list.handle_new_worktree(true, window, cx);
-            });
-        }
-    }
-
-    fn handle_worktree_delete(
-        &mut self,
-        _: &DeleteWorktree,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(worktree_list) = &self.worktree_list {
-            worktree_list.update(cx, |list, cx| {
-                list.handle_delete(&DeleteWorktree, window, cx);
             });
         }
     }
@@ -537,7 +524,6 @@ impl Render for GitPicker {
             .when(self.tab == GitPickerTab::Worktrees, |el| {
                 el.on_action(cx.listener(Self::handle_worktree_from_default))
                     .on_action(cx.listener(Self::handle_worktree_from_default_on_window))
-                    .on_action(cx.listener(Self::handle_worktree_delete))
             })
             .when(self.tab == GitPickerTab::Stash, |el| {
                 el.on_action(cx.listener(Self::handle_drop_stash))

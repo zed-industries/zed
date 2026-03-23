@@ -15,7 +15,7 @@ use gpui::{
     px, uniform_list,
 };
 use language::line_diff;
-use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrevious};
+use menu::{Cancel, SelectNext, SelectPrevious};
 use project::{
     Project,
     git_store::{
@@ -1024,7 +1024,7 @@ impl GitGraph {
                     }
                 }
             }
-            RepositoryEvent::BranchChanged => {
+            RepositoryEvent::BranchChanged | RepositoryEvent::MergeHeadsChanged => {
                 self.pending_select_sha = None;
                 // Only invalidate if we scanned atleast once,
                 // meaning we are not inside the initial repo loading state
@@ -1171,33 +1171,20 @@ impl GitGraph {
         cx.notify();
     }
 
-    fn select_first(&mut self, _: &SelectFirst, _window: &mut Window, cx: &mut Context<Self>) {
-        self.select_entry(0, cx);
-    }
-
-    fn select_prev(&mut self, _: &SelectPrevious, window: &mut Window, cx: &mut Context<Self>) {
+    fn select_prev(&mut self, _: &SelectPrevious, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(selected_entry_idx) = &self.selected_entry_idx {
             self.select_entry(selected_entry_idx.saturating_sub(1), cx);
         } else {
-            self.select_first(&SelectFirst, window, cx);
+            self.select_entry(0, cx);
         }
     }
 
     fn select_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(selected_entry_idx) = &self.selected_entry_idx {
-            self.select_entry(
-                selected_entry_idx
-                    .saturating_add(1)
-                    .min(self.graph_data.commits.len().saturating_sub(1)),
-                cx,
-            );
+            self.select_entry(selected_entry_idx.saturating_add(1), cx);
         } else {
             self.select_prev(&SelectPrevious, window, cx);
         }
-    }
-
-    fn select_last(&mut self, _: &SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
-        self.select_entry(self.graph_data.commits.len().saturating_sub(1), cx);
     }
 
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
@@ -1494,9 +1481,10 @@ impl GitGraph {
 
                                 this.child(
                                     Button::new("author-email-copy", author_email.clone())
-                                        .start_icon(
-                                            Icon::new(icon).size(IconSize::Small).color(icon_color),
-                                        )
+                                        .icon(icon)
+                                        .icon_size(IconSize::Small)
+                                        .icon_color(icon_color)
+                                        .icon_position(IconPosition::Start)
                                         .label_size(LabelSize::Small)
                                         .truncate(true)
                                         .color(Color::Muted)
@@ -1541,9 +1529,10 @@ impl GitGraph {
                                 };
 
                                 Button::new("sha-button", &full_sha)
-                                    .start_icon(
-                                        Icon::new(icon).size(IconSize::Small).color(icon_color),
-                                    )
+                                    .icon(icon)
+                                    .icon_size(IconSize::Small)
+                                    .icon_color(icon_color)
+                                    .icon_position(IconPosition::Start)
                                     .label_size(LabelSize::Small)
                                     .truncate(true)
                                     .color(Color::Muted)
@@ -1600,9 +1589,10 @@ impl GitGraph {
                                         "view-on-provider",
                                         format!("View on {}", provider_name),
                                     )
-                                    .start_icon(
-                                        Icon::new(icon).size(IconSize::Small).color(Color::Muted),
-                                    )
+                                    .icon(icon)
+                                    .icon_size(IconSize::Small)
+                                    .icon_color(Color::Muted)
+                                    .icon_position(IconPosition::Start)
                                     .label_size(LabelSize::Small)
                                     .truncate(true)
                                     .color(Color::Muted)
@@ -2270,10 +2260,8 @@ impl Render for GitGraph {
                 this.open_selected_commit_view(window, cx);
             }))
             .on_action(cx.listener(Self::cancel))
-            .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_prev))
             .on_action(cx.listener(Self::select_next))
-            .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::confirm))
             .child(content)
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {
@@ -2358,7 +2346,7 @@ impl SerializableItem for GitGraph {
             alive_items,
             workspace_id,
             "git_graphs",
-            &persistence::GitGraphsDb::global(cx),
+            &persistence::GIT_GRAPHS,
             cx,
         )
     }
@@ -2371,8 +2359,7 @@ impl SerializableItem for GitGraph {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<gpui::Result<Entity<Self>>> {
-        let db = persistence::GitGraphsDb::global(cx);
-        if db
+        if persistence::GIT_GRAPHS
             .get_git_graph(item_id, workspace_id)
             .ok()
             .is_some_and(|is_open| is_open)
@@ -2393,12 +2380,11 @@ impl SerializableItem for GitGraph {
         cx: &mut Context<Self>,
     ) -> Option<Task<gpui::Result<()>>> {
         let workspace_id = workspace.database_id()?;
-        let db = persistence::GitGraphsDb::global(cx);
-        Some(
-            cx.background_spawn(
-                async move { db.save_git_graph(item_id, workspace_id, true).await },
-            ),
-        )
+        Some(cx.background_spawn(async move {
+            persistence::GIT_GRAPHS
+                .save_git_graph(item_id, workspace_id, true)
+                .await
+        }))
     }
 
     fn should_serialize(&self, event: &Self::Event) -> bool {
@@ -2432,7 +2418,7 @@ mod persistence {
         )]);
     }
 
-    db::static_connection!(GitGraphsDb, [WorkspaceDb]);
+    db::static_connection!(GIT_GRAPHS, GitGraphsDb, [WorkspaceDb]);
 
     impl GitGraphsDb {
         query! {
@@ -3187,6 +3173,12 @@ mod tests {
                 .iter()
                 .any(|event| matches!(event, RepositoryEvent::BranchChanged)),
             "initial repository scan should emit BranchChanged"
+        );
+        assert!(
+            observed_repository_events
+                .iter()
+                .any(|event| matches!(event, RepositoryEvent::MergeHeadsChanged)),
+            "initial repository scan should emit MergeHeadsChanged"
         );
         let commit_count_after = repository.read_with(cx, |repo, _| {
             repo.get_graph_data(crate::LogSource::default(), crate::LogOrder::default())

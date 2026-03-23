@@ -41,16 +41,16 @@ The entire crate is Helix-specific. It provides:
 | `mcp.rs` | MCP integration helpers |
 | `e2e-test/` | Docker-based E2E test with real LLM calls |
 
-### E2E Test (`e2e-test/run_docker_e2e.sh`)
+### E2E Test (`e2e-test/run_e2e.sh`)
 
-10-phase test that validates the full protocol. Run via:
+Four-phase test that validates the full protocol:
 
-```bash
-cd crates/external_websocket_sync/e2e-test
-ANTHROPIC_API_KEY=<key> ./run_docker_e2e.sh
-```
+1. **Phase 1**: New thread creation via `chat_message`
+2. **Phase 2**: Follow-up message to existing thread
+3. **Phase 3**: New thread creation (second thread)
+4. **Phase 4**: Follow-up to non-visible thread (Thread A while Thread B is displayed)
 
-Each phase queries UI state via `query_ui_state` to verify the agent panel displays the correct thread.
+Each phase also queries UI state via `query_ui_state` to verify the agent panel displays the correct thread.
 
 ```bash
 # Run E2E test
@@ -85,15 +85,15 @@ These files contain Helix-specific changes that must be preserved during rebases
 - **Thread open callback**: Wires up thread_service to open existing threads
 - **Onboarding dismissal**: Auto-dismisses `OnboardingUpsell` when WebSocket sync is active
 - **`acp_history_store()`**: Accessor for `ThreadStore` entity, used by WebSocket integration setup (cfg-gated)
+- **`NativeAgentSessionList` import**: Required for thread persistence in `ThreadDisplayNotification` handler
 
-### `crates/agent_ui/src/conversation_view.rs`
-> **Note:** Upstream renamed `crates/agent_ui/src/acp/thread_view.rs` → `crates/agent_ui/src/conversation_view.rs` as part of ACP consolidation (see ACP Consolidation section below).
-
+### `crates/agent_ui/src/acp/thread_view.rs`
 - **`HeadlessConnection`**: No-op `AgentConnection` impl for WebSocket-created threads (cfg-gated)
 - **`UserCreatedThread` event**: Sends when user creates a thread via UI (not via WebSocket)
 - **`ThreadTitleChanged` event**: Forwards title changes to Helix
-- **`from_existing_thread()` constructor**: Creates a `ConversationView` wrapping an existing `Entity<AcpThread>` with a `HeadlessConnection`. Uses `ConnectedServerState` with `active_id`, `threads` HashMap, `conversation` Entity, `history` (`Option<Entity<ThreadHistory>>`), and `_connection_entry_subscription`. Requires `connection_store` and `connection_key` parameters. Used when thread_service loads a thread and needs to display it
-- **Thread registry integration**: Registers threads from `from_existing_thread` into `THREAD_REGISTRY`
+- **`from_existing_thread()` constructor**: Creates an `AcpServerView` wrapping an existing `Entity<AcpThread>` with a `HeadlessConnection`. Uses `ConnectedServerState` with `active_id`, `threads` HashMap, and `Conversation` entity. Used when thread_service loads a thread and needs to display it
+- **Thread registry integration**: Registers threads from both `from_existing_thread` and `initial_state` into `THREAD_REGISTRY`
+- **History refresh**: Calls `history.refresh()` on `Stopped` and `TitleUpdated` events
 
 ### `crates/extensions_ui/src/extensions_ui.rs`
 - **Agent keyword removal**: Claude/Codex/Gemini keywords removed from search (enterprise — users should use corporate LLMs)
@@ -161,7 +161,7 @@ fn load_session(self: Rc<Self>, session: AgentSessionInfo, ..., cx: &mut App)
 
 ### 2. No Duplicate WebSocket Event Sends
 
-**File:** `crates/agent_ui/src/conversation_view.rs` (was `crates/agent_ui/src/acp/thread_view.rs`)
+**File:** `crates/agent_ui/src/acp/thread_view.rs`
 
 **Bug:** Both `thread_service.rs` AND `thread_view.rs` subscribe to thread events (`NewEntry`, `EntryUpdated`, `Stopped`) and send `MessageAdded`/`MessageCompleted` WebSocket events, causing duplicate messages in the Helix chat.
 
@@ -230,65 +230,18 @@ Global callbacks initialized during agent panel setup:
 
 Pending request queues (`PENDING_*`) buffer requests that arrive before callbacks are registered.
 
-## ACP Consolidation (Upstream Breaking Change)
-
-Upstream Zed completed the ACP consolidation — making all agent functionality use the ACP protocol and retiring the legacy non-ACP native agent. This caused the following renames that affect Helix-specific code:
-
-| Old name | New name |
-|----------|----------|
-| `crates/agent_ui/src/acp/thread_view.rs` | `crates/agent_ui/src/conversation_view.rs` |
-| `AcpThreadHistory` | `ThreadHistory` (in `crates/agent_ui/src/thread_history.rs`) |
-| `ExternalAgent` enum | `Agent` enum (in `crates/agent_ui/src/agent_ui.rs`) |
-| `AcpServerView` struct | `ConversationView` struct |
-| `crate::acp::AcpServerView::from_existing_thread` | `ConversationView::from_existing_thread` |
-
-**Key impact on `from_existing_thread`:**
-- Now takes `connection_store: Entity<AgentConnectionStore>` and `connection_key: Agent` as parameters
-- `history` parameter type changed from `Entity<AcpThreadHistory>` to `Option<Entity<ThreadHistory>>`
-- `EntryViewState::new` parameter list changed: removed `prompt_capabilities`/`available_commands`, replaced with `session_capabilities: SharedSessionCapabilities` and `agent_id: AgentId`
-- `ThreadView::new` (was `AcpThreadView::new`) parameter list changed: removed `login` and `resume_thread_metadata`, added `agent_icon_from_external_svg`
-- `ConnectedServerState` now has `history: Option<Entity<ThreadHistory>>` and `_connection_entry_subscription: Subscription` fields (use `Subscription::new(|| {})` for headless case)
-
-**`set_session_list` cfg fix:**
-`ThreadHistory::set_session_list()` in `thread_history.rs` is `#[cfg(any(test, feature = "test-support", feature = "external_websocket_sync"))]` — the `external_websocket_sync` feature was added to allow the WebSocket sync code to call it.
-
-## Branch Naming
-
-The internal git server only accepts pushes to branches matching the `feature/<task-id>-*` pattern. Always name the merge branch after the task ID, e.g. `feature/001617-merge-latest-zed`. Do not use date-based names like `merge-upstream-YYYY-MM-DD`.
-
-## `.github/workflows/` — Always Revert Upstream Changes
-
-The internal git server rejects pushes that modify `.github/workflows/` because it requires a GitHub token scope we don't have. **After every upstream merge, you must restore all workflow files to their pre-merge state.**
-
-Steps:
-
-```bash
-# Find the last Helix commit before the merge (the merge's first parent)
-PRE_MERGE=$(git log --merges --format="%P" -1 | awk '{print $1}')
-# Restore all workflow files to that state
-git checkout $PRE_MERGE -- .github/workflows/
-# Delete any new workflow files upstream added
-git ls-files --deleted -- .github/workflows/  # nothing to delete here (checkout restores)
-# But upstream may have ADDED new files that didn't exist pre-merge:
-git diff $PRE_MERGE HEAD --name-status -- .github/workflows/ | grep '^A' | awk '{print $2}' | xargs -r git rm
-git commit -m "Revert .github/workflows to pre-merge state"
-```
-
-> **Never let upstream workflow changes through to the push.** If you see `.github/workflows/` in `git diff HEAD~N HEAD`, those changes must be reverted before pushing.
-
 ## Rebase Checklist
 
 When rebasing/merging against upstream Zed:
 
-0. **Revert `.github/workflows/`** — restore all files to pre-merge state (see section above); push will be rejected otherwise
 1. **Preserve the `external_websocket_sync` crate** — it's self-contained and rarely conflicts
 2. **Check `agent.rs` `load_session()`** — ensure the entity lifetime fix is present (Critical Fix #1)
-3. **Check `conversation_view.rs` event handlers** — ensure no duplicate WebSocket sends (Critical Fix #2); file was `acp/thread_view.rs` before ACP consolidation
+3. **Check `thread_view.rs` event handlers** — ensure no duplicate WebSocket sends (Critical Fix #2)
 4. **Check `acp_thread.rs` `AssistantMessage`** — ensure `content_only()` exists (Critical Fix #3)
 5. **Check `thread_service.rs` follow-up path** — ensure `notify_thread_display()` is called (Critical Fix #4)
 6. **Check `agent_panel.rs` cfg-gated blocks** — callback setup, `from_existing_thread`, onboarding dismissal, `acp_history_store()`
-7. **Check `conversation_view.rs` cfg-gated blocks** — `HeadlessConnection`, `UserCreatedThread`, `ThreadTitleChanged`, `from_existing_thread()`, THREAD_REGISTRY registration
-8. **Check `from_existing_thread()` matches `ConnectedServerState` struct** — upstream may change fields (currently: `active_id`, `threads` HashMap, `conversation` Entity, `history: Option<Entity<ThreadHistory>>`, `_connection_entry_subscription`)
+7. **Check `thread_view.rs` cfg-gated blocks** — `HeadlessConnection`, `UserCreatedThread`, `ThreadTitleChanged`, `from_existing_thread()`, THREAD_REGISTRY registration in `initial_state`, history refresh on Stopped/TitleUpdated
+8. **Check `from_existing_thread()` matches `ConnectedServerState` struct** — upstream may change fields (currently: `active_id`, `threads` HashMap, `conversation` Entity)
 9. **Check `extensions_ui.rs`** — agent keyword/upsell removal preserved
 10. **Check `dev_container_suggest.rs`** — `suggest_dev_container` early return preserved
 13. **Check `feature_flags/flags.rs`** — `AcpBetaFeatureFlag::enabled_for_all()` returns `true`
@@ -299,7 +252,7 @@ When rebasing/merging against upstream Zed:
 18. **Check `.dockerignore`** — simplified for Helix builds
 19. **Run `cargo check --package zed --features external_websocket_sync`** — must compile
 20. **Run `cargo test -p external_websocket_sync`** — unit tests
-21. **Run E2E test** after merge to verify all 10 phases pass
+21. **Run E2E test** after merge to verify all 4 phases pass
 
 ## Building
 
@@ -342,36 +295,3 @@ Helix-specific commits on main (oldest first):
 | `0a78bf8` | **Fix: keep NativeAgent entity alive during load_session** |
 | `98ec442` | **Fix: strip '## Assistant' heading from WebSocket-synced messages** |
 | `72e2952` | **Fix: remove duplicate WebSocket event sends from thread_view.rs** |
-| `adc592c` | Fix: remove final summary message_added causing duplicate responses |
-| `3193353` | Fix: make thread event subscriptions persistent for Zed→Helix sync |
-| `486a9d6` | Perf: throttle streaming EntryUpdated events (100ms) |
-| `e779937` | Feat: Go-based E2E test server for WebSocket sync protocol |
-| `818cf94` | Fix: adapt external_websocket_sync to upstream connect() API change |
-| `276da28` | Fix: wire up auto_open_panel setting to AgentPanel starts_open() |
-| `2f74e89` | Fix: disable migration banner in Helix builds |
-| `01fbdfc` | Fix: prevent keyboard focus stealing when following agent |
-| `87632d0` | Fix: thread entity brain split after container restart |
-| `3e4d7d7` | Fix: wait for MCP tools before sending first WebSocket message |
-| `d511c3e` | Fix: auto-follow mode and split-brain for external WebSocket sessions |
-| `182cae0` | Fix: missing message_completed in follow-up subscription |
-| `29f10aa` | Emit MessageCompleted from Stopped event for all turn sources |
-| `91c281f` | Extract ensure_thread_subscription to fix missing event handlers |
-| `c33ee0a` | Add entry_type field to MessageAdded sync event |
-| `4053ccd` | Flush stale pending entries when different entry starts streaming |
-| `4e204c4` | Handle ToolCall in NewEntry event (not just EntryUpdated) |
-| `bfe84a2` | Send structured tool_name and tool_status in message_added events |
-| `e38aad1` | Clear persistent subscription on unregister to fix E2E timeout |
-| `8b033a4` | Test: add Stopped emission and mid-stream interrupt E2E tests |
-| `d9fb0a0` | Fix: make thread event subscriptions persistent |
-| `8881750` | Add diagnostic logs for auto-follow workspace.follow() calls |
-| `95ce56d` | Fix: auto-follow mode split-brain for external WebSocket sessions |
-| `fd97448` | Fix: thread hang from dropped GPUI Task in rapid cancel chain |
-| `2fbc0966` | Fix: send user_created_thread for empty threads too |
-| `1d5a75a` | Test: add Phase 10 E2E test for user_created_thread multi-thread sync |
-| `846c74d` | Fix: remove hardcoded phase count from E2E test output |
-| `28f9917` | Portingguide: document branch naming convention for upstream merges |
-| `1f96cb8` | **Merge upstream/main into feature/001617-merge-latest-zed** |
-| `57665e6` | **Fix Helix cfg-gated code for ACP consolidation renames** |
-| `1737543` | Portingguide: update commit history table through merge commit |
-| `11bec02` | **Revert .github/workflows to pre-merge state** |
-| `090464c` | Portingguide: document .github/workflows revert requirement |

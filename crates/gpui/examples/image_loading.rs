@@ -1,5 +1,3 @@
-#![cfg_attr(target_family = "wasm", no_main)]
-
 use std::{path::Path, sync::Arc, time::Duration};
 
 use gpui::{
@@ -194,7 +192,8 @@ impl Render for ImageLoadingExample {
     }
 }
 
-fn run_example() {
+fn main() {
+    env_logger::init();
     application().with_assets(Assets {}).run(|cx: &mut App| {
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
@@ -210,17 +209,4 @@ fn run_example() {
         })
         .unwrap();
     });
-}
-
-#[cfg(not(target_family = "wasm"))]
-fn main() {
-    env_logger::init();
-    run_example();
-}
-
-#[cfg(target_family = "wasm")]
-#[wasm_bindgen::prelude::wasm_bindgen(start)]
-pub fn start() {
-    gpui_platform::web_init();
-    run_example();
 }

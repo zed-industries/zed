@@ -17,8 +17,6 @@ pub struct Model {
     pub first_status: Option<i32>,
     /// For unmerged entries, this is the `second_head` status. For tracked entries, this is the `worktree_status`.
     pub second_status: Option<i32>,
-    pub lines_added: Option<i32>,
-    pub lines_deleted: Option<i32>,
     pub scan_id: i64,
     pub is_deleted: bool,
 }

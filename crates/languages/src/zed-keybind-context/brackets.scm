@@ -1,2 +1,1 @@
-("(" @open
-  ")" @close)
+("(" @open ")" @close)

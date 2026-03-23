@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use workspace::{AppState, OpenResult, OpenVisible, Workspace};
+use workspace::{AppState, OpenVisible, Workspace};
 
 actions!(
     journal,
@@ -107,10 +107,7 @@ pub fn new_journal_entry(workspace: &Workspace, window: &mut Window, cx: &mut Ap
         .spawn(cx, async move |cx| {
             let (journal_dir, entry_path) = create_entry.await?;
             let opened = if open_new_workspace {
-                let OpenResult {
-                    window: new_workspace,
-                    ..
-                } = cx
+                let (new_workspace, _) = cx
                     .update(|_window, cx| {
                         workspace::open_paths(
                             &[journal_dir],

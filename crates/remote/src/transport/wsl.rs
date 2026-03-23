@@ -450,10 +450,13 @@ impl RemoteConnection for WslRemoteConnection {
 
         let mut exec = String::from("exec env ");
 
-        for (key, value) in env.iter() {
-            let assignment = format!("{key}={value}");
-            let assignment = shell_kind.try_quote(&assignment).context("shell quoting")?;
-            write!(exec, "{assignment} ")?;
+        for (k, v) in env.iter() {
+            write!(
+                exec,
+                "{}={} ",
+                k,
+                shell_kind.try_quote(v).context("shell quoting")?
+            )?;
         }
 
         if let Some(program) = program {

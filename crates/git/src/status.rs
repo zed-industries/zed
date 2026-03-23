@@ -586,18 +586,13 @@ pub struct DiffStat {
     pub deleted: u32,
 }
 
-#[derive(Clone, Debug)]
-pub struct GitDiffStat {
-    pub entries: Arc<[(RepoPath, DiffStat)]>,
-}
-
 /// Parses the output of `git diff --numstat` where output looks like:
 ///
 /// ```text
 /// 24   12   dir/file.txt
 /// ```
-pub fn parse_numstat(output: &str) -> GitDiffStat {
-    let mut entries = Vec::new();
+pub fn parse_numstat(output: &str) -> HashMap<RepoPath, DiffStat> {
+    let mut stats = HashMap::default();
     for line in output.lines() {
         let line = line.trim();
         if line.is_empty() {
@@ -618,14 +613,10 @@ pub fn parse_numstat(output: &str) -> GitDiffStat {
         let Ok(path) = RepoPath::new(path_str) else {
             continue;
         };
-        entries.push((path, DiffStat { added, deleted }));
+        let stat = DiffStat { added, deleted };
+        stats.insert(path, stat);
     }
-    entries.sort_by(|(a, _), (b, _)| a.cmp(b));
-    entries.dedup_by(|(a, _), (b, _)| a == b);
-
-    GitDiffStat {
-        entries: entries.into(),
-    }
+    stats
 }
 
 #[cfg(test)]
@@ -638,25 +629,20 @@ mod tests {
 
     use super::{DiffStat, parse_numstat};
 
-    fn lookup<'a>(entries: &'a [(RepoPath, DiffStat)], path: &str) -> Option<&'a DiffStat> {
-        let path = RepoPath::new(path).unwrap();
-        entries.iter().find(|(p, _)| p == &path).map(|(_, s)| s)
-    }
-
     #[test]
     fn test_parse_numstat_normal() {
         let input = "10\t5\tsrc/main.rs\n3\t1\tREADME.md\n";
         let result = parse_numstat(input);
-        assert_eq!(result.entries.len(), 2);
+        assert_eq!(result.len(), 2);
         assert_eq!(
-            lookup(&result.entries, "src/main.rs"),
+            result.get(&RepoPath::new("src/main.rs").unwrap()),
             Some(&DiffStat {
                 added: 10,
                 deleted: 5
             })
         );
         assert_eq!(
-            lookup(&result.entries, "README.md"),
+            result.get(&RepoPath::new("README.md").unwrap()),
             Some(&DiffStat {
                 added: 3,
                 deleted: 1
@@ -669,10 +655,10 @@ mod tests {
         // git diff --numstat outputs "-\t-\tpath" for binary files
         let input = "-\t-\timage.png\n5\t2\tsrc/lib.rs\n";
         let result = parse_numstat(input);
-        assert_eq!(result.entries.len(), 1);
-        assert!(lookup(&result.entries, "image.png").is_none());
+        assert_eq!(result.len(), 1);
+        assert!(!result.contains_key(&RepoPath::new("image.png").unwrap()));
         assert_eq!(
-            lookup(&result.entries, "src/lib.rs"),
+            result.get(&RepoPath::new("src/lib.rs").unwrap()),
             Some(&DiffStat {
                 added: 5,
                 deleted: 2
@@ -682,18 +668,18 @@ mod tests {
 
     #[test]
     fn test_parse_numstat_empty_input() {
-        assert!(parse_numstat("").entries.is_empty());
-        assert!(parse_numstat("\n\n").entries.is_empty());
-        assert!(parse_numstat("   \n  \n").entries.is_empty());
+        assert!(parse_numstat("").is_empty());
+        assert!(parse_numstat("\n\n").is_empty());
+        assert!(parse_numstat("   \n  \n").is_empty());
     }
 
     #[test]
     fn test_parse_numstat_malformed_lines_skipped() {
         let input = "not_a_number\t5\tfile.rs\n10\t5\tvalid.rs\n";
         let result = parse_numstat(input);
-        assert_eq!(result.entries.len(), 1);
+        assert_eq!(result.len(), 1);
         assert_eq!(
-            lookup(&result.entries, "valid.rs"),
+            result.get(&RepoPath::new("valid.rs").unwrap()),
             Some(&DiffStat {
                 added: 10,
                 deleted: 5
@@ -706,9 +692,9 @@ mod tests {
         // Lines with fewer than 3 tab-separated fields are skipped
         let input = "10\t5\n7\t3\tok.rs\n";
         let result = parse_numstat(input);
-        assert_eq!(result.entries.len(), 1);
+        assert_eq!(result.len(), 1);
         assert_eq!(
-            lookup(&result.entries, "ok.rs"),
+            result.get(&RepoPath::new("ok.rs").unwrap()),
             Some(&DiffStat {
                 added: 7,
                 deleted: 3
@@ -721,7 +707,7 @@ mod tests {
         let input = "0\t0\tunchanged_but_present.rs\n";
         let result = parse_numstat(input);
         assert_eq!(
-            lookup(&result.entries, "unchanged_but_present.rs"),
+            result.get(&RepoPath::new("unchanged_but_present.rs").unwrap()),
             Some(&DiffStat {
                 added: 0,
                 deleted: 0

@@ -1,22 +1,13 @@
 use std::{
-    ffi::OsStr,
-    os::windows::ffi::OsStrExt,
     path::Path,
     sync::LazyLock,
     time::{Duration, Instant},
 };
 
 use anyhow::{Context as _, Result};
-use windows::{
-    Win32::{
-        Foundation::{HWND, LPARAM, WPARAM},
-        System::RestartManager::{
-            CCH_RM_SESSION_KEY, RmEndSession, RmGetList, RmRegisterResources, RmShutdown,
-            RmStartSession,
-        },
-        UI::WindowsAndMessaging::PostMessageW,
-    },
-    core::{PCWSTR, PWSTR},
+use windows::Win32::{
+    Foundation::{HWND, LPARAM, WPARAM},
+    UI::WindowsAndMessaging::PostMessageW,
 };
 
 use crate::windows_impl::WM_JOB_UPDATED;
@@ -271,105 +262,8 @@ pub(crate) static JOBS: LazyLock<[Job; 9]> = LazyLock::new(|| {
     ]
 });
 
-/// Attempts to use Windows Restart Manager to release file handles held by other processes
-/// (e.g., Explorer.exe) on the files we need to move during the update.
-///
-/// This is a best-effort operation - if it fails, we'll still try the update and rely on
-/// the retry logic.
-fn release_file_handles(app_dir: &Path) -> Result<()> {
-    // Files that commonly get locked by Explorer or other processes
-    let files_to_release = [
-        app_dir.join("Zed.exe"),
-        app_dir.join("bin\\Zed.exe"),
-        app_dir.join("bin\\zed"),
-        app_dir.join("conpty.dll"),
-    ];
-
-    log::info!("Attempting to release file handles using Restart Manager...");
-
-    let mut session: u32 = 0;
-    let mut session_key = [0u16; CCH_RM_SESSION_KEY as usize + 1];
-
-    // Start a Restart Manager session
-    let err = unsafe {
-        RmStartSession(
-            &mut session,
-            Some(0),
-            PWSTR::from_raw(session_key.as_mut_ptr()),
-        )
-    };
-    if err.is_err() {
-        anyhow::bail!("RmStartSession failed: {err:?}");
-    }
-
-    // Ensure we end the session when done
-    let _session_guard = scopeguard::guard(session, |s| {
-        let _ = unsafe { RmEndSession(s) };
-    });
-
-    // Convert paths to wide strings for Windows API
-    let wide_paths: Vec<Vec<u16>> = files_to_release
-        .iter()
-        .filter(|p| p.exists())
-        .map(|p| {
-            OsStr::new(p)
-                .encode_wide()
-                .chain(std::iter::once(0))
-                .collect()
-        })
-        .collect();
-
-    if wide_paths.is_empty() {
-        log::info!("No files to release handles for");
-        return Ok(());
-    }
-
-    let pcwstr_paths: Vec<PCWSTR> = wide_paths
-        .iter()
-        .map(|p| PCWSTR::from_raw(p.as_ptr()))
-        .collect();
-
-    // Register the files we want to modify
-    let err = unsafe { RmRegisterResources(session, Some(&pcwstr_paths), None, None) };
-    if err.is_err() {
-        anyhow::bail!("RmRegisterResources failed: {err:?}");
-    }
-
-    // Check if any processes are using these files
-    let mut needed: u32 = 0;
-    let mut count: u32 = 0;
-    let mut reboot_reasons: u32 = 0;
-    let _ = unsafe { RmGetList(session, &mut needed, &mut count, None, &mut reboot_reasons) };
-
-    if needed == 0 {
-        log::info!("No processes are holding handles to the files");
-        return Ok(());
-    }
-
-    log::info!(
-        "{} process(es) are holding handles to the files, requesting release...",
-        needed
-    );
-
-    // Request processes to release their handles
-    // RmShutdown with flags=0 asks applications to release handles gracefully
-    // For Explorer, this typically releases icon cache handles without closing Explorer
-    let err = unsafe { RmShutdown(session, 0, None) };
-    if err.is_err() {
-        anyhow::bail!("RmShutdown failed: {:?}", err);
-    }
-
-    log::info!("Successfully requested handle release");
-    Ok(())
-}
-
 pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>, launch: bool) -> Result<()> {
     let hwnd = hwnd.map(|ptr| HWND(ptr as _));
-
-    // Try to release file handles before starting the update
-    if let Err(e) = release_file_handles(app_dir) {
-        log::warn!("Restart Manager failed (will continue anyway): {}", e);
-    }
 
     let mut last_successful_job = None;
     'outer: for (i, job) in JOBS.iter().enumerate() {
@@ -385,22 +279,19 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>, launch: bool) 
                     unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
                     break;
                 }
-                Err(err) => match err.downcast_ref::<std::io::Error>() {
-                    Some(io_err) => match io_err.kind() {
-                        std::io::ErrorKind::NotFound => {
-                            log::error!("Operation failed with file not found, aborting: {}", err);
-                            break 'outer;
-                        }
-                        _ => {
-                            log::error!("Operation failed (retrying): {}", err);
-                            std::thread::sleep(Duration::from_millis(50));
-                        }
-                    },
-                    None => {
-                        log::error!("Operation failed with unexpected error, aborting: {}", err);
-                        break 'outer;
+                Err(err) => {
+                    // Check if it's a "not found" error
+                    let io_err = err.downcast_ref::<std::io::Error>().unwrap();
+                    if io_err.kind() == std::io::ErrorKind::NotFound {
+                        log::warn!("File or folder not found.");
+                        last_successful_job = Some(i);
+                        unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
+                        break;
                     }
-                },
+
+                    log::error!("Operation failed: {} ({:?})", err, io_err.kind());
+                    std::thread::sleep(Duration::from_millis(50));
+                }
             }
         }
     }

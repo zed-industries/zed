@@ -53,8 +53,7 @@ use crate::open_type::apply_features_and_fallbacks;
 #[allow(non_upper_case_globals)]
 const kCGImageAlphaOnly: u32 = 7;
 
-/// macOS text system using CoreText for font shaping.
-pub struct MacTextSystem(RwLock<MacTextSystemState>);
+pub(crate) struct MacTextSystem(RwLock<MacTextSystemState>);
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct FontKey {
@@ -74,8 +73,7 @@ struct MacTextSystemState {
 }
 
 impl MacTextSystem {
-    /// Create a new MacTextSystem.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self(RwLock::new(MacTextSystemState {
             memory_source: MemSource::empty(),
             system_source: SystemSource::new(),
@@ -361,22 +359,13 @@ impl MacTextSystemState {
     fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
         let font = &self.fonts[params.font_id.0];
         let scale = Transform2F::from_scale(params.scale_factor);
-        let mut bounds: Bounds<DevicePixels> = bounds_from_rect_i(font.raster_bounds(
+        Ok(bounds_from_rect_i(font.raster_bounds(
             params.glyph_id.0,
             params.font_size.into(),
             scale,
             HintingOptions::None,
             font_kit::canvas::RasterizationOptions::GrayscaleAa,
-        )?);
-
-        // Add 3% of font size as padding, clamped between 1 and 5 pixels
-        // to avoid clipping of anti-aliased edges.
-        let pad =
-            ((params.font_size.as_f32() * 0.03 * params.scale_factor).ceil() as i32).clamp(1, 5);
-        bounds.origin.x -= DevicePixels(pad);
-        bounds.size.width += DevicePixels(pad);
-
-        Ok(bounds)
+        )?))
     }
 
     fn rasterize_glyph(
