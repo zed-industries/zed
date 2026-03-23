@@ -6,15 +6,12 @@ use collections::HashMap;
 use crate::shell::ShellKind;
 
 fn parse_env_map_from_noisy_output(output: &str) -> Result<collections::HashMap<String, String>> {
-    if let Ok(parsed) = serde_json::from_str(output) {
-        return Ok(parsed);
-    }
     if let Some(pos) = output.find('{') {
-        if let Ok(parsed) = serde_json::from_str(&output[pos..]) {
-            return Ok(parsed);
-        }
+        return serde_json::from_str(&output[pos..]).with_context(|| {
+            format!("Failed to deserialize environment variables from json: {output}")
+        });
     }
-    anyhow::bail!("Failed to deserialize environment variables from json: {output}")
+    anyhow::bail!("Failed to find JSON in shell output: {output}")
 }
 
 pub fn print_env() {
