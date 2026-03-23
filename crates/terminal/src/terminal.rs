@@ -1940,7 +1940,7 @@ impl Terminal {
                 MouseButton::Middle => {
                     if let Some(item) = _cx.read_from_primary() {
                         let text = item.text().unwrap_or_default();
-                        self.input(text.into_bytes());
+                        self.paste(&text);
                     }
                 }
                 _ => {}
