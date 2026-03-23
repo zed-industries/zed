@@ -125,6 +125,7 @@ enum ListEntry {
         highlight_positions: Vec<usize>,
         has_running_threads: bool,
         waiting_thread_count: usize,
+        is_active: bool,
     },
     Thread(ThreadEntry),
     ViewMore {
@@ -729,6 +730,13 @@ impl Sidebar {
             let is_collapsed = self.collapsed_groups.contains(&path_list);
             let should_load_threads = !is_collapsed || !query.is_empty();
 
+            let is_active = active_ws_index.is_some_and(|active_idx| {
+                active_idx == ws_index
+                    || absorbed
+                        .get(&active_idx)
+                        .is_some_and(|(main_idx, _)| *main_idx == ws_index)
+            });
+
             let mut live_infos = Self::all_thread_infos_for_workspace(workspace, cx);
 
             let mut threads: Vec<ThreadEntry> = Vec::new();
@@ -980,6 +988,7 @@ impl Sidebar {
                     highlight_positions: workspace_highlight_positions,
                     has_running_threads,
                     waiting_thread_count,
+                    is_active,
                 });
 
                 for thread in matched_threads {
@@ -991,12 +1000,7 @@ impl Sidebar {
                 let is_draft_for_workspace = self.agent_panel_visible
                     && self.active_thread_is_draft
                     && self.focused_thread.is_none()
-                    && active_ws_index.is_some_and(|active_idx| {
-                        active_idx == ws_index
-                            || absorbed
-                                .get(&active_idx)
-                                .is_some_and(|(main_idx, _)| *main_idx == ws_index)
-                    });
+                    && is_active;
 
                 let show_new_thread_entry = thread_count == 0 || is_draft_for_workspace;
 
@@ -1008,6 +1012,7 @@ impl Sidebar {
                     highlight_positions: Vec::new(),
                     has_running_threads,
                     waiting_thread_count,
+                    is_active,
                 });
 
                 if is_collapsed {
@@ -1148,6 +1153,7 @@ impl Sidebar {
                 highlight_positions,
                 has_running_threads,
                 waiting_thread_count,
+                is_active,
             } => self.render_project_header(
                 ix,
                 false,
@@ -1157,6 +1163,7 @@ impl Sidebar {
                 highlight_positions,
                 *has_running_threads,
                 *waiting_thread_count,
+                *is_active,
                 is_selected,
                 cx,
             ),
@@ -1196,6 +1203,7 @@ impl Sidebar {
         highlight_positions: &[usize],
         has_running_threads: bool,
         waiting_thread_count: usize,
+        is_active: bool,
         is_selected: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -1269,8 +1277,8 @@ impl Sidebar {
                                 .color(Color::Custom(cx.theme().colors().icon_muted.opacity(0.5))),
                         ),
                     )
-                    .child(
-                        h_flex().gap_0p5().child(label).child(
+                    .child(h_flex().gap_0p5().child(label).when(!is_active, |this| {
+                        this.child(
                             IconButton::new(
                                 SharedString::from(format!(
                                     "{id_prefix}project-header-open-workspace-{ix}",
@@ -1297,8 +1305,8 @@ impl Sidebar {
                                     }
                                 }
                             })),
-                        ),
-                    )
+                        )
+                    }))
                     .when(is_collapsed, |this| {
                         this.when(has_running_threads, |this| {
                             this.child(
@@ -1608,6 +1616,7 @@ impl Sidebar {
             highlight_positions,
             has_running_threads,
             waiting_thread_count,
+            is_active,
         } = self.contents.entries.get(header_idx)?
         else {
             return None;
@@ -1625,6 +1634,7 @@ impl Sidebar {
             &highlight_positions,
             *has_running_threads,
             *waiting_thread_count,
+            *is_active,
             is_selected,
             cx,
         );
@@ -3710,6 +3720,7 @@ mod tests {
                     highlight_positions: Vec::new(),
                     has_running_threads: false,
                     waiting_thread_count: 0,
+                    is_active: true,
                 },
                 ListEntry::Thread(ThreadEntry {
                     agent: Agent::NativeAgent,
@@ -3843,6 +3854,7 @@ mod tests {
                     highlight_positions: Vec::new(),
                     has_running_threads: false,
                     waiting_thread_count: 0,
+                    is_active: false,
                 },
             ];
 
