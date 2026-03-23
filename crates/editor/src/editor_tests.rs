@@ -3353,6 +3353,83 @@ fn test_newline(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_newline_clears_trailing_whitespace_on_blank_line(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.auto_indent = Some(settings::AutoIndentMode::PreserveIndent);
+    });
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("    hello\n    world\n", cx);
+        build_editor(buffer, window, cx)
+    });
+
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 9)..DisplayPoint::new(DisplayRow(0), 9),
+            ])
+        });
+
+        editor.newline(&Newline, window, cx);
+        assert_eq!(editor.text(cx), "    hello\n    \n    world\n");
+
+        editor.newline(&Newline, window, cx);
+        assert_eq!(editor.text(cx), "    hello\n\n    \n    world\n");
+    });
+}
+
+#[gpui::test]
+fn test_newline_preserves_whitespace_on_non_blank_line(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.auto_indent = Some(settings::AutoIndentMode::PreserveIndent);
+    });
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("    hello\n    world\n", cx);
+        build_editor(buffer, window, cx)
+    });
+
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 7)..DisplayPoint::new(DisplayRow(0), 7),
+            ])
+        });
+
+        editor.newline(&Newline, window, cx);
+        assert_eq!(editor.text(cx), "    hel\n    lo\n    world\n");
+    });
+}
+
+#[gpui::test]
+fn test_newline_clears_trailing_whitespace_with_tabs(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.auto_indent = Some(settings::AutoIndentMode::PreserveIndent);
+        settings.defaults.tab_size = NonZeroU32::new(4);
+        settings.defaults.hard_tabs = Some(true);
+    });
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("\thello\n\tworld\n", cx);
+        build_editor(buffer, window, cx)
+    });
+
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 9)..DisplayPoint::new(DisplayRow(0), 9),
+            ])
+        });
+
+        editor.newline(&Newline, window, cx);
+        assert_eq!(editor.text(cx), "\thello\n\t\n\tworld\n");
+
+        editor.newline(&Newline, window, cx);
+        assert_eq!(editor.text(cx), "\thello\n\n\t\n\tworld\n");
+    });
+}
+
+#[gpui::test]
 async fn test_newline_yaml(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

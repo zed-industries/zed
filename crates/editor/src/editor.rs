@@ -5230,6 +5230,7 @@ impl Editor {
                         let start_point = selection.start.to_point(&buffer);
                         let mut existing_indent =
                             buffer.indent_size_for_line(MultiBufferRow(start_point.row));
+                        let full_indent_len = existing_indent.len;
                         existing_indent.len = cmp::min(existing_indent.len, start_point.column);
                         let start = selection.start;
                         let end = selection.end;
@@ -5381,8 +5382,25 @@ impl Editor {
                                     }
                                     new_text.extend(extra_indent.chars());
                                 }
+                                // Extend the edit to the beginning of the line when the
+                                // line is blank so that auto-indent whitespace is replaced
+                                // rather than left as trailing whitespace.
+                                let edit_start = if selection_is_empty && preserve_indent {
+                                    let line_len =
+                                        buffer.line_len(MultiBufferRow(start_point.row));
+                                    if line_len > 0
+                                        && line_len == full_indent_len
+                                        && start_point.column == line_len
+                                    {
+                                        buffer.point_to_offset(Point::new(start_point.row, 0))
+                                    } else {
+                                        start
+                                    }
+                                } else {
+                                    start
+                                };
                                 (
-                                    start,
+                                    edit_start,
                                     new_text,
                                     *prevent_auto_indent || !apply_syntax_indent,
                                 )
