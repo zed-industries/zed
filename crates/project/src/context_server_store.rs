@@ -448,8 +448,7 @@ impl ContextServerStore {
             let ai_was_disabled = this.ai_disabled;
             this.ai_disabled = ai_disabled;
 
-            let settings =
-                Self::resolve_all_context_server_settings(&this.worktree_store, cx);
+            let settings = Self::resolve_all_context_server_settings(&this.worktree_store, cx);
             let settings_changed = this.context_server_settings != settings;
 
             if settings_changed {
