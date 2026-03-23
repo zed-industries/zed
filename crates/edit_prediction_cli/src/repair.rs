@@ -10,7 +10,7 @@ use crate::{
     BatchProvider, PredictionProvider,
     anthropic_client::AnthropicClient,
     example::{ActualCursor, Example, ExamplePrediction},
-    format_prompt::{TeacherPrompt, extract_last_codeblock},
+    format_prompt::TeacherPrompt,
     metrics::count_patch_token_changes,
     openai_client::OpenAiClient,
     parse_output::run_parse_output,
@@ -227,10 +227,7 @@ pub fn needs_repair(example: &Example, confidence_threshold: u8) -> bool {
 /// Handles the `KEEP_PREVIOUS` sentinel by copying the teacher's prediction,
 /// and delegates normal output to `TeacherPrompt::parse`.
 pub fn parse(example: &Example, actual_output: &str) -> Result<(String, Option<ActualCursor>)> {
-    let last_codeblock =
-        extract_last_codeblock(actual_output).unwrap_or_else(|| actual_output.to_string());
-
-    if last_codeblock.contains(KEEP_PREVIOUS) {
+    if actual_output.contains(KEEP_PREVIOUS) {
         let original = example
             .predictions
             .first()
@@ -455,4 +452,72 @@ pub async fn sync_batches(args: &RepairArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{PredictionProvider, TeacherBackend};
+    use edit_prediction::example_spec::ExampleSpec;
+    use std::{path::Path, sync::Arc};
+
+    fn example_with_previous_prediction() -> Example {
+        Example {
+            spec: ExampleSpec {
+                name: "example".to_string(),
+                repository_url: "https://github.com/zed-industries/zed.git".to_string(),
+                revision: "HEAD".to_string(),
+                tags: Vec::new(),
+                reasoning: None,
+                uncommitted_diff: String::new(),
+                cursor_path: Arc::from(Path::new("src/main.rs")),
+                cursor_position: "0:0".to_string(),
+                edit_history: String::new(),
+                expected_patches: Vec::new(),
+                rejected_patch: None,
+                telemetry: None,
+                human_feedback: Vec::new(),
+                rating: None,
+            },
+            prompt_inputs: None,
+            prompt: None,
+            predictions: vec![ExamplePrediction {
+                actual_patch: Some("previous patch".to_string()),
+                actual_output: String::new(),
+                actual_cursor: Some(ActualCursor {
+                    path: "src/main.rs".to_string(),
+                    row: 1,
+                    column: 2,
+                    offset: 3,
+                    editable_region_offset: Some(4),
+                }),
+                error: None,
+                provider: PredictionProvider::Teacher(TeacherBackend::Sonnet45),
+                cumulative_logprob: None,
+                avg_logprob: None,
+            }],
+            score: Vec::new(),
+            qa: Vec::new(),
+            zed_version: None,
+            state: None,
+        }
+    }
+
+    #[test]
+    fn test_parse_keeps_previous_when_sentinel_appears_outside_last_codeblock() {
+        let example = example_with_previous_prediction();
+        let actual_output = indoc::indoc! {"
+            After reviewing the feedback, the previous prediction is still correct.
+            Use `KEEP_PREVIOUS`.
+
+            ```
+            unrelated trailing code block
+            ```
+        "};
+
+        let (patch, cursor) = parse(&example, actual_output).unwrap();
+
+        assert_eq!(patch, "previous patch");
+        assert_eq!(cursor.unwrap().offset, 3);
+    }
 }
