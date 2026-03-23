@@ -432,7 +432,7 @@ fn ensure_thread_subscription(
                     );
                 }
             }
-            AcpThreadEvent::Stopped => {
+            AcpThreadEvent::Stopped(_) => {
                 flush_streaming_throttle(&thread_id_for_sub);
                 let rid = crate::get_thread_request_id(&thread_id_for_sub)
                     .unwrap_or_default();

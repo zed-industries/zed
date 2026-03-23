@@ -2221,7 +2221,7 @@ impl AcpThread {
                     if is_same_turn {
                         this.running_turn.take();
                     }
-                    cx.emit(AcpThreadEvent::Stopped);
+                    cx.emit(AcpThreadEvent::Stopped(acp::StopReason::Cancelled));
                     return Ok(None);
                 };
 
@@ -5122,7 +5122,7 @@ mod tests {
                 {
                     let stopped_count = stopped_count.clone();
                     move |_, _, event: &AcpThreadEvent, _| {
-                        if matches!(event, AcpThreadEvent::Stopped) {
+                        if matches!(event, AcpThreadEvent::Stopped(_)) {
                             *stopped_count.borrow_mut() += 1;
                         }
                     }
@@ -5194,7 +5194,7 @@ mod tests {
                 {
                     let stopped_count = stopped_count.clone();
                     move |_, _, event: &AcpThreadEvent, _| {
-                        if matches!(event, AcpThreadEvent::Stopped) {
+                        if matches!(event, AcpThreadEvent::Stopped(_)) {
                             *stopped_count.borrow_mut() += 1;
                         }
                     }
