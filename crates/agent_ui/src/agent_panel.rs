@@ -2960,12 +2960,6 @@ impl AgentPanel {
 
         new_workspace
             .update(cx, |workspace, cx| {
-                workspace.project().read(cx).wait_for_initial_scan(cx)
-            })
-            .await;
-
-        new_workspace
-            .update(cx, |workspace, cx| {
                 let repos = workspace
                     .project()
                     .read(cx)

@@ -181,7 +181,7 @@ impl WorktreeStore {
         self.scanning_enabled = false;
         *self.initial_scan_complete.0.borrow_mut() = true;
     }
-
+    
     /// Returns a future that resolves when all visible worktrees have completed
     /// their initial scan (entries populated, git repos detected).
     pub fn wait_for_initial_scan(&self) -> impl Future<Output = ()> + use<> {

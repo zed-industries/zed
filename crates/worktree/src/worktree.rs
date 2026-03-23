@@ -1186,7 +1186,7 @@ impl LocalWorktree {
         while let Some((scan_id, _)) = self.snapshot_subscriptions.front() {
             if self.snapshot.completed_scan_id >= *scan_id {
                 let (_, tx) = self.snapshot_subscriptions.pop_front().unwrap();
-                let _ = tx.send(());
+                tx.send(()).ok();
             } else {
                 break;
             }
@@ -1313,7 +1313,7 @@ impl LocalWorktree {
     ) -> impl Future<Output = Result<()>> + use<> {
         let (tx, rx) = oneshot::channel();
         if self.snapshot.completed_scan_id >= scan_id {
-            let _ = tx.send(());
+            tx.send(()).ok();
         } else {
             match self
                 .snapshot_subscriptions

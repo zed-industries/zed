@@ -11649,8 +11649,6 @@ async fn test_initial_scan_complete(cx: &mut gpui::TestAppContext) {
     )
     .await;
 
-    // Set up an observer to track Repository creations BEFORE the project is
-    // built. This proves that repos are created during the scan, not after.
     let repos_created = Rc::new(RefCell::new(Vec::new()));
     let _observe = {
         let repos_created = repos_created.clone();
@@ -11669,11 +11667,9 @@ async fn test_initial_scan_complete(cx: &mut gpui::TestAppContext) {
     )
     .await;
 
-    // Wait for all visible worktrees to finish their initial scan
     let scan_complete = project.read_with(cx, |project, cx| project.wait_for_initial_scan(cx));
     scan_complete.await;
 
-    // WorktreeStore should report initial scan as completed
     project.read_with(cx, |project, cx| {
         assert!(
             project.worktree_store().read(cx).initial_scan_completed(),
@@ -11681,7 +11677,6 @@ async fn test_initial_scan_complete(cx: &mut gpui::TestAppContext) {
         );
     });
 
-    // Repositories should have been created during the scan (observed via observe_new)
     let created_repos_len = repos_created.borrow().len();
     assert_eq!(
         created_repos_len, 2,
@@ -11689,7 +11684,6 @@ async fn test_initial_scan_complete(cx: &mut gpui::TestAppContext) {
         created_repos_len
     );
 
-    // GitStore should contain both repositories
     project.read_with(cx, |project, cx| {
         let git_store = project.git_store().read(cx);
         assert_eq!(
