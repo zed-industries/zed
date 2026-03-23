@@ -3047,13 +3047,7 @@ impl AgentPanel {
                 // (equivalent to cmd-esc fullscreen behavior).
                 // This must happen after focus_panel, which activates
                 // and opens the panel in the dock.
-                if should_zoom_agent_panel {
-                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                        panel.update(cx, |_panel, cx| {
-                            cx.emit(PanelEvent::ZoomIn);
-                        });
-                    }
-                }
+
                 if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                     panel.update(cx, |panel, cx| {
                         panel.external_thread(
@@ -4005,6 +3999,8 @@ impl AgentPanel {
 
         let is_text_thread = matches!(&self.active_view, ActiveView::TextThread { .. });
 
+        let is_full_screen = self.is_zoomed(window, cx);
+
         let use_v2_empty_toolbar =
             has_v2_flag && is_empty_state && !is_in_history_or_config && !is_text_thread;
 
@@ -4049,7 +4045,7 @@ impl AgentPanel {
                 .trigger_with_tooltip(agent_selector_button, {
                     move |_window, cx| {
                         Tooltip::for_action_in(
-                            "New Thread\u{2026}",
+                            "New Thread…",
                             &ToggleNewThreadMenu,
                             &focus_handle,
                             cx,
@@ -4092,6 +4088,20 @@ impl AgentPanel {
                                 Corner::TopRight,
                                 cx,
                             ))
+                        })
+                        .when(is_full_screen, |this| {
+                            this.child(
+                                IconButton::new("disable-full-screen", IconName::Minimize)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(move |_, cx| {
+                                        Tooltip::for_action("Disable Full Screen", &ToggleZoom, cx)
+                                    })
+                                    .on_click({
+                                        cx.listener(move |_, _, window, cx| {
+                                            window.dispatch_action(ToggleZoom.boxed_clone(), cx);
+                                        })
+                                    }),
+                            )
                         })
                         .child(self.render_panel_options_menu(window, cx)),
                 )
@@ -4144,6 +4154,20 @@ impl AgentPanel {
                                 Corner::TopRight,
                                 cx,
                             ))
+                        })
+                        .when(is_full_screen, |this| {
+                            this.child(
+                                IconButton::new("disable-full-screen", IconName::Minimize)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(move |_, cx| {
+                                        Tooltip::for_action("Disable Full Screen", &ToggleZoom, cx)
+                                    })
+                                    .on_click({
+                                        cx.listener(move |_, _, window, cx| {
+                                            window.dispatch_action(ToggleZoom.boxed_clone(), cx);
+                                        })
+                                    }),
+                            )
                         })
                         .child(self.render_panel_options_menu(window, cx)),
                 )
