@@ -1599,9 +1599,9 @@ impl MessageEditor {
     ) {
         self.editor.update(cx, |editor, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
-            let clamped = MultiBufferOffset(offset.min(snapshot.len().0));
+            let offset = snapshot.clip_offset(MultiBufferOffset(offset), text::Bias::Left);
             editor.change_selections(Default::default(), window, cx, |selections| {
-                selections.select_ranges([clamped..clamped]);
+                selections.select_ranges([offset..offset]);
             });
         });
     }
