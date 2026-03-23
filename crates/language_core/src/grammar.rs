@@ -2,7 +2,7 @@ use crate::{
     HighlightId, HighlightMap, LanguageConfig, LanguageConfigOverride, LanguageName,
     LanguageQueries, language_config::BracketPairConfig,
 };
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use collections::HashMap;
 use gpui::SharedString;
 use lsp::LanguageServerName;
@@ -314,43 +314,65 @@ impl Grammar {
     ) -> Result<Self> {
         let name = &config.name;
         if let Some(query) = queries.highlights {
-            self = self.with_highlights_query(query.as_ref())?;
+            self = self
+                .with_highlights_query(query.as_ref())
+                .context("Error loading highlights query")?;
         }
         if let Some(query) = queries.brackets {
-            self = self.with_brackets_query(query.as_ref(), name)?;
+            self = self
+                .with_brackets_query(query.as_ref(), name)
+                .context("Error loading brackets query")?;
         }
         if let Some(query) = queries.indents {
-            self = self.with_indents_query(query.as_ref(), name)?;
+            self = self
+                .with_indents_query(query.as_ref(), name)
+                .context("Error loading indents query")?;
         }
         if let Some(query) = queries.outline {
-            self = self.with_outline_query(query.as_ref(), name)?;
+            self = self
+                .with_outline_query(query.as_ref(), name)
+                .context("Error loading outline query")?;
         }
         if let Some(query) = queries.injections {
-            self = self.with_injection_query(query.as_ref(), name)?;
+            self = self
+                .with_injection_query(query.as_ref(), name)
+                .context("Error loading injection query")?;
         }
         if let Some(query) = queries.overrides {
-            self = self.with_override_query(
-                query.as_ref(),
-                name,
-                &config.overrides,
-                &mut config.brackets,
-                &config.scope_opt_in_language_servers,
-            )?;
+            self = self
+                .with_override_query(
+                    query.as_ref(),
+                    name,
+                    &config.overrides,
+                    &mut config.brackets,
+                    &config.scope_opt_in_language_servers,
+                )
+                .context("Error loading override query")?;
         }
         if let Some(query) = queries.redactions {
-            self = self.with_redaction_query(query.as_ref(), name)?;
+            self = self
+                .with_redaction_query(query.as_ref(), name)
+                .context("Error loading redaction query")?;
         }
         if let Some(query) = queries.runnables {
-            self = self.with_runnable_query(query.as_ref())?;
+            self = self
+                .with_runnable_query(query.as_ref())
+                .context("Error loading runnables query")?;
         }
         if let Some(query) = queries.text_objects {
-            self = self.with_text_object_query(query.as_ref(), name)?;
+            self = self
+                .with_text_object_query(query.as_ref(), name)
+                .context("Error loading textobject query")?;
         }
         if let Some(query) = queries.debugger {
-            self = self.with_debug_variables_query(query.as_ref(), name)?;
+            self = self
+                .with_debug_variables_query(query.as_ref(), name)
+                .context("Error loading debug variables query")?;
         }
         if let Some(query) = queries.imports {
-            self = self.with_imports_query(query.as_ref(), name)?;
+            self = self
+                .with_imports_query(query.as_ref(), name)
+                .context("Error loading imports query")?;
         }
         Ok(self)
     }
