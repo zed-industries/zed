@@ -63,7 +63,6 @@ pet.workspace = true
 project.workspace = true
 regex.workspace = true
 rope.workspace = true
-rust-embed.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true

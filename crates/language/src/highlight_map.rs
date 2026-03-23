@@ -11,7 +11,10 @@ pub trait HighlightIdExt {
 
 impl HighlightIdExt for HighlightId {
     fn style(&self, theme: &SyntaxTheme) -> Option<HighlightStyle> {
-        theme.highlights.get(self.index() as usize).map(|entry| entry.1)
+        theme
+            .highlights
+            .get(self.index() as usize)
+            .map(|entry| entry.1)
     }
 
     fn name<'a>(&self, theme: &'a SyntaxTheme) -> Option<&'a str> {

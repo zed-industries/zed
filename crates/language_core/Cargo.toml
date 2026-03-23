@@ -9,21 +9,16 @@ path = "src/language_core.rs"
 
 [dependencies]
 anyhow.workspace = true
-async-trait.workspace = true
 collections.workspace = true
-futures.workspace = true
 gpui.workspace = true
-http_client.workspace = true
 log.workspace = true
 lsp.workspace = true
 parking_lot.workspace = true
 regex.workspace = true
 schemars.workspace = true
-semver.workspace = true
 settings_content.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-smol.workspace = true
 toml.workspace = true
 tree-sitter.workspace = true
 util.workspace = true
