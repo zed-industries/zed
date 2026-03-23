@@ -1269,31 +1269,64 @@ impl Sidebar {
                                 .color(Color::Custom(cx.theme().colors().icon_muted.opacity(0.5))),
                         ),
                     )
-                    .child(label)
-                    .when(is_collapsed && has_running_threads, |this| {
-                        this.child(
-                            Icon::new(IconName::LoadCircle)
-                                .size(IconSize::XSmall)
-                                .color(Color::Muted)
-                                .with_rotate_animation(2),
-                        )
-                    })
-                    .when(is_collapsed && waiting_thread_count > 0, |this| {
-                        let tooltip_text = if waiting_thread_count == 1 {
-                            "1 thread is waiting for confirmation".to_string()
-                        } else {
-                            format!("{waiting_thread_count} threads are waiting for confirmation",)
-                        };
-                        this.child(
-                            div()
-                                .id(format!("{id_prefix}waiting-indicator-{ix}"))
-                                .child(
-                                    Icon::new(IconName::Warning)
-                                        .size(IconSize::XSmall)
-                                        .color(Color::Warning),
+                    .child(
+                        h_flex().gap_0p5().child(label).child(
+                            IconButton::new(
+                                SharedString::from(format!(
+                                    "{id_prefix}project-header-open-workspace-{ix}",
+                                )),
+                                IconName::Focus,
+                            )
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .tooltip(Tooltip::text("Activate Workspace"))
+                            .visible_on_hover(&group_name)
+                            .on_click(cx.listener({
+                                move |this, _, window, cx| {
+                                    this.focused_thread = None;
+                                    if let Some(multi_workspace) = this.multi_workspace.upgrade() {
+                                        multi_workspace.update(cx, |multi_workspace, cx| {
+                                            multi_workspace
+                                                .activate(workspace_for_open.clone(), cx);
+                                        });
+                                    }
+                                    if AgentPanel::is_visible(&workspace_for_open, cx) {
+                                        workspace_for_open.update(cx, |workspace, cx| {
+                                            workspace.focus_panel::<AgentPanel>(window, cx);
+                                        });
+                                    }
+                                }
+                            })),
+                        ),
+                    )
+                    .when(is_collapsed, |this| {
+                        this.when(has_running_threads, |this| {
+                            this.child(
+                                Icon::new(IconName::LoadCircle)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted)
+                                    .with_rotate_animation(2),
+                            )
+                        })
+                        .when(waiting_thread_count > 0, |this| {
+                            let tooltip_text = if waiting_thread_count == 1 {
+                                "1 thread is waiting for confirmation".to_string()
+                            } else {
+                                format!(
+                                    "{waiting_thread_count} threads are waiting for confirmation",
                                 )
-                                .tooltip(Tooltip::text(tooltip_text)),
-                        )
+                            };
+                            this.child(
+                                div()
+                                    .id(format!("{id_prefix}waiting-indicator-{ix}"))
+                                    .child(
+                                        Icon::new(IconName::Warning)
+                                            .size(IconSize::XSmall)
+                                            .color(Color::Warning),
+                                    )
+                                    .tooltip(Tooltip::text(tooltip_text)),
+                            )
+                        })
                     }),
             )
             .child({
@@ -1314,28 +1347,6 @@ impl Sidebar {
                         &workspace_for_remove,
                         cx,
                     ))
-                    .child(
-                        IconButton::new(
-                            SharedString::from(format!(
-                                "{id_prefix}project-header-open-workspace-{ix}",
-                            )),
-                            IconName::ArrowUpRight,
-                        )
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Muted)
-                        .tooltip(Tooltip::text("Open Workspace"))
-                        .on_click(cx.listener({
-                            move |this, _, _window, cx| {
-                                this.selection = None;
-                                let Some(multi_workspace) = this.multi_workspace.upgrade() else {
-                                    return;
-                                };
-                                multi_workspace.update(cx, |multi_workspace, cx| {
-                                    multi_workspace.activate(workspace_for_open.clone(), cx);
-                                });
-                            }
-                        })),
-                    )
                     .when(view_more_expanded && !is_collapsed, |this| {
                         this.child(
                             IconButton::new(
@@ -1386,11 +1397,6 @@ impl Sidebar {
                 this.selection = None;
                 this.toggle_collapse(&path_list_for_toggle, window, cx);
             }))
-            // TODO: Decide if we really want the header to be activating different workspaces
-            // .on_click(cx.listener(move |this, _, window, cx| {
-            //     this.selection = None;
-            //     this.activate_workspace(&workspace_for_activate, window, cx);
-            // }))
             .into_any_element()
     }
 

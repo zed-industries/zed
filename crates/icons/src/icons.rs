@@ -133,6 +133,7 @@ pub enum IconName {
     FileTree,
     Filter,
     Flame,
+    Focus,
     Folder,
     FolderOpen,
     FolderPlus,
