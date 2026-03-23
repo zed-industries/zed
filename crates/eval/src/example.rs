@@ -328,6 +328,9 @@ impl ExampleContext {
                         "{}Bug: Tool confirmation should not be required in eval",
                         log_prefix
                     ),
+                    ThreadEvent::Plan(plan) => {
+                        println!("{log_prefix} Got plan: {plan:?}");
+                    }
                     ThreadEvent::SubagentSpawned(session) => {
                         println!("{log_prefix} Got subagent spawn: {session:?}");
                     }

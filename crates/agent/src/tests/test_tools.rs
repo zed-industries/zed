@@ -2,8 +2,129 @@ use super::*;
 use agent_settings::AgentSettings;
 use gpui::{App, SharedString, Task};
 use std::future;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+
+/// A streaming tool that echoes its input, used to test streaming tool
+/// lifecycle (e.g. partial delivery and cleanup when the LLM stream ends
+/// before `is_input_complete`).
+#[derive(JsonSchema, Serialize, Deserialize)]
+pub struct StreamingEchoToolInput {
+    /// The text to echo.
+    pub text: String,
+}
+
+pub struct StreamingEchoTool {
+    wait_until_complete_rx: Mutex<Option<oneshot::Receiver<()>>>,
+}
+
+impl StreamingEchoTool {
+    pub fn new() -> Self {
+        Self {
+            wait_until_complete_rx: Mutex::new(None),
+        }
+    }
+
+    pub fn with_wait_until_complete(mut self, receiver: oneshot::Receiver<()>) -> Self {
+        self.wait_until_complete_rx = Mutex::new(Some(receiver));
+        self
+    }
+}
+
+impl AgentTool for StreamingEchoTool {
+    type Input = StreamingEchoToolInput;
+    type Output = String;
+
+    const NAME: &'static str = "streaming_echo";
+
+    fn supports_input_streaming() -> bool {
+        true
+    }
+
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Other
+    }
+
+    fn initial_title(
+        &self,
+        _input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
+        "Streaming Echo".into()
+    }
+
+    fn run(
+        self: Arc<Self>,
+        mut input: ToolInput<Self::Input>,
+        _event_stream: ToolCallEventStream,
+        cx: &mut App,
+    ) -> Task<Result<String, String>> {
+        let wait_until_complete_rx = self.wait_until_complete_rx.lock().unwrap().take();
+        cx.spawn(async move |_cx| {
+            while input.recv_partial().await.is_some() {}
+            let input = input
+                .recv()
+                .await
+                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+            if let Some(rx) = wait_until_complete_rx {
+                rx.await.ok();
+            }
+            Ok(input.text)
+        })
+    }
+}
+
+/// A streaming tool that echoes its input, used to test streaming tool
+/// lifecycle (e.g. partial delivery and cleanup when the LLM stream ends
+/// before `is_input_complete`).
+#[derive(JsonSchema, Serialize, Deserialize)]
+pub struct StreamingFailingEchoToolInput {
+    /// The text to echo.
+    pub text: String,
+}
+
+pub struct StreamingFailingEchoTool {
+    pub receive_chunks_until_failure: usize,
+}
+
+impl AgentTool for StreamingFailingEchoTool {
+    type Input = StreamingFailingEchoToolInput;
+
+    type Output = String;
+
+    const NAME: &'static str = "streaming_failing_echo";
+
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Other
+    }
+
+    fn supports_input_streaming() -> bool {
+        true
+    }
+
+    fn initial_title(
+        &self,
+        _input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
+        "echo".into()
+    }
+
+    fn run(
+        self: Arc<Self>,
+        mut input: ToolInput<Self::Input>,
+        _event_stream: ToolCallEventStream,
+        cx: &mut App,
+    ) -> Task<Result<Self::Output, Self::Output>> {
+        cx.spawn(async move |_cx| {
+            for _ in 0..self.receive_chunks_until_failure {
+                let _ = input.recv_partial().await;
+            }
+            Err("failed".into())
+        })
+    }
+}
 
 /// A tool that echoes its input
 #[derive(JsonSchema, Serialize, Deserialize)]

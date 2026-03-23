@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 use gpui::SharedString;
-use project::agent_server_store::AgentServerCommand;
+use project::{AgentId, agent_server_store::AgentServerCommand};
 
 /// External agent type for thread creation
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -39,11 +39,11 @@ impl ExternalAgent {
         history: gpui::Entity<agent::ThreadStore>,
     ) -> Rc<dyn agent_servers::AgentServer> {
         match self {
-            Self::Gemini => Rc::new(agent_servers::Gemini),
-            Self::ClaudeCode => Rc::new(agent_servers::ClaudeCode),
+            Self::Gemini => Rc::new(agent_servers::CustomAgentServer::new(AgentId("gemini".into()))),
+            Self::ClaudeCode => Rc::new(agent_servers::CustomAgentServer::new(AgentId("claude-acp".into()))),
             Self::NativeAgent => Rc::new(agent::NativeAgentServer::new(fs, history)),
             Self::Custom { name, command: _ } => {
-                Rc::new(agent_servers::CustomAgentServer::new(name.clone()))
+                Rc::new(agent_servers::CustomAgentServer::new(AgentId(name.clone())))
             }
         }
     }

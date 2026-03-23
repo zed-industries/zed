@@ -15,6 +15,7 @@ use ui::Checkbox;
 use ui::CopyButton;
 
 use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::iter;
 use std::mem;
 use std::ops::Range;
@@ -246,7 +247,7 @@ pub struct Markdown {
     fallback_code_block_language: Option<LanguageName>,
     options: Options,
     copied_code_blocks: HashSet<ElementId>,
-    code_block_scroll_handles: HashMap<usize, ScrollHandle>,
+    code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
     context_menu_selected_text: Option<String>,
 }
 
@@ -316,7 +317,7 @@ impl Markdown {
                 parse_links_only: false,
             },
             copied_code_blocks: HashSet::default(),
-            code_block_scroll_handles: HashMap::default(),
+            code_block_scroll_handles: BTreeMap::default(),
             context_menu_selected_text: None,
         };
         this.parse(cx);
@@ -341,7 +342,7 @@ impl Markdown {
                 parse_links_only: true,
             },
             copied_code_blocks: HashSet::default(),
-            code_block_scroll_handles: HashMap::default(),
+            code_block_scroll_handles: BTreeMap::default(),
             context_menu_selected_text: None,
         };
         this.parse(cx);
@@ -362,6 +363,32 @@ impl Markdown {
 
     fn clear_code_block_scroll_handles(&mut self) {
         self.code_block_scroll_handles.clear();
+    }
+
+    fn autoscroll_code_block(&self, source_index: usize, cursor_position: Point<Pixels>) {
+        let Some((_, scroll_handle)) = self
+            .code_block_scroll_handles
+            .range(..=source_index)
+            .next_back()
+        else {
+            return;
+        };
+
+        let bounds = scroll_handle.bounds();
+        if cursor_position.y < bounds.top() || cursor_position.y > bounds.bottom() {
+            return;
+        }
+
+        let horizontal_delta = if cursor_position.x < bounds.left() {
+            bounds.left() - cursor_position.x
+        } else if cursor_position.x > bounds.right() {
+            bounds.right() - cursor_position.x
+        } else {
+            return;
+        };
+
+        let offset = scroll_handle.offset();
+        scroll_handle.set_offset(point(offset.x + horizontal_delta, offset.y));
     }
 
     pub fn is_parsing(&self) -> bool {
@@ -902,6 +929,7 @@ impl MarkdownElement {
                         Ok(ix) | Err(ix) => ix,
                     };
                     markdown.selection.set_head(source_index, &rendered_text);
+                    markdown.autoscroll_code_block(source_index, event.position);
                     markdown.autoscroll_request = Some(source_index);
                     cx.notify();
                 } else {
@@ -1244,17 +1272,22 @@ impl Element for MarkdownElement {
 
                             let column_count = alignments.len();
                             builder.push_div(
+                                div().flex().flex_col().items_start(),
+                                range,
+                                markdown_end,
+                            );
+                            builder.push_div(
                                 div()
                                     .id(("table", range.start))
+                                    .min_w_0()
                                     .grid()
                                     .grid_cols(column_count as u16)
                                     .when(self.style.table_columns_min_size, |this| {
                                         this.grid_cols_min_content(column_count as u16)
                                     })
                                     .when(!self.style.table_columns_min_size, |this| {
-                                        this.grid_cols(column_count as u16)
+                                        this.grid_cols_max_content(column_count as u16)
                                     })
-                                    .w_full()
                                     .mb_2()
                                     .border(px(1.5))
                                     .border_color(cx.theme().colors().border)
@@ -1403,6 +1436,7 @@ impl Element for MarkdownElement {
                     }
                     MarkdownTagEnd::Table => {
                         builder.pop_div();
+                        builder.pop_div();
                         builder.table.end();
                     }
                     MarkdownTagEnd::TableHead => {
@@ -1413,6 +1447,7 @@ impl Element for MarkdownElement {
                         builder.table.end_row();
                     }
                     MarkdownTagEnd::TableCell => {
+                        builder.replace_pending_checkbox(range);
                         builder.pop_div();
                         builder.table.end_cell();
                     }
@@ -1895,6 +1930,28 @@ impl MarkdownElementBuilder {
                 .truncate(self.pending_line.text.len() - 1);
             self.pending_line.runs.last_mut().unwrap().len -= 1;
             self.current_source_index -= 1;
+        }
+    }
+
+    fn replace_pending_checkbox(&mut self, source_range: &Range<usize>) {
+        let trimmed = self.pending_line.text.trim();
+        if trimmed == "[x]" || trimmed == "[X]" || trimmed == "[ ]" {
+            let checked = trimmed != "[ ]";
+            self.pending_line = PendingLine::default();
+            let checkbox = Checkbox::new(
+                ElementId::Name(
+                    format!("table_checkbox_{}_{}", source_range.start, source_range.end).into(),
+                ),
+                if checked {
+                    ToggleState::Selected
+                } else {
+                    ToggleState::Unselected
+                },
+            )
+            .fill()
+            .visualization_only(true)
+            .into_any_element();
+            self.div_stack.last_mut().unwrap().extend([checkbox]);
         }
     }
 
@@ -2463,6 +2520,48 @@ mod tests {
 
         assert_eq!(first_word, "a");
         assert_eq!(second_word, "b");
+    }
+
+    #[test]
+    fn test_table_checkbox_detection() {
+        let md = "| Done |\n|------|\n| [x] |\n| [ ] |";
+        let (events, _, _) = crate::parser::parse_markdown(md);
+
+        let mut in_table = false;
+        let mut cell_texts: Vec<String> = Vec::new();
+        let mut current_cell = String::new();
+
+        for (range, event) in &events {
+            match event {
+                MarkdownEvent::Start(MarkdownTag::Table(_)) => in_table = true,
+                MarkdownEvent::End(MarkdownTagEnd::Table) => in_table = false,
+                MarkdownEvent::Start(MarkdownTag::TableCell) => current_cell.clear(),
+                MarkdownEvent::End(MarkdownTagEnd::TableCell) => {
+                    if in_table {
+                        cell_texts.push(current_cell.clone());
+                    }
+                }
+                MarkdownEvent::Text if in_table => {
+                    current_cell.push_str(&md[range.clone()]);
+                }
+                _ => {}
+            }
+        }
+
+        let checkbox_cells: Vec<&String> = cell_texts
+            .iter()
+            .filter(|t| {
+                let trimmed = t.trim();
+                trimmed == "[x]" || trimmed == "[X]" || trimmed == "[ ]"
+            })
+            .collect();
+        assert_eq!(
+            checkbox_cells.len(),
+            2,
+            "Expected 2 checkbox cells, got: {cell_texts:?}"
+        );
+        assert_eq!(checkbox_cells[0].trim(), "[x]");
+        assert_eq!(checkbox_cells[1].trim(), "[ ]");
     }
 
     #[gpui::test]

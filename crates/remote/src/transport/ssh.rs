@@ -463,7 +463,7 @@ impl RemoteConnection for SshRemoteConnection {
             let mut proxy_args = vec![];
             for env_var in VARS {
                 if let Some(value) = std::env::var(env_var).ok() {
-                    proxy_args.push(format!("{}='{}'", env_var, value));
+                    proxy_args.push(format!("{env_var}={value}"));
                 }
             }
             proxy_args.push(remote_binary_path.display(self.path_style()).into_owned());
@@ -1666,12 +1666,11 @@ fn build_command_posix(
     write!(exec, "exec env ")?;
 
     for (k, v) in input_env.iter() {
-        write!(
-            exec,
-            "{}={} ",
-            k,
-            ssh_shell_kind.try_quote(v).context("shell quoting")?
-        )?;
+        let assignment = format!("{k}={v}");
+        let assignment = ssh_shell_kind
+            .try_quote(&assignment)
+            .context("shell quoting")?;
+        write!(exec, "{assignment} ")?;
     }
 
     if let Some(input_program) = input_program {
@@ -1882,7 +1881,7 @@ mod tests {
                 "-q",
                 "-t",
                 "user@host",
-                "cd \"$HOME/work\" && exec env INPUT_VA=val remote_program arg1 arg2"
+                "cd \"$HOME/work\" && exec env 'INPUT_VA=val' remote_program arg1 arg2"
             ]
         );
         assert_eq!(command.env, env);
@@ -1918,10 +1917,42 @@ mod tests {
                 "-q",
                 "-t",
                 "user@host",
-                "cd && exec env INPUT_VA=val /bin/fish -l"
+                "cd && exec env 'INPUT_VA=val' /bin/fish -l"
             ]
         );
         assert_eq!(command.env, env);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_build_command_quotes_env_assignment() -> Result<()> {
+        let mut input_env = HashMap::default();
+        input_env.insert("ZED$(echo foo)".to_string(), "value".to_string());
+
+        let command = build_command_posix(
+            Some("remote_program".to_string()),
+            &[],
+            &input_env,
+            None,
+            None,
+            HashMap::default(),
+            PathStyle::Posix,
+            "/bin/bash",
+            ShellKind::Posix,
+            vec![],
+            "user@host",
+            Interactive::No,
+        )?;
+
+        let remote_command = command
+            .args
+            .last()
+            .context("missing remote command argument")?;
+        assert!(
+            remote_command.contains("exec env 'ZED$(echo foo)=value' remote_program"),
+            "expected env assignment to be quoted, got: {remote_command}"
+        );
 
         Ok(())
     }

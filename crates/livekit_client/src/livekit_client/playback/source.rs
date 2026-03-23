@@ -7,7 +7,7 @@ use rodio::{
     ChannelCount, SampleRate, Source, buffer::SamplesBuffer, conversions::SampleTypeConverter,
 };
 
-use audio::{CHANNEL_COUNT, LEGACY_CHANNEL_COUNT, LEGACY_SAMPLE_RATE, SAMPLE_RATE};
+use audio::{CHANNEL_COUNT, SAMPLE_RATE};
 
 fn frame_to_samplesbuffer(frame: AudioFrame) -> SamplesBuffer {
     let samples = frame.data.iter().copied();
@@ -35,7 +35,8 @@ impl LiveKitStream {
         legacy: bool,
     ) -> Self {
         let (channel_count, sample_rate) = if legacy {
-            (LEGACY_CHANNEL_COUNT, LEGACY_SAMPLE_RATE)
+            // (LEGACY_CHANNEL_COUNT, LEGACY_SAMPLE_RATE) TODO(audio): do this or remove
+            (CHANNEL_COUNT, SAMPLE_RATE)
         } else {
             (CHANNEL_COUNT, SAMPLE_RATE)
         };
