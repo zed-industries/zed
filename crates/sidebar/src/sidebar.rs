@@ -2401,7 +2401,17 @@ impl Sidebar {
             if let Some(next) = next_thread {
                 self.focused_thread = Some(next.session_info.session_id.clone());
 
-                if let Some(workspace) = &group_workspace {
+                // Use the thread's own workspace when it has one open (e.g. an absorbed
+                // linked worktree thread that appears under the main workspace's header
+                // but belongs to its own workspace). Loading into the wrong panel binds
+                // the thread to the wrong project, which corrupts its stored folder_paths
+                // when metadata is saved via ThreadMetadata::from_thread.
+                let target_workspace = match &next.workspace {
+                    ThreadEntryWorkspace::Open(ws) => Some(ws.clone()),
+                    ThreadEntryWorkspace::Closed(_) => group_workspace.clone(),
+                };
+
+                if let Some(workspace) = target_workspace {
                     if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
                         agent_panel.update(cx, |panel, cx| {
                             panel.load_agent_thread(
@@ -6691,6 +6701,181 @@ mod tests {
                 .unwrap(),
             1,
             "other windows should not be activated just because they also match the saved paths"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_archive_thread_uses_next_threads_own_workspace(cx: &mut TestAppContext) {
+        // Regression test: archive_thread previously always loaded the next thread
+        // through group_workspace (the main workspace's ProjectHeader), even when
+        // the next thread belonged to an absorbed linked-worktree workspace. That
+        // caused the worktree thread to be loaded in the main panel, which bound it
+        // to the main project and corrupted its stored folder_paths.
+        //
+        // The fix: use next.workspace (ThreadEntryWorkspace::Open) when available,
+        // falling back to group_workspace only for Closed workspaces.
+        agent_ui::test_support::init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(false, vec!["agent-v2".into()]);
+            ThreadStore::init_global(cx);
+            SidebarThreadMetadataStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            prompt_store::init(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+
+        fs.insert_tree(
+            "/project",
+            serde_json::json!({
+                ".git": {
+                    "worktrees": {
+                        "feature-a": {
+                            "commondir": "../../",
+                            "HEAD": "ref: refs/heads/feature-a",
+                        },
+                    },
+                },
+                "src": {},
+            }),
+        )
+        .await;
+
+        fs.insert_tree(
+            "/wt-feature-a",
+            serde_json::json!({
+                ".git": "gitdir: /project/.git/worktrees/feature-a",
+                "src": {},
+            }),
+        )
+        .await;
+
+        fs.with_git_state(std::path::Path::new("/project/.git"), false, |state| {
+            state.worktrees.push(git::repository::Worktree {
+                path: std::path::PathBuf::from("/wt-feature-a"),
+                ref_name: Some("refs/heads/feature-a".into()),
+                sha: "aaa".into(),
+            });
+        })
+        .unwrap();
+
+        cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+        let main_project = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+        let worktree_project =
+            project::Project::test(fs.clone(), ["/wt-feature-a".as_ref()], cx).await;
+
+        main_project
+            .update(cx, |p, cx| p.git_scans_complete(cx))
+            .await;
+        worktree_project
+            .update(cx, |p, cx| p.git_scans_complete(cx))
+            .await;
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            MultiWorkspace::test_new(main_project.clone(), window, cx)
+        });
+
+        let worktree_workspace = multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.test_add_workspace(worktree_project.clone(), window, cx)
+        });
+
+        // Activate main workspace so the sidebar tracks the main panel.
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.activate_index(0, window, cx);
+        });
+
+        let sidebar = setup_sidebar(&multi_workspace, cx);
+
+        let main_workspace = multi_workspace.read_with(cx, |mw, _| mw.workspaces()[0].clone());
+        let main_panel = add_agent_panel(&main_workspace, &main_project, cx);
+        let _worktree_panel = add_agent_panel(&worktree_workspace, &worktree_project, cx);
+
+        // Open Thread 2 in the main panel and keep it running.
+        let connection = StubAgentConnection::new();
+        open_thread_with_connection(&main_panel, connection.clone(), cx);
+        send_message(&main_panel, cx);
+
+        let thread2_session_id = active_session_id(&main_panel, cx);
+
+        cx.update(|_, cx| {
+            connection.send_update(
+                thread2_session_id.clone(),
+                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("working...".into())),
+                cx,
+            );
+        });
+
+        // Save thread 2's metadata with a newer timestamp so it sorts above thread 1.
+        save_thread_metadata(
+            thread2_session_id.clone(),
+            "Thread 2".into(),
+            chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
+            PathList::new(&[std::path::PathBuf::from("/project")]),
+            cx,
+        )
+        .await;
+
+        // Save thread 1's metadata with the worktree path and an older timestamp so
+        // it sorts below thread 2. archive_thread will find it as the "next" candidate.
+        let thread1_session_id = acp::SessionId::new(Arc::from("thread1-worktree-session"));
+        save_thread_metadata(
+            thread1_session_id.clone(),
+            "Thread 1".into(),
+            chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+            PathList::new(&[std::path::PathBuf::from("/wt-feature-a")]),
+            cx,
+        )
+        .await;
+
+        cx.run_until_parked();
+
+        // Verify the sidebar absorbed thread 1 under [project] with the worktree chip.
+        let entries_before = visible_entries_as_strings(&sidebar, cx);
+        assert!(
+            entries_before.iter().any(|s| s.contains("{wt-feature-a}")),
+            "Thread 1 should appear with the linked-worktree chip before archiving: {:?}",
+            entries_before
+        );
+
+        // The sidebar should track T2 as the focused thread (derived from the
+        // main panel's active view).
+        let focused = sidebar.read_with(cx, |s, _| s.focused_thread.clone());
+        assert_eq!(
+            focused,
+            Some(thread2_session_id.clone()),
+            "focused thread should be Thread 2 before archiving: {:?}",
+            focused
+        );
+
+        // Archive thread 2.
+        sidebar.update_in(cx, |sidebar, window, cx| {
+            sidebar.archive_thread(&thread2_session_id, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // The main panel's active thread must still be thread 2.
+        let main_active = main_panel.read_with(cx, |panel, cx| {
+            panel
+                .active_agent_thread(cx)
+                .map(|t| t.read(cx).session_id().clone())
+        });
+        assert_eq!(
+            main_active,
+            Some(thread2_session_id.clone()),
+            "main panel should not have been taken over by loading the linked-worktree thread T1; \
+             before the fix, archive_thread used group_workspace instead of next.workspace, \
+             causing T1 to be loaded in the wrong panel"
+        );
+
+        // Thread 1 should still appear in the sidebar with its worktree chip
+        // (Thraed 2 was archived so it is gone from the list).
+        let entries_after = visible_entries_as_strings(&sidebar, cx);
+        assert!(
+            entries_after.iter().any(|s| s.contains("{wt-feature-a}")),
+            "T1 should still carry its linked-worktree chip after archiving T2: {:?}",
+            entries_after
         );
     }
 }
