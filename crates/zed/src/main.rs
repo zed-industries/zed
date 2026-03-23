@@ -577,8 +577,6 @@ fn main() {
         let installation_id = cx.foreground_executor().block_on(installation_id).ok();
         let session = cx.foreground_executor().block_on(session);
 
-        migrate_panel_positions(system_id.as_ref(), fs.clone(), cx);
-
         let telemetry = client.telemetry();
         telemetry.start(
             system_id.as_ref().map(|id| id.to_string()),
@@ -1340,79 +1338,6 @@ async fn installation_id(db: KeyValueStore) -> Result<IdType> {
     db.write_kvp(key_name, installation_id.clone()).await?;
 
     Ok(IdType::New(installation_id))
-}
-
-/// Pins current panel dock positions into settings.json for existing users.
-///
-/// This runs once at startup for users who aren't brand new. It writes the
-/// current default positions into the user's settings file for any panel
-/// position they haven't explicitly customized. This is a no-op in practice
-/// (writing values that already match the defaults), but ensures that when
-/// the AgentV2 feature flag later overrides the defaults at runtime,
-/// existing users' layouts aren't silently rearranged.
-fn migrate_panel_positions(system_id: Option<&IdType>, fs: Arc<dyn Fs>, cx: &mut App) {
-    // New users get whatever defaults are active — no pinning needed.
-    if matches!(system_id, Some(IdType::New(_)) | None) {
-        return;
-    }
-
-    let db = KeyValueStore::global(cx);
-    if db
-        .read_kvp("agent_layout_migrated")
-        .ok()
-        .flatten()
-        .is_some()
-    {
-        return;
-    }
-
-    // Pin the current defaults into settings.json for any position the user
-    // has not explicitly set.
-    settings::update_settings_file(fs, cx, |settings, _| {
-        use settings::{DockPosition, DockSide};
-
-        if settings
-            .project_panel
-            .as_ref()
-            .and_then(|p| p.dock)
-            .is_none()
-        {
-            settings.project_panel.get_or_insert_default().dock = Some(DockSide::Left);
-        }
-        if settings
-            .outline_panel
-            .as_ref()
-            .and_then(|p| p.dock)
-            .is_none()
-        {
-            settings.outline_panel.get_or_insert_default().dock = Some(DockSide::Left);
-        }
-        if settings
-            .collaboration_panel
-            .as_ref()
-            .and_then(|p| p.dock)
-            .is_none()
-        {
-            settings.collaboration_panel.get_or_insert_default().dock = Some(DockPosition::Left);
-        }
-        if settings.git_panel.as_ref().and_then(|p| p.dock).is_none() {
-            settings.git_panel.get_or_insert_default().dock = Some(DockPosition::Left);
-        }
-        if settings.agent.as_ref().and_then(|a| a.dock).is_none() {
-            settings
-                .agent
-                .get_or_insert_default()
-                .set_dock(DockPosition::Right);
-        }
-    });
-
-    // Record that we've done this migration.
-    cx.background_spawn(async move {
-        db.write_kvp("agent_layout_migrated".to_string(), "true".to_string())
-            .await
-            .log_err();
-    })
-    .detach();
 }
 
 pub(crate) async fn restore_or_create_workspace(
