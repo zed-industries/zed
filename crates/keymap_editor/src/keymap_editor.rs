@@ -518,18 +518,22 @@ fn disabled_binding_matches_context(
 
 fn binding_is_unbound_by_unbind(
     binding: &gpui::KeyBinding,
+    binding_index: usize,
     all_bindings: &[&gpui::KeyBinding],
 ) -> bool {
-    all_bindings.iter().rev().any(|disabled_binding| {
-        gpui::is_unbind(disabled_binding.action())
-            && keystrokes_match_exactly(disabled_binding.keystrokes(), binding.keystrokes())
-            && disabled_binding
-                .action()
-                .as_any()
-                .downcast_ref::<gpui::Unbind>()
-                .is_some_and(|unbind| unbind.0.as_ref() == binding.action().name())
-            && disabled_binding_matches_context(disabled_binding, binding)
-    })
+    all_bindings[binding_index + 1..]
+        .iter()
+        .rev()
+        .any(|disabled_binding| {
+            gpui::is_unbind(disabled_binding.action())
+                && keystrokes_match_exactly(disabled_binding.keystrokes(), binding.keystrokes())
+                && disabled_binding
+                    .action()
+                    .as_any()
+                    .downcast_ref::<gpui::Unbind>()
+                    .is_some_and(|unbind| unbind.0.as_ref() == binding.action().name())
+                && disabled_binding_matches_context(disabled_binding, binding)
+        })
 }
 
 impl KeymapEditor {
@@ -812,7 +816,7 @@ impl KeymapEditor {
         let mut processed_bindings = Vec::new();
         let mut string_match_candidates = Vec::new();
 
-        for &key_binding in &key_bindings {
+        for (binding_index, &key_binding) in key_bindings.iter().enumerate() {
             if gpui::is_unbind(key_binding.action()) {
                 continue;
             }
@@ -824,7 +828,8 @@ impl KeymapEditor {
 
             let keystroke_text = ui::text_for_keybinding_keystrokes(key_binding.keystrokes(), cx);
             let is_no_action = gpui::is_no_action(key_binding.action());
-            let is_unbound_by_unbind = binding_is_unbound_by_unbind(key_binding, &key_bindings);
+            let is_unbound_by_unbind =
+                binding_is_unbound_by_unbind(key_binding, binding_index, &key_bindings);
             let binding = KeyBinding::new(key_binding, source);
 
             let context = key_binding
@@ -4140,5 +4145,26 @@ mod tests {
         assert!(cmp("a", "!(!a)"));
         assert!(cmp("!(!(!a))", "!a"));
         assert!(cmp("!(!(!(!a)))", "a"));
+    }
+
+    #[test]
+    fn binding_is_unbound_by_unbind_respects_precedence() {
+        let binding = gpui::KeyBinding::new("tab", zed_actions::OpenKeymap, None);
+        let unbind =
+            gpui::KeyBinding::new("tab", gpui::Unbind(binding.action().name().into()), None);
+
+        let unbind_then_binding = vec![&unbind, &binding];
+        assert!(!binding_is_unbound_by_unbind(
+            &binding,
+            1,
+            &unbind_then_binding,
+        ));
+
+        let binding_then_unbind = vec![&binding, &unbind];
+        assert!(binding_is_unbound_by_unbind(
+            &binding,
+            0,
+            &binding_then_unbind,
+        ));
     }
 }
