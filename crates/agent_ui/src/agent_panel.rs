@@ -3206,7 +3206,7 @@ impl Panel for AgentPanel {
     }
 
     fn activation_priority(&self) -> u32 {
-        8
+        3
     }
 
     fn enabled(&self, cx: &App) -> bool {
