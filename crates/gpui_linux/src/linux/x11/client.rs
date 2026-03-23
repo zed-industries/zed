@@ -475,7 +475,7 @@ impl X11Client {
                     XDPEvent::ButtonLayout(layout_str) => {
                         let layout = WindowButtonLayout::parse(&layout_str)
                             .log_err()
-                            .unwrap_or_default();
+                            .unwrap_or_else(WindowButtonLayout::linux_default);
                         client.with_common(|common| common.button_layout = layout);
                         for window in client.0.borrow_mut().windows.values_mut() {
                             window.window.set_button_layout();

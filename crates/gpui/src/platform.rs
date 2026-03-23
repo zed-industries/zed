@@ -433,6 +433,15 @@ impl WindowButton {
             WindowButton::Close => "close",
         }
     }
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    fn index(&self) -> usize {
+        match self {
+            WindowButton::Minimize => 0,
+            WindowButton::Maximize => 1,
+            WindowButton::Close => 2,
+        }
+    }
 }
 
 /// Maximum number of [`WindowButton`]s per side in the titlebar.
@@ -450,6 +459,7 @@ pub struct WindowButtonLayout {
     pub right: [Option<WindowButton>; MAX_BUTTONS_PER_SIDE],
 }
 
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 impl WindowButtonLayout {
     /// Returns Zed's built-in fallback button layout for Linux titlebars.
     pub fn linux_default() -> Self {
@@ -462,14 +472,12 @@ impl WindowButtonLayout {
             ],
         }
     }
-}
 
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
-impl WindowButtonLayout {
     /// Parses a GNOME-style `button-layout` string (e.g. `"close,minimize:maximize"`).
     pub fn parse(layout_string: &str) -> Result<Self> {
         fn parse_side(
             s: &str,
+            seen_buttons: &mut [bool; MAX_BUTTONS_PER_SIDE],
             unrecognized: &mut Vec<String>,
         ) -> [Option<WindowButton>; MAX_BUTTONS_PER_SIDE] {
             let mut result = [None; MAX_BUTTONS_PER_SIDE];
@@ -489,8 +497,12 @@ impl WindowButtonLayout {
                     }
                 };
                 if let Some(button) = button {
+                    if seen_buttons[button.index()] {
+                        continue;
+                    }
                     if let Some(slot) = result.get_mut(i) {
                         *slot = Some(button);
+                        seen_buttons[button.index()] = true;
                         i += 1;
                     }
                 }
@@ -500,9 +512,10 @@ impl WindowButtonLayout {
 
         let (left_str, right_str) = layout_string.split_once(':').unwrap_or(("", layout_string));
         let mut unrecognized = Vec::new();
+        let mut seen_buttons = [false; MAX_BUTTONS_PER_SIDE];
         let layout = Self {
-            left: parse_side(left_str, &mut unrecognized),
-            right: parse_side(right_str, &mut unrecognized),
+            left: parse_side(left_str, &mut seen_buttons, &mut unrecognized),
+            right: parse_side(right_str, &mut seen_buttons, &mut unrecognized),
         };
 
         if !unrecognized.is_empty()
@@ -2160,6 +2173,7 @@ impl From<String> for ClipboardString {
 #[cfg(all(test, any(target_os = "linux", target_os = "freebsd")))]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     #[test]
     fn test_window_button_layout_parse_standard() {
@@ -2243,6 +2257,45 @@ mod tests {
             ]
         );
         assert_eq!(layout.right, [Some(WindowButton::Maximize), None, None]);
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_deduplicates_same_side_buttons() {
+        let layout = WindowButtonLayout::parse("close,close,minimize").unwrap();
+        assert_eq!(
+            layout.right,
+            [
+                Some(WindowButton::Close),
+                Some(WindowButton::Minimize),
+                None
+            ]
+        );
+        assert_eq!(layout.format(), ":close,minimize");
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_deduplicates_buttons_across_sides() {
+        let layout = WindowButtonLayout::parse("close:maximize,close,minimize").unwrap();
+        assert_eq!(layout.left, [Some(WindowButton::Close), None, None]);
+        assert_eq!(
+            layout.right,
+            [
+                Some(WindowButton::Maximize),
+                Some(WindowButton::Minimize),
+                None
+            ]
+        );
+
+        let button_ids: Vec<_> = layout
+            .left
+            .iter()
+            .chain(layout.right.iter())
+            .flatten()
+            .map(WindowButton::id)
+            .collect();
+        let unique_button_ids = button_ids.iter().copied().collect::<HashSet<_>>();
+        assert_eq!(unique_button_ids.len(), button_ids.len());
+        assert_eq!(layout.format(), "close:maximize,minimize");
     }
 
     #[test]

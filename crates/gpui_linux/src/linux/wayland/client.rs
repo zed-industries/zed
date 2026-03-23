@@ -571,7 +571,7 @@ impl WaylandClient {
                         if let Some(client) = client.0.upgrade() {
                             let layout = WindowButtonLayout::parse(&layout_str)
                                 .log_err()
-                                .unwrap_or_default();
+                                .unwrap_or_else(WindowButtonLayout::linux_default);
                             let mut client = client.borrow_mut();
                             client.common.button_layout = layout;
 
