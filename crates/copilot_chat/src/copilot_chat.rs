@@ -370,8 +370,7 @@ pub enum Tool {
 #[serde(rename_all = "lowercase")]
 pub enum ToolChoice {
     Auto,
-    #[serde(rename = "required")]
-    Any,
+    Required,
     None,
 }
 

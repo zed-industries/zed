@@ -52,7 +52,7 @@ pub enum ToolDefinition {
 #[serde(rename_all = "lowercase")]
 pub enum ToolChoice {
     Auto,
-    Any,
+    Required,
     None,
     #[serde(untagged)]
     Other(ToolDefinition),
