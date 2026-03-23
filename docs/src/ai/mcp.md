@@ -67,7 +67,7 @@ You can connect them by adding their commands directly to your settings file ([h
 Alternatively, you can also add a custom server by accessing the Agent Panel's Settings view (also accessible via the `agent: open settings` action).
 From there, you can add it through the modal that appears when you click the "Add Custom Server" button.
 
-When a remote MCP server has no configured "Authorization" header, Zed will prompt you to authenticate yourself against the MCP server using the standard MCP OAuth flow.
+> Note: When a remote MCP server has no configured `"Authorization"` header, Zed will prompt you to authenticate yourself against the MCP server using the standard MCP OAuth flow.
 
 ## Using MCP Servers
 
