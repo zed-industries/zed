@@ -269,8 +269,9 @@ Zed currently supports links to the hosted versions of
 [GitHub](https://github.com),
 [GitLab](https://gitlab.com),
 [Bitbucket](https://bitbucket.org),
-[SourceHut](https://sr.ht) and
-[Codeberg](https://codeberg.org).
+[SourceHut](https://sr.ht),
+[Codeberg](https://codeberg.org) and
+[Hugging Face](https://huggingface.co).
 
 ### Self-Hosted Instances
 
