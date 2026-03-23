@@ -55,7 +55,7 @@ gpui::actions!(
     ]
 );
 
-const DEFAULT_WIDTH: Pixels = px(320.0);
+const DEFAULT_WIDTH: Pixels = px(250.0);
 const MIN_WIDTH: Pixels = px(200.0);
 const MAX_WIDTH: Pixels = px(800.0);
 const DEFAULT_THREADS_SHOWN: usize = 5;
@@ -1224,11 +1224,6 @@ impl Sidebar {
         let path_list_for_collapse = path_list.clone();
         let view_more_expanded = self.expanded_groups.contains_key(path_list);
 
-        let multi_workspace = self.multi_workspace.upgrade();
-        let workspace_count = multi_workspace
-            .as_ref()
-            .map_or(0, |mw| mw.read(cx).workspaces().len());
-
         let label = if highlight_positions.is_empty() {
             Label::new(label.clone())
                 .color(Color::Muted)
@@ -1337,25 +1332,6 @@ impl Sidebar {
                                     this.update_entries(cx);
                                 }
                             })),
-                        )
-                    })
-                    .when(workspace_count > 1, |this| {
-                        let workspace_for_remove_btn = workspace_for_remove.clone();
-                        this.child(
-                            IconButton::new(
-                                SharedString::from(format!(
-                                    "{id_prefix}project-header-remove-{ix}",
-                                )),
-                                IconName::Close,
-                            )
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .tooltip(Tooltip::text("Remove Project"))
-                            .on_click(cx.listener(
-                                move |this, _, window, cx| {
-                                    this.remove_workspace(&workspace_for_remove_btn, window, cx);
-                                },
-                            )),
                         )
                     })
                     .when(show_new_thread_button, |this| {
@@ -1484,7 +1460,7 @@ impl Sidebar {
 
                     let workspace_for_add = workspace.clone();
                     let multi_workspace_for_add = multi_workspace.clone();
-                    menu.separator().entry(
+                    let menu = menu.separator().entry(
                         "Add Folder to Project",
                         Some(Box::new(AddFolderToProject)),
                         move |window, cx| {
@@ -1497,7 +1473,23 @@ impl Sidebar {
                                 workspace.add_folder_to_project(&AddFolderToProject, window, cx);
                             });
                         },
-                    )
+                    );
+
+                    let workspace_for_remove = workspace_for_remove.clone();
+                    let multi_workspace_for_remove = multi_workspace.clone();
+                    menu.separator()
+                        .entry("Remove Project", None, move |window, cx| {
+                            if let Some(mw) = multi_workspace_for_remove.upgrade() {
+                                let ws = workspace_for_remove.clone();
+                                mw.update(cx, |multi_workspace, cx| {
+                                    if let Some(index) =
+                                        multi_workspace.workspaces().iter().position(|w| *w == ws)
+                                    {
+                                        multi_workspace.remove_workspace(index, window, cx);
+                                    }
+                                });
+                            }
+                        })
                 });
 
                 let this = this.clone();
@@ -3080,7 +3072,6 @@ impl Render for Sidebar {
                     .child(
                         h_flex()
                             .gap_1()
-                            .child(self.render_recent_projects_button(cx))
                             .child(
                                 IconButton::new("archive", IconName::Archive)
                                     .icon_size(IconSize::Small)
@@ -3095,7 +3086,8 @@ impl Render for Sidebar {
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.toggle_archive(&ToggleArchive, window, cx);
                                     })),
-                            ),
+                            )
+                            .child(self.render_recent_projects_button(cx)),
                     ),
             )
     }
