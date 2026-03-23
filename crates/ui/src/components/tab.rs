@@ -77,11 +77,11 @@ impl Tab {
     }
 
     pub fn content_height(cx: &App) -> Pixels {
-        DynamicSpacing::Base32.px(cx) - px(1.)
+        DynamicSpacing::Base24.px(cx) - px(1.)
     }
 
     pub fn container_height(cx: &App) -> Pixels {
-        DynamicSpacing::Base32.px(cx)
+        DynamicSpacing::Base24.px(cx)
     }
 }
 
@@ -143,6 +143,9 @@ impl RenderOnce for Tab {
 
         self.div
             .h(Tab::container_height(cx))
+            .max_w(px(180.))
+            .min_w(px(60.))
+            .flex_shrink()
             .bg(tab_bg)
             .border_color(cx.theme().colors().border)
             .map(|this| match self.position {
@@ -172,6 +175,8 @@ impl RenderOnce for Tab {
                     .h(Tab::content_height(cx))
                     .px(DynamicSpacing::Base04.px(cx))
                     .gap(DynamicSpacing::Base04.rems(cx))
+                    .overflow_hidden()
+                    .text_ellipsis()
                     .text_color(text_color)
                     .child(start_slot)
                     .children(self.children)
