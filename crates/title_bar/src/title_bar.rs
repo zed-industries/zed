@@ -161,6 +161,8 @@ pub struct TitleBar {
 
 impl Render for TitleBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_multi_workspace(window, cx);
+
         let title_bar_settings = *TitleBarSettings::get_global(cx);
         let button_layout = title_bar_settings.button_layout;
 
@@ -443,6 +445,46 @@ impl TitleBar {
         this.observe_diagnostics(cx);
 
         this
+    }
+
+    /// Used to update the title bar state in case the workspace has
+    /// been moved to a new window through the threads sidebar.
+    fn sync_multi_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let current = window
+            .root::<MultiWorkspace>()
+            .flatten()
+            .map(|mw| mw.entity_id());
+
+        let tracked = self
+            .multi_workspace
+            .as_ref()
+            .and_then(|weak| weak.upgrade())
+            .map(|mw| mw.entity_id());
+
+        if current == tracked {
+            return;
+        }
+
+        let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() else {
+            self.multi_workspace = None;
+            return;
+        };
+
+        let is_open = multi_workspace.read(cx).sidebar_open();
+        self.platform_titlebar.update(cx, |titlebar, cx| {
+            titlebar.set_workspace_sidebar_open(is_open, cx);
+        });
+
+        let platform_titlebar = self.platform_titlebar.clone();
+        let subscription = cx.observe(&multi_workspace, move |_this, mw, cx| {
+            let is_open = mw.read(cx).sidebar_open();
+            platform_titlebar.update(cx, |titlebar, cx| {
+                titlebar.set_workspace_sidebar_open(is_open, cx);
+            });
+        });
+
+        self.multi_workspace = Some(multi_workspace.downgrade());
+        self._subscriptions.push(subscription);
     }
 
     fn worktree_count(&self, cx: &App) -> usize {
