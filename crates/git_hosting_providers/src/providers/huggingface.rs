@@ -209,13 +209,13 @@ mod tests {
                 repo: "zeta".into(),
             },
             BuildPermalinkParams::new(
-                "e5fe811d7ad0fc26934edd76f891d20bdc3bb194",
-                &repo_path("src/main.py"),
+                "80f73ce5ee059377ce0662ec5c45b592c3025ae5",
+                &repo_path("config.json"),
                 None,
             ),
         );
 
-        let expected_url = "https://huggingface.co/zed-industries/zeta/blob/e5fe811d7ad0fc26934edd76f891d20bdc3bb194/src/main.py";
+        let expected_url = "https://huggingface.co/zed-industries/zeta/blob/80f73ce5ee059377ce0662ec5c45b592c3025ae5/config.json";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
@@ -227,13 +227,13 @@ mod tests {
                 repo: "zeta".into(),
             },
             BuildPermalinkParams::new(
-                "e5fe811d7ad0fc26934edd76f891d20bdc3bb194",
-                &repo_path("src/main.py"),
+                "80f73ce5ee059377ce0662ec5c45b592c3025ae5",
+                &repo_path("config.json"),
                 Some(6..6),
             ),
         );
 
-        let expected_url = "https://huggingface.co/zed-industries/zeta/blob/e5fe811d7ad0fc26934edd76f891d20bdc3bb194/src/main.py#L7";
+        let expected_url = "https://huggingface.co/zed-industries/zeta/blob/80f73ce5ee059377ce0662ec5c45b592c3025ae5/config.json#L7";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
@@ -245,13 +245,13 @@ mod tests {
                 repo: "zeta".into(),
             },
             BuildPermalinkParams::new(
-                "e5fe811d7ad0fc26934edd76f891d20bdc3bb194",
-                &repo_path("src/main.py"),
+                "80f73ce5ee059377ce0662ec5c45b592c3025ae5",
+                &repo_path("config.json"),
                 Some(23..47),
             ),
         );
 
-        let expected_url = "https://huggingface.co/zed-industries/zeta/blob/e5fe811d7ad0fc26934edd76f891d20bdc3bb194/src/main.py#L24-L48";
+        let expected_url = "https://huggingface.co/zed-industries/zeta/blob/80f73ce5ee059377ce0662ec5c45b592c3025ae5/config.json#L24-L48";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
@@ -282,11 +282,11 @@ mod tests {
                 repo: "zeta".into(),
             },
             BuildCommitPermalinkParams {
-                sha: "e5fe811d7ad0fc26934edd76f891d20bdc3bb194",
+                sha: "80f73ce5ee059377ce0662ec5c45b592c3025ae5",
             },
         );
 
-        let expected_url = "https://huggingface.co/zed-industries/zeta/commit/e5fe811d7ad0fc26934edd76f891d20bdc3bb194";
+        let expected_url = "https://huggingface.co/zed-industries/zeta/commit/80f73ce5ee059377ce0662ec5c45b592c3025ae5";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 }
