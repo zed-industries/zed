@@ -1,5 +1,3 @@
-use std::mem;
-
 use anyhow::{Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
@@ -338,10 +336,7 @@ impl Model {
     }
 
     pub fn supports_tools(&self) -> bool {
-        match self {
-            Self::Custom { .. } => true,
-            _ => true,
-        }
+        true
     }
 
     pub fn supports_images(&self) -> bool {
@@ -377,7 +372,24 @@ impl Model {
             Self::Gemini3_1Pro | Self::Gemini3Flash => true,
 
             // OpenAI-compatible models — conservative default
-            _ => false,
+            Self::MiniMaxM2_5
+            | Self::MiniMaxM2_5Free
+            | Self::Glm5
+            | Self::KimiK2_5
+            | Self::MimoV2ProFree
+            | Self::MimoV2OmniFree
+            | Self::MimoV2FlashFree
+            | Self::TrinityLargePreviewFree
+            | Self::BigPickle
+            | Self::Nemotron3SuperFree => false,
+
+            Self::Custom { protocol, .. } => matches!(
+                protocol,
+                ApiProtocol::Anthropic
+                    | ApiProtocol::OpenAiResponses
+                    | ApiProtocol::OpenAiChat
+                    | ApiProtocol::Google
+            ),
         }
     }
 }
@@ -391,11 +403,11 @@ pub async fn stream_generate_content_zen(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: &str,
-    mut request: google_ai::GenerateContentRequest,
+    request: google_ai::GenerateContentRequest,
 ) -> Result<BoxStream<'static, Result<google_ai::GenerateContentResponse>>> {
     let api_key = api_key.trim();
 
-    let model_id = mem::take(&mut request.model.model_id);
+    let model_id = &request.model.model_id;
 
     let uri = format!("{api_url}/v1/models/{model_id}:streamGenerateContent?alt=sse");
 
