@@ -2945,12 +2945,34 @@ impl AgentPanel {
             })?
             .await?;
 
-        let panels_task = new_window_handle.update(cx, |_, _, cx| {
-            new_workspace.update(cx, |workspace, _cx| workspace.take_panels_task())
-        })?;
+        let panels_task = new_workspace.update(cx, |workspace, _cx| workspace.take_panels_task());
+
         if let Some(task) = panels_task {
             task.await.log_err();
         }
+
+        new_workspace
+            .update(cx, |workspace, cx| {
+                workspace.project().read(cx).wait_for_initial_scan(cx)
+            })
+            .await;
+
+        new_workspace
+            .update(cx, |workspace, cx| {
+                let repos = workspace
+                    .project()
+                    .read(cx)
+                    .repositories(cx)
+                    .values()
+                    .cloned()
+                    .collect::<Vec<_>>();
+
+                let tasks = repos
+                    .into_iter()
+                    .map(|repo| repo.update(cx, |repo, _| repo.barrier()));
+                futures::future::join_all(tasks)
+            })
+            .await;
 
         let initial_content = AgentInitialContent::ContentBlock {
             blocks: content,

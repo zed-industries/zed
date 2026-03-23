@@ -1499,21 +1499,35 @@ impl Sidebar {
                         },
                     );
 
-                    let workspace_for_remove = workspace_for_remove.clone();
-                    let multi_workspace_for_remove = multi_workspace.clone();
-                    menu.separator()
-                        .entry("Remove Project", None, move |window, cx| {
-                            if let Some(mw) = multi_workspace_for_remove.upgrade() {
-                                let ws = workspace_for_remove.clone();
-                                mw.update(cx, |multi_workspace, cx| {
-                                    if let Some(index) =
-                                        multi_workspace.workspaces().iter().position(|w| *w == ws)
-                                    {
-                                        multi_workspace.remove_workspace(index, window, cx);
-                                    }
-                                });
-                            }
-                        })
+                    let workspace_count = multi_workspace
+                        .upgrade()
+                        .map_or(0, |mw| mw.read(cx).workspaces().len());
+                    if workspace_count > 1 {
+                        let workspace_for_move = workspace.clone();
+                        let multi_workspace_for_move = multi_workspace.clone();
+                        menu.entry(
+                            "Move to New Window",
+                            Some(Box::new(
+                                zed_actions::agents_sidebar::MoveWorkspaceToNewWindow,
+                            )),
+                            move |window, cx| {
+                                if let Some(mw) = multi_workspace_for_move.upgrade() {
+                                    mw.update(cx, |multi_workspace, cx| {
+                                        if let Some(index) = multi_workspace
+                                            .workspaces()
+                                            .iter()
+                                            .position(|w| *w == workspace_for_move)
+                                        {
+                                            multi_workspace
+                                                .move_workspace_to_new_window(index, window, cx);
+                                        }
+                                    });
+                                }
+                            },
+                        )
+                    } else {
+                        menu
+                    }
                 });
 
                 let this = this.clone();
@@ -2496,15 +2510,6 @@ impl Sidebar {
                         }),
                 )
             })
-            // MultiWorkspace:
-            // zed
-            // zed {olivetti}
-            // USER QUITS APP
-            // USER TURNS ON APP
-            // Multiworkspace:
-            // zed
-            // (never deserializes the olivetti workspace)
-            
             .when(is_hovered && !is_running, |this| {
                 this.action_slot(
                     IconButton::new("archive-thread", IconName::Archive)
