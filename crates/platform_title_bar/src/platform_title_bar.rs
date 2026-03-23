@@ -218,8 +218,8 @@ impl Render for PlatformTitleBar {
                     PlatformStyle::Linux => {
                         if matches!(decorations, Decorations::Client { .. }) {
                             let mut result = title_bar;
-                            if let Some(button_layout) =
-                                button_layout.filter(|button_layout| button_layout.right[0].is_some())
+                            if let Some(button_layout) = button_layout
+                                .filter(|button_layout| button_layout.right[0].is_some())
                             {
                                 result = result.child(platform_linux::LinuxWindowControls::new(
                                     "right-window-controls",
