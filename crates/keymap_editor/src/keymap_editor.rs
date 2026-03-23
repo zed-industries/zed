@@ -731,11 +731,8 @@ impl KeymapEditor {
                 SearchMode::Normal => {}
             }
 
-            // Filter out suppression bindings by default. These are internal
-            // markers created when a user removes a default binding, not real
-            // bindings the user should usually see.
             if !this.show_no_action_bindings {
-                matches.retain(|item| !this.keybindings[item.candidate_id].is_suppression());
+                matches.retain(|item| !this.keybindings[item.candidate_id].is_no_action());
             }
 
             if action_query.is_empty() {
@@ -784,24 +781,19 @@ impl KeymapEditor {
 
         let mut processed_bindings = Vec::new();
         let mut string_match_candidates = Vec::new();
-        let action_names_by_name = HashMap::from_iter(
-            cx.all_action_names()
-                .iter()
-                .copied()
-                .map(|action_name| (action_name, action_name)),
-        );
 
         for key_binding in key_bindings {
+            if gpui::is_unbind(key_binding.action()) {
+                continue;
+            }
+
             let source = key_binding
                 .meta()
                 .map(KeybindSource::from_meta)
                 .unwrap_or(KeybindSource::Unknown);
 
             let keystroke_text = ui::text_for_keybinding_keystrokes(key_binding.keystrokes(), cx);
-            let is_suppression = {
-                let action = key_binding.action();
-                gpui::is_no_action(action) || gpui::is_unbind(action)
-            };
+            let is_no_action = gpui::is_no_action(key_binding.action());
             let binding = KeyBinding::new(key_binding, source);
 
             let context = key_binding
@@ -814,12 +806,7 @@ impl KeymapEditor {
                 })
                 .unwrap_or(KeybindContextString::Global);
 
-            let action_name = key_binding
-                .action()
-                .as_any()
-                .downcast_ref::<gpui::Unbind>()
-                .and_then(|unbind| action_names_by_name.get(unbind.0.as_ref()).copied())
-                .unwrap_or_else(|| key_binding.action().name());
+            let action_name = key_binding.action().name();
             unmapped_action_names.remove(&action_name);
 
             let action_arguments = key_binding
@@ -841,7 +828,7 @@ impl KeymapEditor {
                 binding,
                 context,
                 source,
-                is_suppression,
+                is_no_action,
                 action_information,
             ));
             string_match_candidates.push(string_match_candidate);
@@ -1693,7 +1680,7 @@ struct KeybindInformation {
     binding: KeyBinding,
     context: KeybindContextString,
     source: KeybindSource,
-    is_suppression: bool,
+    is_no_action: bool,
 }
 
 impl KeybindInformation {
@@ -1744,7 +1731,7 @@ impl ProcessedBinding {
         binding: KeyBinding,
         context: KeybindContextString,
         source: KeybindSource,
-        is_suppression: bool,
+        is_no_action: bool,
         action_information: ActionInformation,
     ) -> Self {
         Self::Mapped(
@@ -1753,7 +1740,7 @@ impl ProcessedBinding {
                 binding,
                 context,
                 source,
-                is_suppression,
+                is_no_action,
             },
             action_information,
         )
@@ -1792,9 +1779,9 @@ impl ProcessedBinding {
         self.keybind_information().map(|keybind| &keybind.binding)
     }
 
-    fn is_suppression(&self) -> bool {
+    fn is_no_action(&self) -> bool {
         self.keybind_information()
-            .is_some_and(|keybind| keybind.is_suppression)
+            .is_some_and(|keybind| keybind.is_no_action)
     }
 
     fn keystroke_text(&self) -> Option<&SharedString> {
