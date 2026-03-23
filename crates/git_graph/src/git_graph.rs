@@ -1854,13 +1854,45 @@ impl GitGraph {
                                         -COMMIT_CIRCLE_RADIUS - COMMIT_CIRCLE_STROKE_WIDTH
                                     };
 
-                                    let control = match curve_kind {
+                                    match curve_kind {
                                         CurveKind::Checkout => {
                                             if is_last {
                                                 to_column -= column_shift;
                                             }
                                             builder.move_to(point(current_column, current_row));
-                                            point(current_column, to_row)
+
+                                            if (to_column - current_column).abs() > LANE_WIDTH {
+                                                // Multi-lane checkout: straight down, small
+                                                // curve turn, then straight horizontal.
+                                                if (to_row - current_row).abs() > row_height {
+                                                    let vertical_end =
+                                                        point(current_column, to_row - row_height);
+                                                    builder.line_to(vertical_end);
+                                                    builder.move_to(vertical_end);
+                                                }
+
+                                                let lane_shift = if going_right {
+                                                    LANE_WIDTH
+                                                } else {
+                                                    -LANE_WIDTH
+                                                };
+                                                let curve_end =
+                                                    point(current_column + lane_shift, to_row);
+                                                let curve_control = point(current_column, to_row);
+                                                builder.curve_to(curve_end, curve_control);
+                                                builder.move_to(curve_end);
+
+                                                builder.line_to(point(to_column, to_row));
+                                            } else {
+                                                if (to_row - current_row).abs() > row_height {
+                                                    let start_curve =
+                                                        point(current_column, to_row - row_height);
+                                                    builder.line_to(start_curve);
+                                                    builder.move_to(start_curve);
+                                                }
+                                                let control = point(current_column, to_row);
+                                                builder.curve_to(point(to_column, to_row), control);
+                                            }
                                         }
                                         CurveKind::Merge => {
                                             if is_last {
@@ -1870,37 +1902,25 @@ impl GitGraph {
                                                 current_column + column_shift,
                                                 current_row - COMMIT_CIRCLE_RADIUS,
                                             ));
-                                            point(to_column, current_row)
+
+                                            if (to_column - current_column).abs() > LANE_WIDTH {
+                                                let column_shift = if going_right {
+                                                    LANE_WIDTH
+                                                } else {
+                                                    -LANE_WIDTH
+                                                };
+                                                let start_curve = point(
+                                                    current_column + column_shift,
+                                                    current_row - COMMIT_CIRCLE_RADIUS,
+                                                );
+                                                builder.line_to(start_curve);
+                                                builder.move_to(start_curve);
+                                            }
+
+                                            let control = point(to_column, current_row);
+                                            builder.curve_to(point(to_column, to_row), control);
                                         }
-                                    };
-
-                                    match curve_kind {
-                                        CurveKind::Checkout
-                                            if (to_row - current_row).abs() > row_height =>
-                                        {
-                                            let start_curve =
-                                                point(current_column, current_row + row_height);
-                                            builder.line_to(start_curve);
-                                            builder.move_to(start_curve);
-                                        }
-                                        CurveKind::Merge
-                                            if (to_column - current_column).abs() > LANE_WIDTH =>
-                                        {
-                                            let column_shift =
-                                                if going_right { LANE_WIDTH } else { -LANE_WIDTH };
-
-                                            let start_curve = point(
-                                                current_column + column_shift,
-                                                current_row - COMMIT_CIRCLE_RADIUS,
-                                            );
-
-                                            builder.line_to(start_curve);
-                                            builder.move_to(start_curve);
-                                        }
-                                        _ => {}
-                                    };
-
-                                    builder.curve_to(point(to_column, to_row), control);
+                                    }
                                     current_row = to_row;
                                     current_column = to_column;
                                     builder.move_to(point(current_column, current_row));
