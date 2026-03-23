@@ -1493,35 +1493,35 @@ pub fn rust_lang() -> Arc<Language> {
     )
     .with_queries(LanguageQueries {
         outline: Some(Cow::from(include_str!(
-            "../../languages/src/rust/outline.scm"
+            "../../grammars/src/rust/outline.scm"
         ))),
         indents: Some(Cow::from(include_str!(
-            "../../languages/src/rust/indents.scm"
+            "../../grammars/src/rust/indents.scm"
         ))),
         brackets: Some(Cow::from(include_str!(
-            "../../languages/src/rust/brackets.scm"
+            "../../grammars/src/rust/brackets.scm"
         ))),
         text_objects: Some(Cow::from(include_str!(
-            "../../languages/src/rust/textobjects.scm"
+            "../../grammars/src/rust/textobjects.scm"
         ))),
         highlights: Some(Cow::from(include_str!(
-            "../../languages/src/rust/highlights.scm"
+            "../../grammars/src/rust/highlights.scm"
         ))),
         injections: Some(Cow::from(include_str!(
-            "../../languages/src/rust/injections.scm"
+            "../../grammars/src/rust/injections.scm"
         ))),
         overrides: Some(Cow::from(include_str!(
-            "../../languages/src/rust/overrides.scm"
+            "../../grammars/src/rust/overrides.scm"
         ))),
         redactions: None,
         runnables: Some(Cow::from(include_str!(
-            "../../languages/src/rust/runnables.scm"
+            "../../grammars/src/rust/runnables.scm"
         ))),
         debugger: Some(Cow::from(include_str!(
-            "../../languages/src/rust/debugger.scm"
+            "../../grammars/src/rust/debugger.scm"
         ))),
         imports: Some(Cow::from(include_str!(
-            "../../languages/src/rust/imports.scm"
+            "../../grammars/src/rust/imports.scm"
         ))),
     })
     .expect("Could not parse queries");
@@ -1546,19 +1546,19 @@ pub fn markdown_lang() -> Arc<Language> {
     )
     .with_queries(LanguageQueries {
         brackets: Some(Cow::from(include_str!(
-            "../../languages/src/markdown/brackets.scm"
+            "../../grammars/src/markdown/brackets.scm"
         ))),
         injections: Some(Cow::from(include_str!(
-            "../../languages/src/markdown/injections.scm"
+            "../../grammars/src/markdown/injections.scm"
         ))),
         highlights: Some(Cow::from(include_str!(
-            "../../languages/src/markdown/highlights.scm"
+            "../../grammars/src/markdown/highlights.scm"
         ))),
         indents: Some(Cow::from(include_str!(
-            "../../languages/src/markdown/indents.scm"
+            "../../grammars/src/markdown/indents.scm"
         ))),
         outline: Some(Cow::from(include_str!(
-            "../../languages/src/markdown/outline.scm"
+            "../../grammars/src/markdown/outline.scm"
         ))),
         ..LanguageQueries::default()
     })
