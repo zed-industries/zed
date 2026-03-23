@@ -404,17 +404,17 @@ pub fn init(cx: &mut App) {
                         });
                     },
                 )
-                .register_action(|workspace, action: &StartThreadIn, _window, cx| {
+                .register_action(|workspace, action: &StartThreadIn, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         panel.update(cx, |panel, cx| {
-                            panel.set_start_thread_in(action, cx);
+                            panel.set_start_thread_in(action, window, cx);
                         });
                     }
                 })
-                .register_action(|workspace, _: &CycleStartThreadIn, _window, cx| {
+                .register_action(|workspace, _: &CycleStartThreadIn, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         panel.update(cx, |panel, cx| {
-                            panel.cycle_start_thread_in(cx);
+                            panel.cycle_start_thread_in(window, cx);
                         });
                     }
                 });
@@ -2251,7 +2251,12 @@ impl AgentPanel {
         &self.start_thread_in
     }
 
-    fn set_start_thread_in(&mut self, action: &StartThreadIn, cx: &mut Context<Self>) {
+    fn set_start_thread_in(
+        &mut self,
+        action: &StartThreadIn,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if matches!(action, StartThreadIn::NewWorktree) && !cx.has_flag::<AgentV2FeatureFlag>() {
             return;
         }
@@ -2273,16 +2278,19 @@ impl AgentPanel {
             }
         };
         self.start_thread_in = new_target;
+        if let Some(thread) = self.active_thread_view(cx) {
+            thread.update(cx, |thread, cx| thread.focus_handle(cx).focus(window, cx));
+        }
         self.serialize(cx);
         cx.notify();
     }
 
-    fn cycle_start_thread_in(&mut self, cx: &mut Context<Self>) {
+    fn cycle_start_thread_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let next = match self.start_thread_in {
             StartThreadIn::LocalProject => StartThreadIn::NewWorktree,
             StartThreadIn::NewWorktree => StartThreadIn::LocalProject,
         };
-        self.set_start_thread_in(&next, cx);
+        self.set_start_thread_in(&next, window, cx);
     }
 
     fn reset_start_thread_in_to_default(&mut self, cx: &mut Context<Self>) {
@@ -5958,8 +5966,8 @@ mod tests {
         });
 
         // Change thread target to NewWorktree.
-        panel.update(cx, |panel, cx| {
-            panel.set_start_thread_in(&StartThreadIn::NewWorktree, cx);
+        panel.update_in(cx, |panel, window, cx| {
+            panel.set_start_thread_in(&StartThreadIn::NewWorktree, window, cx);
         });
 
         panel.read_with(cx, |panel, _cx| {
@@ -6181,11 +6189,11 @@ mod tests {
         // Set the selected agent to Codex (a custom agent) and start_thread_in
         // to NewWorktree. We do this AFTER opening the thread because
         // open_external_thread_with_server overrides selected_agent_type.
-        panel.update(cx, |panel, cx| {
+        panel.update_in(cx, |panel, window, cx| {
             panel.selected_agent_type = AgentType::Custom {
                 id: CODEX_ID.into(),
             };
-            panel.set_start_thread_in(&StartThreadIn::NewWorktree, cx);
+            panel.set_start_thread_in(&StartThreadIn::NewWorktree, window, cx);
         });
 
         // Verify the panel has the Codex agent selected.
