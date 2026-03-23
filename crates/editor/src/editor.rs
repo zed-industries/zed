@@ -131,10 +131,10 @@ use itertools::{Either, Itertools};
 use language::{
     AutoindentMode, BlockCommentConfig, BracketMatch, BracketPair, Buffer, BufferRow,
     BufferSnapshot, Capability, CharClassifier, CharKind, CharScopeContext, CodeLabel, CursorShape,
-    DiagnosticEntryRef, DiffOptions, EditPredictionsMode, EditPreview, HighlightIdExt as _,
-    HighlightedText, IndentKind, IndentSize, Language, LanguageName, LanguageRegistry,
-    LanguageScope, LocalFile, OffsetRangeExt, OutlineItem, Point, Selection, SelectionGoal,
-    TextObject, TransactionId, TreeSitterOptions, WordsQuery,
+    DiagnosticEntryRef, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText, IndentKind,
+    IndentSize, Language, LanguageName, LanguageRegistry, LanguageScope, LocalFile, OffsetRangeExt,
+    OutlineItem, Point, Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
+    WordsQuery, highlight_name, highlight_style,
     language_settings::{
         self, LanguageSettings, LspInsertMode, RewrapBehavior, WordsCompletionMode,
         all_language_settings, language_settings,
@@ -19147,7 +19147,7 @@ impl Editor {
                                 move |cx: &mut BlockContext| {
                                     let mut text_style = cx.editor_style.text.clone();
                                     if let Some(highlight_style) = old_highlight_id
-                                        .and_then(|h| h.style(&cx.editor_style.syntax))
+                                        .and_then(|h| highlight_style(h, &cx.editor_style.syntax))
                                     {
                                         text_style = text_style.highlight(highlight_style);
                                     }
@@ -25027,7 +25027,7 @@ impl Editor {
         for chunk in chunks {
             let highlight = chunk
                 .syntax_highlight_id
-                .and_then(|id| id.name(&style.syntax));
+                .and_then(|id| highlight_name(id, &style.syntax));
             let mut chunk_lines = chunk.text.split('\n').peekable();
             while let Some(text) = chunk_lines.next() {
                 let mut merged_with_last_token = false;
@@ -28852,7 +28852,7 @@ pub fn styled_runs_for_code_label<'a>(
                     background_color: Some(local_player.selection),
                     ..Default::default()
                 }
-            } else if let Some(style) = highlight_id.style(syntax_theme) {
+            } else if let Some(style) = highlight_style(*highlight_id, syntax_theme) {
                 style
             } else {
                 return Default::default();

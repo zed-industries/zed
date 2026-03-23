@@ -6,7 +6,7 @@ use futures::FutureExt as _;
 use gpui::EdgesRefinement;
 use gpui::HitboxBehavior;
 use gpui::UnderlineStyle;
-use language::{HighlightIdExt, LanguageName};
+use language::{LanguageName, highlight_style};
 use log::Level;
 pub use path_range::{LineCol, PathWithRange};
 use settings::Settings as _;
@@ -1904,7 +1904,7 @@ impl MarkdownElementBuilder {
                 }
 
                 let mut run_style = self.text_style();
-                if let Some(highlight) = highlight_id.style(&self.syntax_theme) {
+                if let Some(highlight) = highlight_style(highlight_id, &self.syntax_theme) {
                     run_style = run_style.highlight(highlight);
                 }
                 self.pending_line.runs.push(run_style.to_run(range.len()));

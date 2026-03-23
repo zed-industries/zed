@@ -23,7 +23,7 @@ use gpui::{
     ScrollWheelEvent, Stateful, StyledText, Subscription, Task, TextStyleRefinement, WeakEntity,
     actions, anchored, deferred, div,
 };
-use language::{HighlightIdExt as _, Language, LanguageConfig, ToOffset as _};
+use language::{Language, LanguageConfig, ToOffset as _, highlight_style};
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{CompletionDisplayOptions, Project};
 use settings::{
@@ -2315,7 +2315,7 @@ impl RenderOnce for SyntaxHighlightedText {
             }
 
             let mut run_style = text_style.clone();
-            if let Some(highlight_style) = highlight_id.style(syntax_theme) {
+            if let Some(highlight_style) = highlight_style(highlight_id, syntax_theme) {
                 run_style = run_style.highlight(highlight_style);
             }
             // add the highlighted range

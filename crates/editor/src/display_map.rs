@@ -98,7 +98,7 @@ use gpui::{
     WeakEntity,
 };
 use language::{
-    HighlightIdExt as _, Point, Subscription as BufferSubscription,
+    Point, Subscription as BufferSubscription, highlight_style,
     language_settings::language_settings,
 };
 use multi_buffer::{
@@ -1909,7 +1909,7 @@ impl DisplaySnapshot {
         .flat_map(|chunk| {
             let syntax_highlight_style = chunk
                 .syntax_highlight_id
-                .and_then(|id| id.style(&editor_style.syntax));
+                .and_then(|id| highlight_style(id, &editor_style.syntax));
 
             let chunk_highlight = chunk.highlight_style.map(|chunk_highlight| {
                 HighlightStyle {
@@ -2003,7 +2003,7 @@ impl DisplaySnapshot {
 
             let syntax_style = chunk
                 .syntax_highlight_id
-                .and_then(|id| id.style(syntax_theme));
+                .and_then(|id| highlight_style(id, syntax_theme));
             let overlay_style = chunk.highlight_style;
 
             let combined = match (syntax_style, overlay_style) {
@@ -3995,7 +3995,7 @@ pub mod tests {
         for chunk in snapshot.chunks(rows, true, HighlightStyles::default()) {
             let syntax_color = chunk
                 .syntax_highlight_id
-                .and_then(|id| id.style(theme)?.color);
+                .and_then(|id| highlight_style(id, theme)?.color);
             let highlight_color = chunk.highlight_style.and_then(|style| style.color);
             if let Some((last_chunk, last_syntax_color, last_highlight_color)) = chunks.last_mut()
                 && syntax_color == *last_syntax_color

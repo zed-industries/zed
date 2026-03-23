@@ -8,7 +8,7 @@ use gpui::{
     MouseDownEvent, MouseMoveEvent, ParentElement, Render, ScrollStrategy, SharedString, Styled,
     Task, UniformListScrollHandle, WeakEntity, Window, actions, div, rems, uniform_list,
 };
-use language::{HighlightIdExt, ToOffset};
+use language::{ToOffset, highlight_name, highlight_style};
 use menu::{SelectNext, SelectPrevious};
 use std::{mem, ops::Range};
 use theme::ActiveTheme;
@@ -417,12 +417,11 @@ impl HighlightsTreeView {
 
             for capture in captures {
                 let highlight_id = highlight_maps[capture.grammar_index].get(capture.index);
-                let Some(style) = highlight_id.style(&syntax_theme) else {
+                let Some(style) = highlight_style(highlight_id, &syntax_theme) else {
                     continue;
                 };
 
-                let theme_key = highlight_id
-                    .name(&syntax_theme)
+                let theme_key = highlight_name(highlight_id, &syntax_theme)
                     .map(|theme_key| SharedString::from(theme_key.to_string()));
 
                 let capture_name = grammars[capture.grammar_index]
