@@ -5425,7 +5425,10 @@ impl ProjectPanel {
                 false
             }
         };
-        let git_indicator = git_status_indicator(details.git_status);
+        let git_indicator = settings
+            .git_status_indicator
+            .then(|| git_status_indicator(details.git_status))
+            .flatten();
 
         let id: ElementId = if is_sticky {
             SharedString::from(format!("project_panel_sticky_item_{}", entry_id.to_usize())).into()
@@ -5770,7 +5773,9 @@ impl ProjectPanel {
                     })
                     .selectable(false)
                     .when(
-                        canonical_path.is_some() || diagnostic_count.is_some() || git_indicator.is_some(),
+                        canonical_path.is_some()
+                            || diagnostic_count.is_some()
+                            || git_indicator.is_some(),
                         |this| {
                             let symlink_element = canonical_path.map(|path| {
                                 div()
@@ -5815,9 +5820,7 @@ impl ProjectPanel {
                                     })
                                     .when_some(git_indicator, |this, (label, color)| {
                                         this.child(
-                                            Label::new(label)
-                                                .size(LabelSize::Small)
-                                                .color(color)
+                                            Label::new(label).size(LabelSize::Small).color(color),
                                         )
                                     })
                                     .when_some(symlink_element, |this, el| this.child(el))

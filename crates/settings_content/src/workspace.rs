@@ -743,6 +743,10 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub diagnostic_badges: Option<bool>,
+    /// Whether to show a git status indicator next to file names in the project panel.
+    ///
+    /// Default: false
+    pub git_status_indicator: Option<bool>,
 }
 
 #[derive(

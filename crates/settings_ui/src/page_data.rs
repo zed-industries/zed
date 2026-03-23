@@ -4588,6 +4588,28 @@ fn panels_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
+                title: "Git Status Indicator",
+                description: "Show a git status indicator next to file names in the project panel.",
+                field: Box::new(SettingField {
+                    json_path: Some("project_panel.git_status_indicator"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .git_status_indicator
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .git_status_indicator = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
                 title: "Sticky Scroll",
                 description: "Whether to stick parent directories at top of the project panel.",
                 field: Box::new(SettingField {
