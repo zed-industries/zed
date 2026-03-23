@@ -30,7 +30,7 @@ use crate::{
     text_thread_history::{TextThreadHistory, TextThreadHistoryEvent},
 };
 use crate::{
-    ExternalAgent, ExternalAgentInitialContent, NewExternalAgentThread,
+    ExternalAgent, ExternalAgentInitialContent, LaunchAcpAgent, NewExternalAgentThread,
     NewNativeAgentThreadFromSummary,
 };
 use agent_settings::AgentSettings;
@@ -154,6 +154,22 @@ pub fn init(cx: &mut App) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
                             panel.external_thread(action.agent.clone(), None, None, window, cx)
+                        });
+                    }
+                })
+                .register_action(|workspace, action: &LaunchAcpAgent, window, cx| {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        workspace.focus_panel::<AgentPanel>(window, cx);
+                        panel.update(cx, |panel, cx| {
+                            panel.external_thread(
+                                Some(crate::ExternalAgent::Custom {
+                                    name: action.agent_name.clone(),
+                                }),
+                                None,
+                                None,
+                                window,
+                                cx,
+                            )
                         });
                     }
                 })

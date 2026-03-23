@@ -232,12 +232,12 @@ Add concurrent agent tabs from
 - `agent::CloseActiveThreadTabOrDock`
 - `agent::ActivateNextTab` / `agent::ActivatePreviousTab`
 - `agent::TogglePlan` to toggle the plan of the current thread
+- `agent::LaunchAcpAgent` which takes an external agent name and can be bound like this:
+  - `"cmd-t": ["agent::LaunchAcpAgent", { "agent_name": "junie" }]`
 
 These are missing in latest `dima` branch (I had them implemented at same point):
 
 - `agent::DismissErrorNotification` / `agent::CopyErrorNotification`
-- `agent::LaunchAgent` which takes an external agent name and can be bound like this:
-  - `"cmd-t": ["agent::LaunchAgent", { "agent_name": "qwen" }]`
 
 #### Other (probably missing on latest `dima` branch)
 

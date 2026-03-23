@@ -201,6 +201,15 @@ pub struct NewExternalAgentThread {
     pub agent: Option<ExternalAgent>,
 }
 
+/// Launches a new tab with the specified ACP agent.
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = agent)]
+#[serde(deny_unknown_fields)]
+pub struct LaunchAcpAgent {
+    /// The name of the ACP agent to launch.
+    pub agent_name: SharedString,
+}
+
 #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
 #[action(namespace = agent)]
 #[serde(deny_unknown_fields)]
