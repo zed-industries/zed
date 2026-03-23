@@ -321,3 +321,33 @@ Helix-specific commits on main (oldest first):
 | `0a78bf8` | **Fix: keep NativeAgent entity alive during load_session** |
 | `98ec442` | **Fix: strip '## Assistant' heading from WebSocket-synced messages** |
 | `72e2952` | **Fix: remove duplicate WebSocket event sends from thread_view.rs** |
+| `adc592c` | Fix: remove final summary message_added causing duplicate responses |
+| `3193353` | Fix: make thread event subscriptions persistent for Zed→Helix sync |
+| `486a9d6` | Perf: throttle streaming EntryUpdated events (100ms) |
+| `e779937` | Feat: Go-based E2E test server for WebSocket sync protocol |
+| `818cf94` | Fix: adapt external_websocket_sync to upstream connect() API change |
+| `276da28` | Fix: wire up auto_open_panel setting to AgentPanel starts_open() |
+| `2f74e89` | Fix: disable migration banner in Helix builds |
+| `01fbdfc` | Fix: prevent keyboard focus stealing when following agent |
+| `87632d0` | Fix: thread entity brain split after container restart |
+| `3e4d7d7` | Fix: wait for MCP tools before sending first WebSocket message |
+| `d511c3e` | Fix: auto-follow mode and split-brain for external WebSocket sessions |
+| `182cae0` | Fix: missing message_completed in follow-up subscription |
+| `29f10aa` | Emit MessageCompleted from Stopped event for all turn sources |
+| `91c281f` | Extract ensure_thread_subscription to fix missing event handlers |
+| `c33ee0a` | Add entry_type field to MessageAdded sync event |
+| `4053ccd` | Flush stale pending entries when different entry starts streaming |
+| `4e204c4` | Handle ToolCall in NewEntry event (not just EntryUpdated) |
+| `bfe84a2` | Send structured tool_name and tool_status in message_added events |
+| `e38aad1` | Clear persistent subscription on unregister to fix E2E timeout |
+| `8b033a4` | Test: add Stopped emission and mid-stream interrupt E2E tests |
+| `d9fb0a0` | Fix: make thread event subscriptions persistent |
+| `8881750` | Add diagnostic logs for auto-follow workspace.follow() calls |
+| `95ce56d` | Fix: auto-follow mode split-brain for external WebSocket sessions |
+| `fd97448` | Fix: thread hang from dropped GPUI Task in rapid cancel chain |
+| `2fbc0966` | Fix: send user_created_thread for empty threads too |
+| `1d5a75a` | Test: add Phase 10 E2E test for user_created_thread multi-thread sync |
+| `846c74d` | Fix: remove hardcoded phase count from E2E test output |
+| `28f9917` | Portingguide: document branch naming convention for upstream merges |
+| `1f96cb8` | **Merge upstream/main into feature/001617-merge-latest-zed** |
+| `57665e6` | **Fix Helix cfg-gated code for ACP consolidation renames** |
