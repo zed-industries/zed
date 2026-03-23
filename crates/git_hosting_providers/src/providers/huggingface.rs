@@ -247,11 +247,11 @@ mod tests {
             BuildPermalinkParams::new(
                 "80f73ce5ee059377ce0662ec5c45b592c3025ae5",
                 &repo_path("config.json"),
-                Some(23..47),
+                Some(13..18),
             ),
         );
 
-        let expected_url = "https://huggingface.co/zed-industries/zeta/blob/80f73ce5ee059377ce0662ec5c45b592c3025ae5/config.json#L24-L48";
+        let expected_url = "https://huggingface.co/zed-industries/zeta/blob/80f73ce5ee059377ce0662ec5c45b592c3025ae5/config.json#L14-L19";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
