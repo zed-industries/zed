@@ -975,16 +975,11 @@ impl GitPanel {
         let mut dispatch_context = KeyContext::new_with_defaults();
         dispatch_context.add("GitPanel");
 
-        if window
-            .focused(cx)
-            .is_some_and(|focused| self.focus_handle == focused)
-        {
-            dispatch_context.add("menu");
-            dispatch_context.add("ChangesList");
-        }
-
         if self.commit_editor.read(cx).is_focused(window) {
             dispatch_context.add("CommitEditor");
+        } else if self.focus_handle.contains_focused(window, cx) {
+            dispatch_context.add("menu");
+            dispatch_context.add("ChangesList");
         }
 
         dispatch_context
