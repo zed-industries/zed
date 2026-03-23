@@ -99,7 +99,14 @@ pub fn match_fixed_path_set(
     let query = query.chars().collect::<Vec<_>>();
     let query_char_bag = CharBag::from(&lowercase_query[..]);
 
-    let mut matcher = Matcher::new(&query, &lowercase_query, query_char_bag, smart_case, true);
+    let mut matcher = Matcher::new(
+        &query,
+        &lowercase_query,
+        query_char_bag,
+        smart_case,
+        true,
+        path_style,
+    );
 
     let mut results = Vec::with_capacity(candidates.len());
     let (path_prefix, path_prefix_chars, lowercase_prefix) = match worktree_root_name {
@@ -191,8 +198,14 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
                 scope.spawn(async move {
                     let segment_start = segment_idx * segment_size;
                     let segment_end = segment_start + segment_size;
-                    let mut matcher =
-                        Matcher::new(query, lowercase_query, query_char_bag, smart_case, true);
+                    let mut matcher = Matcher::new(
+                        query,
+                        lowercase_query,
+                        query_char_bag,
+                        smart_case,
+                        true,
+                        path_style,
+                    );
 
                     let mut tree_start = 0;
                     for candidate_set in candidate_sets {

@@ -650,6 +650,7 @@ impl ConsoleQueryBarCompletionProvider {
                 LIMIT,
                 &Default::default(),
                 cx.background_executor().clone(),
+                None,
             )
             .await;
 

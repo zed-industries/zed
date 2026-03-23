@@ -17,8 +17,8 @@ use ui::{
     Button, Divider, HighlightedLabel, IconButton, KeyBinding, ListItem, ListItemSpacing, Tooltip,
     prelude::*,
 };
-use util::ResultExt as _;
 use util::paths::PathExt;
+use util::{ResultExt as _, paths::PathStyle};
 use workspace::{
     ModalView, MultiWorkspace, Workspace, dock::DockPosition, notifications::DetachAndPromptErr,
 };
@@ -509,6 +509,7 @@ impl PickerDelegate for WorktreePickerDelegate {
                 10000,
                 &Default::default(),
                 executor,
+                Some(PathStyle::local()),
             )
             .await
         });

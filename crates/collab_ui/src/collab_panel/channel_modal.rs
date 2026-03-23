@@ -305,6 +305,7 @@ impl PickerDelegate for ChannelModalDelegate {
                         usize::MAX,
                         &Default::default(),
                         cx.background_executor().clone(),
+                        None,
                     ));
 
                     cx.spawn_in(window, async move |picker, cx| {

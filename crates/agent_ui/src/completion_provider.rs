@@ -850,6 +850,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 100,
                 &Arc::new(AtomicBool::default()),
                 cx.background_executor().clone(),
+                None,
             )
             .await;
 
@@ -1027,6 +1028,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                         100,
                         &Arc::new(AtomicBool::default()),
                         executor,
+                        None,
                     )
                     .await;
 
@@ -1047,6 +1049,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                             1,
                             &Arc::new(AtomicBool::default()),
                             cx.background_executor().clone(),
+                            None,
                         )
                         .await;
 
@@ -1977,6 +1980,7 @@ pub(crate) fn search_symbols(
             MAX_MATCHES,
             &cancellation_flag,
             cx.background_executor().clone(),
+            None,
         ));
         let mut external_matches = cx.foreground_executor().block_on(fuzzy::match_strings(
             &external_match_candidates,
@@ -1986,6 +1990,7 @@ pub(crate) fn search_symbols(
             MAX_MATCHES - visible_matches.len().min(MAX_MATCHES),
             &cancellation_flag,
             cx.background_executor().clone(),
+            None,
         ));
         let sort_key_for_match = |mat: &StringMatch| {
             let symbol = &symbols[mat.candidate_id];
@@ -2071,6 +2076,7 @@ async fn filter_sessions(
         100,
         &cancellation_flag,
         executor,
+        None,
     )
     .await;
 

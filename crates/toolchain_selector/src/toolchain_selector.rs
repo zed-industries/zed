@@ -1021,6 +1021,7 @@ impl PickerDelegate for ToolchainSelectorDelegate {
                     100,
                     &Default::default(),
                     background,
+                    None,
                 )
                 .await
             };

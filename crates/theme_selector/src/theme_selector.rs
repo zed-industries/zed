@@ -447,6 +447,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
                     100,
                     &Default::default(),
                     background,
+                    None,
                 )
                 .await
             };

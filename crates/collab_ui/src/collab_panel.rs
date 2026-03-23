@@ -616,6 +616,7 @@ impl CollabPanel {
                         usize::MAX,
                         &Default::default(),
                         executor.clone(),
+                        None,
                     ));
                     if !matches.is_empty() {
                         let user_id = user.id;
@@ -660,6 +661,7 @@ impl CollabPanel {
                     usize::MAX,
                     &Default::default(),
                     executor.clone(),
+                    None,
                 ));
                 matches.sort_by(|a, b| {
                     let a_is_guest = room.role_for_user(a.candidate_id as u64)
@@ -712,6 +714,7 @@ impl CollabPanel {
                     usize::MAX,
                     &Default::default(),
                     executor.clone(),
+                    None,
                 ));
                 self.entries
                     .extend(matches.iter().map(|mat| ListEntry::CallParticipant {
@@ -751,6 +754,7 @@ impl CollabPanel {
                 usize::MAX,
                 &Default::default(),
                 executor.clone(),
+                None,
             ));
 
             if !matches.is_empty() || query.is_empty() {
@@ -797,6 +801,7 @@ impl CollabPanel {
                 usize::MAX,
                 &Default::default(),
                 executor.clone(),
+                None,
             ));
 
             let matches_by_id: HashMap<_, _> = matches
@@ -911,6 +916,7 @@ impl CollabPanel {
                 usize::MAX,
                 &Default::default(),
                 executor.clone(),
+                None,
             ));
             request_entries.extend(
                 matches
@@ -947,6 +953,7 @@ impl CollabPanel {
                 usize::MAX,
                 &Default::default(),
                 executor.clone(),
+                None,
             ));
             request_entries.extend(
                 matches
@@ -972,6 +979,7 @@ impl CollabPanel {
                 usize::MAX,
                 &Default::default(),
                 executor.clone(),
+                None,
             ));
             request_entries.extend(
                 matches
@@ -1006,6 +1014,7 @@ impl CollabPanel {
                 usize::MAX,
                 &Default::default(),
                 executor,
+                None,
             ));
 
             let (online_contacts, offline_contacts) = matches

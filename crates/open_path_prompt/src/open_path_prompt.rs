@@ -313,6 +313,7 @@ impl PickerDelegate for OpenPathDelegate {
         let hidden_entries = self.hidden_entries;
         let parent_path_is_root = self.prompt_root == dir;
         let current_dir = self.current_dir();
+        let path_style = self.path_style;
         cx.spawn_in(window, async move |this, cx| {
             if let Some(query) = query {
                 let paths = query.await;
@@ -507,6 +508,7 @@ impl PickerDelegate for OpenPathDelegate {
                 100,
                 &cancel_flag,
                 cx.background_executor().clone(),
+                Some(path_style),
             )
             .await;
             if cancel_flag.load(atomic::Ordering::Acquire) {
