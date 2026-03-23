@@ -6,7 +6,6 @@ use anyhow::{Context as _, Result};
 use client::{ErrorCode, ErrorExt};
 use collections::{BTreeSet, HashMap, hash_map};
 use command_palette_hooks::CommandPaletteFilter;
-use db::kvp::KeyValueStore;
 use editor::{
     Editor, EditorEvent, MultiBufferOffset,
     items::{
@@ -42,7 +41,7 @@ use project::{
 use project_panel_settings::ProjectPanelSettings;
 use rayon::slice::ParallelSliceMut;
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use settings::{
     DockSide, ProjectPanelEntrySpacing, Settings, SettingsStore, ShowDiagnostics, ShowIndentGuides,
     update_settings_file,
@@ -148,8 +147,6 @@ pub struct ProjectPanel {
     clipboard: Option<ClipboardEntry>,
     _dragged_entry_destination: Option<Arc<Path>>,
     workspace: WeakEntity<Workspace>,
-    width: Option<Pixels>,
-    pending_serialization: Task<Option<()>>,
     diagnostics: HashMap<(WorktreeId, Arc<RelPath>), DiagnosticSeverity>,
     diagnostic_counts: HashMap<(WorktreeId, Arc<RelPath>), DiagnosticCount>,
     diagnostic_summary_update: Task<()>,
@@ -608,11 +605,6 @@ pub enum Event {
     Focus,
 }
 
-#[derive(Serialize, Deserialize)]
-struct SerializedProjectPanel {
-    width: Option<Pixels>,
-}
-
 struct DraggedProjectEntryView {
     selection: SelectedEntry,
     icon: Option<SharedString>,
@@ -878,8 +870,6 @@ impl ProjectPanel {
                 clipboard: None,
                 _dragged_entry_destination: None,
                 workspace: workspace.weak_handle(),
-                width: None,
-                pending_serialization: Task::ready(None),
                 diagnostics: Default::default(),
                 diagnostic_counts: Default::default(),
                 diagnostic_summary_update: Task::ready(()),
@@ -1000,37 +990,8 @@ impl ProjectPanel {
         workspace: WeakEntity<Workspace>,
         mut cx: AsyncWindowContext,
     ) -> Result<Entity<Self>> {
-        let serialized_panel = match workspace
-            .read_with(&cx, |workspace, _| {
-                ProjectPanel::serialization_key(workspace)
-            })
-            .ok()
-            .flatten()
-        {
-            Some(serialization_key) => {
-                let kvp = cx.update(|_, cx| KeyValueStore::global(cx))?;
-                cx.background_spawn(async move { kvp.read_kvp(&serialization_key) })
-                    .await
-                    .context("loading project panel")
-                    .log_err()
-                    .flatten()
-                    .map(|panel| serde_json::from_str::<SerializedProjectPanel>(&panel))
-                    .transpose()
-                    .log_err()
-                    .flatten()
-            }
-            None => None,
-        };
-
         workspace.update_in(&mut cx, |workspace, window, cx| {
-            let panel = ProjectPanel::new(workspace, window, cx);
-            if let Some(serialized_panel) = serialized_panel {
-                panel.update(cx, |panel, cx| {
-                    panel.width = serialized_panel.width.map(|px| px.round());
-                    cx.notify();
-                });
-            }
-            panel
+            ProjectPanel::new(workspace, window, cx)
         })
     }
 
@@ -1102,40 +1063,6 @@ impl ProjectPanel {
                     cmp::min(*strongest_diagnostic_severity, diagnostic_severity);
             })
             .or_insert(diagnostic_severity);
-    }
-
-    fn serialization_key(workspace: &Workspace) -> Option<String> {
-        workspace
-            .database_id()
-            .map(|id| i64::from(id).to_string())
-            .or(workspace.session_id())
-            .map(|id| format!("{}-{:?}", PROJECT_PANEL_KEY, id))
-    }
-
-    fn serialize(&mut self, cx: &mut Context<Self>) {
-        let Some(serialization_key) = self
-            .workspace
-            .read_with(cx, |workspace, _| {
-                ProjectPanel::serialization_key(workspace)
-            })
-            .ok()
-            .flatten()
-        else {
-            return;
-        };
-        let width = self.width;
-        let kvp = KeyValueStore::global(cx);
-        self.pending_serialization = cx.background_spawn(
-            async move {
-                kvp.write_kvp(
-                    serialization_key,
-                    serde_json::to_string(&SerializedProjectPanel { width })?,
-                )
-                .await?;
-                anyhow::Ok(())
-            }
-            .log_err(),
-        );
     }
 
     fn focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -7252,17 +7179,8 @@ impl Panel for ProjectPanel {
         });
     }
 
-    fn size(&self, _: &Window, cx: &App) -> Pixels {
-        self.width
-            .unwrap_or_else(|| ProjectPanelSettings::get_global(cx).default_width)
-    }
-
-    fn set_size(&mut self, size: Option<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
-        self.width = size;
-        cx.notify();
-        cx.defer_in(window, |this, _, cx| {
-            this.serialize(cx);
-        });
+    fn default_size(&self, _: &Window, cx: &App) -> Pixels {
+        ProjectPanelSettings::get_global(cx).default_width
     }
 
     fn icon(&self, _: &Window, cx: &App) -> Option<IconName> {

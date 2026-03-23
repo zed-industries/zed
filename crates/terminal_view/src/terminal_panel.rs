@@ -79,8 +79,6 @@ pub struct TerminalPanel {
     pub(crate) center: PaneGroup,
     fs: Arc<dyn Fs>,
     workspace: WeakEntity<Workspace>,
-    pub(crate) width: Option<Pixels>,
-    pub(crate) height: Option<Pixels>,
     pending_serialization: Task<Option<()>>,
     pending_terminals_to_add: usize,
     deferred_tasks: HashMap<TaskId, Task<()>>,
@@ -100,8 +98,6 @@ impl TerminalPanel {
             fs: workspace.app_state().fs.clone(),
             workspace: workspace.weak_handle(),
             pending_serialization: Task::ready(None),
-            width: None,
-            height: None,
             pending_terminals_to_add: 0,
             deferred_tasks: HashMap::default(),
             assistant_enabled: false,
@@ -928,8 +924,6 @@ impl TerminalPanel {
     }
 
     fn serialize(&mut self, cx: &mut Context<Self>) {
-        let height = self.height;
-        let width = self.width;
         let Some(serialization_key) = self
             .workspace
             .read_with(cx, |workspace, _| {
@@ -960,8 +954,6 @@ impl TerminalPanel {
                         serde_json::to_string(&SerializedTerminalPanel {
                             items,
                             active_item_id: None,
-                            height,
-                            width,
                         })?,
                     )
                     .await?;
@@ -1553,25 +1545,12 @@ impl Panel for TerminalPanel {
         });
     }
 
-    fn size(&self, window: &Window, cx: &App) -> Pixels {
+    fn default_size(&self, window: &Window, cx: &App) -> Pixels {
         let settings = TerminalSettings::get_global(cx);
         match self.position(window, cx) {
-            DockPosition::Left | DockPosition::Right => {
-                self.width.unwrap_or(settings.default_width)
-            }
-            DockPosition::Bottom => self.height.unwrap_or(settings.default_height),
+            DockPosition::Left | DockPosition::Right => settings.default_width,
+            DockPosition::Bottom => settings.default_height,
         }
-    }
-
-    fn set_size(&mut self, size: Option<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
-        match self.position(window, cx) {
-            DockPosition::Left | DockPosition::Right => self.width = size,
-            DockPosition::Bottom => self.height = size,
-        }
-        cx.notify();
-        cx.defer_in(window, |this, _, cx| {
-            this.serialize(cx);
-        })
     }
 
     fn is_zoomed(&self, _window: &Window, cx: &App) -> bool {

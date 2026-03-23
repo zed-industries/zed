@@ -131,9 +131,6 @@ fn read_legacy_serialized_panel(kvp: &KeyValueStore) -> Option<SerializedAgentPa
 
 #[derive(Serialize, Deserialize, Debug)]
 struct SerializedAgentPanel {
-    width: Option<Pixels>,
-    #[serde(default)]
-    flexible_width_ratio: Option<f32>,
     selected_agent: Option<AgentType>,
     #[serde(default)]
     last_active_thread: Option<SerializedActiveThread>,
@@ -745,9 +742,6 @@ pub struct AgentPanel {
     agent_navigation_menu_handle: PopoverMenuHandle<ContextMenu>,
     agent_navigation_menu: Option<Entity<ContextMenu>>,
     _extension_subscription: Option<Subscription>,
-    width: Option<Pixels>,
-    flexible_width_ratio: Option<f32>,
-    height: Option<Pixels>,
     zoomed: bool,
     pending_serialization: Option<Task<Result<()>>>,
     onboarding: Entity<AgentPanelOnboarding>,
@@ -769,8 +763,6 @@ impl AgentPanel {
             return;
         };
 
-        let width = self.width;
-        let flexible_width_ratio = self.flexible_width_ratio;
         let selected_agent_type = self.selected_agent_type.clone();
         let start_thread_in = Some(self.start_thread_in);
 
@@ -791,8 +783,6 @@ impl AgentPanel {
             save_serialized_panel(
                 workspace_id,
                 SerializedAgentPanel {
-                    width,
-                    flexible_width_ratio,
                     selected_agent: Some(selected_agent_type),
                     last_active_thread,
                     start_thread_in,
@@ -881,8 +871,6 @@ impl AgentPanel {
 
                 if let Some(serialized_panel) = &serialized_panel {
                     panel.update(cx, |panel, cx| {
-                        panel.width = serialized_panel.width.map(|w| w.round());
-                        panel.flexible_width_ratio = serialized_panel.flexible_width_ratio;
                         if let Some(selected_agent) = serialized_panel.selected_agent.clone() {
                             panel.selected_agent_type = selected_agent;
                         }
@@ -1085,9 +1073,6 @@ impl AgentPanel {
             agent_navigation_menu_handle: PopoverMenuHandle::default(),
             agent_navigation_menu: None,
             _extension_subscription: extension_subscription,
-            width: None,
-            flexible_width_ratio: None,
-            height: None,
             zoomed: false,
             pending_serialization: None,
             onboarding,
@@ -3164,42 +3149,16 @@ impl Panel for AgentPanel {
         });
     }
 
-    fn size(&self, window: &Window, cx: &App) -> Pixels {
+    fn default_size(&self, window: &Window, cx: &App) -> Pixels {
         let settings = AgentSettings::get_global(cx);
         match self.position(window, cx) {
-            DockPosition::Left | DockPosition::Right => {
-                self.width.unwrap_or(settings.default_width)
-            }
-            DockPosition::Bottom => self.height.unwrap_or(settings.default_height),
+            DockPosition::Left | DockPosition::Right => settings.default_width,
+            DockPosition::Bottom => settings.default_height,
         }
     }
 
-    fn set_size(&mut self, size: Option<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
-        match self.position(window, cx) {
-            DockPosition::Left | DockPosition::Right => self.width = size,
-            DockPosition::Bottom => self.height = size,
-        }
-        self.serialize(cx);
-        cx.notify();
-    }
-
-    fn supports_flexible_size(&self, window: &Window, cx: &App) -> bool {
+    fn supports_flexible_size(&self, _window: &Window, _cx: &App) -> bool {
         true
-    }
-
-    fn flexible_size_ratio(&self, _window: &Window, _cx: &App) -> Option<f32> {
-        self.flexible_width_ratio
-    }
-
-    fn set_flexible_size_ratio(
-        &mut self,
-        ratio: Option<f32>,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.flexible_width_ratio = ratio;
-        self.serialize(cx);
-        cx.notify();
     }
 
     fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut Context<Self>) {

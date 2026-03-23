@@ -258,7 +258,6 @@ pub enum Event {
 
 #[derive(Serialize, Deserialize)]
 struct SerializedGitPanel {
-    width: Option<Pixels>,
     #[serde(default)]
     amend_pending: bool,
     #[serde(default)]
@@ -645,7 +644,6 @@ pub struct GitPanel {
     tracked_count: usize,
     tracked_staged_count: usize,
     update_visible_entries_task: Task<()>,
-    width: Option<Pixels>,
     pub(crate) workspace: WeakEntity<Workspace>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     modal_open: bool,
@@ -832,7 +830,6 @@ impl GitPanel {
                 tracked_count: 0,
                 tracked_staged_count: 0,
                 update_visible_entries_task: Task::ready(()),
-                width: None,
                 show_placeholders: false,
                 local_committer: None,
                 local_committer_task: None,
@@ -925,7 +922,6 @@ impl GitPanel {
     }
 
     fn serialize(&mut self, cx: &mut Context<Self>) {
-        let width = self.width;
         let amend_pending = self.amend_pending;
         let signoff_enabled = self.signoff_enabled;
         let kvp = KeyValueStore::global(cx);
@@ -952,7 +948,6 @@ impl GitPanel {
                     kvp.write_kvp(
                         serialization_key,
                         serde_json::to_string(&SerializedGitPanel {
-                            width,
                             amend_pending,
                             signoff_enabled,
                         })?,
@@ -5567,7 +5562,6 @@ impl GitPanel {
 
             if let Some(serialized_panel) = serialized_panel {
                 panel.update(cx, |panel, cx| {
-                    panel.width = serialized_panel.width;
                     panel.amend_pending = serialized_panel.amend_pending;
                     panel.signoff_enabled = serialized_panel.signoff_enabled;
                     cx.notify();
@@ -5796,15 +5790,8 @@ impl Panel for GitPanel {
         });
     }
 
-    fn size(&self, _: &Window, cx: &App) -> Pixels {
-        self.width
-            .unwrap_or_else(|| GitPanelSettings::get_global(cx).default_width)
-    }
-
-    fn set_size(&mut self, size: Option<Pixels>, _: &mut Window, cx: &mut Context<Self>) {
-        self.width = size;
-        self.serialize(cx);
-        cx.notify();
+    fn default_size(&self, _: &Window, cx: &App) -> Pixels {
+        GitPanelSettings::get_global(cx).default_width
     }
 
     fn icon(&self, _: &Window, cx: &App) -> Option<ui::IconName> {

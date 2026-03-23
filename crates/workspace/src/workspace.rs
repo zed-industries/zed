@@ -2127,6 +2127,72 @@ impl Workspace {
         }
     }
 
+    pub fn panel_size_state<T: Panel>(&self, cx: &App) -> Option<dock::PanelSizeState> {
+        self.all_docks().into_iter().find_map(|dock| {
+            let dock = dock.read(cx);
+            let panel = dock.panel::<T>()?;
+            dock.stored_panel_size_state(&panel)
+        })
+    }
+
+    pub fn persisted_panel_size_state(
+        &self,
+        panel_key: &'static str,
+        cx: &App,
+    ) -> Option<dock::PanelSizeState> {
+        dock::Dock::load_persisted_size_state(self, panel_key, cx)
+    }
+
+    pub fn persist_panel_size_state(
+        &self,
+        panel_key: &str,
+        size_state: dock::PanelSizeState,
+        cx: &mut App,
+    ) {
+        let Some(workspace_id) = self
+            .database_id()
+            .map(|id| i64::from(id).to_string())
+            .or(self.session_id())
+        else {
+            return;
+        };
+
+        let kvp = db::kvp::KeyValueStore::global(cx);
+        let panel_key = panel_key.to_string();
+        cx.background_spawn(async move {
+            let scope = kvp.scoped(dock::PANEL_SIZE_STATE_KEY);
+            scope
+                .write(
+                    format!("{workspace_id}:{panel_key}"),
+                    serde_json::to_string(&size_state)?,
+                )
+                .await
+        })
+        .detach();
+    }
+
+    pub fn set_panel_size_state<T: Panel>(
+        &mut self,
+        size_state: dock::PanelSizeState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(panel) = self.panel::<T>(cx) else {
+            return false;
+        };
+
+        let dock = self.dock_at_position(panel.position(window, cx));
+        let did_set = dock.update(cx, |dock, cx| {
+            dock.set_panel_size_state(&panel, size_state, cx)
+        });
+
+        if did_set {
+            self.persist_panel_size_state(T::panel_key(), size_state, cx);
+        }
+
+        did_set
+    }
+
     pub fn flexible_dock_size(
         &self,
         position: DockPosition,
@@ -2149,19 +2215,27 @@ impl Workspace {
         window: &Window,
         cx: &App,
     ) -> Pixels {
+        let size_state = dock.stored_panel_size_state(panel).unwrap_or_default();
+
         if dock.position().axis() == Axis::Horizontal && panel.supports_flexible_size(window, cx) {
-            let ratio = panel
-                .flexible_size_ratio(window, cx)
+            let ratio = size_state
+                .flexible_size_ratio
                 .or_else(|| self.default_flexible_dock_ratio(dock.position(), cx));
 
             if let Some(ratio) = ratio {
                 return self
                     .flexible_dock_size(dock.position(), ratio, window, cx)
-                    .unwrap_or_else(|| panel.size(window, cx));
+                    .unwrap_or_else(|| {
+                        size_state
+                            .size
+                            .unwrap_or_else(|| panel.default_size(window, cx))
+                    });
             }
         }
 
-        panel.size(window, cx)
+        size_state
+            .size
+            .unwrap_or_else(|| panel.default_size(window, cx))
     }
 
     pub fn flexible_dock_ratio_for_size(
@@ -2242,9 +2316,14 @@ impl Workspace {
         let dock_position = panel.position(window, cx);
         let dock = self.dock_at_position(dock_position);
         let any_panel = panel.to_any();
+        let persisted_size_state = self.persisted_panel_size_state(T::panel_key(), cx);
 
         dock.update(cx, |dock, cx| {
-            dock.add_panel(panel, self.weak_self.clone(), window, cx)
+            let index = dock.add_panel(panel.clone(), self.weak_self.clone(), window, cx);
+            if let Some(size_state) = persisted_size_state {
+                dock.set_panel_size_state(&panel, size_state, cx);
+            }
+            index
         });
 
         cx.emit(Event::PanelAdded(any_panel));
@@ -6853,27 +6932,36 @@ impl Workspace {
                 },
             ))
             .on_action(cx.listener(
-                |workspace: &mut Workspace, _: &ResetActiveDockSize, window, cx| {
+                |workspace: &mut Workspace, _: &ResetActiveDockSize, _window, cx| {
                     for dock in workspace.all_docks() {
-                        if dock.focus_handle(cx).contains_focused(window, cx) {
-                            let Some(panel) = dock.read(cx).active_panel() else {
-                                return;
-                            };
-
-                            // Set to `None`, then the size will fall back to the default.
-                            panel.clone().set_size(None, window, cx);
-
+                        if dock.focus_handle(cx).contains_focused(_window, cx) {
+                            let panel = dock.read(cx).active_panel().cloned();
+                            if let Some(panel) = panel {
+                                dock.update(cx, |dock, cx| {
+                                    dock.set_panel_size_state(
+                                        panel.as_ref(),
+                                        dock::PanelSizeState::default(),
+                                        cx,
+                                    );
+                                });
+                            }
                             return;
                         }
                     }
                 },
             ))
             .on_action(cx.listener(
-                |workspace: &mut Workspace, _: &ResetOpenDocksSize, window, cx| {
+                |workspace: &mut Workspace, _: &ResetOpenDocksSize, _window, cx| {
                     for dock in workspace.all_docks() {
-                        if let Some(panel) = dock.read(cx).visible_panel() {
-                            // Set to `None`, then the size will fall back to the default.
-                            panel.clone().set_size(None, window, cx);
+                        let panel = dock.read(cx).visible_panel().cloned();
+                        if let Some(panel) = panel {
+                            dock.update(cx, |dock, cx| {
+                                dock.set_panel_size_state(
+                                    panel.as_ref(),
+                                    dock::PanelSizeState::default(),
+                                    cx,
+                                );
+                            });
                         }
                     }
                 },
@@ -12075,14 +12163,15 @@ mod tests {
 
             assert_eq!(reopened_width, resized_width);
 
-            let flexible_ratio = workspace
-                .right_dock()
-                .read(cx)
+            let right_dock = workspace.right_dock().read(cx);
+            let flexible_panel = right_dock
                 .visible_panel()
                 .expect("flexible dock should still have a visible panel");
-            assert_eq!(flexible_ratio.panel_id(), panel);
+            assert_eq!(flexible_panel.panel_id(), panel);
             assert_eq!(
-                flexible_ratio.flexible_size_ratio(window, cx),
+                right_dock
+                    .stored_panel_size_state(flexible_panel.as_ref())
+                    .and_then(|size_state| size_state.flexible_size_ratio),
                 Some(resized_width.to_f64() as f32 / workspace.bounds.size.width.to_f64() as f32)
             );
         });
@@ -12172,12 +12261,10 @@ mod tests {
             );
             assert_eq!(
                 left_dock.read(cx).active_panel_size(window, cx).unwrap(),
-                panel_1.size(window, cx)
+                px(300.)
             );
 
-            left_dock.update(cx, |left_dock, cx| {
-                left_dock.resize_active_panel(Some(px(1337.)), window, cx)
-            });
+            workspace.resize_left_dock(px(1337.), window, cx);
             assert_eq!(
                 workspace
                     .right_dock()
@@ -12263,7 +12350,7 @@ mod tests {
             let bottom_dock = workspace.bottom_dock();
             assert_eq!(
                 bottom_dock.read(cx).active_panel_size(window, cx).unwrap(),
-                panel_1.size(window, cx),
+                px(300.),
             );
             // Close bottom dock and move panel_1 back to the left.
             bottom_dock.update(cx, |bottom_dock, cx| {
