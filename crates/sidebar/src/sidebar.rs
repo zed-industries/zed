@@ -1502,7 +1502,7 @@ impl Sidebar {
                     let workspace_count = multi_workspace
                         .upgrade()
                         .map_or(0, |mw| mw.read(cx).workspaces().len());
-                    if workspace_count > 1 {
+                    let menu = if workspace_count > 1 {
                         let workspace_for_move = workspace.clone();
                         let multi_workspace_for_move = multi_workspace.clone();
                         menu.entry(
@@ -1527,7 +1527,23 @@ impl Sidebar {
                         )
                     } else {
                         menu
-                    }
+                    };
+
+                    let workspace_for_remove = workspace_for_remove.clone();
+                    let multi_workspace_for_remove = multi_workspace.clone();
+                    menu.separator()
+                        .entry("Remove Project", None, move |window, cx| {
+                            if let Some(mw) = multi_workspace_for_remove.upgrade() {
+                                let ws = workspace_for_remove.clone();
+                                mw.update(cx, |multi_workspace, cx| {
+                                    if let Some(index) =
+                                        multi_workspace.workspaces().iter().position(|w| *w == ws)
+                                    {
+                                        multi_workspace.remove_workspace(index, window, cx);
+                                    }
+                                });
+                            }
+                        })
                 });
 
                 let this = this.clone();
