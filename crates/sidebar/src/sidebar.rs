@@ -30,8 +30,9 @@ use std::rc::Rc;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
-    AgentThreadStatus, CommonAnimationExt, ContextMenu, Divider, HighlightedLabel, KeyBinding,
-    PopoverMenu, PopoverMenuHandle, Tab, ThreadItem, TintColor, Tooltip, WithScrollbar, prelude::*,
+    AgentThreadStatus, CommonAnimationExt, ContextMenu, Divider, HighlightedLabel, IconButtonShape,
+    KeyBinding, PopoverMenu, PopoverMenuHandle, Tab, ThreadItem, TintColor, Tooltip, WithScrollbar,
+    prelude::*,
 };
 use util::ResultExt as _;
 use util::path_list::PathList;
@@ -1219,6 +1220,7 @@ impl Sidebar {
 
         let workspace_for_remove = workspace.clone();
         let workspace_for_menu = workspace.clone();
+        let workspace_for_open = workspace.clone();
 
         let path_list_for_toggle = path_list.clone();
         let path_list_for_collapse = path_list.clone();
@@ -1313,6 +1315,29 @@ impl Sidebar {
                         &workspace_for_remove,
                         cx,
                     ))
+                    .child(
+                        IconButton::new(
+                            SharedString::from(format!(
+                                "{id_prefix}project-header-open-workspace-{ix}",
+                            )),
+                            IconName::ArrowUpRight,
+                        )
+                        .icon_size(IconSize::Small)
+                        .icon_color(Color::Muted)
+                        .tooltip(Tooltip::text("Open Workspace"))
+                        .on_click(cx.listener({
+                            let workspace_for_open = workspace_for_open.clone();
+                            move |this, _, window, cx| {
+                                this.selection = None;
+                                let Some(multi_workspace) = this.multi_workspace.upgrade() else {
+                                    return;
+                                };
+                                multi_workspace.update(cx, |multi_workspace, cx| {
+                                    multi_workspace.activate(workspace_for_open.clone(), cx);
+                                });
+                            }
+                        })),
+                    )
                     .when(view_more_expanded && !is_collapsed, |this| {
                         this.child(
                             IconButton::new(
