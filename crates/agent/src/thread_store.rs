@@ -1,7 +1,9 @@
-use crate::{DbThread, DbThreadMetadata, ThreadsDatabase};
+use crate::{DbThread, DbThreadMetadata, Message, ThreadsDatabase};
+use acp_thread::UserMessageId;
 use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
-use gpui::{App, Context, Entity, Global, Task, prelude::*};
+use chrono::Utc;
+use gpui::{App, Context, Entity, Global, SharedString, Task, prelude::*};
 use util::path_list::PathList;
 
 struct GlobalThreadStore(Entity<ThreadStore>);
@@ -62,6 +64,66 @@ impl ThreadStore {
             let database = database_future.await.map_err(|err| anyhow!(err))?;
             database.save_thread(id, thread, folder_paths).await?;
             this.update(cx, |this, cx| this.reload(cx))
+        })
+    }
+
+    /// Forks a thread at the given user message, creating a new thread
+    /// with conversation history up to (but not including) that message.
+    pub fn fork_thread(
+        &mut self,
+        source_id: acp::SessionId,
+        message_id: UserMessageId,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(acp::SessionId, SharedString)>> {
+        let folder_paths = self
+            .thread_from_session_id(&source_id)
+            .map(|meta| meta.folder_paths.clone())
+            .unwrap_or_default();
+
+        let database_future = ThreadsDatabase::connect(cx);
+
+        cx.spawn(async move |this, cx| {
+            let database = database_future.await.map_err(|err| anyhow!(err))?;
+
+            let mut thread = database
+                .load_thread(source_id)
+                .await?
+                .ok_or_else(|| anyhow!("Thread not found"))?;
+
+            let position = thread
+                .messages
+                .iter()
+                .position(|msg| {
+                    matches!(msg, Message::User(user_msg) if user_msg.id == message_id)
+                })
+                .ok_or_else(|| anyhow!("Message not found"))?;
+
+            // Remove token usage entries for messages being dropped.
+            for msg in &thread.messages[position..] {
+                if let Message::User(user_msg) = msg {
+                    thread.request_token_usage.remove(&user_msg.id);
+                }
+            }
+
+            thread.messages.truncate(position);
+
+            let new_id = acp::SessionId::new(uuid::Uuid::new_v4().to_string());
+
+            thread.title = SharedString::from(format!("Fork of {}", thread.title));
+            thread.updated_at = Utc::now();
+            thread.detailed_summary = None;
+            thread.draft_prompt = None;
+            thread.ui_scroll_position = None;
+
+            let title = thread.title.clone();
+
+            database
+                .save_thread(new_id.clone(), thread, folder_paths)
+                .await?;
+
+            this.update(cx, |this, cx| this.reload(cx))?;
+
+            Ok((new_id, title))
         })
     }
 
@@ -146,6 +208,33 @@ mod tests {
             draft_prompt: None,
             ui_scroll_position: None,
         }
+    }
+
+    fn make_thread_with_messages(
+        title: &str,
+        updated_at: DateTime<Utc>,
+        messages: Vec<Message>,
+    ) -> DbThread {
+        let mut thread = make_thread(title, updated_at);
+        thread.messages = messages;
+        thread
+    }
+
+    fn user_message() -> (UserMessageId, Message) {
+        let id = UserMessageId::new();
+        let msg = Message::User(crate::UserMessage {
+            id: id.clone(),
+            content: vec![crate::UserMessageContent::Text("user text".to_string())],
+        });
+        (id, msg)
+    }
+
+    fn agent_message() -> Message {
+        Message::Agent(crate::AgentMessage {
+            content: vec![crate::AgentMessageContent::Text("agent text".to_string())],
+            tool_results: Default::default(),
+            reasoning_details: None,
+        })
     }
 
     #[gpui::test]
@@ -287,5 +376,117 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].id, first_id);
         assert_eq!(entries[1].id, second_id);
+    }
+
+    #[gpui::test]
+    async fn test_fork_thread_creates_truncated_copy(cx: &mut TestAppContext) {
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        cx.run_until_parked();
+
+        let original_id = session_id("thread-a");
+        let (_, msg1) = user_message();
+        let (_, msg2) = user_message();
+        let (msg3_id, msg3) = user_message();
+        let messages = vec![
+            msg1,
+            agent_message(),
+            msg2,
+            agent_message(),
+            msg3,
+            agent_message(),
+        ];
+        let original_thread = make_thread_with_messages(
+            "My Thread",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+            messages,
+        );
+
+        let save_task = thread_store.update(cx, |store, cx| {
+            store.save_thread(original_id.clone(), original_thread, PathList::default(), cx)
+        });
+        save_task.await.unwrap();
+        cx.run_until_parked();
+
+        // Fork at msg3, which should keep messages before it (msg1, response, msg2, response).
+        let (new_id, new_title) = thread_store
+            .update(cx, |store, cx| {
+                store.fork_thread(original_id.clone(), msg3_id, cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        assert_ne!(new_id, original_id);
+        assert_eq!(new_title.as_ref(), "Fork of My Thread");
+
+        let entries: Vec<_> = thread_store.read_with(cx, |store, _cx| store.entries().collect());
+        assert_eq!(entries.len(), 2);
+        // The fork has a newer updated_at, so it should sort first.
+        assert_eq!(entries[0].id, new_id);
+        assert_eq!(entries[1].id, original_id);
+
+        // Load the forked thread and verify it has only the first 4 messages.
+        let forked = thread_store
+            .update(cx, |store, cx| store.load_thread(new_id, cx))
+            .await
+            .unwrap()
+            .expect("forked thread should exist");
+
+        assert_eq!(forked.messages.len(), 4);
+        assert_eq!(forked.title.as_ref(), "Fork of My Thread");
+    }
+
+    #[gpui::test]
+    async fn test_fork_thread_preserves_original(cx: &mut TestAppContext) {
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        cx.run_until_parked();
+
+        let original_id = session_id("thread-a");
+        let original_time = Utc.with_ymd_and_hms(2024, 6, 15, 12, 0, 0).unwrap();
+        let (_, msg1) = user_message();
+        let (msg2_id, msg2) = user_message();
+        let messages = vec![
+            msg1,
+            agent_message(),
+            msg2,
+            agent_message(),
+        ];
+        let original_thread =
+            make_thread_with_messages("Important Chat", original_time, messages);
+
+        let save_task = thread_store.update(cx, |store, cx| {
+            store.save_thread(original_id.clone(), original_thread, PathList::default(), cx)
+        });
+        save_task.await.unwrap();
+        cx.run_until_parked();
+
+        // Fork at msg2, keeping only msg1 and its response.
+        let (new_id, _) = thread_store
+            .update(cx, |store, cx| {
+                store.fork_thread(original_id.clone(), msg2_id, cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        // Load both threads and verify the original is untouched.
+        let original_loaded = thread_store
+            .update(cx, |store, cx| store.load_thread(original_id.clone(), cx))
+            .await
+            .unwrap()
+            .expect("original thread should exist");
+        let forked_loaded = thread_store
+            .update(cx, |store, cx| store.load_thread(new_id, cx))
+            .await
+            .unwrap()
+            .expect("forked thread should exist");
+
+        assert_eq!(original_loaded.title.as_ref(), "Important Chat");
+        assert_eq!(original_loaded.updated_at, original_time);
+        assert_eq!(original_loaded.messages.len(), 4);
+
+        assert_eq!(forked_loaded.title.as_ref(), "Fork of Important Chat");
+        assert!(forked_loaded.updated_at > original_time);
+        assert_eq!(forked_loaded.messages.len(), 2);
     }
 }

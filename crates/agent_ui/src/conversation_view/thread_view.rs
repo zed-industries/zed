@@ -158,6 +158,10 @@ impl ThreadFeedbackState {
 
 pub enum AcpThreadViewEvent {
     FirstSendRequested { content: Vec<acp::ContentBlock> },
+    ForkRequested {
+        session_id: acp::SessionId,
+        message_id: acp_thread::UserMessageId,
+    },
 }
 
 impl EventEmitter<AcpThreadViewEvent> for ThreadView {}
@@ -1828,6 +1832,14 @@ impl ThreadView {
                 thread.restore_checkpoint(message_id.clone(), cx)
             })
             .detach_and_log_err(cx);
+    }
+
+    pub fn fork_at_message(&mut self, message_id: &UserMessageId, cx: &mut Context<Self>) {
+        let session_id = self.thread.read(cx).session_id().clone();
+        cx.emit(AcpThreadViewEvent::ForkRequested {
+            session_id,
+            message_id: message_id.clone(),
+        });
     }
 
     pub fn clear_thread_error(&mut self, cx: &mut Context<Self>) {
@@ -3835,22 +3847,38 @@ impl ThreadView {
                     .gap_1p5()
                     .w_full()
                     .children(rules_item)
-                    .when(is_editable && has_checkpoint_button, |this| {
+                    .when(is_editable && (has_checkpoint_button || entry_ix > 0), |this| {
                         this.children(message.id.clone().map(|message_id| {
+                            let fork_message_id = message_id.clone();
                             h_flex()
                                 .px_3()
                                 .gap_2()
                                 .child(Divider::horizontal())
-                                .child(
-                                    Button::new("restore-checkpoint", "Restore Checkpoint")
-                                        .start_icon(Icon::new(IconName::Undo).size(IconSize::XSmall).color(Color::Muted))
-                                        .label_size(LabelSize::XSmall)
-                                        .color(Color::Muted)
-                                        .tooltip(Tooltip::text("Restores all files in the project to the content they had at this point in the conversation."))
-                                        .on_click(cx.listener(move |this, _, _window, cx| {
-                                            this.restore_checkpoint(&message_id, cx);
-                                        }))
-                                )
+                                .when(has_checkpoint_button, |this| {
+                                    let restore_message_id = message_id.clone();
+                                    this.child(
+                                        Button::new("restore-checkpoint", "Restore Checkpoint")
+                                            .start_icon(Icon::new(IconName::Undo).size(IconSize::XSmall).color(Color::Muted))
+                                            .label_size(LabelSize::XSmall)
+                                            .color(Color::Muted)
+                                            .tooltip(Tooltip::text("Restores all files in the project to the content they had at this point in the conversation."))
+                                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                                this.restore_checkpoint(&restore_message_id, cx);
+                                            }))
+                                    )
+                                })
+                                .when(entry_ix > 0, |this| {
+                                    this.child(
+                                        Button::new("fork-thread", "Fork Thread")
+                                            .start_icon(Icon::new(IconName::GitBranch).size(IconSize::XSmall).color(Color::Muted))
+                                            .label_size(LabelSize::XSmall)
+                                            .color(Color::Muted)
+                                            .tooltip(Tooltip::text("Creates a new thread with the conversation history up to this point."))
+                                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                                this.fork_at_message(&fork_message_id, cx);
+                                            }))
+                                    )
+                                })
                                 .child(Divider::horizontal())
                         }))
                     })

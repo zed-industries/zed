@@ -1749,6 +1749,50 @@ impl AgentPanel {
         }
     }
 
+    fn fork_thread(
+        &mut self,
+        session_id: acp::SessionId,
+        message_id: acp_thread::UserMessageId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let thread_store = self.thread_store.clone();
+        let workspace = self.workspace.clone();
+
+        cx.spawn_in(window, async move |this, cx| {
+            let (new_session_id, title) = thread_store
+                .update(&mut cx.clone(), |store, cx| {
+                    store.fork_thread(session_id, message_id, cx)
+                })
+                .await?;
+
+            this.update_in(cx, |this, window, cx| {
+                this.open_thread(new_session_id, None, Some(title), window, cx);
+            })?;
+
+            this.update_in(cx, |_, _window, cx| {
+                if let Some(workspace) = workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        struct ThreadForkedToast;
+                        workspace.show_toast(
+                            workspace::Toast::new(
+                                workspace::notifications::NotificationId::unique::<
+                                    ThreadForkedToast,
+                                >(),
+                                "Thread forked",
+                            )
+                            .autohide(),
+                            cx,
+                        );
+                    });
+                }
+            })?;
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
     fn copy_thread_to_clipboard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(thread) = self.active_native_agent_thread(cx) else {
             Self::show_deferred_toast(&self.workspace, "No active native thread to copy", cx);
@@ -2230,6 +2274,17 @@ impl AgentPanel {
                 |this, view, event: &AcpThreadViewEvent, window, cx| match event {
                     AcpThreadViewEvent::FirstSendRequested { content } => {
                         this.handle_first_send_requested(view.clone(), content.clone(), window, cx);
+                    }
+                    AcpThreadViewEvent::ForkRequested {
+                        session_id,
+                        message_id,
+                    } => {
+                        this.fork_thread(
+                            session_id.clone(),
+                            message_id.clone(),
+                            window,
+                            cx,
+                        );
                     }
                 },
             )
