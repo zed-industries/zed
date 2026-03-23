@@ -2,7 +2,10 @@
 
 use anyhow::Result;
 use buffer_diff::BufferDiff;
-use editor::{Editor, EditorEvent, MultiBuffer, ToPoint, actions::DiffClipboardWithSelectionData};
+use editor::{
+    Editor, EditorEvent, EditorSettings, MultiBuffer, SplittableEditor, ToPoint,
+    actions::DiffClipboardWithSelectionData,
+};
 use futures::{FutureExt, select_biased};
 use gpui::{
     AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
@@ -10,6 +13,7 @@ use gpui::{
 };
 use language::{self, Buffer, Point};
 use project::Project;
+use settings::Settings;
 use std::{
     any::{Any, TypeId},
     cmp,
@@ -22,13 +26,13 @@ use ui::{Color, Icon, IconName, Label, LabelCommon as _, SharedString};
 use util::paths::PathExt;
 
 use workspace::{
-    Item, ItemHandle as _, ItemNavHistory, Workspace,
+    Item, ItemNavHistory, Workspace,
     item::{ItemEvent, SaveOptions, TabContentParams},
     searchable::SearchableItemHandle,
 };
 
 pub struct TextDiffView {
-    diff_editor: Entity<Editor>,
+    diff_editor: Entity<SplittableEditor>,
     title: SharedString,
     path: Option<SharedString>,
     buffer_changes_tx: watch::Sender<()>,
@@ -125,11 +129,11 @@ impl TextDiffView {
         );
 
         let task = window.spawn(cx, async move |cx| {
-            let project = workspace.update(cx, |workspace, _| workspace.project().clone())?;
-
             update_diff_buffer(&diff_buffer, &source_buffer, &clipboard_buffer, cx).await?;
 
             workspace.update_in(cx, |workspace, window, cx| {
+                let project = workspace.project().clone();
+                let workspace_entity = cx.entity();
                 let diff_view = cx.new(|cx| {
                     TextDiffView::new(
                         clipboard_buffer,
@@ -138,6 +142,7 @@ impl TextDiffView {
                         expanded_selection_range,
                         diff_buffer,
                         project,
+                        workspace_entity,
                         window,
                         cx,
                     )
@@ -162,6 +167,7 @@ impl TextDiffView {
         source_range: Range<Point>,
         diff_buffer: Entity<BufferDiff>,
         project: Entity<Project>,
+        workspace: Entity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -174,15 +180,24 @@ impl TextDiffView {
             multibuffer
         });
         let diff_editor = cx.new(|cx| {
-            let mut editor = Editor::for_multibuffer(multibuffer, Some(project), window, cx);
-            editor.start_temporary_diff_override();
-            editor.disable_diagnostics(cx);
-            editor.set_expand_all_diff_hunks(cx);
-            editor.set_render_diff_hunk_controls(
+            let splittable = SplittableEditor::new(
+                EditorSettings::get_global(cx).diff_view_style,
+                multibuffer,
+                project,
+                workspace,
+                window,
+                cx,
+            );
+            splittable.set_render_diff_hunk_controls(
                 Arc::new(|_, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
                 cx,
             );
-            editor
+            splittable.rhs_editor().update(cx, |editor, cx| {
+                editor.start_temporary_diff_override();
+                editor.disable_diagnostics(cx);
+                editor.set_expand_all_diff_hunks(cx);
+            });
+            splittable
         });
 
         let (buffer_changes_tx, mut buffer_changes_rx) = watch::channel(());
@@ -352,12 +367,14 @@ impl Item for TextDiffView {
         &'a self,
         type_id: TypeId,
         self_handle: &'a Entity<Self>,
-        _: &'a App,
+        cx: &'a App,
     ) -> Option<gpui::AnyEntity> {
         if type_id == TypeId::of::<Self>() {
             Some(self_handle.clone().into())
-        } else if type_id == TypeId::of::<Editor>() {
+        } else if type_id == TypeId::of::<SplittableEditor>() {
             Some(self.diff_editor.clone().into())
+        } else if type_id == TypeId::of::<Editor>() {
+            Some(self.diff_editor.read(cx).rhs_editor().clone().into())
         } else {
             None
         }
@@ -372,7 +389,7 @@ impl Item for TextDiffView {
         cx: &App,
         f: &mut dyn FnMut(gpui::EntityId, &dyn project::ProjectItem),
     ) {
-        self.diff_editor.for_each_project_item(cx, f)
+        self.diff_editor.read(cx).for_each_project_item(cx, f)
     }
 
     fn set_nav_history(
@@ -381,7 +398,8 @@ impl Item for TextDiffView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.diff_editor.update(cx, |editor, _| {
+        let rhs = self.diff_editor.read(cx).rhs_editor().clone();
+        rhs.update(cx, |editor, _| {
             editor.set_nav_history(Some(nav_history));
         });
     }
@@ -463,11 +481,11 @@ impl Render for TextDiffView {
 mod tests {
     use super::*;
     use editor::{MultiBufferOffset, PathKey, test::editor_test_context::assert_state_with_diff};
-    use gpui::{TestAppContext, VisualContext};
+    use gpui::{BorrowAppContext, TestAppContext, VisualContext};
     use language::Point;
     use project::{FakeFs, Project};
     use serde_json::json;
-    use settings::SettingsStore;
+    use settings::{DiffViewStyle, SettingsStore};
     use unindent::unindent;
     use util::{path, test::marked_text_ranges};
     use workspace::MultiWorkspace;
@@ -476,6 +494,11 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.diff_view_style = Some(DiffViewStyle::Unified);
+                });
+            });
             theme::init(theme::LoadThemes::JustBase, cx);
         });
     }
@@ -918,7 +941,9 @@ mod tests {
         cx.executor().run_until_parked();
 
         assert_state_with_diff(
-            &diff_view.read_with(cx, |diff_view, _| diff_view.diff_editor.clone()),
+            &diff_view.read_with(cx, |diff_view, cx| {
+                diff_view.diff_editor.read(cx).rhs_editor().clone()
+            }),
             cx,
             expected_diff,
         );

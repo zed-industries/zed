@@ -103,11 +103,11 @@ use {
     feature_flags::FeatureFlagAppExt as _,
     git_ui::project_diff::ProjectDiff,
     gpui::{
-        App, AppContext as _, Bounds, KeyBinding, Modifiers, VisualTestAppContext, WindowBounds,
-        WindowHandle, WindowOptions, point, px, size,
+        App, AppContext as _, Bounds, Entity, KeyBinding, Modifiers, VisualTestAppContext,
+        WindowBounds, WindowHandle, WindowOptions, point, px, size,
     },
     image::RgbaImage,
-    project::AgentId,
+    project::{AgentId, Project},
     project_panel::ProjectPanel,
     settings::{NotifyWhenAgentWaiting, Settings as _},
     settings_ui::SettingsWindow,
@@ -1966,6 +1966,7 @@ impl AgentServer for StubAgentServer {
     fn connect(
         &self,
         _delegate: AgentServerDelegate,
+        _project: Entity<Project>,
         _cx: &mut App,
     ) -> gpui::Task<gpui::Result<Rc<dyn AgentConnection>>> {
         gpui::Task::ready(Ok(Rc::new(self.connection.clone())))

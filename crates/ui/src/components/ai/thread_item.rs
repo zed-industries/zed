@@ -22,25 +22,26 @@ pub enum AgentThreadStatus {
 pub struct ThreadItem {
     id: ElementId,
     icon: IconName,
+    icon_color: Option<Color>,
+    icon_visible: bool,
     custom_icon_from_external_svg: Option<SharedString>,
     title: SharedString,
+    title_label_color: Option<Color>,
+    title_generating: bool,
+    highlight_positions: Vec<usize>,
     timestamp: SharedString,
     notified: bool,
     status: AgentThreadStatus,
-    generating_title: bool,
     selected: bool,
     focused: bool,
     hovered: bool,
-    docked_right: bool,
     added: Option<usize>,
     removed: Option<usize>,
     worktree: Option<SharedString>,
-    highlight_positions: Vec<usize>,
+    worktree_full_path: Option<SharedString>,
     worktree_highlight_positions: Vec<usize>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_hover: Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>,
-    title_label_color: Option<Color>,
-    title_label_size: Option<LabelSize>,
     action_slot: Option<AnyElement>,
     tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
 }
@@ -50,25 +51,26 @@ impl ThreadItem {
         Self {
             id: id.into(),
             icon: IconName::ZedAgent,
+            icon_color: None,
+            icon_visible: true,
             custom_icon_from_external_svg: None,
             title: title.into(),
+            title_label_color: None,
+            title_generating: false,
+            highlight_positions: Vec::new(),
             timestamp: "".into(),
             notified: false,
             status: AgentThreadStatus::default(),
-            generating_title: false,
             selected: false,
             focused: false,
             hovered: false,
-            docked_right: false,
             added: None,
             removed: None,
             worktree: None,
-            highlight_positions: Vec::new(),
+            worktree_full_path: None,
             worktree_highlight_positions: Vec::new(),
             on_click: None,
             on_hover: Box::new(|_, _, _| {}),
-            title_label_color: None,
-            title_label_size: None,
             action_slot: None,
             tooltip: None,
         }
@@ -81,6 +83,16 @@ impl ThreadItem {
 
     pub fn icon(mut self, icon: IconName) -> Self {
         self.icon = icon;
+        self
+    }
+
+    pub fn icon_color(mut self, color: Color) -> Self {
+        self.icon_color = Some(color);
+        self
+    }
+
+    pub fn icon_visible(mut self, visible: bool) -> Self {
+        self.icon_visible = visible;
         self
     }
 
@@ -99,8 +111,18 @@ impl ThreadItem {
         self
     }
 
-    pub fn generating_title(mut self, generating: bool) -> Self {
-        self.generating_title = generating;
+    pub fn title_generating(mut self, generating: bool) -> Self {
+        self.title_generating = generating;
+        self
+    }
+
+    pub fn title_label_color(mut self, color: Color) -> Self {
+        self.title_label_color = Some(color);
+        self
+    }
+
+    pub fn highlight_positions(mut self, positions: Vec<usize>) -> Self {
+        self.highlight_positions = positions;
         self
     }
 
@@ -124,18 +146,13 @@ impl ThreadItem {
         self
     }
 
-    pub fn docked_right(mut self, docked_right: bool) -> Self {
-        self.docked_right = docked_right;
-        self
-    }
-
     pub fn worktree(mut self, worktree: impl Into<SharedString>) -> Self {
         self.worktree = Some(worktree.into());
         self
     }
 
-    pub fn highlight_positions(mut self, positions: Vec<usize>) -> Self {
-        self.highlight_positions = positions;
+    pub fn worktree_full_path(mut self, worktree_full_path: impl Into<SharedString>) -> Self {
+        self.worktree_full_path = Some(worktree_full_path.into());
         self
     }
 
@@ -162,16 +179,6 @@ impl ThreadItem {
         self
     }
 
-    pub fn title_label_color(mut self, color: Color) -> Self {
-        self.title_label_color = Some(color);
-        self
-    }
-
-    pub fn title_label_size(mut self, size: LabelSize) -> Self {
-        self.title_label_size = Some(size);
-        self
-    }
-
     pub fn action_slot(mut self, element: impl IntoElement) -> Self {
         self.action_slot = Some(element.into_any_element());
         self
@@ -186,6 +193,26 @@ impl ThreadItem {
 impl RenderOnce for ThreadItem {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let color = cx.theme().colors();
+        let base_bg = color
+            .title_bar_background
+            .blend(color.panel_background.opacity(0.2));
+
+        let base_bg = if self.selected {
+            color.element_active
+        } else {
+            base_bg
+        };
+
+        let hover_color = color
+            .element_active
+            .blend(color.element_background.opacity(0.2));
+
+        let gradient_overlay = GradientFade::new(base_bg, hover_color, hover_color)
+            .width(px(64.0))
+            .right(px(-10.0))
+            .gradient_stop(0.75)
+            .group_name("thread-item");
+
         let dot_separator = || {
             Label::new("•")
                 .size(LabelSize::Small)
@@ -194,25 +221,26 @@ impl RenderOnce for ThreadItem {
         };
 
         let icon_id = format!("icon-{}", self.id);
+        let icon_visible = self.icon_visible;
         let icon_container = || {
             h_flex()
                 .id(icon_id.clone())
                 .size_4()
                 .flex_none()
                 .justify_center()
+                .when(!icon_visible, |this| this.invisible())
         };
+        let icon_color = self.icon_color.unwrap_or(Color::Muted);
         let agent_icon = if let Some(custom_svg) = self.custom_icon_from_external_svg {
             Icon::from_external_svg(custom_svg)
-                .color(Color::Muted)
+                .color(icon_color)
                 .size(IconSize::Small)
         } else {
-            Icon::new(self.icon)
-                .color(Color::Muted)
-                .size(IconSize::Small)
+            Icon::new(self.icon).color(icon_color).size(IconSize::Small)
         };
 
         let decoration = |icon: IconDecorationKind, color: Hsla| {
-            IconDecoration::new(icon, cx.theme().colors().surface_background, cx)
+            IconDecoration::new(icon, base_bg, cx)
                 .color(color)
                 .position(gpui::Point {
                     x: px(-2.),
@@ -264,10 +292,9 @@ impl RenderOnce for ThreadItem {
 
         let title = self.title;
         let highlight_positions = self.highlight_positions;
-        let title_label_size = self.title_label_size.unwrap_or(LabelSize::Default);
-        let title_label = if self.generating_title {
+
+        let title_label = if self.title_generating {
             Label::new(title)
-                .size(title_label_size)
                 .color(Color::Muted)
                 .with_animation(
                     "generating-title",
@@ -278,66 +305,38 @@ impl RenderOnce for ThreadItem {
                 )
                 .into_any_element()
         } else if highlight_positions.is_empty() {
-            let label = Label::new(title).size(title_label_size);
-            let label = if let Some(color) = self.title_label_color {
-                label.color(color)
-            } else {
-                label
-            };
-            label.into_any_element()
+            Label::new(title)
+                .when_some(self.title_label_color, |label, color| label.color(color))
+                .into_any_element()
         } else {
-            let label = HighlightedLabel::new(title, highlight_positions).size(title_label_size);
-            let label = if let Some(color) = self.title_label_color {
-                label.color(color)
-            } else {
-                label
-            };
-            label.into_any_element()
+            HighlightedLabel::new(title, highlight_positions)
+                .when_some(self.title_label_color, |label, color| label.color(color))
+                .into_any_element()
         };
-
-        let b_bg = color
-            .title_bar_background
-            .blend(color.panel_background.opacity(0.8));
-
-        let base_bg = if self.selected {
-            color.element_active
-        } else {
-            b_bg
-        };
-
-        let gradient_overlay =
-            GradientFade::new(base_bg, color.element_hover, color.element_active)
-                .width(px(64.0))
-                .right(px(-10.0))
-                .gradient_stop(0.75)
-                .group_name("thread-item");
 
         let has_diff_stats = self.added.is_some() || self.removed.is_some();
+        let diff_stat_id = self.id.clone();
         let added_count = self.added.unwrap_or(0);
         let removed_count = self.removed.unwrap_or(0);
-        let diff_stat_id = self.id.clone();
+
         let has_worktree = self.worktree.is_some();
         let has_timestamp = !self.timestamp.is_empty();
         let timestamp = self.timestamp;
 
         v_flex()
             .id(self.id.clone())
+            .cursor_pointer()
             .group("thread-item")
             .relative()
             .overflow_hidden()
-            .cursor_pointer()
             .w_full()
             .py_1()
             .px_1p5()
             .when(self.selected, |s| s.bg(color.element_active))
             .border_1()
             .border_color(gpui::transparent_black())
-            .when(self.focused, |s| {
-                s.when(self.docked_right, |s| s.border_r_2())
-                    .border_color(color.border_focused)
-            })
-            .hover(|s| s.bg(color.element_hover))
-            .active(|s| s.bg(color.element_active))
+            .when(self.focused, |s| s.border_color(color.border_focused))
+            .hover(|s| s.bg(hover_color))
             .on_hover(self.on_hover)
             .child(
                 h_flex()
@@ -358,15 +357,11 @@ impl RenderOnce for ThreadItem {
                     .child(gradient_overlay)
                     .when(self.hovered, |this| {
                         this.when_some(self.action_slot, |this, slot| {
-                            let overlay = GradientFade::new(
-                                base_bg,
-                                color.element_hover,
-                                color.element_active,
-                            )
-                            .width(px(64.0))
-                            .right(px(6.))
-                            .gradient_stop(0.75)
-                            .group_name("thread-item");
+                            let overlay = GradientFade::new(base_bg, hover_color, hover_color)
+                                .width(px(64.0))
+                                .right(px(6.))
+                                .gradient_stop(0.75)
+                                .group_name("thread-item");
 
                             this.child(
                                 h_flex()
@@ -380,57 +375,56 @@ impl RenderOnce for ThreadItem {
                         })
                     }),
             )
-            .when_some(self.worktree, |this, worktree| {
-                let worktree_highlight_positions = self.worktree_highlight_positions;
-                let worktree_label = if worktree_highlight_positions.is_empty() {
-                    Label::new(worktree)
-                        .size(LabelSize::Small)
-                        .color(Color::Muted)
-                        .into_any_element()
-                } else {
-                    HighlightedLabel::new(worktree, worktree_highlight_positions)
-                        .size(LabelSize::Small)
-                        .color(Color::Muted)
-                        .into_any_element()
-                };
+            .when(has_worktree || has_diff_stats || has_timestamp, |this| {
+                let worktree_full_path = self.worktree_full_path.clone().unwrap_or_default();
+                let worktree_label = self.worktree.map(|worktree| {
+                    let positions = self.worktree_highlight_positions;
+                    if positions.is_empty() {
+                        Label::new(worktree)
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                            .into_any_element()
+                    } else {
+                        HighlightedLabel::new(worktree, positions)
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                            .into_any_element()
+                    }
+                });
 
                 this.child(
                     h_flex()
                         .min_w_0()
                         .gap_1p5()
                         .child(icon_container()) // Icon Spacing
-                        .child(worktree_label)
-                        .when(has_diff_stats || has_timestamp, |this| {
-                            this.child(dot_separator())
-                        })
-                        .when(has_diff_stats, |this| {
+                        .when_some(worktree_label, |this, label| {
                             this.child(
-                                DiffStat::new(diff_stat_id.clone(), added_count, removed_count)
-                                    .tooltip("Unreviewed changes"),
+                                h_flex()
+                                    .id(format!("{}-worktree", self.id.clone()))
+                                    .gap_1()
+                                    .child(
+                                        Icon::new(IconName::GitWorktree)
+                                            .size(IconSize::XSmall)
+                                            .color(Color::Muted),
+                                    )
+                                    .child(label)
+                                    .tooltip(move |_, cx| {
+                                        Tooltip::with_meta(
+                                            "Thread Running in a Local Git Worktree",
+                                            None,
+                                            worktree_full_path.clone(),
+                                            cx,
+                                        )
+                                    }),
                             )
                         })
-                        .when(has_diff_stats && has_timestamp, |this| {
+                        .when(has_worktree && (has_diff_stats || has_timestamp), |this| {
                             this.child(dot_separator())
                         })
-                        .when(has_timestamp, |this| {
-                            this.child(
-                                Label::new(timestamp.clone())
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            )
-                        }),
-                )
-            })
-            .when(!has_worktree && (has_diff_stats || has_timestamp), |this| {
-                this.child(
-                    h_flex()
-                        .min_w_0()
-                        .gap_1p5()
-                        .child(icon_container()) // Icon Spacing
                         .when(has_diff_stats, |this| {
                             this.child(
                                 DiffStat::new(diff_stat_id, added_count, removed_count)
-                                    .tooltip("Unreviewed Changes"),
+                                    .tooltip("Unreviewed changes"),
                             )
                         })
                         .when(has_diff_stats && has_timestamp, |this| {
@@ -580,18 +574,6 @@ impl Component for ThreadItem {
                             .icon(IconName::AiClaude)
                             .timestamp("12h")
                             .focused(true),
-                    )
-                    .into_any_element(),
-            ),
-            single_example(
-                "Focused + Docked Right",
-                container()
-                    .child(
-                        ThreadItem::new("ti-7b", "Focused with right dock border")
-                            .icon(IconName::AiClaude)
-                            .timestamp("1w")
-                            .focused(true)
-                            .docked_right(true),
                     )
                     .into_any_element(),
             ),

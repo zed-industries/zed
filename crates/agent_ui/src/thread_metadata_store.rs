@@ -36,9 +36,12 @@ pub fn init(cx: &mut App) {
 }
 
 /// Migrate existing thread metadata from native agent thread store to the new metadata storage.
+/// We migrate the last 10 threads per project and skip threads that do not have a project.
 ///
 /// TODO: Remove this after N weeks of shipping the sidebar
 fn migrate_thread_metadata(cx: &mut App) {
+    const MAX_MIGRATED_THREADS_PER_PROJECT: usize = 10;
+
     let store = SidebarThreadMetadataStore::global(cx);
     let db = store.read(cx).db.clone();
 
@@ -48,16 +51,32 @@ fn migrate_thread_metadata(cx: &mut App) {
         }
 
         let metadata = store.read_with(cx, |_store, app| {
+            let mut migrated_threads_per_project = HashMap::default();
+
             ThreadStore::global(app)
                 .read(app)
                 .entries()
-                .map(|entry| ThreadMetadata {
-                    session_id: entry.id,
-                    agent_id: None,
-                    title: entry.title,
-                    updated_at: entry.updated_at,
-                    created_at: entry.created_at,
-                    folder_paths: entry.folder_paths,
+                .filter_map(|entry| {
+                    if entry.folder_paths.is_empty() {
+                        return None;
+                    }
+
+                    let migrated_thread_count = migrated_threads_per_project
+                        .entry(entry.folder_paths.clone())
+                        .or_insert(0);
+                    if *migrated_thread_count >= MAX_MIGRATED_THREADS_PER_PROJECT {
+                        return None;
+                    }
+                    *migrated_thread_count += 1;
+
+                    Some(ThreadMetadata {
+                        session_id: entry.id,
+                        agent_id: None,
+                        title: entry.title,
+                        updated_at: entry.updated_at,
+                        created_at: entry.created_at,
+                        folder_paths: entry.folder_paths,
+                    })
                 })
                 .collect::<Vec<_>>()
         });
@@ -335,8 +354,16 @@ impl SidebarThreadMetadataStore {
 
         match event {
             acp_thread::AcpThreadEvent::NewEntry
+            | acp_thread::AcpThreadEvent::TitleUpdated
             | acp_thread::AcpThreadEvent::EntryUpdated(_)
-            | acp_thread::AcpThreadEvent::TitleUpdated => {
+            | acp_thread::AcpThreadEvent::EntriesRemoved(_)
+            | acp_thread::AcpThreadEvent::ToolAuthorizationRequested(_)
+            | acp_thread::AcpThreadEvent::ToolAuthorizationReceived(_)
+            | acp_thread::AcpThreadEvent::Retry(_)
+            | acp_thread::AcpThreadEvent::Stopped(_)
+            | acp_thread::AcpThreadEvent::Error
+            | acp_thread::AcpThreadEvent::LoadError(_)
+            | acp_thread::AcpThreadEvent::Refusal => {
                 let metadata = ThreadMetadata::from_thread(&thread, cx);
                 self.save(metadata, cx).detach_and_log_err(cx);
             }
@@ -722,35 +749,68 @@ mod tests {
         });
         assert_eq!(list.len(), 0);
 
+        let project_a_paths = PathList::new(&[Path::new("/project-a")]);
+        let project_b_paths = PathList::new(&[Path::new("/project-b")]);
         let now = Utc::now();
 
-        // Populate the native ThreadStore via save_thread
-        let save1 = cx.update(|cx| {
-            let thread_store = ThreadStore::global(cx);
-            thread_store.update(cx, |store, cx| {
-                store.save_thread(
-                    acp::SessionId::new("session-1"),
-                    make_db_thread("Thread 1", now),
-                    PathList::default(),
-                    cx,
-                )
-            })
-        });
-        save1.await.unwrap();
-        cx.run_until_parked();
+        for index in 0..12 {
+            let updated_at = now + chrono::Duration::seconds(index as i64);
+            let session_id = format!("project-a-session-{index}");
+            let title = format!("Project A Thread {index}");
 
-        let save2 = cx.update(|cx| {
+            let save_task = cx.update(|cx| {
+                let thread_store = ThreadStore::global(cx);
+                let session_id = session_id.clone();
+                let title = title.clone();
+                let project_a_paths = project_a_paths.clone();
+                thread_store.update(cx, |store, cx| {
+                    store.save_thread(
+                        acp::SessionId::new(session_id),
+                        make_db_thread(&title, updated_at),
+                        project_a_paths,
+                        cx,
+                    )
+                })
+            });
+            save_task.await.unwrap();
+            cx.run_until_parked();
+        }
+
+        for index in 0..3 {
+            let updated_at = now + chrono::Duration::seconds(100 + index as i64);
+            let session_id = format!("project-b-session-{index}");
+            let title = format!("Project B Thread {index}");
+
+            let save_task = cx.update(|cx| {
+                let thread_store = ThreadStore::global(cx);
+                let session_id = session_id.clone();
+                let title = title.clone();
+                let project_b_paths = project_b_paths.clone();
+                thread_store.update(cx, |store, cx| {
+                    store.save_thread(
+                        acp::SessionId::new(session_id),
+                        make_db_thread(&title, updated_at),
+                        project_b_paths,
+                        cx,
+                    )
+                })
+            });
+            save_task.await.unwrap();
+            cx.run_until_parked();
+        }
+
+        let save_projectless = cx.update(|cx| {
             let thread_store = ThreadStore::global(cx);
             thread_store.update(cx, |store, cx| {
                 store.save_thread(
-                    acp::SessionId::new("session-2"),
-                    make_db_thread("Thread 2", now),
+                    acp::SessionId::new("projectless-session"),
+                    make_db_thread("Projectless Thread", now + chrono::Duration::seconds(200)),
                     PathList::default(),
                     cx,
                 )
             })
         });
-        save2.await.unwrap();
+        save_projectless.await.unwrap();
         cx.run_until_parked();
 
         // Run migration
@@ -760,26 +820,73 @@ mod tests {
 
         cx.run_until_parked();
 
-        // Verify the metadata was migrated
+        // Verify the metadata was migrated, limited to 10 per project, and
+        // projectless threads were skipped.
         let list = cx.update(|cx| {
             let store = SidebarThreadMetadataStore::global(cx);
             store.read(cx).entries().collect::<Vec<_>>()
         });
-        assert_eq!(list.len(), 2);
+        assert_eq!(list.len(), 13);
 
-        let metadata1 = list
-            .iter()
-            .find(|m| m.session_id.0.as_ref() == "session-1")
-            .expect("session-1 should be in migrated metadata");
-        assert_eq!(metadata1.title.as_ref(), "Thread 1");
-        assert!(metadata1.agent_id.is_none());
+        assert!(
+            list.iter()
+                .all(|metadata| !metadata.folder_paths.is_empty())
+        );
+        assert!(
+            list.iter()
+                .all(|metadata| metadata.session_id.0.as_ref() != "projectless-session")
+        );
 
-        let metadata2 = list
+        let project_a_entries = list
             .iter()
-            .find(|m| m.session_id.0.as_ref() == "session-2")
-            .expect("session-2 should be in migrated metadata");
-        assert_eq!(metadata2.title.as_ref(), "Thread 2");
-        assert!(metadata2.agent_id.is_none());
+            .filter(|metadata| metadata.folder_paths == project_a_paths)
+            .collect::<Vec<_>>();
+        assert_eq!(project_a_entries.len(), 10);
+        assert_eq!(
+            project_a_entries
+                .iter()
+                .map(|metadata| metadata.session_id.0.as_ref())
+                .collect::<Vec<_>>(),
+            vec![
+                "project-a-session-11",
+                "project-a-session-10",
+                "project-a-session-9",
+                "project-a-session-8",
+                "project-a-session-7",
+                "project-a-session-6",
+                "project-a-session-5",
+                "project-a-session-4",
+                "project-a-session-3",
+                "project-a-session-2",
+            ]
+        );
+        assert!(
+            project_a_entries
+                .iter()
+                .all(|metadata| metadata.agent_id.is_none())
+        );
+
+        let project_b_entries = list
+            .iter()
+            .filter(|metadata| metadata.folder_paths == project_b_paths)
+            .collect::<Vec<_>>();
+        assert_eq!(project_b_entries.len(), 3);
+        assert_eq!(
+            project_b_entries
+                .iter()
+                .map(|metadata| metadata.session_id.0.as_ref())
+                .collect::<Vec<_>>(),
+            vec![
+                "project-b-session-2",
+                "project-b-session-1",
+                "project-b-session-0",
+            ]
+        );
+        assert!(
+            project_b_entries
+                .iter()
+                .all(|metadata| metadata.agent_id.is_none())
+        );
     }
 
     #[gpui::test]

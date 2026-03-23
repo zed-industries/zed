@@ -426,6 +426,8 @@ pub async fn run_repair(
         actual_cursor,
         error: err,
         provider: PredictionProvider::Repair,
+        cumulative_logprob: None,
+        avg_logprob: None,
     });
 
     Ok(())

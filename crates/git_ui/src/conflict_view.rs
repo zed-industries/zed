@@ -11,7 +11,7 @@ use gpui::{
 };
 use language::{Anchor, Buffer, BufferId};
 use project::{
-    ConflictRegion, ConflictSet, ConflictSetUpdate, ProjectItem as _,
+    ConflictRegion, ConflictSet, ConflictSetUpdate, Project, ProjectItem as _,
     git_store::{GitStoreEvent, RepositoryEvent},
 };
 use settings::Settings;
@@ -497,8 +497,7 @@ fn render_conflict_buttons(
         .into_any()
 }
 
-fn collect_conflicted_file_paths(workspace: &Workspace, cx: &App) -> Vec<String> {
-    let project = workspace.project().read(cx);
+fn collect_conflicted_file_paths(project: &Project, cx: &App) -> Vec<String> {
     let git_store = project.git_store().read(cx);
     let mut paths = Vec::new();
 
@@ -534,7 +533,11 @@ pub(crate) fn register_conflict_notification(
             GitStoreEvent::ConflictsUpdated
                 | GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::StatusesChanged, _)
         );
-        if !AgentSettings::get_global(cx).enabled || !conflicts_changed {
+        if !AgentSettings::get_global(cx).enabled(cx) || !conflicts_changed {
+            return;
+        }
+        let project = workspace.project().read(cx);
+        if project.is_via_collab() {
             return;
         }
 
@@ -542,7 +545,7 @@ pub(crate) fn register_conflict_notification(
             return;
         }
 
-        let paths = collect_conflicted_file_paths(workspace, cx);
+        let paths = collect_conflicted_file_paths(project, cx);
         let notification_id = workspace::merge_conflict_notification_id();
         let current_paths_set: HashSet<String> = paths.iter().cloned().collect();
 
@@ -556,11 +559,10 @@ pub(crate) fn register_conflict_notification(
             let file_count = paths.len();
             workspace.show_notification(notification_id, cx, |cx| {
                 cx.new(|cx| {
-                    let message = if file_count == 1 {
-                        "1 file has unresolved merge conflicts".to_string()
-                    } else {
-                        format!("{file_count} files have unresolved merge conflicts")
-                    };
+                    let message = format!(
+                        "{file_count} file{} have unresolved merge conflicts",
+                        if file_count == 1 { "" } else { "s" }
+                    );
 
                     MessageNotification::new(message, cx)
                         .primary_message("Resolve with Agent")

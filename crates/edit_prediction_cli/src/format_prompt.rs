@@ -150,6 +150,20 @@ pub fn zeta2_output_for_patch(
         );
     }
 
+    if version == ZetaFormat::V0318SeedMultiRegions {
+        let cursor_in_new = cursor_offset.map(|cursor_offset| {
+            let hunk_start = first_hunk_offset.unwrap_or(0);
+            result.floor_char_boundary((hunk_start + cursor_offset).min(result.len()))
+        });
+        return multi_region::encode_from_old_and_new_v0318(
+            &old_editable_region,
+            &result,
+            cursor_in_new,
+            zeta_prompt::CURSOR_MARKER,
+            multi_region::V0318_END_MARKER,
+        );
+    }
+
     if version == ZetaFormat::V0316SeedMultiRegions {
         let cursor_in_new = cursor_offset.map(|cursor_offset| {
             let hunk_start = first_hunk_offset.unwrap_or(0);

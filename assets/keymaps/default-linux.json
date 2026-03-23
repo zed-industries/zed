@@ -785,9 +785,14 @@
     "bindings": {
       "alt-tab": "editor::AcceptEditPrediction",
       "alt-l": "editor::AcceptEditPrediction",
-      "tab": "editor::AcceptEditPrediction",
       "alt-k": "editor::AcceptNextWordEditPrediction",
       "alt-j": "editor::AcceptNextLineEditPrediction",
+    },
+  },
+  {
+    "context": "Editor && edit_prediction && edit_prediction_mode == eager",
+    "bindings": {
+      "tab": "editor::AcceptEditPrediction",
     },
   },
   {
@@ -1451,8 +1456,8 @@
   {
     "context": "GitPicker",
     "bindings": {
-      "alt-1": "git_picker::ActivateBranchesTab",
-      "alt-2": "git_picker::ActivateWorktreesTab",
+      "alt-1": "git_picker::ActivateWorktreesTab",
+      "alt-2": "git_picker::ActivateBranchesTab",
       "alt-3": "git_picker::ActivateStashTab",
     },
   },

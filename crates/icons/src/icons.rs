@@ -151,6 +151,7 @@ pub enum IconName {
     GitCommit,
     GitGraph,
     GitMergeConflict,
+    GitWorktree,
     Github,
     Hash,
     HistoryRerun,
