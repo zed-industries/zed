@@ -43,7 +43,7 @@ use zed_actions::editor::{MoveDown, MoveUp};
 
 use zed_actions::agents_sidebar::FocusSidebarFilter;
 
-use zed::i18n::t;
+use zed_i18n::t;
 
 gpui::actions!(
     agents_sidebar,

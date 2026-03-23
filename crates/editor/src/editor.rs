@@ -223,7 +223,7 @@ use workspace::{
 };
 pub use zed_actions::editor::RevealInFileManager;
 use zed_actions::editor::{MoveDown, MoveUp};
-use zed::i18n::t;
+use zed_i18n::t;
 
 use crate::{
     code_context_menus::CompletionsMenuSource,

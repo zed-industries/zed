@@ -30,6 +30,7 @@ strum.workspace = true
 theme.workspace = true
 ui_macros.workspace = true
 util.workspace = true
+zed_i18n.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true

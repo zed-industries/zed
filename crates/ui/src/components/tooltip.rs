@@ -4,7 +4,7 @@ use std::rc::Rc;
 use gpui::{Action, AnyElement, AnyView, AppContext, FocusHandle, IntoElement, Render};
 use settings::Settings;
 use theme::ThemeSettings;
-use zed::i18n::t;
+use zed_i18n::t;
 
 use crate::prelude::*;
 use crate::{Color, KeyBinding, Label, LabelSize, StyledExt, h_flex, v_flex};
