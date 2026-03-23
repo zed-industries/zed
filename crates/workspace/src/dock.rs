@@ -1013,14 +1013,12 @@ impl Render for PanelButtons {
         h_flex()
             .gap_1()
             .when(
-                has_buttons && dock.position == DockPosition::Bottom,
+                has_buttons
+                    && (dock.position == DockPosition::Bottom
+                        || dock.position == DockPosition::Right),
                 |this| this.child(Divider::vertical().color(DividerColor::Border)),
             )
             .children(buttons)
-            .when(
-                has_buttons && dock.position == DockPosition::Right,
-                |this| this.child(Divider::vertical().color(DividerColor::Border)),
-            )
             .when(has_buttons && dock.position == DockPosition::Left, |this| {
                 this.child(Divider::vertical().color(DividerColor::Border))
             })

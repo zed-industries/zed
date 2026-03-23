@@ -426,6 +426,7 @@ pub fn init(
                     defaults.collaboration_panel.get_or_insert_default().dock =
                         Some(DockPosition::Right);
                     defaults.git_panel.get_or_insert_default().dock = Some(DockPosition::Right);
+                    defaults.notification_panel.get_or_insert_default().button = Some(false);
                 } else {
                     defaults.agent.get_or_insert_default().dock = Some(DockPosition::Right);
                     defaults.project_panel.get_or_insert_default().dock = Some(DockSide::Left);
@@ -433,6 +434,7 @@ pub fn init(
                     defaults.collaboration_panel.get_or_insert_default().dock =
                         Some(DockPosition::Left);
                     defaults.git_panel.get_or_insert_default().dock = Some(DockPosition::Left);
+                    defaults.notification_panel.get_or_insert_default().button = Some(true);
                 }
             });
         });
