@@ -924,6 +924,7 @@ impl Plan {
                 }
                 acp::PlanEntryStatus::InProgress => {
                     stats.in_progress_entry = stats.in_progress_entry.or(Some(entry));
+                    stats.pending += 1;
                 }
                 acp::PlanEntryStatus::Completed => {
                     stats.completed += 1;
