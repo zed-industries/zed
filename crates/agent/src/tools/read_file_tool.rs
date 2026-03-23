@@ -896,7 +896,7 @@ mod test {
         );
         authorization
             .response
-            .send(acp::PermissionOptionId::new("allow"))
+            .send(acp::PermissionOptionId::new("allow").into())
             .unwrap();
 
         let result = read_task.await;
@@ -1185,7 +1185,7 @@ mod test {
         );
 
         auth.response
-            .send(acp::PermissionOptionId::new("allow"))
+            .send(acp::PermissionOptionId::new("allow").into())
             .unwrap();
 
         let result = task.await;

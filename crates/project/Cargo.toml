@@ -45,6 +45,7 @@ client.workspace = true
 clock.workspace = true
 collections.workspace = true
 context_server.workspace = true
+credentials_provider.workspace = true
 dap.workspace = true
 extension.workspace = true
 fancy-regex.workspace = true

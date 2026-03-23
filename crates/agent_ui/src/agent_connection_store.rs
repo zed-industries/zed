@@ -9,8 +9,7 @@ use gpui::{AppContext, Context, Entity, EventEmitter, SharedString, Subscription
 use project::{AgentServerStore, AgentServersUpdated, Project};
 use watch::Receiver;
 
-use crate::{ExternalAgent, ThreadHistory};
-use project::ExternalAgentServerName;
+use crate::{Agent, ThreadHistory};
 
 pub enum AgentConnectionEntry {
     Connecting {
@@ -25,7 +24,7 @@ pub enum AgentConnectionEntry {
 #[derive(Clone)]
 pub struct AgentConnectedState {
     pub connection: Rc<dyn AgentConnection>,
-    pub history: Entity<ThreadHistory>,
+    pub history: Option<Entity<ThreadHistory>>,
 }
 
 impl AgentConnectionEntry {
@@ -39,7 +38,7 @@ impl AgentConnectionEntry {
 
     pub fn history(&self) -> Option<&Entity<ThreadHistory>> {
         match self {
-            AgentConnectionEntry::Connected(state) => Some(&state.history),
+            AgentConnectionEntry::Connected(state) => state.history.as_ref(),
             _ => None,
         }
     }
@@ -53,7 +52,7 @@ impl EventEmitter<AgentConnectionEntryEvent> for AgentConnectionEntry {}
 
 pub struct AgentConnectionStore {
     project: Entity<Project>,
-    entries: HashMap<ExternalAgent, Entity<AgentConnectionEntry>>,
+    entries: HashMap<Agent, Entity<AgentConnectionEntry>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -68,13 +67,13 @@ impl AgentConnectionStore {
         }
     }
 
-    pub fn entry(&self, key: &ExternalAgent) -> Option<&Entity<AgentConnectionEntry>> {
+    pub fn entry(&self, key: &Agent) -> Option<&Entity<AgentConnectionEntry>> {
         self.entries.get(key)
     }
 
     pub fn request_connection(
         &mut self,
-        key: ExternalAgent,
+        key: Agent,
         server: Rc<dyn AgentServer>,
         cx: &mut Context<Self>,
     ) -> Entity<AgentConnectionEntry> {
@@ -142,10 +141,8 @@ impl AgentConnectionStore {
     ) {
         let store = store.read(cx);
         self.entries.retain(|key, _| match key {
-            ExternalAgent::NativeAgent => true,
-            ExternalAgent::Custom { name } => store
-                .external_agents
-                .contains_key(&ExternalAgentServerName(name.clone())),
+            Agent::NativeAgent => true,
+            Agent::Custom { id } => store.external_agents.contains_key(id),
         });
         cx.notify();
     }
@@ -163,10 +160,12 @@ impl AgentConnectionStore {
         let agent_server_store = self.project.read(cx).agent_server_store().clone();
         let delegate = AgentServerDelegate::new(agent_server_store, Some(new_version_tx));
 
-        let connect_task = server.connect(delegate, cx);
+        let connect_task = server.connect(delegate, self.project.clone(), cx);
         let connect_task = cx.spawn(async move |_this, cx| match connect_task.await {
             Ok(connection) => cx.update(|cx| {
-                let history = cx.new(|cx| ThreadHistory::new(connection.session_list(cx), cx));
+                let history = connection
+                    .session_list(cx)
+                    .map(|session_list| cx.new(|cx| ThreadHistory::new(session_list, cx)));
                 Ok(AgentConnectedState {
                     connection,
                     history,

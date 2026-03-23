@@ -1,8 +1,4 @@
-use std::{
-    ops::Range,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{ops::Range, sync::Arc};
 
 use cloud_llm_client::EditPredictionRejectReason;
 use edit_prediction_types::{PredictedCursorPosition, interpolate_edits};
@@ -29,6 +25,7 @@ impl std::fmt::Display for EditPredictionId {
 pub struct EditPredictionResult {
     pub id: EditPredictionId,
     pub prediction: Result<EditPrediction, EditPredictionRejectReason>,
+    pub e2e_latency: std::time::Duration,
 }
 
 impl EditPredictionResult {
@@ -38,15 +35,15 @@ impl EditPredictionResult {
         edited_buffer_snapshot: &BufferSnapshot,
         edits: Arc<[(Range<Anchor>, Arc<str>)]>,
         cursor_position: Option<PredictedCursorPosition>,
-        buffer_snapshotted_at: Instant,
-        response_received_at: Instant,
         inputs: ZetaPromptInput,
         model_version: Option<String>,
+        e2e_latency: std::time::Duration,
         cx: &mut AsyncApp,
     ) -> Self {
         if edits.is_empty() {
             return Self {
                 id,
+                e2e_latency,
                 prediction: Err(EditPredictionRejectReason::Empty),
             };
         }
@@ -62,6 +59,7 @@ impl EditPredictionResult {
         else {
             return Self {
                 id,
+                e2e_latency,
                 prediction: Err(EditPredictionRejectReason::InterpolatedEmpty),
             };
         };
@@ -70,6 +68,7 @@ impl EditPredictionResult {
 
         Self {
             id: id.clone(),
+            e2e_latency,
             prediction: Ok(EditPrediction {
                 id,
                 edits,
@@ -78,8 +77,6 @@ impl EditPredictionResult {
                 edit_preview,
                 inputs,
                 buffer: edited_buffer.clone(),
-                buffer_snapshotted_at,
-                response_received_at,
                 model_version,
             }),
         }
@@ -94,8 +91,6 @@ pub struct EditPrediction {
     pub snapshot: BufferSnapshot,
     pub edit_preview: EditPreview,
     pub buffer: Entity<Buffer>,
-    pub buffer_snapshotted_at: Instant,
-    pub response_received_at: Instant,
     pub inputs: zeta_prompt::ZetaPromptInput,
     pub model_version: Option<String>,
 }
@@ -110,10 +105,6 @@ impl EditPrediction {
 
     pub fn targets_buffer(&self, buffer: &Buffer) -> bool {
         self.snapshot.remote_id() == buffer.remote_id()
-    }
-
-    pub fn latency(&self) -> Duration {
-        self.response_received_at - self.buffer_snapshotted_at
     }
 }
 
@@ -169,8 +160,6 @@ mod tests {
                 can_collect_data: false,
                 repo_url: None,
             },
-            buffer_snapshotted_at: Instant::now(),
-            response_received_at: Instant::now(),
         };
 
         cx.update(|cx| {

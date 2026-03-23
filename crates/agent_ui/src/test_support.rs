@@ -1,7 +1,9 @@
 use acp_thread::{AgentConnection, StubAgentConnection};
 use agent_client_protocol as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
-use gpui::{Entity, SharedString, Task, TestAppContext, VisualTestContext};
+use gpui::{Entity, Task, TestAppContext, VisualTestContext};
+use project::AgentId;
+use project::Project;
 use settings::SettingsStore;
 use std::any::Any;
 use std::rc::Rc;
@@ -11,11 +13,23 @@ use crate::agent_panel;
 
 pub struct StubAgentServer<C> {
     connection: C,
+    agent_id: AgentId,
 }
 
-impl<C> StubAgentServer<C> {
+impl<C> StubAgentServer<C>
+where
+    C: AgentConnection,
+{
     pub fn new(connection: C) -> Self {
-        Self { connection }
+        Self {
+            connection,
+            agent_id: "Test".into(),
+        }
+    }
+
+    pub fn with_connection_agent_id(mut self) -> Self {
+        self.agent_id = self.connection.agent_id();
+        self
     }
 }
 
@@ -37,13 +51,14 @@ where
         ui::IconName::Ai
     }
 
-    fn name(&self) -> SharedString {
-        "Test".into()
+    fn agent_id(&self) -> AgentId {
+        self.agent_id.clone()
     }
 
     fn connect(
         &self,
         _delegate: AgentServerDelegate,
+        _project: Entity<Project>,
         _cx: &mut gpui::App,
     ) -> Task<gpui::Result<Rc<dyn AgentConnection>>> {
         Task::ready(Ok(Rc::new(self.connection.clone())))
@@ -80,8 +95,25 @@ pub fn open_thread_with_connection(
     cx.run_until_parked();
 }
 
+pub fn open_thread_with_custom_connection<C>(
+    panel: &Entity<AgentPanel>,
+    connection: C,
+    cx: &mut VisualTestContext,
+) where
+    C: 'static + AgentConnection + Send + Clone,
+{
+    panel.update_in(cx, |panel, window, cx| {
+        panel.open_external_thread_with_server(
+            Rc::new(StubAgentServer::new(connection).with_connection_agent_id()),
+            window,
+            cx,
+        );
+    });
+    cx.run_until_parked();
+}
+
 pub fn send_message(panel: &Entity<AgentPanel>, cx: &mut VisualTestContext) {
-    let thread_view = panel.read_with(cx, |panel, cx| panel.as_active_thread_view(cx).unwrap());
+    let thread_view = panel.read_with(cx, |panel, cx| panel.active_thread_view(cx).unwrap());
     let message_editor = thread_view.read_with(cx, |view, _cx| view.message_editor.clone());
     message_editor.update_in(cx, |editor, window, cx| {
         editor.set_text("Hello", window, cx);

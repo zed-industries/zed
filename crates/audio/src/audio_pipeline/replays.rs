@@ -8,7 +8,8 @@ use rodio::Source;
 use smol::fs::File;
 use std::{io, path::PathBuf, sync::Arc, time::Duration};
 
-use crate::{REPLAY_DURATION, rodio_ext::Replay};
+use crate::REPLAY_DURATION;
+use crate::audio_pipeline::rodio_ext::Replay;
 
 #[derive(Default, Clone)]
 pub(crate) struct Replays(Arc<Mutex<HashMap<String, Replay>>>);

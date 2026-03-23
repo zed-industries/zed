@@ -61,28 +61,43 @@ impl std::fmt::Debug for AgentServerCommand {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct ExternalAgentServerName(pub SharedString);
+#[derive(
+    Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(transparent)]
+pub struct AgentId(pub SharedString);
 
-impl std::fmt::Display for ExternalAgentServerName {
+impl AgentId {
+    pub fn new(id: impl Into<SharedString>) -> Self {
+        AgentId(id.into())
+    }
+}
+
+impl std::fmt::Display for AgentId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }
 }
 
-impl From<&'static str> for ExternalAgentServerName {
+impl From<&'static str> for AgentId {
     fn from(value: &'static str) -> Self {
-        ExternalAgentServerName(value.into())
+        AgentId(value.into())
     }
 }
 
-impl From<ExternalAgentServerName> for SharedString {
-    fn from(value: ExternalAgentServerName) -> Self {
+impl From<AgentId> for SharedString {
+    fn from(value: AgentId) -> Self {
         value.0
     }
 }
 
-impl std::borrow::Borrow<str> for ExternalAgentServerName {
+impl AsRef<str> for AgentId {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::borrow::Borrow<str> for AgentId {
     fn borrow(&self) -> &str {
         &self.0
     }
@@ -163,7 +178,7 @@ impl ExternalAgentEntry {
 
 pub struct AgentServerStore {
     state: AgentServerStoreState,
-    pub external_agents: HashMap<ExternalAgentServerName, ExternalAgentEntry>,
+    pub external_agents: HashMap<AgentId, ExternalAgentEntry>,
 }
 
 pub struct AgentServersUpdated;
@@ -228,7 +243,7 @@ impl AgentServerStore {
                             .as_ref()
                             .map(|path| SharedString::from(path.clone()));
                         let icon = icon_path;
-                        let agent_server_name = ExternalAgentServerName(agent_name.clone().into());
+                        let agent_server_name = AgentId(agent_name.clone().into());
                         self.external_agents
                             .entry(agent_server_name.clone())
                             .and_modify(|entry| {
@@ -285,13 +300,13 @@ impl AgentServerStore {
         cx.emit(AgentServersUpdated);
     }
 
-    pub fn agent_icon(&self, name: &ExternalAgentServerName) -> Option<SharedString> {
+    pub fn agent_icon(&self, name: &AgentId) -> Option<SharedString> {
         self.external_agents
             .get(name)
             .and_then(|entry| entry.icon.clone())
     }
 
-    pub fn agent_source(&self, name: &ExternalAgentServerName) -> Option<ExternalAgentSource> {
+    pub fn agent_source(&self, name: &AgentId) -> Option<ExternalAgentSource> {
         self.external_agents.get(name).map(|entry| entry.source)
     }
 }
@@ -337,7 +352,7 @@ pub fn resolve_extension_icon_path(
 }
 
 impl AgentServerStore {
-    pub fn agent_display_name(&self, name: &ExternalAgentServerName) -> Option<SharedString> {
+    pub fn agent_display_name(&self, name: &AgentId) -> Option<SharedString> {
         self.external_agents
             .get(name)
             .and_then(|entry| entry.display_name.clone())
@@ -424,7 +439,7 @@ impl AgentServerStore {
 
         // Insert extension agents before custom/registry so registry entries override extensions.
         for (agent_name, ext_id, targets, env, icon_path, display_name) in extension_agents.iter() {
-            let name = ExternalAgentServerName(agent_name.clone().into());
+            let name = AgentId(agent_name.clone().into());
             let mut env = env.clone();
             if let Some(settings_env) =
                 new_settings
@@ -463,7 +478,7 @@ impl AgentServerStore {
         for (name, settings) in new_settings.iter() {
             match settings {
                 CustomAgentServerSettings::Custom { command, .. } => {
-                    let agent_name = ExternalAgentServerName(name.clone().into());
+                    let agent_name = AgentId(name.clone().into());
                     self.external_agents.insert(
                         agent_name.clone(),
                         ExternalAgentEntry::new(
@@ -485,7 +500,7 @@ impl AgentServerStore {
                         continue;
                     };
 
-                    let agent_name = ExternalAgentServerName(name.clone().into());
+                    let agent_name = AgentId(name.clone().into());
                     match agent {
                         RegistryAgent::Binary(agent) => {
                             if !agent.supports_current_platform {
@@ -650,7 +665,7 @@ impl AgentServerStore {
 
     pub fn get_external_agent(
         &mut self,
-        name: &ExternalAgentServerName,
+        name: &AgentId,
     ) -> Option<&mut (dyn ExternalAgentServer + 'static)> {
         self.external_agents
             .get_mut(name)
@@ -668,7 +683,7 @@ impl AgentServerStore {
         }
     }
 
-    pub fn external_agents(&self) -> impl Iterator<Item = &ExternalAgentServerName> {
+    pub fn external_agents(&self) -> impl Iterator<Item = &AgentId> {
         self.external_agents.keys()
     }
 
@@ -777,12 +792,12 @@ impl AgentServerStore {
                 .names
                 .into_iter()
                 .map(|name| {
-                    let agent_name = ExternalAgentServerName(name.into());
+                    let agent_id = AgentId(name.into());
                     let (icon, display_name, source) = metadata
-                        .remove(&agent_name)
+                        .remove(&agent_id)
                         .or_else(|| {
                             AgentRegistryStore::try_global(cx)
-                                .and_then(|store| store.read(cx).agent(&agent_name.0))
+                                .and_then(|store| store.read(cx).agent(&agent_id))
                                 .map(|s| {
                                     (
                                         s.icon_path().cloned(),
@@ -795,13 +810,13 @@ impl AgentServerStore {
                     let agent = RemoteExternalAgentServer {
                         project_id: *project_id,
                         upstream_client: upstream_client.clone(),
-                        name: agent_name.clone(),
+                        name: agent_id.clone(),
                         new_version_available_tx: new_version_available_txs
-                            .remove(&agent_name)
+                            .remove(&agent_id)
                             .flatten(),
                     };
                     (
-                        agent_name,
+                        agent_id,
                         ExternalAgentEntry::new(
                             Box::new(agent) as Box<dyn ExternalAgentServer>,
                             source,
@@ -877,10 +892,7 @@ impl AgentServerStore {
         Ok(())
     }
 
-    pub fn get_extension_id_for_agent(
-        &mut self,
-        name: &ExternalAgentServerName,
-    ) -> Option<Arc<str>> {
+    pub fn get_extension_id_for_agent(&mut self, name: &AgentId) -> Option<Arc<str>> {
         self.external_agents.get_mut(name).and_then(|entry| {
             entry
                 .server
@@ -894,7 +906,7 @@ impl AgentServerStore {
 struct RemoteExternalAgentServer {
     project_id: u64,
     upstream_client: Entity<RemoteClient>,
-    name: ExternalAgentServerName,
+    name: AgentId,
     new_version_available_tx: Option<watch::Sender<Option<String>>>,
 }
 
@@ -1362,13 +1374,8 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
                 .await
                 .unwrap_or_default();
 
-            let mut exec_args = Vec::new();
-            exec_args.push("--yes".to_string());
-            exec_args.push(package.to_string());
-            if !args.is_empty() {
-                exec_args.push("--".to_string());
-                exec_args.extend(args);
-            }
+            let mut exec_args = vec!["--yes".to_string(), "--".to_string(), package.to_string()];
+            exec_args.extend(args);
 
             let npm_command = node_runtime
                 .npm_command(
@@ -1433,10 +1440,6 @@ impl ExternalAgentServer for LocalCustomAgent {
         self
     }
 }
-
-pub const GEMINI_NAME: &str = "gemini";
-pub const CLAUDE_AGENT_NAME: &str = "claude-acp";
-pub const CODEX_NAME: &str = "codex-acp";
 
 #[derive(Default, Clone, JsonSchema, Debug, PartialEq, RegisterSetting)]
 pub struct AllAgentServersSettings(pub HashMap<String, CustomAgentServerSettings>);

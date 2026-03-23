@@ -110,6 +110,12 @@ pub struct Extensions {
 #[serde(deny_unknown_fields)]
 pub struct AcpRegistry;
 
+/// Show call diagnostics and connection quality statistics.
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = collab)]
+#[serde(deny_unknown_fields)]
+pub struct ShowCallStats;
+
 /// Decreases the font size in the editor buffer.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = zed)]
@@ -191,6 +197,8 @@ pub mod editor {
             MoveUp,
             /// Moves cursor down.
             MoveDown,
+            /// Reveals the current file in the system file manager.
+            RevealInFileManager,
         ]
     );
 }
@@ -323,6 +331,12 @@ pub mod feedback {
             RequestFeature
         ]
     );
+}
+
+pub mod theme {
+    use gpui::actions;
+
+    actions!(theme, [ToggleMode]);
 }
 
 pub mod theme_selector {
@@ -762,6 +776,18 @@ pub mod preview {
             ]
         );
     }
+}
+
+pub mod agents_sidebar {
+    use gpui::actions;
+
+    actions!(
+        agents_sidebar,
+        [
+            /// Moves focus to the sidebar's search/filter editor.
+            FocusSidebarFilter,
+        ]
+    );
 }
 
 pub mod notebook {

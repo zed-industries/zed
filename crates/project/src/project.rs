@@ -33,7 +33,7 @@ pub mod search_history;
 pub mod yarn;
 
 use dap::inline_value::{InlineValueLocation, VariableLookupKind, VariableScope};
-use itertools::Either;
+use itertools::{Either, Itertools};
 
 use crate::{
     git_store::GitStore,
@@ -43,12 +43,11 @@ use crate::{
     worktree_store::WorktreeIdCounter,
 };
 pub use agent_registry_store::{AgentRegistryStore, RegistryAgent};
-pub use agent_server_store::{
-    AgentServerStore, AgentServersUpdated, ExternalAgentServerName, ExternalAgentSource,
-};
+pub use agent_server_store::{AgentId, AgentServerStore, AgentServersUpdated, ExternalAgentSource};
 pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
+    linked_worktree_short_name, worktrees_directory_for_repo,
 };
 pub use manifest_tree::ManifestTree;
 pub use project_search::{Search, SearchResults};
@@ -136,6 +135,7 @@ use text::{Anchor, BufferId, OffsetRangeExt, Point, Rope};
 use toolchain_store::EmptyToolchainStore;
 use util::{
     ResultExt as _, maybe,
+    path_list::PathList,
     paths::{PathStyle, SanitizedPath, is_absolute},
     rel_path::RelPath,
 };
@@ -307,7 +307,7 @@ enum ProjectClientState {
     /// Multi-player mode but still a local project.
     Shared { remote_id: u64 },
     /// Multi-player mode but working on a remote project.
-    Remote {
+    Collab {
         sharing_has_stopped: bool,
         capability: Capability,
         remote_id: u64,
@@ -1816,7 +1816,7 @@ impl Project {
                 client_subscriptions: Default::default(),
                 _subscriptions: vec![cx.on_release(Self::release)],
                 collab_client: client.clone(),
-                client_state: ProjectClientState::Remote {
+                client_state: ProjectClientState::Collab {
                     sharing_has_stopped: false,
                     capability: Capability::ReadWrite,
                     remote_id,
@@ -1934,7 +1934,7 @@ impl Project {
             ProjectClientState::Shared { .. } => {
                 let _ = self.unshare_internal(cx);
             }
-            ProjectClientState::Remote { remote_id, .. } => {
+            ProjectClientState::Collab { remote_id, .. } => {
                 let _ = self.collab_client.send(proto::LeaveProject {
                     project_id: *remote_id,
                 });
@@ -2166,7 +2166,7 @@ impl Project {
         match self.client_state {
             ProjectClientState::Local => None,
             ProjectClientState::Shared { remote_id, .. }
-            | ProjectClientState::Remote { remote_id, .. } => Some(remote_id),
+            | ProjectClientState::Collab { remote_id, .. } => Some(remote_id),
         }
     }
 
@@ -2220,7 +2220,7 @@ impl Project {
     #[inline]
     pub fn replica_id(&self) -> ReplicaId {
         match self.client_state {
-            ProjectClientState::Remote { replica_id, .. } => replica_id,
+            ProjectClientState::Collab { replica_id, .. } => replica_id,
             _ => {
                 if self.remote_client.is_some() {
                     ReplicaId::REMOTE_SERVER
@@ -2292,6 +2292,32 @@ impl Project {
         cx: &'a App,
     ) -> impl 'a + DoubleEndedIterator<Item = Entity<Worktree>> {
         self.worktree_store.read(cx).visible_worktrees(cx)
+    }
+
+    pub fn default_path_list(&self, cx: &App) -> PathList {
+        let worktree_roots = self
+            .visible_worktrees(cx)
+            .sorted_by(|left, right| {
+                left.read(cx)
+                    .is_single_file()
+                    .cmp(&right.read(cx).is_single_file())
+            })
+            .filter_map(|worktree| {
+                let worktree = worktree.read(cx);
+                let path = worktree.abs_path();
+                if worktree.is_single_file() {
+                    Some(path.parent()?.to_path_buf())
+                } else {
+                    Some(path.to_path_buf())
+                }
+            })
+            .collect::<Vec<_>>();
+
+        if worktree_roots.is_empty() {
+            PathList::new(&[paths::home_dir().as_path()])
+        } else {
+            PathList::new(&worktree_roots)
+        }
     }
 
     #[inline]
@@ -2734,7 +2760,7 @@ impl Project {
             } else {
                 Capability::ReadOnly
             };
-        if let ProjectClientState::Remote { capability, .. } = &mut self.client_state {
+        if let ProjectClientState::Collab { capability, .. } = &mut self.client_state {
             if *capability == new_capability {
                 return;
             }
@@ -2747,7 +2773,7 @@ impl Project {
     }
 
     fn disconnected_from_host_internal(&mut self, cx: &mut App) {
-        if let ProjectClientState::Remote {
+        if let ProjectClientState::Collab {
             sharing_has_stopped,
             ..
         } = &mut self.client_state
@@ -2774,7 +2800,7 @@ impl Project {
     #[inline]
     pub fn is_disconnected(&self, cx: &App) -> bool {
         match &self.client_state {
-            ProjectClientState::Remote {
+            ProjectClientState::Collab {
                 sharing_has_stopped,
                 ..
             } => *sharing_has_stopped,
@@ -2796,7 +2822,7 @@ impl Project {
     #[inline]
     pub fn capability(&self) -> Capability {
         match &self.client_state {
-            ProjectClientState::Remote { capability, .. } => *capability,
+            ProjectClientState::Collab { capability, .. } => *capability,
             ProjectClientState::Shared { .. } | ProjectClientState::Local => Capability::ReadWrite,
         }
     }
@@ -2812,7 +2838,7 @@ impl Project {
             ProjectClientState::Local | ProjectClientState::Shared { .. } => {
                 self.remote_client.is_none()
             }
-            ProjectClientState::Remote { .. } => false,
+            ProjectClientState::Collab { .. } => false,
         }
     }
 
@@ -2823,7 +2849,7 @@ impl Project {
             ProjectClientState::Local | ProjectClientState::Shared { .. } => {
                 self.remote_client.is_some()
             }
-            ProjectClientState::Remote { .. } => false,
+            ProjectClientState::Collab { .. } => false,
         }
     }
 
@@ -2832,7 +2858,7 @@ impl Project {
     pub fn is_via_collab(&self) -> bool {
         match &self.client_state {
             ProjectClientState::Local | ProjectClientState::Shared { .. } => false,
-            ProjectClientState::Remote { .. } => true,
+            ProjectClientState::Collab { .. } => true,
         }
     }
 
@@ -4505,7 +4531,7 @@ impl Project {
         match &self.client_state {
             ProjectClientState::Shared { .. } => true,
             ProjectClientState::Local => false,
-            ProjectClientState::Remote { .. } => true,
+            ProjectClientState::Collab { .. } => true,
         }
     }
 
@@ -5506,25 +5532,51 @@ impl Project {
                     let key = (worktree_id, path);
                     log::debug!("handle_create_file_for_peer: looking up key={:?}", key);
 
-                    let mut files = downloading_files.lock();
-                    log::trace!(
-                        "handle_create_file_for_peer: current downloading_files keys: {:?}",
-                        files.keys().collect::<Vec<_>>()
-                    );
+                    let empty_file_destination: Option<PathBuf> = {
+                        let mut files = downloading_files.lock();
+                        log::trace!(
+                            "handle_create_file_for_peer: current downloading_files keys: {:?}",
+                            files.keys().collect::<Vec<_>>()
+                        );
 
-                    if let Some(file_entry) = files.get_mut(&key) {
-                        file_entry.total_size = state.content_size;
-                        file_entry.file_id = Some(state.id);
+                        if let Some(file_entry) = files.get_mut(&key) {
+                            file_entry.total_size = state.content_size;
+                            file_entry.file_id = Some(state.id);
+                            log::debug!(
+                                "handle_create_file_for_peer: updated file entry: total_size={}, file_id={}",
+                                state.content_size,
+                                state.id
+                            );
+                        } else {
+                            log::warn!(
+                                "handle_create_file_for_peer: key={:?} not found in downloading_files",
+                                key
+                            );
+                        }
+
+                        if state.content_size == 0 {
+                            // No chunks will arrive for an empty file; write it now.
+                            files.remove(&key).map(|entry| entry.destination_path)
+                        } else {
+                            None
+                        }
+                    };
+
+                    if let Some(destination) = empty_file_destination {
                         log::debug!(
-                            "handle_create_file_for_peer: updated file entry: total_size={}, file_id={}",
-                            state.content_size,
-                            state.id
+                            "handle_create_file_for_peer: writing empty file to {:?}",
+                            destination
                         );
-                    } else {
-                        log::warn!(
-                            "handle_create_file_for_peer: key={:?} not found in downloading_files",
-                            key
-                        );
+                        match smol::fs::write(&destination, &[] as &[u8]).await {
+                            Ok(_) => log::info!(
+                                "handle_create_file_for_peer: successfully wrote file to {:?}",
+                                destination
+                            ),
+                            Err(e) => log::error!(
+                                "handle_create_file_for_peer: failed to write empty file: {:?}",
+                                e
+                            ),
+                        }
                     }
                 } else {
                     log::warn!("handle_create_file_for_peer: State has no file field");
@@ -5604,7 +5656,7 @@ impl Project {
 
     fn synchronize_remote_buffers(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let project_id = match self.client_state {
-            ProjectClientState::Remote {
+            ProjectClientState::Collab {
                 sharing_has_stopped,
                 remote_id,
                 ..

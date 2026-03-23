@@ -14,12 +14,13 @@ use anyhow::Context as _;
 use askpass::AskPassDelegate;
 use cloud_llm_client::CompletionIntent;
 use collections::{BTreeMap, HashMap, HashSet};
-use db::kvp::KEY_VALUE_STORE;
+use db::kvp::KeyValueStore;
 use editor::{
     Direction, Editor, EditorElement, EditorMode, MultiBuffer, MultiBufferOffset,
     actions::ExpandAllDiffHunks,
 };
 use editor::{EditorStyle, RewrapOptions};
+use file_icons::FileIcons;
 use futures::StreamExt as _;
 use git::commit::ParsedCommitMessage;
 use git::repository::{
@@ -714,11 +715,16 @@ impl GitPanel {
 
             let mut was_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
             let mut was_tree_view = GitPanelSettings::get_global(cx).tree_view;
+            let mut was_file_icons = GitPanelSettings::get_global(cx).file_icons;
+            let mut was_folder_icons = GitPanelSettings::get_global(cx).folder_icons;
             let mut was_diff_stats = GitPanelSettings::get_global(cx).diff_stats;
             cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
-                let sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
-                let tree_view = GitPanelSettings::get_global(cx).tree_view;
-                let diff_stats = GitPanelSettings::get_global(cx).diff_stats;
+                let settings = GitPanelSettings::get_global(cx);
+                let sort_by_path = settings.sort_by_path;
+                let tree_view = settings.tree_view;
+                let file_icons = settings.file_icons;
+                let folder_icons = settings.folder_icons;
+                let diff_stats = settings.diff_stats;
                 if tree_view != was_tree_view {
                     this.view_mode = GitPanelViewMode::from_settings(cx);
                 }
@@ -731,9 +737,19 @@ impl GitPanel {
                 if (diff_stats != was_diff_stats) || update_entries {
                     this.update_visible_entries(window, cx);
                 }
+                if file_icons != was_file_icons || folder_icons != was_folder_icons {
+                    cx.notify();
+                }
                 was_sort_by_path = sort_by_path;
                 was_tree_view = tree_view;
+                was_file_icons = file_icons;
+                was_folder_icons = folder_icons;
                 was_diff_stats = diff_stats;
+            })
+            .detach();
+
+            cx.observe_global::<FileIcons>(|_, cx| {
+                cx.notify();
             })
             .detach();
 
@@ -912,6 +928,7 @@ impl GitPanel {
         let width = self.width;
         let amend_pending = self.amend_pending;
         let signoff_enabled = self.signoff_enabled;
+        let kvp = KeyValueStore::global(cx);
 
         self.pending_serialization = cx.spawn(async move |git_panel, cx| {
             cx.background_executor()
@@ -932,16 +949,15 @@ impl GitPanel {
             };
             cx.background_spawn(
                 async move {
-                    KEY_VALUE_STORE
-                        .write_kvp(
-                            serialization_key,
-                            serde_json::to_string(&SerializedGitPanel {
-                                width,
-                                amend_pending,
-                                signoff_enabled,
-                            })?,
-                        )
-                        .await?;
+                    kvp.write_kvp(
+                        serialization_key,
+                        serde_json::to_string(&SerializedGitPanel {
+                            width,
+                            amend_pending,
+                            signoff_enabled,
+                        })?,
+                    )
+                    .await?;
                     anyhow::Ok(())
                 }
                 .log_err(),
@@ -1117,7 +1133,22 @@ impl GitPanel {
         }
 
         if matches!(self.entries.get(new_index), Some(GitListEntry::Header(..))) {
-            self.selected_entry = Some(new_index.saturating_sub(1));
+            self.selected_entry = match &self.view_mode {
+                GitPanelViewMode::Flat => Some(new_index.saturating_sub(1)),
+                GitPanelViewMode::Tree(tree_view_state) => {
+                    maybe!({
+                        let current_logical_index = tree_view_state
+                            .logical_indices
+                            .iter()
+                            .position(|&i| i == new_index)?;
+
+                        tree_view_state
+                            .logical_indices
+                            .get(current_logical_index.saturating_sub(1))
+                            .copied()
+                    })
+                }
+            };
         } else {
             self.selected_entry = Some(new_index);
         }
@@ -2245,6 +2276,7 @@ impl GitPanel {
                 RewrapOptions {
                     override_language_settings: false,
                     preserve_existing_whitespace: true,
+                    line_length: None,
                 },
                 cx,
             );
@@ -5020,15 +5052,21 @@ impl GitPanel {
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let tree_view = GitPanelSettings::get_global(cx).tree_view;
+        let settings = GitPanelSettings::get_global(cx);
+        let tree_view = settings.tree_view;
         let path_style = self.project.read(cx).path_style(cx);
         let git_path_style = ProjectSettings::get_global(cx).git.path_style;
         let display_name = entry.display_name(path_style);
 
         let selected = self.selected_entry == Some(ix);
         let marked = self.marked_entries.contains(&ix);
-        let status_style = GitPanelSettings::get_global(cx).status_style;
+        let status_style = settings.status_style;
         let status = entry.status;
+        let file_icon = if settings.file_icons {
+            FileIcons::get_icon(entry.repo_path.as_std_path(), cx)
+        } else {
+            None
+        };
 
         let has_conflict = status.is_conflicted();
         let is_modified = status.is_modified();
@@ -5105,6 +5143,21 @@ impl GitPanel {
             .min_w_0()
             .flex_1()
             .gap_1()
+            .when(settings.file_icons, |this| {
+                this.child(
+                    file_icon
+                        .map(|file_icon| {
+                            Icon::from_path(file_icon)
+                                .size(IconSize::Small)
+                                .color(Color::Muted)
+                        })
+                        .unwrap_or_else(|| {
+                            Icon::new(IconName::File)
+                                .size(IconSize::Small)
+                                .color(Color::Muted)
+                        }),
+                )
+            })
             .child(git_status_icon(status))
             .map(|this| {
                 if tree_view {
@@ -5273,10 +5326,24 @@ impl GitPanel {
             )
         };
 
-        let folder_icon = if entry.expanded {
-            IconName::FolderOpen
+        let settings = GitPanelSettings::get_global(cx);
+        let folder_icon = if settings.folder_icons {
+            FileIcons::get_folder_icon(entry.expanded, entry.key.path.as_std_path(), cx)
         } else {
-            IconName::Folder
+            FileIcons::get_chevron_icon(entry.expanded, cx)
+        };
+        let fallback_folder_icon = if settings.folder_icons {
+            if entry.expanded {
+                IconName::FolderOpen
+            } else {
+                IconName::Folder
+            }
+        } else {
+            if entry.expanded {
+                IconName::ChevronDown
+            } else {
+                IconName::ChevronRight
+            }
         };
 
         let stage_status = if let Some(repo) = &self.active_repository {
@@ -5299,9 +5366,17 @@ impl GitPanel {
             .gap_1()
             .pl(px(entry.depth as f32 * TREE_INDENT))
             .child(
-                Icon::new(folder_icon)
-                    .size(IconSize::Small)
-                    .color(Color::Muted),
+                folder_icon
+                    .map(|folder_icon| {
+                        Icon::from_path(folder_icon)
+                            .size(IconSize::Small)
+                            .color(Color::Muted)
+                    })
+                    .unwrap_or_else(|| {
+                        Icon::new(fallback_folder_icon)
+                            .size(IconSize::Small)
+                            .color(Color::Muted)
+                    }),
             )
             .child(self.entry_label(entry.name.clone(), label_color).truncate());
 
@@ -5468,12 +5543,14 @@ impl GitPanel {
         mut cx: AsyncWindowContext,
     ) -> anyhow::Result<Entity<Self>> {
         let serialized_panel = match workspace
-            .read_with(&cx, |workspace, _| Self::serialization_key(workspace))
+            .read_with(&cx, |workspace, cx| {
+                Self::serialization_key(workspace).map(|key| (key, KeyValueStore::global(cx)))
+            })
             .ok()
             .flatten()
         {
-            Some(serialization_key) => cx
-                .background_spawn(async move { KEY_VALUE_STORE.read_kvp(&serialization_key) })
+            Some((serialization_key, kvp)) => cx
+                .background_spawn(async move { kvp.read_kvp(&serialization_key) })
                 .await
                 .context("loading git panel")
                 .log_err()
@@ -5738,8 +5815,20 @@ impl Panel for GitPanel {
         Some("Git Panel")
     }
 
+    fn icon_label(&self, _: &Window, cx: &App) -> Option<String> {
+        if !GitPanelSettings::get_global(cx).show_count_badge {
+            return None;
+        }
+        let total = self.changes_count;
+        (total > 0).then(|| total.to_string())
+    }
+
     fn toggle_action(&self) -> Box<dyn Action> {
         Box::new(ToggleFocus)
+    }
+
+    fn starts_open(&self, _: &Window, cx: &App) -> bool {
+        GitPanelSettings::get_global(cx).starts_open
     }
 
     fn activation_priority(&self) -> u32 {

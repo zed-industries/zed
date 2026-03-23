@@ -816,7 +816,15 @@ impl UserStore {
         }
 
         self.organizations = response.organizations.into_iter().map(Arc::new).collect();
-        self.current_organization = self.organizations.first().cloned();
+        self.current_organization = response
+            .default_organization_id
+            .and_then(|default_organization_id| {
+                self.organizations
+                    .iter()
+                    .find(|organization| organization.id == default_organization_id)
+                    .cloned()
+            })
+            .or_else(|| self.organizations.first().cloned());
         self.plans_by_organization = response
             .plans_by_organization
             .into_iter()

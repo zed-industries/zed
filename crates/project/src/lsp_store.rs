@@ -1703,6 +1703,10 @@ impl LocalLspStore {
                 formatter
             };
             match formatter {
+                Formatter::None => {
+                    zlog::trace!(logger => "skipping formatter 'none'");
+                    continue;
+                }
                 Formatter::Auto => unreachable!("Auto resolved above"),
                 Formatter::Prettier => {
                     let logger = zlog::scoped!(logger => "prettier");
@@ -3963,10 +3967,7 @@ impl BufferLspData {
         self.inlay_hints.remove_server_data(for_server);
 
         if let Some(semantic_tokens) = &mut self.semantic_tokens {
-            semantic_tokens.raw_tokens.servers.remove(&for_server);
-            semantic_tokens
-                .latest_invalidation_requests
-                .remove(&for_server);
+            semantic_tokens.remove_server_data(for_server);
         }
 
         if let Some(folding_ranges) = &mut self.folding_ranges {
@@ -4031,6 +4032,7 @@ pub enum LspStoreEvent {
 pub struct LanguageServerStatus {
     pub name: LanguageServerName,
     pub server_version: Option<SharedString>,
+    pub server_readable_version: Option<SharedString>,
     pub pending_work: BTreeMap<ProgressToken, LanguageServerProgress>,
     pub has_pending_diagnostic_updates: bool,
     pub progress_tokens: HashSet<ProgressToken>,
@@ -6646,6 +6648,7 @@ impl LspStore {
         completions: Rc<RefCell<Box<[Completion]>>>,
         completion_index: usize,
         push_to_history: bool,
+        all_commit_ranges: Vec<Range<language::Anchor>>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<Transaction>>> {
         if let Some((client, project_id)) = self.upstream_client() {
@@ -6662,6 +6665,11 @@ impl LspStore {
                             new_text: completion.new_text,
                             source: completion.source,
                         })),
+                        all_commit_ranges: all_commit_ranges
+                            .iter()
+                            .cloned()
+                            .map(language::proto::serialize_anchor_range)
+                            .collect(),
                     }
                 };
 
@@ -6755,12 +6763,15 @@ impl LspStore {
                             let has_overlap = if is_file_start_auto_import {
                                 false
                             } else {
-                                let start_within = primary.start.cmp(&range.start, buffer).is_le()
-                                    && primary.end.cmp(&range.start, buffer).is_ge();
-                                let end_within = range.start.cmp(&primary.end, buffer).is_le()
-                                    && range.end.cmp(&primary.end, buffer).is_ge();
-                                let result = start_within || end_within;
-                                result
+                                all_commit_ranges.iter().any(|commit_range| {
+                                    let start_within =
+                                        commit_range.start.cmp(&range.start, buffer).is_le()
+                                            && commit_range.end.cmp(&range.start, buffer).is_ge();
+                                    let end_within =
+                                        range.start.cmp(&commit_range.end, buffer).is_le()
+                                            && range.end.cmp(&commit_range.end, buffer).is_ge();
+                                    start_within || end_within
+                                })
                             };
 
                             //Skip additional edits which overlap with the primary completion edit
@@ -8195,6 +8206,7 @@ impl LspStore {
                     LanguageServerStatus {
                         name,
                         server_version: None,
+                        server_readable_version: None,
                         pending_work: Default::default(),
                         has_pending_diagnostic_updates: false,
                         progress_tokens: Default::default(),
@@ -9385,6 +9397,7 @@ impl LspStore {
                 LanguageServerStatus {
                     name: server_name.clone(),
                     server_version: None,
+                    server_readable_version: None,
                     pending_work: Default::default(),
                     has_pending_diagnostic_updates: false,
                     progress_tokens: Default::default(),
@@ -9827,7 +9840,9 @@ impl LspStore {
                     let typ = match event.kind? {
                         PathEventKind::Created => lsp::FileChangeType::CREATED,
                         PathEventKind::Removed => lsp::FileChangeType::DELETED,
-                        PathEventKind::Changed => lsp::FileChangeType::CHANGED,
+                        PathEventKind::Changed | PathEventKind::Rescan => {
+                            lsp::FileChangeType::CHANGED
+                        }
                     };
                     Some(lsp::FileEvent {
                         uri: file_path_to_lsp_url(&event.path).log_err()?,
@@ -10421,13 +10436,19 @@ impl LspStore {
         envelope: TypedEnvelope<proto::ApplyCompletionAdditionalEdits>,
         mut cx: AsyncApp,
     ) -> Result<proto::ApplyCompletionAdditionalEditsResponse> {
-        let (buffer, completion) = this.update(&mut cx, |this, cx| {
+        let (buffer, completion, all_commit_ranges) = this.update(&mut cx, |this, cx| {
             let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
             let buffer = this.buffer_store.read(cx).get_existing(buffer_id)?;
             let completion = Self::deserialize_completion(
                 envelope.payload.completion.context("invalid completion")?,
             )?;
-            anyhow::Ok((buffer, completion))
+            let all_commit_ranges = envelope
+                .payload
+                .all_commit_ranges
+                .into_iter()
+                .map(language::proto::deserialize_anchor_range)
+                .collect::<Result<Vec<_>, _>>()?;
+            anyhow::Ok((buffer, completion, all_commit_ranges))
         })?;
 
         let apply_additional_edits = this.update(&mut cx, |this, cx| {
@@ -10447,6 +10468,7 @@ impl LspStore {
                 }]))),
                 0,
                 false,
+                all_commit_ranges,
                 cx,
             )
         });
@@ -11341,6 +11363,7 @@ impl LspStore {
             LanguageServerStatus {
                 name: language_server.name(),
                 server_version: language_server.version(),
+                server_readable_version: language_server.readable_version(),
                 pending_work: Default::default(),
                 has_pending_diagnostic_updates: false,
                 progress_tokens: Default::default(),

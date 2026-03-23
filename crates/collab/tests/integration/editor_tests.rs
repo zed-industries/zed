@@ -5691,7 +5691,7 @@ async fn test_document_symbols(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
     executor.run_until_parked();
 
     editor_a.update(cx_a, |editor, cx| {
-        let breadcrumbs = editor
+        let (breadcrumbs, _) = editor
             .breadcrumbs(cx)
             .expect("Host should have breadcrumbs");
         let texts: Vec<_> = breadcrumbs.iter().map(|b| b.text.as_str()).collect();
@@ -5727,6 +5727,7 @@ async fn test_document_symbols(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
             editor
                 .breadcrumbs(cx)
                 .expect("Client B should have breadcrumbs")
+                .0
                 .iter()
                 .map(|b| b.text.as_str())
                 .collect::<Vec<_>>(),

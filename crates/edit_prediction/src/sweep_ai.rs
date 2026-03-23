@@ -21,7 +21,6 @@ use std::{
     ops::Range,
     path::Path,
     sync::Arc,
-    time::Instant,
 };
 
 const SWEEP_API_URL: &str = "https://autocomplete.sweep.dev/backend/next_edit_autocomplete";
@@ -50,6 +49,7 @@ impl SweepAi {
             .sweep
             .privacy_mode;
         let debug_info = self.debug_info.clone();
+        let request_start = cx.background_executor().now();
         self.api_token.update(cx, |key_state, cx| {
             _ = key_state.load_if_needed(SWEEP_CREDENTIALS_URL, |s| s, cx);
         });
@@ -89,8 +89,6 @@ impl SweepAi {
             })
             .take(3)
             .collect::<Vec<_>>();
-
-        let buffer_snapshotted_at = Instant::now();
 
         let result = cx.background_spawn(async move {
             let text = inputs.snapshot.text();
@@ -255,7 +253,6 @@ impl SweepAi {
             let mut body = String::new();
             response.body_mut().read_to_string(&mut body).await?;
 
-            let response_received_at = Instant::now();
             if !response.status().is_success() {
                 let message = format!(
                     "Request failed with status: {:?}\nBody: {}",
@@ -289,19 +286,13 @@ impl SweepAi {
                 })
                 .collect::<Vec<_>>();
 
-            anyhow::Ok((
-                response.autocomplete_id,
-                edits,
-                inputs.snapshot,
-                response_received_at,
-                ep_inputs,
-            ))
+            anyhow::Ok((response.autocomplete_id, edits, inputs.snapshot, ep_inputs))
         });
 
         let buffer = inputs.buffer.clone();
 
         cx.spawn(async move |cx| {
-            let (id, edits, old_snapshot, response_received_at, inputs) = result.await?;
+            let (id, edits, old_snapshot, inputs) = result.await?;
             anyhow::Ok(Some(
                 EditPredictionResult::new(
                     EditPredictionId(id.into()),
@@ -309,10 +300,9 @@ impl SweepAi {
                     &old_snapshot,
                     edits.into(),
                     None,
-                    buffer_snapshotted_at,
-                    response_received_at,
                     inputs,
                     None,
+                    cx.background_executor().now() - request_start,
                     cx,
                 )
                 .await,

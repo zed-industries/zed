@@ -15,6 +15,7 @@ pub struct NotificationPanelSettings {
     pub button: bool,
     pub dock: DockPosition,
     pub default_width: Pixels,
+    pub show_count_badge: bool,
 }
 
 impl Settings for CollaborationPanelSettings {
@@ -36,6 +37,7 @@ impl Settings for NotificationPanelSettings {
             button: panel.button.unwrap(),
             dock: panel.dock.unwrap().into(),
             default_width: panel.default_width.map(px).unwrap(),
+            show_count_badge: panel.show_count_badge.unwrap(),
         };
     }
 }

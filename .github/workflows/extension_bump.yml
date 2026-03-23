@@ -17,6 +17,10 @@ on:
         description: force-bump
         required: true
         type: boolean
+      working-directory:
+        description: working-directory
+        type: string
+        default: .
     secrets:
       app-id:
         description: The app ID used to create the PR
@@ -42,8 +46,6 @@ jobs:
         if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
             PR_FORK_POINT="$(git merge-base origin/main HEAD)"
             git checkout "$PR_FORK_POINT"
-        elif BRANCH_PARENT_SHA="$(git merge-base origin/main origin/zed-zippy-autobump)"; then
-            git checkout "$BRANCH_PARENT_SHA"
         else
             git checkout "$(git log -1 --format=%H)"~1
         fi
@@ -59,6 +61,10 @@ jobs:
       version_changed: ${{ steps.compare-versions-check.outputs.version_changed }}
       current_version: ${{ steps.compare-versions-check.outputs.current_version }}
     timeout-minutes: 1
+    defaults:
+      run:
+        shell: bash -euxo pipefail {0}
+        working-directory: ${{ inputs.working-directory }}
   bump_extension_version:
     needs:
     - check_version_changed
@@ -77,6 +83,11 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+        path: ~/.rustup
     - name: extension_bump::install_bump_2_version
       run: pip install bump2version --break-system-packages
     - id: bump-version
@@ -94,29 +105,56 @@ jobs:
             --no-configured-files "$BUMP_TYPE" "${BUMP_FILES[@]}"
 
         if [[ -f "Cargo.toml" ]]; then
-            cargo update --workspace
+            cargo +stable update --workspace
         fi
 
         NEW_VERSION="$(sed -n 's/^version = \"\(.*\)\"/\1/p' < extension.toml | tr -d '[:space:]')"
+        EXTENSION_ID="$(sed -n 's/^id = "\(.*\)"/\1/p' < extension.toml | head -1 | tr -d '[:space:]')"
+        EXTENSION_NAME="$(sed -n 's/^name = "\(.*\)"/\1/p' < extension.toml | head -1 | tr -d '[:space:]')"
+
+        if [[ "$WORKING_DIR" == "." || -z "$WORKING_DIR" ]]; then
+            {
+                echo "title=Bump version to ${NEW_VERSION}";
+                echo "body=This PR bumps the version of this extension to v${NEW_VERSION}";
+                echo "branch_name=zed-zippy-autobump";
+            } >> "$GITHUB_OUTPUT"
+        else
+            {
+                echo "title=${EXTENSION_ID}: Bump to v${NEW_VERSION}";
+                echo "body<<EOF";
+                echo "This PR bumps the version of the ${EXTENSION_NAME} extension to v${NEW_VERSION}.";
+                echo "";
+                echo "Release Notes:";
+                echo "";
+                echo "- N/A";
+                echo "EOF";
+                echo "branch_name=zed-zippy-${EXTENSION_ID}-autobump";
+            } >> "$GITHUB_OUTPUT"
+        fi
 
         echo "new_version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
       env:
         OLD_VERSION: ${{ needs.check_version_changed.outputs.current_version }}
         BUMP_TYPE: ${{ inputs.bump-type }}
+        WORKING_DIR: ${{ inputs.working-directory }}
     - name: extension_bump::create_pull_request
       uses: peter-evans/create-pull-request@v7
       with:
-        title: Bump version to ${{ steps.bump-version.outputs.new_version }}
-        body: This PR bumps the version of this extension to v${{ steps.bump-version.outputs.new_version }}
-        commit-message: Bump version to v${{ steps.bump-version.outputs.new_version }}
-        branch: zed-zippy-autobump
+        title: ${{ steps.bump-version.outputs.title }}
+        body: ${{ steps.bump-version.outputs.body }}
+        commit-message: ${{ steps.bump-version.outputs.title }}
+        branch: ${{ steps.bump-version.outputs.branch_name }}
         committer: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
         base: main
         delete-branch: true
         token: ${{ steps.generate-token.outputs.token }}
         sign-commits: true
         assignees: ${{ github.actor }}
-    timeout-minutes: 3
+    timeout-minutes: 5
+    defaults:
+      run:
+        shell: bash -euxo pipefail {0}
+        working-directory: ${{ inputs.working-directory }}
   create_version_label:
     needs:
     - check_version_changed
@@ -133,6 +171,21 @@ jobs:
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
+    - id: determine-tag
+      name: extension_bump::determine_tag
+      run: |
+        EXTENSION_ID="$(sed -n 's/^id = "\(.*\)"/\1/p' < extension.toml | head -1 | tr -d '[:space:]')"
+
+        if [[ "$WORKING_DIR" == "." || -z "$WORKING_DIR" ]]; then
+            TAG="v${CURRENT_VERSION}"
+        else
+            TAG="${EXTENSION_ID}-v${CURRENT_VERSION}"
+        fi
+
+        echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+      env:
+        CURRENT_VERSION: ${{ needs.check_version_changed.outputs.current_version }}
+        WORKING_DIR: ${{ inputs.working-directory }}
     - name: extension_bump::create_version_tag
       uses: actions/github-script@v7
       with:
@@ -140,11 +193,17 @@ jobs:
           github.rest.git.createRef({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              ref: 'refs/tags/v${{ needs.check_version_changed.outputs.current_version }}',
+              ref: 'refs/tags/${{ steps.determine-tag.outputs.tag }}',
               sha: context.sha
           })
         github-token: ${{ steps.generate-token.outputs.token }}
+    outputs:
+      tag: ${{ steps.determine-tag.outputs.tag }}
     timeout-minutes: 1
+    defaults:
+      run:
+        shell: bash -euxo pipefail {0}
+        working-directory: ${{ inputs.working-directory }}
   trigger_release:
     needs:
     - check_version_changed
@@ -170,16 +229,85 @@ jobs:
         EXTENSION_ID="$(sed -n 's/id = \"\(.*\)\"/\1/p' < extension.toml)"
 
         echo "extension_id=${EXTENSION_ID}" >> "$GITHUB_OUTPUT"
-    - name: extension_bump::release_action
-      uses: huacnlee/zed-extension-action@v2
+    - id: extension-update
+      name: extension_bump::release_action
+      uses: huacnlee/zed-extension-action@82920ff0876879f65ffbcfa3403589114a8919c6
       with:
         extension-name: ${{ steps.get-extension-id.outputs.extension_id }}
         push-to: zed-industries/extensions
-        tag: v${{ needs.check_version_changed.outputs.current_version }}
+        tag: ${{ needs.create_version_label.outputs.tag }}
       env:
         COMMITTER_TOKEN: ${{ steps.generate-token.outputs.token }}
+    - name: extension_bump::enable_automerge_if_staff
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ steps.generate-token.outputs.token }}
+        script: |
+          const prNumber = process.env.PR_NUMBER;
+          if (!prNumber) {
+              console.log('No pull request number set, skipping automerge.');
+              return;
+          }
+
+          const author = process.env.GITHUB_ACTOR;
+          let isStaff = false;
+          try {
+              const response = await github.rest.teams.getMembershipForUserInOrg({
+                  org: 'zed-industries',
+                  team_slug: 'staff',
+                  username: author
+              });
+              isStaff = response.data.state === 'active';
+          } catch (error) {
+              if (error.status !== 404) {
+                  throw error;
+              }
+          }
+
+          if (!isStaff) {
+              console.log(`Actor ${author} is not a staff member, skipping automerge.`);
+              return;
+          }
+
+          // Assign staff member responsible for the bump
+          const pullNumber = parseInt(prNumber);
+
+          await github.rest.issues.addAssignees({
+              owner: 'zed-industries',
+              repo: 'extensions',
+              issue_number: pullNumber,
+              assignees: [author]
+          });
+          console.log(`Assigned ${author} to PR #${prNumber} in zed-industries/extensions`);
+
+          // Get the GraphQL node ID
+          const { data: pr } = await github.rest.pulls.get({
+              owner: 'zed-industries',
+              repo: 'extensions',
+              pull_number: pullNumber
+          });
+
+          await github.graphql(`
+              mutation($pullRequestId: ID!) {
+                  enablePullRequestAutoMerge(input: { pullRequestId: $pullRequestId, mergeMethod: SQUASH }) {
+                      pullRequest {
+                          autoMergeRequest {
+                              enabledAt
+                          }
+                      }
+                  }
+              }
+          `, { pullRequestId: pr.node_id });
+
+          console.log(`Automerge enabled for PR #${prNumber} in zed-industries/extensions`);
+      env:
+        PR_NUMBER: ${{ steps.extension-update.outputs.pull-request-number }}
+    defaults:
+      run:
+        shell: bash -euxo pipefail {0}
+        working-directory: ${{ inputs.working-directory }}
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
+  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}extension-bump
   cancel-in-progress: true
 defaults:
   run:

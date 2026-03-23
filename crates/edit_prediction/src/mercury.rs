@@ -1,37 +1,47 @@
 use crate::{
     DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId, EditPredictionModelInput,
-    EditPredictionStartedDebugEvent, open_ai_response::text_from_response,
+    EditPredictionStartedDebugEvent, EditPredictionStore, open_ai_response::text_from_response,
     prediction::EditPredictionResult, zeta::compute_edits,
 };
 use anyhow::{Context as _, Result};
 use cloud_llm_client::EditPredictionRejectReason;
 use futures::AsyncReadExt as _;
 use gpui::{
-    App, AppContext as _, Entity, Global, SharedString, Task,
-    http_client::{self, AsyncBody, HttpClient, Method},
+    App, AppContext as _, Context, Entity, Global, SharedString, Task,
+    http_client::{self, AsyncBody, HttpClient, Method, StatusCode},
 };
 use language::{ToOffset, ToPoint as _};
 use language_model::{ApiKeyState, EnvVar, env_var};
 use release_channel::AppVersion;
-use serde::Serialize;
-use std::{mem, ops::Range, path::Path, sync::Arc, time::Instant};
+use serde::{Deserialize, Serialize};
+use std::{mem, ops::Range, path::Path, sync::Arc};
 use zeta_prompt::ZetaPromptInput;
 
 const MERCURY_API_URL: &str = "https://api.inceptionlabs.ai/v1/edit/completions";
 
 pub struct Mercury {
     pub api_token: Entity<ApiKeyState>,
+    payment_required_error: bool,
 }
 
 impl Mercury {
     pub fn new(cx: &mut App) -> Self {
         Mercury {
             api_token: mercury_api_token(cx),
+            payment_required_error: false,
         }
     }
 
+    pub fn has_payment_required_error(&self) -> bool {
+        self.payment_required_error
+    }
+
+    pub fn set_payment_required_error(&mut self, payment_required_error: bool) {
+        self.payment_required_error = payment_required_error;
+    }
+
     pub(crate) fn request_prediction(
-        &self,
+        &mut self,
         EditPredictionModelInput {
             buffer,
             snapshot,
@@ -41,7 +51,7 @@ impl Mercury {
             debug_tx,
             ..
         }: EditPredictionModelInput,
-        cx: &mut App,
+        cx: &mut Context<EditPredictionStore>,
     ) -> Task<Result<Option<EditPredictionResult>>> {
         self.api_token.update(cx, |key_state, cx| {
             _ = key_state.load_if_needed(MERCURY_CREDENTIALS_URL, |s| s, cx);
@@ -57,7 +67,7 @@ impl Mercury {
 
         let http_client = cx.http_client();
         let cursor_point = position.to_point(&snapshot);
-        let buffer_snapshotted_at = Instant::now();
+        let request_start = cx.background_executor().now();
         let active_buffer = buffer.clone();
 
         let result = cx.background_spawn(async move {
@@ -127,6 +137,7 @@ impl Mercury {
                     content: open_ai::MessageContent::Plain(prompt),
                 }],
                 stream: false,
+                stream_options: None,
                 max_completion_tokens: None,
                 stop: vec![],
                 temperature: None,
@@ -161,8 +172,13 @@ impl Mercury {
                 .await
                 .context("Failed to read response body")?;
 
-            let response_received_at = Instant::now();
             if !response.status().is_success() {
+                if response.status() == StatusCode::PAYMENT_REQUIRED {
+                    anyhow::bail!(MercuryPaymentRequiredError(
+                        mercury_payment_required_message(&body),
+                    ));
+                }
+
                 anyhow::bail!(
                     "Request failed with status: {:?}\nBody: {}",
                     response.status(),
@@ -206,12 +222,25 @@ impl Mercury {
                 );
             }
 
-            anyhow::Ok((id, edits, snapshot, response_received_at, inputs))
+            anyhow::Ok((id, edits, snapshot, inputs))
         });
 
-        cx.spawn(async move |cx| {
-            let (id, edits, old_snapshot, response_received_at, inputs) =
-                result.await.context("Mercury edit prediction failed")?;
+        cx.spawn(async move |ep_store, cx| {
+            let result = result.await.context("Mercury edit prediction failed");
+
+            let has_payment_required_error = result
+                .as_ref()
+                .err()
+                .is_some_and(is_mercury_payment_required_error);
+
+            ep_store.update(cx, |store, cx| {
+                store
+                    .mercury
+                    .set_payment_required_error(has_payment_required_error);
+                cx.notify();
+            })?;
+
+            let (id, edits, old_snapshot, inputs) = result?;
             anyhow::Ok(Some(
                 EditPredictionResult::new(
                     EditPredictionId(id.into()),
@@ -219,10 +248,9 @@ impl Mercury {
                     &old_snapshot,
                     edits.into(),
                     None,
-                    buffer_snapshotted_at,
-                    response_received_at,
                     inputs,
                     None,
+                    cx.background_executor().now() - request_start,
                     cx,
                 )
                 .await,
@@ -315,6 +343,33 @@ fn push_delimited(prompt: &mut String, delimiters: Range<&str>, cb: impl FnOnce(
 pub const MERCURY_CREDENTIALS_URL: SharedString =
     SharedString::new_static("https://api.inceptionlabs.ai/v1/edit/completions");
 pub const MERCURY_CREDENTIALS_USERNAME: &str = "mercury-api-token";
+
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+struct MercuryPaymentRequiredError(SharedString);
+
+#[derive(Deserialize)]
+struct MercuryErrorResponse {
+    error: MercuryErrorMessage,
+}
+
+#[derive(Deserialize)]
+struct MercuryErrorMessage {
+    message: String,
+}
+
+fn is_mercury_payment_required_error(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<MercuryPaymentRequiredError>()
+        .is_some()
+}
+
+fn mercury_payment_required_message(body: &[u8]) -> SharedString {
+    serde_json::from_slice::<MercuryErrorResponse>(body)
+        .map(|response| response.error.message.into())
+        .unwrap_or_else(|_| String::from_utf8_lossy(body).trim().to_string().into())
+}
+
 pub static MERCURY_TOKEN_ENV_VAR: std::sync::LazyLock<EnvVar> = env_var!("MERCURY_AI_TOKEN");
 
 struct GlobalMercuryApiKey(Entity<ApiKeyState>);
