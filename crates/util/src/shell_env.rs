@@ -5,6 +5,64 @@ use collections::HashMap;
 
 use crate::shell::ShellKind;
 
+fn parse_env_map_from_noisy_output(output: &str) -> Result<collections::HashMap<String, String>> {
+    // Fast path for clean output.
+    if let Ok(parsed) = serde_json::from_str(output) {
+        return Ok(parsed);
+    }
+
+    // Fallback path: tolerate shell/banner/prompt noise by extracting the first
+    // top-level JSON object found in stdout.
+    let mut start_index = None;
+    let mut depth: usize = 0;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for (index, character) in output.char_indices() {
+        if start_index.is_none() {
+            if character == '{' {
+                start_index = Some(index);
+                depth = 1;
+                in_string = false;
+                escaped = false;
+            }
+            continue;
+        }
+
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        match character {
+            '"' => in_string = true,
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    let Some(start) = start_index else {
+                        break;
+                    };
+                    let candidate = &output[start..=index];
+                    if let Ok(parsed) = serde_json::from_str(candidate) {
+                        return Ok(parsed);
+                    }
+                    start_index = None;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    anyhow::bail!("Failed to deserialize environment variables from json: {output}")
+}
+
 pub fn print_env() {
     let env_vars: HashMap<String, String> = std::env::vars().collect();
     let json = serde_json::to_string_pretty(&env_vars).unwrap_or_else(|err| {
@@ -146,7 +204,7 @@ async fn spawn_and_read_fd(
 #[cfg(windows)]
 async fn capture_windows(
     shell_path: &Path,
-    args: &[String],
+    _args: &[String],
     directory: &Path,
 ) -> Result<collections::HashMap<String, String>> {
     use std::process::Stdio;
@@ -164,7 +222,7 @@ async fn capture_windows(
             .unwrap_or_else(|| value.to_owned())
     };
     let mut cmd = crate::command::new_command(shell_path);
-    cmd.args(args);
+    // Ignore user-provided shell args - use our own commands for env capture.
     let cmd = match shell_kind {
         ShellKind::Csh
         | ShellKind::Tcsh
@@ -213,14 +271,10 @@ async fn capture_windows(
                 &format!("cd {}; {} --printenv", quoted_directory, zed_command),
             ])
         }
-        ShellKind::Cmd => cmd.args([
-            "/c",
-            "cd",
-            &directory_string,
-            "&&",
-            &zed_path_string,
-            "--printenv",
-        ]),
+        ShellKind::Cmd => {
+            let dir = directory_string.trim_end_matches('\\');
+            cmd.args(["/d", "/c", "cd", dir, "&&", &zed_path_string, "--printenv"])
+        }
     }
     .stdin(Stdio::null())
     .stdout(Stdio::piped())
@@ -238,8 +292,7 @@ async fn capture_windows(
     );
     let env_output = String::from_utf8_lossy(&output.stdout);
 
-    // Parse the JSON output from zed --printenv
-    serde_json::from_str(&env_output).with_context(|| {
+    parse_env_map_from_noisy_output(&env_output).with_context(|| {
         format!("Failed to deserialize environment variables from json: {env_output}")
     })
 }
