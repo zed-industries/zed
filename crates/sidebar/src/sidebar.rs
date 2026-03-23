@@ -449,16 +449,19 @@ impl Sidebar {
     }
 
     fn observe_docks(&mut self, workspace: &Entity<Workspace>, cx: &mut Context<Self>) {
-        let workspace = workspace.clone();
         let docks: Vec<_> = workspace
             .read(cx)
             .all_docks()
             .into_iter()
             .cloned()
             .collect();
+        let workspace = workspace.downgrade();
         for dock in docks {
             let workspace = workspace.clone();
             cx.observe(&dock, move |this, _dock, cx| {
+                let Some(workspace) = workspace.upgrade() else {
+                    return;
+                };
                 if !this.is_active_workspace(&workspace, cx) {
                     return;
                 }
@@ -3359,6 +3362,27 @@ mod tests {
 
         // Empty input
         assert_eq!(Sidebar::clean_mention_links(""), "");
+    }
+
+    #[gpui::test]
+    async fn test_entities_released_on_window_close(cx: &mut TestAppContext) {
+        let project = init_test_project("/my-project", cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let sidebar = setup_sidebar(&multi_workspace, cx);
+
+        let weak_workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().downgrade());
+        let weak_sidebar = sidebar.downgrade();
+        let weak_multi_workspace = multi_workspace.downgrade();
+
+        drop(sidebar);
+        drop(multi_workspace);
+        cx.update(|window, _cx| window.remove_window());
+        cx.run_until_parked();
+
+        weak_multi_workspace.assert_released();
+        weak_sidebar.assert_released();
+        weak_workspace.assert_released();
     }
 
     #[gpui::test]
