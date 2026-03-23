@@ -1729,13 +1729,11 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::new(("reflow", ""), Rewrap { line_length: None })
             .range(select_range)
             .args(|_action, args| {
-                if let Ok(length) = args.parse::<usize>() {
+                args.parse::<usize>().map_or(None, |length| {
                     Some(Box::new(Rewrap {
                         line_length: Some(length),
                     }))
-                } else {
-                    None
-                }
+                })
             }),
         VimCommand::new(("fo", "ld"), editor::actions::FoldSelectedRanges).range(act_on_range),
         VimCommand::new(("foldo", "pen"), editor::actions::UnfoldLines)
