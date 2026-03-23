@@ -1611,28 +1611,6 @@ impl LocalLspStore {
                 })
             })?;
 
-        /// Apply edits to the buffer that will become part of the formatting transaction.
-        /// Fails if the buffer has been edited since the start of that transaction.
-        fn extend_formatting_transaction(
-            buffer: &FormattableBuffer,
-            formatting_transaction_id: text::TransactionId,
-            cx: &mut AsyncApp,
-            operation: impl FnOnce(&mut Buffer, &mut Context<Buffer>),
-        ) -> anyhow::Result<()> {
-            buffer.handle.update(cx, |buffer, cx| {
-                let last_transaction_id = buffer.peek_undo_stack().map(|t| t.transaction_id());
-                if last_transaction_id != Some(formatting_transaction_id) {
-                    anyhow::bail!("Buffer edited while formatting. Aborting")
-                }
-                buffer.start_transaction();
-                operation(buffer, cx);
-                if let Some(transaction_id) = buffer.end_transaction(cx) {
-                    buffer.merge_transactions(transaction_id, formatting_transaction_id);
-                }
-                Ok(())
-            })
-        }
-
         // handle whitespace formatting
         if settings.remove_trailing_whitespace_on_save {
             zlog::trace!(logger => "removing trailing whitespace");
@@ -1733,26 +1711,6 @@ impl LocalLspStore {
         logger: zlog::Logger,
         cx: &mut AsyncApp,
     ) -> anyhow::Result<()> {
-        fn extend_formatting_transaction(
-            buffer: &FormattableBuffer,
-            formatting_transaction_id: text::TransactionId,
-            cx: &mut AsyncApp,
-            operation: impl FnOnce(&mut Buffer, &mut Context<Buffer>),
-        ) -> anyhow::Result<()> {
-            buffer.handle.update(cx, |buffer, cx| {
-                let last_transaction_id = buffer.peek_undo_stack().map(|t| t.transaction_id());
-                if last_transaction_id != Some(formatting_transaction_id) {
-                    anyhow::bail!("Buffer edited while formatting. Aborting")
-                }
-                buffer.start_transaction();
-                operation(buffer, cx);
-                if let Some(transaction_id) = buffer.end_transaction(cx) {
-                    buffer.merge_transactions(transaction_id, formatting_transaction_id);
-                }
-                Ok(())
-            })
-        }
-
         match formatter {
             Formatter::Auto => unreachable!("Auto resolved above"),
             Formatter::Prettier => {
@@ -1785,16 +1743,12 @@ impl LocalLspStore {
                 zlog::trace!(logger => "formatting");
                 let _timer = zlog::time!(logger => "Formatting buffer via external command");
 
-                let diff = Self::format_via_external_command(
-                    buffer,
-                    &command,
-                    arguments.as_deref(),
-                    cx,
-                )
-                .await
-                .with_context(|| {
-                    format!("Failed to format buffer via external command: {}", command)
-                })?;
+                let diff =
+                    Self::format_via_external_command(buffer, &command, arguments.as_deref(), cx)
+                        .await
+                        .with_context(|| {
+                            format!("Failed to format buffer via external command: {}", command)
+                        })?;
                 let Some(diff) = diff else {
                     zlog::trace!(logger => "No changes");
                     return Ok(());
@@ -1961,8 +1915,7 @@ impl LocalLspStore {
                     zlog::trace!(logger => "Executing {}", describe_code_action(&action));
 
                     if let Err(err) =
-                        Self::try_resolve_code_action(server, &mut action, request_timeout)
-                            .await
+                        Self::try_resolve_code_action(server, &mut action, request_timeout).await
                     {
                         zlog::error!(
                             logger =>
@@ -2007,11 +1960,10 @@ impl LocalLspStore {
                         } else if let Some(changes) = edit.changes {
                             operations.extend(changes.into_iter().map(|(uri, edits)| {
                                 lsp::DocumentChangeOperation::Edit(lsp::TextDocumentEdit {
-                                    text_document:
-                                        lsp::OptionalVersionedTextDocumentIdentifier {
-                                            uri,
-                                            version: None,
-                                        },
+                                    text_document: lsp::OptionalVersionedTextDocumentIdentifier {
+                                        uri,
+                                        version: None,
+                                    },
                                     edits: edits.into_iter().map(Edit::Plain).collect(),
                                 })
                             }));
@@ -2196,8 +2148,7 @@ impl LocalLspStore {
                             .unwrap_or_default()
                     })?;
 
-                    if let Some(transaction) =
-                        project_transaction_command.0.remove(&buffer.handle)
+                    if let Some(transaction) = project_transaction_command.0.remove(&buffer.handle)
                     {
                         zlog::trace!(
                             logger =>
@@ -14482,4 +14433,26 @@ pub fn ensure_uniform_list_compatible_label(label: &mut CodeLabel) {
     }
 
     label.text = new_text;
+}
+
+/// Apply edits to the buffer that will become part of the formatting transaction.
+/// Fails if the buffer has been edited since the start of that transaction.
+fn extend_formatting_transaction(
+    buffer: &FormattableBuffer,
+    formatting_transaction_id: text::TransactionId,
+    cx: &mut AsyncApp,
+    operation: impl FnOnce(&mut Buffer, &mut Context<Buffer>),
+) -> anyhow::Result<()> {
+    buffer.handle.update(cx, |buffer, cx| {
+        let last_transaction_id = buffer.peek_undo_stack().map(|t| t.transaction_id());
+        if last_transaction_id != Some(formatting_transaction_id) {
+            anyhow::bail!("Buffer edited while formatting. Aborting")
+        }
+        buffer.start_transaction();
+        operation(buffer, cx);
+        if let Some(transaction_id) = buffer.end_transaction(cx) {
+            buffer.merge_transactions(transaction_id, formatting_transaction_id);
+        }
+        Ok(())
+    })
 }
