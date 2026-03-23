@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::RwLock;
 
-static CURRENT_LOCALE: RwLock<&'static str> = RwLock::new("en");
+static CURRENT_LOCALE: RwLock<String> = RwLock::new(String::new());
 
 fn translations_en() -> HashMap<&'static str, &'static str> {
     HashMap::from([
@@ -3045,13 +3045,14 @@ fn get_translations_map() -> HashMap<&'static str, HashMap<&'static str, &'stati
 }
 
 pub fn get_locale() -> String {
-    CURRENT_LOCALE.read().unwrap().to_string()
+    let l = CURRENT_LOCALE.read().unwrap();
+    if l.is_empty() { "en".to_string() } else { l.clone() }
 }
 
 pub fn set_locale(locale: &str) {
     let supported = ["en", "zh-CN", "ja", "ko", "fr", "de", "es", "pt-BR", "ru"];
     if supported.contains(&locale) {
-        *CURRENT_LOCALE.write().unwrap() = locale;
+        *CURRENT_LOCALE.write().unwrap() = locale.to_string();
     }
 }
 
