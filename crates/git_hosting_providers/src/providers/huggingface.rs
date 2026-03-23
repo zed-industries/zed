@@ -1,6 +1,11 @@
-use std::str::FromStr;
+use std::{str::FromStr, sync::Arc};
 
+use anyhow::{Context as _, Result, bail};
 use async_trait::async_trait;
+use futures::AsyncReadExt;
+use gpui::SharedString;
+use http_client::{AsyncBody, HttpClient, HttpRequestExt, Request};
+use serde::Deserialize;
 use url::Url;
 
 use git::{
@@ -8,9 +13,82 @@ use git::{
     RemoteUrl,
 };
 
+#[derive(Debug, Deserialize)]
+struct CommitEntry {
+    authors: Vec<CommitAuthor>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CommitAuthor {
+    avatar: Option<String>,
+}
+
 pub struct HuggingFace;
 
 impl HuggingFace {
+    fn api_url(&self, repo_owner: &str, repo: &str) -> String {
+        // The owner may be prefixed with a repo type (e.g. "datasets/squad").
+        // Map to the correct API path: /api/models/, /api/datasets/, or /api/spaces/.
+        if let Some(owner) = repo_owner.strip_prefix("datasets/") {
+            format!("https://huggingface.co/api/datasets/{owner}/{repo}")
+        } else if let Some(owner) = repo_owner.strip_prefix("spaces/") {
+            format!("https://huggingface.co/api/spaces/{owner}/{repo}")
+        } else {
+            format!("https://huggingface.co/api/models/{repo_owner}/{repo}")
+        }
+    }
+
+    async fn fetch_commit_author_avatar(
+        &self,
+        repo_owner: &str,
+        repo: &str,
+        commit: &str,
+        client: &Arc<dyn HttpClient>,
+    ) -> Result<Option<Url>> {
+        let url = format!("{}/commits/{commit}?limit=1", self.api_url(repo_owner, repo));
+
+        let request = Request::get(&url)
+            .header("Content-Type", "application/json")
+            .follow_redirects(http_client::RedirectPolicy::FollowAll);
+
+        let mut response = client
+            .send(request.body(AsyncBody::default())?)
+            .await
+            .with_context(|| format!("error fetching Hugging Face commit details at {:?}", url))?;
+
+        let mut body = Vec::new();
+        response.body_mut().read_to_end(&mut body).await?;
+
+        if response.status().is_client_error() {
+            let text = String::from_utf8_lossy(body.as_slice());
+            bail!(
+                "status error {}, response: {text:?}",
+                response.status().as_u16()
+            );
+        }
+
+        let body_str = std::str::from_utf8(&body)?;
+        let commits: Vec<CommitEntry> = serde_json::from_str(body_str)
+            .context("failed to deserialize Hugging Face commit details")?;
+
+        let avatar = commits
+            .first()
+            .and_then(|entry| entry.authors.first())
+            .and_then(|author| author.avatar.as_deref());
+
+        let Some(avatar) = avatar else {
+            return Ok(None);
+        };
+
+        if avatar.starts_with('/') {
+            Ok(Some(Url::parse(&format!(
+                "https://huggingface.co{avatar}"
+            ))?))
+        } else {
+            Ok(Some(Url::parse(avatar)?))
+        }
+    }
+
     fn parse_remote_url_inner(&self, url: &str) -> Option<ParsedGitRemote> {
         let url = RemoteUrl::from_str(url).ok()?;
 
@@ -55,7 +133,7 @@ impl GitHostingProvider for HuggingFace {
     }
 
     fn supports_avatars(&self) -> bool {
-        false
+        true
     }
 
     fn format_line_number(&self, line: u32) -> String {
@@ -81,6 +159,18 @@ impl GitHostingProvider for HuggingFace {
         self.base_url()
             .join(&format!("{owner}/{repo}/commit/{sha}"))
             .unwrap()
+    }
+
+    async fn commit_author_avatar_url(
+        &self,
+        repo_owner: &str,
+        repo: &str,
+        commit: SharedString,
+        _author_email: Option<SharedString>,
+        http_client: Arc<dyn HttpClient>,
+    ) -> Result<Option<Url>> {
+        self.fetch_commit_author_avatar(repo_owner, repo, &commit, &http_client)
+            .await
     }
 
     fn build_permalink(&self, remote: ParsedGitRemote, params: BuildPermalinkParams) -> Url {
