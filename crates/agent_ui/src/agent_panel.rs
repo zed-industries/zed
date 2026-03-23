@@ -2828,8 +2828,7 @@ impl AgentPanel {
                     None => {
                         this.update_in(cx, |this, window, cx| {
                             this.set_worktree_creation_error(
-                                "Failed to generate a branch name: all typewriter names are taken"
-                                    .into(),
+                                "Failed to generate a unique branch name".into(),
                                 window,
                                 cx,
                             );
