@@ -48,7 +48,6 @@ impl HuggingFace {
         let url = format!("{}/commits/{commit}?limit=1", self.api_url(repo_owner, repo));
 
         let request = Request::get(&url)
-            .header("Content-Type", "application/json")
             .follow_redirects(http_client::RedirectPolicy::FollowAll);
 
         let mut response = client
