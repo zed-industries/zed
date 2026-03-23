@@ -14,7 +14,7 @@ use language::{ToOffset, ToPoint as _};
 use language_model::{ApiKeyState, EnvVar, env_var};
 use release_channel::AppVersion;
 use serde::{Deserialize, Serialize};
-use std::{mem, ops::Range, path::Path, sync::Arc, time::Instant};
+use std::{mem, ops::Range, path::Path, sync::Arc};
 use zeta_prompt::ZetaPromptInput;
 
 const MERCURY_API_URL: &str = "https://api.inceptionlabs.ai/v1/edit/completions";
@@ -67,7 +67,7 @@ impl Mercury {
 
         let http_client = cx.http_client();
         let cursor_point = position.to_point(&snapshot);
-        let buffer_snapshotted_at = Instant::now();
+        let request_start = cx.background_executor().now();
         let active_buffer = buffer.clone();
 
         let result = cx.background_spawn(async move {
@@ -137,6 +137,7 @@ impl Mercury {
                     content: open_ai::MessageContent::Plain(prompt),
                 }],
                 stream: false,
+                stream_options: None,
                 max_completion_tokens: None,
                 stop: vec![],
                 temperature: None,
@@ -171,7 +172,6 @@ impl Mercury {
                 .await
                 .context("Failed to read response body")?;
 
-            let response_received_at = Instant::now();
             if !response.status().is_success() {
                 if response.status() == StatusCode::PAYMENT_REQUIRED {
                     anyhow::bail!(MercuryPaymentRequiredError(
@@ -222,7 +222,7 @@ impl Mercury {
                 );
             }
 
-            anyhow::Ok((id, edits, snapshot, response_received_at, inputs))
+            anyhow::Ok((id, edits, snapshot, inputs))
         });
 
         cx.spawn(async move |ep_store, cx| {
@@ -240,7 +240,7 @@ impl Mercury {
                 cx.notify();
             })?;
 
-            let (id, edits, old_snapshot, response_received_at, inputs) = result?;
+            let (id, edits, old_snapshot, inputs) = result?;
             anyhow::Ok(Some(
                 EditPredictionResult::new(
                     EditPredictionId(id.into()),
@@ -248,10 +248,9 @@ impl Mercury {
                     &old_snapshot,
                     edits.into(),
                     None,
-                    buffer_snapshotted_at,
-                    response_received_at,
                     inputs,
                     None,
+                    cx.background_executor().now() - request_start,
                     cx,
                 )
                 .await,

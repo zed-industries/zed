@@ -10,7 +10,6 @@ use project::{AgentServerStore, AgentServersUpdated, Project};
 use watch::Receiver;
 
 use crate::{Agent, ThreadHistory};
-use project::ExternalAgentServerName;
 
 pub enum AgentConnectionEntry {
     Connecting {
@@ -25,7 +24,7 @@ pub enum AgentConnectionEntry {
 #[derive(Clone)]
 pub struct AgentConnectedState {
     pub connection: Rc<dyn AgentConnection>,
-    pub history: Entity<ThreadHistory>,
+    pub history: Option<Entity<ThreadHistory>>,
 }
 
 impl AgentConnectionEntry {
@@ -39,7 +38,7 @@ impl AgentConnectionEntry {
 
     pub fn history(&self) -> Option<&Entity<ThreadHistory>> {
         match self {
-            AgentConnectionEntry::Connected(state) => Some(&state.history),
+            AgentConnectionEntry::Connected(state) => state.history.as_ref(),
             _ => None,
         }
     }
@@ -143,9 +142,7 @@ impl AgentConnectionStore {
         let store = store.read(cx);
         self.entries.retain(|key, _| match key {
             Agent::NativeAgent => true,
-            Agent::Custom { name } => store
-                .external_agents
-                .contains_key(&ExternalAgentServerName(name.clone())),
+            Agent::Custom { id } => store.external_agents.contains_key(id),
         });
         cx.notify();
     }
@@ -163,10 +160,12 @@ impl AgentConnectionStore {
         let agent_server_store = self.project.read(cx).agent_server_store().clone();
         let delegate = AgentServerDelegate::new(agent_server_store, Some(new_version_tx));
 
-        let connect_task = server.connect(delegate, cx);
+        let connect_task = server.connect(delegate, self.project.clone(), cx);
         let connect_task = cx.spawn(async move |_this, cx| match connect_task.await {
             Ok(connection) => cx.update(|cx| {
-                let history = cx.new(|cx| ThreadHistory::new(connection.session_list(cx), cx));
+                let history = connection
+                    .session_list(cx)
+                    .map(|session_list| cx.new(|cx| ThreadHistory::new(session_list, cx)));
                 Ok(AgentConnectedState {
                     connection,
                     history,

@@ -9,7 +9,7 @@ use channel::{Channel, ChannelEvent, ChannelStore};
 use client::{ChannelId, Client, Contact, User, UserStore};
 use collections::{HashMap, HashSet};
 use contact_finder::ContactFinder;
-use db::kvp::KEY_VALUE_STORE;
+use db::kvp::KeyValueStore;
 use editor::{Editor, EditorElement, EditorStyle};
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
@@ -171,6 +171,7 @@ pub fn init(cx: &mut App) {
                 });
             });
         });
+        // TODO(jk): Is this action ever triggered?
         workspace.register_action(|_, _: &ScreenShare, window, cx| {
             let room = ActiveCall::global(cx).read(cx).room().cloned();
             if let Some(room) = room {
@@ -179,19 +180,32 @@ pub fn init(cx: &mut App) {
                         if room.is_sharing_screen() {
                             room.unshare_screen(true, cx).ok();
                         } else {
-                            let sources = cx.screen_capture_sources();
+                            #[cfg(target_os = "linux")]
+                            let is_wayland = gpui::guess_compositor() == "Wayland";
+                            #[cfg(not(target_os = "linux"))]
+                            let is_wayland = false;
 
-                            cx.spawn(async move |room, cx| {
-                                let sources = sources.await??;
-                                let first = sources.into_iter().next();
-                                if let Some(first) = first {
-                                    room.update(cx, |room, cx| room.share_screen(first, cx))?
-                                        .await
-                                } else {
-                                    Ok(())
+                            #[cfg(target_os = "linux")]
+                            {
+                                if is_wayland {
+                                    room.share_screen_wayland(cx).detach_and_log_err(cx);
                                 }
-                            })
-                            .detach_and_log_err(cx);
+                            }
+                            if !is_wayland {
+                                let sources = cx.screen_capture_sources();
+
+                                cx.spawn(async move |room, cx| {
+                                    let sources = sources.await??;
+                                    let first = sources.into_iter().next();
+                                    if let Some(first) = first {
+                                        room.update(cx, |room, cx| room.share_screen(first, cx))?
+                                            .await
+                                    } else {
+                                        Ok(())
+                                    }
+                                })
+                                .detach_and_log_err(cx);
+                            }
                         };
                     });
                 });
@@ -429,16 +443,17 @@ impl CollabPanel {
             .ok()
             .flatten()
         {
-            Some(serialization_key) => cx
-                .background_spawn(async move { KEY_VALUE_STORE.read_kvp(&serialization_key) })
-                .await
-                .context("reading collaboration panel from key value store")
-                .log_err()
-                .flatten()
-                .map(|panel| serde_json::from_str::<SerializedCollabPanel>(&panel))
-                .transpose()
-                .log_err()
-                .flatten(),
+            Some(serialization_key) => {
+                let kvp = cx.update(|_, cx| KeyValueStore::global(cx))?;
+                kvp.read_kvp(&serialization_key)
+                    .context("reading collaboration panel from key value store")
+                    .log_err()
+                    .flatten()
+                    .map(|panel| serde_json::from_str::<SerializedCollabPanel>(&panel))
+                    .transpose()
+                    .log_err()
+                    .flatten()
+            }
             None => None,
         };
 
@@ -479,19 +494,19 @@ impl CollabPanel {
         };
         let width = self.width;
         let collapsed_channels = self.collapsed_channels.clone();
+        let kvp = KeyValueStore::global(cx);
         self.pending_serialization = cx.background_spawn(
             async move {
-                KEY_VALUE_STORE
-                    .write_kvp(
-                        serialization_key,
-                        serde_json::to_string(&SerializedCollabPanel {
-                            width,
-                            collapsed_channels: Some(
-                                collapsed_channels.iter().map(|cid| cid.0).collect(),
-                            ),
-                        })?,
-                    )
-                    .await?;
+                kvp.write_kvp(
+                    serialization_key,
+                    serde_json::to_string(&SerializedCollabPanel {
+                        width,
+                        collapsed_channels: Some(
+                            collapsed_channels.iter().map(|cid| cid.0).collect(),
+                        ),
+                    })?,
+                )
+                .await?;
                 anyhow::Ok(())
             }
             .log_err(),

@@ -263,6 +263,8 @@ pub async fn run_prediction(
                 actual_cursor: None,
                 error: None,
                 provider,
+                cumulative_logprob: None,
+                avg_logprob: None,
             });
 
         step_progress.set_substatus("requesting prediction");
@@ -455,6 +457,8 @@ async fn predict_anthropic(
                     _ => PredictionProvider::TeacherNonBatching(backend),
                 }
             },
+            cumulative_logprob: None,
+            avg_logprob: None,
         };
 
         example.predictions.push(prediction);
@@ -572,6 +576,8 @@ async fn predict_openai(
                     _ => PredictionProvider::TeacherNonBatching(backend),
                 }
             },
+            cumulative_logprob: None,
+            avg_logprob: None,
         };
 
         example.predictions.push(prediction);
@@ -656,6 +662,8 @@ pub async fn predict_baseten(
         actual_cursor,
         error: None,
         provider: PredictionProvider::Baseten(format),
+        cumulative_logprob: None,
+        avg_logprob: None,
     };
 
     example.predictions.push(prediction);

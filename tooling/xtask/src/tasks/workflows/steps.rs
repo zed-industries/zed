@@ -211,11 +211,18 @@ pub fn clear_target_dir_if_large(platform: Platform) -> Step<Run> {
     }
 }
 
-pub fn clippy(platform: Platform) -> Step<Run> {
+pub fn clippy(platform: Platform, target: Option<&str>) -> Step<Run> {
     match platform {
         Platform::Windows => named::pwsh("./script/clippy.ps1"),
-        _ => named::bash("./script/clippy"),
+        _ => match target {
+            Some(target) => named::bash(format!("./script/clippy --target {target}")),
+            None => named::bash("./script/clippy"),
+        },
     }
+}
+
+pub fn install_rustup_target(target: &str) -> Step<Run> {
+    named::bash(format!("rustup target add {target}"))
 }
 
 pub fn cache_rust_dependencies_namespace() -> Step<Use> {
@@ -262,18 +269,12 @@ pub fn setup_linux() -> Step<Run> {
     named::bash("./script/linux")
 }
 
-fn install_mold() -> Step<Run> {
-    named::bash("./script/install-mold")
-}
-
 fn download_wasi_sdk() -> Step<Run> {
     named::bash("./script/download-wasi-sdk")
 }
 
 pub(crate) fn install_linux_dependencies(job: Job) -> Job {
-    job.add_step(setup_linux())
-        .add_step(install_mold())
-        .add_step(download_wasi_sdk())
+    job.add_step(setup_linux()).add_step(download_wasi_sdk())
 }
 
 pub fn script(name: &str) -> Step<Run> {

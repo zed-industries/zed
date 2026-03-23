@@ -30,8 +30,8 @@ use settings::{
     BaseKeymap, KeybindSource, KeymapFile, Settings as _, SettingsAssets, infer_json_indent_size,
 };
 use ui::{
-    ActiveTheme as _, App, Banner, BorrowAppContext, ContextMenu, IconButtonShape, Indicator,
-    Modal, ModalFooter, ModalHeader, ParentElement as _, PopoverMenu, Render, Section,
+    ActiveTheme as _, App, Banner, BorrowAppContext, ContextMenu, IconButtonShape, IconPosition,
+    Indicator, Modal, ModalFooter, ModalHeader, ParentElement as _, PopoverMenu, Render, Section,
     SharedString, Styled as _, Table, TableColumnWidths, TableInteractionState,
     TableResizeBehavior, Tooltip, Window, prelude::*,
 };
@@ -39,7 +39,7 @@ use ui_input::InputField;
 use util::ResultExt;
 use workspace::{
     Item, ModalView, SerializableItem, Workspace, notifications::NotifyTaskExt as _,
-    register_serializable_item,
+    register_serializable_item, with_active_or_new_workspace,
 };
 
 pub use ui_components::*;
@@ -47,7 +47,7 @@ use zed_actions::{ChangeKeybinding, OpenKeymap};
 
 use crate::{
     action_completion_provider::ActionCompletionProvider,
-    persistence::KEYBINDING_EDITORS,
+    persistence::KeybindingEditorDb,
     ui_components::keystroke_input::{
         ClearKeystrokes, KeystrokeInput, StartRecording, StopRecording,
     },
@@ -73,6 +73,8 @@ actions!(
         CopyContext,
         /// Toggles Conflict Filtering
         ToggleConflictFilter,
+        /// Toggles whether NoAction bindings are shown
+        ToggleNoActionBindings,
         /// Toggle Keystroke search
         ToggleKeystrokeSearch,
         /// Toggles exact matching for keystroke search
@@ -126,14 +128,16 @@ pub fn init(cx: &mut App) {
         }
     }
 
+    cx.on_action(|_: &OpenKeymap, cx| {
+        with_active_or_new_workspace(cx, |workspace, window, cx| {
+            open_keymap_editor(None, workspace, window, cx);
+        });
+    });
+
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
-        workspace
-            .register_action(|workspace, _: &OpenKeymap, window, cx| {
-                open_keymap_editor(None, workspace, window, cx);
-            })
-            .register_action(|workspace, action: &ChangeKeybinding, window, cx| {
-                open_keymap_editor(Some(action.action.clone()), workspace, window, cx);
-            });
+        workspace.register_action(|workspace, action: &ChangeKeybinding, window, cx| {
+            open_keymap_editor(Some(action.action.clone()), workspace, window, cx);
+        });
     })
     .detach();
 
@@ -183,7 +187,7 @@ impl KeymapEventChannel {
     }
 }
 
-#[derive(Default, PartialEq)]
+#[derive(Default, PartialEq, Copy, Clone)]
 enum SearchMode {
     #[default]
     Normal,
@@ -220,6 +224,25 @@ impl FilterState {
         match self {
             FilterState::All => FilterState::Conflicts,
             FilterState::Conflicts => FilterState::All,
+        }
+    }
+}
+
+#[derive(Default, PartialEq, Eq, Copy, Clone)]
+struct SourceFilters {
+    user: bool,
+    zed_defaults: bool,
+    vim_defaults: bool,
+}
+
+impl SourceFilters {
+    fn allows(&self, source: Option<KeybindSource>) -> bool {
+        match source {
+            Some(KeybindSource::User) => self.user,
+            Some(KeybindSource::Vim) => self.vim_defaults,
+            Some(KeybindSource::Base | KeybindSource::Default | KeybindSource::Unknown) | None => {
+                self.zed_defaults
+            }
         }
     }
 }
@@ -412,6 +435,8 @@ struct KeymapEditor {
     keybindings: Vec<ProcessedBinding>,
     keybinding_conflict_state: ConflictState,
     filter_state: FilterState,
+    source_filters: SourceFilters,
+    show_no_action_bindings: bool,
     search_mode: SearchMode,
     search_query_debounce: Option<Task<()>>,
     // corresponds 1 to 1 with keybindings
@@ -539,6 +564,12 @@ impl KeymapEditor {
             keybindings: vec![],
             keybinding_conflict_state: ConflictState::default(),
             filter_state: FilterState::default(),
+            source_filters: SourceFilters {
+                user: true,
+                zed_defaults: true,
+                vim_defaults: true,
+            },
+            show_no_action_bindings: true,
             search_mode: SearchMode::default(),
             string_match_candidates: Arc::new(vec![]),
             matches: vec![],
@@ -637,6 +668,11 @@ impl KeymapEditor {
         )
         .await;
         this.update(cx, |this, cx| {
+            matches.retain(|candidate| {
+                this.source_filters
+                    .allows(this.keybindings[candidate.candidate_id].keybind_source())
+            });
+
             match this.filter_state {
                 FilterState::Conflicts => {
                     matches.retain(|candidate| {
@@ -693,6 +729,15 @@ impl KeymapEditor {
                     });
                 }
                 SearchMode::Normal => {}
+            }
+
+            // Filter out NoAction suppression bindings by default. These are internal
+            // markers created when a user deletes a default binding (to suppress the
+            // default at the GPUI level), not real bindings the user should usually see.
+            if !this.show_no_action_bindings {
+                matches.retain(|item| {
+                    this.keybindings[item.candidate_id].action().name != gpui::NoAction.name()
+                });
             }
 
             if action_query.is_empty() {
@@ -1367,6 +1412,31 @@ impl KeymapEditor {
         self.set_filter_state(self.filter_state.invert(), cx);
     }
 
+    fn toggle_no_action_bindings(
+        &mut self,
+        _: &ToggleNoActionBindings,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_no_action_bindings = !self.show_no_action_bindings;
+        self.on_query_changed(cx);
+    }
+
+    fn toggle_user_bindings_filter(&mut self, cx: &mut Context<Self>) {
+        self.source_filters.user = !self.source_filters.user;
+        self.on_query_changed(cx);
+    }
+
+    fn toggle_zed_defaults_filter(&mut self, cx: &mut Context<Self>) {
+        self.source_filters.zed_defaults = !self.source_filters.zed_defaults;
+        self.on_query_changed(cx);
+    }
+
+    fn toggle_vim_defaults_filter(&mut self, cx: &mut Context<Self>) {
+        self.source_filters.vim_defaults = !self.source_filters.vim_defaults;
+        self.on_query_changed(cx);
+    }
+
     fn set_filter_state(&mut self, filter_state: FilterState, cx: &mut Context<Self>) {
         if self.filter_state != filter_state {
             self.filter_state = filter_state;
@@ -1441,6 +1511,127 @@ impl KeymapEditor {
             .iter()
             .filter(|kb| kb.keystrokes().is_some())
             .any(|kb| kb.action().name == action_name)
+    }
+
+    fn render_filter_dropdown(
+        &self,
+        focus_handle: &FocusHandle,
+        cx: &mut Context<KeymapEditor>,
+    ) -> impl IntoElement {
+        let focus_handle = focus_handle.clone();
+        let keymap_editor = cx.entity();
+        return PopoverMenu::new("keymap-editor-filter-menu")
+            .menu(move |window, cx| {
+                Some(ContextMenu::build_persistent(window, cx, {
+                    let focus_handle = focus_handle.clone();
+                    let keymap_editor = keymap_editor.clone();
+                    move |mut menu, _window, cx| {
+                        let (filter_state, source_filters, show_no_action_bindings) = keymap_editor
+                            .read_with(cx, |editor, _| {
+                                (
+                                    editor.filter_state,
+                                    editor.source_filters,
+                                    editor.show_no_action_bindings,
+                                )
+                            });
+
+                        menu = menu
+                            .context(focus_handle.clone())
+                            .header("Filters")
+                            .map(add_filter(
+                                "Conflicts",
+                                matches!(filter_state, FilterState::Conflicts),
+                                Some(ToggleConflictFilter.boxed_clone()),
+                                &focus_handle,
+                                &keymap_editor,
+                                None,
+                            ))
+                            .map(add_filter(
+                                "No Action",
+                                show_no_action_bindings,
+                                Some(ToggleNoActionBindings.boxed_clone()),
+                                &focus_handle,
+                                &keymap_editor,
+                                None,
+                            ))
+                            .separator()
+                            .header("Categories")
+                            .map(add_filter(
+                                "User",
+                                source_filters.user,
+                                None,
+                                &focus_handle,
+                                &keymap_editor,
+                                Some(|editor, cx| {
+                                    editor.toggle_user_bindings_filter(cx);
+                                }),
+                            ))
+                            .map(add_filter(
+                                "Default",
+                                source_filters.zed_defaults,
+                                None,
+                                &focus_handle,
+                                &keymap_editor,
+                                Some(|editor, cx| {
+                                    editor.toggle_zed_defaults_filter(cx);
+                                }),
+                            ))
+                            .map(add_filter(
+                                "Vim",
+                                source_filters.vim_defaults,
+                                None,
+                                &focus_handle,
+                                &keymap_editor,
+                                Some(|editor, cx| {
+                                    editor.toggle_vim_defaults_filter(cx);
+                                }),
+                            ));
+                        menu
+                    }
+                }))
+            })
+            .anchor(gpui::Corner::TopRight)
+            .offset(gpui::Point {
+                x: px(0.0),
+                y: px(2.0),
+            })
+            .trigger_with_tooltip(
+                IconButton::new("KeymapEditorFilterMenuButton", IconName::Sliders)
+                    .icon_size(IconSize::Small)
+                    .when(
+                        self.keybinding_conflict_state.any_user_binding_conflicts(),
+                        |this| this.indicator(Indicator::dot().color(Color::Warning)),
+                    ),
+                Tooltip::text("Filters"),
+            );
+
+        fn add_filter(
+            name: &'static str,
+            toggled: bool,
+            action: Option<Box<dyn Action>>,
+            focus_handle: &FocusHandle,
+            keymap_editor: &Entity<KeymapEditor>,
+            cb: Option<fn(&mut KeymapEditor, &mut Context<KeymapEditor>)>,
+        ) -> impl FnOnce(ContextMenu) -> ContextMenu {
+            let focus_handle = focus_handle.clone();
+            let keymap_editor = keymap_editor.clone();
+            return move |menu: ContextMenu| {
+                menu.toggleable_entry(
+                    name,
+                    toggled,
+                    IconPosition::End,
+                    action.as_ref().map(|a| a.boxed_clone()),
+                    move |window, cx| {
+                        window.focus(&focus_handle, cx);
+                        if let Some(action) = &action {
+                            window.dispatch_action(action.boxed_clone(), cx);
+                        } else if let Some(cb) = cb {
+                            keymap_editor.update(cx, cb);
+                        }
+                    },
+                )
+            };
+        }
     }
 }
 
@@ -1694,6 +1885,7 @@ impl Render for KeymapEditor {
         let row_count = self.matches.len();
         let focus_handle = &self.focus_handle;
         let theme = cx.theme();
+        let search_mode = self.search_mode;
 
         v_flex()
             .id("keymap-editor")
@@ -1711,6 +1903,7 @@ impl Render for KeymapEditor {
             .on_action(cx.listener(Self::copy_action_to_clipboard))
             .on_action(cx.listener(Self::copy_context_to_clipboard))
             .on_action(cx.listener(Self::toggle_conflict_filter))
+            .on_action(cx.listener(Self::toggle_no_action_bindings))
             .on_action(cx.listener(Self::toggle_keystroke_search))
             .on_action(cx.listener(Self::toggle_exact_keystroke_matching))
             .on_action(cx.listener(Self::show_matching_keystrokes))
@@ -1727,6 +1920,7 @@ impl Render for KeymapEditor {
                     .child(
                         h_flex()
                             .gap_2()
+                            .items_center()
                             .child(
                                 h_flex()
                                     .key_context({
@@ -1748,152 +1942,65 @@ impl Render for KeymapEditor {
                                 h_flex()
                                     .gap_1()
                                     .min_w_96()
+                                    .items_center()
                                     .child(
                                         IconButton::new(
-                                            "KeymapEditorToggleFiltersIcon",
+                                            "KeymapEditorKeystrokeSearchButton",
                                             IconName::Keyboard,
                                         )
                                         .icon_size(IconSize::Small)
+                                        .toggle_state(matches!(
+                                            search_mode,
+                                            SearchMode::KeyStroke { .. }
+                                        ))
                                         .tooltip({
                                             let focus_handle = focus_handle.clone();
-
                                             move |_window, cx| {
                                                 Tooltip::for_action_in(
-                                                    "Search by Keystroke",
+                                                    "Search by Keystrokes",
                                                     &ToggleKeystrokeSearch,
-                                                    &focus_handle.clone(),
+                                                    &focus_handle,
                                                     cx,
                                                 )
                                             }
                                         })
-                                        .toggle_state(matches!(
-                                            self.search_mode,
-                                            SearchMode::KeyStroke { .. }
-                                        ))
-                                        .on_click(|_, window, cx| {
+                                        .on_click(cx.listener(|_, _, window, cx| {
                                             window.dispatch_action(
                                                 ToggleKeystrokeSearch.boxed_clone(),
                                                 cx,
                                             );
-                                        }),
+                                        })),
                                     )
                                     .child(
-                                        IconButton::new("KeymapEditorConflictIcon", IconName::Warning)
-                                            .icon_size(IconSize::Small)
-                                            .when(
-                                                self.keybinding_conflict_state
-                                                    .any_user_binding_conflicts(),
-                                                |this| {
-                                                    this.indicator(
-                                                        Indicator::dot().color(Color::Warning),
-                                                    )
-                                                },
+                                        self.render_filter_dropdown(focus_handle, cx)
+                                    )
+                                    .child(
+                                        Button::new("edit-in-json", "Edit in JSON")
+                                            .style(ButtonStyle::Subtle)
+                                            .key_binding(
+                                                ui::KeyBinding::for_action_in(&zed_actions::OpenKeymapFile, &focus_handle, cx)
+                                                    .map(|kb| kb.size(rems_from_px(10.))),
                                             )
-                                            .tooltip({
-                                                let filter_state = self.filter_state;
-                                                let focus_handle = focus_handle.clone();
-
-                                                move |_window, cx| {
-                                                    Tooltip::for_action_in(
-                                                        match filter_state {
-                                                            FilterState::All => "Show Conflicts",
-                                                            FilterState::Conflicts => {
-                                                                "Hide Conflicts"
-                                                            }
-                                                        },
-                                                        &ToggleConflictFilter,
-                                                        &focus_handle.clone(),
-                                                        cx,
-                                                    )
-                                                }
-                                            })
-                                            .selected_icon_color(Color::Warning)
-                                            .toggle_state(matches!(
-                                                self.filter_state,
-                                                FilterState::Conflicts
-                                            ))
                                             .on_click(|_, window, cx| {
                                                 window.dispatch_action(
-                                                    ToggleConflictFilter.boxed_clone(),
+                                                    zed_actions::OpenKeymapFile.boxed_clone(),
                                                     cx,
                                                 );
-                                            }),
+                                            })
                                     )
                                     .child(
-                                        h_flex()
-                                            .w_full()
-                                            .px_1p5()
-                                            .gap_1()
-                                            .justify_end()
-                                            .child(
-                                                PopoverMenu::new("open-keymap-menu")
-                                                    .menu(move |window, cx| {
-                                                        Some(ContextMenu::build(window, cx, |menu, _, _| {
-                                                            menu.header("View Default...")
-                                                                .action(
-                                                                    "Zed Key Bindings",
-                                                                    zed_actions::OpenDefaultKeymap
-                                                                        .boxed_clone(),
-                                                                )
-                                                                .action(
-                                                                    "Vim Bindings",
-                                                                    zed_actions::vim::OpenDefaultKeymap.boxed_clone(),
-                                                                )
-                                                        }))
-                                                    })
-                                                    .anchor(gpui::Corner::TopRight)
-                                                    .offset(gpui::Point {
-                                                        x: px(0.0),
-                                                        y: px(2.0),
-                                                    })
-                                                    .trigger_with_tooltip(
-                                                        IconButton::new(
-                                                            "OpenKeymapJsonButton",
-                                                            IconName::Ellipsis,
-                                                        )
-                                                        .icon_size(IconSize::Small),
-                                                        {
-                                                            let focus_handle = focus_handle.clone();
-                                                            move |_window, cx| {
-                                                                Tooltip::for_action_in(
-                                                                    "View Default...",
-                                                                    &zed_actions::OpenKeymapFile,
-                                                                    &focus_handle,
-                                                                    cx,
-                                                                )
-                                                            }
-                                                        },
-                                                    ),
+                                        Button::new("create", "Create Keybinding")
+                                            .style(ButtonStyle::Outlined)
+                                            .key_binding(
+                                                ui::KeyBinding::for_action_in(&OpenCreateKeybindingModal, &focus_handle, cx)
+                                                    .map(|kb| kb.size(rems_from_px(10.))),
                                             )
-                                            .child(
-                                                Button::new("edit-in-json", "Edit in JSON")
-                                                    .style(ButtonStyle::Subtle)
-                                                    .key_binding(
-                                                        ui::KeyBinding::for_action_in(&zed_actions::OpenKeymapFile, &focus_handle, cx)
-                                                            .map(|kb| kb.size(rems_from_px(10.))),
-                                                    )
-                                                    .on_click(|_, window, cx| {
-                                                        window.dispatch_action(
-                                                            zed_actions::OpenKeymapFile.boxed_clone(),
-                                                            cx,
-                                                        );
-                                                    })
-                                            )
-                                            .child(
-                                                Button::new("create", "Create Keybinding")
-                                                    .style(ButtonStyle::Outlined)
-                                                    .key_binding(
-                                                        ui::KeyBinding::for_action_in(&OpenCreateKeybindingModal, &focus_handle, cx)
-                                                            .map(|kb| kb.size(rems_from_px(10.))),
-                                                    )
-                                                    .on_click(|_, window, cx| {
-                                                        window.dispatch_action(
-                                                            OpenCreateKeybindingModal.boxed_clone(),
-                                                            cx,
-                                                        );
-                                                    })
-                                            )
-
+                                            .on_click(|_, window, cx| {
+                                                window.dispatch_action(
+                                                    OpenCreateKeybindingModal.boxed_clone(),
+                                                    cx,
+                                                );
+                                            })
                                     )
                             ),
                     )
@@ -3713,13 +3820,8 @@ impl SerializableItem for KeymapEditor {
         _window: &mut Window,
         cx: &mut App,
     ) -> gpui::Task<gpui::Result<()>> {
-        workspace::delete_unloaded_items(
-            alive_items,
-            workspace_id,
-            "keybinding_editors",
-            &KEYBINDING_EDITORS,
-            cx,
-        )
+        let db = KeybindingEditorDb::global(cx);
+        workspace::delete_unloaded_items(alive_items, workspace_id, "keybinding_editors", &db, cx)
     }
 
     fn deserialize(
@@ -3730,11 +3832,9 @@ impl SerializableItem for KeymapEditor {
         window: &mut Window,
         cx: &mut App,
     ) -> gpui::Task<gpui::Result<Entity<Self>>> {
+        let db = KeybindingEditorDb::global(cx);
         window.spawn(cx, async move |cx| {
-            if KEYBINDING_EDITORS
-                .get_keybinding_editor(item_id, workspace_id)?
-                .is_some()
-            {
+            if db.get_keybinding_editor(item_id, workspace_id)?.is_some() {
                 cx.update(|window, cx| cx.new(|cx| KeymapEditor::new(workspace, window, cx)))
             } else {
                 Err(anyhow!("No keybinding editor to deserialize"))
@@ -3751,11 +3851,10 @@ impl SerializableItem for KeymapEditor {
         cx: &mut ui::Context<Self>,
     ) -> Option<gpui::Task<gpui::Result<()>>> {
         let workspace_id = workspace.database_id()?;
-        Some(cx.background_spawn(async move {
-            KEYBINDING_EDITORS
-                .save_keybinding_editor(item_id, workspace_id)
-                .await
-        }))
+        let db = KeybindingEditorDb::global(cx);
+        Some(cx.background_spawn(
+            async move { db.save_keybinding_editor(item_id, workspace_id).await },
+        ))
     }
 
     fn should_serialize(&self, _event: &Self::Event) -> bool {
@@ -3784,7 +3883,7 @@ mod persistence {
         )];
     }
 
-    db::static_connection!(KEYBINDING_EDITORS, KeybindingEditorDb, [WorkspaceDb]);
+    db::static_connection!(KeybindingEditorDb, [WorkspaceDb]);
 
     impl KeybindingEditorDb {
         query! {

@@ -877,6 +877,7 @@ impl VsCodeSettings {
             scrollbar: None,
             scroll_multiplier: None,
             toolbar: None,
+            show_count_badge: None,
         })
     }
 

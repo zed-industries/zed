@@ -22,7 +22,7 @@ use ui::SharedString;
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
 use zeta_prompt::{ParsedOutput, ZetaPromptInput};
 
-use std::{env, ops::Range, path::Path, sync::Arc, time::Instant};
+use std::{env, ops::Range, path::Path, sync::Arc};
 use zeta_prompt::{
     CURSOR_MARKER, ZetaFormat, format_zeta_prompt, get_prefill, parse_zeta2_model_output,
     prompt_input_contains_special_tokens, stop_tokens_for_format,
@@ -63,7 +63,7 @@ pub fn request_prediction_with_zeta(
     };
 
     let http_client = cx.http_client();
-    let buffer_snapshotted_at = Instant::now();
+    let request_start = cx.background_executor().now();
     let raw_config = store.zeta2_raw_config().cloned();
     let preferred_experiment = store.preferred_experiment().map(|s| s.to_owned());
     let open_ai_compatible_api_key = load_open_ai_compatible_api_key_if_needed(provider, cx);
@@ -100,7 +100,6 @@ pub fn request_prediction_with_zeta(
         snapshot: BufferSnapshot,
         edits: Vec<(Range<Anchor>, Arc<str>)>,
         cursor_position: Option<PredictedCursorPosition>,
-        received_response_at: Instant,
         editable_range_in_buffer: Range<usize>,
         model_version: Option<String>,
     }
@@ -295,8 +294,6 @@ pub fn request_prediction_with_zeta(
                 return Ok((None, None));
             };
 
-            let received_response_at = Instant::now();
-
             log::trace!("Got edit prediction response");
 
             let Some(ParsedOutput {
@@ -358,7 +355,6 @@ pub fn request_prediction_with_zeta(
                         snapshot: snapshot.clone(),
                         edits,
                         cursor_position,
-                        received_response_at,
                         editable_range_in_buffer,
                         model_version,
                     }),
@@ -372,6 +368,7 @@ pub fn request_prediction_with_zeta(
         let Some((id, prediction)) = handle_api_response(&this, request_task.await, cx)? else {
             return Ok(None);
         };
+        let request_duration = cx.background_executor().now() - request_start;
 
         let Some(Prediction {
             prompt_input: inputs,
@@ -379,13 +376,13 @@ pub fn request_prediction_with_zeta(
             snapshot: edited_buffer_snapshot,
             edits,
             cursor_position,
-            received_response_at,
             editable_range_in_buffer,
             model_version,
         }) = prediction
         else {
             return Ok(Some(EditPredictionResult {
                 id,
+                e2e_latency: request_duration,
                 prediction: Err(EditPredictionRejectReason::Empty),
             }));
         };
@@ -423,6 +420,7 @@ pub fn request_prediction_with_zeta(
                             &edited_buffer_snapshot,
                             editable_range_in_buffer,
                             example_spec,
+                            request_duration,
                             cx,
                         );
                     })
@@ -438,10 +436,9 @@ pub fn request_prediction_with_zeta(
                 &edited_buffer_snapshot,
                 edits.into(),
                 cursor_position,
-                buffer_snapshotted_at,
-                received_response_at,
                 inputs,
                 model_version,
+                request_duration,
                 cx,
             )
             .await,
@@ -590,6 +587,7 @@ pub(crate) fn edit_prediction_accepted(
 
     let request_id = current_prediction.prediction.id.to_string();
     let model_version = current_prediction.prediction.model_version;
+    let e2e_latency = current_prediction.e2e_latency;
     let require_auth = custom_accept_url.is_none();
     let client = store.client.clone();
     let llm_token = store.llm_token.clone();
@@ -615,6 +613,7 @@ pub(crate) fn edit_prediction_accepted(
                     serde_json::to_string(&AcceptEditPredictionBody {
                         request_id: request_id.clone(),
                         model_version: model_version.clone(),
+                        e2e_latency_ms: Some(e2e_latency.as_millis()),
                     })?
                     .into(),
                 );

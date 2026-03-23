@@ -36,7 +36,7 @@ use thiserror::Error;
 use util::command::{Stdio, new_command};
 use util::paths::PathStyle;
 use util::rel_path::RelPath;
-use util::{ResultExt, normalize_path, paths};
+use util::{ResultExt, paths};
 use uuid::Uuid;
 
 pub use askpass::{AskPassDelegate, AskPassResult, AskPassSession};
@@ -74,97 +74,6 @@ pub fn original_repo_path_from_common_dir(common_dir: &Path) -> PathBuf {
     } else {
         common_dir.to_path_buf()
     }
-}
-
-/// Resolves the configured worktree directory to an absolute path.
-///
-/// `worktree_directory_setting` is the raw string from the user setting
-/// (e.g. `"../worktrees"`, `".git/zed-worktrees"`, `"my-worktrees/"`).
-/// Trailing slashes are stripped. The path is resolved relative to
-/// `working_directory` (the repository's working directory root).
-///
-/// When the resolved directory falls outside the working directory
-/// (e.g. `"../worktrees"`), the repository's directory name is
-/// automatically appended so that sibling repos don't collide.
-/// For example, with working directory `~/code/zed` and setting
-/// `"../worktrees"`, this returns `~/code/worktrees/zed`.
-///
-/// When the resolved directory is inside the working directory
-/// (e.g. `".git/zed-worktrees"`), no extra component is added
-/// because the path is already project-scoped.
-pub fn resolve_worktree_directory(
-    working_directory: &Path,
-    worktree_directory_setting: &str,
-) -> PathBuf {
-    let trimmed = worktree_directory_setting.trim_end_matches(['/', '\\']);
-    let joined = working_directory.join(trimmed);
-    let resolved = normalize_path(&joined);
-
-    if resolved.starts_with(working_directory) {
-        resolved
-    } else if let Some(repo_dir_name) = working_directory.file_name() {
-        resolved.join(repo_dir_name)
-    } else {
-        resolved
-    }
-}
-
-/// Validates that the resolved worktree directory is acceptable:
-/// - The setting must not be an absolute path.
-/// - The resolved path must be either a subdirectory of the working
-///   directory or a subdirectory of its parent (i.e., a sibling).
-///
-/// Returns `Ok(resolved_path)` or an error with a user-facing message.
-pub fn validate_worktree_directory(
-    working_directory: &Path,
-    worktree_directory_setting: &str,
-) -> Result<PathBuf> {
-    // Check the original setting before trimming, since a path like "///"
-    // is absolute but becomes "" after stripping trailing separators.
-    // Also check for leading `/` or `\` explicitly, because on Windows
-    // `Path::is_absolute()` requires a drive letter — so `/tmp/worktrees`
-    // would slip through even though it's clearly not a relative path.
-    if Path::new(worktree_directory_setting).is_absolute()
-        || worktree_directory_setting.starts_with('/')
-        || worktree_directory_setting.starts_with('\\')
-    {
-        anyhow::bail!(
-            "git.worktree_directory must be a relative path, got: {worktree_directory_setting:?}"
-        );
-    }
-
-    if worktree_directory_setting.is_empty() {
-        anyhow::bail!("git.worktree_directory must not be empty");
-    }
-
-    let trimmed = worktree_directory_setting.trim_end_matches(['/', '\\']);
-    if trimmed == ".." {
-        anyhow::bail!("git.worktree_directory must not be \"..\" (use \"../some-name\" instead)");
-    }
-
-    let resolved = resolve_worktree_directory(working_directory, worktree_directory_setting);
-
-    let parent = working_directory.parent().unwrap_or(working_directory);
-
-    if !resolved.starts_with(parent) {
-        anyhow::bail!(
-            "git.worktree_directory resolved to {resolved:?}, which is outside \
-             the project root and its parent directory. It must resolve to a \
-             subdirectory of {working_directory:?} or a sibling of it."
-        );
-    }
-
-    Ok(resolved)
-}
-
-/// Returns the full absolute path for a specific branch's worktree
-/// given the resolved worktree directory.
-pub fn worktree_path_for_branch(
-    working_directory: &Path,
-    worktree_directory_setting: &str,
-    branch: &str,
-) -> PathBuf {
-    resolve_worktree_directory(working_directory, worktree_directory_setting).join(branch)
 }
 
 /// Commit data needed for the git graph visualization.
@@ -303,18 +212,25 @@ impl Branch {
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Worktree {
     pub path: PathBuf,
-    pub ref_name: SharedString,
+    pub ref_name: Option<SharedString>,
     // todo(git_worktree) This type should be a Oid
     pub sha: SharedString,
 }
 
 impl Worktree {
-    pub fn branch(&self) -> &str {
-        self.ref_name
-            .as_ref()
-            .strip_prefix("refs/heads/")
-            .or_else(|| self.ref_name.as_ref().strip_prefix("refs/remotes/"))
-            .unwrap_or(self.ref_name.as_ref())
+    /// Returns a display name for the worktree, suitable for use in the UI.
+    ///
+    /// If the worktree is attached to a branch, returns the branch name.
+    /// Otherwise, returns the short SHA of the worktree's HEAD commit.
+    pub fn display_name(&self) -> &str {
+        match self.ref_name {
+            Some(ref ref_name) => ref_name
+                .strip_prefix("refs/heads/")
+                .or_else(|| ref_name.strip_prefix("refs/remotes/"))
+                .unwrap_or(ref_name),
+            // Detached HEAD — show the short SHA as a fallback.
+            None => &self.sha[..self.sha.len().min(SHORT_SHA_LENGTH)],
+        }
     }
 }
 
@@ -342,12 +258,10 @@ pub fn parse_worktrees_from_str<T: AsRef<str>>(raw_worktrees: T) -> Vec<Worktree
             // Ignore other lines: detached, bare, locked, prunable, etc.
         }
 
-        // todo(git_worktree) We should add a test for detach head state
-        // a detach head will have ref_name as none so we would skip it
-        if let (Some(path), Some(sha), Some(ref_name)) = (path, sha, ref_name) {
+        if let (Some(path), Some(sha)) = (path, sha) {
             worktrees.push(Worktree {
                 path: PathBuf::from(path),
-                ref_name: ref_name.into(),
+                ref_name: ref_name.map(Into::into),
                 sha: sha.into(),
             })
         }
@@ -763,14 +677,14 @@ pub trait GitRepository: Send + Sync {
     -> BoxFuture<'_, Result<()>>;
     fn rename_branch(&self, branch: String, new_name: String) -> BoxFuture<'_, Result<()>>;
 
-    fn delete_branch(&self, name: String) -> BoxFuture<'_, Result<()>>;
+    fn delete_branch(&self, is_remote: bool, name: String) -> BoxFuture<'_, Result<()>>;
 
     fn worktrees(&self) -> BoxFuture<'_, Result<Vec<Worktree>>>;
 
     fn create_worktree(
         &self,
-        name: String,
-        directory: PathBuf,
+        branch_name: String,
+        path: PathBuf,
         from_commit: Option<String>,
     ) -> BoxFuture<'_, Result<()>>;
 
@@ -1034,6 +948,7 @@ impl RealGitRepository {
             self.any_git_binary_path.clone(),
             self.working_directory()
                 .with_context(|| "Can't run git commands without a working directory")?,
+            self.path(),
             self.executor.clone(),
             self.is_trusted(),
         ))
@@ -1088,6 +1003,7 @@ pub async fn get_git_committer(cx: &AsyncApp) -> GitCommitter {
     let git = GitBinary::new(
         git_binary_path.unwrap_or(PathBuf::from("git")),
         paths::home_dir().clone(),
+        paths::home_dir().join(".git"),
         cx.background_executor().clone(),
         true,
     );
@@ -1712,20 +1628,19 @@ impl GitRepository for RealGitRepository {
 
     fn create_worktree(
         &self,
-        name: String,
-        directory: PathBuf,
+        branch_name: String,
+        path: PathBuf,
         from_commit: Option<String>,
     ) -> BoxFuture<'_, Result<()>> {
         let git_binary = self.git_binary();
-        let final_path = directory.join(&name);
         let mut args = vec![
             OsString::from("--no-optional-locks"),
             OsString::from("worktree"),
             OsString::from("add"),
             OsString::from("-b"),
-            OsString::from(name.as_str()),
+            OsString::from(branch_name.as_str()),
             OsString::from("--"),
-            OsString::from(final_path.as_os_str()),
+            OsString::from(path.as_os_str()),
         ];
         if let Some(from_commit) = from_commit {
             args.push(OsString::from(from_commit));
@@ -1735,7 +1650,7 @@ impl GitRepository for RealGitRepository {
 
         self.executor
             .spawn(async move {
-                std::fs::create_dir_all(final_path.parent().unwrap_or(&final_path))?;
+                std::fs::create_dir_all(path.parent().unwrap_or(&path))?;
                 let git = git_binary?;
                 let output = git.build_command(&args).output().await?;
                 if output.status.success() {
@@ -1866,12 +1781,14 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn delete_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
+    fn delete_branch(&self, is_remote: bool, name: String) -> BoxFuture<'_, Result<()>> {
         let git_binary = self.git_binary();
 
         self.executor
             .spawn(async move {
-                git_binary?.run(&["branch", "-d", &name]).await?;
+                git_binary?
+                    .run(&["branch", if is_remote { "-dr" } else { "-d" }, &name])
+                    .await?;
                 anyhow::Ok(())
             })
             .boxed()
@@ -2244,6 +2161,7 @@ impl GitRepository for RealGitRepository {
         cx: AsyncApp,
     ) -> BoxFuture<'_, Result<RemoteCommandOutput>> {
         let working_directory = self.working_directory();
+        let git_directory = self.path();
         let executor = cx.background_executor().clone();
         let git_binary_path = self.system_git_binary_path.clone();
         let is_trusted = self.is_trusted();
@@ -2255,6 +2173,7 @@ impl GitRepository for RealGitRepository {
             let git = GitBinary::new(
                 git_binary_path,
                 working_directory,
+                git_directory,
                 executor.clone(),
                 is_trusted,
             );
@@ -2286,6 +2205,7 @@ impl GitRepository for RealGitRepository {
         cx: AsyncApp,
     ) -> BoxFuture<'_, Result<RemoteCommandOutput>> {
         let working_directory = self.working_directory();
+        let git_directory = self.path();
         let executor = cx.background_executor().clone();
         let git_binary_path = self.system_git_binary_path.clone();
         let is_trusted = self.is_trusted();
@@ -2297,6 +2217,7 @@ impl GitRepository for RealGitRepository {
             let git = GitBinary::new(
                 git_binary_path,
                 working_directory,
+                git_directory,
                 executor.clone(),
                 is_trusted,
             );
@@ -2326,6 +2247,7 @@ impl GitRepository for RealGitRepository {
         cx: AsyncApp,
     ) -> BoxFuture<'_, Result<RemoteCommandOutput>> {
         let working_directory = self.working_directory();
+        let git_directory = self.path();
         let remote_name = format!("{}", fetch_options);
         let git_binary_path = self.system_git_binary_path.clone();
         let executor = cx.background_executor().clone();
@@ -2338,6 +2260,7 @@ impl GitRepository for RealGitRepository {
             let git = GitBinary::new(
                 git_binary_path,
                 working_directory,
+                git_directory,
                 executor.clone(),
                 is_trusted,
             );
@@ -2990,6 +2913,7 @@ async fn exclude_files(git: &GitBinary) -> Result<GitExcludeOverride> {
 pub(crate) struct GitBinary {
     git_binary_path: PathBuf,
     working_directory: PathBuf,
+    git_directory: PathBuf,
     executor: BackgroundExecutor,
     index_file_path: Option<PathBuf>,
     envs: HashMap<String, String>,
@@ -3000,12 +2924,14 @@ impl GitBinary {
     pub(crate) fn new(
         git_binary_path: PathBuf,
         working_directory: PathBuf,
+        git_directory: PathBuf,
         executor: BackgroundExecutor,
         is_trusted: bool,
     ) -> Self {
         Self {
             git_binary_path,
             working_directory,
+            git_directory,
             executor,
             index_file_path: None,
             envs: HashMap::default(),
@@ -3051,12 +2977,9 @@ impl GitBinary {
 
         // Copy the default index file so that Git doesn't have to rebuild the
         // whole index from scratch. This might fail if this is an empty repository.
-        smol::fs::copy(
-            self.working_directory.join(".git").join("index"),
-            &index_file_path,
-        )
-        .await
-        .ok();
+        smol::fs::copy(self.git_directory.join("index"), &index_file_path)
+            .await
+            .ok();
 
         self.index_file_path = Some(index_file_path.clone());
         let result = f(self).await;
@@ -3070,19 +2993,13 @@ impl GitBinary {
     }
 
     pub async fn with_exclude_overrides(&self) -> Result<GitExcludeOverride> {
-        let path = self
-            .working_directory
-            .join(".git")
-            .join("info")
-            .join("exclude");
+        let path = self.git_directory.join("info").join("exclude");
 
         GitExcludeOverride::new(path).await
     }
 
     fn path_for_index_id(&self, id: Uuid) -> PathBuf {
-        self.working_directory
-            .join(".git")
-            .join(format!("index-{}.tmp", id))
+        self.git_directory.join(format!("index-{}.tmp", id))
     }
 
     pub async fn run<S>(&self, args: &[S]) -> Result<String>
@@ -3388,6 +3305,8 @@ fn checkpoint_author_envs() -> HashMap<String, String> {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
     use gpui::TestAppContext;
 
@@ -3405,6 +3324,7 @@ mod tests {
         let git = GitBinary::new(
             PathBuf::from("git"),
             dir.path().to_path_buf(),
+            dir.path().join(".git"),
             cx.executor(),
             false,
         );
@@ -3418,6 +3338,7 @@ mod tests {
         let git = GitBinary::new(
             PathBuf::from("git"),
             dir.path().to_path_buf(),
+            dir.path().join(".git"),
             cx.executor(),
             false,
         );
@@ -3437,6 +3358,7 @@ mod tests {
         let git = GitBinary::new(
             PathBuf::from("git"),
             dir.path().to_path_buf(),
+            dir.path().join(".git"),
             cx.executor(),
             false,
         );
@@ -3462,6 +3384,7 @@ mod tests {
         let git = GitBinary::new(
             PathBuf::from("git"),
             dir.path().to_path_buf(),
+            dir.path().join(".git"),
             cx.executor(),
             true,
         );
@@ -3480,6 +3403,7 @@ mod tests {
         let git = GitBinary::new(
             PathBuf::from("git"),
             dir.path().to_path_buf(),
+            dir.path().join(".git"),
             cx.executor(),
             true,
         );
@@ -3491,6 +3415,27 @@ mod tests {
         assert!(
             !output.status.success(),
             "hooksPath should NOT be overridden for trusted repos"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_path_for_index_id_uses_real_git_directory(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let working_directory = PathBuf::from("/code/worktree");
+        let git_directory = PathBuf::from("/code/repo/.git/modules/worktree");
+        let git = GitBinary::new(
+            PathBuf::from("git"),
+            working_directory,
+            git_directory.clone(),
+            cx.executor(),
+            false,
+        );
+
+        let path = git.path_for_index_id(Uuid::nil());
+
+        assert_eq!(
+            path,
+            git_directory.join(format!("index-{}.tmp", Uuid::nil()))
         );
     }
 
@@ -3853,7 +3798,7 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
         assert_eq!(result[0].sha.as_ref(), "abc123def");
-        assert_eq!(result[0].ref_name.as_ref(), "refs/heads/main");
+        assert_eq!(result[0].ref_name, Some("refs/heads/main".into()));
 
         // Multiple worktrees
         let input = "worktree /home/user/project\nHEAD abc123\nbranch refs/heads/main\n\n\
@@ -3861,23 +3806,30 @@ mod tests {
         let result = parse_worktrees_from_str(input);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
-        assert_eq!(result[0].ref_name.as_ref(), "refs/heads/main");
+        assert_eq!(result[0].ref_name, Some("refs/heads/main".into()));
         assert_eq!(result[1].path, PathBuf::from("/home/user/project-wt"));
-        assert_eq!(result[1].ref_name.as_ref(), "refs/heads/feature");
+        assert_eq!(result[1].ref_name, Some("refs/heads/feature".into()));
 
-        // Detached HEAD entry (should be skipped since ref_name won't parse)
+        // Detached HEAD entry (included with ref_name: None)
         let input = "worktree /home/user/project\nHEAD abc123\nbranch refs/heads/main\n\n\
                       worktree /home/user/detached\nHEAD def456\ndetached\n\n";
         let result = parse_worktrees_from_str(input);
-        assert_eq!(result.len(), 1);
+        assert_eq!(result.len(), 2);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
+        assert_eq!(result[0].ref_name, Some("refs/heads/main".into()));
+        assert_eq!(result[1].path, PathBuf::from("/home/user/detached"));
+        assert_eq!(result[1].ref_name, None);
+        assert_eq!(result[1].sha.as_ref(), "def456");
 
-        // Bare repo entry (should be skipped)
+        // Bare repo entry (included with ref_name: None)
         let input = "worktree /home/user/bare.git\nHEAD abc123\nbare\n\n\
                       worktree /home/user/project\nHEAD def456\nbranch refs/heads/main\n\n";
         let result = parse_worktrees_from_str(input);
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].path, PathBuf::from("/home/user/bare.git"));
+        assert_eq!(result[0].ref_name, None);
+        assert_eq!(result[1].path, PathBuf::from("/home/user/project"));
+        assert_eq!(result[1].ref_name, Some("refs/heads/main".into()));
 
         // Extra porcelain lines (locked, prunable) should be ignored
         let input = "worktree /home/user/project\nHEAD abc123\nbranch refs/heads/main\n\n\
@@ -3886,11 +3838,14 @@ mod tests {
         let result = parse_worktrees_from_str(input);
         assert_eq!(result.len(), 3);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
-        assert_eq!(result[0].ref_name.as_ref(), "refs/heads/main");
+        assert_eq!(result[0].ref_name, Some("refs/heads/main".into()));
         assert_eq!(result[1].path, PathBuf::from("/home/user/locked-wt"));
-        assert_eq!(result[1].ref_name.as_ref(), "refs/heads/locked-branch");
+        assert_eq!(result[1].ref_name, Some("refs/heads/locked-branch".into()));
         assert_eq!(result[2].path, PathBuf::from("/home/user/prunable-wt"));
-        assert_eq!(result[2].ref_name.as_ref(), "refs/heads/prunable-branch");
+        assert_eq!(
+            result[2].ref_name,
+            Some("refs/heads/prunable-branch".into())
+        );
 
         // Leading/trailing whitespace on lines should be tolerated
         let input =
@@ -3899,7 +3854,7 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
         assert_eq!(result[0].sha.as_ref(), "abc123");
-        assert_eq!(result[0].ref_name.as_ref(), "refs/heads/main");
+        assert_eq!(result[0].ref_name, Some("refs/heads/main".into()));
 
         // Windows-style line endings should be handled
         let input = "worktree /home/user/project\r\nHEAD abc123\r\nbranch refs/heads/main\r\n\r\n";
@@ -3907,89 +3862,79 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
         assert_eq!(result[0].sha.as_ref(), "abc123");
-        assert_eq!(result[0].ref_name.as_ref(), "refs/heads/main");
+        assert_eq!(result[0].ref_name, Some("refs/heads/main".into()));
     }
-
-    const TEST_WORKTREE_DIRECTORIES: &[&str] =
-        &["../worktrees", ".git/zed-worktrees", "my-worktrees/"];
 
     #[gpui::test]
     async fn test_create_and_list_worktrees(cx: &mut TestAppContext) {
         disable_git_global_config();
         cx.executor().allow_parking();
 
-        for worktree_dir_setting in TEST_WORKTREE_DIRECTORIES {
-            let repo_dir = tempfile::tempdir().unwrap();
-            git2::Repository::init(repo_dir.path()).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let repo_dir = temp_dir.path().join("repo");
+        let worktrees_dir = temp_dir.path().join("worktrees");
 
-            let repo = RealGitRepository::new(
-                &repo_dir.path().join(".git"),
-                None,
-                Some("git".into()),
-                cx.executor(),
-            )
-            .unwrap();
+        fs::create_dir_all(&repo_dir).unwrap();
+        fs::create_dir_all(&worktrees_dir).unwrap();
 
-            // Create an initial commit (required for worktrees)
-            smol::fs::write(repo_dir.path().join("file.txt"), "content")
-                .await
-                .unwrap();
-            repo.stage_paths(vec![repo_path("file.txt")], Arc::new(HashMap::default()))
-                .await
-                .unwrap();
-            repo.commit(
-                "Initial commit".into(),
-                None,
-                CommitOptions::default(),
-                AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
-                Arc::new(checkpoint_author_envs()),
-            )
+        git2::Repository::init(&repo_dir).unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        // Create an initial commit (required for worktrees)
+        smol::fs::write(repo_dir.join("file.txt"), "content")
             .await
             .unwrap();
-
-            // List worktrees — should have just the main one
-            let worktrees = repo.worktrees().await.unwrap();
-            assert_eq!(worktrees.len(), 1);
-            assert_eq!(
-                worktrees[0].path.canonicalize().unwrap(),
-                repo_dir.path().canonicalize().unwrap()
-            );
-
-            // Create a new worktree
-            repo.create_worktree(
-                "test-branch".to_string(),
-                resolve_worktree_directory(repo_dir.path(), worktree_dir_setting),
-                Some("HEAD".to_string()),
-            )
+        repo.stage_paths(vec![repo_path("file.txt")], Arc::new(HashMap::default()))
             .await
             .unwrap();
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(checkpoint_author_envs()),
+        )
+        .await
+        .unwrap();
 
-            // List worktrees — should have two
-            let worktrees = repo.worktrees().await.unwrap();
-            assert_eq!(worktrees.len(), 2);
+        // List worktrees — should have just the main one
+        let worktrees = repo.worktrees().await.unwrap();
+        assert_eq!(worktrees.len(), 1);
+        assert_eq!(
+            worktrees[0].path.canonicalize().unwrap(),
+            repo_dir.canonicalize().unwrap()
+        );
 
-            let expected_path =
-                worktree_path_for_branch(repo_dir.path(), worktree_dir_setting, "test-branch");
-            let new_worktree = worktrees
-                .iter()
-                .find(|w| w.branch() == "test-branch")
-                .expect("should find worktree with test-branch");
-            assert_eq!(
-                new_worktree.path.canonicalize().unwrap(),
-                expected_path.canonicalize().unwrap(),
-                "failed for worktree_directory setting: {worktree_dir_setting:?}"
-            );
+        let worktree_path = worktrees_dir.join("some-worktree");
 
-            // Clean up so the next iteration starts fresh
-            repo.remove_worktree(expected_path, true).await.unwrap();
+        // Create a new worktree
+        repo.create_worktree(
+            "test-branch".to_string(),
+            worktree_path.clone(),
+            Some("HEAD".to_string()),
+        )
+        .await
+        .unwrap();
 
-            // Clean up the worktree base directory if it was created outside repo_dir
-            // (e.g. for the "../worktrees" setting, it won't be inside the TempDir)
-            let resolved_dir = resolve_worktree_directory(repo_dir.path(), worktree_dir_setting);
-            if !resolved_dir.starts_with(repo_dir.path()) {
-                let _ = std::fs::remove_dir_all(&resolved_dir);
-            }
-        }
+        // List worktrees — should have two
+        let worktrees = repo.worktrees().await.unwrap();
+        assert_eq!(worktrees.len(), 2);
+
+        let new_worktree = worktrees
+            .iter()
+            .find(|w| w.display_name() == "test-branch")
+            .expect("should find worktree with test-branch");
+        assert_eq!(
+            new_worktree.path.canonicalize().unwrap(),
+            worktree_path.canonicalize().unwrap(),
+        );
     }
 
     #[gpui::test]
@@ -3997,147 +3942,92 @@ mod tests {
         disable_git_global_config();
         cx.executor().allow_parking();
 
-        for worktree_dir_setting in TEST_WORKTREE_DIRECTORIES {
-            let repo_dir = tempfile::tempdir().unwrap();
-            git2::Repository::init(repo_dir.path()).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let repo_dir = temp_dir.path().join("repo");
+        let worktrees_dir = temp_dir.path().join("worktrees");
+        git2::Repository::init(&repo_dir).unwrap();
 
-            let repo = RealGitRepository::new(
-                &repo_dir.path().join(".git"),
-                None,
-                Some("git".into()),
-                cx.executor(),
-            )
+        let repo = RealGitRepository::new(
+            &repo_dir.join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        // Create an initial commit
+        smol::fs::write(repo_dir.join("file.txt"), "content")
+            .await
             .unwrap();
+        repo.stage_paths(vec![repo_path("file.txt")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(checkpoint_author_envs()),
+        )
+        .await
+        .unwrap();
 
-            // Create an initial commit
-            smol::fs::write(repo_dir.path().join("file.txt"), "content")
-                .await
-                .unwrap();
-            repo.stage_paths(vec![repo_path("file.txt")], Arc::new(HashMap::default()))
-                .await
-                .unwrap();
-            repo.commit(
-                "Initial commit".into(),
-                None,
-                CommitOptions::default(),
-                AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
-                Arc::new(checkpoint_author_envs()),
-            )
+        // Create a worktree
+        let worktree_path = worktrees_dir.join("worktree-to-remove");
+        repo.create_worktree(
+            "to-remove".to_string(),
+            worktree_path.clone(),
+            Some("HEAD".to_string()),
+        )
+        .await
+        .unwrap();
+
+        // Remove the worktree
+        repo.remove_worktree(worktree_path.clone(), false)
             .await
             .unwrap();
 
-            // Create a worktree
-            repo.create_worktree(
-                "to-remove".to_string(),
-                resolve_worktree_directory(repo_dir.path(), worktree_dir_setting),
-                Some("HEAD".to_string()),
-            )
+        // Verify the directory is removed
+        let worktrees = repo.worktrees().await.unwrap();
+        assert_eq!(worktrees.len(), 1);
+        assert!(
+            worktrees.iter().all(|w| w.display_name() != "to-remove"),
+            "removed worktree should not appear in list"
+        );
+        assert!(!worktree_path.exists());
+
+        // Create a worktree
+        let worktree_path = worktrees_dir.join("dirty-wt");
+        repo.create_worktree(
+            "dirty-wt".to_string(),
+            worktree_path.clone(),
+            Some("HEAD".to_string()),
+        )
+        .await
+        .unwrap();
+
+        assert!(worktree_path.exists());
+
+        // Add uncommitted changes in the worktree
+        smol::fs::write(worktree_path.join("dirty-file.txt"), "uncommitted")
             .await
             .unwrap();
 
-            let worktree_path =
-                worktree_path_for_branch(repo_dir.path(), worktree_dir_setting, "to-remove");
-            assert!(worktree_path.exists());
+        // Non-force removal should fail with dirty worktree
+        let result = repo.remove_worktree(worktree_path.clone(), false).await;
+        assert!(
+            result.is_err(),
+            "non-force removal of dirty worktree should fail"
+        );
 
-            // Remove the worktree
-            repo.remove_worktree(worktree_path.clone(), false)
-                .await
-                .unwrap();
-
-            // Verify it's gone from the list
-            let worktrees = repo.worktrees().await.unwrap();
-            assert_eq!(worktrees.len(), 1);
-            assert!(
-                worktrees.iter().all(|w| w.branch() != "to-remove"),
-                "removed worktree should not appear in list"
-            );
-
-            // Verify the directory is removed
-            assert!(!worktree_path.exists());
-
-            // Clean up the worktree base directory if it was created outside repo_dir
-            // (e.g. for the "../worktrees" setting, it won't be inside the TempDir)
-            let resolved_dir = resolve_worktree_directory(repo_dir.path(), worktree_dir_setting);
-            if !resolved_dir.starts_with(repo_dir.path()) {
-                let _ = std::fs::remove_dir_all(&resolved_dir);
-            }
-        }
-    }
-
-    #[gpui::test]
-    async fn test_remove_worktree_force(cx: &mut TestAppContext) {
-        disable_git_global_config();
-        cx.executor().allow_parking();
-
-        for worktree_dir_setting in TEST_WORKTREE_DIRECTORIES {
-            let repo_dir = tempfile::tempdir().unwrap();
-            git2::Repository::init(repo_dir.path()).unwrap();
-
-            let repo = RealGitRepository::new(
-                &repo_dir.path().join(".git"),
-                None,
-                Some("git".into()),
-                cx.executor(),
-            )
-            .unwrap();
-
-            // Create an initial commit
-            smol::fs::write(repo_dir.path().join("file.txt"), "content")
-                .await
-                .unwrap();
-            repo.stage_paths(vec![repo_path("file.txt")], Arc::new(HashMap::default()))
-                .await
-                .unwrap();
-            repo.commit(
-                "Initial commit".into(),
-                None,
-                CommitOptions::default(),
-                AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
-                Arc::new(checkpoint_author_envs()),
-            )
+        // Force removal should succeed
+        repo.remove_worktree(worktree_path.clone(), true)
             .await
             .unwrap();
 
-            // Create a worktree
-            repo.create_worktree(
-                "dirty-wt".to_string(),
-                resolve_worktree_directory(repo_dir.path(), worktree_dir_setting),
-                Some("HEAD".to_string()),
-            )
-            .await
-            .unwrap();
-
-            let worktree_path =
-                worktree_path_for_branch(repo_dir.path(), worktree_dir_setting, "dirty-wt");
-
-            // Add uncommitted changes in the worktree
-            smol::fs::write(worktree_path.join("dirty-file.txt"), "uncommitted")
-                .await
-                .unwrap();
-
-            // Non-force removal should fail with dirty worktree
-            let result = repo.remove_worktree(worktree_path.clone(), false).await;
-            assert!(
-                result.is_err(),
-                "non-force removal of dirty worktree should fail"
-            );
-
-            // Force removal should succeed
-            repo.remove_worktree(worktree_path.clone(), true)
-                .await
-                .unwrap();
-
-            let worktrees = repo.worktrees().await.unwrap();
-            assert_eq!(worktrees.len(), 1);
-            assert!(!worktree_path.exists());
-
-            // Clean up the worktree base directory if it was created outside repo_dir
-            // (e.g. for the "../worktrees" setting, it won't be inside the TempDir)
-            let resolved_dir = resolve_worktree_directory(repo_dir.path(), worktree_dir_setting);
-            if !resolved_dir.starts_with(repo_dir.path()) {
-                let _ = std::fs::remove_dir_all(&resolved_dir);
-            }
-        }
+        let worktrees = repo.worktrees().await.unwrap();
+        assert_eq!(worktrees.len(), 1);
+        assert!(!worktree_path.exists());
     }
 
     #[gpui::test]
@@ -4145,141 +4035,69 @@ mod tests {
         disable_git_global_config();
         cx.executor().allow_parking();
 
-        for worktree_dir_setting in TEST_WORKTREE_DIRECTORIES {
-            let repo_dir = tempfile::tempdir().unwrap();
-            git2::Repository::init(repo_dir.path()).unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let repo_dir = temp_dir.path().join("repo");
+        let worktrees_dir = temp_dir.path().join("worktrees");
 
-            let repo = RealGitRepository::new(
-                &repo_dir.path().join(".git"),
-                None,
-                Some("git".into()),
-                cx.executor(),
-            )
+        git2::Repository::init(&repo_dir).unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        // Create an initial commit
+        smol::fs::write(repo_dir.join("file.txt"), "content")
+            .await
             .unwrap();
+        repo.stage_paths(vec![repo_path("file.txt")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(checkpoint_author_envs()),
+        )
+        .await
+        .unwrap();
 
-            // Create an initial commit
-            smol::fs::write(repo_dir.path().join("file.txt"), "content")
-                .await
-                .unwrap();
-            repo.stage_paths(vec![repo_path("file.txt")], Arc::new(HashMap::default()))
-                .await
-                .unwrap();
-            repo.commit(
-                "Initial commit".into(),
-                None,
-                CommitOptions::default(),
-                AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
-                Arc::new(checkpoint_author_envs()),
-            )
+        // Create a worktree
+        let old_path = worktrees_dir.join("old-worktree-name");
+        repo.create_worktree(
+            "old-name".to_string(),
+            old_path.clone(),
+            Some("HEAD".to_string()),
+        )
+        .await
+        .unwrap();
+
+        assert!(old_path.exists());
+
+        // Move the worktree to a new path
+        let new_path = worktrees_dir.join("new-worktree-name");
+        repo.rename_worktree(old_path.clone(), new_path.clone())
             .await
             .unwrap();
 
-            // Create a worktree
-            repo.create_worktree(
-                "old-name".to_string(),
-                resolve_worktree_directory(repo_dir.path(), worktree_dir_setting),
-                Some("HEAD".to_string()),
-            )
-            .await
-            .unwrap();
+        // Verify the old path is gone and new path exists
+        assert!(!old_path.exists());
+        assert!(new_path.exists());
 
-            let old_path =
-                worktree_path_for_branch(repo_dir.path(), worktree_dir_setting, "old-name");
-            assert!(old_path.exists());
-
-            // Move the worktree to a new path
-            let new_path =
-                resolve_worktree_directory(repo_dir.path(), worktree_dir_setting).join("new-name");
-            repo.rename_worktree(old_path.clone(), new_path.clone())
-                .await
-                .unwrap();
-
-            // Verify the old path is gone and new path exists
-            assert!(!old_path.exists());
-            assert!(new_path.exists());
-
-            // Verify it shows up in worktree list at the new path
-            let worktrees = repo.worktrees().await.unwrap();
-            assert_eq!(worktrees.len(), 2);
-            let moved_worktree = worktrees
-                .iter()
-                .find(|w| w.branch() == "old-name")
-                .expect("should find worktree by branch name");
-            assert_eq!(
-                moved_worktree.path.canonicalize().unwrap(),
-                new_path.canonicalize().unwrap()
-            );
-
-            // Clean up so the next iteration starts fresh
-            repo.remove_worktree(new_path, true).await.unwrap();
-
-            // Clean up the worktree base directory if it was created outside repo_dir
-            // (e.g. for the "../worktrees" setting, it won't be inside the TempDir)
-            let resolved_dir = resolve_worktree_directory(repo_dir.path(), worktree_dir_setting);
-            if !resolved_dir.starts_with(repo_dir.path()) {
-                let _ = std::fs::remove_dir_all(&resolved_dir);
-            }
-        }
-    }
-
-    #[test]
-    fn test_resolve_worktree_directory() {
-        let work_dir = Path::new("/code/my-project");
-
-        // Sibling directory — outside project, so repo dir name is appended
+        // Verify it shows up in worktree list at the new path
+        let worktrees = repo.worktrees().await.unwrap();
+        assert_eq!(worktrees.len(), 2);
+        let moved_worktree = worktrees
+            .iter()
+            .find(|w| w.display_name() == "old-name")
+            .expect("should find worktree by branch name");
         assert_eq!(
-            resolve_worktree_directory(work_dir, "../worktrees"),
-            PathBuf::from("/code/worktrees/my-project")
-        );
-
-        // Git subdir — inside project, no repo name appended
-        assert_eq!(
-            resolve_worktree_directory(work_dir, ".git/zed-worktrees"),
-            PathBuf::from("/code/my-project/.git/zed-worktrees")
-        );
-
-        // Simple subdir — inside project, no repo name appended
-        assert_eq!(
-            resolve_worktree_directory(work_dir, "my-worktrees"),
-            PathBuf::from("/code/my-project/my-worktrees")
-        );
-
-        // Trailing slash is stripped
-        assert_eq!(
-            resolve_worktree_directory(work_dir, "../worktrees/"),
-            PathBuf::from("/code/worktrees/my-project")
-        );
-        assert_eq!(
-            resolve_worktree_directory(work_dir, "my-worktrees/"),
-            PathBuf::from("/code/my-project/my-worktrees")
-        );
-
-        // Multiple trailing slashes
-        assert_eq!(
-            resolve_worktree_directory(work_dir, "foo///"),
-            PathBuf::from("/code/my-project/foo")
-        );
-
-        // Trailing backslashes (Windows-style)
-        assert_eq!(
-            resolve_worktree_directory(work_dir, "my-worktrees\\"),
-            PathBuf::from("/code/my-project/my-worktrees")
-        );
-        assert_eq!(
-            resolve_worktree_directory(work_dir, "foo\\/\\"),
-            PathBuf::from("/code/my-project/foo")
-        );
-
-        // Empty string resolves to the working directory itself (inside)
-        assert_eq!(
-            resolve_worktree_directory(work_dir, ""),
-            PathBuf::from("/code/my-project")
-        );
-
-        // Just ".." — outside project, repo dir name appended
-        assert_eq!(
-            resolve_worktree_directory(work_dir, ".."),
-            PathBuf::from("/code/my-project")
+            moved_worktree.path.canonicalize().unwrap(),
+            new_path.canonicalize().unwrap()
         );
     }
 
@@ -4311,82 +4129,24 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_validate_worktree_directory() {
-        let work_dir = Path::new("/code/my-project");
-
-        // Valid: sibling
-        assert!(validate_worktree_directory(work_dir, "../worktrees").is_ok());
-
-        // Valid: subdirectory
-        assert!(validate_worktree_directory(work_dir, ".git/zed-worktrees").is_ok());
-        assert!(validate_worktree_directory(work_dir, "my-worktrees").is_ok());
-
-        // Invalid: just ".." would resolve back to the working directory itself
-        let err = validate_worktree_directory(work_dir, "..").unwrap_err();
-        assert!(err.to_string().contains("must not be \"..\""));
-
-        // Invalid: ".." with trailing separators
-        let err = validate_worktree_directory(work_dir, "..\\").unwrap_err();
-        assert!(err.to_string().contains("must not be \"..\""));
-        let err = validate_worktree_directory(work_dir, "../").unwrap_err();
-        assert!(err.to_string().contains("must not be \"..\""));
-
-        // Invalid: empty string would resolve to the working directory itself
-        let err = validate_worktree_directory(work_dir, "").unwrap_err();
-        assert!(err.to_string().contains("must not be empty"));
-
-        // Invalid: absolute path
-        let err = validate_worktree_directory(work_dir, "/tmp/worktrees").unwrap_err();
-        assert!(err.to_string().contains("relative path"));
-
-        // Invalid: "/" is absolute on Unix
-        let err = validate_worktree_directory(work_dir, "/").unwrap_err();
-        assert!(err.to_string().contains("relative path"));
-
-        // Invalid: "///" is absolute
-        let err = validate_worktree_directory(work_dir, "///").unwrap_err();
-        assert!(err.to_string().contains("relative path"));
-
-        // Invalid: escapes too far up
-        let err = validate_worktree_directory(work_dir, "../../other-project/wt").unwrap_err();
-        assert!(err.to_string().contains("outside"));
-    }
-
-    #[test]
-    fn test_worktree_path_for_branch() {
-        let work_dir = Path::new("/code/my-project");
-
-        // Outside project — repo dir name is part of the resolved directory
-        assert_eq!(
-            worktree_path_for_branch(work_dir, "../worktrees", "feature/foo"),
-            PathBuf::from("/code/worktrees/my-project/feature/foo")
-        );
-
-        // Inside project — no repo dir name inserted
-        assert_eq!(
-            worktree_path_for_branch(work_dir, ".git/zed-worktrees", "my-branch"),
-            PathBuf::from("/code/my-project/.git/zed-worktrees/my-branch")
-        );
-
-        // Trailing slash on setting (inside project)
-        assert_eq!(
-            worktree_path_for_branch(work_dir, "my-worktrees/", "branch"),
-            PathBuf::from("/code/my-project/my-worktrees/branch")
-        );
-    }
-
     impl RealGitRepository {
         /// Force a Git garbage collection on the repository.
         fn gc(&self) -> BoxFuture<'_, Result<()>> {
             let working_directory = self.working_directory();
+            let git_directory = self.path();
             let git_binary_path = self.any_git_binary_path.clone();
             let executor = self.executor.clone();
             self.executor
                 .spawn(async move {
                     let git_binary_path = git_binary_path.clone();
                     let working_directory = working_directory?;
-                    let git = GitBinary::new(git_binary_path, working_directory, executor, true);
+                    let git = GitBinary::new(
+                        git_binary_path,
+                        working_directory,
+                        git_directory,
+                        executor,
+                        true,
+                    );
                     git.run(&["gc", "--prune"]).await?;
                     Ok(())
                 })

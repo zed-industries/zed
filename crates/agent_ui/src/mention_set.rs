@@ -150,8 +150,14 @@ impl MentionSet {
             MentionUri::GitDiff { base_ref } => {
                 self.confirm_mention_for_git_diff(base_ref.into(), cx)
             }
+            MentionUri::Selection {
+                abs_path: Some(abs_path),
+                line_range,
+            } => self.confirm_mention_for_symbol(abs_path, line_range, cx),
+            MentionUri::Selection { abs_path: None, .. } => Task::ready(Err(anyhow!(
+                "Untitled buffer selection mentions are not supported for paste"
+            ))),
             MentionUri::PastedImage
-            | MentionUri::Selection { .. }
             | MentionUri::TerminalSelection { .. }
             | MentionUri::MergeConflict { .. } => {
                 Task::ready(Err(anyhow!("Unsupported mention URI type for paste")))
@@ -556,7 +562,7 @@ impl MentionSet {
         ));
         let delegate =
             AgentServerDelegate::new(project.read(cx).agent_server_store().clone(), None);
-        let connection = server.connect(delegate, cx);
+        let connection = server.connect(delegate, project.clone(), cx);
         cx.spawn(async move |_, cx| {
             let agent = connection.await?;
             let agent = agent.downcast::<agent::NativeAgentConnection>().unwrap();
@@ -689,12 +695,51 @@ mod tests {
             "Unexpected error: {error:#}"
         );
     }
+
+    #[gpui::test]
+    async fn test_selection_mentions_supported_for_paste(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({"file.rs": "line 1\nline 2\nline 3\nline 4\n"}),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let mention_set = cx.new(|_cx| MentionSet::new(project.downgrade(), None, None));
+
+        let mention_task = mention_set.update(cx, |mention_set, cx| {
+            let http_client = project.read(cx).client().http_client();
+            mention_set.confirm_mention_for_uri(
+                MentionUri::Selection {
+                    abs_path: Some(path!("/project/file.rs").into()),
+                    line_range: 1..=2,
+                },
+                false,
+                http_client,
+                cx,
+            )
+        });
+
+        let mention = mention_task.await.unwrap();
+        match mention {
+            Mention::Text {
+                content,
+                tracked_buffers,
+            } => {
+                assert_eq!(content, "line 2\nline 3\n");
+                assert_eq!(tracked_buffers.len(), 1);
+            }
+            other => panic!("Expected selection mention to resolve as text, got {other:?}"),
+        }
+    }
 }
 
 /// Inserts a list of images into the editor as context mentions.
 /// This is the shared implementation used by both paste and file picker operations.
 pub(crate) async fn insert_images_as_context(
-    images: Vec<gpui::Image>,
+    images: Vec<(gpui::Image, SharedString)>,
     editor: Entity<Editor>,
     mention_set: Entity<MentionSet>,
     workspace: WeakEntity<Workspace>,
@@ -706,7 +751,7 @@ pub(crate) async fn insert_images_as_context(
 
     let replacement_text = MentionUri::PastedImage.as_link().to_string();
 
-    for image in images {
+    for (image, name) in images {
         let Some((excerpt_id, text_anchor, multibuffer_anchor)) = editor
             .update_in(cx, |editor, window, cx| {
                 let snapshot = editor.snapshot(window, cx);
@@ -740,7 +785,7 @@ pub(crate) async fn insert_images_as_context(
                 excerpt_id,
                 text_anchor,
                 content_len,
-                MentionUri::PastedImage.name().into(),
+                name.clone(),
                 IconName::Image.path().into(),
                 None,
                 None,
@@ -798,12 +843,24 @@ pub(crate) fn paste_images_as_context(
     cx: &mut App,
 ) -> Option<Task<()>> {
     let clipboard = cx.read_from_clipboard()?;
+
+    // Only handle paste if the first clipboard entry is an image or file path.
+    // If text comes first, return None so the caller falls through to text paste.
+    // This respects the priority order set by the source application.
+    if matches!(
+        clipboard.entries().first(),
+        Some(ClipboardEntry::String(_)) | None
+    ) {
+        return None;
+    }
+
     Some(window.spawn(cx, async move |mut cx| {
         use itertools::Itertools;
-        let (mut images, paths) = clipboard
+        let default_name: SharedString = MentionUri::PastedImage.name().into();
+        let (mut images, paths): (Vec<(gpui::Image, SharedString)>, Vec<_>) = clipboard
             .into_entries()
             .filter_map(|entry| match entry {
-                ClipboardEntry::Image(image) => Some(Either::Left(image)),
+                ClipboardEntry::Image(image) => Some(Either::Left((image, default_name.clone()))),
                 ClipboardEntry::ExternalPaths(paths) => Some(Either::Right(paths)),
                 _ => None,
             })
@@ -814,24 +871,32 @@ pub(crate) fn paste_images_as_context(
                 cx.background_spawn(async move {
                     let mut images = vec![];
                     for path in paths.into_iter().flat_map(|paths| paths.paths().to_owned()) {
-                        let Ok(content) = async_fs::read(path).await else {
+                        let Ok(content) = async_fs::read(&path).await else {
                             continue;
                         };
                         let Ok(format) = image::guess_format(&content) else {
                             continue;
                         };
-                        images.push(gpui::Image::from_bytes(
-                            match format {
-                                image::ImageFormat::Png => gpui::ImageFormat::Png,
-                                image::ImageFormat::Jpeg => gpui::ImageFormat::Jpeg,
-                                image::ImageFormat::WebP => gpui::ImageFormat::Webp,
-                                image::ImageFormat::Gif => gpui::ImageFormat::Gif,
-                                image::ImageFormat::Bmp => gpui::ImageFormat::Bmp,
-                                image::ImageFormat::Tiff => gpui::ImageFormat::Tiff,
-                                image::ImageFormat::Ico => gpui::ImageFormat::Ico,
-                                _ => continue,
-                            },
-                            content,
+                        let name: SharedString = path
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .map(|s| SharedString::from(s.to_owned()))
+                            .unwrap_or_else(|| default_name.clone());
+                        images.push((
+                            gpui::Image::from_bytes(
+                                match format {
+                                    image::ImageFormat::Png => gpui::ImageFormat::Png,
+                                    image::ImageFormat::Jpeg => gpui::ImageFormat::Jpeg,
+                                    image::ImageFormat::WebP => gpui::ImageFormat::Webp,
+                                    image::ImageFormat::Gif => gpui::ImageFormat::Gif,
+                                    image::ImageFormat::Bmp => gpui::ImageFormat::Bmp,
+                                    image::ImageFormat::Tiff => gpui::ImageFormat::Tiff,
+                                    image::ImageFormat::Ico => gpui::ImageFormat::Ico,
+                                    _ => continue,
+                                },
+                                content,
+                            ),
+                            name,
                         ));
                     }
                     images
@@ -840,12 +905,9 @@ pub(crate) fn paste_images_as_context(
             );
         }
 
-        cx.update(|_window, cx| {
-            cx.stop_propagation();
-        })
-        .ok();
-
-        insert_images_as_context(images, editor, mention_set, workspace, &mut cx).await;
+        if !images.is_empty() {
+            insert_images_as_context(images, editor, mention_set, workspace, &mut cx).await;
+        }
     }))
 }
 

@@ -1374,7 +1374,7 @@ mod tests {
 
         event
             .response
-            .send(acp::PermissionOptionId::new("allow"))
+            .send(acp::PermissionOptionId::new("allow").into())
             .unwrap();
         authorize_task.await.unwrap();
     }

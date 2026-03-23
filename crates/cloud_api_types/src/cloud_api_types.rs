@@ -23,6 +23,8 @@ pub struct GetAuthenticatedUserResponse {
     #[serde(default)]
     pub organizations: Vec<Organization>,
     #[serde(default)]
+    pub default_organization_id: Option<OrganizationId>,
+    #[serde(default)]
     pub plans_by_organization: BTreeMap<OrganizationId, KnownOrUnknown<Plan, String>>,
     pub plan: PlanInfo,
 }

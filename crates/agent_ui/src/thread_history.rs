@@ -5,59 +5,48 @@ use std::rc::Rc;
 use ui::prelude::*;
 
 pub struct ThreadHistory {
-    session_list: Option<Rc<dyn AgentSessionList>>,
+    session_list: Rc<dyn AgentSessionList>,
     sessions: Vec<AgentSessionInfo>,
     _refresh_task: Task<()>,
     _watch_task: Option<Task<()>>,
 }
 
 impl ThreadHistory {
-    pub fn new(session_list: Option<Rc<dyn AgentSessionList>>, cx: &mut Context<Self>) -> Self {
+    pub fn new(session_list: Rc<dyn AgentSessionList>, cx: &mut Context<Self>) -> Self {
         let mut this = Self {
-            session_list: None,
+            session_list,
             sessions: Vec::new(),
             _refresh_task: Task::ready(()),
             _watch_task: None,
         };
-        this.set_session_list_impl(session_list, cx);
+
+        this.start_watching(cx);
         this
     }
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_session_list(
         &mut self,
-        session_list: Option<Rc<dyn AgentSessionList>>,
+        session_list: Rc<dyn AgentSessionList>,
         cx: &mut Context<Self>,
     ) {
-        self.set_session_list_impl(session_list, cx);
-    }
-
-    fn set_session_list_impl(
-        &mut self,
-        session_list: Option<Rc<dyn AgentSessionList>>,
-        cx: &mut Context<Self>,
-    ) {
-        if let (Some(current), Some(next)) = (&self.session_list, &session_list)
-            && Rc::ptr_eq(current, next)
-        {
+        if Rc::ptr_eq(&self.session_list, &session_list) {
             return;
         }
 
         self.session_list = session_list;
         self.sessions.clear();
         self._refresh_task = Task::ready(());
+        self.start_watching(cx);
+    }
 
-        let Some(session_list) = self.session_list.as_ref() else {
-            self._watch_task = None;
-            cx.notify();
-            return;
-        };
-        let Some(rx) = session_list.watch(cx) else {
+    fn start_watching(&mut self, cx: &mut Context<Self>) {
+        let Some(rx) = self.session_list.watch(cx) else {
             self._watch_task = None;
             self.refresh_sessions(false, cx);
             return;
         };
-        session_list.notify_refresh();
+        self.session_list.notify_refresh();
 
         self._watch_task = Some(cx.spawn(async move |this, cx| {
             while let Ok(first_update) = rx.recv().await {
@@ -132,10 +121,7 @@ impl ThreadHistory {
     }
 
     fn refresh_sessions(&mut self, load_all_pages: bool, cx: &mut Context<Self>) {
-        let Some(session_list) = self.session_list.clone() else {
-            cx.notify();
-            return;
-        };
+        let session_list = self.session_list.clone();
 
         self._refresh_task = cx.spawn(async move |this, cx| {
             let mut cursor: Option<String> = None;
@@ -196,14 +182,8 @@ impl ThreadHistory {
         self.sessions.is_empty()
     }
 
-    pub fn has_session_list(&self) -> bool {
-        self.session_list.is_some()
-    }
-
     pub fn refresh(&mut self, _cx: &mut Context<Self>) {
-        if let Some(session_list) = &self.session_list {
-            session_list.notify_refresh();
-        }
+        self.session_list.notify_refresh();
     }
 
     pub fn session_for_id(&self, session_id: &acp::SessionId) -> Option<AgentSessionInfo> {
@@ -222,10 +202,7 @@ impl ThreadHistory {
     }
 
     pub fn supports_delete(&self) -> bool {
-        self.session_list
-            .as_ref()
-            .map(|sl| sl.supports_delete())
-            .unwrap_or(false)
+        self.session_list.supports_delete()
     }
 
     pub(crate) fn delete_session(
@@ -233,19 +210,11 @@ impl ThreadHistory {
         session_id: &acp::SessionId,
         cx: &mut App,
     ) -> Task<anyhow::Result<()>> {
-        if let Some(session_list) = self.session_list.as_ref() {
-            session_list.delete_session(session_id, cx)
-        } else {
-            Task::ready(Ok(()))
-        }
+        self.session_list.delete_session(session_id, cx)
     }
 
     pub(crate) fn delete_sessions(&self, cx: &mut App) -> Task<anyhow::Result<()>> {
-        if let Some(session_list) = self.session_list.as_ref() {
-            session_list.delete_sessions(cx)
-        } else {
-            Task::ready(Ok(()))
-        }
+        self.session_list.delete_sessions(cx)
     }
 }
 
@@ -408,7 +377,7 @@ mod tests {
     fn test_session(session_id: &str, title: &str) -> AgentSessionInfo {
         AgentSessionInfo {
             session_id: acp::SessionId::new(session_id),
-            cwd: None,
+            work_dirs: None,
             title: Some(title.to_string().into()),
             updated_at: None,
             created_at: None,
@@ -425,7 +394,7 @@ mod tests {
             vec![test_session("session-2", "Second")],
         ));
 
-        let history = cx.new(|cx| ThreadHistory::new(Some(session_list.clone()), cx));
+        let history = cx.new(|cx| ThreadHistory::new(session_list.clone(), cx));
         cx.run_until_parked();
 
         history.update(cx, |history, _cx| {
@@ -447,7 +416,7 @@ mod tests {
             vec![test_session("session-2", "Second")],
         ));
 
-        let history = cx.new(|cx| ThreadHistory::new(Some(session_list.clone()), cx));
+        let history = cx.new(|cx| ThreadHistory::new(session_list.clone(), cx));
         cx.run_until_parked();
         session_list.clear_requested_cursors();
 
@@ -482,7 +451,7 @@ mod tests {
             vec![test_session("session-2", "Second")],
         ));
 
-        let history = cx.new(|cx| ThreadHistory::new(Some(session_list.clone()), cx));
+        let history = cx.new(|cx| ThreadHistory::new(session_list.clone(), cx));
         cx.run_until_parked();
 
         history.update(cx, |history, cx| history.refresh_full_history(cx));
@@ -513,7 +482,7 @@ mod tests {
             vec![test_session("session-2", "Second")],
         ));
 
-        let history = cx.new(|cx| ThreadHistory::new(Some(session_list.clone()), cx));
+        let history = cx.new(|cx| ThreadHistory::new(session_list.clone(), cx));
         cx.run_until_parked();
 
         history.update(cx, |history, cx| history.refresh_full_history(cx));
@@ -542,7 +511,7 @@ mod tests {
             vec![test_session("session-2", "Second")],
         ));
 
-        let history = cx.new(|cx| ThreadHistory::new(Some(session_list.clone()), cx));
+        let history = cx.new(|cx| ThreadHistory::new(session_list.clone(), cx));
         cx.run_until_parked();
 
         history.update(cx, |history, cx| history.refresh_full_history(cx));
@@ -585,7 +554,7 @@ mod tests {
             .with_async_responses(),
         );
 
-        let history = cx.new(|cx| ThreadHistory::new(Some(session_list.clone()), cx));
+        let history = cx.new(|cx| ThreadHistory::new(session_list.clone(), cx));
         cx.run_until_parked();
         session_list.clear_requested_cursors();
 
@@ -608,7 +577,7 @@ mod tests {
         let session_id = acp::SessionId::new("test-session");
         let sessions = vec![AgentSessionInfo {
             session_id: session_id.clone(),
-            cwd: None,
+            work_dirs: None,
             title: Some("Original Title".into()),
             updated_at: None,
             created_at: None,
@@ -616,7 +585,7 @@ mod tests {
         }];
         let session_list = Rc::new(TestSessionList::new(sessions));
 
-        let history = cx.new(|cx| ThreadHistory::new(Some(session_list.clone()), cx));
+        let history = cx.new(|cx| ThreadHistory::new(session_list.clone(), cx));
         cx.run_until_parked();
 
         session_list.send_update(SessionListUpdate::SessionInfo {
@@ -641,7 +610,7 @@ mod tests {
         let session_id = acp::SessionId::new("test-session");
         let sessions = vec![AgentSessionInfo {
             session_id: session_id.clone(),
-            cwd: None,
+            work_dirs: None,
             title: Some("Original Title".into()),
             updated_at: None,
             created_at: None,
@@ -649,7 +618,7 @@ mod tests {
         }];
         let session_list = Rc::new(TestSessionList::new(sessions));
 
-        let history = cx.new(|cx| ThreadHistory::new(Some(session_list.clone()), cx));
+        let history = cx.new(|cx| ThreadHistory::new(session_list.clone(), cx));
         cx.run_until_parked();
 
         session_list.send_update(SessionListUpdate::SessionInfo {
@@ -671,7 +640,7 @@ mod tests {
         let session_id = acp::SessionId::new("test-session");
         let sessions = vec![AgentSessionInfo {
             session_id: session_id.clone(),
-            cwd: None,
+            work_dirs: None,
             title: Some("Original Title".into()),
             updated_at: None,
             created_at: None,
@@ -679,7 +648,7 @@ mod tests {
         }];
         let session_list = Rc::new(TestSessionList::new(sessions));
 
-        let history = cx.new(|cx| ThreadHistory::new(Some(session_list.clone()), cx));
+        let history = cx.new(|cx| ThreadHistory::new(session_list.clone(), cx));
         cx.run_until_parked();
 
         session_list.send_update(SessionListUpdate::SessionInfo {
@@ -704,7 +673,7 @@ mod tests {
         let session_id = acp::SessionId::new("test-session");
         let sessions = vec![AgentSessionInfo {
             session_id: session_id.clone(),
-            cwd: None,
+            work_dirs: None,
             title: None,
             updated_at: None,
             created_at: None,
@@ -712,7 +681,7 @@ mod tests {
         }];
         let session_list = Rc::new(TestSessionList::new(sessions));
 
-        let history = cx.new(|cx| ThreadHistory::new(Some(session_list.clone()), cx));
+        let history = cx.new(|cx| ThreadHistory::new(session_list.clone(), cx));
         cx.run_until_parked();
 
         session_list.send_update(SessionListUpdate::SessionInfo {
@@ -741,7 +710,7 @@ mod tests {
         let session_id = acp::SessionId::new("test-session");
         let sessions = vec![AgentSessionInfo {
             session_id: session_id.clone(),
-            cwd: None,
+            work_dirs: None,
             title: Some("Server Title".into()),
             updated_at: None,
             created_at: None,
@@ -749,7 +718,7 @@ mod tests {
         }];
         let session_list = Rc::new(TestSessionList::new(sessions));
 
-        let history = cx.new(|cx| ThreadHistory::new(Some(session_list.clone()), cx));
+        let history = cx.new(|cx| ThreadHistory::new(session_list.clone(), cx));
         cx.run_until_parked();
 
         session_list.send_update(SessionListUpdate::SessionInfo {
@@ -775,7 +744,7 @@ mod tests {
         let session_id = acp::SessionId::new("known-session");
         let sessions = vec![AgentSessionInfo {
             session_id,
-            cwd: None,
+            work_dirs: None,
             title: Some("Original".into()),
             updated_at: None,
             created_at: None,
@@ -783,7 +752,7 @@ mod tests {
         }];
         let session_list = Rc::new(TestSessionList::new(sessions));
 
-        let history = cx.new(|cx| ThreadHistory::new(Some(session_list.clone()), cx));
+        let history = cx.new(|cx| ThreadHistory::new(session_list.clone(), cx));
         cx.run_until_parked();
 
         session_list.send_update(SessionListUpdate::SessionInfo {
