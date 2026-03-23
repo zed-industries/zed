@@ -256,35 +256,36 @@ impl Model {
     pub fn max_token_count(&self) -> u64 {
         match self {
             // Anthropic models
-            Self::ClaudeOpus4_6 | Self::ClaudeSonnet4_6 => 200_000,
+            Self::ClaudeOpus4_6 | Self::ClaudeSonnet4_6 => 1_000_000,
             Self::ClaudeOpus4_5 | Self::ClaudeSonnet4_5 | Self::ClaudeSonnet4 => 200_000,
             Self::ClaudeOpus4_1 => 200_000,
             Self::ClaudeHaiku4_5 => 200_000,
             Self::Claude3_5Haiku => 200_000,
 
             // OpenAI models
-            Self::Gpt5_4 | Self::Gpt5_4Pro | Self::Gpt5_4Mini => 256_000,
-            Self::Gpt5_4Nano => 128_000,
-            Self::Gpt5_3Codex | Self::Gpt5_3Spark => 256_000,
-            Self::Gpt5_2 | Self::Gpt5_2Codex => 256_000,
+            Self::Gpt5_4 | Self::Gpt5_4Pro => 1_050_000,
+            Self::Gpt5_4Mini | Self::Gpt5_4Nano => 400_000,
+            Self::Gpt5_3Codex => 400_000,
+            Self::Gpt5_3Spark => 128_000,
+            Self::Gpt5_2 | Self::Gpt5_2Codex => 400_000,
             Self::Gpt5_1 | Self::Gpt5_1Codex | Self::Gpt5_1CodexMax | Self::Gpt5_1CodexMini => {
-                256_000
+                400_000
             }
-            Self::Gpt5 | Self::Gpt5Codex => 256_000,
-            Self::Gpt5Nano => 128_000,
+            Self::Gpt5 | Self::Gpt5Codex | Self::Gpt5Nano => 400_000,
 
             // Google models
             Self::Gemini3_1Pro => 1_048_576,
             Self::Gemini3Flash => 1_048_576,
 
             // OpenAI-compatible models
-            Self::MiniMaxM2_5 | Self::MiniMaxM2_5Free => 128_000,
-            Self::Glm5 => 128_000,
-            Self::KimiK2_5 => 128_000,
-            Self::MimoV2ProFree | Self::MimoV2OmniFree | Self::MimoV2FlashFree => 128_000,
-            Self::TrinityLargePreviewFree => 128_000,
-            Self::BigPickle => 128_000,
-            Self::Nemotron3SuperFree => 128_000,
+            Self::MiniMaxM2_5 | Self::MiniMaxM2_5Free => 196_608,
+            Self::Glm5 => 200_000,
+            Self::KimiK2_5 => 262_144,
+            Self::MimoV2ProFree => 1_048_576,
+            Self::MimoV2OmniFree | Self::MimoV2FlashFree => 262_144,
+            Self::TrinityLargePreviewFree => 131_072,
+            Self::BigPickle => 200_000,
+            Self::Nemotron3SuperFree => 262_144,
 
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
@@ -293,34 +294,42 @@ impl Model {
     pub fn max_output_tokens(&self) -> Option<u64> {
         match self {
             // Anthropic models
-            Self::ClaudeOpus4_6 | Self::ClaudeSonnet4_6 => Some(16_384),
-            Self::ClaudeOpus4_5 | Self::ClaudeSonnet4_5 | Self::ClaudeSonnet4 => Some(16_384),
-            Self::ClaudeOpus4_1 => Some(16_384),
-            Self::ClaudeHaiku4_5 => Some(8_192),
+            Self::ClaudeOpus4_6 => Some(128_000),
+            Self::ClaudeSonnet4_6 => Some(64_000),
+            Self::ClaudeOpus4_5
+            | Self::ClaudeOpus4_1
+            | Self::ClaudeSonnet4_5
+            | Self::ClaudeSonnet4
+            | Self::ClaudeHaiku4_5 => Some(64_000),
             Self::Claude3_5Haiku => Some(8_192),
 
             // OpenAI models
-            Self::Gpt5_4 | Self::Gpt5_4Pro | Self::Gpt5_4Mini => Some(32_768),
-            Self::Gpt5_4Nano => Some(16_384),
-            Self::Gpt5_3Codex | Self::Gpt5_3Spark => Some(32_768),
-            Self::Gpt5_2 | Self::Gpt5_2Codex => Some(32_768),
-            Self::Gpt5_1 | Self::Gpt5_1Codex | Self::Gpt5_1CodexMax | Self::Gpt5_1CodexMini => {
-                Some(32_768)
-            }
-            Self::Gpt5 | Self::Gpt5Codex => Some(32_768),
-            Self::Gpt5Nano => Some(16_384),
+            Self::Gpt5_4
+            | Self::Gpt5_4Pro
+            | Self::Gpt5_4Mini
+            | Self::Gpt5_4Nano
+            | Self::Gpt5_3Codex
+            | Self::Gpt5_3Spark
+            | Self::Gpt5_2
+            | Self::Gpt5_2Codex
+            | Self::Gpt5_1
+            | Self::Gpt5_1Codex
+            | Self::Gpt5_1CodexMax
+            | Self::Gpt5_1CodexMini
+            | Self::Gpt5
+            | Self::Gpt5Codex
+            | Self::Gpt5Nano => Some(128_000),
 
             // Google models
             Self::Gemini3_1Pro | Self::Gemini3Flash => Some(65_536),
 
-            // OpenAI-compatible models — use reasonable defaults
-            Self::MiniMaxM2_5 | Self::MiniMaxM2_5Free => Some(16_384),
-            Self::Glm5 => Some(16_384),
-            Self::KimiK2_5 => Some(16_384),
-            Self::MimoV2ProFree | Self::MimoV2OmniFree | Self::MimoV2FlashFree => Some(16_384),
-            Self::TrinityLargePreviewFree => Some(16_384),
-            Self::BigPickle => Some(16_384),
-            Self::Nemotron3SuperFree => Some(16_384),
+            // OpenAI-compatible models
+            Self::MiniMaxM2_5 | Self::MiniMaxM2_5Free => Some(65_536),
+            Self::Glm5 | Self::BigPickle => Some(128_000),
+            Self::KimiK2_5 => Some(65_536),
+            Self::MimoV2ProFree => Some(131_072),
+            Self::MimoV2OmniFree | Self::MimoV2FlashFree => Some(65_536),
+            Self::TrinityLargePreviewFree | Self::Nemotron3SuperFree => Some(16_384),
 
             Self::Custom {
                 max_output_tokens, ..
