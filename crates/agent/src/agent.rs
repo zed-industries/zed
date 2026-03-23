@@ -319,9 +319,6 @@ impl NativeAgent {
         self.register_session(thread, project_id, cx)
     }
 
-    pub fn context_server_registry(&self) -> &Entity<ContextServerRegistry> {
-        &self.context_server_registry
-    }
 
     fn register_session(
         &mut self,
@@ -1622,24 +1619,29 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
     }
 
     fn wait_for_tools_ready(&self, cx: &mut App) -> Task<()> {
-        let agent = self.0.read(cx);
-        let registry = agent.context_server_registry().read(cx);
-        let has_pending = registry.has_pending_tool_loads();
-
-        let context_server_store = agent.project.read(cx).context_server_store();
-        let store = context_server_store.read(cx);
-        let configured_server_count = store.configured_server_ids().len();
-        let registered_count = registry.registered_server_count();
-        let has_unregistered_servers =
-            configured_server_count > 0 && registered_count < configured_server_count;
+        let (has_pending, has_unregistered_servers, mut receiver, expected_servers, registry_handle) = {
+            let agent = self.0.read(cx);
+            // Use the first project's registry; if no project is registered yet, nothing to wait for.
+            let Some(project_state) = agent.projects.values().next() else {
+                return Task::ready(());
+            };
+            let registry_entity = &project_state.context_server_registry;
+            let has_pending = registry_entity.read(cx).has_pending_tool_loads();
+            let registered_count = registry_entity.read(cx).registered_server_count();
+            let context_server_store = project_state.project.read(cx).context_server_store();
+            let configured_server_count = context_server_store.read(cx).configured_server_ids().len();
+            let has_unregistered_servers =
+                configured_server_count > 0 && registered_count < configured_server_count;
+            let receiver = registry_entity.read(cx).tools_ready_receiver();
+            let registry_handle = registry_entity.clone();
+            (has_pending, has_unregistered_servers, receiver, configured_server_count, registry_handle)
+        };
 
         if !has_pending && !has_unregistered_servers {
             return Task::ready(());
         }
 
-        let mut receiver = registry.tools_ready_receiver();
-        let expected_servers = configured_server_count;
-        let registry_handle = agent.context_server_registry().clone();
+        let expected_servers = expected_servers;
         cx.spawn(async move |cx| {
             let wait = async {
                 loop {
