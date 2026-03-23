@@ -1253,7 +1253,8 @@ impl Sidebar {
             .group(&group_name)
             .h(Tab::content_height(cx))
             .w_full()
-            .px_1p5()
+            .pl_1p5()
+            .pr_1()
             .border_1()
             .map(|this| {
                 if is_selected {
@@ -1277,36 +1278,7 @@ impl Sidebar {
                                 .color(Color::Custom(cx.theme().colors().icon_muted.opacity(0.5))),
                         ),
                     )
-                    .child(h_flex().gap_0p5().child(label).when(!is_active, |this| {
-                        this.child(
-                            IconButton::new(
-                                SharedString::from(format!(
-                                    "{id_prefix}project-header-open-workspace-{ix}",
-                                )),
-                                IconName::Focus,
-                            )
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .tooltip(Tooltip::text("Activate Workspace"))
-                            .visible_on_hover(&group_name)
-                            .on_click(cx.listener({
-                                move |this, _, window, cx| {
-                                    this.focused_thread = None;
-                                    if let Some(multi_workspace) = this.multi_workspace.upgrade() {
-                                        multi_workspace.update(cx, |multi_workspace, cx| {
-                                            multi_workspace
-                                                .activate(workspace_for_open.clone(), cx);
-                                        });
-                                    }
-                                    if AgentPanel::is_visible(&workspace_for_open, cx) {
-                                        workspace_for_open.update(cx, |workspace, cx| {
-                                            workspace.focus_panel::<AgentPanel>(window, cx);
-                                        });
-                                    }
-                                }
-                            })),
-                        )
-                    }))
+                    .child(label)
                     .when(is_collapsed, |this| {
                         this.when(has_running_threads, |this| {
                             this.child(
@@ -1372,6 +1344,35 @@ impl Sidebar {
                                     this.selection = None;
                                     this.expanded_groups.remove(&path_list_for_collapse);
                                     this.update_entries(cx);
+                                }
+                            })),
+                        )
+                    })
+                    .when(!is_active, |this| {
+                        this.child(
+                            IconButton::new(
+                                SharedString::from(format!(
+                                    "{id_prefix}project-header-open-workspace-{ix}",
+                                )),
+                                IconName::Focus,
+                            )
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .tooltip(Tooltip::text("Activate Workspace"))
+                            .on_click(cx.listener({
+                                move |this, _, window, cx| {
+                                    this.focused_thread = None;
+                                    if let Some(multi_workspace) = this.multi_workspace.upgrade() {
+                                        multi_workspace.update(cx, |multi_workspace, cx| {
+                                            multi_workspace
+                                                .activate(workspace_for_open.clone(), cx);
+                                        });
+                                    }
+                                    if AgentPanel::is_visible(&workspace_for_open, cx) {
+                                        workspace_for_open.update(cx, |workspace, cx| {
+                                            workspace.focus_panel::<AgentPanel>(window, cx);
+                                        });
+                                    }
                                 }
                             })),
                         )
