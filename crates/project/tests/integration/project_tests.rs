@@ -11490,7 +11490,6 @@ async fn test_initial_scan_complete(cx: &mut gpui::TestAppContext) {
     });
 
     // Check tasks for each worktree
-    // todo! add api to inventory
     for worktree_id in &worktree_ids {
         let tasks = inventory.update(cx, |inventory, cx| {
             inventory.list_tasks(None, None, Some(*worktree_id), cx)

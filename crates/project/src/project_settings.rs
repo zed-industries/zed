@@ -10,9 +10,8 @@ use lsp::{DEFAULT_LSP_REQUEST_TIMEOUT_SECS, LanguageServerName};
 use paths::{
     EDITORCONFIG_NAME, local_debug_file_relative_path, local_settings_file_relative_path,
     local_tasks_file_relative_path, local_vscode_launch_file_relative_path,
-    local_vscode_tasks_file_relative_path,
+    local_vscode_tasks_file_relative_path, task_file_name,
 };
-use paths::{debug_task_file_name, task_file_name};
 use rpc::{
     AnyProtoClient, TypedEnvelope,
     proto::{self, REMOTE_SERVER_PROJECT_ID},
@@ -764,10 +763,10 @@ pub struct SettingsObserver {
     _global_debug_config_watcher: Task<()>,
 }
 
-/// SettingsObserver observers changes to .zed/{settings, task, debug}.json files in local worktrees
+/// SettingsObserver observers changes to .zed/{settings, task}.json files in local worktrees
 /// (or the equivalent protobuf messages from upstream) and updates local settings
 /// and sends notifications downstream.
-/// In ssh mode it also monitors ~/.config/zed/{settings, task, debug}.json and sends the content
+/// In ssh mode it also monitors ~/.config/zed/{settings, task}.json and sends the content
 /// upstream.
 impl SettingsObserver {
     pub fn init(client: &AnyProtoClient) {
@@ -1241,18 +1240,6 @@ impl SettingsObserver {
             return;
         }
 
-        let has_pending_task_inventory_update = changes.iter().any(|(path, _, _)| {
-            path.ends_with(local_tasks_file_relative_path())
-                || path.ends_with(local_vscode_tasks_file_relative_path())
-                || path.ends_with(local_debug_file_relative_path())
-                || path.ends_with(local_vscode_launch_file_relative_path())
-        });
-
-        let pending_task_inventory_update = has_pending_task_inventory_update.then(|| {
-            self.task_store
-                .update(cx, |task_store, _| task_store.register_pending_update())
-        });
-
         let worktree = worktree.clone();
         cx.spawn(async move |this, cx| {
             let settings_contents: Vec<(Arc<RelPath>, _, _)> =
@@ -1272,9 +1259,7 @@ impl SettingsObserver {
                         cx,
                     )
                 })
-            })?;
-            drop(pending_task_inventory_update);
-            anyhow::Ok(())
+            })
         })
         .detach();
     }
@@ -1370,17 +1355,17 @@ impl SettingsObserver {
                             log::error!(
                                 "Failed to set local debug scenarios in {path:?}: {message:?}"
                             );
-                            cx.emit(SettingsObserverEvent::LocalDebugScenariosUpdated(Err(
+                            cx.emit(SettingsObserverEvent::LocalTasksUpdated(Err(
                                 InvalidSettingsError::Debug { path, message },
                             )));
                         }
                         Err(e) => {
-                            log::error!("Failed to set local debug scenarios: {e}");
+                            log::error!("Failed to set local tasks: {e}");
                         }
                         Ok(()) => {
-                            cx.emit(SettingsObserverEvent::LocalDebugScenariosUpdated(Ok(
-                                directory.as_std_path().join(debug_task_file_name()),
-                            )));
+                            cx.emit(SettingsObserverEvent::LocalTasksUpdated(Ok(directory
+                                .as_std_path()
+                                .join(task_file_name()))));
                         }
                     }
                 }
