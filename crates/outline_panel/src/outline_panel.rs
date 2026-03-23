@@ -5069,7 +5069,7 @@ impl Panel for OutlinePanel {
     }
 
     fn activation_priority(&self) -> u32 {
-        5
+        6
     }
 }
 
