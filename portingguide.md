@@ -372,3 +372,6 @@ Helix-specific commits on main (oldest first):
 | `28f9917` | Portingguide: document branch naming convention for upstream merges |
 | `1f96cb8` | **Merge upstream/main into feature/001617-merge-latest-zed** |
 | `57665e6` | **Fix Helix cfg-gated code for ACP consolidation renames** |
+| `1737543` | Portingguide: update commit history table through merge commit |
+| `11bec02` | **Revert .github/workflows to pre-merge state** |
+| `090464c` | Portingguide: document .github/workflows revert requirement |
