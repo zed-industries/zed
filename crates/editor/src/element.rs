@@ -8696,6 +8696,10 @@ fn render_blame_entry_popover(
     window: &mut Window,
     cx: &mut App,
 ) -> Option<AnyElement> {
+    if markdown.read(cx).is_parsing() {
+        return None;
+    }
+
     let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
     let blame = blame.read(cx);
     let repository = blame.repository(cx, buffer)?;
