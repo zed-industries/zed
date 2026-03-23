@@ -10,7 +10,7 @@ use std::{
 };
 
 use acp_thread::{AcpThread, MentionUri, ThreadStatus};
-use agent::{ContextServerRegistry, NativeAgentSessionList, SharedThread, ThreadStore};
+use agent::{ContextServerRegistry, SharedThread, ThreadStore};
 use agent_client_protocol as acp;
 use agent_servers::AgentServer;
 use collections::HashSet;
@@ -1095,17 +1095,22 @@ impl AgentPanel {
                         // We can't use open_thread() because it creates a new ACP connection
                         // that won't find this thread (thread_service uses a different agent
                         // instance). Instead, wrap the existing Entity<AcpThread> directly.
-                        let server = crate::ExternalAgent::NativeAgent
+                        let server = crate::Agent::NativeAgent
                             .server(this.fs.clone(), this.thread_store.clone());
+                        let history = this.connection_store.read(cx)
+                            .entry(&crate::Agent::NativeAgent)
+                            .and_then(|entry| entry.read(cx).history().cloned());
                         let server_view = cx.new(|cx| {
-                            crate::acp::AcpServerView::from_existing_thread(
+                            ConversationView::from_existing_thread(
                                 notification.thread_entity.clone(),
                                 server,
+                                this.connection_store.clone(),
+                                crate::Agent::NativeAgent,
                                 this.workspace.clone(),
                                 this.project.clone(),
                                 Some(this.thread_store.clone()),
                                 this.prompt_store.clone(),
-                                this.acp_history.clone(),
+                                history,
                                 agent_name,
                                 window,
                                 cx,
@@ -1121,18 +1126,6 @@ impl AgentPanel {
 
                         // Dismiss onboarding so "Welcome to Zed AI" doesn't show
                         OnboardingUpsell::set_dismissed(true, cx);
-
-                        // Ensure history view has a session_list so threads appear in "View All".
-                        // The normal flow sets session_list when a NativeAgent connection is made,
-                        // but from_existing_thread uses HeadlessConnection which doesn't provide one.
-                        // Create a NativeAgentSessionList wrapping the ThreadStore so saved threads
-                        // are discoverable in the history UI.
-                        let thread_store = this.thread_store.clone();
-                        this.acp_history.update(cx, |history, cx| {
-                            let session_list: Rc<dyn acp_thread::AgentSessionList> =
-                                Rc::new(NativeAgentSessionList::new(thread_store, cx));
-                            history.set_session_list(Some(session_list), cx);
-                        });
 
                         // Activate following for externally-initiated threads.
                         // AcpThreadView defaults should_be_following to true, so new

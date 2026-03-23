@@ -580,7 +580,7 @@ impl ConversationView {
         }
     }
 
-    /// Create an AcpServerView wrapping an existing headless thread entity.
+    /// Create a ConversationView wrapping an existing headless thread entity.
     ///
     /// This bypasses the normal connection/loading path for threads created
     /// by thread_service (WebSocket-created threads). Each server.connect()
@@ -591,17 +591,21 @@ impl ConversationView {
     pub fn from_existing_thread(
         thread: gpui::Entity<AcpThread>,
         agent: Rc<dyn AgentServer>,
+        connection_store: Entity<AgentConnectionStore>,
+        connection_key: Agent,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
         prompt_store: Option<Entity<PromptStore>>,
-        history: Entity<AcpThreadHistory>,
+        history: Option<Entity<ThreadHistory>>,
         agent_name: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
-        let available_commands = Rc::new(RefCell::new(vec![]));
+        let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::new(
+            thread.read(cx).prompt_capabilities(),
+            vec![],
+        )));
 
         let agent_server_store = project.read(cx).agent_server_store().clone();
         let subscriptions = vec![
@@ -634,20 +638,20 @@ impl ConversationView {
         .detach();
 
         // Build the entry view state and sync existing entries
-        let agent_name_str = agent_name.unwrap_or_else(|| agent.name().to_string());
-        let display_name: SharedString = agent_name_str.clone().into();
-        let agent_shared_name: SharedString = agent_name_str.into();
+        let agent_id = agent.agent_id();
+        let agent_display_name: SharedString = agent_name
+            .map(SharedString::from)
+            .unwrap_or_else(|| agent_id.0.clone());
 
         let entry_view_state = cx.new(|_cx| {
             EntryViewState::new(
                 workspace.clone(),
                 project.downgrade(),
                 thread_store.clone(),
-                history.downgrade(),
+                history.as_ref().map(|h| h.downgrade()),
                 prompt_store.clone(),
-                prompt_capabilities.clone(),
-                available_commands.clone(),
-                agent_shared_name.clone(),
+                session_capabilities.clone(),
+                agent_id.clone(),
             )
         });
 
@@ -732,15 +736,15 @@ impl ConversationView {
             conv
         });
         let current = cx.new(|cx| {
-            AcpThreadView::new(
+            ThreadView::new(
                 None, // parent_id
                 thread.clone(),
                 conversation_entity.clone(),
-                None, // login
                 weak,
                 agent_icon,
-                agent_shared_name.clone(),
-                display_name,
+                None, // agent_icon_from_external_svg
+                agent_id,
+                agent_display_name,
                 workspace.clone(),
                 entry_view_state,
                 None, // config_options_view
@@ -748,10 +752,8 @@ impl ConversationView {
                 None, // model_selector
                 None, // profile_selector
                 list_state,
-                prompt_capabilities,
-                available_commands,
+                session_capabilities,
                 false, // resumed_without_history
-                None,  // resume_thread_metadata
                 project.downgrade(),
                 thread_store.clone(),
                 history.clone(),
@@ -773,6 +775,8 @@ impl ConversationView {
 
         Self {
             agent,
+            connection_store,
+            connection_key,
             agent_server_store,
             workspace,
             project,
@@ -784,12 +788,12 @@ impl ConversationView {
                 active_id: Some(id.clone()),
                 threads: HashMap::from_iter([(id, current)]),
                 conversation: conversation_entity,
+                history,
+                _connection_entry_subscription: Subscription::new(|| {}),
             }),
-            login: None,
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
             auth_task: None,
-            history,
             _subscriptions: subscriptions,
             focus_handle: cx.focus_handle(),
         }

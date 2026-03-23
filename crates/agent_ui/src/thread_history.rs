@@ -24,7 +24,7 @@ impl ThreadHistory {
         this
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "test-support", feature = "external_websocket_sync"))]
     pub fn set_session_list(
         &mut self,
         session_list: Rc<dyn AgentSessionList>,
