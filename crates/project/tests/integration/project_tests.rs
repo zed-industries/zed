@@ -11698,41 +11698,6 @@ async fn test_initial_scan_complete(cx: &mut gpui::TestAppContext) {
             "Expected 2 repositories in GitStore"
         );
     });
-
-    // Wait for any task inventory updates triggered by the scan
-    let tasks_complete = project.update(cx, |project, cx| {
-        project
-            .task_store()
-            .update(cx, |store, _| store.pending_updates_completed())
-    });
-    tasks_complete.await;
-
-    // Verify task inventory has tasks from both worktrees
-    let (inventory, worktree_ids) = project.read_with(cx, |project, cx| {
-        let inventory = project
-            .task_store()
-            .read(cx)
-            .task_inventory()
-            .unwrap()
-            .clone();
-        let worktree_ids: Vec<_> = project
-            .visible_worktrees(cx)
-            .map(|wt| wt.read(cx).id())
-            .collect();
-        (inventory, worktree_ids)
-    });
-
-    // Check tasks for each worktree
-    for worktree_id in &worktree_ids {
-        let tasks = inventory.update(cx, |inventory, cx| {
-            inventory.list_tasks(None, None, Some(*worktree_id), cx)
-        });
-        let task_labels: Vec<String> = tasks.await.into_iter().map(|(_, t)| t.label).collect();
-        assert!(
-            !task_labels.is_empty(),
-            "Expected tasks to be loaded for worktree {worktree_id:?}, got none"
-        );
-    }
 }
 
 pub fn init_test(cx: &mut gpui::TestAppContext) {

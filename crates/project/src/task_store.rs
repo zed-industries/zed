@@ -1,5 +1,4 @@
 use std::{
-    future::Future,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -279,12 +278,6 @@ impl TaskStore {
         task_inventory.update(cx, |inventory, _| {
             inventory.update_file_based_tasks(location, raw_tasks_json)
         })
-    }
-
-    /// Returns a future that resolves when all pending task inventory updates
-    /// (triggered by worktree scans discovering task files) have completed.
-    pub fn pending_updates_completed(&mut self) -> impl Future<Output = ()> + use<> {
-        async {}
     }
 
     pub(super) fn update_user_debug_scenarios(
