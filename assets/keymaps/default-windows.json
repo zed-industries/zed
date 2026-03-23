@@ -790,7 +790,7 @@
     },
   },
   {
-    "context": "Editor && edit_prediction && edit_prediction_mode == eager",
+    "context": "Editor && edit_prediction && edit_prediction_mode == eager && !showing_completions",
     "use_key_equivalents": true,
     "bindings": {
       "tab": "editor::AcceptEditPrediction",
