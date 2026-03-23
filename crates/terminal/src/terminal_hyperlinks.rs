@@ -969,6 +969,17 @@ mod tests {
                 test_path!("‹«/te:st/👉co:ol.r:s:4:2::::::»›");
                 test_path!("/test/cool.rs:::👉:");
             }
+
+            #[test]
+            #[should_panic(expected = "Path = «copy).yml»")]
+            // Filenames with parentheses in the middle (e.g. `file(copy).txt`) are not
+            // matched as a single path because `(` is treated as a path boundary. This is
+            // a tradeoff to support the more common `Tool(path)` pattern (e.g. Claude Code
+            // output like `Update(.claude/SKILL.md)`) where `(` is a delimiter, not part
+            // of the filename.
+            fn parens_in_filename_not_matched() {
+                test_path!("‹«docker-compose.prod(👉copy).yml»›");
+            }
         }
 
         mod windows {
