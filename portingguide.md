@@ -256,10 +256,31 @@ Upstream Zed completed the ACP consolidation — making all agent functionality 
 
 The internal git server only accepts pushes to branches matching the `feature/<task-id>-*` pattern. Always name the merge branch after the task ID, e.g. `feature/001617-merge-latest-zed`. Do not use date-based names like `merge-upstream-YYYY-MM-DD`.
 
+## `.github/workflows/` — Always Revert Upstream Changes
+
+The internal git server rejects pushes that modify `.github/workflows/` because it requires a GitHub token scope we don't have. **After every upstream merge, you must restore all workflow files to their pre-merge state.**
+
+Steps:
+
+```bash
+# Find the last Helix commit before the merge (the merge's first parent)
+PRE_MERGE=$(git log --merges --format="%P" -1 | awk '{print $1}')
+# Restore all workflow files to that state
+git checkout $PRE_MERGE -- .github/workflows/
+# Delete any new workflow files upstream added
+git ls-files --deleted -- .github/workflows/  # nothing to delete here (checkout restores)
+# But upstream may have ADDED new files that didn't exist pre-merge:
+git diff $PRE_MERGE HEAD --name-status -- .github/workflows/ | grep '^A' | awk '{print $2}' | xargs -r git rm
+git commit -m "Revert .github/workflows to pre-merge state"
+```
+
+> **Never let upstream workflow changes through to the push.** If you see `.github/workflows/` in `git diff HEAD~N HEAD`, those changes must be reverted before pushing.
+
 ## Rebase Checklist
 
 When rebasing/merging against upstream Zed:
 
+0. **Revert `.github/workflows/`** — restore all files to pre-merge state (see section above); push will be rejected otherwise
 1. **Preserve the `external_websocket_sync` crate** — it's self-contained and rarely conflicts
 2. **Check `agent.rs` `load_session()`** — ensure the entity lifetime fix is present (Critical Fix #1)
 3. **Check `conversation_view.rs` event handlers** — ensure no duplicate WebSocket sends (Critical Fix #2); file was `acp/thread_view.rs` before ACP consolidation
@@ -278,7 +299,7 @@ When rebasing/merging against upstream Zed:
 18. **Check `.dockerignore`** — simplified for Helix builds
 19. **Run `cargo check --package zed --features external_websocket_sync`** — must compile
 20. **Run `cargo test -p external_websocket_sync`** — unit tests
-21. **Run E2E test** after merge to verify all 4 phases pass
+21. **Run E2E test** after merge to verify all 10 phases pass
 
 ## Building
 
