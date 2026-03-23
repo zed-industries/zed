@@ -221,7 +221,7 @@ impl ChannelBuffer {
                     })
                     .log_err();
             }
-            language::BufferEvent::Edited => {
+            language::BufferEvent::Edited { .. } => {
                 cx.emit(ChannelBufferEvent::BufferEdited);
             }
             _ => {}

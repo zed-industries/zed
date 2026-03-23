@@ -212,12 +212,7 @@ impl PickerDelegate for ModelPickerDelegate {
         cx.notify();
     }
 
-    fn can_select(
-        &mut self,
-        ix: usize,
-        _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
-    ) -> bool {
+    fn can_select(&self, ix: usize, _window: &mut Window, _cx: &mut Context<Picker<Self>>) -> bool {
         match self.filtered_entries.get(ix) {
             Some(ModelPickerEntry::Model(_, _)) => true,
             Some(ModelPickerEntry::Separator(_)) | None => false,

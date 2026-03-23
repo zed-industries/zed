@@ -167,6 +167,7 @@ pub struct OpenCodeAvailableModel {
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct LmStudioSettingsContent {
     pub api_url: Option<String>,
+    pub api_key: Option<String>,
     pub available_models: Option<Vec<LmStudioAvailableModel>>,
 }
 

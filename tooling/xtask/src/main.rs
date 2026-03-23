@@ -23,6 +23,7 @@ enum CliCommand {
     /// Builds GPUI web examples and serves them.
     WebExamples(tasks::web_examples::WebExamplesArgs),
     Workflows(tasks::workflows::GenerateWorkflowArgs),
+    CheckWorkflows(tasks::workflow_checks::WorkflowValidationArgs),
 }
 
 fn main() -> Result<()> {
@@ -37,5 +38,6 @@ fn main() -> Result<()> {
         CliCommand::PublishGpui(args) => tasks::publish_gpui::run_publish_gpui(args),
         CliCommand::WebExamples(args) => tasks::web_examples::run_web_examples(args),
         CliCommand::Workflows(args) => tasks::workflows::run_workflows(args),
+        CliCommand::CheckWorkflows(args) => tasks::workflow_checks::validate(args),
     }
 }

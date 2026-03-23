@@ -1,5 +1,6 @@
 # Labels pull requests by author: 'bot' for bot accounts, 'staff' for
-# staff team members, 'first contribution' for first-time external contributors.
+# staff team members, 'guild' for guild members, 'first contribution' for
+# first-time external contributors.
 name: PR Labeler
 
 on:
@@ -29,8 +30,50 @@ jobs:
           script: |
             const BOT_LABEL = 'bot';
             const STAFF_LABEL = 'staff';
+            const GUILD_LABEL = 'guild';
             const FIRST_CONTRIBUTION_LABEL = 'first contribution';
             const STAFF_TEAM_SLUG = 'staff';
+            const GUILD_MEMBERS = [
+              '11happy',
+              'AidanV',
+              'AmaanBilwar',
+              'OmChillure',
+              'Palanikannan1437',
+              'Shivansh-25',
+              'SkandaBhat',
+              'TwistingTwists',
+              'YEDASAVG',
+              'Ziqi-Yang',
+              'alanpjohn',
+              'arjunkomath',
+              'austincummings',
+              'ayushk-1801',
+              'claiwe',
+              'criticic',
+              'dongdong867',
+              'emamulandalib',
+              'eureka928',
+              'feitreim',
+              'iam-liam',
+              'iksuddle',
+              'ishaksebsib',
+              'lingyaochu',
+              'loadingalias',
+              'marcocondrache',
+              'mchisolm0',
+              'mostlyKIGuess',
+              'nairadithya',
+              'nihalxkumar',
+              'notJoon',
+              'polyesterswing',
+              'prayanshchh',
+              'razeghi71',
+              'sarmadgulzar',
+              'seanstrom',
+              'th0jensen',
+              'tommyming',
+              'virajbhartiya',
+            ];
 
             const pr = context.payload.pull_request;
             const author = pr.user.login;
@@ -69,6 +112,17 @@ jobs:
               });
               console.log(`PR #${pr.number} by ${author}: labeled '${STAFF_LABEL}' (staff team member)`);
               return;
+            }
+
+            if (GUILD_MEMBERS.includes(author)) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                labels: [GUILD_LABEL]
+              });
+              console.log(`PR #${pr.number} by ${author}: labeled '${GUILD_LABEL}' (guild member)`);
+              // No early return: guild members can also get 'first contribution'
             }
 
             // We use inverted logic here due to a suspected GitHub bug where first-time contributors

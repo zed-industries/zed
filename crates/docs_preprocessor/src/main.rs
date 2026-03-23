@@ -578,6 +578,7 @@ fn handle_postprocessing() -> Result<()> {
         .expect("Default title not a string")
         .to_string();
     let amplitude_key = std::env::var("DOCS_AMPLITUDE_API_KEY").unwrap_or_default();
+    let consent_io_instance = std::env::var("DOCS_CONSENT_IO_INSTANCE").unwrap_or_default();
 
     output.insert("html".to_string(), zed_html);
     mdbook::Renderer::render(&mdbook::renderer::HtmlHandlebars::new(), &ctx)?;
@@ -647,6 +648,7 @@ fn handle_postprocessing() -> Result<()> {
         zlog::trace!(logger => "Updating {:?}", pretty_path(&file, &root_dir));
         let contents = contents.replace("#description#", meta_description);
         let contents = contents.replace("#amplitude_key#", &amplitude_key);
+        let contents = contents.replace("#consent_io_instance#", &consent_io_instance);
         let contents = title_regex()
             .replace(&contents, |_: &regex::Captures| {
                 format!("<title>{}</title>", meta_title)

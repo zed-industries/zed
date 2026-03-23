@@ -297,7 +297,7 @@ impl DiagnosticBlock {
                     return;
                 };
 
-                for (excerpt_id, range) in multibuffer.excerpts_for_buffer(buffer_id, cx) {
+                for (excerpt_id, _, range) in multibuffer.excerpts_for_buffer(buffer_id, cx) {
                     if range.context.overlaps(&diagnostic.range, &snapshot) {
                         Self::jump_to(
                             editor,
