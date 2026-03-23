@@ -73,6 +73,10 @@ impl Mode {
             Self::Normal | Self::Insert | Self::Replace | Self::HelixNormal => false,
         }
     }
+
+    pub fn is_helix(&self) -> bool {
+        matches!(self, Self::HelixNormal | Self::HelixSelect)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -187,14 +191,15 @@ impl From<Register> for ClipboardItem {
 
 impl From<ClipboardItem> for Register {
     fn from(item: ClipboardItem) -> Self {
-        // For now, we don't store metadata for multiple entries.
-        match item.entries().first() {
-            Some(ClipboardEntry::String(value)) if item.entries().len() == 1 => Register {
+        match item.entries().iter().find_map(|entry| match entry {
+            ClipboardEntry::String(value) => Some(value),
+            _ => None,
+        }) {
+            Some(value) => Register {
                 text: value.text().to_owned().into(),
                 clipboard_selections: value.metadata_json::<Vec<ClipboardSelection>>(),
             },
-            // For now, registers can't store images. This could change in the future.
-            _ => Register::default(),
+            None => Register::default(),
         }
     }
 }
@@ -228,7 +233,15 @@ pub struct VimGlobals {
     pub recorded_actions: Vec<ReplayableAction>,
     pub recorded_selection: RecordedSelection,
 
+    /// The register being written to by the active `q{register}` macro
+    /// recording.
     pub recording_register: Option<char>,
+    /// The register that was selected at the start of the current
+    /// dot-recording, for example, `"ap`.
+    pub recording_register_for_dot: Option<char>,
+    /// The register from the last completed dot-recording. Used when replaying
+    /// with `.`.
+    pub recorded_register_for_dot: Option<char>,
     pub last_recorded_register: Option<char>,
     pub last_replayed_register: Option<char>,
     pub replayer: Option<Replayer>,
@@ -310,10 +323,11 @@ impl MarksState {
             let Some(workspace_id) = this.update(cx, |this, cx| this.workspace_id(cx)).ok()? else {
                 return None;
             };
+            let db = cx.update(|cx| VimDb::global(cx));
             let (marks, paths) = cx
                 .background_spawn(async move {
-                    let marks = DB.get_marks(workspace_id)?;
-                    let paths = DB.get_global_marks_paths(workspace_id)?;
+                    let marks = db.get_marks(workspace_id)?;
+                    let paths = db.get_global_marks_paths(workspace_id)?;
                     anyhow::Ok((marks, paths))
                 })
                 .await
@@ -432,8 +446,9 @@ impl MarksState {
                 if let Some(workspace_id) = self.workspace_id(cx) {
                     let path = path.clone();
                     let key = key.clone();
+                    let db = VimDb::global(cx);
                     cx.background_spawn(async move {
-                        DB.set_global_mark_path(workspace_id, key, path).await
+                        db.set_global_mark_path(workspace_id, key, path).await
                     })
                     .detach_and_log_err(cx);
                 }
@@ -449,8 +464,9 @@ impl MarksState {
         self.serialized_marks.insert(path.clone(), new_points);
 
         if let Some(workspace_id) = self.workspace_id(cx) {
+            let db = VimDb::global(cx);
             cx.background_spawn(async move {
-                DB.set_marks(workspace_id, path.clone(), to_write).await?;
+                db.set_marks(workspace_id, path.clone(), to_write).await?;
                 anyhow::Ok(())
             })
             .detach_and_log_err(cx);
@@ -515,7 +531,7 @@ impl MarksState {
         cx: &mut Context<Self>,
     ) {
         let on_change = cx.subscribe(buffer_handle, move |this, buffer, event, cx| match event {
-            BufferEvent::Edited => {
+            BufferEvent::Edited { .. } => {
                 if let Some(path) = this.path_for_buffer(&buffer, cx) {
                     this.serialize_buffer_marks(path, &buffer, cx);
                 }
@@ -643,8 +659,9 @@ impl MarksState {
         let path = if let Some(target) = self.global_marks.get(&mark_name.clone()) {
             let name = mark_name.clone();
             if let Some(workspace_id) = self.workspace_id(cx) {
+                let db = VimDb::global(cx);
                 cx.background_spawn(async move {
-                    DB.delete_global_marks_path(workspace_id, name).await
+                    db.delete_global_marks_path(workspace_id, name).await
                 })
                 .detach_and_log_err(cx);
             }
@@ -684,7 +701,8 @@ impl MarksState {
             .get_mut(&path)
             .map(|m| m.remove(&mark_name.clone()));
         if let Some(workspace_id) = self.workspace_id(cx) {
-            cx.background_spawn(async move { DB.delete_mark(workspace_id, path, mark_name).await })
+            let db = VimDb::global(cx);
+            cx.background_spawn(async move { db.delete_mark(workspace_id, path, mark_name).await })
                 .detach_and_log_err(cx);
         }
     }
@@ -915,6 +933,7 @@ impl VimGlobals {
                 self.dot_recording = false;
                 self.recorded_actions = std::mem::take(&mut self.recording_actions);
                 self.recorded_count = self.recording_count.take();
+                self.recorded_register_for_dot = self.recording_register_for_dot.take();
                 self.stop_recording_after_next_action = false;
             }
         }
@@ -942,6 +961,7 @@ impl VimGlobals {
                 self.dot_recording = false;
                 self.recorded_actions = std::mem::take(&mut self.recording_actions);
                 self.recorded_count = self.recording_count.take();
+                self.recorded_register_for_dot = self.recording_register_for_dot.take();
                 self.stop_recording_after_next_action = false;
             }
         }
@@ -1750,7 +1770,7 @@ impl Domain for VimDb {
     ];
 }
 
-db::static_connection!(DB, VimDb, [WorkspaceDb]);
+db::static_connection!(VimDb, [WorkspaceDb]);
 
 struct SerializedMark {
     path: Arc<Path>,

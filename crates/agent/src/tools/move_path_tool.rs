@@ -273,7 +273,7 @@ mod tests {
         );
 
         auth.response
-            .send(acp::PermissionOptionId::new("allow"))
+            .send(acp::PermissionOptionId::new("allow").into())
             .unwrap();
 
         let result = task.await;
@@ -379,7 +379,7 @@ mod tests {
         );
 
         auth.response
-            .send(acp::PermissionOptionId::new("allow"))
+            .send(acp::PermissionOptionId::new("allow").into())
             .unwrap();
 
         assert!(

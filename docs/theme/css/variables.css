@@ -27,6 +27,7 @@
   --border: hsl(220, 13%, 80%);
   --border-light: hsl(220, 13%, 90%);
   --border-hover: hsl(220, 13%, 70%);
+  --border-footer: hsl(220, 13%, 91%);
 
   --media-bg: hsl(50, 25%, 92%);
 
@@ -124,6 +125,7 @@
   --border: hsl(220, 13%, 20%);
   --border-light: hsl(220, 13%, 15%);
   --border-hover: hsl(220, 13%, 40%);
+  --border-footer: hsl(220, 13%, 12%);
 
   --media-bg: hsl(220, 13%, 8%);
 

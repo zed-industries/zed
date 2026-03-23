@@ -5,7 +5,7 @@ use gpui::{App, AppContext, Context, Entity};
 use itertools::Itertools;
 use language::{Buffer, BufferSnapshot};
 use rope::Point;
-use text::{Bias, BufferId, OffsetRangeExt, locator::Locator};
+use text::{Bias, OffsetRangeExt, locator::Locator};
 use util::{post_inc, rel_path::RelPath};
 use ztracing::instrument;
 
@@ -27,6 +27,12 @@ pub struct PathKey {
 }
 
 impl PathKey {
+    pub fn sorted(sort_prefix: u64) -> Self {
+        Self {
+            sort_prefix: Some(sort_prefix),
+            path: RelPath::empty().into_arc(),
+        }
+    }
     pub fn with_sort_prefix(sort_prefix: u64, path: Arc<RelPath>) -> Self {
         Self {
             sort_prefix: Some(sort_prefix),
@@ -84,6 +90,17 @@ impl MultiBuffer {
         let snapshot = self.read(cx);
         let excerpt = snapshot.excerpt(*excerpt_id)?;
         Some(Anchor::in_buffer(excerpt.id, excerpt.range.context.start))
+    }
+
+    pub fn set_excerpts_for_buffer(
+        &mut self,
+        buffer: Entity<Buffer>,
+        ranges: impl IntoIterator<Item = Range<Point>>,
+        context_line_count: u32,
+        cx: &mut Context<Self>,
+    ) -> (Vec<Range<Anchor>>, bool) {
+        let path = PathKey::for_buffer(&buffer, cx);
+        self.set_excerpts_for_path(path, buffer, ranges, context_line_count, cx)
     }
 
     /// Sets excerpts, returns `true` if at least one new excerpt was added.
@@ -170,15 +187,6 @@ impl MultiBuffer {
                 .ok()
                 .unwrap_or_default()
         }
-    }
-
-    pub fn remove_excerpts_for_buffer(&mut self, buffer: BufferId, cx: &mut Context<Self>) {
-        self.remove_excerpts(
-            self.excerpts_for_buffer(buffer, cx)
-                .into_iter()
-                .map(|(excerpt, _)| excerpt),
-            cx,
-        );
     }
 
     pub(super) fn expand_excerpts_with_paths(

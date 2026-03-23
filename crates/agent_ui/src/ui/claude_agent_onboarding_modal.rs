@@ -1,4 +1,4 @@
-use client::zed_urls;
+use agent_servers::CLAUDE_AGENT_ID;
 use gpui::{
     ClickEvent, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, MouseDownEvent, Render,
     linear_color_stop, linear_gradient,
@@ -37,7 +37,13 @@ impl ClaudeCodeOnboardingModal {
 
             if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                 panel.update(cx, |panel, cx| {
-                    panel.new_agent_thread(AgentType::ClaudeAgent, window, cx);
+                    panel.new_agent_thread(
+                        AgentType::Custom {
+                            id: CLAUDE_AGENT_ID.into(),
+                        },
+                        window,
+                        cx,
+                    );
                 });
             }
         });
@@ -47,8 +53,8 @@ impl ClaudeCodeOnboardingModal {
         claude_agent_onboarding_event!("Open Panel Clicked");
     }
 
-    fn view_docs(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        cx.open_url(&zed_urls::external_agents_docs(cx));
+    fn view_docs(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        window.dispatch_action(Box::new(zed_actions::AcpRegistry), cx);
         cx.notify();
 
         claude_agent_onboarding_event!("Documentation Link Clicked");
@@ -195,15 +201,16 @@ impl Render for ClaudeCodeOnboardingModal {
         let copy = "Powered by the Agent Client Protocol, you can now run Claude Agent as\na first-class citizen in Zed's agent panel.";
 
         let open_panel_button = Button::new("open-panel", "Start with Claude Agent")
-            .icon_size(IconSize::Indicator)
             .style(ButtonStyle::Tinted(TintColor::Accent))
             .full_width()
             .on_click(cx.listener(Self::open_panel));
 
         let docs_button = Button::new("add-other-agents", "Add Other Agents")
-            .icon(IconName::ArrowUpRight)
-            .icon_size(IconSize::Indicator)
-            .icon_color(Color::Muted)
+            .end_icon(
+                Icon::new(IconName::ArrowUpRight)
+                    .size(IconSize::Indicator)
+                    .color(Color::Muted),
+            )
             .full_width()
             .on_click(cx.listener(Self::view_docs));
 

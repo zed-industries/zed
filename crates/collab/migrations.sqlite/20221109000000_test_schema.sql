@@ -109,6 +109,7 @@ CREATE TABLE "project_repositories" (
     "head_commit_details" VARCHAR,
     "remote_upstream_url" VARCHAR,
     "remote_origin_url" VARCHAR,
+    "linked_worktrees" VARCHAR,
     PRIMARY KEY (project_id, id)
 );
 
@@ -122,6 +123,8 @@ CREATE TABLE "project_repository_statuses" (
     "status_kind" INT4 NOT NULL,
     "first_status" INT4 NULL,
     "second_status" INT4 NULL,
+    "lines_added" INT4 NULL,
+    "lines_deleted" INT4 NULL,
     "scan_id" INT8 NOT NULL,
     "is_deleted" BOOL NOT NULL,
     PRIMARY KEY (project_id, repository_id, repo_path)

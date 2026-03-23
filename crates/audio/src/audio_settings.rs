@@ -42,12 +42,8 @@ pub struct AudioSettings {
     ///
     /// You need to rejoin a call for this setting to apply
     pub legacy_audio_compatible: bool,
-    /// Requires 'rodio_audio: true'
-    ///
     /// Select specific output audio device.
     pub output_audio_device: Option<DeviceId>,
-    /// Requires 'rodio_audio: true'
-    ///
     /// Select specific input audio device.
     pub input_audio_device: Option<DeviceId>,
 }
@@ -75,8 +71,8 @@ impl Settings for AudioSettings {
 }
 
 /// See docs on [LIVE_SETTINGS]
-pub(crate) struct LiveSettings {
-    pub(crate) auto_microphone_volume: AtomicBool,
+pub struct LiveSettings {
+    pub auto_microphone_volume: AtomicBool,
     pub(crate) auto_speaker_volume: AtomicBool,
     pub(crate) denoise: AtomicBool,
 }
@@ -132,7 +128,7 @@ impl LiveSettings {
 /// observer of SettingsStore. Needed because audio playback and recording are
 /// real time and must each run in a dedicated OS thread, therefore we can not
 /// use the background executor.
-pub(crate) static LIVE_SETTINGS: LiveSettings = LiveSettings {
+pub static LIVE_SETTINGS: LiveSettings = LiveSettings {
     auto_microphone_volume: AtomicBool::new(true),
     auto_speaker_volume: AtomicBool::new(true),
     denoise: AtomicBool::new(true),

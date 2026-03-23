@@ -1,6 +1,6 @@
 name = "JSON"
 grammar = "json"
-path_suffixes = ["json", "flake.lock", "geojson"]
+path_suffixes = ["json", "flake.lock", "geojson", "prettierrc"]
 line_comments = ["// "]
 autoclose_before = ",]}"
 brackets = [

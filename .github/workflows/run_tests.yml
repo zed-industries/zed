@@ -35,7 +35,7 @@ jobs:
           git fetch origin "$GITHUB_BASE_REF" --depth=350
           COMPARE_REV="$(git merge-base "origin/${GITHUB_BASE_REF}" HEAD)"
         fi
-        CHANGED_FILES="$(git diff --name-only "$COMPARE_REV" ${{ github.sha }})"
+        CHANGED_FILES="$(git diff --name-only "$COMPARE_REV" "$GITHUB_SHA")"
 
         check_pattern() {
           local output_name="$1"
@@ -103,13 +103,22 @@ jobs:
         check_pattern "run_action_checks" '^\.github/(workflows/|actions/|actionlint.yml)|tooling/xtask|script/' -qP
         check_pattern "run_docs" '^(docs/|crates/.*\.rs)' -qP
         check_pattern "run_licenses" '^(Cargo.lock|script/.*licenses)' -qP
-        check_pattern "run_tests" '^(docs/|script/update_top_ranking_issues/|\.github/(ISSUE_TEMPLATE|workflows/(?!run_tests)))' -qvP
+        check_pattern "run_tests" '^(docs/|script/update_top_ranking_issues/|\.github/(ISSUE_TEMPLATE|workflows/(?!run_tests))|extensions/)' -qvP
+        # Detect changed extension directories (excluding extensions/workflows)
+        CHANGED_EXTENSIONS=$(echo "$CHANGED_FILES" | grep -oP '^extensions/[^/]+(?=/)' | sort -u | grep -v '^extensions/workflows$' || true)
+        if [ -n "$CHANGED_EXTENSIONS" ]; then
+            EXTENSIONS_JSON=$(echo "$CHANGED_EXTENSIONS" | jq -R -s -c 'split("\n") | map(select(length > 0))')
+        else
+            EXTENSIONS_JSON="[]"
+        fi
+        echo "changed_extensions=$EXTENSIONS_JSON" >> "$GITHUB_OUTPUT"
     outputs:
       changed_packages: ${{ steps.filter.outputs.changed_packages }}
       run_action_checks: ${{ steps.filter.outputs.run_action_checks }}
       run_docs: ${{ steps.filter.outputs.run_docs }}
       run_licenses: ${{ steps.filter.outputs.run_licenses }}
       run_tests: ${{ steps.filter.outputs.run_tests }}
+      changed_extensions: ${{ steps.filter.outputs.changed_extensions }}
   check_style:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-4x8-ubuntu-2204
@@ -139,6 +148,21 @@ jobs:
       uses: crate-ci/typos@2d0ce569feab1f8752f1dde43cc2f2aa53236e06
       with:
         config: ./typos.toml
+    - name: run_tests::fetch_ts_query_ls
+      uses: dsaltares/fetch-gh-release-asset@aa37ae5c44d3c9820bc12fe675e8670ecd93bd1c
+      with:
+        repo: ribru17/ts_query_ls
+        version: tags/v3.15.1
+        file: ts_query_ls-x86_64-unknown-linux-gnu.tar.gz
+    - name: run_tests::run_ts_query_ls
+      run: |-
+        tar -xf "$GITHUB_WORKSPACE/ts_query_ls-x86_64-unknown-linux-gnu.tar.gz" -C "$GITHUB_WORKSPACE"
+        "$GITHUB_WORKSPACE/ts_query_ls" format --check . || {
+            echo "Found unformatted queries, please format them with ts_query_ls."
+            echo "For easy use, install the Tree-sitter query extension:"
+            echo "zed://extension/tree-sitter-query"
+            false
+        }
     timeout-minutes: 60
   clippy_windows:
     needs:
@@ -175,6 +199,9 @@ jobs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
     runs-on: namespace-profile-16x32-ubuntu-2204
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -191,8 +218,6 @@ jobs:
         path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
-    - name: steps::install_mold
-      run: ./script/install-mold
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
     - name: steps::setup_sccache
@@ -235,6 +260,39 @@ jobs:
         SCCACHE_BUCKET: sccache-zed
     - name: steps::clippy
       run: ./script/clippy
+    - name: steps::show_sccache_stats
+      run: sccache --show-stats || true
+    timeout-minutes: 60
+  clippy_mac_x86_64:
+    needs:
+    - orchestrate
+    if: needs.orchestrate.outputs.run_tests == 'true'
+    runs-on: namespace-profile-mac-large
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_cargo_config
+      run: |
+        mkdir -p ./../.cargo
+        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+        path: ~/.rustup
+    - name: steps::install_rustup_target
+      run: rustup target add x86_64-apple-darwin
+    - name: steps::setup_sccache
+      run: ./script/setup-sccache
+      env:
+        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        SCCACHE_BUCKET: sccache-zed
+    - name: steps::clippy
+      run: ./script/clippy --target x86_64-apple-darwin
     - name: steps::show_sccache_stats
       run: sccache --show-stats || true
     timeout-minutes: 60
@@ -285,6 +343,9 @@ jobs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
     runs-on: namespace-profile-16x32-ubuntu-2204
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -301,8 +362,6 @@ jobs:
         path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
-    - name: steps::install_mold
-      run: ./script/install-mold
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
     - name: steps::setup_node
@@ -385,6 +444,9 @@ jobs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
     runs-on: namespace-profile-16x32-ubuntu-2204
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -397,8 +459,6 @@ jobs:
         path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
-    - name: steps::install_mold
-      run: ./script/install-mold
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
     - name: steps::setup_cargo_config
@@ -428,6 +488,9 @@ jobs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
     runs-on: namespace-profile-8x16-ubuntu-2204
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -444,8 +507,6 @@ jobs:
         path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
-    - name: steps::install_mold
-      run: ./script/install-mold
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
     - name: steps::setup_sccache
@@ -466,11 +527,53 @@ jobs:
       run: |
         rm -rf ./../.cargo
     timeout-minutes: 60
+  check_wasm:
+    needs:
+    - orchestrate
+    if: needs.orchestrate.outputs.run_tests == 'true'
+    runs-on: namespace-profile-8x16-ubuntu-2204
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_cargo_config
+      run: |
+        mkdir -p ./../.cargo
+        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+        path: ~/.rustup
+    - name: run_tests::check_wasm::install_nightly_wasm_toolchain
+      run: rustup toolchain install nightly --component rust-src --target wasm32-unknown-unknown
+    - name: steps::setup_sccache
+      run: ./script/setup-sccache
+      env:
+        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        SCCACHE_BUCKET: sccache-zed
+    - name: run_tests::check_wasm::cargo_check_wasm
+      run: cargo +nightly -Zbuild-std=std,panic_abort check --target wasm32-unknown-unknown -p gpui_platform
+      env:
+        CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS: -C target-feature=+atomics,+bulk-memory,+mutable-globals
+    - name: steps::show_sccache_stats
+      run: sccache --show-stats || true
+    - name: steps::cleanup_cargo_config
+      if: always()
+      run: |
+        rm -rf ./../.cargo
+    timeout-minutes: 60
   check_dependencies:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_tests == 'true'
     runs-on: namespace-profile-2x4-ubuntu-2404
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -503,6 +606,9 @@ jobs:
     - orchestrate
     if: needs.orchestrate.outputs.run_docs == 'true'
     runs-on: namespace-profile-8x16-ubuntu-2204
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -525,8 +631,6 @@ jobs:
         jobSummary: false
     - name: steps::setup_linux
       run: ./script/linux
-    - name: steps::install_mold
-      run: ./script/install-mold
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
     - name: ./script/generate-action-metadata
@@ -581,8 +685,14 @@ jobs:
       name: run_tests::check_scripts::download_actionlint
       run: bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
     - name: run_tests::check_scripts::run_actionlint
-      run: |
-        ${{ steps.get_actionlint.outputs.executable }} -color
+      run: '"$ACTIONLINT_BIN" -color'
+      env:
+        ACTIONLINT_BIN: ${{ steps.get_actionlint.outputs.executable }}
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+        path: ~/.rustup
     - name: run_tests::check_scripts::check_xtask_workflows
       run: |
         cargo xtask workflows
@@ -628,7 +738,25 @@ jobs:
       with:
         input: crates/proto/proto/
         against: https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/proto/proto/
+    - name: run_tests::check_postgres_and_protobuf_migrations::buf_lint
+      run: buf lint crates/proto/proto
+    - name: run_tests::check_postgres_and_protobuf_migrations::check_protobuf_formatting
+      run: buf format --diff --exit-code crates/proto/proto
     timeout-minutes: 60
+  extension_tests:
+    needs:
+    - orchestrate
+    if: needs.orchestrate.outputs.changed_extensions != '[]'
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        extension: ${{ fromJson(needs.orchestrate.outputs.changed_extensions) }}
+      fail-fast: false
+      max-parallel: 1
+    uses: ./.github/workflows/extension_tests.yml
+    with:
+      working-directory: ${{ matrix.extension }}
   tests_pass:
     needs:
     - orchestrate
@@ -636,15 +764,18 @@ jobs:
     - clippy_windows
     - clippy_linux
     - clippy_mac
+    - clippy_mac_x86_64
     - run_tests_windows
     - run_tests_linux
     - run_tests_mac
     - doctests
     - check_workspace_binaries
+    - check_wasm
     - check_dependencies
     - check_docs
     - check_licenses
     - check_scripts
+    - extension_tests
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && always()
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
@@ -658,22 +789,43 @@ jobs:
           if [[ "$2" != "skipped" && "$2" != "success" ]]; then EXIT_CODE=1; fi
         }
 
-        check_result "orchestrate" "${{ needs.orchestrate.result }}"
-        check_result "check_style" "${{ needs.check_style.result }}"
-        check_result "clippy_windows" "${{ needs.clippy_windows.result }}"
-        check_result "clippy_linux" "${{ needs.clippy_linux.result }}"
-        check_result "clippy_mac" "${{ needs.clippy_mac.result }}"
-        check_result "run_tests_windows" "${{ needs.run_tests_windows.result }}"
-        check_result "run_tests_linux" "${{ needs.run_tests_linux.result }}"
-        check_result "run_tests_mac" "${{ needs.run_tests_mac.result }}"
-        check_result "doctests" "${{ needs.doctests.result }}"
-        check_result "check_workspace_binaries" "${{ needs.check_workspace_binaries.result }}"
-        check_result "check_dependencies" "${{ needs.check_dependencies.result }}"
-        check_result "check_docs" "${{ needs.check_docs.result }}"
-        check_result "check_licenses" "${{ needs.check_licenses.result }}"
-        check_result "check_scripts" "${{ needs.check_scripts.result }}"
+        check_result "orchestrate" "$RESULT_ORCHESTRATE"
+        check_result "check_style" "$RESULT_CHECK_STYLE"
+        check_result "clippy_windows" "$RESULT_CLIPPY_WINDOWS"
+        check_result "clippy_linux" "$RESULT_CLIPPY_LINUX"
+        check_result "clippy_mac" "$RESULT_CLIPPY_MAC"
+        check_result "clippy_mac_x86_64" "$RESULT_CLIPPY_MAC_X86_64"
+        check_result "run_tests_windows" "$RESULT_RUN_TESTS_WINDOWS"
+        check_result "run_tests_linux" "$RESULT_RUN_TESTS_LINUX"
+        check_result "run_tests_mac" "$RESULT_RUN_TESTS_MAC"
+        check_result "doctests" "$RESULT_DOCTESTS"
+        check_result "check_workspace_binaries" "$RESULT_CHECK_WORKSPACE_BINARIES"
+        check_result "check_wasm" "$RESULT_CHECK_WASM"
+        check_result "check_dependencies" "$RESULT_CHECK_DEPENDENCIES"
+        check_result "check_docs" "$RESULT_CHECK_DOCS"
+        check_result "check_licenses" "$RESULT_CHECK_LICENSES"
+        check_result "check_scripts" "$RESULT_CHECK_SCRIPTS"
+        check_result "extension_tests" "$RESULT_EXTENSION_TESTS"
 
         exit $EXIT_CODE
+      env:
+        RESULT_ORCHESTRATE: ${{ needs.orchestrate.result }}
+        RESULT_CHECK_STYLE: ${{ needs.check_style.result }}
+        RESULT_CLIPPY_WINDOWS: ${{ needs.clippy_windows.result }}
+        RESULT_CLIPPY_LINUX: ${{ needs.clippy_linux.result }}
+        RESULT_CLIPPY_MAC: ${{ needs.clippy_mac.result }}
+        RESULT_CLIPPY_MAC_X86_64: ${{ needs.clippy_mac_x86_64.result }}
+        RESULT_RUN_TESTS_WINDOWS: ${{ needs.run_tests_windows.result }}
+        RESULT_RUN_TESTS_LINUX: ${{ needs.run_tests_linux.result }}
+        RESULT_RUN_TESTS_MAC: ${{ needs.run_tests_mac.result }}
+        RESULT_DOCTESTS: ${{ needs.doctests.result }}
+        RESULT_CHECK_WORKSPACE_BINARIES: ${{ needs.check_workspace_binaries.result }}
+        RESULT_CHECK_WASM: ${{ needs.check_wasm.result }}
+        RESULT_CHECK_DEPENDENCIES: ${{ needs.check_dependencies.result }}
+        RESULT_CHECK_DOCS: ${{ needs.check_docs.result }}
+        RESULT_CHECK_LICENSES: ${{ needs.check_licenses.result }}
+        RESULT_CHECK_SCRIPTS: ${{ needs.check_scripts.result }}
+        RESULT_EXTENSION_TESTS: ${{ needs.extension_tests.result }}
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
   cancel-in-progress: true
