@@ -1,5 +1,4 @@
 use anyhow::Result;
-use arrayvec::ArrayVec;
 use client::{Client, EditPredictionUsage, UserStore};
 use cloud_api_types::{OrganizationId, SubmitEditPredictionFeedbackBody};
 use cloud_llm_client::predict_edits_v3::{
@@ -27,6 +26,7 @@ use gpui::{
     http_client::{self, AsyncBody, Method},
     prelude::*,
 };
+use heapless::Vec as ArrayVec;
 use language::language_settings::all_language_settings;
 use language::{Anchor, Buffer, File, Point, TextBufferSnapshot, ToOffset, ToPoint};
 use language::{BufferSnapshot, OffsetRangeExt};
@@ -332,7 +332,7 @@ struct ProjectState {
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
     current_prediction: Option<CurrentEditPrediction>,
     next_pending_prediction_id: usize,
-    pending_predictions: ArrayVec<PendingPrediction, 2>,
+    pending_predictions: ArrayVec<PendingPrediction, 2, u8>,
     debug_tx: Option<mpsc::UnboundedSender<DebugEvent>>,
     last_edit_prediction_refresh: Option<(EntityId, Instant)>,
     last_jump_prediction_refresh: Option<(EntityId, Instant)>,
@@ -2311,18 +2311,24 @@ impl EditPredictionStore {
         });
 
         if project_state.pending_predictions.len() < max_pending_predictions {
-            project_state.pending_predictions.push(PendingPrediction {
-                id: pending_prediction_id,
-                task,
-                drop_on_cancel,
-            });
+            project_state
+                .pending_predictions
+                .push(PendingPrediction {
+                    id: pending_prediction_id,
+                    task,
+                    drop_on_cancel,
+                })
+                .unwrap();
         } else {
             let pending_prediction = project_state.pending_predictions.pop().unwrap();
-            project_state.pending_predictions.push(PendingPrediction {
-                id: pending_prediction_id,
-                task,
-                drop_on_cancel,
-            });
+            project_state
+                .pending_predictions
+                .push(PendingPrediction {
+                    id: pending_prediction_id,
+                    task,
+                    drop_on_cancel,
+                })
+                .unwrap();
             project_state.cancel_pending_prediction(pending_prediction, cx);
         }
     }

@@ -150,6 +150,20 @@ pub fn zeta2_output_for_patch(
         );
     }
 
+    if version == ZetaFormat::V0318SeedMultiRegions {
+        let cursor_in_new = cursor_offset.map(|cursor_offset| {
+            let hunk_start = first_hunk_offset.unwrap_or(0);
+            result.floor_char_boundary((hunk_start + cursor_offset).min(result.len()))
+        });
+        return multi_region::encode_from_old_and_new_v0318(
+            &old_editable_region,
+            &result,
+            cursor_in_new,
+            zeta_prompt::CURSOR_MARKER,
+            multi_region::V0318_END_MARKER,
+        );
+    }
+
     if version == ZetaFormat::V0316SeedMultiRegions {
         let cursor_in_new = cursor_offset.map(|cursor_offset| {
             let hunk_start = first_hunk_offset.unwrap_or(0);
@@ -237,7 +251,10 @@ impl TeacherPrompt {
             }
         }
 
-        if response.trim().ends_with(Self::NO_EDITS) {
+        if response
+            .trim_end_matches(&[' ', '\n', '`'])
+            .ends_with(Self::NO_EDITS)
+        {
             return Ok(no_edits);
         }
 
@@ -871,5 +888,43 @@ mod tests {
         let text = "`````\ncontent here\n`````";
         let result = extract_last_codeblock(text).unwrap();
         assert_eq!(result, "content here\n");
+    }
+
+    #[test]
+    fn test_parse_no_edits_response_with_trailing_backticks() {
+        let response = "NO_EDITS```";
+
+        let parsed = TeacherPrompt::parse(
+            &Example {
+                spec: edit_prediction::example_spec::ExampleSpec {
+                    name: "test".to_string(),
+                    repository_url: "https://github.com/zed-industries/zed.git".to_string(),
+                    revision: "HEAD".to_string(),
+                    tags: Vec::new(),
+                    reasoning: None,
+                    uncommitted_diff: String::new(),
+                    cursor_path: std::sync::Arc::from(std::path::Path::new("src/main.rs")),
+                    cursor_position: "0:0".to_string(),
+                    edit_history: String::new(),
+                    expected_patches: Vec::new(),
+                    rejected_patch: None,
+                    telemetry: None,
+                    human_feedback: Vec::new(),
+                    rating: None,
+                },
+                prompt_inputs: None,
+                prompt: None,
+                predictions: Vec::new(),
+                score: Vec::new(),
+                qa: Vec::new(),
+                zed_version: None,
+                state: None,
+            },
+            response,
+        )
+        .unwrap();
+
+        assert!(parsed.0.is_empty());
+        assert!(parsed.1.is_none());
     }
 }

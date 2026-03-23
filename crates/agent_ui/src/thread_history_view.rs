@@ -1,5 +1,7 @@
 use crate::thread_history::ThreadHistory;
-use crate::{AgentPanel, ConversationView, RemoveHistory, RemoveSelectedThread};
+use crate::{
+    AgentPanel, ConversationView, DEFAULT_THREAD_TITLE, RemoveHistory, RemoveSelectedThread,
+};
 use acp_thread::AgentSessionInfo;
 use chrono::{Datelike as _, Local, NaiveDate, TimeDelta, Utc};
 use editor::{Editor, EditorEvent};
@@ -16,14 +18,12 @@ use ui::{
     WithScrollbar, prelude::*,
 };
 
-const DEFAULT_TITLE: &SharedString = &SharedString::new_static("New Thread");
-
-pub(crate) fn thread_title(entry: &AgentSessionInfo) -> &SharedString {
+pub(crate) fn thread_title(entry: &AgentSessionInfo) -> SharedString {
     entry
         .title
-        .as_ref()
+        .clone()
         .filter(|title| !title.is_empty())
-        .unwrap_or(DEFAULT_TITLE)
+        .unwrap_or_else(|| DEFAULT_THREAD_TITLE.into())
 }
 
 pub struct ThreadHistoryView {
@@ -203,7 +203,7 @@ impl ThreadHistoryView {
                 let mut candidates = Vec::with_capacity(entries.len());
 
                 for (idx, entry) in entries.iter().enumerate() {
-                    candidates.push(StringMatchCandidate::new(idx, thread_title(entry)));
+                    candidates.push(StringMatchCandidate::new(idx, &thread_title(entry)));
                 }
 
                 const MAX_MATCHES: usize = 100;
@@ -429,7 +429,7 @@ impl ThreadHistoryView {
             (_, None) => "—".to_string(),
         };
 
-        let title = thread_title(entry).clone();
+        let title = thread_title(entry);
         let full_date = entry_time
             .map(|time| {
                 EntryTimeFormat::DateAndTime.format_timestamp(time.timestamp(), self.local_timezone)
@@ -678,7 +678,7 @@ impl HistoryEntryElement {
 impl RenderOnce for HistoryEntryElement {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let id = ElementId::Name(self.entry.session_id.0.clone().into());
-        let title = thread_title(&self.entry).clone();
+        let title = thread_title(&self.entry);
         let formatted_time = self
             .entry
             .updated_at

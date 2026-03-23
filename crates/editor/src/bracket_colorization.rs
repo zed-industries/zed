@@ -392,6 +392,20 @@ where
             &bracket_colors_markup(&mut cx),
             "All markdown brackets should be colored based on their depth, again"
         );
+
+        cx.set_state(indoc! {r#"ˇ('')('')
+
+((''))('')
+
+('')((''))"#});
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+
+        assert_eq!(
+            "«1('')1»«1('')1»\n\n«1(«2('')2»)1»«1('')1»\n\n«1('')1»«1(«2('')2»)1»\n1 hsla(207.80, 16.20%, 69.19%, 1.00)\n2 hsla(29.00, 54.00%, 65.88%, 1.00)\n",
+            &bracket_colors_markup(&mut cx),
+            "Markdown quote pairs should not interfere with parenthesis pairing"
+        );
     }
 
     #[gpui::test]

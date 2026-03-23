@@ -50,6 +50,7 @@ pub(crate) struct Callbacks {
     should_close: Option<Box<dyn FnMut() -> bool>>,
     close: Option<Box<dyn FnOnce()>>,
     appearance_changed: Option<Box<dyn FnMut()>>,
+    button_layout_changed: Option<Box<dyn FnMut()>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1038,6 +1039,14 @@ impl WaylandWindowStatePtr {
         }
     }
 
+    pub fn set_button_layout(&self) {
+        let callback = self.callbacks.borrow_mut().button_layout_changed.take();
+        if let Some(mut fun) = callback {
+            fun();
+            self.callbacks.borrow_mut().button_layout_changed = Some(fun);
+        }
+    }
+
     pub fn primary_output_scale(&self) -> i32 {
         self.state.borrow_mut().primary_output_scale()
     }
@@ -1333,6 +1342,10 @@ impl PlatformWindow for WaylandWindow {
 
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
         self.0.callbacks.borrow_mut().appearance_changed = Some(callback);
+    }
+
+    fn on_button_layout_changed(&self, callback: Box<dyn FnMut()>) {
+        self.0.callbacks.borrow_mut().button_layout_changed = Some(callback);
     }
 
     fn draw(&self, scene: &Scene) {

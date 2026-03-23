@@ -212,18 +212,25 @@ impl Branch {
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Worktree {
     pub path: PathBuf,
-    pub ref_name: SharedString,
+    pub ref_name: Option<SharedString>,
     // todo(git_worktree) This type should be a Oid
     pub sha: SharedString,
 }
 
 impl Worktree {
-    pub fn branch(&self) -> &str {
-        self.ref_name
-            .as_ref()
-            .strip_prefix("refs/heads/")
-            .or_else(|| self.ref_name.as_ref().strip_prefix("refs/remotes/"))
-            .unwrap_or(self.ref_name.as_ref())
+    /// Returns a display name for the worktree, suitable for use in the UI.
+    ///
+    /// If the worktree is attached to a branch, returns the branch name.
+    /// Otherwise, returns the short SHA of the worktree's HEAD commit.
+    pub fn display_name(&self) -> &str {
+        match self.ref_name {
+            Some(ref ref_name) => ref_name
+                .strip_prefix("refs/heads/")
+                .or_else(|| ref_name.strip_prefix("refs/remotes/"))
+                .unwrap_or(ref_name),
+            // Detached HEAD — show the short SHA as a fallback.
+            None => &self.sha[..self.sha.len().min(SHORT_SHA_LENGTH)],
+        }
     }
 }
 
@@ -251,12 +258,10 @@ pub fn parse_worktrees_from_str<T: AsRef<str>>(raw_worktrees: T) -> Vec<Worktree
             // Ignore other lines: detached, bare, locked, prunable, etc.
         }
 
-        // todo(git_worktree) We should add a test for detach head state
-        // a detach head will have ref_name as none so we would skip it
-        if let (Some(path), Some(sha), Some(ref_name)) = (path, sha, ref_name) {
+        if let (Some(path), Some(sha)) = (path, sha) {
             worktrees.push(Worktree {
                 path: PathBuf::from(path),
-                ref_name: ref_name.into(),
+                ref_name: ref_name.map(Into::into),
                 sha: sha.into(),
             })
         }
@@ -3793,7 +3798,7 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
         assert_eq!(result[0].sha.as_ref(), "abc123def");
-        assert_eq!(result[0].ref_name.as_ref(), "refs/heads/main");
+        assert_eq!(result[0].ref_name, Some("refs/heads/main".into()));
 
         // Multiple worktrees
         let input = "worktree /home/user/project\nHEAD abc123\nbranch refs/heads/main\n\n\
@@ -3801,23 +3806,30 @@ mod tests {
         let result = parse_worktrees_from_str(input);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
-        assert_eq!(result[0].ref_name.as_ref(), "refs/heads/main");
+        assert_eq!(result[0].ref_name, Some("refs/heads/main".into()));
         assert_eq!(result[1].path, PathBuf::from("/home/user/project-wt"));
-        assert_eq!(result[1].ref_name.as_ref(), "refs/heads/feature");
+        assert_eq!(result[1].ref_name, Some("refs/heads/feature".into()));
 
-        // Detached HEAD entry (should be skipped since ref_name won't parse)
+        // Detached HEAD entry (included with ref_name: None)
         let input = "worktree /home/user/project\nHEAD abc123\nbranch refs/heads/main\n\n\
                       worktree /home/user/detached\nHEAD def456\ndetached\n\n";
         let result = parse_worktrees_from_str(input);
-        assert_eq!(result.len(), 1);
+        assert_eq!(result.len(), 2);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
+        assert_eq!(result[0].ref_name, Some("refs/heads/main".into()));
+        assert_eq!(result[1].path, PathBuf::from("/home/user/detached"));
+        assert_eq!(result[1].ref_name, None);
+        assert_eq!(result[1].sha.as_ref(), "def456");
 
-        // Bare repo entry (should be skipped)
+        // Bare repo entry (included with ref_name: None)
         let input = "worktree /home/user/bare.git\nHEAD abc123\nbare\n\n\
                       worktree /home/user/project\nHEAD def456\nbranch refs/heads/main\n\n";
         let result = parse_worktrees_from_str(input);
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].path, PathBuf::from("/home/user/bare.git"));
+        assert_eq!(result[0].ref_name, None);
+        assert_eq!(result[1].path, PathBuf::from("/home/user/project"));
+        assert_eq!(result[1].ref_name, Some("refs/heads/main".into()));
 
         // Extra porcelain lines (locked, prunable) should be ignored
         let input = "worktree /home/user/project\nHEAD abc123\nbranch refs/heads/main\n\n\
@@ -3826,11 +3838,14 @@ mod tests {
         let result = parse_worktrees_from_str(input);
         assert_eq!(result.len(), 3);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
-        assert_eq!(result[0].ref_name.as_ref(), "refs/heads/main");
+        assert_eq!(result[0].ref_name, Some("refs/heads/main".into()));
         assert_eq!(result[1].path, PathBuf::from("/home/user/locked-wt"));
-        assert_eq!(result[1].ref_name.as_ref(), "refs/heads/locked-branch");
+        assert_eq!(result[1].ref_name, Some("refs/heads/locked-branch".into()));
         assert_eq!(result[2].path, PathBuf::from("/home/user/prunable-wt"));
-        assert_eq!(result[2].ref_name.as_ref(), "refs/heads/prunable-branch");
+        assert_eq!(
+            result[2].ref_name,
+            Some("refs/heads/prunable-branch".into())
+        );
 
         // Leading/trailing whitespace on lines should be tolerated
         let input =
@@ -3839,7 +3854,7 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
         assert_eq!(result[0].sha.as_ref(), "abc123");
-        assert_eq!(result[0].ref_name.as_ref(), "refs/heads/main");
+        assert_eq!(result[0].ref_name, Some("refs/heads/main".into()));
 
         // Windows-style line endings should be handled
         let input = "worktree /home/user/project\r\nHEAD abc123\r\nbranch refs/heads/main\r\n\r\n";
@@ -3847,7 +3862,7 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
         assert_eq!(result[0].sha.as_ref(), "abc123");
-        assert_eq!(result[0].ref_name.as_ref(), "refs/heads/main");
+        assert_eq!(result[0].ref_name, Some("refs/heads/main".into()));
     }
 
     #[gpui::test]
@@ -3914,7 +3929,7 @@ mod tests {
 
         let new_worktree = worktrees
             .iter()
-            .find(|w| w.branch() == "test-branch")
+            .find(|w| w.display_name() == "test-branch")
             .expect("should find worktree with test-branch");
         assert_eq!(
             new_worktree.path.canonicalize().unwrap(),
@@ -3976,7 +3991,7 @@ mod tests {
         let worktrees = repo.worktrees().await.unwrap();
         assert_eq!(worktrees.len(), 1);
         assert!(
-            worktrees.iter().all(|w| w.branch() != "to-remove"),
+            worktrees.iter().all(|w| w.display_name() != "to-remove"),
             "removed worktree should not appear in list"
         );
         assert!(!worktree_path.exists());
@@ -4078,7 +4093,7 @@ mod tests {
         assert_eq!(worktrees.len(), 2);
         let moved_worktree = worktrees
             .iter()
-            .find(|w| w.branch() == "old-name")
+            .find(|w| w.display_name() == "old-name")
             .expect("should find worktree by branch name");
         assert_eq!(
             moved_worktree.path.canonicalize().unwrap(),

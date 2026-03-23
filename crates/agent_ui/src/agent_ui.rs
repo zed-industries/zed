@@ -80,6 +80,8 @@ pub(crate) use thread_history::ThreadHistory;
 pub(crate) use thread_history_view::*;
 use zed_actions;
 
+pub const DEFAULT_THREAD_TITLE: &str = "New Thread";
+
 actions!(
     agent,
     [
@@ -192,6 +194,29 @@ pub struct AuthorizeToolCall {
     pub option_id: String,
     /// The kind of permission option (serialized as string).
     pub option_kind: String,
+}
+
+/// Action to select a permission granularity option from the dropdown.
+/// This updates the selected granularity without triggering authorization.
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = agent)]
+#[serde(deny_unknown_fields)]
+pub struct SelectPermissionGranularity {
+    /// The tool call ID for which to select the granularity.
+    pub tool_call_id: String,
+    /// The index of the selected granularity option.
+    pub index: usize,
+}
+
+/// Action to toggle a command pattern checkbox in the permission dropdown.
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = agent)]
+#[serde(deny_unknown_fields)]
+pub struct ToggleCommandPattern {
+    /// The tool call ID for which to toggle the pattern.
+    pub tool_call_id: String,
+    /// The index of the command pattern to toggle.
+    pub pattern_index: usize,
 }
 
 /// Creates a new conversation thread, optionally based on an existing thread.

@@ -14649,6 +14649,107 @@ async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_formatter_failure_does_not_abort_subsequent_formatters(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.formatter = Some(FormatterList::Vec(vec![
+            Formatter::LanguageServer(settings::LanguageServerFormatterSpecifier::Current),
+            Formatter::CodeAction("organize-imports".into()),
+        ]))
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(path!("/file.rs"), "fn main() {}\n".into())
+        .await;
+
+    let project = Project::test(fs, [path!("/").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), buffer, window, cx)
+    });
+
+    let fake_server = fake_servers.next().await.unwrap();
+
+    // Formatter #1 (LanguageServer) returns an error to simulate failure
+    fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
+        move |_params, _| async move { Err(anyhow::anyhow!("Simulated formatter failure")) },
+    );
+
+    // Formatter #2 (CodeAction) returns a successful edit
+    fake_server.set_request_handler::<lsp::request::CodeActionRequest, _, _>(
+        move |_params, _| async move {
+            let uri = lsp::Uri::from_file_path(path!("/file.rs")).unwrap();
+            Ok(Some(vec![lsp::CodeActionOrCommand::CodeAction(
+                lsp::CodeAction {
+                    kind: Some("organize-imports".into()),
+                    edit: Some(lsp::WorkspaceEdit::new(
+                        [(
+                            uri,
+                            vec![lsp::TextEdit::new(
+                                lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+                                "use std::io;\n".to_string(),
+                            )],
+                        )]
+                        .into_iter()
+                        .collect(),
+                    )),
+                    ..Default::default()
+                },
+            )]))
+        },
+    );
+
+    fake_server.set_request_handler::<lsp::request::CodeActionResolveRequest, _, _>({
+        move |params, _| async move { Ok(params) }
+    });
+
+    editor
+        .update_in(cx, |editor, window, cx| {
+            editor.perform_format(
+                project.clone(),
+                FormatTrigger::Manual,
+                FormatTarget::Buffers(editor.buffer().read(cx).all_buffers()),
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await;
+
+    // Formatter #1 (LanguageServer) failed, but formatter #2 (CodeAction) should have applied
+    editor.update(cx, |editor, cx| {
+        assert_eq!(editor.text(cx), "use std::io;\nfn main() {}\n");
+    });
+
+    // The entire format operation should undo as one transaction
+    editor.update_in(cx, |editor, window, cx| {
+        editor.undo(&Default::default(), window, cx);
+        assert_eq!(editor.text(cx), "fn main() {}\n");
+    });
+}
+
+#[gpui::test]
 async fn test_concurrent_format_requests(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

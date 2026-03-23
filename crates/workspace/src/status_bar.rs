@@ -1,6 +1,6 @@
-use crate::{ItemHandle, Pane, ToggleWorkspaceSidebar};
+use crate::{ItemHandle, MultiWorkspace, Pane, ToggleWorkspaceSidebar};
 use gpui::{
-    Action, AnyView, App, Context, Decorations, Entity, IntoElement, ParentElement, Render, Styled,
+    AnyView, App, Context, Decorations, Entity, IntoElement, ParentElement, Render, Styled,
     Subscription, Window,
 };
 use std::any::TypeId;
@@ -104,8 +104,12 @@ impl StatusBar {
                 .tooltip(move |_, cx| {
                     Tooltip::for_action("Open Threads Sidebar", &ToggleWorkspaceSidebar, cx)
                 })
-                .on_click(|_, window, cx| {
-                    window.dispatch_action(ToggleWorkspaceSidebar.boxed_clone(), cx);
+                .on_click(move |_, window, cx| {
+                    if let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() {
+                        multi_workspace.update(cx, |multi_workspace, cx| {
+                            multi_workspace.toggle_sidebar(window, cx);
+                        });
+                    }
                 }),
             )
             .child(Divider::vertical().color(ui::DividerColor::Border))

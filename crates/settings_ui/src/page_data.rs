@@ -3481,7 +3481,7 @@ fn window_and_layout_page() -> SettingsPage {
         ]
     }
 
-    fn title_bar_section() -> [SettingsPageItem; 9] {
+    fn title_bar_section() -> [SettingsPageItem; 10] {
         [
             SettingsPageItem::SectionHeader("Title Bar"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -3647,6 +3647,122 @@ fn window_and_layout_page() -> SettingsPage {
                 }),
                 metadata: None,
                 files: USER,
+            }),
+            SettingsPageItem::DynamicItem(DynamicItem {
+                discriminant: SettingItem {
+                    files: USER,
+                    title: "Button Layout",
+                    description:
+                        "(Linux only) choose how window control buttons are laid out in the titlebar.",
+                    field: Box::new(SettingField {
+                        json_path: Some("title_bar.button_layout$"),
+                        pick: |settings_content| {
+                            Some(
+                                &dynamic_variants::<settings::WindowButtonLayoutContent>()[settings_content
+                                    .title_bar
+                                    .as_ref()?
+                                    .button_layout
+                                    .as_ref()?
+                                    .discriminant()
+                                    as usize],
+                            )
+                        },
+                        write: |settings_content, value| {
+                            let Some(value) = value else {
+                                settings_content
+                                    .title_bar
+                                    .get_or_insert_default()
+                                    .button_layout = None;
+                                return;
+                            };
+
+                            let current_custom_layout = settings_content
+                                .title_bar
+                                .as_ref()
+                                .and_then(|title_bar| title_bar.button_layout.as_ref())
+                                .and_then(|button_layout| match button_layout {
+                                    settings::WindowButtonLayoutContent::Custom(layout) => {
+                                        Some(layout.clone())
+                                    }
+                                    _ => None,
+                                });
+
+                            let button_layout = match value {
+                                settings::WindowButtonLayoutContentDiscriminants::PlatformDefault => {
+                                    settings::WindowButtonLayoutContent::PlatformDefault
+                                }
+                                settings::WindowButtonLayoutContentDiscriminants::Standard => {
+                                    settings::WindowButtonLayoutContent::Standard
+                                }
+                                settings::WindowButtonLayoutContentDiscriminants::Custom => {
+                                    settings::WindowButtonLayoutContent::Custom(
+                                        current_custom_layout.unwrap_or_else(|| {
+                                            "close:minimize,maximize".to_string()
+                                        }),
+                                    )
+                                }
+                            };
+
+                            settings_content
+                                .title_bar
+                                .get_or_insert_default()
+                                .button_layout = Some(button_layout);
+                        },
+                    }),
+                    metadata: None,
+                },
+                pick_discriminant: |settings_content| {
+                    Some(
+                        settings_content
+                            .title_bar
+                            .as_ref()?
+                            .button_layout
+                            .as_ref()?
+                            .discriminant() as usize,
+                    )
+                },
+                fields: dynamic_variants::<settings::WindowButtonLayoutContent>()
+                    .into_iter()
+                    .map(|variant| match variant {
+                        settings::WindowButtonLayoutContentDiscriminants::PlatformDefault => {
+                            vec![]
+                        }
+                        settings::WindowButtonLayoutContentDiscriminants::Standard => vec![],
+                        settings::WindowButtonLayoutContentDiscriminants::Custom => vec![
+                            SettingItem {
+                                files: USER,
+                                title: "Custom Button Layout",
+                                description:
+                                    "GNOME-style layout string such as \"close:minimize,maximize\".",
+                                field: Box::new(SettingField {
+                                    json_path: Some("title_bar.button_layout"),
+                                    pick: |settings_content| match settings_content
+                                        .title_bar
+                                        .as_ref()?
+                                        .button_layout
+                                        .as_ref()?
+                                    {
+                                        settings::WindowButtonLayoutContent::Custom(layout) => {
+                                            Some(layout)
+                                        }
+                                        _ => DEFAULT_EMPTY_STRING,
+                                    },
+                                    write: |settings_content, value| {
+                                        settings_content
+                                            .title_bar
+                                            .get_or_insert_default()
+                                            .button_layout = value
+                                            .map(settings::WindowButtonLayoutContent::Custom);
+                                    },
+                                }),
+                                metadata: Some(Box::new(SettingsFieldMetadata {
+                                    placeholder: Some("close:minimize,maximize"),
+                                    ..Default::default()
+                                })),
+                            },
+                        ],
+                    })
+                    .collect(),
             }),
         ]
     }

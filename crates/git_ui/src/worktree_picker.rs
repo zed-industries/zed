@@ -96,9 +96,12 @@ impl WorktreeList {
         });
 
         cx.spawn_in(window, async move |this, cx| {
-            let all_worktrees = all_worktrees_request
+            let all_worktrees: Vec<_> = all_worktrees_request
                 .context("No active repository")?
-                .await??;
+                .await??
+                .into_iter()
+                .filter(|worktree| worktree.ref_name.is_some()) // hide worktrees without a branch
+                .collect();
 
             let default_branch = default_branch_request
                 .context("No active repository")?
@@ -182,7 +185,7 @@ impl WorktreeList {
                 return;
             }
             picker.delegate.create_worktree(
-                entry.worktree.branch(),
+                entry.worktree.display_name(),
                 replace_current_window,
                 Some(default_branch.into()),
                 window,
@@ -649,7 +652,7 @@ impl PickerDelegate for WorktreeListDelegate {
                 let candidates = all_worktrees
                     .iter()
                     .enumerate()
-                    .map(|(ix, worktree)| StringMatchCandidate::new(ix, worktree.branch()))
+                    .map(|(ix, worktree)| StringMatchCandidate::new(ix, worktree.display_name()))
                     .collect::<Vec<StringMatchCandidate>>();
                 fuzzy::match_strings(
                     &candidates,
@@ -674,13 +677,13 @@ impl PickerDelegate for WorktreeListDelegate {
                     if !query.is_empty()
                         && !matches
                             .first()
-                            .is_some_and(|entry| entry.worktree.branch() == query)
+                            .is_some_and(|entry| entry.worktree.display_name() == query)
                     {
                         let query = query.replace(' ', "-");
                         matches.push(WorktreeEntry {
                             worktree: GitWorktree {
                                 path: Default::default(),
-                                ref_name: format!("refs/heads/{query}").into(),
+                                ref_name: Some(format!("refs/heads/{query}").into()),
                                 sha: Default::default(),
                             },
                             positions: Vec::new(),
@@ -706,7 +709,7 @@ impl PickerDelegate for WorktreeListDelegate {
             return;
         };
         if entry.is_new {
-            self.create_worktree(&entry.worktree.branch(), secondary, None, window, cx);
+            self.create_worktree(&entry.worktree.display_name(), secondary, None, window, cx);
         } else {
             self.open_worktree(&entry.worktree.path, secondary, window, cx);
         }
@@ -737,16 +740,19 @@ impl PickerDelegate for WorktreeListDelegate {
 
         let (branch_name, sublabel) = if entry.is_new {
             (
-                Label::new(format!("Create Worktree: \"{}\"…", entry.worktree.branch()))
-                    .truncate()
-                    .into_any_element(),
+                Label::new(format!(
+                    "Create Worktree: \"{}\"…",
+                    entry.worktree.display_name()
+                ))
+                .truncate()
+                .into_any_element(),
                 format!(
                     "based off {}",
                     self.base_branch(cx).unwrap_or("the current branch")
                 ),
             )
         } else {
-            let branch = entry.worktree.branch();
+            let branch = entry.worktree.display_name();
             let branch_first_line = branch.lines().next().unwrap_or(branch);
             let positions: Vec<_> = entry
                 .positions

@@ -9,6 +9,7 @@ mod project;
 mod serde_helper;
 mod terminal;
 mod theme;
+mod title_bar;
 mod workspace;
 
 pub use agent::*;
@@ -26,6 +27,7 @@ pub use serde_helper::{
 use settings_json::parse_json_with_comments;
 pub use terminal::*;
 pub use theme::*;
+pub use title_bar::*;
 pub use workspace::*;
 
 use collections::{HashMap, IndexMap};
@@ -314,43 +316,6 @@ impl strum::VariantNames for BaseKeymapContent {
         "Cursor",
         "None",
     ];
-}
-
-#[with_fallible_options]
-#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
-pub struct TitleBarSettingsContent {
-    /// Whether to show the branch icon beside branch switcher in the title bar.
-    ///
-    /// Default: false
-    pub show_branch_icon: Option<bool>,
-    /// Whether to show onboarding banners in the title bar.
-    ///
-    /// Default: true
-    pub show_onboarding_banner: Option<bool>,
-    /// Whether to show user avatar in the title bar.
-    ///
-    /// Default: true
-    pub show_user_picture: Option<bool>,
-    /// Whether to show the branch name button in the titlebar.
-    ///
-    /// Default: true
-    pub show_branch_name: Option<bool>,
-    /// Whether to show the project host and name in the titlebar.
-    ///
-    /// Default: true
-    pub show_project_items: Option<bool>,
-    /// Whether to show the sign in button in the title bar.
-    ///
-    /// Default: true
-    pub show_sign_in: Option<bool>,
-    /// Whether to show the user menu button in the title bar.
-    ///
-    /// Default: true
-    pub show_user_menu: Option<bool>,
-    /// Whether to show the menus in the title bar.
-    ///
-    /// Default: false
-    pub show_menus: Option<bool>,
 }
 
 /// Configuration of audio in Zed.

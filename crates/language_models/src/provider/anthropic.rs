@@ -24,7 +24,7 @@ use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 
-use crate::provider::util::parse_tool_arguments;
+use crate::provider::util::{fix_streamed_json, parse_tool_arguments};
 
 pub use settings::AnthropicAvailableModel as AvailableModel;
 
@@ -175,7 +175,12 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
                     max_output_tokens: model.max_output_tokens,
                     default_temperature: model.default_temperature,
                     extra_beta_headers: model.extra_beta_headers.clone(),
-                    mode: model.mode.unwrap_or_default().into(),
+                    mode: match model.mode.unwrap_or_default() {
+                        settings::ModelMode::Default => AnthropicModelMode::Default,
+                        settings::ModelMode::Thinking { budget_tokens } => {
+                            AnthropicModelMode::Thinking { budget_tokens }
+                        }
+                    },
                 },
             );
         }
@@ -868,9 +873,9 @@ impl AnthropicEventMapper {
                         // valid JSON that serde can accept, e.g. by closing
                         // unclosed delimiters. This way, we can update the
                         // UI with whatever has been streamed back so far.
-                        if let Ok(input) = serde_json::Value::from_str(
-                            &partial_json_fixer::fix_json(&tool_use.input_json),
-                        ) {
+                        if let Ok(input) =
+                            serde_json::Value::from_str(&fix_streamed_json(&tool_use.input_json))
+                        {
                             return vec![Ok(LanguageModelCompletionEvent::ToolUse(
                                 LanguageModelToolUse {
                                     id: tool_use.id.clone().into(),
