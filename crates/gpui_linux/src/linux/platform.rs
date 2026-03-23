@@ -142,7 +142,7 @@ impl LinuxCommon {
             text_system,
             appearance: WindowAppearance::Light,
             auto_hide_scrollbars: false,
-            button_layout: WindowButtonLayout::default(),
+            button_layout: WindowButtonLayout::linux_default(),
             callbacks,
             signal,
             menus: Vec::new(),
@@ -604,8 +604,8 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         self.inner.with_common(|common| common.appearance)
     }
 
-    fn button_layout(&self) -> WindowButtonLayout {
-        self.inner.with_common(|common| common.button_layout)
+    fn button_layout(&self) -> Option<WindowButtonLayout> {
+        Some(self.inner.with_common(|common| common.button_layout))
     }
 
     fn register_url_scheme(&self, _: &str) -> Task<anyhow::Result<()>> {

@@ -157,9 +157,9 @@ pub trait Platform: 'static {
     /// Returns the appearance of the application's windows.
     fn window_appearance(&self) -> WindowAppearance;
 
-    /// Returns the window button layout configuration.
-    fn button_layout(&self) -> WindowButtonLayout {
-        WindowButtonLayout::default()
+    /// Returns the window button layout configuration when supported.
+    fn button_layout(&self) -> Option<WindowButtonLayout> {
+        None
     }
 
     fn open_url(&self, url: &str);
@@ -450,8 +450,9 @@ pub struct WindowButtonLayout {
     pub right: [Option<WindowButton>; MAX_BUTTONS_PER_SIDE],
 }
 
-impl Default for WindowButtonLayout {
-    fn default() -> Self {
+impl WindowButtonLayout {
+    /// Returns Zed's built-in fallback button layout for Linux titlebars.
+    pub fn linux_default() -> Self {
         Self {
             left: [None; MAX_BUTTONS_PER_SIDE],
             right: [
@@ -2276,8 +2277,8 @@ mod tests {
     }
 
     #[test]
-    fn test_window_button_layout_default() {
-        let layout = WindowButtonLayout::default();
+    fn test_window_button_layout_linux_default() {
+        let layout = WindowButtonLayout::linux_default();
         assert_eq!(layout.left, [None, None, None]);
         assert_eq!(
             layout.right,

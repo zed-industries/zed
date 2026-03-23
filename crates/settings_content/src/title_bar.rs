@@ -27,7 +27,7 @@ impl WindowButtonLayoutContent {
 
         match self {
             Self::PlatformDefault => None,
-            Self::Standard => Some(WindowButtonLayout::default()),
+            Self::Standard => Some(WindowButtonLayout::linux_default()),
             Self::Custom(layout) => WindowButtonLayout::parse(&layout).log_err(),
         }
     }

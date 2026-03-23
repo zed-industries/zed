@@ -1155,8 +1155,8 @@ impl App {
         self.platform.window_appearance()
     }
 
-    /// Returns the window button layout configuration.
-    pub fn button_layout(&self) -> WindowButtonLayout {
+    /// Returns the window button layout configuration when supported.
+    pub fn button_layout(&self) -> Option<WindowButtonLayout> {
         self.platform.button_layout()
     }
 
