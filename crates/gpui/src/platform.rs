@@ -411,19 +411,19 @@ impl Default for WindowControls {
     }
 }
 
-/// A button type in window controls
+/// A window control button type used in [`WindowButtonLayout`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WindowButton {
-    /// Minimize button
+    /// The minimize button
     Minimize,
-    /// Maximize button
+    /// The maximize button
     Maximize,
-    /// Close button
+    /// The close button
     Close,
 }
 
 impl WindowButton {
-    /// Returns a stable element ID for this button type
+    /// Returns a stable element ID for rendering this button.
     pub fn id(&self) -> &'static str {
         match self {
             WindowButton::Minimize => "minimize",
@@ -433,15 +433,18 @@ impl WindowButton {
     }
 }
 
-/// Maximum number of buttons per side in the titlebar
+/// Maximum number of [`WindowButton`]s per side in the titlebar.
 pub const MAX_BUTTONS_PER_SIDE: usize = 3;
 
-/// Window control button layout configuration
+/// Describes which [`WindowButton`]s appear on each side of the titlebar.
+///
+/// On Linux, this is read from the desktop environment's configuration
+/// (e.g. GNOME's `gtk-decoration-layout` gsetting) via [`WindowButtonLayout::parse`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WindowButtonLayout {
-    /// Buttons displayed on the left side of the titlebar
+    /// Buttons on the left side of the titlebar.
     pub left: [Option<WindowButton>; MAX_BUTTONS_PER_SIDE],
-    /// Buttons displayed on the right side of the titlebar
+    /// Buttons on the right side of the titlebar.
     pub right: [Option<WindowButton>; MAX_BUTTONS_PER_SIDE],
 }
 
@@ -459,9 +462,7 @@ impl Default for WindowButtonLayout {
 }
 
 impl WindowButtonLayout {
-    /// Parse a GNOME-style button-layout string.
-    /// Format: "button1,button2:button3,button4"
-    /// Left of colon = left side, right of colon = right side
+    /// Parses a GNOME-style `button-layout` string (e.g. `"close,minimize:maximize"`).
     pub fn parse(layout_string: &str) -> Result<Self> {
         fn parse_side(
             s: &str,
@@ -474,19 +475,20 @@ impl WindowButtonLayout {
                 if trimmed.is_empty() {
                     continue;
                 }
-                match trimmed {
-                    "minimize" | "maximize" | "close" => {
-                        if i < MAX_BUTTONS_PER_SIDE {
-                            result[i] = Some(match trimmed {
-                                "minimize" => WindowButton::Minimize,
-                                "maximize" => WindowButton::Maximize,
-                                "close" => WindowButton::Close,
-                                _ => unreachable!(),
-                            });
-                            i += 1;
-                        }
+                let button = match trimmed {
+                    "minimize" => Some(WindowButton::Minimize),
+                    "maximize" => Some(WindowButton::Maximize),
+                    "close" => Some(WindowButton::Close),
+                    other => {
+                        unrecognized.push(other.to_string());
+                        None
                     }
-                    other => unrecognized.push(other.to_string()),
+                };
+                if let Some(button) = button {
+                    if let Some(slot) = result.get_mut(i) {
+                        *slot = Some(button);
+                        i += 1;
+                    }
                 }
             }
             result
@@ -513,8 +515,7 @@ impl WindowButtonLayout {
         Ok(layout)
     }
 
-    /// Formats the layout into a GNOME-style button-layout string.
-    /// Format: "button1,button2:button3,button4"
+    /// Formats the layout back into a GNOME-style `button-layout` string.
     pub fn format(&self) -> String {
         fn format_side(buttons: &[Option<WindowButton>; MAX_BUTTONS_PER_SIDE]) -> String {
             buttons
