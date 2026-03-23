@@ -1016,14 +1016,6 @@ impl X11Client {
                         return Some(());
                     }
 
-                    log::debug!(
-                        "x11 KeyPress: keycode={}, keysym={}, key={:?}, key_char={:?}",
-                        code.raw(),
-                        xkbc::keysym_get_name(keysym),
-                        keystroke.key,
-                        keystroke.key_char,
-                    );
-
                     if let Some(mut compose_state) = state.compose_state.take() {
                         compose_state.feed(keysym);
                         match compose_state.status() {
@@ -2580,7 +2572,10 @@ fn update_xkb_mask_from_event_state(xkb: &mut xkbc::State, event_state: xproto::
     // KeyButMask contains both modifier bits (0-7) and mouse button bits (8-15).
     // Strip CapsLock and NumLock (they're tracked as locked, not depressed),
     // and strip button bits which aren't modifier state.
-    let modifier_bits_only: u32 = u16::from(event_state) as u32 & 0xFF;
+    // X11 modifier bits occupy the low 8 bits of the 16-bit KeyButMask;
+    // bits 8-15 are mouse button state.
+    const X11_MODIFIER_MASK: u32 = 0xFF;
+    let modifier_bits_only: u32 = u16::from(event_state) as u32 & X11_MODIFIER_MASK;
     let depressed_mods = modifier_bits_only & !((ModMask::LOCK | ModMask::M2).bits() as u32);
 
     let latched_mods = xkb.serialize_mods(xkbc::STATE_MODS_LATCHED);
@@ -2596,4 +2591,66 @@ fn update_xkb_mask_from_event_state(xkb: &mut xkbc::State, event_state: xproto::
         latched_layout,
         locked_layout,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use xkbcommon::xkb as xkbc;
+
+    fn create_us_xkb_state() -> xkbc::State {
+        let context = xkbc::Context::new(xkbc::CONTEXT_NO_FLAGS);
+        let keymap = xkbc::Keymap::new_from_names(
+            &context,
+            &"evdev",
+            &"pc105",
+            &"us",
+            &"",
+            None,
+            xkbc::KEYMAP_COMPILE_NO_FLAGS,
+        )
+        .expect("Failed to create US keymap");
+        xkbc::State::new(&keymap)
+    }
+
+    #[test]
+    fn test_update_xkb_mask_strips_mouse_button_bits() {
+        let mut state = create_us_xkb_state();
+
+        let event_state = xproto::KeyButMask::from(0x101u16); // Shift + Button1
+        update_xkb_mask_from_event_state(&mut state, event_state);
+
+        let depressed = state.serialize_mods(xkbc::STATE_MODS_DEPRESSED);
+        assert_eq!(depressed & 0x01, 0x01, "Shift should be depressed");
+        assert_eq!(depressed & 0x100, 0, "Button1 bit should be stripped");
+    }
+
+    #[test]
+    fn test_update_xkb_mask_strips_capslock_and_numlock() {
+        let mut state = create_us_xkb_state();
+
+        let capslock_numlock = (ModMask::LOCK | ModMask::M2).bits();
+        let event_state = xproto::KeyButMask::from(capslock_numlock);
+        update_xkb_mask_from_event_state(&mut state, event_state);
+
+        let depressed = state.serialize_mods(xkbc::STATE_MODS_DEPRESSED);
+        assert_eq!(depressed, 0, "CapsLock and NumLock should not appear as depressed");
+    }
+
+    #[test]
+    fn test_update_xkb_mask_preserves_locked_layout() {
+        let mut state = create_us_xkb_state();
+
+        state.update_mask(0, 0, 0, 0, 0, 0);
+        let locked_layout_before = state.serialize_layout(xkbc::STATE_LAYOUT_LOCKED);
+
+        let event_state = xproto::KeyButMask::from(0u16);
+        update_xkb_mask_from_event_state(&mut state, event_state);
+
+        let locked_layout_after = state.serialize_layout(xkbc::STATE_LAYOUT_LOCKED);
+        assert_eq!(
+            locked_layout_before, locked_layout_after,
+            "Locked layout group should be preserved"
+        );
+    }
 }
