@@ -6,8 +6,8 @@
 use anyhow::Result;
 use acp_thread::{AcpThread, AcpThreadEvent};
 use agent::ThreadStore;
-use acp_thread::AgentSessionInfo;
 use agent_client_protocol::{ContentBlock, TextContent};
+use util::path_list::PathList;
 use gpui::{App, Entity, WeakEntity};
 use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet};
@@ -724,14 +724,12 @@ fn create_new_thread_sync(
             let agent_server_store = project.read(cx).agent_server_store().clone();
             let delegate = agent_servers::AgentServerDelegate::new(
                 agent_server_store,
-                project.clone(),
-                None,
                 None,
             );
-            server.connect(delegate, cx)
+            server.connect(delegate, project.clone(), cx)
         });
 
-        let (connection, _spawn_task): (std::rc::Rc<dyn acp_thread::AgentConnection>, _) = connection_task
+        let connection: std::rc::Rc<dyn acp_thread::AgentConnection> = connection_task
             .await
             .log_err()
             .ok_or_else(|| anyhow::anyhow!("Failed to connect to agent"))?;
@@ -741,7 +739,7 @@ fn create_new_thread_sync(
         if let Some(first_method) = auth_methods.first() {
             let connection_for_auth = connection.clone();
             let auth_task = cx.update(|cx| {
-                connection_for_auth.authenticate(first_method.id.clone(), cx)
+                connection_for_auth.authenticate(first_method.id().clone(), cx)
             });
             if let Err(e) = auth_task.await {
                 log::warn!("[THREAD_SERVICE] Authentication failed (continuing): {}", e);
@@ -765,7 +763,7 @@ fn create_new_thread_sync(
         let connection_for_tools = connection.clone();
         let connection_for_model = connection.clone();
         let thread_entity: Entity<AcpThread> = cx.update(|cx| {
-            connection.new_session(project_clone.clone(), &cwd, cx)
+            connection.new_session(project_clone.clone(), PathList::new(&[&cwd]), cx)
         }).await?;
 
         // Wait for the NativeAgent's model list to be populated.
@@ -1031,11 +1029,9 @@ async fn load_thread_from_agent(
         let agent_server_store = project.read(cx).agent_server_store().clone();
         let delegate = agent_servers::AgentServerDelegate::new(
             agent_server_store,
-            project.clone(),
-            None,
             None,
         );
-        let connection_task = server.connect(delegate, cx);
+        let connection_task = server.connect(delegate, project.clone(), cx);
         // Use ZED_WORK_DIR for consistency with session storage
         let cwd = std::env::var("ZED_WORK_DIR")
             .ok()
@@ -1048,7 +1044,7 @@ async fn load_thread_from_agent(
         (connection_task, cwd)
     });
 
-    let (connection, _spawn_task): (std::rc::Rc<dyn acp_thread::AgentConnection>, _) = connection_task.await?;
+    let connection: std::rc::Rc<dyn acp_thread::AgentConnection> = connection_task.await?;
 
     eprintln!("✅ [THREAD_SERVICE] Connected to agent for loading thread");
     log::info!("✅ [THREAD_SERVICE] Connected to agent for loading thread");
@@ -1066,10 +1062,10 @@ async fn load_thread_from_agent(
     }
 
     // Load the thread from agent
-    let session_info = AgentSessionInfo::new(agent_client_protocol::SessionId::new(acp_thread_id.clone()));
+    let session_id = agent_client_protocol::SessionId::new(acp_thread_id.clone());
     let project_clone = project.clone();
     let load_task = cx.update(|cx| {
-        connection.load_session(session_info, project_clone, &cwd, cx)
+        connection.load_session(session_id, project_clone, PathList::new(&[&cwd]), None, cx)
     });
 
     let thread_entity: Entity<AcpThread> = load_task.await?;
@@ -1156,13 +1152,11 @@ fn open_existing_thread_sync(
     // Create delegate for connection
     let delegate = agent_servers::AgentServerDelegate::new(
         agent_server_store,
-        project.clone(),
-        None, // status_tx
         None, // new_version_tx
     );
 
     // Connect to get AgentConnection
-    let connection_task = server.connect(delegate, cx);
+    let connection_task = server.connect(delegate, project.clone(), cx);
 
     // Use ZED_WORK_DIR for consistency with session storage
     let cwd = std::env::var("ZED_WORK_DIR")
@@ -1178,7 +1172,7 @@ fn open_existing_thread_sync(
     let request_clone = request.clone();
     let project_clone = project.clone();
     cx.spawn(async move |cx| {
-        let (connection, _spawn_task) = match connection_task.await {
+        let connection = match connection_task.await {
             Ok(result) => result,
             Err(e) => {
                 eprintln!("❌ [THREAD_SERVICE] Failed to connect to agent: {}", e);
@@ -1203,13 +1197,12 @@ fn open_existing_thread_sync(
         eprintln!("🔨 [THREAD_SERVICE] Calling connection.load_session() to load from agent...");
         log::info!("🔨 [THREAD_SERVICE] Calling connection.load_session() to load from agent...");
 
-        // Convert string to AgentSessionInfo
-        let session_info = AgentSessionInfo::new(agent_client_protocol::SessionId::new(request_clone.acp_thread_id.clone()));
+        let session_id = agent_client_protocol::SessionId::new(request_clone.acp_thread_id.clone());
 
         // Use the generic AgentConnection::load_session() method
         // This works for both NativeAgent (from local DB) and ACP agents (via session/load protocol)
         let load_task = cx.update(|cx| {
-            connection.load_session(session_info, project_clone, &cwd, cx)
+            connection.load_session(session_id, project_clone, PathList::new(&[&cwd]), None, cx)
         });
 
         let thread_entity: Entity<AcpThread> = match load_task.await {
