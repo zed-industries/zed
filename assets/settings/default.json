@@ -2246,7 +2246,7 @@
     },
     "openai_compatible": {},
     "opencode": {
-      "api_url": "https://opencode.ai/zen"
+      "api_url": "https://opencode.ai/zen",
     },
     "open_router": {
       "api_url": "https://openrouter.ai/api/v1",
