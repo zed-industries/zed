@@ -36,7 +36,9 @@ use crate::{
     ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task,
     ThreadTaskTimings, Window, WindowControlArea, hash, point, px, size,
 };
-use anyhow::{Result, bail};
+use anyhow::Result;
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+use anyhow::bail;
 use async_task::Runnable;
 use futures::channel::oneshot;
 #[cfg(any(test, feature = "test-support"))]
@@ -461,6 +463,7 @@ impl Default for WindowButtonLayout {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 impl WindowButtonLayout {
     /// Parses a GNOME-style `button-layout` string (e.g. `"close,minimize:maximize"`).
     pub fn parse(layout_string: &str) -> Result<Self> {
@@ -516,6 +519,7 @@ impl WindowButtonLayout {
     }
 
     /// Formats the layout back into a GNOME-style `button-layout` string.
+    #[cfg(test)]
     pub fn format(&self) -> String {
         fn format_side(buttons: &[Option<WindowButton>; MAX_BUTTONS_PER_SIDE]) -> String {
             buttons
@@ -2151,7 +2155,7 @@ impl From<String> for ClipboardString {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(target_os = "linux", target_os = "freebsd")))]
 mod tests {
     use super::*;
 

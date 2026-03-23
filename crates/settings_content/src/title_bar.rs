@@ -4,8 +4,8 @@ use settings_macros::{MergeFrom, with_fallible_options};
 
 /// The layout of window control buttons as represented by user settings.
 ///
-/// This matches the string format used by GNOME `button-layout` settings (e.g.
-/// "close:minimize,maximize").
+/// Custom layout strings use the GNOME `button-layout` format (e.g.
+/// `"close:minimize,maximize"`).
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, Default)]
 #[schemars(schema_with = "window_button_layout_schema")]
 #[serde(from = "String", into = "String")]
@@ -15,8 +15,8 @@ pub enum WindowButtonLayoutContent {
     Auto,
     /// Use Zed's own hardcoded default layout, regardless of system config.
     Default,
-    /// A user-specified layout string.
-    Custom(gpui::WindowButtonLayout),
+    /// A raw GNOME-style layout string.
+    Custom(String),
 }
 
 fn window_button_layout_schema(_: &mut SchemaGenerator) -> Schema {
@@ -28,22 +28,12 @@ fn window_button_layout_schema(_: &mut SchemaGenerator) -> Schema {
     })
 }
 
-impl WindowButtonLayoutContent {
-    pub fn into_layout(self) -> Option<gpui::WindowButtonLayout> {
-        match self {
-            Self::Auto => None,
-            Self::Default => Some(gpui::WindowButtonLayout::default()),
-            Self::Custom(layout) => Some(layout),
-        }
-    }
-}
-
 impl From<WindowButtonLayoutContent> for String {
     fn from(value: WindowButtonLayoutContent) -> Self {
         match value {
             WindowButtonLayoutContent::Auto => "auto".to_string(),
             WindowButtonLayoutContent::Default => "default".to_string(),
-            WindowButtonLayoutContent::Custom(layout) => layout.format(),
+            WindowButtonLayoutContent::Custom(s) => s,
         }
     }
 }
@@ -53,13 +43,7 @@ impl From<String> for WindowButtonLayoutContent {
         match layout_string.as_str() {
             "auto" => Self::Auto,
             "default" => Self::Default,
-            other => match gpui::WindowButtonLayout::parse(other) {
-                Ok(layout) => Self::Custom(layout),
-                Err(error) => {
-                    log::warn!("Invalid button layout string {other:?}: {error:#}");
-                    Self::Default
-                }
-            },
+            _ => Self::Custom(layout_string),
         }
     }
 }
