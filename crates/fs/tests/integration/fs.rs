@@ -1,10 +1,14 @@
 use std::{
+    collections::BTreeSet,
     io::Write,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
+use futures::{FutureExt, StreamExt};
+
 use fs::*;
-use gpui::BackgroundExecutor;
+use gpui::{BackgroundExecutor, TestAppContext};
 use serde_json::json;
 use tempfile::TempDir;
 use util::path;
@@ -620,4 +624,91 @@ async fn test_realfs_symlink_loop_metadata(executor: BackgroundExecutor) {
     assert!(!metadata.is_fifo);
     assert!(!metadata.is_executable);
     // don't care about len or mtime on symlinks?
+}
+
+#[gpui::test]
+#[ignore = "stress test; run explicitly when needed"]
+async fn test_realfs_watch_stress_reports_missed_paths(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    const FILE_COUNT: usize = 32000;
+    cx.executor().allow_parking();
+
+    let fs = RealFs::new(None, executor.clone());
+    let temp_dir = TempDir::new().expect("create temp dir");
+    let root = temp_dir.path();
+
+    let mut file_paths = Vec::with_capacity(FILE_COUNT);
+    let mut expected_paths = BTreeSet::new();
+
+    for index in 0..FILE_COUNT {
+        let dir_path = root.join(format!("dir-{index:04}"));
+        let file_path = dir_path.join("file.txt");
+        fs.create_dir(&dir_path).await.expect("create watched dir");
+        fs.write(&file_path, b"before")
+            .await
+            .expect("create initial file");
+        expected_paths.insert(file_path.clone());
+        file_paths.push(file_path);
+    }
+
+    let (mut events, watcher) = fs.watch(root, Duration::from_millis(10)).await;
+    let _watcher = watcher;
+
+    for file_path in &expected_paths {
+        _watcher
+            .add(file_path.parent().expect("file has parent"))
+            .expect("add explicit directory watch");
+    }
+
+    for (index, file_path) in file_paths.iter().enumerate() {
+        let content = format!("after-{index}");
+        fs.write(file_path, content.as_bytes())
+            .await
+            .expect("modify watched file");
+    }
+
+    let mut changed_paths = BTreeSet::new();
+    let mut rescan_count: u32 = 0;
+    let timeout = executor.timer(Duration::from_secs(10)).fuse();
+
+    futures::pin_mut!(timeout);
+
+    let mut ticks = 0;
+    while ticks < 1000 {
+        if let Some(batch) = events.next().fuse().now_or_never().flatten() {
+            for event in batch {
+                if event.kind == Some(PathEventKind::Rescan) {
+                    rescan_count += 1;
+                }
+                if expected_paths.contains(&event.path) {
+                    changed_paths.insert(event.path);
+                }
+            }
+            if changed_paths.len() == expected_paths.len() {
+                break;
+            }
+            ticks = 0;
+        } else {
+            ticks += 1;
+            executor.timer(Duration::from_millis(10)).await;
+        }
+    }
+
+    let missed_paths: BTreeSet<_> = expected_paths.difference(&changed_paths).cloned().collect();
+
+    eprintln!(
+        "realfs watch stress: expected={}, observed={}, missed={}, rescan={}",
+        expected_paths.len(),
+        changed_paths.len(),
+        missed_paths.len(),
+        rescan_count
+    );
+
+    assert!(
+        missed_paths.is_empty() || rescan_count > 0,
+        "missed {} paths without rescan being reported",
+        missed_paths.len()
+    );
 }

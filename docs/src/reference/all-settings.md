@@ -1908,6 +1908,14 @@ WARNING: `{buffer_path}` should not be used to direct your formatter to read fro
 Here `rust-analyzer` will be used first to format the code, followed by a call of sed.
 If any of the formatters fails, the subsequent ones will still be executed.
 
+6. To disable the formatter, use `"none"`. This setting disables the configured formatter, but any actions in `code_actions_on_format` will still be executed:
+
+```json [settings]
+{
+  "formatter": "none"
+}
+```
+
 ## Auto close
 
 - Description: Whether to automatically add matching closing characters when typing opening parenthesis, bracket, brace, single or double quote characters.
@@ -4619,7 +4627,8 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
     "show_user_picture": true,
     "show_user_menu": true,
     "show_sign_in": true,
-    "show_menus": false
+    "show_menus": false,
+    "button_layout": "platform_default"
   }
 }
 ```
@@ -4634,6 +4643,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 - `show_user_menu`: Whether to show the user menu button in the titlebar (the one that displays your avatar by default and contains options like Settings, Keymap, Themes, etc.)
 - `show_sign_in`: Whether to show the sign in button in the titlebar
 - `show_menus`: Whether to show the menus in the titlebar
+- `button_layout`: The layout of window control buttons in the title bar (Linux only). Can be set to `"platform_default"` to follow the system setting, `"standard"` to use Zed's built-in layout, or a custom format like `"close:minimize,maximize"`
 
 ## Vim
 
@@ -4695,7 +4705,8 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
     "bold_folder_labels": false,
     "drag_and_drop": true,
     "scrollbar": {
-      "show": null
+      "show": null,
+      "horizontal_scroll": true
     },
     "sticky_scroll": true,
     "show_diagnostics": "all",
@@ -4941,9 +4952,9 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 }
 ```
 
-### Scrollbar: Show
+### Scrollbar
 
-- Description: Whether to show a scrollbar in the project panel. Possible values: null, "auto", "system", "always", "never". Inherits editor settings when absent, see its description for more details.
+- Description: Scrollbar-related settings for the project panel.
 - Setting: `scrollbar`
 - Default:
 
@@ -4951,7 +4962,8 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 {
   "project_panel": {
     "scrollbar": {
-      "show": null
+      "show": null,
+      "horizontal_scroll": true
     }
   }
 }
@@ -4959,29 +4971,8 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 **Options**
 
-1. Show scrollbar in the project panel
-
-```json [settings]
-{
-  "project_panel": {
-    "scrollbar": {
-      "show": "always"
-    }
-  }
-}
-```
-
-2. Hide scrollbar in the project panel
-
-```json [settings]
-{
-  "project_panel": {
-    "scrollbar": {
-      "show": "never"
-    }
-  }
-}
-```
+- `show`: Whether to show a scrollbar in the project panel. Possible values: null, "auto", "system", "always", "never". Inherits editor settings when absent, see its description for more details.
+- `horizontal_scroll`: Whether to allow horizontal scrolling in the project panel. When `false`, the view is locked to the leftmost position and long file names are clipped.
 
 ### Sort Mode
 
@@ -5108,7 +5099,8 @@ See the [debugger page](../debugger.md) for more information about debugging sup
     "collapse_untracked_diff": false,
     "scrollbar": {
       "show": null
-    }
+    },
+    "starts_open": false
   }
 }
 ```
@@ -5123,6 +5115,7 @@ See the [debugger page](../debugger.md) for more information about debugging sup
 - `sort_by_path`: Whether to sort entries in the panel by path or by status (the default)
 - `collapse_untracked_diff`: Whether to collapse untracked files in the diff panel
 - `scrollbar`: When to show the scrollbar in the git panel
+- `starts_open`: Whether the git panel should open on startup
 
 ## Git Worktree Directory
 

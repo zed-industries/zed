@@ -9,6 +9,7 @@ mod project;
 mod serde_helper;
 mod terminal;
 mod theme;
+mod title_bar;
 mod workspace;
 
 pub use agent::*;
@@ -26,6 +27,7 @@ pub use serde_helper::{
 use settings_json::parse_json_with_comments;
 pub use terminal::*;
 pub use theme::*;
+pub use title_bar::*;
 pub use workspace::*;
 
 use collections::{HashMap, IndexMap};
@@ -316,43 +318,6 @@ impl strum::VariantNames for BaseKeymapContent {
     ];
 }
 
-#[with_fallible_options]
-#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
-pub struct TitleBarSettingsContent {
-    /// Whether to show the branch icon beside branch switcher in the title bar.
-    ///
-    /// Default: false
-    pub show_branch_icon: Option<bool>,
-    /// Whether to show onboarding banners in the title bar.
-    ///
-    /// Default: true
-    pub show_onboarding_banner: Option<bool>,
-    /// Whether to show user avatar in the title bar.
-    ///
-    /// Default: true
-    pub show_user_picture: Option<bool>,
-    /// Whether to show the branch name button in the titlebar.
-    ///
-    /// Default: true
-    pub show_branch_name: Option<bool>,
-    /// Whether to show the project host and name in the titlebar.
-    ///
-    /// Default: true
-    pub show_project_items: Option<bool>,
-    /// Whether to show the sign in button in the title bar.
-    ///
-    /// Default: true
-    pub show_sign_in: Option<bool>,
-    /// Whether to show the user menu button in the title bar.
-    ///
-    /// Default: true
-    pub show_user_menu: Option<bool>,
-    /// Whether to show the menus in the title bar.
-    ///
-    /// Default: false
-    pub show_menus: Option<bool>,
-}
-
 /// Configuration of audio in Zed.
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
@@ -593,6 +558,17 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: icon
     pub status_style: Option<StatusStyle>,
+
+    /// Whether to show file icons in the git panel.
+    ///
+    /// Default: false
+    pub file_icons: Option<bool>,
+
+    /// Whether to show folder icons or chevrons for directories in the git panel.
+    ///
+    /// Default: true
+    pub folder_icons: Option<bool>,
+
     /// How and when the scrollbar should be displayed.
     ///
     /// Default: inherits editor scrollbar settings
@@ -624,6 +600,16 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: true
     pub diff_stats: Option<bool>,
+
+    /// Whether to show a badge on the git panel icon with the count of uncommitted changes.
+    ///
+    /// Default: false
+    pub show_count_badge: Option<bool>,
+
+    /// Whether the git panel should open on startup.
+    ///
+    /// Default: false
+    pub starts_open: Option<bool>,
 }
 
 #[derive(
@@ -671,6 +657,10 @@ pub struct NotificationPanelSettingsContent {
     /// Default: 300
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_width: Option<f32>,
+    /// Whether to show a badge on the notification panel icon with the count of unread notifications.
+    ///
+    /// Default: false
+    pub show_count_badge: Option<bool>,
 }
 
 #[with_fallible_options]
@@ -721,6 +711,10 @@ pub struct FileFinderSettingsContent {
     ///
     /// Default: Smart
     pub include_ignored: Option<IncludeIgnoredContent>,
+    /// Whether to include text channels in file finder results.
+    ///
+    /// Default: false
+    pub include_channels: Option<bool>,
 }
 
 #[derive(

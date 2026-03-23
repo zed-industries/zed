@@ -1461,7 +1461,12 @@ async fn register_session_inner(
         .detach();
     })
     .ok();
-    let serialized_layout = persistence::get_serialized_layout(adapter_name).await;
+    let serialized_layout = this
+        .update(cx, |_, cx| {
+            persistence::get_serialized_layout(&adapter_name, &db::kvp::KeyValueStore::global(cx))
+        })
+        .ok()
+        .flatten();
     let debug_session = this.update_in(cx, |this, window, cx| {
         let parent_session = this
             .sessions_with_children
@@ -1821,20 +1826,22 @@ impl Render for DebugPanel {
                         .gap_2()
                         .child(
                             Button::new("spawn-new-session-empty-state", "New Session")
-                                .icon(IconName::Plus)
-                                .icon_size(IconSize::Small)
-                                .icon_color(Color::Muted)
-                                .icon_position(IconPosition::Start)
+                                .start_icon(
+                                    Icon::new(IconName::Plus)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
                                 .on_click(|_, window, cx| {
                                     window.dispatch_action(crate::Start.boxed_clone(), cx);
                                 }),
                         )
                         .child(
                             Button::new("edit-debug-settings", "Edit debug.json")
-                                .icon(IconName::Code)
-                                .icon_size(IconSize::Small)
-                                .icon_color(Color::Muted)
-                                .icon_position(IconPosition::Start)
+                                .start_icon(
+                                    Icon::new(IconName::Code)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
                                 .on_click(|_, window, cx| {
                                     window.dispatch_action(
                                         zed_actions::OpenProjectDebugTasks.boxed_clone(),
@@ -1844,10 +1851,11 @@ impl Render for DebugPanel {
                         )
                         .child(
                             Button::new("open-debugger-docs", "Debugger Docs")
-                                .icon(IconName::Book)
-                                .icon_size(IconSize::Small)
-                                .icon_color(Color::Muted)
-                                .icon_position(IconPosition::Start)
+                                .start_icon(
+                                    Icon::new(IconName::Book)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
                                 .on_click(|_, _, cx| cx.open_url("https://zed.dev/docs/debugger")),
                         )
                         .child(
@@ -1855,10 +1863,11 @@ impl Render for DebugPanel {
                                 "spawn-new-session-install-extensions",
                                 "Debugger Extensions",
                             )
-                            .icon(IconName::Blocks)
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .icon_position(IconPosition::Start)
+                            .start_icon(
+                                Icon::new(IconName::Blocks)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            )
                             .on_click(|_, window, cx| {
                                 window.dispatch_action(
                                     zed_actions::Extensions {

@@ -127,8 +127,9 @@ fn fetch_extension_repos(filter_repos_input: &WorkflowInput) -> (NamedJob, JobOu
         .id("calc-changes")
         .add_env(("PREV_COMMIT", prev_commit.to_string()));
 
-        let removed_ci = StepOutput::new(&step, "removed_ci");
-        let removed_shared = StepOutput::new(&step, "removed_shared");
+        // These are created in the for-loop above and thus do exist
+        let removed_ci = StepOutput::new_unchecked(&step, "removed_ci");
+        let removed_shared = StepOutput::new_unchecked(&step, "removed_shared");
 
         (step, removed_ci, removed_shared)
     }

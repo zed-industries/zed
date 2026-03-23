@@ -225,6 +225,7 @@ fn find_visuals(xcb: &XCBConnection, screen_index: usize) -> VisualSet {
     set
 }
 
+#[derive(Debug, Clone, Copy)]
 struct RawWindow {
     connection: *mut c_void,
     screen_id: usize,
@@ -249,6 +250,7 @@ pub struct Callbacks {
     should_close: Option<Box<dyn FnMut() -> bool>>,
     close: Option<Box<dyn FnOnce()>>,
     appearance_changed: Option<Box<dyn FnMut()>>,
+    button_layout_changed: Option<Box<dyn FnMut()>>,
 }
 
 pub struct X11WindowState {
@@ -533,12 +535,22 @@ impl X11WindowState {
                 && let Some(title) = titlebar.title
             {
                 check_reply(
-                    || "X11 ChangeProperty8 on window title failed.",
+                    || "X11 ChangeProperty8 on WM_NAME failed.",
                     xcb.change_property8(
                         xproto::PropMode::REPLACE,
                         x_window,
                         xproto::AtomEnum::WM_NAME,
                         xproto::AtomEnum::STRING,
+                        title.as_bytes(),
+                    ),
+                )?;
+                check_reply(
+                    || "X11 ChangeProperty8 on _NET_WM_NAME failed.",
+                    xcb.change_property8(
+                        xproto::PropMode::REPLACE,
+                        x_window,
+                        atoms._NET_WM_NAME,
+                        atoms.UTF8_STRING,
                         title.as_bytes(),
                     ),
                 )?;
@@ -1245,6 +1257,14 @@ impl X11WindowStatePtr {
             self.callbacks.borrow_mut().appearance_changed = Some(fun);
         }
     }
+
+    pub fn set_button_layout(&self) {
+        let callback = self.callbacks.borrow_mut().button_layout_changed.take();
+        if let Some(mut fun) = callback {
+            fun();
+            self.callbacks.borrow_mut().button_layout_changed = Some(fun);
+        }
+    }
 }
 
 impl PlatformWindow for X11Window {
@@ -1591,6 +1611,10 @@ impl PlatformWindow for X11Window {
         self.0.callbacks.borrow_mut().appearance_changed = Some(callback);
     }
 
+    fn on_button_layout_changed(&self, callback: Box<dyn FnMut()>) {
+        self.0.callbacks.borrow_mut().button_layout_changed = Some(callback);
+    }
+
     fn draw(&self, scene: &Scene) {
         let mut inner = self.0.state.borrow_mut();
 
@@ -1603,23 +1627,13 @@ impl PlatformWindow for X11Window {
                 window_id: self.0.x_window,
                 visual_id: inner.visual_id,
             };
-            let display_handle = rwh::HasDisplayHandle::display_handle(&raw_window)
-                .unwrap()
-                .as_raw();
-            let window_handle = rwh::HasWindowHandle::window_handle(&raw_window)
-                .unwrap()
-                .as_raw();
-
-            inner
-                .renderer
-                .recover(display_handle, window_handle)
-                .unwrap_or_else(|err| {
-                    panic!(
-                        "GPU device lost and recovery failed. \
+            inner.renderer.recover(&raw_window).unwrap_or_else(|err| {
+                panic!(
+                    "GPU device lost and recovery failed. \
                         This may happen after system suspend/resume. \
                         Please restart the application.\n\nError: {err}"
-                    )
-                });
+                )
+            });
 
             // The current scene references atlas textures that were cleared during recovery.
             // Skip this frame and let the next frame rebuild the scene with fresh textures.

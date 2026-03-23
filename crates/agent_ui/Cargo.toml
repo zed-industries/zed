@@ -34,7 +34,7 @@ agent_servers.workspace = true
 agent_settings.workspace = true
 ai_onboarding.workspace = true
 anyhow.workspace = true
-arrayvec.workspace = true
+heapless.workspace = true
 assistant_text_thread.workspace = true
 assistant_slash_command.workspace = true
 assistant_slash_commands.workspace = true
@@ -132,6 +132,7 @@ languages = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, "features" = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
+
 semver.workspace = true
 reqwest_client.workspace = true
 

@@ -10,6 +10,7 @@ use language::LanguageRegistry;
 use markdown::parser::PARSE_OPTIONS;
 use markup5ever_rcdom::RcDom;
 use pulldown_cmark::{Alignment, Event, Parser, Tag, TagEnd};
+use stacksafe::stacksafe;
 use std::{
     cell::RefCell, collections::HashMap, mem, ops::Range, path::PathBuf, rc::Rc, sync::Arc, vec,
 };
@@ -907,6 +908,7 @@ impl<'a> MarkdownParser<'a> {
         elements
     }
 
+    #[stacksafe]
     fn parse_html_node(
         &self,
         source_range: Range<usize>,
@@ -1013,6 +1015,7 @@ impl<'a> MarkdownParser<'a> {
         }
     }
 
+    #[stacksafe]
     fn parse_paragraph(
         &self,
         source_range: Range<usize>,
@@ -2771,6 +2774,35 @@ Some other content
             parse(markdown).await.children[0],
             ParsedMarkdownElement::Table(expected_table)
         );
+    }
+
+    #[gpui::test]
+    async fn test_table_with_checkboxes() {
+        let markdown = "\
+| Done | Task    |
+|------|---------|
+| [x]  | Fix bug |
+| [ ]  | Add feature |";
+
+        let parsed = parse(markdown).await;
+        let table = match &parsed.children[0] {
+            ParsedMarkdownElement::Table(table) => table,
+            other => panic!("Expected table, got: {:?}", other),
+        };
+
+        let first_cell = &table.body[0].columns[0];
+        let first_cell_text = match &first_cell.children[0] {
+            MarkdownParagraphChunk::Text(t) => t.contents.to_string(),
+            other => panic!("Expected text chunk, got: {:?}", other),
+        };
+        assert_eq!(first_cell_text.trim(), "[x]");
+
+        let second_cell = &table.body[1].columns[0];
+        let second_cell_text = match &second_cell.children[0] {
+            MarkdownParagraphChunk::Text(t) => t.contents.to_string(),
+            other => panic!("Expected text chunk, got: {:?}", other),
+        };
+        assert_eq!(second_cell_text.trim(), "[ ]");
     }
 
     #[gpui::test]

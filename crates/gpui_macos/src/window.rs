@@ -55,7 +55,10 @@ use std::{
     path::PathBuf,
     ptr::{self, NonNull},
     rc::Rc,
-    sync::{Arc, Weak},
+    sync::{
+        Arc, Weak,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 use util::ResultExt;
@@ -170,6 +173,10 @@ unsafe fn build_classes() {
                 );
                 decl.add_method(
                     sel!(mouseExited:),
+                    handle_view_event as extern "C" fn(&Object, Sel, id),
+                );
+                decl.add_method(
+                    sel!(magnifyWithEvent:),
                     handle_view_event as extern "C" fn(&Object, Sel, id),
                 );
                 decl.add_method(
@@ -436,6 +443,7 @@ struct MacWindowState {
     select_previous_tab_callback: Option<Box<dyn FnMut()>>,
     toggle_tab_bar_callback: Option<Box<dyn FnMut()>>,
     activated_least_once: bool,
+    closed: Arc<AtomicBool>,
     // The parent window if this window is a sheet (Dialog kind)
     sheet_parent: Option<id>,
 }
@@ -760,6 +768,7 @@ impl MacWindow {
                 select_previous_tab_callback: None,
                 toggle_tab_bar_callback: None,
                 activated_least_once: false,
+                closed: Arc::new(AtomicBool::new(false)),
                 sheet_parent: None,
             })));
 
@@ -1016,6 +1025,17 @@ impl Drop for MacWindow {
     }
 }
 
+/// Calls `f` if the window is not closed.
+///
+/// This should be used when spawning foreground tasks interacting with the
+/// window, as some messages will end hard faulting if dispatched to no longer
+/// valid window handles.
+fn if_window_not_closed(closed: Arc<AtomicBool>, f: impl FnOnce()) {
+    if !closed.load(Ordering::Acquire) {
+        f();
+    }
+}
+
 impl PlatformWindow for MacWindow {
     fn bounds(&self) -> Bounds<Pixels> {
         self.0.as_ref().lock().bounds()
@@ -1036,14 +1056,15 @@ impl PlatformWindow for MacWindow {
     fn resize(&mut self, size: Size<Pixels>) {
         let this = self.0.lock();
         let window = this.native_window;
+        let closed = this.closed.clone();
         this.foreground_executor
             .spawn(async move {
-                unsafe {
+                if_window_not_closed(closed, || unsafe {
                     window.setContentSize_(NSSize {
                         width: size.width.as_f32() as f64,
                         height: size.height.as_f32() as f64,
                     });
-                }
+                })
             })
             .detach();
     }
@@ -1256,15 +1277,21 @@ impl PlatformWindow for MacWindow {
                 }
             });
             let block = block.copy();
-            let native_window = self.0.lock().native_window;
-            let executor = self.0.lock().foreground_executor.clone();
+            let lock = self.0.lock();
+            let native_window = lock.native_window;
+            let closed = lock.closed.clone();
+            let executor = lock.foreground_executor.clone();
             executor
                 .spawn(async move {
-                    let _: () = msg_send![
-                        alert,
-                        beginSheetModalForWindow: native_window
-                        completionHandler: block
-                    ];
+                    if !closed.load(Ordering::Acquire) {
+                        let _: () = msg_send![
+                            alert,
+                            beginSheetModalForWindow: native_window
+                            completionHandler: block
+                        ];
+                    } else {
+                        let _: () = msg_send![alert, release];
+                    }
                 })
                 .detach();
 
@@ -1273,12 +1300,16 @@ impl PlatformWindow for MacWindow {
     }
 
     fn activate(&self) {
-        let window = self.0.lock().native_window;
-        let executor = self.0.lock().foreground_executor.clone();
+        let lock = self.0.lock();
+        let window = lock.native_window;
+        let closed = lock.closed.clone();
+        let executor = lock.foreground_executor.clone();
         executor
             .spawn(async move {
-                unsafe {
-                    let _: () = msg_send![window, makeKeyAndOrderFront: nil];
+                if !closed.load(Ordering::Acquire) {
+                    unsafe {
+                        let _: () = msg_send![window, makeKeyAndOrderFront: nil];
+                    }
                 }
             })
             .detach();
@@ -1416,11 +1447,12 @@ impl PlatformWindow for MacWindow {
     fn zoom(&self) {
         let this = self.0.lock();
         let window = this.native_window;
+        let closed = this.closed.clone();
         this.foreground_executor
             .spawn(async move {
-                unsafe {
+                if_window_not_closed(closed, || unsafe {
                     window.zoom_(nil);
-                }
+                })
             })
             .detach();
     }
@@ -1428,11 +1460,12 @@ impl PlatformWindow for MacWindow {
     fn toggle_fullscreen(&self) {
         let this = self.0.lock();
         let window = this.native_window;
+        let closed = this.closed.clone();
         this.foreground_executor
             .spawn(async move {
-                unsafe {
+                if_window_not_closed(closed, || unsafe {
                     window.toggleFullScreen_(nil);
-                }
+                })
             })
             .detach();
     }
@@ -1573,45 +1606,48 @@ impl PlatformWindow for MacWindow {
     fn titlebar_double_click(&self) {
         let this = self.0.lock();
         let window = this.native_window;
+        let closed = this.closed.clone();
         this.foreground_executor
             .spawn(async move {
-                unsafe {
-                    let defaults: id = NSUserDefaults::standardUserDefaults();
-                    let domain = ns_string("NSGlobalDomain");
-                    let key = ns_string("AppleActionOnDoubleClick");
+                if_window_not_closed(closed, || {
+                    unsafe {
+                        let defaults: id = NSUserDefaults::standardUserDefaults();
+                        let domain = ns_string("NSGlobalDomain");
+                        let key = ns_string("AppleActionOnDoubleClick");
 
-                    let dict: id = msg_send![defaults, persistentDomainForName: domain];
-                    let action: id = if !dict.is_null() {
-                        msg_send![dict, objectForKey: key]
-                    } else {
-                        nil
-                    };
+                        let dict: id = msg_send![defaults, persistentDomainForName: domain];
+                        let action: id = if !dict.is_null() {
+                            msg_send![dict, objectForKey: key]
+                        } else {
+                            nil
+                        };
 
-                    let action_str = if !action.is_null() {
-                        CStr::from_ptr(NSString::UTF8String(action)).to_string_lossy()
-                    } else {
-                        "".into()
-                    };
+                        let action_str = if !action.is_null() {
+                            CStr::from_ptr(NSString::UTF8String(action)).to_string_lossy()
+                        } else {
+                            "".into()
+                        };
 
-                    match action_str.as_ref() {
-                        "None" => {
-                            // "Do Nothing" selected, so do no action
-                        }
-                        "Minimize" => {
-                            window.miniaturize_(nil);
-                        }
-                        "Maximize" => {
-                            window.zoom_(nil);
-                        }
-                        "Fill" => {
-                            // There is no documented API for "Fill" action, so we'll just zoom the window
-                            window.zoom_(nil);
-                        }
-                        _ => {
-                            window.zoom_(nil);
+                        match action_str.as_ref() {
+                            "None" => {
+                                // "Do Nothing" selected, so do no action
+                            }
+                            "Minimize" => {
+                                window.miniaturize_(nil);
+                            }
+                            "Maximize" => {
+                                window.zoom_(nil);
+                            }
+                            "Fill" => {
+                                // There is no documented API for "Fill" action, so we'll just zoom the window
+                                window.zoom_(nil);
+                            }
+                            _ => {
+                                window.zoom_(nil);
+                            }
                         }
                     }
-                }
+                })
             })
             .detach();
     }
@@ -1795,10 +1831,13 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
             // may need them even if there is no marked text;
             // however we skip keys with control or the input handler adds control-characters to the buffer.
             // and keys with function, as the input handler swallows them.
+            // and keys with platform (Cmd), so that Cmd+key events (e.g. Cmd+`) are not
+            // consumed by the IME on non-QWERTY / dead-key layouts.
             if is_composing
                 || (key_down_event.keystroke.key_char.is_none()
                     && !key_down_event.keystroke.modifiers.control
-                    && !key_down_event.keystroke.modifiers.function)
+                    && !key_down_event.keystroke.modifiers.function
+                    && !key_down_event.keystroke.modifiers.platform)
             {
                 {
                     let mut lock = window_state.as_ref().lock();
@@ -2063,11 +2102,13 @@ fn update_window_scale_factor(window_state: &Arc<Mutex<MacWindowState>>) {
     let scale_factor = lock.scale_factor();
     let size = lock.content_size();
     let drawable_size = size.to_device_pixels(scale_factor);
-    unsafe {
-        let _: () = msg_send![
-            lock.renderer.layer(),
-            setContentsScale: scale_factor as f64
-        ];
+    if let Some(layer) = lock.renderer.layer() {
+        unsafe {
+            let _: () = msg_send![
+                layer,
+                setContentsScale: scale_factor as f64
+            ];
+        }
     }
 
     lock.renderer.update_drawable_size(drawable_size);
@@ -2104,10 +2145,12 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
     // in theory, we're not supposed to invoke this method manually but it balances out
     // the spurious `becomeKeyWindow` event and helps us work around that bug.
     if selector == sel!(windowDidBecomeKey:) && !is_active {
+        let native_window = lock.native_window;
+        drop(lock);
         unsafe {
-            let _: () = msg_send![lock.native_window, resignKeyWindow];
-            return;
+            let _: () = msg_send![native_window, resignKeyWindow];
         }
+        return;
     }
 
     let executor = lock.foreground_executor.clone();
@@ -2174,6 +2217,7 @@ extern "C" fn close_window(this: &Object, _: Sel) {
         let close_callback = {
             let window_state = get_window_state(this);
             let mut lock = window_state.as_ref().lock();
+            lock.closed.store(true, Ordering::Release);
             lock.close_callback.take()
         };
 

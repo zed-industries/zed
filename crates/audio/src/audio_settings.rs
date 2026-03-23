@@ -71,8 +71,8 @@ impl Settings for AudioSettings {
 }
 
 /// See docs on [LIVE_SETTINGS]
-pub(crate) struct LiveSettings {
-    pub(crate) auto_microphone_volume: AtomicBool,
+pub struct LiveSettings {
+    pub auto_microphone_volume: AtomicBool,
     pub(crate) auto_speaker_volume: AtomicBool,
     pub(crate) denoise: AtomicBool,
 }
@@ -128,7 +128,7 @@ impl LiveSettings {
 /// observer of SettingsStore. Needed because audio playback and recording are
 /// real time and must each run in a dedicated OS thread, therefore we can not
 /// use the background executor.
-pub(crate) static LIVE_SETTINGS: LiveSettings = LiveSettings {
+pub static LIVE_SETTINGS: LiveSettings = LiveSettings {
     auto_microphone_volume: AtomicBool::new(true),
     auto_speaker_volume: AtomicBool::new(true),
     denoise: AtomicBool::new(true),

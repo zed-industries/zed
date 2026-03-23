@@ -17,7 +17,7 @@ cli-support = []
 [dependencies]
 ai_onboarding.workspace = true
 anyhow.workspace = true
-arrayvec.workspace = true
+heapless.workspace = true
 brotli.workspace = true
 buffer_diff.workspace = true
 client.workspace = true

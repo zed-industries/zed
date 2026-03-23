@@ -33,7 +33,7 @@ use ui::prelude::*;
 use util::debug_panic;
 
 use crate::provider::anthropic::{AnthropicEventMapper, into_anthropic};
-use crate::provider::util::parse_tool_arguments;
+use crate::provider::util::{fix_streamed_json, parse_tool_arguments};
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("copilot_chat");
 const PROVIDER_NAME: LanguageModelProviderName =
@@ -579,7 +579,7 @@ pub fn map_to_language_model_completion_events(
 
                             if !entry.id.is_empty() && !entry.name.is_empty() {
                                 if let Ok(input) = serde_json::from_str::<serde_json::Value>(
-                                    &partial_json_fixer::fix_json(&entry.arguments),
+                                    &fix_streamed_json(&entry.arguments),
                                 ) {
                                     events.push(Ok(LanguageModelCompletionEvent::ToolUse(
                                         LanguageModelToolUse {
@@ -1111,38 +1111,26 @@ fn into_copilot_responses(
             Role::User => {
                 for content in &message.content {
                     if let MessageContent::ToolResult(tool_result) = content {
-                        let output = if let Some(out) = &tool_result.output {
-                            match out {
-                                serde_json::Value::String(s) => {
-                                    responses::ResponseFunctionOutput::Text(s.clone())
-                                }
-                                serde_json::Value::Null => {
-                                    responses::ResponseFunctionOutput::Text(String::new())
-                                }
-                                other => responses::ResponseFunctionOutput::Text(other.to_string()),
+                        let output = match &tool_result.content {
+                            LanguageModelToolResultContent::Text(text) => {
+                                responses::ResponseFunctionOutput::Text(text.to_string())
                             }
-                        } else {
-                            match &tool_result.content {
-                                LanguageModelToolResultContent::Text(text) => {
-                                    responses::ResponseFunctionOutput::Text(text.to_string())
-                                }
-                                LanguageModelToolResultContent::Image(image) => {
-                                    if model.supports_vision() {
-                                        responses::ResponseFunctionOutput::Content(vec![
-                                            responses::ResponseInputContent::InputImage {
-                                                image_url: Some(image.to_base64_url()),
-                                                detail: Default::default(),
-                                            },
-                                        ])
-                                    } else {
-                                        debug_panic!(
-                                            "This should be caught at {} level",
-                                            tool_result.tool_name
-                                        );
-                                        responses::ResponseFunctionOutput::Text(
+                            LanguageModelToolResultContent::Image(image) => {
+                                if model.supports_vision() {
+                                    responses::ResponseFunctionOutput::Content(vec![
+                                        responses::ResponseInputContent::InputImage {
+                                            image_url: Some(image.to_base64_url()),
+                                            detail: Default::default(),
+                                        },
+                                    ])
+                                } else {
+                                    debug_panic!(
+                                        "This should be caught at {} level",
+                                        tool_result.tool_name
+                                    );
+                                    responses::ResponseFunctionOutput::Text(
                                             "[Tool responded with an image, but this model does not support vision]".into(),
                                         )
-                                    }
                                 }
                             }
                         };

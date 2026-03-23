@@ -1502,10 +1502,9 @@ impl GitGraph {
 
                                 this.child(
                                     Button::new("author-email-copy", author_email.clone())
-                                        .icon(icon)
-                                        .icon_size(IconSize::Small)
-                                        .icon_color(icon_color)
-                                        .icon_position(IconPosition::Start)
+                                        .start_icon(
+                                            Icon::new(icon).size(IconSize::Small).color(icon_color),
+                                        )
                                         .label_size(LabelSize::Small)
                                         .truncate(true)
                                         .color(Color::Muted)
@@ -1550,10 +1549,9 @@ impl GitGraph {
                                 };
 
                                 Button::new("sha-button", &full_sha)
-                                    .icon(icon)
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(icon_color)
-                                    .icon_position(IconPosition::Start)
+                                    .start_icon(
+                                        Icon::new(icon).size(IconSize::Small).color(icon_color),
+                                    )
                                     .label_size(LabelSize::Small)
                                     .truncate(true)
                                     .color(Color::Muted)
@@ -1610,10 +1608,9 @@ impl GitGraph {
                                         "view-on-provider",
                                         format!("View on {}", provider_name),
                                     )
-                                    .icon(icon)
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(Color::Muted)
-                                    .icon_position(IconPosition::Start)
+                                    .start_icon(
+                                        Icon::new(icon).size(IconSize::Small).color(Color::Muted),
+                                    )
                                     .label_size(LabelSize::Small)
                                     .truncate(true)
                                     .color(Color::Muted)
@@ -2368,7 +2365,7 @@ impl workspace::SerializableItem for GitGraph {
             alive_items,
             workspace_id,
             "git_graphs",
-            &persistence::GIT_GRAPHS,
+            &persistence::GitGraphsDb::global(cx),
             cx,
         )
     }
@@ -2381,15 +2378,30 @@ impl workspace::SerializableItem for GitGraph {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<gpui::Result<Entity<Self>>> {
-        let Some(repo_work_path) = persistence::GIT_GRAPHS
-            .get_git_graph(item_id, workspace_id)
-            .ok()
-            .flatten()
-        else {
+        let db = persistence::GitGraphsDb::global(cx);
+        let Some(repo_work_path) = db.get_git_graph(item_id, workspace_id).ok().flatten() else {
             return Task::ready(Err(anyhow::anyhow!("No git graph to deserialize")));
         };
 
-        let git_store = project.read(cx).git_store().clone();
+        let project = project.read(cx);
+        let git_store = project.git_store().clone();
+
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        let wait = project.wait_for_initial_scan(cx);
+
+        cx.background_spawn(async move {
+            wait.await;
+            tx.send(()).ok();
+        })
+        .detach();
+
+        if let Err(err) = rx.recv() {
+            return Task::ready(Err(anyhow::anyhow!(
+                "Failed to wait for initial scan: {:?}",
+                err
+            )));
+        }
+
         let path = repo_work_path.as_path();
         let repo_id = git_store
             .read(cx)
@@ -2406,7 +2418,7 @@ impl workspace::SerializableItem for GitGraph {
         let Some(repo_id) = repo_id else {
             return Task::ready(Err(anyhow::anyhow!(
                 "Repository not found for path: {:?}",
-                repo_work_path
+                path
             )));
         };
 
@@ -2432,9 +2444,9 @@ impl workspace::SerializableItem for GitGraph {
             .to_string_lossy()
             .to_string();
 
+        let db = persistence::GitGraphsDb::global(cx);
         Some(cx.background_spawn(async move {
-            persistence::GIT_GRAPHS
-                .save_git_graph(item_id, workspace_id, repo_working_path)
+            db.save_git_graph(item_id, workspace_id, repo_working_path)
                 .await
         }))
     }
@@ -2477,7 +2489,7 @@ mod persistence {
         ];
     }
 
-    db::static_connection!(GIT_GRAPHS, GitGraphsDb, [WorkspaceDb]);
+    db::static_connection!(GitGraphsDb, [WorkspaceDb]);
 
     impl GitGraphsDb {
         query! {

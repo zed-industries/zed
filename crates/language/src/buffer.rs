@@ -4610,7 +4610,7 @@ impl BufferSnapshot {
                 continue;
             }
 
-            let mut all_brackets: Vec<(BracketMatch<usize>, bool)> = Vec::new();
+            let mut all_brackets: Vec<(BracketMatch<usize>, usize, bool)> = Vec::new();
             let mut opens = Vec::new();
             let mut color_pairs = Vec::new();
 
@@ -4636,8 +4636,9 @@ impl BufferSnapshot {
                 let mut open = None;
                 let mut close = None;
                 let syntax_layer_depth = mat.depth;
+                let pattern_index = mat.pattern_index;
                 let config = configs[mat.grammar_index];
-                let pattern = &config.patterns[mat.pattern_index];
+                let pattern = &config.patterns[pattern_index];
                 for capture in mat.captures {
                     if capture.index == config.open_capture_ix {
                         open = Some(capture.node.byte_range());
@@ -4658,7 +4659,7 @@ impl BufferSnapshot {
                 }
 
                 open_to_close_ranges
-                    .entry((open_range.start, open_range.end))
+                    .entry((open_range.start, open_range.end, pattern_index))
                     .or_insert_with(BTreeMap::new)
                     .insert(
                         (close_range.start, close_range.end),
@@ -4679,6 +4680,7 @@ impl BufferSnapshot {
                         newline_only: pattern.newline_only,
                         color_index: None,
                     },
+                    pattern_index,
                     pattern.rainbow_exclude,
                 ));
             }
@@ -4692,22 +4694,43 @@ impl BufferSnapshot {
                 // For each close, we know the expected open_len from tree-sitter matches.
 
                 // Map each close to its expected open length (for inferring opens)
-                let close_to_open_len: HashMap<(usize, usize), usize> = all_brackets
+                let close_to_open_len: HashMap<(usize, usize, usize), usize> = all_brackets
                     .iter()
-                    .map(|(m, _)| ((m.close_range.start, m.close_range.end), m.open_range.len()))
+                    .map(|(bracket_match, pattern_index, _)| {
+                        (
+                            (
+                                bracket_match.close_range.start,
+                                bracket_match.close_range.end,
+                                *pattern_index,
+                            ),
+                            bracket_match.open_range.len(),
+                        )
+                    })
                     .collect();
 
                 // Collect unique opens and closes within this chunk
-                let mut unique_opens: HashSet<(usize, usize)> = all_brackets
+                let mut unique_opens: HashSet<(usize, usize, usize)> = all_brackets
                     .iter()
-                    .map(|(m, _)| (m.open_range.start, m.open_range.end))
-                    .filter(|(start, _)| chunk_range.contains(start))
+                    .map(|(bracket_match, pattern_index, _)| {
+                        (
+                            bracket_match.open_range.start,
+                            bracket_match.open_range.end,
+                            *pattern_index,
+                        )
+                    })
+                    .filter(|(start, _, _)| chunk_range.contains(start))
                     .collect();
 
-                let mut unique_closes: Vec<(usize, usize)> = all_brackets
+                let mut unique_closes: Vec<(usize, usize, usize)> = all_brackets
                     .iter()
-                    .map(|(m, _)| (m.close_range.start, m.close_range.end))
-                    .filter(|(start, _)| chunk_range.contains(start))
+                    .map(|(bracket_match, pattern_index, _)| {
+                        (
+                            bracket_match.close_range.start,
+                            bracket_match.close_range.end,
+                            *pattern_index,
+                        )
+                    })
+                    .filter(|(start, _, _)| chunk_range.contains(start))
                     .collect();
                 unique_closes.sort();
                 unique_closes.dedup();
@@ -4716,8 +4739,9 @@ impl BufferSnapshot {
                 let mut unique_opens_vec: Vec<_> = unique_opens.iter().copied().collect();
                 unique_opens_vec.sort();
 
-                let mut valid_pairs: HashSet<((usize, usize), (usize, usize))> = HashSet::default();
-                let mut open_stack: Vec<(usize, usize)> = Vec::new();
+                let mut valid_pairs: HashSet<((usize, usize, usize), (usize, usize, usize))> =
+                    HashSet::default();
+                let mut open_stacks: HashMap<usize, Vec<(usize, usize)>> = HashMap::default();
                 let mut open_idx = 0;
 
                 for close in &unique_closes {
@@ -4725,36 +4749,53 @@ impl BufferSnapshot {
                     while open_idx < unique_opens_vec.len()
                         && unique_opens_vec[open_idx].0 < close.0
                     {
-                        open_stack.push(unique_opens_vec[open_idx]);
+                        let (start, end, pattern_index) = unique_opens_vec[open_idx];
+                        open_stacks
+                            .entry(pattern_index)
+                            .or_default()
+                            .push((start, end));
                         open_idx += 1;
                     }
 
                     // Try to match with most recent open
-                    if let Some(open) = open_stack.pop() {
-                        valid_pairs.insert((open, *close));
+                    let (close_start, close_end, pattern_index) = *close;
+                    if let Some(open) = open_stacks
+                        .get_mut(&pattern_index)
+                        .and_then(|open_stack| open_stack.pop())
+                    {
+                        valid_pairs.insert(((open.0, open.1, pattern_index), *close));
                     } else if let Some(&open_len) = close_to_open_len.get(close) {
                         // No open on stack - infer one based on expected open_len
-                        if close.0 >= open_len {
-                            let inferred = (close.0 - open_len, close.0);
+                        if close_start >= open_len {
+                            let inferred = (close_start - open_len, close_start, pattern_index);
                             unique_opens.insert(inferred);
                             valid_pairs.insert((inferred, *close));
                             all_brackets.push((
                                 BracketMatch {
                                     open_range: inferred.0..inferred.1,
-                                    close_range: close.0..close.1,
+                                    close_range: close_start..close_end,
                                     newline_only: false,
                                     syntax_layer_depth: 0,
                                     color_index: None,
                                 },
+                                pattern_index,
                                 false,
                             ));
                         }
                     }
                 }
 
-                all_brackets.retain(|(m, _)| {
-                    let open = (m.open_range.start, m.open_range.end);
-                    let close = (m.close_range.start, m.close_range.end);
+                all_brackets.retain(|(bracket_match, pattern_index, _)| {
+                    let open = (
+                        bracket_match.open_range.start,
+                        bracket_match.open_range.end,
+                        *pattern_index,
+                    );
+                    let close = (
+                        bracket_match.close_range.start,
+                        bracket_match.close_range.end,
+                        *pattern_index,
+                    );
                     valid_pairs.contains(&(open, close))
                 });
             }
@@ -4762,7 +4803,7 @@ impl BufferSnapshot {
             let mut all_brackets = all_brackets
                 .into_iter()
                 .enumerate()
-                .map(|(index, (bracket_match, rainbow_exclude))| {
+                .map(|(index, (bracket_match, _, rainbow_exclude))| {
                     // Certain languages have "brackets" that are not brackets, e.g. tags. and such
                     // bracket will match the entire tag with all text inside.
                     // For now, avoid highlighting any pair that has more than single char in each bracket.

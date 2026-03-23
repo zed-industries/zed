@@ -5,9 +5,9 @@ use client::{Client, UserStore};
 use cloud_api_types::OrganizationId;
 use cloud_llm_client::{WebSearchBody, WebSearchResponse};
 use futures::AsyncReadExt as _;
-use gpui::{App, AppContext, Context, Entity, Subscription, Task};
+use gpui::{App, AppContext, Context, Entity, Task};
 use http_client::{HttpClient, Method};
-use language_model::{LlmApiToken, NeedsLlmTokenRefresh, RefreshLlmTokenListener};
+use language_model::{LlmApiToken, NeedsLlmTokenRefresh};
 use web_search::{WebSearchProvider, WebSearchProviderId};
 
 pub struct CloudWebSearchProvider {
@@ -26,34 +26,16 @@ pub struct State {
     client: Arc<Client>,
     user_store: Entity<UserStore>,
     llm_api_token: LlmApiToken,
-    _llm_token_subscription: Subscription,
 }
 
 impl State {
     pub fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
-        let refresh_llm_token_listener = RefreshLlmTokenListener::global(cx);
+        let llm_api_token = LlmApiToken::global(cx);
 
         Self {
             client,
             user_store,
-            llm_api_token: LlmApiToken::default(),
-            _llm_token_subscription: cx.subscribe(
-                &refresh_llm_token_listener,
-                |this, _, _event, cx| {
-                    let client = this.client.clone();
-                    let llm_api_token = this.llm_api_token.clone();
-                    let organization_id = this
-                        .user_store
-                        .read(cx)
-                        .current_organization()
-                        .map(|o| o.id.clone());
-                    cx.spawn(async move |_this, _cx| {
-                        llm_api_token.refresh(&client, organization_id).await?;
-                        anyhow::Ok(())
-                    })
-                    .detach_and_log_err(cx);
-                },
-            ),
+            llm_api_token,
         }
     }
 }
@@ -73,7 +55,7 @@ impl WebSearchProvider for CloudWebSearchProvider {
             .user_store
             .read(cx)
             .current_organization()
-            .map(|o| o.id.clone());
+            .map(|organization| organization.id.clone());
         let body = WebSearchBody { query };
         cx.background_spawn(async move {
             perform_web_search(client, llm_api_token, organization_id, body).await
