@@ -14693,9 +14693,7 @@ async fn test_formatter_failure_does_not_abort_subsequent_formatters(cx: &mut Te
 
     // Formatter #1 (LanguageServer) returns an error to simulate failure
     fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
-        move |_params, _| async move {
-            Err(anyhow::anyhow!("Simulated formatter failure"))
-        },
+        move |_params, _| async move { Err(anyhow::anyhow!("Simulated formatter failure")) },
     );
 
     // Formatter #2 (CodeAction) returns a successful edit
@@ -14709,10 +14707,7 @@ async fn test_formatter_failure_does_not_abort_subsequent_formatters(cx: &mut Te
                         [(
                             uri,
                             vec![lsp::TextEdit::new(
-                                lsp::Range::new(
-                                    lsp::Position::new(0, 0),
-                                    lsp::Position::new(0, 0),
-                                ),
+                                lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
                                 "use std::io;\n".to_string(),
                             )],
                         )]
