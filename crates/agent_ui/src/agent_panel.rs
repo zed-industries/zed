@@ -26,7 +26,6 @@ use zed_actions::agent::{
     ResolveConflictedFilesWithAgent, ResolveConflictsWithAgent, ReviewBranchDiff,
 };
 
-use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal, HoldForDefault};
 use crate::{
     AddContextServer, AgentDiffPane, ConversationView, CopyThreadToClipboard, CycleStartThreadIn,
     Follow, InlineAssistant, LoadThreadFromClipboard, NewTextThread, NewThread,
@@ -41,6 +40,10 @@ use crate::{
 use crate::{
     Agent, AgentInitialContent, ExternalSourcePrompt, NewExternalAgentThread,
     NewNativeAgentThreadFromSummary,
+};
+use crate::{
+    DEFAULT_THREAD_TITLE,
+    ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal, HoldForDefault},
 };
 use crate::{
     ExpandMessageEditor, ThreadHistoryView,
@@ -92,7 +95,6 @@ use zed_actions::{
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
 const RECENTLY_UPDATED_MENU_LIMIT: usize = 6;
-const DEFAULT_THREAD_TITLE: &str = "New Thread";
 
 fn read_serialized_panel(
     workspace_id: workspace::WorkspaceId,
@@ -775,11 +777,7 @@ impl AgentPanel {
             SerializedActiveThread {
                 session_id: thread.session_id().0.to_string(),
                 agent_type: self.selected_agent_type.clone(),
-                title: if title.as_ref() != DEFAULT_THREAD_TITLE {
-                    Some(title.to_string())
-                } else {
-                    None
-                },
+                title: title.map(|t| t.to_string()),
                 work_dirs: work_dirs.map(|dirs| dirs.serialize()),
             }
         });
@@ -3221,7 +3219,7 @@ impl AgentPanel {
                     .map(|r| r.read(cx).title_editor.clone())
                 {
                     if is_generating_title {
-                        Label::new("New Thread…")
+                        Label::new(DEFAULT_THREAD_TITLE)
                             .color(Color::Muted)
                             .truncate()
                             .with_animation(

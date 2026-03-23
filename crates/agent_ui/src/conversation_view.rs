@@ -40,6 +40,7 @@ use parking_lot::RwLock;
 use project::{AgentId, AgentServerStore, Project, ProjectEntryId};
 use prompt_store::{PromptId, PromptStore};
 
+use crate::DEFAULT_THREAD_TITLE;
 use crate::message_editor::SessionCapabilities;
 use rope::Point;
 use settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore};
@@ -551,7 +552,7 @@ impl ConversationView {
                 (
                     Some(thread.session_id().clone()),
                     thread.work_dirs().cloned(),
-                    Some(thread.title()),
+                    thread.title(),
                 )
             })
             .unwrap_or((None, None, None));
@@ -1106,9 +1107,12 @@ impl ConversationView {
         &self.workspace
     }
 
-    pub fn title(&self, _cx: &App) -> SharedString {
+    pub fn title(&self, cx: &App) -> SharedString {
         match &self.server_state {
-            ServerState::Connected(_) => "New Thread".into(),
+            ServerState::Connected(view) => view
+                .active_view()
+                .and_then(|v| v.read(cx).thread.read(cx).title())
+                .unwrap_or_else(|| DEFAULT_THREAD_TITLE.into()),
             ServerState::Loading(_) => "Loading…".into(),
             ServerState::LoadError { error, .. } => match error {
                 LoadError::Unsupported { .. } => {
@@ -1350,8 +1354,9 @@ impl ConversationView {
                 );
             }
             AcpThreadEvent::TitleUpdated => {
-                let title = thread.read(cx).title();
-                if let Some(active_thread) = self.thread_view(&thread_id) {
+                if let Some(title) = thread.read(cx).title()
+                    && let Some(active_thread) = self.thread_view(&thread_id)
+                {
                     let title_editor = active_thread.read(cx).title_editor.clone();
                     title_editor.update(cx, |editor, cx| {
                         if editor.text(cx) != title {
@@ -3708,7 +3713,7 @@ pub(crate) mod tests {
         cx.new(|cx| {
             AcpThread::new(
                 None,
-                name,
+                Some(name.into()),
                 None,
                 connection,
                 project,
@@ -3908,7 +3913,7 @@ pub(crate) mod tests {
             Task::ready(Ok(cx.new(|cx| {
                 AcpThread::new(
                     None,
-                    "AuthGatedAgent",
+                    None,
                     Some(work_dirs),
                     self,
                     project,
@@ -3982,7 +3987,7 @@ pub(crate) mod tests {
                 let action_log = cx.new(|_| ActionLog::new(project.clone()));
                 AcpThread::new(
                     None,
-                    "SaboteurAgentConnection",
+                    None,
                     Some(work_dirs),
                     self,
                     project,
@@ -4052,7 +4057,7 @@ pub(crate) mod tests {
                 let action_log = cx.new(|_| ActionLog::new(project.clone()));
                 AcpThread::new(
                     None,
-                    "RefusalAgentConnection",
+                    None,
                     Some(work_dirs),
                     self,
                     project,
@@ -4132,7 +4137,7 @@ pub(crate) mod tests {
             let thread = cx.new(|cx| {
                 AcpThread::new(
                     None,
-                    "CwdCapturingConnection",
+                    None,
                     Some(work_dirs),
                     self.clone(),
                     project,
@@ -4167,7 +4172,7 @@ pub(crate) mod tests {
             let thread = cx.new(|cx| {
                 AcpThread::new(
                     None,
-                    "CwdCapturingConnection",
+                    None,
                     Some(work_dirs),
                     self.clone(),
                     project,
@@ -6109,7 +6114,7 @@ pub(crate) mod tests {
             assert_eq!(editor.text(cx), "My Custom Title");
         });
         thread.read_with(cx, |thread, _cx| {
-            assert_eq!(thread.title().as_ref(), "My Custom Title");
+            assert_eq!(thread.title(), Some("My Custom Title".into()));
         });
     }
 
@@ -6195,7 +6200,7 @@ pub(crate) mod tests {
         cx.new(|cx| {
             AcpThread::new(
                 parent_session_id,
-                "Test Thread",
+                None,
                 None,
                 connection,
                 project,
@@ -6703,7 +6708,7 @@ pub(crate) mod tests {
             let thread = cx.new(|cx| {
                 AcpThread::new(
                     None,
-                    "CloseCapableConnection",
+                    Some("CloseCapableConnection".into()),
                     Some(work_dirs),
                     self,
                     project,

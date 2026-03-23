@@ -1,4 +1,4 @@
-use crate::SelectPermissionGranularity;
+use crate::{DEFAULT_THREAD_TITLE, SelectPermissionGranularity};
 use std::cell::RefCell;
 
 use acp_thread::ContentBlock;
@@ -405,7 +405,11 @@ impl ThreadView {
             let can_edit = thread.update(cx, |thread, cx| thread.can_set_title(cx));
             let editor = cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_text(thread.read(cx).title(), window, cx);
+                if let Some(title) = thread.read(cx).title() {
+                    editor.set_text(title, window, cx);
+                } else {
+                    editor.set_text(DEFAULT_THREAD_TITLE, window, cx);
+                }
                 editor.set_read_only(!can_edit);
                 editor
             });
@@ -1537,7 +1541,7 @@ impl ThreadView {
             EditorEvent::Blurred => {
                 if title_editor.read(cx).text(cx).is_empty() {
                     title_editor.update(cx, |editor, cx| {
-                        editor.set_text("New Thread", window, cx);
+                        editor.set_text(DEFAULT_THREAD_TITLE, window, cx);
                     });
                 }
             }
@@ -4656,7 +4660,10 @@ impl ThreadView {
             .language_for_name("Markdown");
 
         let thread = self.thread.read(cx);
-        let thread_title = thread.title().to_string();
+        let thread_title = thread
+            .title()
+            .unwrap_or_else(|| DEFAULT_THREAD_TITLE.into())
+            .to_string();
         let markdown = thread.to_markdown(cx);
 
         let project = workspace.read(cx).project().clone();
@@ -7068,7 +7075,7 @@ impl ThreadView {
 
         let thread_title = thread
             .as_ref()
-            .map(|t| t.read(cx).title())
+            .and_then(|t| t.read(cx).title())
             .filter(|t| !t.is_empty());
         let tool_call_label = tool_call.label.read(cx).source().to_string();
         let has_tool_call_label = !tool_call_label.is_empty();

@@ -3122,7 +3122,7 @@ async fn test_title_generation(cx: &mut TestAppContext) {
     fake_model.send_last_completion_stream_text_chunk("Hey!");
     fake_model.end_last_completion_stream();
     cx.run_until_parked();
-    thread.read_with(cx, |thread, _| assert_eq!(thread.title(), "New Thread"));
+    thread.read_with(cx, |thread, _| assert_eq!(thread.title(), None));
 
     // Ensure the summary model has been invoked to generate a title.
     summary_model.send_last_completion_stream_text_chunk("Hello ");
@@ -3131,7 +3131,9 @@ async fn test_title_generation(cx: &mut TestAppContext) {
     summary_model.end_last_completion_stream();
     send.collect::<Vec<_>>().await;
     cx.run_until_parked();
-    thread.read_with(cx, |thread, _| assert_eq!(thread.title(), "Hello world"));
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(thread.title(), Some("Hello world".into()))
+    });
 
     // Send another message, ensuring no title is generated this time.
     let send = thread
@@ -3145,7 +3147,9 @@ async fn test_title_generation(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert_eq!(summary_model.pending_completions(), Vec::new());
     send.collect::<Vec<_>>().await;
-    thread.read_with(cx, |thread, _| assert_eq!(thread.title(), "Hello world"));
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(thread.title(), Some("Hello world".into()))
+    });
 }
 
 #[gpui::test]

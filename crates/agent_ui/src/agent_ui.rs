@@ -80,6 +80,8 @@ pub(crate) use thread_history::ThreadHistory;
 pub(crate) use thread_history_view::*;
 use zed_actions;
 
+pub const DEFAULT_THREAD_TITLE: &str = "New Thread";
+
 actions!(
     agent,
     [

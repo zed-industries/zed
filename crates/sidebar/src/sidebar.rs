@@ -5,7 +5,9 @@ use agent_ui::thread_metadata_store::{SidebarThreadMetadataStore, ThreadMetadata
 use agent_ui::threads_archive_view::{
     ThreadsArchiveView, ThreadsArchiveViewEvent, format_history_entry_timestamp,
 };
-use agent_ui::{Agent, AgentPanel, AgentPanelEvent, NewThread, RemoveSelectedThread};
+use agent_ui::{
+    Agent, AgentPanel, AgentPanelEvent, DEFAULT_THREAD_TITLE, NewThread, RemoveSelectedThread,
+};
 use chrono::Utc;
 use editor::Editor;
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagViewExt as _};
@@ -556,7 +558,9 @@ impl Sidebar {
 
                 let icon = thread_view_ref.agent_icon;
                 let icon_from_external_svg = thread_view_ref.agent_icon_from_external_svg.clone();
-                let title = thread.title();
+                let title = thread
+                    .title()
+                    .unwrap_or_else(|| DEFAULT_THREAD_TITLE.into());
                 let is_native = thread_view_ref.as_native_thread(cx).is_some();
                 let is_title_generating = is_native && thread.has_provisional_title();
                 let session_id = thread.session_id().clone();
@@ -2706,9 +2710,9 @@ impl Sidebar {
 
         let label: SharedString = if is_active {
             self.active_draft_text(cx)
-                .unwrap_or_else(|| "New Thread".into())
+                .unwrap_or_else(|| DEFAULT_THREAD_TITLE.into())
         } else {
-            "New Thread".into()
+            DEFAULT_THREAD_TITLE.into()
         };
 
         let workspace = workspace.clone();
@@ -5098,7 +5102,7 @@ mod tests {
 
         let connection_b2 = StubAgentConnection::new();
         connection_b2.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-            acp::ContentChunk::new("New thread".into()),
+            acp::ContentChunk::new(DEFAULT_THREAD_TITLE.into()),
         )]);
         open_thread_with_connection(&panel_b, connection_b2, cx);
         send_message(&panel_b, cx);

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
+use crate::DEFAULT_THREAD_TITLE;
 use crate::ThreadHistory;
 use acp_thread::MentionUri;
 use agent_client_protocol as acp;
@@ -192,7 +193,7 @@ pub struct EntryMatch {
 fn session_title(title: Option<SharedString>) -> SharedString {
     title
         .filter(|title| !title.is_empty())
-        .unwrap_or_else(|| SharedString::new_static("New Thread"))
+        .unwrap_or_else(|| SharedString::new_static(DEFAULT_THREAD_TITLE))
 }
 
 #[derive(Debug, Clone)]
@@ -1098,11 +1099,11 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
 
         if let Some(agent_panel) = workspace.panel::<AgentPanel>(cx)
             && let Some(thread) = agent_panel.read(cx).active_agent_thread(cx)
+            && let Some(title) = thread.read(cx).title()
         {
-            let thread = thread.read(cx);
             mentions.insert(MentionUri::Thread {
-                id: thread.session_id().clone(),
-                name: thread.title().into(),
+                id: thread.read(cx).session_id().clone(),
+                name: title.to_string(),
             });
         }
 

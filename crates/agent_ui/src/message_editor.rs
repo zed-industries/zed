@@ -1,3 +1,4 @@
+use crate::DEFAULT_THREAD_TITLE;
 use crate::SendImmediately;
 use crate::ThreadHistory;
 use crate::{
@@ -387,7 +388,7 @@ impl MessageEditor {
         };
         let thread_title = title
             .filter(|title| !title.is_empty())
-            .unwrap_or_else(|| SharedString::new_static("New Thread"));
+            .unwrap_or_else(|| SharedString::new_static(DEFAULT_THREAD_TITLE));
         let uri = MentionUri::Thread {
             id: session_id,
             name: thread_title.to_string(),

@@ -296,11 +296,6 @@ impl AgentServer for CustomAgentServer {
         cx: &mut App,
     ) -> Task<Result<Rc<dyn AgentConnection>>> {
         let agent_id = self.agent_id();
-        let display_name = delegate
-            .store
-            .read(cx)
-            .agent_display_name(&agent_id)
-            .unwrap_or_else(|| agent_id.0.clone());
         let default_mode = self.default_mode(cx);
         let default_model = self.default_model(cx);
         let is_registry_agent = is_registry_agent(agent_id.clone(), cx);
@@ -376,7 +371,6 @@ impl AgentServer for CustomAgentServer {
             let connection = crate::acp::connect(
                 agent_id,
                 project,
-                display_name,
                 command,
                 default_mode,
                 default_model,

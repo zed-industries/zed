@@ -665,11 +665,10 @@ mod test_support {
             cx: &mut gpui::App,
         ) -> Entity<AcpThread> {
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
-            let thread_title = title.unwrap_or_else(|| SharedString::new_static("Test"));
             let thread = cx.new(|cx| {
                 AcpThread::new(
                     None,
-                    thread_title,
+                    title,
                     Some(work_dirs),
                     self.clone(),
                     project,
