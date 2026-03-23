@@ -1,3 +1,4 @@
+use gpui::WindowButtonLayout;
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
@@ -17,6 +18,24 @@ pub enum WindowButtonLayoutContent {
     Default,
     /// A raw GNOME-style layout string.
     Custom(String),
+}
+
+impl WindowButtonLayoutContent {
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    pub fn into_layout(self) -> Option<WindowButtonLayout> {
+        use util::ResultExt;
+
+        match self {
+            Self::Auto => None,
+            Self::Default => Some(WindowButtonLayout::default()),
+            Self::Custom(layout) => WindowButtonLayout::parse(&layout).log_err(),
+        }
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+    pub fn into_layout(self) -> Option<WindowButtonLayout> {
+        None
+    }
 }
 
 fn window_button_layout_schema(_: &mut SchemaGenerator) -> Schema {

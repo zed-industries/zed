@@ -26,27 +26,7 @@ impl Settings for TitleBarSettings {
             show_sign_in: content.show_sign_in.unwrap(),
             show_user_menu: content.show_user_menu.unwrap(),
             show_menus: content.show_menus.unwrap(),
-            button_layout: resolve_button_layout(content.button_layout.unwrap_or_default()),
+            button_layout: content.button_layout.unwrap_or_default().into_layout(),
         }
     }
-}
-
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
-fn resolve_button_layout(
-    setting: settings::WindowButtonLayoutContent,
-) -> Option<WindowButtonLayout> {
-    use util::ResultExt;
-
-    match setting {
-        settings::WindowButtonLayoutContent::Auto => None,
-        settings::WindowButtonLayoutContent::Default => Some(WindowButtonLayout::default()),
-        settings::WindowButtonLayoutContent::Custom(s) => WindowButtonLayout::parse(&s).log_err(),
-    }
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
-fn resolve_button_layout(
-    _setting: settings::WindowButtonLayoutContent,
-) -> Option<WindowButtonLayout> {
-    None
 }

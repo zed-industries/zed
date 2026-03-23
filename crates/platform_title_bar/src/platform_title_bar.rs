@@ -74,6 +74,20 @@ impl PlatformTitleBar {
         self.button_layout = button_layout;
     }
 
+    fn effective_button_layout(
+        &self,
+        decorations: &Decorations,
+        cx: &App,
+    ) -> Option<WindowButtonLayout> {
+        if self.platform_style == PlatformStyle::Linux
+            && matches!(decorations, Decorations::Client { .. })
+        {
+            Some(self.button_layout.unwrap_or_else(|| cx.button_layout()))
+        } else {
+            None
+        }
+    }
+
     pub fn init(cx: &mut App) {
         SystemWindowTabs::init(cx);
     }
@@ -101,13 +115,7 @@ impl Render for PlatformTitleBar {
         let close_action = Box::new(workspace::CloseWindow);
         let children = mem::take(&mut self.children);
 
-        let button_layout = if self.platform_style == PlatformStyle::Linux
-            && matches!(decorations, Decorations::Client { .. })
-        {
-            self.button_layout.unwrap_or_else(|| cx.button_layout())
-        } else {
-            WindowButtonLayout::default()
-        };
+        let button_layout = self.effective_button_layout(&decorations, cx);
         let is_multiworkspace_sidebar_open =
             PlatformTitleBar::is_multi_workspace_enabled(cx) && self.is_workspace_sidebar_open();
 
@@ -163,7 +171,9 @@ impl Render for PlatformTitleBar {
                     && !is_multiworkspace_sidebar_open
                 {
                     this.pl(px(TRAFFIC_LIGHT_PADDING))
-                } else if button_layout.left[0].is_some() {
+                } else if let Some(button_layout) =
+                    button_layout.filter(|button_layout| button_layout.left[0].is_some())
+                {
                     this.child(platform_linux::LinuxWindowControls::new(
                         "left-window-controls",
                         button_layout.left,
@@ -208,7 +218,9 @@ impl Render for PlatformTitleBar {
                     PlatformStyle::Linux => {
                         if matches!(decorations, Decorations::Client { .. }) {
                             let mut result = title_bar;
-                            if button_layout.right[0].is_some() {
+                            if let Some(button_layout) =
+                                button_layout.filter(|button_layout| button_layout.right[0].is_some())
+                            {
                                 result = result.child(platform_linux::LinuxWindowControls::new(
                                     "right-window-controls",
                                     button_layout.right,
