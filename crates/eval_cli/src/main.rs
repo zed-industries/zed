@@ -82,7 +82,7 @@ struct Args {
     timeout: Option<u64>,
 
     /// Directory for output artifacts (result.json, thread.md, thread.json).
-    #[arg(long, default_value = "/logs/agent")]
+    #[arg(long, default_value = ".")]
     output_dir: PathBuf,
 
     /// Disable staff mode (staff mode is enabled by default).
@@ -94,13 +94,9 @@ struct Args {
     #[arg(long)]
     reasoning_effort: Option<String>,
 
-    /// Force enable extended thinking, overriding model auto-detection.
-    #[arg(long, conflicts_with = "disable_thinking")]
-    enable_thinking: bool,
-
-    /// Force disable extended thinking, overriding model auto-detection.
-    #[arg(long, conflicts_with = "enable_thinking")]
-    disable_thinking: bool,
+    /// Enable or disable extended thinking. Defaults to model auto-detection if omitted.
+    #[arg(long)]
+    thinking: Option<bool>,
 }
 
 enum AgentOutcome {
@@ -183,13 +179,7 @@ fn main() {
 
         let model_name = args.model.clone();
         let timeout = args.timeout;
-        let thinking_override = if args.enable_thinking {
-            Some(true)
-        } else if args.disable_thinking {
-            Some(false)
-        } else {
-            None
-        };
+        let thinking_override = args.thinking;
         let reasoning_effort = args.reasoning_effort.clone();
 
         cx.spawn(async move |cx| {
