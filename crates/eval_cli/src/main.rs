@@ -84,6 +84,23 @@ struct Args {
     /// Directory for output artifacts (result.json, thread.md, thread.json).
     #[arg(long, default_value = "/logs/agent")]
     output_dir: PathBuf,
+
+    /// Disable staff mode (staff mode is enabled by default).
+    #[arg(long)]
+    no_staff: bool,
+
+    /// Reasoning effort level for models that support thinking (low, medium, high).
+    /// Defaults to "high" for thinking-capable models.
+    #[arg(long)]
+    reasoning_effort: Option<String>,
+
+    /// Force enable extended thinking, overriding model auto-detection.
+    #[arg(long, conflicts_with = "disable_thinking")]
+    enable_thinking: bool,
+
+    /// Force disable extended thinking, overriding model auto-detection.
+    #[arg(long, conflicts_with = "enable_thinking")]
+    disable_thinking: bool,
 }
 
 enum AgentOutcome {
@@ -154,7 +171,7 @@ fn main() {
 
     app.run(move |cx| {
         let app_state = headless::init(cx);
-        cx.set_staff(true);
+        cx.set_staff(!args.no_staff);
 
         let auth_tasks = LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
             registry
@@ -166,6 +183,14 @@ fn main() {
 
         let model_name = args.model.clone();
         let timeout = args.timeout;
+        let thinking_override = if args.enable_thinking {
+            Some(true)
+        } else if args.disable_thinking {
+            Some(false)
+        } else {
+            None
+        };
+        let reasoning_effort = args.reasoning_effort.clone();
 
         cx.spawn(async move |cx| {
             futures::future::join_all(auth_tasks).await;
@@ -178,6 +203,8 @@ fn main() {
                 &instruction,
                 &model_name,
                 timeout,
+                thinking_override,
+                reasoning_effort.as_deref(),
                 Some(&output_dir),
                 cx,
             )
@@ -257,6 +284,8 @@ async fn run_agent(
     instruction: &str,
     model_name: &str,
     timeout: Option<u64>,
+    thinking_override: Option<bool>,
+    reasoning_effort: Option<&str>,
     output_dir: Option<&std::path::Path>,
     cx: &mut AsyncApp,
 ) -> (Result<AgentOutcome>, Option<language_model::TokenUsage>) {
@@ -292,10 +321,14 @@ async fn run_agent(
             anyhow::Ok(())
         })?;
 
-        let (enable_thinking, effort) = if supports_thinking {
-            (true, "\"high\"")
+        let enable_thinking = thinking_override.unwrap_or(supports_thinking);
+        let effort = if enable_thinking {
+            match reasoning_effort {
+                Some(level) => format!("\"{level}\""),
+                None => "\"high\"".to_string(),
+            }
         } else {
-            (false, "null")
+            "null".to_string()
         };
         let provider_id = selected.provider.0.to_string();
         let model_id = selected.model.0.to_string();
