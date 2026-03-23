@@ -18,6 +18,8 @@ use serde::Deserialize;
 use std::{path::PathBuf, sync::Arc};
 use util::ResultExt;
 
+use crate::auth::provider::{AuthProvider, ZedCloudAuthProvider};
+
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const REVISION: Option<&'static str> = option_env!("GITHUB_SHA");
 
@@ -210,12 +212,12 @@ impl ServiceMode {
 
 pub struct AppState {
     pub db: Arc<Database>,
-    pub http_client: Option<reqwest::Client>,
     pub livekit_client: Option<Arc<dyn livekit_api::Client>>,
     pub blob_store_client: Option<aws_sdk_s3::Client>,
     pub executor: Executor,
     pub kinesis_client: Option<::aws_sdk_kinesis::Client>,
     pub config: Config,
+    pub auth_provider: Arc<dyn AuthProvider>,
 }
 
 impl AppState {
@@ -247,9 +249,14 @@ impl AppState {
             .context("failed to construct HTTP client")?;
 
         let db = Arc::new(db);
+
+        let auth_provider: Arc<dyn AuthProvider> = Arc::new(ZedCloudAuthProvider::new(
+            Some(http_client),
+            config.zed_cloud_url().to_string(),
+        ));
+
         let this = Self {
             db: db.clone(),
-            http_client: Some(http_client),
             livekit_client,
             blob_store_client: build_blob_store_client(&config).await.log_err(),
             executor,
@@ -259,6 +266,7 @@ impl AppState {
                 None
             },
             config,
+            auth_provider,
         };
         Ok(Arc::new(this))
     }
