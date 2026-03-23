@@ -434,6 +434,53 @@ fn ensure_thread_subscription(
             }
             AcpThreadEvent::Stopped(_) => {
                 flush_streaming_throttle(&thread_id_for_sub);
+
+                // Send a final corrected message_added for every assistant/tool_call entry.
+                //
+                // Problem: The streaming text buffer (StreamingTextBuffer) in AcpThread
+                // accumulates incoming text chunks and reveals them gradually via a 16ms timer.
+                // AcpThreadEvent::EntryUpdated fires BEFORE the new chunk is appended to the
+                // buffer, so throttled_send_message_added captures content that is one chunk
+                // behind. flush_streaming_text (called just before Stopped is emitted) then
+                // flushes the buffer to the Markdown entity, but flush_streaming_throttle only
+                // sends stored pending messages — it does not re-read the now-complete content.
+                //
+                // For very short AI responses (e.g. "4"), the entire content may arrive in one
+                // chunk that was never captured by the throttle, leaving the Go server with only
+                // the empty content from the initial NewEntry event.
+                //
+                // Fix: after flush_streaming_throttle, read the current (complete) content from
+                // every assistant/tool_call entry and send it as a final message_added. The Go
+                // server accumulator uses per-messageID overwrite semantics, so these final
+                // events correctly replace any truncated or empty content sent during streaming.
+                let thread = thread_entity.read(cx);
+                for (idx, entry) in thread.entries().iter().enumerate() {
+                    let (content, entry_type, tool_name, tool_status) = match entry {
+                        acp_thread::AgentThreadEntry::AssistantMessage(msg) => {
+                            (msg.content_only(cx), "text".to_string(), String::new(), String::new())
+                        }
+                        acp_thread::AgentThreadEntry::ToolCall(tool_call) => {
+                            let name = tool_call.label.read(cx).source().to_string();
+                            let status = tool_call.status.to_string();
+                            (tool_call.to_markdown(cx), "tool_call".to_string(), name, status)
+                        }
+                        _ => continue,
+                    };
+                    if content.is_empty() {
+                        continue;
+                    }
+                    let _ = crate::send_websocket_event(SyncEvent::MessageAdded {
+                        acp_thread_id: thread_id_for_sub.clone(),
+                        message_id: idx.to_string(),
+                        role: "assistant".to_string(),
+                        content,
+                        entry_type,
+                        tool_name,
+                        tool_status,
+                        timestamp: chrono::Utc::now().timestamp(),
+                    });
+                }
+
                 let rid = crate::get_thread_request_id(&thread_id_for_sub)
                     .unwrap_or_default();
                 eprintln!(
