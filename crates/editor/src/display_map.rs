@@ -2269,9 +2269,10 @@ impl DisplaySnapshot {
             .unwrap_or(false)
     }
 
-    /// Returns `true` if the first non-whitespace content on `row` is a closing
-    /// bracket according to the language's bracket pair configuration.
-    fn line_starts_with_closing_bracket(&self, row: u32) -> bool {
+    /// If the first non-whitespace content on `row` is a closing bracket
+    /// according to the language's bracket pair configuration, returns the
+    /// row's indent length. Returns `None` otherwise.
+    fn closing_bracket_indent_len(&self, row: u32) -> Option<u32> {
         let snapshot = self.buffer_snapshot();
         let indent_len = self
             .line_indent_for_buffer_row(MultiBufferRow(row))
@@ -2282,21 +2283,15 @@ impl DisplaySnapshot {
             .take_while(|ch| *ch != '\n')
             .collect();
 
-        // Closing tags (e.g. `</div>`) are not represented in bracket pair
-        // configs, so check for them separately.
-        if line_text.starts_with("</") {
-            return true;
+        let scope = snapshot.language_scope_at(Point::new(row, 0))?;
+        if scope
+            .brackets()
+            .any(|(pair, _)| line_text.starts_with(&pair.end))
+        {
+            return Some(indent_len);
         }
 
-        if let Some(scope) = snapshot.language_scope_at(Point::new(row, 0)) {
-            let mut brackets = scope.brackets().peekable();
-            if brackets.peek().is_some() {
-                return brackets.any(|(pair, _)| line_text.starts_with(&pair.end));
-            }
-        }
-
-        // Fallback when no language is available or brackets are not configured
-        line_text.starts_with('}') || line_text.starts_with(')') || line_text.starts_with(']')
+        None
     }
 
     #[instrument(skip_all)]
@@ -2377,12 +2372,9 @@ impl DisplaySnapshot {
             };
 
             let end = if let Some(row) = closing_row {
-                if self.line_starts_with_closing_bracket(row) {
+                if let Some(indent_len) = self.closing_bracket_indent_len(row) {
                     // Include newline and whitespace before closing delimiter,
                     // so it appears on the same display line as the fold placeholder
-                    let indent_len = self
-                        .line_indent_for_buffer_row(MultiBufferRow(row))
-                        .raw_len();
                     Point::new(row, indent_len)
                 } else {
                     last_non_blank_row(row - 1)
