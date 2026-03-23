@@ -847,9 +847,14 @@
     "context": "Editor && edit_prediction",
     "bindings": {
       "alt-tab": "editor::AcceptEditPrediction",
-      "tab": "editor::AcceptEditPrediction",
       "ctrl-cmd-right": "editor::AcceptNextWordEditPrediction",
       "ctrl-cmd-down": "editor::AcceptNextLineEditPrediction",
+    },
+  },
+  {
+    "context": "Editor && edit_prediction && edit_prediction_mode == eager",
+    "bindings": {
+      "tab": "editor::AcceptEditPrediction",
     },
   },
   {

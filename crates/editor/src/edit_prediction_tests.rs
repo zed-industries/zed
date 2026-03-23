@@ -1,7 +1,9 @@
 use edit_prediction_types::{
     EditPredictionDelegate, EditPredictionIconSet, PredictedCursorPosition,
 };
-use gpui::{Entity, KeyBinding, Modifiers, NoAction, Task, prelude::*};
+use gpui::{
+    Entity, KeyBinding, KeybindingKeystroke, Keystroke, Modifiers, NoAction, Task, prelude::*,
+};
 use indoc::indoc;
 use language::EditPredictionsMode;
 use language::{Buffer, CodeLabel};
@@ -594,12 +596,12 @@ async fn test_inline_edit_prediction_keybind_selection_cases(cx: &mut gpui::Test
                 .accept_keystroke
                 .as_ref()
                 .expect("default inline edit prediction should have an accept binding")
-                .to_string();
+                .clone();
             let preview_keystroke = keybind_display
                 .preview_keystroke
                 .as_ref()
                 .expect("default inline edit prediction should have a preview binding")
-                .to_string();
+                .clone();
             (accept_keystroke, preview_keystroke)
         });
 
@@ -620,7 +622,7 @@ async fn test_inline_edit_prediction_keybind_selection_cases(cx: &mut gpui::Test
             mode: EditPredictionsMode::Subtle,
             extra_bindings: Vec::new(),
             state: InlineKeybindState::Normal,
-            expected_accept_keystroke: ExpectedKeystroke::DefaultAccept,
+            expected_accept_keystroke: ExpectedKeystroke::DefaultPreview,
             expected_preview_keystroke: ExpectedKeystroke::DefaultPreview,
             expected_displayed_keystroke: ExpectedKeystroke::DefaultPreview,
         },
@@ -629,9 +631,9 @@ async fn test_inline_edit_prediction_keybind_selection_cases(cx: &mut gpui::Test
             use_default_keymap: true,
             mode: EditPredictionsMode::Eager,
             extra_bindings: vec![KeyBinding::new(
-                &default_accept_keystroke,
+                "tab",
                 NoAction,
-                Some("Editor && edit_prediction"),
+                Some("Editor && edit_prediction && edit_prediction_mode == eager"),
             )],
             state: InlineKeybindState::Normal,
             expected_accept_keystroke: ExpectedKeystroke::DefaultPreview,
@@ -768,36 +770,39 @@ async fn test_inline_edit_prediction_keybind_selection_cases(cx: &mut gpui::Test
                 .unwrap_or_else(|| panic!("case '{}' should have a displayed binding", case.name));
 
             let expected_accept_keystroke = match case.expected_accept_keystroke {
-                ExpectedKeystroke::DefaultAccept => default_accept_keystroke.as_str(),
-                ExpectedKeystroke::DefaultPreview => default_preview_keystroke.as_str(),
-                ExpectedKeystroke::Literal(keystroke) => keystroke,
+                ExpectedKeystroke::DefaultAccept => default_accept_keystroke.clone(),
+                ExpectedKeystroke::DefaultPreview => default_preview_keystroke.clone(),
+                ExpectedKeystroke::Literal(keystroke) => KeybindingKeystroke::from_keystroke(
+                    Keystroke::parse(keystroke).expect("expected test keystroke to parse"),
+                ),
             };
             let expected_preview_keystroke = match case.expected_preview_keystroke {
-                ExpectedKeystroke::DefaultAccept => default_accept_keystroke.as_str(),
-                ExpectedKeystroke::DefaultPreview => default_preview_keystroke.as_str(),
-                ExpectedKeystroke::Literal(keystroke) => keystroke,
+                ExpectedKeystroke::DefaultAccept => default_accept_keystroke.clone(),
+                ExpectedKeystroke::DefaultPreview => default_preview_keystroke.clone(),
+                ExpectedKeystroke::Literal(keystroke) => KeybindingKeystroke::from_keystroke(
+                    Keystroke::parse(keystroke).expect("expected test keystroke to parse"),
+                ),
             };
             let expected_displayed_keystroke = match case.expected_displayed_keystroke {
-                ExpectedKeystroke::DefaultAccept => default_accept_keystroke.as_str(),
-                ExpectedKeystroke::DefaultPreview => default_preview_keystroke.as_str(),
-                ExpectedKeystroke::Literal(keystroke) => keystroke,
+                ExpectedKeystroke::DefaultAccept => default_accept_keystroke.clone(),
+                ExpectedKeystroke::DefaultPreview => default_preview_keystroke.clone(),
+                ExpectedKeystroke::Literal(keystroke) => KeybindingKeystroke::from_keystroke(
+                    Keystroke::parse(keystroke).expect("expected test keystroke to parse"),
+                ),
             };
 
             assert_eq!(
-                accept_keystroke.to_string(),
-                expected_accept_keystroke,
+                accept_keystroke, &expected_accept_keystroke,
                 "case '{}' selected the wrong accept binding",
                 case.name
             );
             assert_eq!(
-                preview_keystroke.to_string(),
-                expected_preview_keystroke,
+                preview_keystroke, &expected_preview_keystroke,
                 "case '{}' selected the wrong preview binding",
                 case.name
             );
             assert_eq!(
-                displayed_keystroke.to_string(),
-                expected_displayed_keystroke,
+                displayed_keystroke, &expected_displayed_keystroke,
                 "case '{}' selected the wrong displayed binding",
                 case.name
             );

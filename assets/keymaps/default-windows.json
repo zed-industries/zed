@@ -779,9 +779,15 @@
     "bindings": {
       "alt-tab": "editor::AcceptEditPrediction",
       "alt-l": "editor::AcceptEditPrediction",
-      "tab": "editor::AcceptEditPrediction",
       "alt-k": "editor::AcceptNextWordEditPrediction",
       "alt-j": "editor::AcceptNextLineEditPrediction",
+    },
+  },
+  {
+    "context": "Editor && edit_prediction && edit_prediction_mode == eager",
+    "use_key_equivalents": true,
+    "bindings": {
+      "tab": "editor::AcceptEditPrediction",
     },
   },
   {
