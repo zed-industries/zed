@@ -9643,6 +9643,7 @@ dependencies = [
  "smol",
  "snippet",
  "task",
+ "tempfile",
  "terminal",
  "theme",
  "toml 0.8.23",

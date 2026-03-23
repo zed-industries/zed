@@ -218,7 +218,7 @@ use workspace::{
     OpenTerminal, Pane, RestoreOnStartupBehavior, SERIALIZATION_THROTTLE_TIME, SplitDirection,
     TabBarSettings, Toast, ViewId, Workspace, WorkspaceId, WorkspaceSettings,
     item::{ItemBufferKind, ItemHandle, PreviewTabsSettings, SaveOptions},
-    notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
+    notifications::{DetachAndPromptErr, NotificationId, NotifyResultExt, NotifyTaskExt},
     searchable::SearchEvent,
 };
 pub use zed_actions::editor::RevealInFileManager;
@@ -6868,7 +6868,8 @@ impl Editor {
         let runnable_task = match deployed_from {
             Some(CodeActionSource::Indicator(_)) => Task::ready(Ok(Default::default())),
             _ => {
-                let mut task_context_task = Task::ready(None);
+                let mut task_context_task = Task::ready(Ok(None));
+                let workspace = self.workspace().map(|w| w.downgrade());
                 if let Some(tasks) = &tasks
                     && let Some(project) = project
                 {
@@ -6879,7 +6880,10 @@ impl Editor {
                 cx.spawn_in(window, {
                     let buffer = buffer.clone();
                     async move |editor, cx| {
-                        let task_context = task_context_task.await;
+                        let task_context = match workspace {
+                            Some(ws) => task_context_task.await.notify_workspace_async_err(ws, cx).flatten(),
+                            None => task_context_task.await.ok().flatten(),
+                        };
 
                         let resolved_tasks =
                             tasks
@@ -9277,7 +9281,7 @@ impl Editor {
         buffer_row: u32,
         tasks: &Arc<RunnableTasks>,
         cx: &mut Context<Self>,
-    ) -> Task<Option<task::TaskContext>> {
+    ) -> Task<Result<Option<task::TaskContext>>> {
         let position = Point::new(buffer_row, tasks.column);
         let range_start = buffer.read(cx).anchor_at(position, Bias::Right);
         let location = Location {
