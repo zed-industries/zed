@@ -83,11 +83,15 @@ fn migrate_thread_metadata(cx: &mut App) {
                 .collect::<Vec<_>>()
         });
 
+        log::info!("Migrating {} thread store entries", metadata.len());
+
         // Manually save each entry to the database and call reload, otherwise
         // we'll end up triggering lots of reloads after each save
         for entry in metadata {
             db.save(entry).await?;
         }
+
+        log::info!("Finished migrating thread store entries");
 
         let _ = store.update(cx, |store, cx| store.reload(cx));
         Ok(())
