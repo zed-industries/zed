@@ -432,7 +432,7 @@ impl Sidebar {
                 AgentPanelEvent::ActiveViewChanged => {
                     let is_new_draft = agent_panel
                         .read(cx)
-                        .active_conversation()
+                        .active_conversation_view()
                         .is_some_and(|cv| cv.read(cx).parent_id(cx).is_none());
                     if is_new_draft {
                         this.focused_thread = None;
