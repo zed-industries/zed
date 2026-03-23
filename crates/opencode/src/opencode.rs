@@ -42,6 +42,18 @@ pub enum Model {
     Claude3_5Haiku,
 
     // -- OpenAI Responses API models --
+    #[serde(rename = "gpt-5.4")]
+    Gpt5_4,
+    #[serde(rename = "gpt-5.4-pro")]
+    Gpt5_4Pro,
+    #[serde(rename = "gpt-5.4-mini")]
+    Gpt5_4Mini,
+    #[serde(rename = "gpt-5.4-nano")]
+    Gpt5_4Nano,
+    #[serde(rename = "gpt-5.3-codex")]
+    Gpt5_3Codex,
+    #[serde(rename = "gpt-5.3-codex-spark")]
+    Gpt5_3Spark,
     #[serde(rename = "gpt-5.2")]
     Gpt5_2,
     #[serde(rename = "gpt-5.2-codex")]
@@ -62,8 +74,8 @@ pub enum Model {
     Gpt5Nano,
 
     // -- Google protocol models --
-    #[serde(rename = "gemini-3-pro")]
-    Gemini3Pro,
+    #[serde(rename = "gemini-3.1-pro")]
+    Gemini3_1Pro,
     #[serde(rename = "gemini-3-flash")]
     Gemini3Flash,
 
@@ -72,28 +84,22 @@ pub enum Model {
     MiniMaxM2_5,
     #[serde(rename = "minimax-m2.5-free")]
     MiniMaxM2_5Free,
-    #[serde(rename = "minimax-m2.1")]
-    MiniMaxM2_1,
     #[serde(rename = "glm-5")]
     Glm5,
-    #[serde(rename = "glm-5-free")]
-    Glm5Free,
-    #[serde(rename = "glm-4.7")]
-    Glm4_7,
-    #[serde(rename = "glm-4.6")]
-    Glm4_6,
     #[serde(rename = "kimi-k2.5")]
     KimiK2_5,
-    #[serde(rename = "kimi-k2.5-free")]
-    KimiK2_5Free,
-    #[serde(rename = "kimi-k2-thinking")]
-    KimiK2Thinking,
-    #[serde(rename = "kimi-k2")]
-    KimiK2,
-    #[serde(rename = "qwen3-coder")]
-    Qwen3Coder,
+    #[serde(rename = "mimo-v2-pro-free")]
+    MimoV2ProFree,
+    #[serde(rename = "mimo-v2-omni-free")]
+    MimoV2OmniFree,
+    #[serde(rename = "mimo-v2-flash-free")]
+    MimoV2FlashFree,
+    #[serde(rename = "trinity-large-preview-free")]
+    TrinityLargePreviewFree,
     #[serde(rename = "big-pickle")]
     BigPickle,
+    #[serde(rename = "nemotron-3-super-free")]
+    Nemotron3SuperFree,
 
     // -- Custom model --
     #[serde(rename = "custom")]
@@ -122,6 +128,12 @@ impl Model {
             Self::ClaudeHaiku4_5 => "claude-haiku-4-5",
             Self::Claude3_5Haiku => "claude-3-5-haiku",
 
+            Self::Gpt5_4 => "gpt-5.4",
+            Self::Gpt5_4Pro => "gpt-5.4-pro",
+            Self::Gpt5_4Mini => "gpt-5.4-mini",
+            Self::Gpt5_4Nano => "gpt-5.4-nano",
+            Self::Gpt5_3Codex => "gpt-5.3-codex",
+            Self::Gpt5_3Spark => "gpt-5.3-codex-spark",
             Self::Gpt5_2 => "gpt-5.2",
             Self::Gpt5_2Codex => "gpt-5.2-codex",
             Self::Gpt5_1 => "gpt-5.1",
@@ -132,22 +144,19 @@ impl Model {
             Self::Gpt5Codex => "gpt-5-codex",
             Self::Gpt5Nano => "gpt-5-nano",
 
-            Self::Gemini3Pro => "gemini-3-pro",
+            Self::Gemini3_1Pro => "gemini-3.1-pro",
             Self::Gemini3Flash => "gemini-3-flash",
 
             Self::MiniMaxM2_5 => "minimax-m2.5",
             Self::MiniMaxM2_5Free => "minimax-m2.5-free",
-            Self::MiniMaxM2_1 => "minimax-m2.1",
             Self::Glm5 => "glm-5",
-            Self::Glm5Free => "glm-5-free",
-            Self::Glm4_7 => "glm-4.7",
-            Self::Glm4_6 => "glm-4.6",
             Self::KimiK2_5 => "kimi-k2.5",
-            Self::KimiK2_5Free => "kimi-k2.5-free",
-            Self::KimiK2Thinking => "kimi-k2-thinking",
-            Self::KimiK2 => "kimi-k2",
-            Self::Qwen3Coder => "qwen3-coder",
+            Self::MimoV2ProFree => "mimo-v2-pro-free",
+            Self::MimoV2OmniFree => "mimo-v2-omni-free",
+            Self::MimoV2FlashFree => "mimo-v2-flash-free",
+            Self::TrinityLargePreviewFree => "trinity-large-preview-free",
             Self::BigPickle => "big-pickle",
+            Self::Nemotron3SuperFree => "nemotron-3-super-free",
 
             Self::Custom { name, .. } => name,
         }
@@ -164,6 +173,12 @@ impl Model {
             Self::ClaudeHaiku4_5 => "Claude Haiku 4.5",
             Self::Claude3_5Haiku => "Claude Haiku 3.5",
 
+            Self::Gpt5_4 => "GPT 5.4",
+            Self::Gpt5_4Pro => "GPT 5.4 Pro",
+            Self::Gpt5_4Mini => "GPT 5.4 Mini",
+            Self::Gpt5_4Nano => "GPT 5.4 Nano",
+            Self::Gpt5_3Codex => "GPT 5.3 Codex",
+            Self::Gpt5_3Spark => "GPT 5.3 Codex Spark",
             Self::Gpt5_2 => "GPT 5.2",
             Self::Gpt5_2Codex => "GPT 5.2 Codex",
             Self::Gpt5_1 => "GPT 5.1",
@@ -174,27 +189,22 @@ impl Model {
             Self::Gpt5Codex => "GPT 5 Codex",
             Self::Gpt5Nano => "GPT 5 Nano",
 
-            Self::Gemini3Pro => "Gemini 3 Pro",
+            Self::Gemini3_1Pro => "Gemini 3.1 Pro",
             Self::Gemini3Flash => "Gemini 3 Flash",
 
             Self::MiniMaxM2_5 => "MiniMax M2.5",
             Self::MiniMaxM2_5Free => "MiniMax M2.5 Free",
-            Self::MiniMaxM2_1 => "MiniMax M2.1",
             Self::Glm5 => "GLM 5",
-            Self::Glm5Free => "GLM 5 Free",
-            Self::Glm4_7 => "GLM 4.7",
-            Self::Glm4_6 => "GLM 4.6",
             Self::KimiK2_5 => "Kimi K2.5",
-            Self::KimiK2_5Free => "Kimi K2.5 Free",
-            Self::KimiK2Thinking => "Kimi K2 Thinking",
-            Self::KimiK2 => "Kimi K2",
-            Self::Qwen3Coder => "Qwen3 Coder 480B",
+            Self::MimoV2ProFree => "MiMo V2 Pro Free",
+            Self::MimoV2OmniFree => "MiMo V2 Omni Free",
+            Self::MimoV2FlashFree => "MiMo V2 Flash Free",
+            Self::TrinityLargePreviewFree => "Trinity Large Preview Free",
             Self::BigPickle => "Big Pickle",
+            Self::Nemotron3SuperFree => "Nemotron 3 Super Free",
 
             Self::Custom {
-                name,
-                display_name,
-                ..
+                name, display_name, ..
             } => display_name.as_deref().unwrap_or(name),
         }
     }
@@ -210,7 +220,13 @@ impl Model {
             | Self::ClaudeHaiku4_5
             | Self::Claude3_5Haiku => ApiProtocol::Anthropic,
 
-            Self::Gpt5_2
+            Self::Gpt5_4
+            | Self::Gpt5_4Pro
+            | Self::Gpt5_4Mini
+            | Self::Gpt5_4Nano
+            | Self::Gpt5_3Codex
+            | Self::Gpt5_3Spark
+            | Self::Gpt5_2
             | Self::Gpt5_2Codex
             | Self::Gpt5_1
             | Self::Gpt5_1Codex
@@ -220,21 +236,18 @@ impl Model {
             | Self::Gpt5Codex
             | Self::Gpt5Nano => ApiProtocol::OpenAiResponses,
 
-            Self::Gemini3Pro | Self::Gemini3Flash => ApiProtocol::Google,
+            Self::Gemini3_1Pro | Self::Gemini3Flash => ApiProtocol::Google,
 
             Self::MiniMaxM2_5
             | Self::MiniMaxM2_5Free
-            | Self::MiniMaxM2_1
             | Self::Glm5
-            | Self::Glm5Free
-            | Self::Glm4_7
-            | Self::Glm4_6
             | Self::KimiK2_5
-            | Self::KimiK2_5Free
-            | Self::KimiK2Thinking
-            | Self::KimiK2
-            | Self::Qwen3Coder
-            | Self::BigPickle => ApiProtocol::OpenAiChat,
+            | Self::MimoV2ProFree
+            | Self::MimoV2OmniFree
+            | Self::MimoV2FlashFree
+            | Self::TrinityLargePreviewFree
+            | Self::BigPickle
+            | Self::Nemotron3SuperFree => ApiProtocol::OpenAiChat,
 
             Self::Custom { protocol, .. } => *protocol,
         }
@@ -250,24 +263,28 @@ impl Model {
             Self::Claude3_5Haiku => 200_000,
 
             // OpenAI models
+            Self::Gpt5_4 | Self::Gpt5_4Pro | Self::Gpt5_4Mini => 256_000,
+            Self::Gpt5_4Nano => 128_000,
+            Self::Gpt5_3Codex | Self::Gpt5_3Spark => 256_000,
             Self::Gpt5_2 | Self::Gpt5_2Codex => 256_000,
-            Self::Gpt5_1
-            | Self::Gpt5_1Codex
-            | Self::Gpt5_1CodexMax
-            | Self::Gpt5_1CodexMini => 256_000,
+            Self::Gpt5_1 | Self::Gpt5_1Codex | Self::Gpt5_1CodexMax | Self::Gpt5_1CodexMini => {
+                256_000
+            }
             Self::Gpt5 | Self::Gpt5Codex => 256_000,
             Self::Gpt5Nano => 128_000,
 
             // Google models
-            Self::Gemini3Pro => 1_048_576,
+            Self::Gemini3_1Pro => 1_048_576,
             Self::Gemini3Flash => 1_048_576,
 
             // OpenAI-compatible models
-            Self::MiniMaxM2_5 | Self::MiniMaxM2_5Free | Self::MiniMaxM2_1 => 128_000,
-            Self::Glm5 | Self::Glm5Free | Self::Glm4_7 | Self::Glm4_6 => 128_000,
-            Self::KimiK2_5 | Self::KimiK2_5Free | Self::KimiK2Thinking | Self::KimiK2 => 128_000,
-            Self::Qwen3Coder => 128_000,
+            Self::MiniMaxM2_5 | Self::MiniMaxM2_5Free => 128_000,
+            Self::Glm5 => 128_000,
+            Self::KimiK2_5 => 128_000,
+            Self::MimoV2ProFree | Self::MimoV2OmniFree | Self::MimoV2FlashFree => 128_000,
+            Self::TrinityLargePreviewFree => 128_000,
             Self::BigPickle => 128_000,
+            Self::Nemotron3SuperFree => 128_000,
 
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
@@ -283,25 +300,27 @@ impl Model {
             Self::Claude3_5Haiku => Some(8_192),
 
             // OpenAI models
+            Self::Gpt5_4 | Self::Gpt5_4Pro | Self::Gpt5_4Mini => Some(32_768),
+            Self::Gpt5_4Nano => Some(16_384),
+            Self::Gpt5_3Codex | Self::Gpt5_3Spark => Some(32_768),
             Self::Gpt5_2 | Self::Gpt5_2Codex => Some(32_768),
-            Self::Gpt5_1
-            | Self::Gpt5_1Codex
-            | Self::Gpt5_1CodexMax
-            | Self::Gpt5_1CodexMini => Some(32_768),
+            Self::Gpt5_1 | Self::Gpt5_1Codex | Self::Gpt5_1CodexMax | Self::Gpt5_1CodexMini => {
+                Some(32_768)
+            }
             Self::Gpt5 | Self::Gpt5Codex => Some(32_768),
             Self::Gpt5Nano => Some(16_384),
 
             // Google models
-            Self::Gemini3Pro | Self::Gemini3Flash => Some(65_536),
+            Self::Gemini3_1Pro | Self::Gemini3Flash => Some(65_536),
 
             // OpenAI-compatible models — use reasonable defaults
-            Self::MiniMaxM2_5 | Self::MiniMaxM2_5Free | Self::MiniMaxM2_1 => Some(16_384),
-            Self::Glm5 | Self::Glm5Free | Self::Glm4_7 | Self::Glm4_6 => Some(16_384),
-            Self::KimiK2_5 | Self::KimiK2_5Free | Self::KimiK2Thinking | Self::KimiK2 => {
-                Some(16_384)
-            }
-            Self::Qwen3Coder => Some(16_384),
+            Self::MiniMaxM2_5 | Self::MiniMaxM2_5Free => Some(16_384),
+            Self::Glm5 => Some(16_384),
+            Self::KimiK2_5 => Some(16_384),
+            Self::MimoV2ProFree | Self::MimoV2OmniFree | Self::MimoV2FlashFree => Some(16_384),
+            Self::TrinityLargePreviewFree => Some(16_384),
             Self::BigPickle => Some(16_384),
+            Self::Nemotron3SuperFree => Some(16_384),
 
             Self::Custom {
                 max_output_tokens, ..
@@ -329,7 +348,13 @@ impl Model {
             | Self::Claude3_5Haiku => true,
 
             // OpenAI models support images
-            Self::Gpt5_2
+            Self::Gpt5_4
+            | Self::Gpt5_4Pro
+            | Self::Gpt5_4Mini
+            | Self::Gpt5_4Nano
+            | Self::Gpt5_3Codex
+            | Self::Gpt5_3Spark
+            | Self::Gpt5_2
             | Self::Gpt5_2Codex
             | Self::Gpt5_1
             | Self::Gpt5_1Codex
@@ -340,7 +365,7 @@ impl Model {
             | Self::Gpt5Nano => true,
 
             // Google models support images
-            Self::Gemini3Pro | Self::Gemini3Flash => true,
+            Self::Gemini3_1Pro | Self::Gemini3Flash => true,
 
             // OpenAI-compatible models — conservative default
             _ => false,
@@ -383,9 +408,9 @@ pub async fn stream_generate_content_zen(
                         if let Some(line) = line.strip_prefix("data: ") {
                             match serde_json::from_str(line) {
                                 Ok(response) => Some(Ok(response)),
-                                Err(error) => Some(Err(anyhow!(
-                                    "Error parsing JSON: {error:?}\n{line:?}"
-                                ))),
+                                Err(error) => {
+                                    Some(Err(anyhow!("Error parsing JSON: {error:?}\n{line:?}")))
+                                }
                             }
                         } else {
                             None

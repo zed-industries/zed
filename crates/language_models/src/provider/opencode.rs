@@ -500,9 +500,7 @@ impl LanguageModel for OpenCodeLanguageModel {
                 let stream = self.stream_google_zen(google_request, cx);
                 async move {
                     let mapper = GoogleEventMapper::new();
-                    Ok(mapper
-                        .map_stream(stream.await?.map(|r| r.map_err(Into::into)).boxed())
-                        .boxed())
+                    Ok(mapper.map_stream(stream.await?.boxed()).boxed())
                 }
                 .boxed()
             }
