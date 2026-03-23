@@ -6,6 +6,7 @@ mod gitea;
 mod gitee;
 mod github;
 mod gitlab;
+mod huggingface;
 mod sourcehut;
 
 pub use azure::*;
@@ -16,4 +17,5 @@ pub use gitea::*;
 pub use gitee::*;
 pub use github::*;
 pub use gitlab::*;
+pub use huggingface::*;
 pub use sourcehut::*;
