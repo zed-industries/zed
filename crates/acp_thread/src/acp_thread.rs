@@ -4999,7 +4999,7 @@ mod tests {
 
         // Initial title is the default.
         thread.read_with(cx, |thread, _| {
-            assert_eq!(thread.title().as_ref().map(|s| s.as_str()), Some("Test"));
+            assert_eq!(thread.title(), None);
         });
 
         // Setting a provisional title updates the display title.
