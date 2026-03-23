@@ -2514,8 +2514,6 @@ impl Sidebar {
                     IconButton::new("stop-thread", IconName::Stop)
                         .icon_size(IconSize::Small)
                         .icon_color(Color::Error)
-                        .shape(IconButtonShape::Square)
-                        .size(ButtonSize::Compact)
                         .style(ButtonStyle::Tinted(TintColor::Error))
                         .tooltip(Tooltip::text("Stop Generation"))
                         .on_click({
