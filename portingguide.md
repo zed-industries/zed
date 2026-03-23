@@ -230,6 +230,10 @@ Global callbacks initialized during agent panel setup:
 
 Pending request queues (`PENDING_*`) buffer requests that arrive before callbacks are registered.
 
+## Branch Naming
+
+The internal git server only accepts pushes to branches matching the `feature/<task-id>-*` pattern. Always name the merge branch after the task ID, e.g. `feature/001617-merge-latest-zed`. Do not use date-based names like `merge-upstream-YYYY-MM-DD`.
+
 ## Rebase Checklist
 
 When rebasing/merging against upstream Zed:
