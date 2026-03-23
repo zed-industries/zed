@@ -13,9 +13,9 @@ use settings_macros::{MergeFrom, with_fallible_options};
 pub enum WindowButtonLayoutContent {
     /// Follow the system/desktop configuration.
     #[default]
-    Auto,
-    /// Use Zed's own hardcoded default layout, regardless of system config.
-    Default,
+    PlatformDefault,
+    /// Use Zed's built-in standard layout, regardless of system config.
+    Standard,
     /// A raw GNOME-style layout string.
     Custom(String),
 }
@@ -26,8 +26,8 @@ impl WindowButtonLayoutContent {
         use util::ResultExt;
 
         match self {
-            Self::Auto => None,
-            Self::Default => Some(WindowButtonLayout::default()),
+            Self::PlatformDefault => None,
+            Self::Standard => Some(WindowButtonLayout::default()),
             Self::Custom(layout) => WindowButtonLayout::parse(&layout).log_err(),
         }
     }
@@ -41,7 +41,7 @@ impl WindowButtonLayoutContent {
 fn window_button_layout_schema(_: &mut SchemaGenerator) -> Schema {
     json_schema!({
         "anyOf": [
-            { "enum": ["auto", "default"] },
+            { "enum": ["platform_default", "standard"] },
             { "type": "string" }
         ]
     })
@@ -50,8 +50,8 @@ fn window_button_layout_schema(_: &mut SchemaGenerator) -> Schema {
 impl From<WindowButtonLayoutContent> for String {
     fn from(value: WindowButtonLayoutContent) -> Self {
         match value {
-            WindowButtonLayoutContent::Auto => "auto".to_string(),
-            WindowButtonLayoutContent::Default => "default".to_string(),
+            WindowButtonLayoutContent::PlatformDefault => "platform_default".to_string(),
+            WindowButtonLayoutContent::Standard => "standard".to_string(),
             WindowButtonLayoutContent::Custom(s) => s,
         }
     }
@@ -60,8 +60,8 @@ impl From<WindowButtonLayoutContent> for String {
 impl From<String> for WindowButtonLayoutContent {
     fn from(layout_string: String) -> Self {
         match layout_string.as_str() {
-            "auto" => Self::Auto,
-            "default" => Self::Default,
+            "platform_default" => Self::PlatformDefault,
+            "standard" => Self::Standard,
             _ => Self::Custom(layout_string),
         }
     }
@@ -104,10 +104,10 @@ pub struct TitleBarSettingsContent {
     pub show_menus: Option<bool>,
     /// The layout of window control buttons in the title bar (Linux only).
     ///
-    /// This can be set to "auto" to follow the system configuration, or
-    /// "default" to use Zed's hardcoded layout. For custom layouts, use a
+    /// This can be set to "platform_default" to follow the system configuration, or
+    /// "standard" to use Zed's built-in layout. For custom layouts, use a
     /// GNOME-style layout string like "close:minimize,maximize".
     ///
-    /// Default: "auto"
+    /// Default: "platform_default"
     pub button_layout: Option<WindowButtonLayoutContent>,
 }

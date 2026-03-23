@@ -461,7 +461,7 @@
     // Whether to show the menus in the titlebar.
     "show_menus": false,
     // The layout of window control buttons in the title bar (Linux only).
-    "button_layout": "auto",
+    "button_layout": "platform_default",
   },
   "audio": {
     // Opt into the new audio system.
