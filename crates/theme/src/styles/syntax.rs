@@ -71,20 +71,19 @@ impl SyntaxTheme {
     pub fn get_capture_name(&self, idx: usize) -> Option<&str> {
         self.capture_name_map
             .iter()
-            .find_map(|(key, value)| (*value == idx).then_some(key.as_ref()))
+            .find(|(_, value)| **value == idx)
+            .map(|(key, _)| key.as_ref())
     }
 
     pub fn highlight_id(&self, capture_name: &str) -> Option<u32> {
         self.capture_name_map
             .range::<str, _>((
-                capture_name
-                    .split(".")
-                    .next()
-                    .map_or(std::ops::Bound::Unbounded, std::ops::Bound::Included),
+                capture_name.split(".").next().map_or(
+                    std::ops::Bound::Included(capture_name),
+                    std::ops::Bound::Included,
+                ),
                 std::ops::Bound::Included(capture_name),
             ))
-            .collect::<Vec<_>>()
-            .into_iter()
             .rfind(|(prefix, _)| {
                 capture_name
                     .strip_prefix(*prefix)
