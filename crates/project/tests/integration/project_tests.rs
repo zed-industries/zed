@@ -11682,12 +11682,11 @@ async fn test_initial_scan_complete(cx: &mut gpui::TestAppContext) {
     });
 
     // Repositories should have been created during the scan (observed via observe_new)
-    let created_repos = repos_created.borrow();
+    let created_repos_len = repos_created.borrow().len();
     assert_eq!(
-        created_repos.len(),
-        2,
+        created_repos_len, 2,
         "Expected 2 repositories to be created during scan, got {}",
-        created_repos.len()
+        created_repos_len
     );
 
     // GitStore should contain both repositories
