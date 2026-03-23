@@ -1734,7 +1734,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
                         line_length: Some(length),
                     }))
                 } else {
-                    Some(Box::new(Rewrap { line_length: None }))
+                    None
                 }
             }),
         VimCommand::new(("fo", "ld"), editor::actions::FoldSelectedRanges).range(act_on_range),
@@ -3612,6 +3612,25 @@ mod test {
                 4567
             "},
             Mode::Normal,
+        );
+
+        // Assert that, if `:reflow` is invoked with an invalid argument, it
+        // does not actually have any effect in the buffer's contents.
+        cx.set_state(
+            indoc! {"
+                ˇ0123 4567 0123 4567
+            "},
+            Mode::VisualLine,
+        );
+
+        cx.simulate_keystrokes(": reflow space a");
+        cx.simulate_keystrokes("enter");
+
+        cx.assert_state(
+            indoc! {"
+                ˇ0123 4567 0123 4567
+            "},
+            Mode::VisualLine,
         );
     }
 }

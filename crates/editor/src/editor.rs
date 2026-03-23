@@ -1869,8 +1869,6 @@ pub enum MultibufferSelectionMode {
 pub struct RewrapOptions {
     pub override_language_settings: bool,
     pub preserve_existing_whitespace: bool,
-    // TODO!: Better name to make it obvious this is meant to be an optional
-    // override?
     pub line_length: Option<usize>,
 }
 

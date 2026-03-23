@@ -10,8 +10,6 @@ use serde::Deserialize;
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 pub(crate) struct Rewrap {
-    // TODO!: Should this just be a tuple? Not sure if that would not require
-    // updating the keymap file too.
     pub line_length: Option<usize>,
 }
 
