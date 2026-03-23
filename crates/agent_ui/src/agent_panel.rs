@@ -2994,6 +2994,7 @@ impl AgentPanel {
                 }
 
                 // If we had an active buffer, remap its path and reopen it.
+                let had_active_file = active_file_path.is_some();
                 let remapped_active_path = active_file_path.and_then(|original_path| {
                     let best_match = path_remapping
                         .iter()
@@ -3016,7 +3017,7 @@ impl AgentPanel {
                     None
                 });
 
-                if remapped_active_path.is_none() {
+                if had_active_file && remapped_active_path.is_none() {
                     log::warn!(
                         "Active file could not be remapped to the new worktree; it will not be reopened"
                     );
