@@ -2603,6 +2603,105 @@ impl AgentPanel {
         }
     }
 
+    fn render_new_thread_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let focus_handle = self.focus_handle(cx);
+        let agent_server_store = self.project.read(cx).agent_server_store().clone();
+
+        let active_native_thread = self.active_native_agent_thread(cx);
+
+        PopoverMenu::new("new_thread_menu")
+            .trigger_with_tooltip(
+                IconButton::new("new_thread_menu_btn", IconName::Plus)
+                    .icon_size(IconSize::Small),
+                {
+                    let focus_handle = focus_handle.clone();
+                    move |_window, cx| {
+                        Tooltip::for_action_in(
+                            "New Thread…",
+                            &ToggleNewThreadMenu,
+                            &focus_handle,
+                            cx,
+                        )
+                    }
+                },
+            )
+            .anchor(Corner::TopRight)
+            .with_handle(self.new_thread_menu_handle.clone())
+            .menu(move |window, cx| {
+                let active_native_thread = active_native_thread.clone();
+                let agent_server_store = agent_server_store.clone();
+
+                Some(ContextMenu::build(window, cx, {
+                    let focus_handle = focus_handle.clone();
+                    move |mut menu, _window, cx| {
+                        menu = menu.context(focus_handle.clone());
+
+                        if let Some(active_thread) = active_native_thread.as_ref() {
+                            let thread = active_thread.read(cx);
+                            if !thread.is_empty() {
+                                let session_id = thread.id().clone();
+                                menu = menu.entry("New From Summary", None, move |window, cx| {
+                                    window.dispatch_action(
+                                        Box::new(NewNativeAgentThreadFromSummary {
+                                            from_session_id: session_id.clone(),
+                                        }),
+                                        cx,
+                                    );
+                                });
+                            }
+                        }
+
+                        menu = menu
+                            .action(
+                                "Zed Agent",
+                                Box::new(NewExternalAgentThread { agent: None }),
+                            )
+                            .action("Text Thread", NewTextThread.boxed_clone())
+                            .separator()
+                            .header("External Agents");
+
+                        let store = agent_server_store.read(cx);
+                        let builtin_names: &[&str] = &[
+                            project::agent_server_store::GEMINI_NAME,
+                            project::agent_server_store::CLAUDE_CODE_NAME,
+                            project::agent_server_store::CODEX_NAME,
+                        ];
+
+                        let mut custom_agents: Vec<(SharedString, SharedString)> = store
+                            .external_agents
+                            .keys()
+                            .filter(|name| !builtin_names.contains(&name.0.as_ref()))
+                            .map(|name| {
+                                let display_name = store
+                                    .agent_display_name(name)
+                                    .unwrap_or_else(|| name.0.clone());
+                                (name.0.clone(), display_name)
+                            })
+                            .collect();
+                        custom_agents.sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase()));
+
+                        for (name, display_name) in custom_agents {
+                            menu = menu.entry(display_name, None, {
+                                let name: SharedString = name.clone();
+                                move |window, cx| {
+                                    window.dispatch_action(
+                                        Box::new(NewExternalAgentThread {
+                                            agent: Some(ExternalAgent::Custom {
+                                                name: name.clone(),
+                                            }),
+                                        }),
+                                        cx,
+                                    );
+                                }
+                            });
+                        }
+
+                        menu
+                    }
+                }))
+            })
+    }
+
     fn render_tab_bar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let agent_server_store = self.project.read(cx).agent_server_store().clone();
 
@@ -2610,6 +2709,7 @@ impl AgentPanel {
             .gap(DynamicSpacing::Base02.rems(cx))
             .pl(DynamicSpacing::Base04.rems(cx))
             .pr(DynamicSpacing::Base06.rems(cx))
+            .child(self.render_new_thread_menu(cx))
             .child(self.render_recent_entries_menu(IconName::MenuAltTemp, Corner::TopRight, cx))
             .child(self.render_panel_options_menu(window, cx));
 

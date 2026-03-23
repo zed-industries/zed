@@ -198,7 +198,7 @@ pub struct NewThread;
 #[serde(deny_unknown_fields)]
 pub struct NewExternalAgentThread {
     /// Which agent to use for the conversation.
-    agent: Option<ExternalAgent>,
+    pub agent: Option<ExternalAgent>,
 }
 
 #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
