@@ -1326,8 +1326,7 @@ impl Sidebar {
                         .icon_color(Color::Muted)
                         .tooltip(Tooltip::text("Open Workspace"))
                         .on_click(cx.listener({
-                            let workspace_for_open = workspace_for_open.clone();
-                            move |this, _, window, cx| {
+                            move |this, _, _window, cx| {
                                 this.selection = None;
                                 let Some(multi_workspace) = this.multi_workspace.upgrade() else {
                                     return;
@@ -2485,6 +2484,8 @@ impl Sidebar {
                     IconButton::new("stop-thread", IconName::Stop)
                         .icon_size(IconSize::Small)
                         .icon_color(Color::Error)
+                        .shape(IconButtonShape::Square)
+                        .size(ButtonSize::Compact)
                         .style(ButtonStyle::Tinted(TintColor::Error))
                         .tooltip(Tooltip::text("Stop Generation"))
                         .on_click({
@@ -2495,6 +2496,15 @@ impl Sidebar {
                         }),
                 )
             })
+            // MultiWorkspace:
+            // zed
+            // zed {olivetti}
+            // USER QUITS APP
+            // USER TURNS ON APP
+            // Multiworkspace:
+            // zed
+            // (never deserializes the olivetti workspace)
+            
             .when(is_hovered && !is_running, |this| {
                 this.action_slot(
                     IconButton::new("archive-thread", IconName::Archive)
