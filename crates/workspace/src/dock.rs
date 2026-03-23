@@ -283,32 +283,8 @@ impl DockPosition {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct PanelSizeState {
     pub size: Option<Pixels>,
-    pub flexible_size_ratio: Option<f32>,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
-struct SerializedPanelSizeState {
-    size: Option<Pixels>,
     #[serde(default)]
-    flexible_size_ratio: Option<f32>,
-}
-
-impl From<PanelSizeState> for SerializedPanelSizeState {
-    fn from(value: PanelSizeState) -> Self {
-        Self {
-            size: value.size,
-            flexible_size_ratio: value.flexible_size_ratio,
-        }
-    }
-}
-
-impl From<SerializedPanelSizeState> for PanelSizeState {
-    fn from(value: SerializedPanelSizeState) -> Self {
-        Self {
-            size: value.size,
-            flexible_size_ratio: value.flexible_size_ratio,
-        }
-    }
+    pub flexible_size_ratio: Option<f32>,
 }
 
 struct PanelEntry {

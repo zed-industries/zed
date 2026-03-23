@@ -2168,7 +2168,7 @@ impl Workspace {
                 )
                 .await
         })
-        .detach();
+        .detach_and_log_err(cx);
     }
 
     pub fn set_panel_size_state<T: Panel>(
@@ -6932,9 +6932,9 @@ impl Workspace {
                 },
             ))
             .on_action(cx.listener(
-                |workspace: &mut Workspace, _: &ResetActiveDockSize, _window, cx| {
+                |workspace: &mut Workspace, _: &ResetActiveDockSize, window, cx| {
                     for dock in workspace.all_docks() {
-                        if dock.focus_handle(cx).contains_focused(_window, cx) {
+                        if dock.focus_handle(cx).contains_focused(window, cx) {
                             let panel = dock.read(cx).active_panel().cloned();
                             if let Some(panel) = panel {
                                 dock.update(cx, |dock, cx| {

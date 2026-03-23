@@ -5017,14 +5017,10 @@ mod tests {
 
         let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
 
-        // --- Set up workspace A: width=300, with an active thread ---
+        // --- Set up workspace A: with an active thread ---
         let panel_a = workspace_a.update_in(cx, |workspace, window, cx| {
             let text_thread_store = cx.new(|cx| TextThreadStore::fake(project_a.clone(), cx));
             cx.new(|cx| AgentPanel::new(workspace, text_thread_store, None, window, cx))
-        });
-
-        panel_a.update(cx, |panel, _cx| {
-            panel.width = Some(px(300.0));
         });
 
         panel_a.update_in(cx, |panel, window, cx| {
@@ -5046,14 +5042,13 @@ mod tests {
 
         let agent_type_a = panel_a.read_with(cx, |panel, _cx| panel.selected_agent_type.clone());
 
-        // --- Set up workspace B: ClaudeCode, width=400, no active thread ---
+        // --- Set up workspace B: ClaudeCode, no active thread ---
         let panel_b = workspace_b.update_in(cx, |workspace, window, cx| {
             let text_thread_store = cx.new(|cx| TextThreadStore::fake(project_b.clone(), cx));
             cx.new(|cx| AgentPanel::new(workspace, text_thread_store, None, window, cx))
         });
 
         panel_b.update(cx, |panel, _cx| {
-            panel.width = Some(px(400.0));
             panel.selected_agent_type = AgentType::Custom {
                 id: "claude-acp".into(),
             };
@@ -5079,13 +5074,8 @@ mod tests {
             .expect("panel B load should succeed");
         cx.run_until_parked();
 
-        // Workspace A should restore its thread, width, and agent type
+        // Workspace A should restore its thread and agent type
         loaded_a.read_with(cx, |panel, _cx| {
-            assert_eq!(
-                panel.width,
-                Some(px(300.0)),
-                "workspace A width should be restored"
-            );
             assert_eq!(
                 panel.selected_agent_type, agent_type_a,
                 "workspace A agent type should be restored"
@@ -5096,13 +5086,8 @@ mod tests {
             );
         });
 
-        // Workspace B should restore its own width and agent type, with no thread
+        // Workspace B should restore its own agent type, with no thread
         loaded_b.read_with(cx, |panel, _cx| {
-            assert_eq!(
-                panel.width,
-                Some(px(400.0)),
-                "workspace B width should be restored"
-            );
             assert_eq!(
                 panel.selected_agent_type,
                 AgentType::Custom {

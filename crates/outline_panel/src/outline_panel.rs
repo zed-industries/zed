@@ -708,11 +708,7 @@ impl OutlinePanel {
 
         workspace.update_in(&mut cx, |workspace, window, cx| {
             let panel = Self::new(workspace, serialized_panel.as_ref(), window, cx);
-            if let Some(_serialized_panel) = serialized_panel {
-                panel.update(cx, |_, cx| {
-                    cx.notify();
-                });
-            }
+            panel.update(cx, |_, cx| cx.notify());
             panel
         })
     }
