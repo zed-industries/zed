@@ -52,31 +52,33 @@ Or directly via the UI through the status bar menu:
 
 > Note that edit prediction modes work with any prediction provider.
 
-### Conflict With Other `tab` Actions {#edit-predictions-conflict}
+## Default Key Bindings
 
-In `eager` mode, Zed uses `tab` to accept edit predictions in normal editor contexts.
-When `tab` is already needed for something more specific, such as accepting an entry from the completions menu, use `alt-tab` instead.
+On Mac and Windows, you can accept edit predictions with `alt-tab`. On Linux, `alt-tab` is often used by the window manager for switching windows, so `alt-l` is the default key binding.
 
-On Linux, `alt-tab` is often used by the window manager for switching windows, so `alt-l` is also bound by default for accepting predictions and is the binding shown in the UI.
+In `eager` mode, you can also use the `tab` key to accept edit predictions, unless the completion menu is open, in which case `tab` accepts LSP completions. In order to use `tab` to insert whitespace, you need to dismiss the prediction with {#kb editor::Cancel} before hitting `tab`.
 
 {#action editor::AcceptNextWordEditPrediction} ({#kb editor::AcceptNextWordEditPrediction}) can be used to accept the current edit prediction up to the next word boundary.
 {#action editor::AcceptNextLineEditPrediction} ({#kb editor::AcceptNextLineEditPrediction}) can be used to accept the current edit prediction up to the new line boundary.
 
 ## Configuring Edit Prediction Keybindings {#edit-predictions-keybinding}
 
-By default, `tab` is used to accept edit predictions. You can use another keybinding by inserting this in your keymap:
+### Keybinding Example: Always Use Tab
+
+If you want to always use `tab` for accepting edit predictions, regardless of whether the LSP completions menu is open, you can add the following to your keymap:
 
 ```json [keymap]
-{
-  "context": "Editor && edit_prediction",
-  "bindings": {
-    // Here we also allow `alt-enter` to accept the prediction
-    "alt-enter": "editor::AcceptEditPrediction"
+[
+  {
+    "context": "Editor && edit_prediction",
+    "unbind": {
+      "tab": "editor::AcceptEditPrediction"
+    }
   }
-}
+]
 ```
 
-If your keybinding contains a modifier, that modifier can also be used to preview the edit prediction.
+After that, {#kb editor::ComposeCompletion} remains available for accepting LSP completions
 
 ### Keybinding Example: Always Use Alt-Tab
 
@@ -85,7 +87,7 @@ If you want to stop using `tab` for accepting edit predictions and always use `a
 ```json [keymap]
 [
   {
-    "context": "Editor && edit_prediction && edit_prediction_mode == eager",
+    "context": "Editor && edit_prediction",
     "unbind": {
       "tab": "editor::AcceptEditPrediction"
     }
@@ -115,102 +117,17 @@ If you want to move both default accept bindings to something else, unbind them 
   }
 ]
 ```
-1. edit tab, change binding
-2. delete alt-tab
 
-If you want the new key to be used while the completions menu is open, bind it in a more specific context too:
-
-```json [keymap]
-[
-  {
-    "context": "Editor && edit_prediction && showing_completions",
-    "bindings": {
-      "ctrl-enter": "editor::AcceptEditPrediction"
-    }
-  }
-]
-```
-
-### Keybinding Example: Restore the Old Conflict Behavior
-
-Before Zed v0.229.0, `alt-tab` was used when there was a potential conflict with `tab`.  When the cursor was in leading whitespace, or the LSP completions menu was open.
-If you want to restore that older behavior, keep `alt-tab` as the fallback key and unbind `tab` only where you do not want it to accept predictions like so:
-
-```json [keymap]
-[
-  {
-    "context": "Editor && edit_prediction && showing_completions && in_leading_whitespace",
-    "unbind": {
-      "tab": "editor::AcceptEditPrediction"
-    }
-  }
-]
-```
+In this case, because the binding contains the modifier `ctrl`, it will be used to preview the prediction in subtle mode, or when the completions menu is open.
 
 ### Cleaning Up Older Keymap Entries
 
-If your `keymap.json` still uses the removed `edit_prediction_conflict` context, you can safely delete those entries with bindings in `Editor && edit_prediction` and the more specific contexts such as:
+Before Zed version `v0.229.0`, the `unbind` feature did not exist, so the recommended way to unbind `tab` was to copy the non-edit-prediction bindings for tab into your keymap, and add a custom binding for {#action editor::AcceptEditPrediction }.
 
-- `Editor && edit_prediction && showing_completions`
-- `Editor && edit_prediction && in_leading_whitespace`
+Additionally, there was a split between `edit_prediction_conflict` and `edit_prediction` that has since been reworked. `edit_prediction_conflict` was
+really `showing_completions` and `in_leading_whitespace` under the hood, but `in_leading_whitespace` did not exist. `edit_prediction_conflict` will be migrated to `edit_prediction && (showing_completions || in_leading_whitespace)` if you previously had a custom binding to change it.
 
-For example, this older keymap entry that removed the tab binding, and added a custom binding:
-
-```json [keymap]
-[
-  // Bind `tab` back to its original behavior.
-  {
-    "context": "Editor",
-    "bindings": {
-      "tab": "editor::Tab"
-    }
-  },
-  {
-    "context": "Editor && showing_completions",
-    "bindings": {
-      "tab": "editor::ComposeCompletion"
-    }
-  },
-  {
-    "context": "(VimControl && !menu) || vim_mode == replace || vim_mode == waiting",
-    "bindings": {
-      "tab": "vim::Tab"
-    }
-  },
-  {
-    "context": "vim_mode == literal",
-    "bindings": {
-      "tab": ["vim::Literal", ["tab", "\u0009"]]
-    }
-  },
-  {
-    "context": "Editor && (edit_prediction || edit_prediction_conflict)",
-    "bindings": {
-      "ctrl-enter": "editor::AcceptEditPrediction"
-    }
-  }
-]
-```
-(edit_prediction && (showing_completions || in_leading_whitespace))
-
-should become:
-
-```json [keymap]
-[
-  {
-    "context": "Editor && edit_prediction",
-    "unbind": {
-      "tab": "editor::AcceptEditPrediction",
-      // uncomment to also remove the default alt-tab binding
-      //"alt-tab": "editor::AcceptEditPrediction"
-    },
-    "bindings": {
-      "ctrl-enter": "editor::AcceptEditPrediction"
-    }
-  },
-]
-```
-
+If your `keymap.json` still contains these copy-pasted bindings, you can safely delete those entries and replace them with a single `"unbind"` as shown above
 
 ## Disabling Automatic Edit Prediction
 
