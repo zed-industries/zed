@@ -2916,7 +2916,11 @@ impl Sidebar {
                     .into_any_element()
             }))
             .on_click(|_, window, cx| {
-                window.dispatch_action(ToggleWorkspaceSidebar.boxed_clone(), cx);
+                if let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() {
+                    multi_workspace.update(cx, |multi_workspace, cx| {
+                        multi_workspace.close_sidebar(window, cx);
+                    });
+                }
             })
     }
 }
