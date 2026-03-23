@@ -502,6 +502,36 @@ fn keystrokes_match_exactly(
         })
 }
 
+fn disabled_binding_matches_context(
+    disabled_binding: &gpui::KeyBinding,
+    binding: &gpui::KeyBinding,
+) -> bool {
+    match (
+        disabled_binding.predicate().as_deref(),
+        binding.predicate().as_deref(),
+    ) {
+        (None, _) => true,
+        (Some(_), None) => false,
+        (Some(disabled_predicate), Some(predicate)) => disabled_predicate.is_superset(predicate),
+    }
+}
+
+fn binding_is_unbound_by_unbind(
+    binding: &gpui::KeyBinding,
+    all_bindings: &[&gpui::KeyBinding],
+) -> bool {
+    all_bindings.iter().rev().any(|disabled_binding| {
+        gpui::is_unbind(disabled_binding.action())
+            && keystrokes_match_exactly(disabled_binding.keystrokes(), binding.keystrokes())
+            && disabled_binding
+                .action()
+                .as_any()
+                .downcast_ref::<gpui::Unbind>()
+                .is_some_and(|unbind| unbind.0.as_ref() == binding.action().name())
+            && disabled_binding_matches_context(disabled_binding, binding)
+    })
+}
+
 impl KeymapEditor {
     fn new(workspace: WeakEntity<Workspace>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let _keymap_subscription =
@@ -769,7 +799,7 @@ impl KeymapEditor {
     ) {
         let key_bindings_ptr = cx.key_bindings();
         let lock = key_bindings_ptr.borrow();
-        let key_bindings = lock.bindings();
+        let key_bindings = lock.bindings().collect::<Vec<_>>();
         let mut unmapped_action_names = HashSet::from_iter(cx.all_action_names().iter().copied());
         let action_documentation = cx.action_documentation();
         let mut generator = KeymapFile::action_schema_generator();
@@ -782,7 +812,7 @@ impl KeymapEditor {
         let mut processed_bindings = Vec::new();
         let mut string_match_candidates = Vec::new();
 
-        for key_binding in key_bindings {
+        for &key_binding in &key_bindings {
             if gpui::is_unbind(key_binding.action()) {
                 continue;
             }
@@ -794,6 +824,7 @@ impl KeymapEditor {
 
             let keystroke_text = ui::text_for_keybinding_keystrokes(key_binding.keystrokes(), cx);
             let is_no_action = gpui::is_no_action(key_binding.action());
+            let is_unbound_by_unbind = binding_is_unbound_by_unbind(key_binding, &key_bindings);
             let binding = KeyBinding::new(key_binding, source);
 
             let context = key_binding
@@ -829,6 +860,7 @@ impl KeymapEditor {
                 context,
                 source,
                 is_no_action,
+                is_unbound_by_unbind,
                 action_information,
             ));
             string_match_candidates.push(string_match_candidate);
@@ -1022,20 +1054,23 @@ impl KeymapEditor {
                 .and_then(KeybindContextString::local)
                 .is_none();
 
-            let selected_binding_is_unbound = selected_binding.is_unbound();
+            let selected_binding_is_unmapped = selected_binding.is_unbound();
+            let selected_binding_is_suppressed = selected_binding.is_unbound_by_unbind();
+            let selected_binding_is_non_interactable =
+                selected_binding_is_unmapped || selected_binding_is_suppressed;
 
             let context_menu = ContextMenu::build(window, cx, |menu, _window, _cx| {
                 menu.context(self.focus_handle.clone())
-                    .when(selected_binding_is_unbound, |this| {
+                    .when(selected_binding_is_unmapped, |this| {
                         this.action("Create", Box::new(CreateBinding))
                     })
                     .action_disabled_when(
-                        selected_binding_is_unbound,
+                        selected_binding_is_non_interactable,
                         "Edit",
                         Box::new(EditBinding),
                     )
                     .action_disabled_when(
-                        selected_binding_is_unbound,
+                        selected_binding_is_non_interactable,
                         "Delete",
                         Box::new(DeleteBinding),
                     )
@@ -1083,9 +1118,15 @@ impl KeymapEditor {
         &self,
         index: usize,
         conflict: Option<ConflictOrigin>,
+        is_unbound_by_unbind: bool,
         cx: &mut Context<Self>,
     ) -> IconButton {
-        if self.filter_state != FilterState::Conflicts
+        if is_unbound_by_unbind {
+            base_button_style(index, IconName::Warning)
+                .icon_color(Color::Warning)
+                .disabled(true)
+                .tooltip(Tooltip::text("This action is unbound"))
+        } else if self.filter_state != FilterState::Conflicts
             && let Some(conflict) = conflict
         {
             if conflict.is_user_keybind_conflict() {
@@ -1245,6 +1286,9 @@ impl KeymapEditor {
         let Some((keybind, keybind_index)) = self.selected_keybind_and_index() else {
             return;
         };
+        if !create && keybind.is_unbound_by_unbind() {
+            return;
+        }
         let keybind = keybind.clone();
         let keymap_editor = cx.entity();
 
@@ -1351,6 +1395,9 @@ impl KeymapEditor {
         let Some(to_remove) = self.selected_binding().cloned() else {
             return;
         };
+        if to_remove.is_unbound_by_unbind() {
+            return;
+        }
 
         let std::result::Result::Ok(fs) = self
             .workspace
@@ -1681,6 +1728,7 @@ struct KeybindInformation {
     context: KeybindContextString,
     source: KeybindSource,
     is_no_action: bool,
+    is_unbound_by_unbind: bool,
 }
 
 impl KeybindInformation {
@@ -1732,6 +1780,7 @@ impl ProcessedBinding {
         context: KeybindContextString,
         source: KeybindSource,
         is_no_action: bool,
+        is_unbound_by_unbind: bool,
         action_information: ActionInformation,
     ) -> Self {
         Self::Mapped(
@@ -1741,6 +1790,7 @@ impl ProcessedBinding {
                 context,
                 source,
                 is_no_action,
+                is_unbound_by_unbind,
             },
             action_information,
         )
@@ -1782,6 +1832,11 @@ impl ProcessedBinding {
     fn is_no_action(&self) -> bool {
         self.keybind_information()
             .is_some_and(|keybind| keybind.is_no_action)
+    }
+
+    fn is_unbound_by_unbind(&self) -> bool {
+        self.keybind_information()
+            .is_some_and(|keybind| keybind.is_unbound_by_unbind)
     }
 
     fn keystroke_text(&self) -> Option<&SharedString> {
@@ -2065,11 +2120,18 @@ impl Render for KeymapEditor {
                                     let binding = &this.keybindings[candidate_id];
                                     let action_name = binding.action().name;
                                     let conflict = this.get_conflict(index);
+                                    let is_unbound_by_unbind = binding.is_unbound_by_unbind();
                                     let is_overridden = conflict.is_some_and(|conflict| {
                                         !conflict.is_user_keybind_conflict()
                                     });
+                                    let is_dimmed = is_overridden || is_unbound_by_unbind;
 
-                                    let icon = this.create_row_button(index, conflict, cx);
+                                    let icon = this.create_row_button(
+                                        index,
+                                        conflict,
+                                        is_unbound_by_unbind,
+                                        cx,
+                                    );
 
                                     let action = div()
                                         .id(("keymap action", index))
@@ -2090,7 +2152,7 @@ impl Render for KeymapEditor {
                                         .when(
                                             !context_menu_deployed
                                                 && this.show_hover_menus
-                                                && !is_overridden,
+                                                && !is_dimmed,
                                             |this| {
                                                 this.tooltip({
                                                     let action_name = binding.action().name;
@@ -2143,7 +2205,7 @@ impl Render for KeymapEditor {
                                                 .when(
                                                     is_local
                                                         && !context_menu_deployed
-                                                        && !is_overridden
+                                                        && !is_dimmed
                                                         && this.show_hover_menus,
                                                     |this| {
                                                         this.tooltip(Tooltip::element({
@@ -2178,6 +2240,10 @@ impl Render for KeymapEditor {
                     .map_row(cx.processor(
                         |this, (row_index, row): (usize, Stateful<Div>), _window, cx| {
                         let conflict = this.get_conflict(row_index);
+                            let candidate_id = this.matches.get(row_index).map(|candidate| candidate.candidate_id);
+                            let is_unbound_by_unbind = candidate_id
+                                .and_then(|candidate_id| this.keybindings.get(candidate_id))
+                                .is_some_and(ProcessedBinding::is_unbound_by_unbind);
                             let is_selected = this.selected_index == Some(row_index);
 
                             let row_id = row_group_id(row_index);
@@ -2186,38 +2252,43 @@ impl Render for KeymapEditor {
                                 .id(("keymap-row-wrapper", row_index))
                                 .child(
                                     row.id(row_id.clone())
-                                        .on_any_mouse_down(cx.listener(
-                                            move |this,
-                                                  mouse_down_event: &gpui::MouseDownEvent,
-                                                  window,
-                                                  cx| {
-                                                if mouse_down_event.button == MouseButton::Right {
-                                                    this.select_index(
-                                                        row_index, None, window, cx,
-                                                    );
-                                                    this.create_context_menu(
-                                                        mouse_down_event.position,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                }
-                                            },
-                                        ))
-                                        .on_click(cx.listener(
-                                            move |this, event: &ClickEvent, window, cx| {
-                                                this.select_index(row_index, None, window, cx);
-                                                if event.click_count() == 2 {
-                                                    this.open_edit_keybinding_modal(
-                                                        false, window, cx,
-                                                    );
-                                                }
-                                            },
-                                        ))
+                                        .when(!is_unbound_by_unbind, |row| {
+                                            row.on_any_mouse_down(cx.listener(
+                                                move |this,
+                                                      mouse_down_event: &gpui::MouseDownEvent,
+                                                      window,
+                                                      cx| {
+                                                    if mouse_down_event.button == MouseButton::Right {
+                                                        this.select_index(
+                                                            row_index, None, window, cx,
+                                                        );
+                                                        this.create_context_menu(
+                                                            mouse_down_event.position,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    }
+                                                },
+                                            ))
+                                        })
+                                        .when(!is_unbound_by_unbind, |row| {
+                                            row.on_click(cx.listener(
+                                                move |this, event: &ClickEvent, window, cx| {
+                                                    this.select_index(row_index, None, window, cx);
+                                                    if event.click_count() == 2 {
+                                                        this.open_edit_keybinding_modal(
+                                                            false, window, cx,
+                                                        );
+                                                    }
+                                                },
+                                            ))
+                                        })
                                         .group(row_id)
                                         .when(
-                                            conflict.is_some_and(|conflict| {
-                                                !conflict.is_user_keybind_conflict()
-                                            }),
+                                            is_unbound_by_unbind
+                                                || conflict.is_some_and(|conflict| {
+                                                    !conflict.is_user_keybind_conflict()
+                                                }),
                                             |row| {
                                                 const OVERRIDDEN_OPACITY: f32 = 0.5;
                                                 row.opacity(OVERRIDDEN_OPACITY)
@@ -2225,7 +2296,8 @@ impl Render for KeymapEditor {
                                         )
                                         .when_some(
                                             conflict.filter(|conflict| {
-                                                !this.context_menu_deployed() &&
+                                                !is_unbound_by_unbind
+                                                    && !this.context_menu_deployed() &&
                                                 !conflict.is_user_keybind_conflict()
                                             }),
                                             |row, conflict| {
@@ -2242,8 +2314,12 @@ impl Render for KeymapEditor {
                                                     }.map(|source| format!("This keybinding is overridden by the '{}' binding from {}.", binding.action().humanized_name, source))
                                                 }).unwrap_or_else(|| "This binding is overridden.".to_string());
 
-                                                row.tooltip(Tooltip::text(context))},
-                                        ),
+                                                row.tooltip(Tooltip::text(context))
+                                            },
+                                        )
+                                        .when(is_unbound_by_unbind, |row| {
+                                            row.tooltip(Tooltip::text("This action is unbound"))
+                                        }),
                                 )
                                 .border_2()
                                 .when(
