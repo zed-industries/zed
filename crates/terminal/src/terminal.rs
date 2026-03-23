@@ -211,12 +211,12 @@ impl TerminalBounds {
         // `N * line_height / line_height` can be N-epsilon, which floor()
         // would round down, pushing the first line into invisible scrollback.
         let raw = f32::from(self.bounds.size.height / self.line_height);
-        (raw + 0.01).floor() as usize
+        raw.next_up().floor() as usize
     }
 
     pub fn num_columns(&self) -> usize {
         let raw = f32::from(self.bounds.size.width / self.cell_width);
-        (raw + 0.01).floor() as usize
+        raw.next_up().floor() as usize
     }
 
     pub fn height(&self) -> Pixels {
