@@ -5970,7 +5970,6 @@ mod tests {
             DisableAiSettings::register(cx);
         });
 
-        // Open thread A and keep it generating so it goes to background when B opens.
         let connection_a = StubAgentConnection::new();
         open_thread_with_connection(&panel, connection_a.clone(), &mut cx);
         send_message(&panel, &mut cx);
@@ -5986,17 +5985,12 @@ mod tests {
         });
         cx.run_until_parked();
 
-        // Open thread B — thread A (still generating) moves to background_threads.
-        // Both threads share the same AgentConnectionStore entry (same server name "Test"),
-        // so sessions for thread B are registered in connection_a's sessions map.
         let connection_b = StubAgentConnection::new();
         open_thread_with_connection(&panel, connection_b, &mut cx);
         send_message(&panel, &mut cx);
 
         let session_id_b = active_session_id(&panel, &cx);
         cx.update(|_, cx| {
-            // session_id_b was created via the shared Rc<dyn AgentConnection> (a clone of
-            // connection_a), so it lives in connection_a's sessions map, not connection_b's.
             connection_a.send_update(
                 session_id_b,
                 acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("chunk".into())),
@@ -6005,8 +5999,6 @@ mod tests {
         });
         cx.run_until_parked();
 
-        // Capture weak refs to both ConnectionView entities and to the shared
-        // AgentConnectionEntry in the store before disabling AI.
         let (weak_view_a, weak_view_b, weak_entry) = panel.read_with(&cx, |panel, cx| {
             let weak_b = panel.active_connection_view().unwrap().downgrade();
             let weak_a = panel
@@ -6026,13 +6018,11 @@ mod tests {
             (weak_a, weak_b, weak_entry)
         });
 
-        // Disable AI.
         cx.update(|_, cx| {
             DisableAiSettings::override_global(DisableAiSettings { disable_ai: true }, cx);
         });
         cx.run_until_parked();
 
-        // active_view and background_threads should be cleared.
         panel.read_with(&cx, |panel, _cx| {
             assert!(
                 matches!(panel.active_view, ActiveView::Uninitialized),
@@ -6044,7 +6034,6 @@ mod tests {
             );
         });
 
-        // Both ConnectionView entities should have been dropped (no strong refs remain).
         assert!(
             weak_view_a.upgrade().is_none(),
             "Background ConnectionView (thread A) should have been dropped"
@@ -6054,10 +6043,6 @@ mod tests {
             "Active ConnectionView (thread B) should have been dropped"
         );
 
-        // The AgentConnectionEntry held by the store should also be gone. With the tasks
-        // in request_connection holding only WeakEntity refs, removing the entry from
-        // the map is the last strong ref — confirming that the Rc<dyn AgentConnection>
-        // (and any associated external process) was freed.
         assert!(
             weak_entry.upgrade().is_none(),
             "AgentConnectionEntry should have been dropped after disabling AI, \
@@ -6095,7 +6080,6 @@ mod tests {
             cx.new(|cx| AgentPanel::new(workspace, text_thread_store, None, window, cx))
         });
 
-        // Open an external thread and send a message so there is an active AcpThread.
         panel.update_in(&mut cx, |panel, window, cx| {
             panel.open_external_thread_with_server(
                 Rc::new(StubAgentServer::default_response()),
@@ -6128,15 +6112,12 @@ mod tests {
         });
         drop(loaded_panel);
 
-        // Register DisableAiSettings and set disable_ai = true.
         cx.update(|_, cx| {
             DisableAiSettings::register(cx);
         });
         cx.update(|_, cx| {
             DisableAiSettings::override_global(DisableAiSettings { disable_ai: true }, cx);
         });
-        // With the fix, serialize(cx) fires inside the observer and the background task
-        // saves last_active_thread = None to the database.
         cx.run_until_parked();
 
         // Load a fresh panel and assert it has no active connection view.
