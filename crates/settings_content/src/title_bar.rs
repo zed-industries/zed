@@ -7,7 +7,18 @@ use settings_macros::{MergeFrom, with_fallible_options};
 ///
 /// Custom layout strings use the GNOME `button-layout` format (e.g.
 /// `"close:minimize,maximize"`).
-#[derive(Clone, PartialEq, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, Default)]
+#[derive(
+    Clone,
+    PartialEq,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    Default,
+    strum::EnumDiscriminants,
+)]
+#[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
 #[schemars(schema_with = "window_button_layout_schema")]
 #[serde(from = "String", into = "String")]
 pub enum WindowButtonLayoutContent {
