@@ -569,7 +569,9 @@ impl WaylandClient {
                     }
                     XDPEvent::ButtonLayout(layout_str) => {
                         if let Some(client) = client.0.upgrade() {
-                            let layout = WindowButtonLayout::parse(&layout_str);
+                            let layout = WindowButtonLayout::parse(&layout_str)
+                                .log_err()
+                                .unwrap_or_default();
                             let windows = {
                                 let mut client = client.borrow_mut();
                                 client.common.button_layout = layout;

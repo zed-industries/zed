@@ -36,7 +36,7 @@ use crate::{
     ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task,
     ThreadTaskTimings, Window, WindowControlArea, hash, point, px, size,
 };
-use anyhow::Result;
+use anyhow::{Result, bail};
 use async_task::Runnable;
 use futures::channel::oneshot;
 #[cfg(any(test, feature = "test-support"))]
@@ -462,32 +462,55 @@ impl WindowButtonLayout {
     /// Parse a GNOME-style button-layout string.
     /// Format: "button1,button2:button3,button4"
     /// Left of colon = left side, right of colon = right side
-    pub fn parse(layout_string: &str) -> Self {
-        fn parse_side(s: &str) -> [Option<WindowButton>; MAX_BUTTONS_PER_SIDE] {
+    pub fn parse(layout_string: &str) -> Result<Self> {
+        fn parse_side(
+            s: &str,
+            unrecognized: &mut Vec<String>,
+        ) -> [Option<WindowButton>; MAX_BUTTONS_PER_SIDE] {
             let mut result = [None; MAX_BUTTONS_PER_SIDE];
             let mut i = 0;
             for name in s.split(',') {
-                if i >= MAX_BUTTONS_PER_SIDE {
-                    break;
+                let trimmed = name.trim();
+                if trimmed.is_empty() {
+                    continue;
                 }
-                if let Some(btn) = match name.trim() {
-                    "minimize" => Some(WindowButton::Minimize),
-                    "maximize" => Some(WindowButton::Maximize),
-                    "close" => Some(WindowButton::Close),
-                    _ => None,
-                } {
-                    result[i] = Some(btn);
-                    i += 1;
+                match trimmed {
+                    "minimize" | "maximize" | "close" => {
+                        if i < MAX_BUTTONS_PER_SIDE {
+                            result[i] = Some(match trimmed {
+                                "minimize" => WindowButton::Minimize,
+                                "maximize" => WindowButton::Maximize,
+                                "close" => WindowButton::Close,
+                                _ => unreachable!(),
+                            });
+                            i += 1;
+                        }
+                    }
+                    other => unrecognized.push(other.to_string()),
                 }
             }
             result
         }
 
         let (left_str, right_str) = layout_string.split_once(':').unwrap_or(("", layout_string));
-        Self {
-            left: parse_side(left_str),
-            right: parse_side(right_str),
+        let mut unrecognized = Vec::new();
+        let layout = Self {
+            left: parse_side(left_str, &mut unrecognized),
+            right: parse_side(right_str, &mut unrecognized),
+        };
+
+        if !unrecognized.is_empty()
+            && layout.left.iter().all(Option::is_none)
+            && layout.right.iter().all(Option::is_none)
+        {
+            bail!(
+                "button layout string {:?} contains no valid buttons (unrecognized: {})",
+                layout_string,
+                unrecognized.join(", ")
+            );
         }
+
+        Ok(layout)
     }
 
     /// Formats the layout into a GNOME-style button-layout string.
@@ -2133,7 +2156,7 @@ mod tests {
 
     #[test]
     fn test_window_button_layout_parse_standard() {
-        let layout = WindowButtonLayout::parse("close,minimize:maximize");
+        let layout = WindowButtonLayout::parse("close,minimize:maximize").unwrap();
         assert_eq!(
             layout.left,
             [
@@ -2147,7 +2170,7 @@ mod tests {
 
     #[test]
     fn test_window_button_layout_parse_right_only() {
-        let layout = WindowButtonLayout::parse("minimize,maximize,close");
+        let layout = WindowButtonLayout::parse("minimize,maximize,close").unwrap();
         assert_eq!(layout.left, [None, None, None]);
         assert_eq!(
             layout.right,
@@ -2161,7 +2184,7 @@ mod tests {
 
     #[test]
     fn test_window_button_layout_parse_left_only() {
-        let layout = WindowButtonLayout::parse("close,minimize,maximize:");
+        let layout = WindowButtonLayout::parse("close,minimize,maximize:").unwrap();
         assert_eq!(
             layout.left,
             [
@@ -2175,7 +2198,7 @@ mod tests {
 
     #[test]
     fn test_window_button_layout_parse_with_whitespace() {
-        let layout = WindowButtonLayout::parse(" close , minimize : maximize ");
+        let layout = WindowButtonLayout::parse(" close , minimize : maximize ").unwrap();
         assert_eq!(
             layout.left,
             [
@@ -2189,14 +2212,21 @@ mod tests {
 
     #[test]
     fn test_window_button_layout_parse_empty() {
-        let layout = WindowButtonLayout::parse("");
+        let layout = WindowButtonLayout::parse("").unwrap();
+        assert_eq!(layout.left, [None, None, None]);
+        assert_eq!(layout.right, [None, None, None]);
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_intentionally_empty() {
+        let layout = WindowButtonLayout::parse(":").unwrap();
         assert_eq!(layout.left, [None, None, None]);
         assert_eq!(layout.right, [None, None, None]);
     }
 
     #[test]
     fn test_window_button_layout_parse_invalid_buttons() {
-        let layout = WindowButtonLayout::parse("close,invalid,minimize:maximize,foo");
+        let layout = WindowButtonLayout::parse("close,invalid,minimize:maximize,foo").unwrap();
         assert_eq!(
             layout.left,
             [
@@ -2210,14 +2240,14 @@ mod tests {
 
     #[test]
     fn test_window_button_layout_parse_gnome_style() {
-        let layout = WindowButtonLayout::parse("close");
+        let layout = WindowButtonLayout::parse("close").unwrap();
         assert_eq!(layout.left, [None, None, None]);
         assert_eq!(layout.right, [Some(WindowButton::Close), None, None]);
     }
 
     #[test]
     fn test_window_button_layout_parse_elementary_style() {
-        let layout = WindowButtonLayout::parse("close:maximize");
+        let layout = WindowButtonLayout::parse("close:maximize").unwrap();
         assert_eq!(layout.left, [Some(WindowButton::Close), None, None]);
         assert_eq!(layout.right, [Some(WindowButton::Maximize), None, None]);
     }
@@ -2234,7 +2264,7 @@ mod tests {
         ];
 
         for case in cases {
-            let layout = WindowButtonLayout::parse(case);
+            let layout = WindowButtonLayout::parse(case).unwrap();
             assert_eq!(layout.format(), case, "Round-trip failed for: {}", case);
         }
     }
@@ -2251,5 +2281,13 @@ mod tests {
                 Some(WindowButton::Close)
             ]
         );
+
+        let round_tripped = WindowButtonLayout::parse(&layout.format()).unwrap();
+        assert_eq!(round_tripped, layout);
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_all_invalid() {
+        assert!(WindowButtonLayout::parse("asdfghjkl").is_err());
     }
 }

@@ -473,7 +473,9 @@ impl X11Client {
                         }
                     }
                     XDPEvent::ButtonLayout(layout_str) => {
-                        let layout = WindowButtonLayout::parse(&layout_str);
+                        let layout = WindowButtonLayout::parse(&layout_str)
+                            .log_err()
+                            .unwrap_or_default();
                         client.with_common(|common| common.button_layout = layout);
                         let window_ids: Vec<_> =
                             client.0.borrow().windows.keys().copied().collect();
