@@ -1,12 +1,12 @@
 ---
-title: AI Code Completion in Zed - Zeta, Copilot, Sweep, Mercury Coder
-description: Set up AI code completions in Zed with Zeta (built-in), GitHub Copilot, Sweep, Codestral, or Mercury Coder. Multi-line predictions on every keystroke.
+title: AI Code Completion in Zed - Zeta, Copilot, Mercury Coder
+description: Set up AI code completions in Zed with Zeta (built-in), GitHub Copilot, Codestral, or Mercury Coder. Multi-line predictions on every keystroke.
 ---
 
 # Edit Prediction
 
 Edit Prediction is how Zed's AI code completions work: an LLM predicts the code you want to write.
-Each keystroke sends a new request to the edit prediction provider, which returns individual or multi-line suggestions that can be quickly accepted by pressing `tab`.
+Each keystroke sends a new request to the edit prediction provider, which returns individual or multi-line suggestions you accept by pressing `tab`.
 
 The default provider is [Zeta, a proprietary open source and open dataset model](https://huggingface.co/zed-industries/zeta), but you can also use [other providers](#other-providers) like GitHub Copilot, Sweep, Mercury Coder, and Codestral.
 
@@ -15,7 +15,9 @@ The default provider is [Zeta, a proprietary open source and open dataset model]
 To use Zeta, [sign in](../authentication.md#what-features-require-signing-in).
 Once signed in, predictions appear as you type.
 
-You can confirm that Zeta is properly configured either by verifying whether you have the following code in your settings file:
+You can confirm that Zeta is properly configured by opening the [Settings Editor](zed://settings/edit_predictions.providers) (`Cmd+,` on macOS or `Ctrl+,` on Linux/Windows) and searching for `edit_predictions`. The `provider` field should be set to `Zed AI`.
+
+Or verify this in your settings.json:
 
 ```json [settings]
 {
@@ -33,7 +35,7 @@ The free plan includes 2,000 Zeta predictions per month. The [Pro plan](../ai/pl
 
 ### Switching Modes {#switching-modes}
 
-Zed's Edit Prediction comes with two different display modes:
+Edit Prediction has two display modes:
 
 1. `eager` (default): predictions are displayed inline as long as it doesn't conflict with language server completions
 2. `subtle`: predictions only appear inline when holding a modifier key (`alt` by default)
@@ -54,9 +56,9 @@ Or directly via the UI through the status bar menu:
 
 ## Default Key Bindings
 
-On Mac and Windows, you can accept edit predictions with `alt-tab`. On Linux, `alt-tab` is often used by the window manager for switching windows, so `alt-l` is the default key binding.
+On macOS and Windows, you can accept edit predictions with `alt-tab`. On Linux, `alt-tab` is often used by the window manager for switching windows, so `alt-l` is the default key binding for edit predictions.
 
-In `eager` mode, you can also use the `tab` key to accept edit predictions, unless the completion menu is open, in which case `tab` accepts LSP completions. In order to use `tab` to insert whitespace, you need to dismiss the prediction with {#kb editor::Cancel} before hitting `tab`.
+In `eager` mode, you can also use the `tab` key to accept edit predictions, unless the completion menu is open, in which case `tab` accepts LSP completions. To use `tab` to insert whitespace, you need to dismiss the prediction with {#kb editor::Cancel} before hitting `tab`.
 
 {#action editor::AcceptNextWordEditPrediction} ({#kb editor::AcceptNextWordEditPrediction}) can be used to accept the current edit prediction up to the next word boundary.
 {#action editor::AcceptNextLineEditPrediction} ({#kb editor::AcceptNextLineEditPrediction}) can be used to accept the current edit prediction up to the new line boundary.
@@ -78,7 +80,7 @@ If you want to always use `tab` for accepting edit predictions, regardless of wh
 ]
 ```
 
-After that, {#kb editor::ComposeCompletion} remains available for accepting LSP completions
+After that, {#kb editor::ComposeCompletion} remains available for accepting LSP completions.
 
 ### Keybinding Example: Always Use Alt-Tab
 
@@ -122,12 +124,11 @@ In this case, because the binding contains the modifier `ctrl`, it will be used 
 
 ### Cleaning Up Older Keymap Entries
 
-Before Zed version `v0.229.0`, the `unbind` feature did not exist, so the recommended way to unbind `tab` was to copy the non-edit-prediction bindings for tab into your keymap, and add a custom binding for {#action editor::AcceptEditPrediction }.
+If you configured edit prediction keybindings before Zed `v0.229.0`, your `keymap.json` may have entries that are now redundant.
 
-Additionally, there was a split between `edit_prediction_conflict` and `edit_prediction` that has since been reworked. `edit_prediction_conflict` was
-really `showing_completions` and `in_leading_whitespace` under the hood, but `in_leading_whitespace` did not exist. `edit_prediction_conflict` will be migrated to `edit_prediction && (showing_completions || in_leading_whitespace)` if you previously had a custom binding to change it.
+**Old tab workaround**: Before `unbind` existed, the only way to prevent `tab` from accepting edit predictions was to copy all the default non-edit-prediction `tab` bindings into your keymap alongside a custom `AcceptEditPrediction` binding. If your keymap still contains those copy-pasted entries, delete them and use a single `"unbind"` entry as shown in the examples above.
 
-If your `keymap.json` still contains these copy-pasted bindings, you can safely delete those entries and replace them with a single `"unbind"` as shown above
+**Renamed context**: The `edit_prediction_conflict` context has been replaced by `edit_prediction && (showing_completions || in_leading_whitespace)`. Zed automatically migrates any bindings that used `edit_prediction_conflict`, so no changes are required on your end.
 
 ## Disabling Automatic Edit Prediction
 
@@ -220,8 +221,8 @@ If your organization uses GitHub Copilot Enterprise, you can configure Zed to us
 
 Replace `"https://your.enterprise.domain"` with the URL provided by your GitHub Enterprise administrator (e.g., `https://foo.ghe.com`).
 
-Once set, Zed will route Copilot requests through your enterprise endpoint.
-When you sign in by clicking the Copilot icon in the status bar, you will be redirected to your configured enterprise URL to complete authentication.
+Once set, Zed routes Copilot requests through your enterprise endpoint.
+When you sign in by clicking the Copilot icon in the status bar, you are redirected to your configured enterprise URL to complete authentication.
 All other Copilot features and usage remain the same.
 
 Copilot can provide multiple completion alternatives, and these can be navigated with the following actions:
