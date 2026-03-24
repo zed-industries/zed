@@ -190,21 +190,17 @@ fn fuzzy_match_positions(query: &str, candidate: &str) -> Option<Vec<usize>> {
 fn root_repository_snapshots(
     workspace: &Entity<Workspace>,
     cx: &App,
-) -> Vec<project::git_store::RepositorySnapshot> {
+) -> impl Iterator<Item = project::git_store::RepositorySnapshot> {
     let path_list = workspace_path_list(workspace, cx);
     let project = workspace.read(cx).project().read(cx);
-    project
-        .repositories(cx)
-        .values()
-        .filter_map(|repo| {
-            let snapshot = repo.read(cx).snapshot();
-            let is_root = path_list
-                .paths()
-                .iter()
-                .any(|p| p.as_path() == snapshot.work_directory_abs_path.as_ref());
-            is_root.then_some(snapshot)
-        })
-        .collect()
+    project.repositories(cx).values().filter_map(move |repo| {
+        let snapshot = repo.read(cx).snapshot();
+        let is_root = path_list
+            .paths()
+            .iter()
+            .any(|p| p.as_path() == snapshot.work_directory_abs_path.as_ref());
+        is_root.then_some(snapshot)
+    })
 }
 
 fn workspace_path_list(workspace: &Entity<Workspace>, cx: &App) -> PathList {
@@ -1740,12 +1736,10 @@ impl Sidebar {
             if path_list.paths().len() != 1 {
                 continue;
             }
-            let should_prune = root_repository_snapshots(workspace, cx)
-                .iter()
-                .any(|snapshot| {
-                    snapshot.is_linked_worktree()
-                        && !known_worktree_paths.contains(snapshot.work_directory_abs_path.as_ref())
-                });
+            let should_prune = root_repository_snapshots(workspace, cx).any(|snapshot| {
+                snapshot.is_linked_worktree()
+                    && !known_worktree_paths.contains(snapshot.work_directory_abs_path.as_ref())
+            });
             if should_prune {
                 to_remove.push(workspace.clone());
             }
