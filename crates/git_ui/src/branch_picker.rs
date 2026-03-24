@@ -1067,7 +1067,22 @@ impl PickerDelegate for BranchListDelegate {
                                 })
                                 .when_some(
                                     entry.as_branch().map(|b| b.name().to_string()),
-                                    |this, branch_name| this.tooltip(Tooltip::text(branch_name)),
+                                    |this, branch_name| {
+                                        this.map(|this| {
+                                            if is_head_branch {
+                                                this.tooltip(move |_, cx| {
+                                                    Tooltip::with_meta(
+                                                        branch_name.clone(),
+                                                        None,
+                                                        "Current Branch",
+                                                        cx,
+                                                    )
+                                                })
+                                            } else {
+                                                this.tooltip(Tooltip::text(branch_name))
+                                            }
+                                        })
+                                    },
                                 ),
                         ),
                 )
