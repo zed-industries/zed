@@ -2961,9 +2961,9 @@ mod tests {
     fn get_cells(size: TerminalBounds, rng: &mut StdRng) -> Vec<Vec<char>> {
         let mut cells = Vec::new();
 
-        for _ in 0..((size.height() / size.line_height()) as usize) {
+        for _ in 0..size.num_lines() {
             let mut row_vec = Vec::new();
-            for _ in 0..((size.width() / size.cell_width()) as usize) {
+            for _ in 0..size.num_columns() {
                 let cell_char = rng.sample(distr::Alphanumeric) as char;
                 row_vec.push(cell_char)
             }
