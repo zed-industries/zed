@@ -1,6 +1,6 @@
 ---
-title: AI Code Completion in Zed - Zeta, Copilot, Mercury Coder
-description: Set up AI code completions in Zed with Zeta (built-in), GitHub Copilot, Codestral, or Mercury Coder. Multi-line predictions on every keystroke.
+title: AI Code Completion in Zed - Zeta, Copilot, Sweep, Mercury Coder
+description: Set up AI code completions in Zed with Zeta (built-in), GitHub Copilot, Codestral, Sweep, or Mercury Coder. Multi-line predictions on every keystroke.
 ---
 
 # Edit Prediction
