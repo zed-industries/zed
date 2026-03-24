@@ -554,7 +554,8 @@ impl Vim {
                 waiting_operator = Some(Operator::DeleteSurrounds);
             }
             Some(Operator::ChangeSurrounds { target: None, .. }) => {
-                let bracket_anchors = self.prepare_change_surrounds(object, window, cx);
+                let bracket_anchors =
+                    self.prepare_and_move_to_valid_bracket_pair(object, window, cx);
                 if !bracket_anchors.is_empty() {
                     waiting_operator = Some(Operator::ChangeSurrounds {
                         target: Some(object),

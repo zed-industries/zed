@@ -396,7 +396,7 @@ impl Vim {
     /// character appears earlier on the line (e.g. `I'm 'good'`).
     ///
     /// Returns an empty `Vec` if no valid pair was found for any cursor.
-    pub(crate) fn prepare_change_surrounds(
+    pub fn prepare_and_move_to_valid_bracket_pair(
         &mut self,
         object: Object,
         window: &mut Window,
