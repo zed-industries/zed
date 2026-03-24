@@ -357,7 +357,8 @@ impl LanguageModel for CopilotChatLanguageModel {
             | CompletionIntent::TerminalInlineAssist
             | CompletionIntent::GenerateGitCommitMessage => true,
 
-            CompletionIntent::ToolResults
+            CompletionIntent::Subagent
+            | CompletionIntent::ToolResults
             | CompletionIntent::ThreadSummarization
             | CompletionIntent::CreateFile
             | CompletionIntent::EditFile => false,
@@ -1072,6 +1073,7 @@ fn compute_thinking_budget(
 fn intent_to_chat_location(intent: Option<CompletionIntent>) -> ChatLocation {
     match intent {
         Some(CompletionIntent::UserPrompt) => ChatLocation::Agent,
+        Some(CompletionIntent::Subagent) => ChatLocation::Agent,
         Some(CompletionIntent::ToolResults) => ChatLocation::Agent,
         Some(CompletionIntent::ThreadSummarization) => ChatLocation::Panel,
         Some(CompletionIntent::ThreadContextSummarization) => ChatLocation::Panel,
