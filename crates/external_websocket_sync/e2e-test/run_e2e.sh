@@ -41,6 +41,19 @@ cleanup() {
     [ -n "${XVFB_PID:-}" ] && kill "$XVFB_PID" 2>/dev/null || true
     rm -f "$MOCK_PORT_FILE"
 
+    # Dump Zed errors/panics (full log available at ZED_LOG_FILE)
+    if [ -f "${ZED_LOG_FILE:-}" ]; then
+        ZED_ERRORS=$(grep -ciE "panic|error|fatal" "$ZED_LOG_FILE" 2>/dev/null || echo "0")
+        if [ "$ZED_ERRORS" -gt 0 ]; then
+            echo ""
+            echo "=================================================="
+            echo "  ZED PROCESS ERRORS ($ZED_ERRORS lines)"
+            echo "=================================================="
+            grep -iE "panic|error|fatal" "$ZED_LOG_FILE" | tail -50 || true
+            echo "  (full log: $ZED_LOG_FILE)"
+        fi
+    fi
+
     # Report screenshots
     if [ -d "$SCREENSHOT_DIR" ]; then
         SHOT_COUNT=$(ls -1 "$SCREENSHOT_DIR"/*.png 2>/dev/null | wc -l)
@@ -123,7 +136,7 @@ export ZED_HELIX_URL="127.0.0.1:${MOCK_PORT}"
 export ZED_HELIX_TOKEN="test-token"
 export ZED_HELIX_TLS=false
 export ZED_HELIX_SKIP_TLS_VERIFY=false
-export HELIX_SESSION_ID="e2e-test-session-001"
+export HELIX_SESSION_ID="ses_e2e-test-session-001"
 
 # ---- Determine which agents to test ----
 # E2E_AGENTS controls which agent rounds to run. Default: zed-agent only.
@@ -202,12 +215,14 @@ echo "[zed]   ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:+set (${#ANTHROPIC_API_KEY} 
 echo "[zed]   E2E_AGENTS=$E2E_AGENTS"
 echo ""
 
-# Start Zed
+# Start Zed (capture logs for debugging)
+ZED_LOG_FILE="/tmp/zed-e2e.log"
 "$ZED_BINARY" \
     --allow-multiple-instances \
     "$PROJECT_DIR" \
-    &
+    > "$ZED_LOG_FILE" 2>&1 &
 ZED_PID=$!
+echo "[zed] Logs: $ZED_LOG_FILE"
 
 echo "[zed] Started (PID $ZED_PID)"
 echo ""

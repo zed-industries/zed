@@ -40,7 +40,7 @@ require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/bradfitz/gomemcache v0.0.0-20250403215159-8d39553ac7cf // indirect
 	github.com/bradleyfalzon/ghinstallation/v2 v2.17.0 // indirect
-	github.com/buger/jsonparser v1.1.1 // indirect
+	github.com/buger/jsonparser v1.1.2 // indirect
 	github.com/bwmarrin/discordgo v0.28.1 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
@@ -136,7 +136,7 @@ require (
 	github.com/hashicorp/go-retryablehttp v0.7.8 // indirect
 	github.com/hashicorp/go-version v1.8.0 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
-	github.com/helixml/kodit v1.2.0 // indirect
+	github.com/helixml/kodit v1.2.1 // indirect
 	github.com/huandu/xstrings v1.5.0 // indirect
 	github.com/infracloudio/msbotbuilder-go v0.2.5 // indirect
 	github.com/invopop/jsonschema v0.13.0 // indirect
@@ -193,7 +193,7 @@ require (
 	github.com/nats-io/nuid v1.0.1 // indirect
 	github.com/nikoksr/notify v0.41.0 // indirect
 	github.com/nikolalohinski/gonja v1.5.3 // indirect
-	github.com/oapi-codegen/runtime v1.2.0 // indirect
+	github.com/oapi-codegen/runtime v1.3.0 // indirect
 	github.com/oasdiff/yaml v0.0.0-20250309154309-f31be36b4037 // indirect
 	github.com/oasdiff/yaml3 v0.0.0-20250309153720-d2182401db90 // indirect
 	github.com/oklog/ulid/v2 v2.1.0 // indirect
@@ -286,7 +286,7 @@ require (
 	golang.org/x/mod v0.33.0 // indirect
 	golang.org/x/net v0.50.0 // indirect
 	golang.org/x/oauth2 v0.35.0 // indirect
-	golang.org/x/sync v0.19.0 // indirect
+	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/term v0.40.0 // indirect
 	golang.org/x/text v0.34.0 // indirect

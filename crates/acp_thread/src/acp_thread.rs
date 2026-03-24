@@ -2315,8 +2315,17 @@ impl AcpThread {
         Self::flush_streaming_text(&mut self.streaming_text_buffer, cx);
         self.mark_pending_tools_as_canceled();
 
-        // Wait for the send task to complete
-        cx.background_spawn(turn.send_task)
+        // Drop the send_task instead of awaiting it. This cancels the prompt
+        // future immediately, which drops the oneshot `tx`. The `rx.await` in
+        // run_turn then returns Err, hitting the existing "tx dropped" handler
+        // that emits Stopped(Cancelled) (see run_turn line ~2224).
+        //
+        // We still call connection.cancel() above as a courtesy notification
+        // to the agent, but we don't wait for the agent to acknowledge it.
+        // The previous approach (cx.background_spawn(turn.send_task)) would
+        // deadlock if the agent never responded to CancelNotification.
+        drop(turn.send_task);
+        Task::ready(())
     }
 
     fn mark_pending_tools_as_canceled(&mut self) {
