@@ -1885,7 +1885,17 @@ impl Thread {
         cx: &mut AsyncApp,
     ) -> Result<()> {
         let mut attempt = 0;
-        let mut intent = CompletionIntent::UserPrompt;
+        // Subagent turns are agent-initiated: using SubagentPrompt causes the Copilot Chat
+        // provider to send `X-Initiator: agent`, so these requests do not consume the
+        // user's premium request quota
+        let initial_intent = this.read_with(cx, |this, _| {
+            if this.is_subagent() {
+                CompletionIntent::SubagentPrompt
+            } else {
+                CompletionIntent::UserPrompt
+            }
+        })?;
+        let mut intent = initial_intent;
         loop {
             // Re-read the model and refresh tools on each iteration so that
             // mid-turn changes (e.g. the user switches model, toggles tools,
@@ -2066,7 +2076,7 @@ impl Thread {
                 this.update(cx, |this, _cx| {
                     if let Some(Message::Agent(message)) = this.messages.last() {
                         if message.tool_results.is_empty() {
-                            intent = CompletionIntent::UserPrompt;
+                            intent = initial_intent;
                             this.messages.push(Message::Resume);
                         }
                     }

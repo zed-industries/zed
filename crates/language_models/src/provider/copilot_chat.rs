@@ -357,7 +357,11 @@ impl LanguageModel for CopilotChatLanguageModel {
             | CompletionIntent::TerminalInlineAssist
             | CompletionIntent::GenerateGitCommitMessage => true,
 
-            CompletionIntent::ToolResults
+            // Subagent requests are agent-initiated: Copilot will send
+            // `X-Initiator: agent` so they do not consume the user's
+            // premium request quota.
+            CompletionIntent::SubagentPrompt
+            | CompletionIntent::ToolResults
             | CompletionIntent::ThreadSummarization
             | CompletionIntent::CreateFile
             | CompletionIntent::EditFile => false,
@@ -1072,6 +1076,7 @@ fn compute_thinking_budget(
 fn intent_to_chat_location(intent: Option<CompletionIntent>) -> ChatLocation {
     match intent {
         Some(CompletionIntent::UserPrompt) => ChatLocation::Agent,
+        Some(CompletionIntent::SubagentPrompt) => ChatLocation::Agent,
         Some(CompletionIntent::ToolResults) => ChatLocation::Agent,
         Some(CompletionIntent::ThreadSummarization) => ChatLocation::Panel,
         Some(CompletionIntent::ThreadContextSummarization) => ChatLocation::Panel,
