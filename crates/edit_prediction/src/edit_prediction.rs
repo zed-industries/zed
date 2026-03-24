@@ -177,7 +177,6 @@ pub struct EditPredictionModelInput {
     debug_tx: Option<mpsc::UnboundedSender<DebugEvent>>,
     can_collect_data: bool,
     is_open_source: bool,
-    pub user_actions: Vec<UserActionRecord>,
 }
 
 #[derive(Debug)]
@@ -214,26 +213,6 @@ pub struct EditPredictionFinishedDebugEvent {
     pub buffer: WeakEntity<Buffer>,
     pub position: Anchor,
     pub model_output: Option<String>,
-}
-
-const USER_ACTION_HISTORY_SIZE: usize = 16;
-
-#[derive(Clone, Debug)]
-pub struct UserActionRecord {
-    pub action_type: UserActionType,
-    pub buffer_id: EntityId,
-    pub line_number: u32,
-    pub offset: usize,
-    pub timestamp_epoch_ms: u64,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum UserActionType {
-    InsertChar,
-    InsertSelection,
-    DeleteChar,
-    DeleteSelection,
-    CursorMovement,
 }
 
 /// An event with associated metadata for reconstructing buffer state.
@@ -335,19 +314,11 @@ struct ProjectState {
     cancelled_predictions: HashSet<usize>,
     context: Entity<RelatedExcerptStore>,
     license_detection_watchers: HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
-    user_actions: VecDeque<UserActionRecord>,
     _subscriptions: [gpui::Subscription; 2],
     copilot: Option<Entity<Copilot>>,
 }
 
 impl ProjectState {
-    fn record_user_action(&mut self, action: UserActionRecord) {
-        if self.user_actions.len() >= USER_ACTION_HISTORY_SIZE {
-            self.user_actions.pop_front();
-        }
-        self.user_actions.push_back(action);
-    }
-
     pub fn events(&self, cx: &App) -> Vec<StoredEvent> {
         self.events
             .iter()
@@ -1116,7 +1087,6 @@ impl EditPredictionStore {
                 last_edit_prediction_refresh: None,
                 last_jump_prediction_refresh: None,
                 license_detection_watchers: HashMap::default(),
-                user_actions: VecDeque::with_capacity(USER_ACTION_HISTORY_SIZE),
                 _subscriptions: [
                     cx.subscribe(&project, Self::handle_project_event),
                     cx.observe_release(&project, move |this, _, cx| {
@@ -1370,32 +1340,6 @@ impl EditPredictionStore {
                 &edit_range,
                 cx,
             );
-
-        if is_local {
-            let action_type = match (total_deleted, total_inserted, num_edits) {
-                (0, ins, n) if ins == n => UserActionType::InsertChar,
-                (0, _, _) => UserActionType::InsertSelection,
-                (del, 0, n) if del == n => UserActionType::DeleteChar,
-                (_, 0, _) => UserActionType::DeleteSelection,
-                (_, ins, n) if ins == n => UserActionType::InsertChar,
-                (_, _, _) => UserActionType::InsertSelection,
-            };
-
-            if let Some(offset) = last_offset {
-                let point = new_snapshot.offset_to_point(offset);
-                let timestamp_epoch_ms = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map(|d| d.as_millis() as u64)
-                    .unwrap_or(0);
-                project_state.record_user_action(UserActionRecord {
-                    action_type,
-                    buffer_id: buffer.entity_id(),
-                    line_number: point.row,
-                    offset,
-                    timestamp_epoch_ms,
-                });
-            }
-        }
 
         if !include_in_history {
             return;
@@ -2339,28 +2283,6 @@ impl EditPredictionStore {
 
         let snapshot = active_buffer.read(cx).snapshot();
         let cursor_point = position.to_point(&snapshot);
-        let current_offset = position.to_offset(&snapshot);
-
-        let mut user_actions: Vec<UserActionRecord> =
-            project_state.user_actions.iter().cloned().collect();
-
-        if let Some(last_action) = user_actions.last() {
-            if last_action.buffer_id == active_buffer.entity_id()
-                && current_offset != last_action.offset
-            {
-                let timestamp_epoch_ms = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map(|d| d.as_millis() as u64)
-                    .unwrap_or(0);
-                user_actions.push(UserActionRecord {
-                    action_type: UserActionType::CursorMovement,
-                    buffer_id: active_buffer.entity_id(),
-                    line_number: cursor_point.row,
-                    offset: current_offset,
-                    timestamp_epoch_ms,
-                });
-            }
-        }
         let diagnostic_search_start = cursor_point.row.saturating_sub(DIAGNOSTIC_LINES_RANGE);
         let diagnostic_search_end = cursor_point.row + DIAGNOSTIC_LINES_RANGE;
         let diagnostic_search_range =
@@ -2392,7 +2314,6 @@ impl EditPredictionStore {
             trigger,
             diagnostic_search_range: diagnostic_search_range,
             debug_tx,
-            user_actions,
             can_collect_data,
             is_open_source,
         };
