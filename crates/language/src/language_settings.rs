@@ -462,8 +462,7 @@ pub struct CodestralSettings {
     pub api_url: Option<String>,
 }
 
-#[derive(Clone, Debug, Default)]
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Clone, Debug, Default)]
 pub struct OpenAiCompatibleEditPredictionSettings {
     /// Model to use for completions.
     pub model: String,
