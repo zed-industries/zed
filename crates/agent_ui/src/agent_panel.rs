@@ -46,8 +46,8 @@ use extension_host::ExtensionStore;
 use fs::Fs;
 use gpui::{
     Action, AnyElement, App, AsyncWindowContext, ClipboardItem, Corner, DismissEvent, Empty,
-    Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, KeyContext, Pixels, ScrollHandle,
-    Subscription, Task, UpdateGlobal, WeakEntity, prelude::*,
+    Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, KeyContext, MouseButton, Pixels,
+    ScrollHandle, Subscription, Task, UpdateGlobal, WeakEntity, prelude::*,
 };
 use language::LanguageRegistry;
 use language_model::{ConfigurationError, LanguageModelRegistry};
@@ -2799,6 +2799,12 @@ impl AgentPanel {
                         this.set_active_tab_by_id(index, window, cx);
                     }
                 }))
+                .on_mouse_down(
+                    MouseButton::Middle,
+                    cx.listener(move |this: &mut Self, _, window, cx| {
+                        this.remove_tab_by_id(index, window, cx);
+                    }),
+                )
                 .child(tab_label)
                 .start_slot(start_slot)
                 .end_slot(
