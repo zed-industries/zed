@@ -8,7 +8,7 @@ use crate::{
     InlayHintRefreshReason, MultiBufferSnapshot, RowExt, ToPoint,
     display_map::{DisplaySnapshot, ToDisplayPoint},
     hover_popover::hide_hover,
-    persistence::DB,
+    persistence::EditorDb,
 };
 pub use autoscroll::{Autoscroll, AutoscrollStrategy};
 use core::fmt::Debug;
@@ -467,12 +467,13 @@ impl ScrollManager {
             let item_id = cx.entity().entity_id().as_u64() as ItemId;
             let executor = cx.background_executor().clone();
 
+            let db = EditorDb::global(cx);
             self._save_scroll_position_task = cx.background_executor().spawn(async move {
                 executor.timer(Duration::from_millis(10)).await;
                 log::debug!(
                     "Saving scroll position for item {item_id:?} in workspace {workspace_id:?}"
                 );
-                DB.save_scroll_position(
+                db.save_scroll_position(
                     item_id,
                     workspace_id,
                     top_row,
@@ -937,7 +938,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        let scroll_position = DB.get_scroll_position(item_id, workspace_id);
+        let scroll_position = EditorDb::global(cx).get_scroll_position(item_id, workspace_id);
         if let Ok(Some((top_row, x, y))) = scroll_position {
             let top_anchor = self
                 .buffer()

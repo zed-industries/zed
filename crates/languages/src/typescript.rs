@@ -804,6 +804,7 @@ impl LspAdapter for TypeScriptLspAdapter {
     async fn initialization_options(
         self: Arc<Self>,
         adapter: &Arc<dyn LspAdapterDelegate>,
+        _: &mut AsyncApp,
     ) -> Result<Option<serde_json::Value>> {
         let tsdk_path = self.tsdk_path(adapter).await;
         Ok(Some(json!({

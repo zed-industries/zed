@@ -1,17 +1,30 @@
-use std::time::Duration;
+use std::{ops::RangeInclusive, path::PathBuf, time::Duration};
 
-use gpui::{Animation, AnimationExt, AnyView, IntoElement, Window, pulsating_between};
+use acp_thread::MentionUri;
+use agent_client_protocol as acp;
+use editor::{Editor, SelectionEffects, scroll::Autoscroll};
+use gpui::{
+    Animation, AnimationExt, AnyView, Context, IntoElement, WeakEntity, Window, pulsating_between,
+};
+use prompt_store::PromptId;
+use rope::Point;
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::{ButtonLike, TintColor, prelude::*};
+use ui::{ButtonLike, TintColor, Tooltip, prelude::*};
+use workspace::{OpenOptions, Workspace};
+
+use crate::Agent;
 
 #[derive(IntoElement)]
 pub struct MentionCrease {
     id: ElementId,
     icon: SharedString,
     label: SharedString,
+    mention_uri: Option<MentionUri>,
+    workspace: Option<WeakEntity<Workspace>>,
     is_toggled: bool,
     is_loading: bool,
+    tooltip: Option<SharedString>,
     image_preview: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
 }
 
@@ -25,10 +38,23 @@ impl MentionCrease {
             id: id.into(),
             icon: icon.into(),
             label: label.into(),
+            mention_uri: None,
+            workspace: None,
             is_toggled: false,
             is_loading: false,
+            tooltip: None,
             image_preview: None,
         }
+    }
+
+    pub fn mention_uri(mut self, mention_uri: Option<MentionUri>) -> Self {
+        self.mention_uri = mention_uri;
+        self
+    }
+
+    pub fn workspace(mut self, workspace: Option<WeakEntity<Workspace>>) -> Self {
+        self.workspace = workspace;
+        self
     }
 
     pub fn is_toggled(mut self, is_toggled: bool) -> Self {
@@ -38,6 +64,11 @@ impl MentionCrease {
 
     pub fn is_loading(mut self, is_loading: bool) -> Self {
         self.is_loading = is_loading;
+        self
+    }
+
+    pub fn tooltip(mut self, tooltip: impl Into<SharedString>) -> Self {
+        self.tooltip = Some(tooltip.into());
         self
     }
 
@@ -55,6 +86,9 @@ impl RenderOnce for MentionCrease {
         let settings = ThemeSettings::get_global(cx);
         let font_size = settings.agent_buffer_font_size(cx);
         let buffer_font = settings.buffer_font.clone();
+        let is_loading = self.is_loading;
+        let tooltip = self.tooltip;
+        let image_preview = self.image_preview;
 
         let button_height = DefiniteLength::Absolute(AbsoluteLength::Pixels(
             px(window.line_height().into()) - px(1.),
@@ -66,9 +100,14 @@ impl RenderOnce for MentionCrease {
             .height(button_height)
             .selected_style(ButtonStyle::Tinted(TintColor::Accent))
             .toggle_state(self.is_toggled)
-            .when_some(self.image_preview, |this, image_preview| {
-                this.hoverable_tooltip(image_preview)
-            })
+            .when_some(
+                self.mention_uri.clone().zip(self.workspace.clone()),
+                |this, (mention_uri, workspace)| {
+                    this.on_click(move |_event, window, cx| {
+                        open_mention_uri(mention_uri.clone(), &workspace, window, cx);
+                    })
+                },
+            )
             .child(
                 h_flex()
                     .pb_px()
@@ -82,7 +121,7 @@ impl RenderOnce for MentionCrease {
                     )
                     .child(self.label.clone())
                     .map(|this| {
-                        if self.is_loading {
+                        if is_loading {
                             this.with_animation(
                                 "loading-context-crease",
                                 Animation::new(Duration::from_secs(2))
@@ -96,5 +135,178 @@ impl RenderOnce for MentionCrease {
                         }
                     }),
             )
+            .map(|button| {
+                if let Some(image_preview) = image_preview {
+                    button.hoverable_tooltip(image_preview)
+                } else {
+                    button.when_some(tooltip, |this, tooltip_text| {
+                        this.tooltip(Tooltip::text(tooltip_text))
+                    })
+                }
+            })
     }
+}
+
+fn open_mention_uri(
+    mention_uri: MentionUri,
+    workspace: &WeakEntity<Workspace>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let Some(workspace) = workspace.upgrade() else {
+        return;
+    };
+
+    workspace.update(cx, |workspace, cx| match mention_uri {
+        MentionUri::File { abs_path } => {
+            open_file(workspace, abs_path, None, window, cx);
+        }
+        MentionUri::Symbol {
+            abs_path,
+            line_range,
+            ..
+        }
+        | MentionUri::Selection {
+            abs_path: Some(abs_path),
+            line_range,
+        } => {
+            open_file(workspace, abs_path, Some(line_range), window, cx);
+        }
+        MentionUri::Directory { abs_path } => {
+            reveal_in_project_panel(workspace, abs_path, cx);
+        }
+        MentionUri::Thread { id, name } => {
+            open_thread(workspace, id, name, window, cx);
+        }
+        MentionUri::TextThread { .. } => {}
+        MentionUri::Rule { id, .. } => {
+            open_rule(workspace, id, window, cx);
+        }
+        MentionUri::Fetch { url } => {
+            cx.open_url(url.as_str());
+        }
+        MentionUri::PastedImage
+        | MentionUri::Selection { abs_path: None, .. }
+        | MentionUri::Diagnostics { .. }
+        | MentionUri::TerminalSelection { .. }
+        | MentionUri::GitDiff { .. }
+        | MentionUri::MergeConflict { .. } => {}
+    });
+}
+
+fn open_file(
+    workspace: &mut Workspace,
+    abs_path: PathBuf,
+    line_range: Option<RangeInclusive<u32>>,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let project = workspace.project();
+
+    if let Some(project_path) =
+        project.update(cx, |project, cx| project.find_project_path(&abs_path, cx))
+    {
+        let item = workspace.open_path(project_path, None, true, window, cx);
+        if let Some(line_range) = line_range {
+            window
+                .spawn(cx, async move |cx| {
+                    let Some(editor) = item.await?.downcast::<Editor>() else {
+                        return Ok(());
+                    };
+                    editor
+                        .update_in(cx, |editor, window, cx| {
+                            let range = Point::new(*line_range.start(), 0)
+                                ..Point::new(*line_range.start(), 0);
+                            editor.change_selections(
+                                SelectionEffects::scroll(Autoscroll::center()),
+                                window,
+                                cx,
+                                |selections| selections.select_ranges(vec![range]),
+                            );
+                        })
+                        .ok();
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx);
+        } else {
+            item.detach_and_log_err(cx);
+        }
+    } else if abs_path.exists() {
+        workspace
+            .open_abs_path(
+                abs_path,
+                OpenOptions {
+                    focus: Some(true),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            )
+            .detach_and_log_err(cx);
+    }
+}
+
+fn reveal_in_project_panel(
+    workspace: &mut Workspace,
+    abs_path: PathBuf,
+    cx: &mut Context<Workspace>,
+) {
+    let project = workspace.project();
+    let Some(entry_id) = project.update(cx, |project, cx| {
+        let path = project.find_project_path(&abs_path, cx)?;
+        project.entry_for_path(&path, cx).map(|entry| entry.id)
+    }) else {
+        return;
+    };
+
+    project.update(cx, |_, cx| {
+        cx.emit(project::Event::RevealInProjectPanel(entry_id));
+    });
+}
+
+fn open_thread(
+    workspace: &mut Workspace,
+    id: acp::SessionId,
+    name: String,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    use crate::AgentPanel;
+
+    let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
+        return;
+    };
+
+    // Right now we only support loading threads in the native agent
+    panel.update(cx, |panel, cx| {
+        panel.load_agent_thread(
+            Agent::NativeAgent,
+            id,
+            None,
+            Some(name.into()),
+            true,
+            window,
+            cx,
+        )
+    });
+}
+
+fn open_rule(
+    _workspace: &mut Workspace,
+    id: PromptId,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    use zed_actions::assistant::OpenRulesLibrary;
+
+    let PromptId::User { uuid } = id else {
+        return;
+    };
+
+    window.dispatch_action(
+        Box::new(OpenRulesLibrary {
+            prompt_to_select: Some(uuid.0),
+        }),
+        cx,
+    );
 }

@@ -171,7 +171,7 @@ cat > "$ZED_CONFIG_DIR/settings.json" << JSONEOF
 ${AGENT_SERVERS_JSON}
   "language_models": {
     "anthropic": {
-      "api_url": "https://api.anthropic.com"
+      "api_url": "${ANTHROPIC_BASE_URL:-https://api.anthropic.com}"
     }
   },
   "agent": {

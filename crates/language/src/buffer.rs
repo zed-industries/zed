@@ -4,7 +4,7 @@ use crate::{
     DebuggerTextObject, LanguageScope, Outline, OutlineConfig, PLAIN_TEXT, RunnableCapture,
     RunnableTag, TextObject, TreeSitterOptions,
     diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup},
-    language_settings::{LanguageSettings, language_settings},
+    language_settings::{AutoIndentMode, LanguageSettings, language_settings},
     outline::OutlineItem,
     row_chunk::RowChunks,
     syntax_map::{
@@ -187,7 +187,7 @@ struct BufferBranchState {
 /// state of a buffer.
 pub struct BufferSnapshot {
     pub text: text::BufferSnapshot,
-    pub syntax: SyntaxSnapshot,
+    pub(crate) syntax: SyntaxSnapshot,
     tree_sitter_data: Arc<TreeSitterData>,
     diagnostics: TreeMap<LanguageServerId, DiagnosticSet>,
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
@@ -359,7 +359,7 @@ pub enum BufferEvent {
         is_local: bool,
     },
     /// The buffer was edited.
-    Edited,
+    Edited { is_local: bool },
     /// The buffer's `dirty` bit changed.
     DirtyChanged,
     /// The buffer was saved.
@@ -435,7 +435,7 @@ pub enum DiskState {
     /// File created in Zed that has not been saved.
     New,
     /// File present on the filesystem.
-    Present { mtime: MTime },
+    Present { mtime: MTime, size: u64 },
     /// Deleted file that was previously present.
     Deleted,
     /// An old version of a file that was previously present
@@ -448,7 +448,17 @@ impl DiskState {
     pub fn mtime(self) -> Option<MTime> {
         match self {
             DiskState::New => None,
-            DiskState::Present { mtime } => Some(mtime),
+            DiskState::Present { mtime, .. } => Some(mtime),
+            DiskState::Deleted => None,
+            DiskState::Historic { .. } => None,
+        }
+    }
+
+    /// Returns the file's size on disk in bytes.
+    pub fn size(self) -> Option<u64> {
+        match self {
+            DiskState::New => None,
+            DiskState::Present { size, .. } => Some(size),
             DiskState::Deleted => None,
             DiskState::Historic { .. } => None,
         }
@@ -1776,7 +1786,9 @@ impl Buffer {
         self.syntax_map.lock().contains_unknown_injections()
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    /// Sets the sync parse timeout for this buffer.
+    ///
+    /// Setting this to `None` disables sync parsing entirely.
     pub fn set_sync_parse_timeout(&mut self, timeout: Option<Duration>) {
         self.sync_parse_timeout = timeout;
     }
@@ -2375,7 +2387,7 @@ impl Buffer {
         };
         match file.disk_state() {
             DiskState::New => false,
-            DiskState::Present { mtime } => match self.saved_mtime {
+            DiskState::Present { mtime, .. } => match self.saved_mtime {
                 Some(saved_mtime) => {
                     mtime.bad_is_greater_than(saved_mtime) && self.has_unsaved_edits()
                 }
@@ -2455,7 +2467,7 @@ impl Buffer {
             false
         };
         if let Some((transaction_id, start_version)) = self.text.end_transaction_at(now) {
-            self.did_edit(&start_version, was_dirty, cx);
+            self.did_edit(&start_version, was_dirty, true, cx);
             Some(transaction_id)
         } else {
             None
@@ -2736,17 +2748,18 @@ impl Buffer {
                 .filter(|((_, (range, _)), _)| {
                     let language = before_edit.language_at(range.start);
                     let language_id = language.map(|l| l.id());
-                    if let Some((cached_language_id, auto_indent)) = previous_setting
+                    if let Some((cached_language_id, apply_syntax_indent)) = previous_setting
                         && cached_language_id == language_id
                     {
-                        auto_indent
+                        apply_syntax_indent
                     } else {
                         // The auto-indent setting is not present in editorconfigs, hence
                         // we can avoid passing the file here.
-                        let auto_indent =
+                        let auto_indent_mode =
                             language_settings(language.map(|l| l.name()), None, cx).auto_indent;
-                        previous_setting = Some((language_id, auto_indent));
-                        auto_indent
+                        let apply_syntax_indent = auto_indent_mode == AutoIndentMode::SyntaxAware;
+                        previous_setting = Some((language_id, apply_syntax_indent));
+                        apply_syntax_indent
                     }
                 })
                 .map(|((ix, (range, _)), new_text)| {
@@ -2841,7 +2854,13 @@ impl Buffer {
         Some(edit_id)
     }
 
-    fn did_edit(&mut self, old_version: &clock::Global, was_dirty: bool, cx: &mut Context<Self>) {
+    fn did_edit(
+        &mut self,
+        old_version: &clock::Global,
+        was_dirty: bool,
+        is_local: bool,
+        cx: &mut Context<Self>,
+    ) {
         self.was_changed();
 
         if self.edits_since::<usize>(old_version).next().is_none() {
@@ -2849,9 +2868,19 @@ impl Buffer {
         }
 
         self.reparse(cx, true);
-        cx.emit(BufferEvent::Edited);
-        if was_dirty != self.is_dirty() {
+        cx.emit(BufferEvent::Edited { is_local });
+        let is_dirty = self.is_dirty();
+        if was_dirty != is_dirty {
             cx.emit(BufferEvent::DirtyChanged);
+        }
+        if was_dirty && !is_dirty {
+            if let Some(file) = self.file.as_ref() {
+                if matches!(file.disk_state(), DiskState::Present { .. })
+                    && file.disk_state().mtime() != self.saved_mtime
+                {
+                    cx.emit(BufferEvent::ReloadNeeded);
+                }
+            }
         }
         cx.notify();
     }
@@ -2961,7 +2990,7 @@ impl Buffer {
         self.text.apply_ops(buffer_ops);
         self.deferred_ops.insert(deferred_ops);
         self.flush_deferred_ops(cx);
-        self.did_edit(&old_version, was_dirty, cx);
+        self.did_edit(&old_version, was_dirty, false, cx);
         // Notify independently of whether the buffer was edited as the operations could include a
         // selection update.
         cx.notify();
@@ -3116,7 +3145,7 @@ impl Buffer {
 
         if let Some((transaction_id, operation)) = self.text.undo() {
             self.send_operation(Operation::Buffer(operation), true, cx);
-            self.did_edit(&old_version, was_dirty, cx);
+            self.did_edit(&old_version, was_dirty, true, cx);
             self.restore_encoding_for_transaction(transaction_id, was_dirty);
             Some(transaction_id)
         } else {
@@ -3134,7 +3163,7 @@ impl Buffer {
         let old_version = self.version.clone();
         if let Some(operation) = self.text.undo_transaction(transaction_id) {
             self.send_operation(Operation::Buffer(operation), true, cx);
-            self.did_edit(&old_version, was_dirty, cx);
+            self.did_edit(&old_version, was_dirty, true, cx);
             true
         } else {
             false
@@ -3156,7 +3185,7 @@ impl Buffer {
             self.send_operation(Operation::Buffer(operation), true, cx);
         }
         if undone {
-            self.did_edit(&old_version, was_dirty, cx)
+            self.did_edit(&old_version, was_dirty, true, cx)
         }
         undone
     }
@@ -3166,7 +3195,7 @@ impl Buffer {
         let operation = self.text.undo_operations(counts);
         let old_version = self.version.clone();
         self.send_operation(Operation::Buffer(operation), true, cx);
-        self.did_edit(&old_version, was_dirty, cx);
+        self.did_edit(&old_version, was_dirty, true, cx);
     }
 
     /// Manually redoes a specific transaction in the buffer's redo history.
@@ -3176,7 +3205,7 @@ impl Buffer {
 
         if let Some((transaction_id, operation)) = self.text.redo() {
             self.send_operation(Operation::Buffer(operation), true, cx);
-            self.did_edit(&old_version, was_dirty, cx);
+            self.did_edit(&old_version, was_dirty, true, cx);
             self.restore_encoding_for_transaction(transaction_id, was_dirty);
             Some(transaction_id)
         } else {
@@ -3217,7 +3246,7 @@ impl Buffer {
             self.send_operation(Operation::Buffer(operation), true, cx);
         }
         if redone {
-            self.did_edit(&old_version, was_dirty, cx)
+            self.did_edit(&old_version, was_dirty, true, cx)
         }
         redone
     }
@@ -3327,7 +3356,7 @@ impl Buffer {
         if !ops.is_empty() {
             for op in ops {
                 self.send_operation(Operation::Buffer(op), true, cx);
-                self.did_edit(&old_version, was_dirty, cx);
+                self.did_edit(&old_version, was_dirty, true, cx);
             }
         }
     }
@@ -3704,6 +3733,14 @@ impl BufferSnapshot {
             }
         }
         None
+    }
+
+    pub fn captures(
+        &self,
+        range: Range<usize>,
+        query: fn(&Grammar) -> Option<&tree_sitter::Query>,
+    ) -> SyntaxMapCaptures<'_> {
+        self.syntax.captures(range, &self.text, query)
     }
 
     #[ztracing::instrument(skip_all)]
@@ -4573,7 +4610,7 @@ impl BufferSnapshot {
                 continue;
             }
 
-            let mut all_brackets: Vec<(BracketMatch<usize>, bool)> = Vec::new();
+            let mut all_brackets: Vec<(BracketMatch<usize>, usize, bool)> = Vec::new();
             let mut opens = Vec::new();
             let mut color_pairs = Vec::new();
 
@@ -4599,8 +4636,9 @@ impl BufferSnapshot {
                 let mut open = None;
                 let mut close = None;
                 let syntax_layer_depth = mat.depth;
+                let pattern_index = mat.pattern_index;
                 let config = configs[mat.grammar_index];
-                let pattern = &config.patterns[mat.pattern_index];
+                let pattern = &config.patterns[pattern_index];
                 for capture in mat.captures {
                     if capture.index == config.open_capture_ix {
                         open = Some(capture.node.byte_range());
@@ -4621,7 +4659,7 @@ impl BufferSnapshot {
                 }
 
                 open_to_close_ranges
-                    .entry((open_range.start, open_range.end))
+                    .entry((open_range.start, open_range.end, pattern_index))
                     .or_insert_with(BTreeMap::new)
                     .insert(
                         (close_range.start, close_range.end),
@@ -4642,6 +4680,7 @@ impl BufferSnapshot {
                         newline_only: pattern.newline_only,
                         color_index: None,
                     },
+                    pattern_index,
                     pattern.rainbow_exclude,
                 ));
             }
@@ -4655,22 +4694,43 @@ impl BufferSnapshot {
                 // For each close, we know the expected open_len from tree-sitter matches.
 
                 // Map each close to its expected open length (for inferring opens)
-                let close_to_open_len: HashMap<(usize, usize), usize> = all_brackets
+                let close_to_open_len: HashMap<(usize, usize, usize), usize> = all_brackets
                     .iter()
-                    .map(|(m, _)| ((m.close_range.start, m.close_range.end), m.open_range.len()))
+                    .map(|(bracket_match, pattern_index, _)| {
+                        (
+                            (
+                                bracket_match.close_range.start,
+                                bracket_match.close_range.end,
+                                *pattern_index,
+                            ),
+                            bracket_match.open_range.len(),
+                        )
+                    })
                     .collect();
 
                 // Collect unique opens and closes within this chunk
-                let mut unique_opens: HashSet<(usize, usize)> = all_brackets
+                let mut unique_opens: HashSet<(usize, usize, usize)> = all_brackets
                     .iter()
-                    .map(|(m, _)| (m.open_range.start, m.open_range.end))
-                    .filter(|(start, _)| chunk_range.contains(start))
+                    .map(|(bracket_match, pattern_index, _)| {
+                        (
+                            bracket_match.open_range.start,
+                            bracket_match.open_range.end,
+                            *pattern_index,
+                        )
+                    })
+                    .filter(|(start, _, _)| chunk_range.contains(start))
                     .collect();
 
-                let mut unique_closes: Vec<(usize, usize)> = all_brackets
+                let mut unique_closes: Vec<(usize, usize, usize)> = all_brackets
                     .iter()
-                    .map(|(m, _)| (m.close_range.start, m.close_range.end))
-                    .filter(|(start, _)| chunk_range.contains(start))
+                    .map(|(bracket_match, pattern_index, _)| {
+                        (
+                            bracket_match.close_range.start,
+                            bracket_match.close_range.end,
+                            *pattern_index,
+                        )
+                    })
+                    .filter(|(start, _, _)| chunk_range.contains(start))
                     .collect();
                 unique_closes.sort();
                 unique_closes.dedup();
@@ -4679,8 +4739,9 @@ impl BufferSnapshot {
                 let mut unique_opens_vec: Vec<_> = unique_opens.iter().copied().collect();
                 unique_opens_vec.sort();
 
-                let mut valid_pairs: HashSet<((usize, usize), (usize, usize))> = HashSet::default();
-                let mut open_stack: Vec<(usize, usize)> = Vec::new();
+                let mut valid_pairs: HashSet<((usize, usize, usize), (usize, usize, usize))> =
+                    HashSet::default();
+                let mut open_stacks: HashMap<usize, Vec<(usize, usize)>> = HashMap::default();
                 let mut open_idx = 0;
 
                 for close in &unique_closes {
@@ -4688,36 +4749,53 @@ impl BufferSnapshot {
                     while open_idx < unique_opens_vec.len()
                         && unique_opens_vec[open_idx].0 < close.0
                     {
-                        open_stack.push(unique_opens_vec[open_idx]);
+                        let (start, end, pattern_index) = unique_opens_vec[open_idx];
+                        open_stacks
+                            .entry(pattern_index)
+                            .or_default()
+                            .push((start, end));
                         open_idx += 1;
                     }
 
                     // Try to match with most recent open
-                    if let Some(open) = open_stack.pop() {
-                        valid_pairs.insert((open, *close));
+                    let (close_start, close_end, pattern_index) = *close;
+                    if let Some(open) = open_stacks
+                        .get_mut(&pattern_index)
+                        .and_then(|open_stack| open_stack.pop())
+                    {
+                        valid_pairs.insert(((open.0, open.1, pattern_index), *close));
                     } else if let Some(&open_len) = close_to_open_len.get(close) {
                         // No open on stack - infer one based on expected open_len
-                        if close.0 >= open_len {
-                            let inferred = (close.0 - open_len, close.0);
+                        if close_start >= open_len {
+                            let inferred = (close_start - open_len, close_start, pattern_index);
                             unique_opens.insert(inferred);
                             valid_pairs.insert((inferred, *close));
                             all_brackets.push((
                                 BracketMatch {
                                     open_range: inferred.0..inferred.1,
-                                    close_range: close.0..close.1,
+                                    close_range: close_start..close_end,
                                     newline_only: false,
                                     syntax_layer_depth: 0,
                                     color_index: None,
                                 },
+                                pattern_index,
                                 false,
                             ));
                         }
                     }
                 }
 
-                all_brackets.retain(|(m, _)| {
-                    let open = (m.open_range.start, m.open_range.end);
-                    let close = (m.close_range.start, m.close_range.end);
+                all_brackets.retain(|(bracket_match, pattern_index, _)| {
+                    let open = (
+                        bracket_match.open_range.start,
+                        bracket_match.open_range.end,
+                        *pattern_index,
+                    );
+                    let close = (
+                        bracket_match.close_range.start,
+                        bracket_match.close_range.end,
+                        *pattern_index,
+                    );
                     valid_pairs.contains(&(open, close))
                 });
             }
@@ -4725,7 +4803,7 @@ impl BufferSnapshot {
             let mut all_brackets = all_brackets
                 .into_iter()
                 .enumerate()
-                .map(|(index, (bracket_match, rainbow_exclude))| {
+                .map(|(index, (bracket_match, _, rainbow_exclude))| {
                     // Certain languages have "brackets" that are not brackets, e.g. tags. and such
                     // bracket will match the entire tag with all text inside.
                     // For now, avoid highlighting any pair that has more than single char in each bracket.

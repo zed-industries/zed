@@ -8,7 +8,7 @@ use editor::scroll::Autoscroll;
 use editor::{Editor, EditorEvent, MultiBufferOffset, SelectionEffects};
 use gpui::{
     App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, IsZero, ListState, ParentElement, Render, RetainAllImageCache, Styled,
+    IntoElement, IsZero, ListOffset, ListState, ParentElement, Render, RetainAllImageCache, Styled,
     Subscription, Task, WeakEntity, Window, list,
 };
 use language::LanguageRegistry;
@@ -26,7 +26,7 @@ use crate::{
     markdown_parser::parse_markdown,
     markdown_renderer::{RenderContext, render_markdown_block},
 };
-use crate::{ScrollDown, ScrollDownByItem, ScrollUp, ScrollUpByItem};
+use crate::{ScrollDown, ScrollDownByItem, ScrollToBottom, ScrollToTop, ScrollUp, ScrollUpByItem};
 
 const REPARSE_DEBOUNCE: Duration = Duration::from_millis(200);
 
@@ -277,6 +277,7 @@ impl MarkdownPreviewView {
             |this, editor, event: &EditorEvent, window, cx| {
                 match event {
                     EditorEvent::Edited { .. }
+                    | EditorEvent::BufferEdited { .. }
                     | EditorEvent::DirtyChanged
                     | EditorEvent::ExcerptsEdited { .. } => {
                         this.parse_markdown_from_active_editor(true, window, cx);
@@ -312,6 +313,10 @@ impl MarkdownPreviewView {
         cx: &mut Context<Self>,
     ) {
         if let Some(state) = &self.active_editor {
+            // if there is already a task to update the ui and the current task is also debounced (not high priority), do nothing
+            if wait_for_debounce && self.parsing_markdown_task.is_some() {
+                return;
+            }
             self.parsing_markdown_task = Some(self.parse_markdown_in_background(
                 wait_for_debounce,
                 state.editor.clone(),
@@ -355,6 +360,7 @@ impl MarkdownPreviewView {
                 let scroll_top = view.list_state.logical_scroll_top();
                 view.list_state.reset(markdown_blocks_count);
                 view.list_state.scroll_to(scroll_top);
+                view.parsing_markdown_task = None;
                 cx.notify();
             })
         })
@@ -505,6 +511,30 @@ impl MarkdownPreviewView {
         }
         cx.notify();
     }
+
+    fn scroll_to_top(&mut self, _: &ScrollToTop, _window: &mut Window, cx: &mut Context<Self>) {
+        self.list_state.scroll_to(ListOffset {
+            item_ix: 0,
+            offset_in_item: px(0.),
+        });
+        cx.notify();
+    }
+
+    fn scroll_to_bottom(
+        &mut self,
+        _: &ScrollToBottom,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let count = self.list_state.item_count();
+        if count > 0 {
+            self.list_state.scroll_to(ListOffset {
+                item_ix: count - 1,
+                offset_in_item: px(0.),
+            });
+        }
+        cx.notify();
+    }
 }
 
 impl Focusable for MarkdownPreviewView {
@@ -556,6 +586,8 @@ impl Render for MarkdownPreviewView {
             .on_action(cx.listener(MarkdownPreviewView::scroll_down))
             .on_action(cx.listener(MarkdownPreviewView::scroll_up_by_item))
             .on_action(cx.listener(MarkdownPreviewView::scroll_down_by_item))
+            .on_action(cx.listener(MarkdownPreviewView::scroll_to_top))
+            .on_action(cx.listener(MarkdownPreviewView::scroll_to_bottom))
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .p_4()

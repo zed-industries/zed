@@ -406,8 +406,6 @@ After adding your API key, Codestral will appear in the provider dropdown in the
 
 ### Self-Hosted OpenAI-compatible servers
 
-> **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
-
 You can use any self-hosted server that implements the OpenAI completion API format. This works with vLLM, llama.cpp server, LocalAI, and other compatible servers.
 
 #### Configuration

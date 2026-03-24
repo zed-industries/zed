@@ -1025,59 +1025,107 @@ func (d *testDriver) validateStore() bool {
 		errors = append(errors, fmt.Sprintf("Expected at least %d sessions with ZedThreadID, got %d", expectedSessions, sessionsWithThread))
 	}
 
-	// Check completed interactions have non-empty ResponseMessage
+	// Check completed interactions.
+	// Phases 8 and 9 include mid-stream interrupt tests where the agent may be
+	// cancelled while executing tool calls (before generating any text). Those
+	// interactions legitimately end up complete with ResponseMessage="" and only
+	// tool_call entries. We treat them as "interrupted" and skip the text-content
+	// checks, but we do require that enough non-interrupted interactions have content.
 	completedInteractions := 0
+	completedWithContent := 0
 	for _, i := range interactions {
-		if i.State == types.InteractionStateComplete {
-			completedInteractions++
-			if i.ResponseMessage == "" {
-				errors = append(errors, fmt.Sprintf("Interaction %s: complete but empty ResponseMessage (accumulation bug!)",
-					truncate(i.ID, 12)))
-			} else {
-				log.Printf("[store] Completed interaction %s: %d bytes response, session=%s",
-					truncate(i.ID, 12), len(i.ResponseMessage), truncate(i.SessionID, 12))
-			}
-			// Verify structured response entries
-			if len(i.ResponseEntries) == 0 {
-				errors = append(errors, fmt.Sprintf("Interaction %s: complete but no ResponseEntries",
-					truncate(i.ID, 12)))
-			} else {
+		if i.State != types.InteractionStateComplete {
+			continue
+		}
+		completedInteractions++
+
+		if i.ResponseMessage == "" {
+			// Check if this was interrupted during tool use (has tool_call entries but no text).
+			// This is expected for phases 8 and 9 cancellations.
+			interrupted := false
+			if len(i.ResponseEntries) > 0 {
 				var entries []struct {
-					Type      string `json:"type"`
-					Content   string `json:"content"`
-					MessageID string `json:"message_id"`
+					Type string `json:"type"`
 				}
-				if err := json.Unmarshal(i.ResponseEntries, &entries); err != nil {
-					errors = append(errors, fmt.Sprintf("Interaction %s: failed to parse ResponseEntries: %v",
-						truncate(i.ID, 12), err))
-				} else {
+				if err := json.Unmarshal(i.ResponseEntries, &entries); err == nil {
 					hasText := false
 					for _, e := range entries {
 						if e.Type == "text" {
 							hasText = true
-						}
-						if e.Type != "text" && e.Type != "tool_call" {
-							errors = append(errors, fmt.Sprintf("Interaction %s: unexpected entry type %q",
-								truncate(i.ID, 12), e.Type))
-						}
-						if e.Content == "" {
-							errors = append(errors, fmt.Sprintf("Interaction %s: entry %s has empty content",
-								truncate(i.ID, 12), e.MessageID))
+							break
 						}
 					}
 					if !hasText {
-						errors = append(errors, fmt.Sprintf("Interaction %s: no 'text' entries in ResponseEntries",
-							truncate(i.ID, 12)))
+						interrupted = true
 					}
+				}
+			}
+			if interrupted {
+				log.Printf("[store] Interaction %s: complete, interrupted during tool use (no text — expected for phases 8/9)",
+					truncate(i.ID, 12))
+			} else {
+				// Truly empty — no entries at all. This is also expected for turns
+				// cancelled before generating any output (e.g. rapid cancel in phase 9).
+				log.Printf("[store] Interaction %s: complete with no content (cancelled before output — expected for phases 8/9)",
+					truncate(i.ID, 12))
+			}
+			continue
+		}
+
+		// Interaction has text content — validate it properly.
+		completedWithContent++
+		log.Printf("[store] Completed interaction %s: %d bytes response, session=%s",
+			truncate(i.ID, 12), len(i.ResponseMessage), truncate(i.SessionID, 12))
+
+		if len(i.ResponseEntries) == 0 {
+			errors = append(errors, fmt.Sprintf("Interaction %s: has ResponseMessage but no ResponseEntries",
+				truncate(i.ID, 12)))
+		} else {
+			var entries []struct {
+				Type      string `json:"type"`
+				Content   string `json:"content"`
+				MessageID string `json:"message_id"`
+			}
+			if err := json.Unmarshal(i.ResponseEntries, &entries); err != nil {
+				errors = append(errors, fmt.Sprintf("Interaction %s: failed to parse ResponseEntries: %v",
+					truncate(i.ID, 12), err))
+			} else {
+				hasText := false
+				for _, e := range entries {
+					if e.Type == "text" {
+						hasText = true
+					}
+					if e.Type != "text" && e.Type != "tool_call" {
+						errors = append(errors, fmt.Sprintf("Interaction %s: unexpected entry type %q",
+							truncate(i.ID, 12), e.Type))
+					}
+					if e.Content == "" {
+						errors = append(errors, fmt.Sprintf("Interaction %s: entry %s has empty content",
+							truncate(i.ID, 12), e.MessageID))
+					}
+				}
+				if !hasText {
+					errors = append(errors, fmt.Sprintf("Interaction %s: has ResponseMessage but no 'text' entries in ResponseEntries",
+						truncate(i.ID, 12)))
 				}
 			}
 		}
 	}
 
-	// Expect at least 2 completed interactions per round
-	expectedCompleted := 2 * len(d.agentRounds)
+	// Expect at least 6 completed interactions per round (phases 1-5, 7 at minimum)
+	expectedCompleted := 6 * len(d.agentRounds)
 	if completedInteractions < expectedCompleted {
 		errors = append(errors, fmt.Sprintf("Expected at least %d completed interactions, got %d", expectedCompleted, completedInteractions))
+	}
+
+	// Expect at least 6 interactions WITH content per round (phases 1, 2, 3, 4, 5, 7 at minimum).
+	// The server now creates on-the-fly interactions for follow-up assistant turns where
+	// Zed skips message_added(role=user), so all follow-up phases produce content.
+	// This catches genuine accumulation failures where content is silently dropped.
+	expectedWithContent := 6 * len(d.agentRounds)
+	if completedWithContent < expectedWithContent {
+		errors = append(errors, fmt.Sprintf("Expected at least %d completed interactions with content, got %d (accumulation may be broken)",
+			expectedWithContent, completedWithContent))
 	}
 
 	// --- ACCUMULATION VALIDATION ---
@@ -1123,9 +1171,10 @@ func (d *testDriver) validateStore() bool {
 		return false
 	}
 
-	log.Println("\n[store] Store state: Sessions and interactions created correctly - PASSED")
-	log.Println("[store] Accumulation: ResponseMessage content preserved - PASSED")
-	log.Println("[store] Structured entries: ResponseEntries populated on completion - PASSED")
+	log.Printf("\n[store] Store state: Sessions and interactions created correctly - PASSED")
+	log.Printf("[store] Accumulation: %d interactions with content (interrupted/cancelled: %d) - PASSED",
+		completedWithContent, completedInteractions-completedWithContent)
+	log.Println("[store] Structured entries: ResponseEntries populated for content-bearing interactions - PASSED")
 	return true
 }
 

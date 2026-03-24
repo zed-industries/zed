@@ -44,121 +44,146 @@ impl TabMap {
         mut fold_edits: Vec<FoldEdit>,
         tab_size: NonZeroU32,
     ) -> (TabSnapshot, Vec<TabEdit>) {
-        let old_snapshot = &mut self.0;
-        let mut new_snapshot = TabSnapshot {
-            fold_snapshot,
-            tab_size: tab_size.min(MAX_TABS),
-            max_expansion_column: old_snapshot.max_expansion_column,
-            version: old_snapshot.version,
-        };
+        let tab_size = tab_size.min(MAX_TABS);
 
-        if old_snapshot.fold_snapshot.version != new_snapshot.fold_snapshot.version {
-            new_snapshot.version += 1;
+        if self.0.tab_size != tab_size {
+            let old_max_point = self.0.max_point();
+            self.0.version += 1;
+            self.0.fold_snapshot = fold_snapshot;
+            self.0.tab_size = tab_size;
+            return (
+                self.0.clone(),
+                vec![TabEdit {
+                    old: TabPoint::zero()..old_max_point,
+                    new: TabPoint::zero()..self.0.max_point(),
+                }],
+            );
         }
 
-        let tab_edits = if old_snapshot.tab_size == new_snapshot.tab_size {
-            // Expand each edit to include the next tab on the same line as the edit,
-            // and any subsequent tabs on that line that moved across the tab expansion
-            // boundary.
-            for fold_edit in &mut fold_edits {
-                let old_end = fold_edit.old.end.to_point(&old_snapshot.fold_snapshot);
-                let old_end_row_successor_offset = cmp::min(
-                    FoldPoint::new(old_end.row() + 1, 0),
-                    old_snapshot.fold_snapshot.max_point(),
-                )
-                .to_offset(&old_snapshot.fold_snapshot);
-                let new_end = fold_edit.new.end.to_point(&new_snapshot.fold_snapshot);
+        let old_snapshot = &mut self.0;
+        let mut new_version = old_snapshot.version;
+        if old_snapshot.fold_snapshot.version != fold_snapshot.version {
+            new_version += 1;
+        }
 
-                let mut offset_from_edit = 0;
-                let mut first_tab_offset = None;
-                let mut last_tab_with_changed_expansion_offset = None;
-                'outer: for chunk in old_snapshot.fold_snapshot.chunks(
-                    fold_edit.old.end..old_end_row_successor_offset,
-                    false,
-                    Highlights::default(),
-                ) {
-                    let mut remaining_tabs = chunk.tabs;
-                    while remaining_tabs != 0 {
-                        let ix = remaining_tabs.trailing_zeros();
-                        let offset_from_edit = offset_from_edit + ix;
-                        if first_tab_offset.is_none() {
-                            first_tab_offset = Some(offset_from_edit);
-                        }
+        if fold_edits.is_empty() {
+            old_snapshot.version = new_version;
+            old_snapshot.fold_snapshot = fold_snapshot;
+            old_snapshot.tab_size = tab_size;
+            return (old_snapshot.clone(), vec![]);
+        }
+        // Expand each edit to include the next tab on the same line as the edit,
+        // and any subsequent tabs on that line that moved across the tab expansion
+        // boundary.
+        //
+        // This is necessary because a tab's display width depends on its column
+        // position: it expands to fill up to the next tab stop. When an edit
+        // shifts text on a line, any tab character after the edit may now render
+        // at a different width even though the tab byte itself wasn't touched.
+        // Additionally, tabs beyond `max_expansion_column` are rendered as a
+        // single space instead of expanding to the next tab stop. An edit that
+        // shifts a tab across that boundary changes its display width, so the
+        // edit must cover it. We scan forward from the edit end to the end of
+        // the line, extending the edit to include the first subsequent tab (whose
+        // rendered width may have changed) and the last tab that crossed the
+        // expansion boundary (transitioning between expanded and non-expanded).
+        for fold_edit in &mut fold_edits {
+            let old_end = fold_edit.old.end.to_point(&old_snapshot.fold_snapshot);
+            let old_end_row_successor_offset = cmp::min(
+                FoldPoint::new(old_end.row() + 1, 0),
+                old_snapshot.fold_snapshot.max_point(),
+            )
+            .to_offset(&old_snapshot.fold_snapshot);
+            let new_end = fold_edit.new.end.to_point(&fold_snapshot);
 
-                        let old_column = old_end.column() + offset_from_edit;
-                        let new_column = new_end.column() + offset_from_edit;
-                        let was_expanded = old_column < old_snapshot.max_expansion_column;
-                        let is_expanded = new_column < new_snapshot.max_expansion_column;
-                        if was_expanded != is_expanded {
-                            last_tab_with_changed_expansion_offset = Some(offset_from_edit);
-                        } else if !was_expanded && !is_expanded {
-                            break 'outer;
-                        }
-
-                        remaining_tabs &= remaining_tabs - 1;
+            let mut offset_from_edit = 0;
+            let mut first_tab_offset = None;
+            let mut last_tab_with_changed_expansion_offset = None;
+            'outer: for chunk in old_snapshot.fold_snapshot.chunks(
+                fold_edit.old.end..old_end_row_successor_offset,
+                false,
+                Highlights::default(),
+            ) {
+                let mut remaining_tabs = chunk.tabs;
+                while remaining_tabs != 0 {
+                    let ix = remaining_tabs.trailing_zeros();
+                    let offset_from_edit = offset_from_edit + ix;
+                    if first_tab_offset.is_none() {
+                        first_tab_offset = Some(offset_from_edit);
                     }
 
-                    offset_from_edit += chunk.text.len() as u32;
-                    if old_end.column() + offset_from_edit >= old_snapshot.max_expansion_column
-                        && new_end.column() + offset_from_edit >= new_snapshot.max_expansion_column
-                    {
-                        break;
+                    let old_column = old_end.column() + offset_from_edit;
+                    let new_column = new_end.column() + offset_from_edit;
+                    let was_expanded = old_column < old_snapshot.max_expansion_column;
+                    let is_expanded = new_column < old_snapshot.max_expansion_column;
+                    if was_expanded != is_expanded {
+                        last_tab_with_changed_expansion_offset = Some(offset_from_edit);
+                    } else if !was_expanded && !is_expanded {
+                        break 'outer;
                     }
+
+                    remaining_tabs &= remaining_tabs - 1;
                 }
 
-                if let Some(offset) = last_tab_with_changed_expansion_offset.or(first_tab_offset) {
-                    fold_edit.old.end.0 += offset as usize + 1;
-                    fold_edit.new.end.0 += offset as usize + 1;
+                offset_from_edit += chunk.text.len() as u32;
+                if old_end.column() + offset_from_edit >= old_snapshot.max_expansion_column
+                    && new_end.column() + offset_from_edit >= old_snapshot.max_expansion_column
+                {
+                    break;
                 }
             }
 
-            let _old_alloc_ptr = fold_edits.as_ptr();
-            // Combine any edits that overlap due to the expansion.
-            let mut fold_edits = fold_edits.into_iter();
-            if let Some(mut first_edit) = fold_edits.next() {
-                // This code relies on reusing allocations from the Vec<_> - at the time of writing .flatten() prevents them.
-                #[allow(clippy::filter_map_identity)]
-                let mut v: Vec<_> = fold_edits
-                    .scan(&mut first_edit, |state, edit| {
-                        if state.old.end >= edit.old.start {
-                            state.old.end = edit.old.end;
-                            state.new.end = edit.new.end;
-                            Some(None) // Skip this edit, it's merged
-                        } else {
-                            let new_state = edit;
-                            let result = Some(Some(state.clone())); // Yield the previous edit
-                            **state = new_state;
-                            result
-                        }
-                    })
-                    .filter_map(|x| x)
-                    .collect();
-                v.push(first_edit);
-                debug_assert_eq!(v.as_ptr(), _old_alloc_ptr, "Fold edits were reallocated");
-                v.into_iter()
-                    .map(|fold_edit| {
-                        let old_start = fold_edit.old.start.to_point(&old_snapshot.fold_snapshot);
-                        let old_end = fold_edit.old.end.to_point(&old_snapshot.fold_snapshot);
-                        let new_start = fold_edit.new.start.to_point(&new_snapshot.fold_snapshot);
-                        let new_end = fold_edit.new.end.to_point(&new_snapshot.fold_snapshot);
-                        TabEdit {
-                            old: old_snapshot.fold_point_to_tab_point(old_start)
-                                ..old_snapshot.fold_point_to_tab_point(old_end),
-                            new: new_snapshot.fold_point_to_tab_point(new_start)
-                                ..new_snapshot.fold_point_to_tab_point(new_end),
-                        }
-                    })
-                    .collect()
-            } else {
-                vec![]
+            if let Some(offset) = last_tab_with_changed_expansion_offset.or(first_tab_offset) {
+                fold_edit.old.end.0 += offset as usize + 1;
+                fold_edit.new.end.0 += offset as usize + 1;
             }
-        } else {
-            new_snapshot.version += 1;
-            vec![TabEdit {
-                old: TabPoint::zero()..old_snapshot.max_point(),
-                new: TabPoint::zero()..new_snapshot.max_point(),
-            }]
+        }
+
+        let new_snapshot = TabSnapshot {
+            fold_snapshot,
+            tab_size,
+            max_expansion_column: old_snapshot.max_expansion_column,
+            version: new_version,
         };
+
+        let _old_alloc_ptr = fold_edits.as_ptr();
+        // Combine any edits that overlap due to the expansion.
+        let mut fold_edits = fold_edits.into_iter();
+        let mut first_edit = fold_edits.next().unwrap();
+        // This code relies on reusing allocations from the Vec<_> - at the time of writing .flatten() prevents them.
+        #[allow(clippy::filter_map_identity)]
+        let mut v: Vec<_> = fold_edits
+            .scan(&mut first_edit, |state, edit| {
+                if state.old.end >= edit.old.start {
+                    state.old.end = edit.old.end;
+                    state.new.end = edit.new.end;
+                    Some(None) // Skip this edit, it's merged
+                } else {
+                    let new_state = edit;
+                    let result = Some(Some(state.clone())); // Yield the previous edit
+                    **state = new_state;
+                    result
+                }
+            })
+            .filter_map(|x| x)
+            .collect();
+        v.push(first_edit);
+        debug_assert_eq!(v.as_ptr(), _old_alloc_ptr, "Fold edits were reallocated");
+        let tab_edits = v
+            .into_iter()
+            .map(|fold_edit| {
+                let old_start = fold_edit.old.start.to_point(&old_snapshot.fold_snapshot);
+                let old_end = fold_edit.old.end.to_point(&old_snapshot.fold_snapshot);
+                let new_start = fold_edit.new.start.to_point(&new_snapshot.fold_snapshot);
+                let new_end = fold_edit.new.end.to_point(&new_snapshot.fold_snapshot);
+                TabEdit {
+                    old: old_snapshot.fold_point_to_tab_point(old_start)
+                        ..old_snapshot.fold_point_to_tab_point(old_end),
+                    new: new_snapshot.fold_point_to_tab_point(new_start)
+                        ..new_snapshot.fold_point_to_tab_point(new_end),
+                }
+            })
+            .collect();
         *old_snapshot = new_snapshot;
         (old_snapshot.clone(), tab_edits)
     }
@@ -168,6 +193,8 @@ impl TabMap {
 pub struct TabSnapshot {
     pub fold_snapshot: FoldSnapshot,
     pub tab_size: NonZeroU32,
+    /// The maximum column up to which a tab can expand.
+    /// Any tab after this column will not expand.
     pub max_expansion_column: u32,
     pub version: usize,
 }
@@ -365,10 +392,11 @@ impl TabSnapshot {
     }
 
     #[ztracing::instrument(skip_all)]
-    fn expand_tabs<'a, I>(&self, mut cursor: TabStopCursor<'a, I>, column: u32) -> u32
-    where
-        I: Iterator<Item = Chunk<'a>>,
-    {
+    fn expand_tabs<'a>(&self, mut cursor: TabStopCursor<'a>, column: u32) -> u32 {
+        // we only ever act on a single row at a time
+        // so the main difference is that other layers build a transform sumtree, and can then just run through that
+        // we cant quite do this here, as we need to work with the previous layer chunk to understand the tabs of the corresponding row
+        // we can still do forward searches for this though, we search for a row, then traverse the column up to where we need to be
         let tab_size = self.tab_size.get();
 
         let end_column = column.min(self.max_expansion_column);
@@ -376,7 +404,7 @@ impl TabSnapshot {
         let mut tab_count = 0;
         let mut expanded_tab_len = 0;
 
-        while let Some(tab_stop) = cursor.seek(seek_target) {
+        while let Some(tab_stop) = cursor.seek_forward(seek_target) {
             let expanded_chars_old = tab_stop.char_offset + expanded_tab_len - tab_count;
             let tab_len = tab_size - ((expanded_chars_old - 1) % tab_size);
             tab_count += 1;
@@ -399,22 +427,19 @@ impl TabSnapshot {
     }
 
     #[ztracing::instrument(skip_all)]
-    fn collapse_tabs<'a, I>(
+    fn collapse_tabs<'a>(
         &self,
-        mut cursor: TabStopCursor<'a, I>,
+        mut cursor: TabStopCursor<'a>,
         column: u32,
         bias: Bias,
-    ) -> (u32, u32, u32)
-    where
-        I: Iterator<Item = Chunk<'a>>,
-    {
+    ) -> (u32, u32, u32) {
         let tab_size = self.tab_size.get();
         let mut collapsed_column = column;
         let mut seek_target = column.min(self.max_expansion_column);
         let mut tab_count = 0;
         let mut expanded_tab_len = 0;
 
-        while let Some(tab_stop) = cursor.seek(seek_target) {
+        while let Some(tab_stop) = cursor.seek_forward(seek_target) {
             // Calculate how much we want to expand this tab stop (into spaces)
             let expanded_chars_old = tab_stop.char_offset + expanded_tab_len - tab_count;
             let tab_len = tab_size - ((expanded_chars_old - 1) % tab_size);
@@ -617,13 +642,7 @@ impl<'a> Iterator for TabChunks<'a> {
             }
         }
 
-        let first_tab_ix = if self.chunk.tabs != 0 {
-            self.chunk.tabs.trailing_zeros() as usize
-        } else {
-            self.chunk.text.len()
-        };
-
-        if first_tab_ix == 0 {
+        if self.chunk.tabs & 1 != 0 {
             self.chunk.text = &self.chunk.text[1..];
             self.chunk.tabs >>= 1;
             self.chunk.chars >>= 1;
@@ -654,12 +673,46 @@ impl<'a> Iterator for TabChunks<'a> {
             });
         }
 
-        let prefix_len = first_tab_ix;
+        // Fast path: no tabs in the remaining chunk, return it directly
+        if self.chunk.tabs == 0 {
+            let chunk = self.chunk.clone();
+            self.chunk.text = "";
+            self.chunk.tabs = 0;
+            self.chunk.chars = 0;
+            self.chunk.newlines = 0;
+            let chunk_len = chunk.text.len() as u32;
+
+            let newline_count = chunk.newlines.count_ones();
+            if newline_count > 0 {
+                let last_newline_bit = 128 - chunk.newlines.leading_zeros();
+                let chars_after_last_newline =
+                    chunk.chars.unbounded_shr(last_newline_bit).count_ones();
+                let bytes_after_last_newline = chunk_len - last_newline_bit;
+
+                self.column = chars_after_last_newline;
+                self.input_column = bytes_after_last_newline;
+                self.output_position = Point::new(
+                    self.output_position.row + newline_count,
+                    bytes_after_last_newline,
+                );
+            } else {
+                let char_count = chunk.chars.count_ones();
+                self.column += char_count;
+                if !self.inside_leading_tab {
+                    self.input_column += chunk_len;
+                }
+                self.output_position.column += chunk_len;
+            }
+
+            return Some(chunk);
+        }
+
+        // Split at the next tab position
+        let prefix_len = self.chunk.tabs.trailing_zeros() as usize;
         let (prefix, suffix) = self.chunk.text.split_at(prefix_len);
 
         let mask = 1u128.unbounded_shl(prefix_len as u32).wrapping_sub(1);
         let prefix_chars = self.chunk.chars & mask;
-        let prefix_tabs = self.chunk.tabs & mask;
         let prefix_newlines = self.chunk.newlines & mask;
 
         self.chunk.text = suffix;
@@ -692,11 +745,154 @@ impl<'a> Iterator for TabChunks<'a> {
         Some(Chunk {
             text: prefix,
             chars: prefix_chars,
-            tabs: prefix_tabs,
+            tabs: 0,
             newlines: prefix_newlines,
             ..self.chunk.clone()
         })
     }
+}
+
+struct TabStopCursor<'a> {
+    chunks: FoldChunks<'a>,
+    byte_offset: u32,
+    char_offset: u32,
+    /// Chunk
+    /// last tab position iterated through
+    current_chunk: Option<(TabStopChunk<'a>, u32)>,
+}
+
+struct TabStopChunk<'a> {
+    chars: u128,
+    text: &'a str,
+    tabs: u128,
+}
+
+impl<'a> TabStopCursor<'a> {
+    fn new(chunks: FoldChunks<'a>) -> Self {
+        Self {
+            chunks,
+            byte_offset: 0,
+            char_offset: 0,
+            current_chunk: None,
+        }
+    }
+
+    fn bytes_until_next_char(&self) -> Option<usize> {
+        self.current_chunk.as_ref().map(|&(ref chunk, idx)| {
+            let higher_chars = chunk.chars.unbounded_shr(idx + 1);
+
+            if higher_chars != 0 {
+                higher_chars.trailing_zeros() as usize + 1
+            } else {
+                chunk.text.len() - idx as usize
+            }
+        })
+    }
+
+    fn is_char_boundary(&self) -> bool {
+        self.current_chunk
+            .as_ref()
+            .is_some_and(|&(ref chunk, idx)| {
+                (1u128.unbounded_shl(idx) & chunk.chars) != 0 || idx as usize == chunk.text.len()
+            })
+    }
+
+    /// distance: length to move forward while searching for the next tab stop
+    #[ztracing::instrument(skip_all)]
+    fn seek_forward(&mut self, distance: u32) -> Option<TabStop> {
+        if distance == 0 {
+            return None;
+        }
+
+        let mut distance_remaining = distance;
+
+        while let Some((mut chunk, chunk_position)) = self.current_chunk.take().or_else(|| {
+            self.chunks.next().map(|chunk| {
+                (
+                    TabStopChunk {
+                        chars: chunk.chars,
+                        text: chunk.text,
+                        tabs: chunk.tabs,
+                    },
+                    0,
+                )
+            })
+        }) {
+            let chunk_len = chunk.text.len() as u32;
+
+            if chunk.tabs == 0 {
+                let chunk_remaining = chunk_len - chunk_position;
+                if chunk_remaining >= distance_remaining {
+                    let end = chunk_position + distance_remaining;
+                    self.byte_offset += distance_remaining;
+                    self.char_offset +=
+                        count_chars_in_byte_range(chunk_position..(end - 1), chunk.chars);
+                    if end < 128 {
+                        self.current_chunk = Some((chunk, end));
+                    }
+                    return None;
+                }
+
+                self.byte_offset += chunk_remaining;
+                self.char_offset +=
+                    count_chars_in_byte_range(chunk_position..(chunk_len - 1), chunk.chars);
+                distance_remaining -= chunk_remaining;
+                continue;
+            }
+
+            let tab_end = chunk.tabs.trailing_zeros() + 1;
+            let bytes_to_tab = tab_end - chunk_position;
+
+            if bytes_to_tab > distance_remaining {
+                let end = chunk_position + distance_remaining;
+                self.byte_offset += distance_remaining;
+                self.char_offset +=
+                    count_chars_in_byte_range(chunk_position..(end - 1), chunk.chars);
+                self.current_chunk = Some((chunk, end));
+                return None;
+            }
+
+            self.byte_offset += bytes_to_tab;
+            self.char_offset +=
+                count_chars_in_byte_range(chunk_position..(tab_end - 1), chunk.chars);
+
+            let tabstop = TabStop {
+                char_offset: self.char_offset,
+                byte_offset: self.byte_offset,
+            };
+
+            chunk.tabs = (chunk.tabs - 1) & chunk.tabs;
+
+            if tab_end != chunk_len {
+                self.current_chunk = Some((chunk, tab_end));
+            }
+
+            return Some(tabstop);
+        }
+
+        None
+    }
+
+    fn byte_offset(&self) -> u32 {
+        self.byte_offset
+    }
+
+    fn char_offset(&self) -> u32 {
+        self.char_offset
+    }
+}
+
+#[inline(always)]
+fn count_chars_in_byte_range(range: Range<u32>, bitmap: u128) -> u32 {
+    let low_mask = u128::MAX << range.start;
+    let high_mask = u128::MAX >> (127 - range.end);
+    (bitmap & low_mask & high_mask).count_ones()
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TabStop {
+    char_offset: u32,
+    byte_offset: u32,
 }
 
 #[cfg(test)]
@@ -814,40 +1010,21 @@ mod tests {
 
     #[gpui::test]
     fn test_expand_tabs(cx: &mut gpui::App) {
-        let test_values = [
-            ("κg🏀 f\nwo🏀❌by🍐❎β🍗c\tβ❎ \ncλ🎉", 17),
-            (" \twςe", 4),
-            ("fε", 1),
-            ("i❎\t", 3),
-        ];
-        let buffer = MultiBuffer::build_simple("", cx);
+        let input = "A\tBC\tDEF\tG\tHI\tJ\tK\tL\tM";
+
+        let buffer = MultiBuffer::build_simple(input, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
 
-        for (text, column) in test_values {
-            let mut tabs = 0u128;
-            let mut chars = 0u128;
-            for (idx, c) in text.char_indices() {
-                if c == '\t' {
-                    tabs |= 1 << idx;
-                }
-                chars |= 1 << idx;
-            }
-
-            let chunks = [Chunk {
-                text,
-                tabs,
-                chars,
-                ..Default::default()
-            }];
-
-            let cursor = TabStopCursor::new(chunks);
+        for (ix, _) in input.char_indices() {
+            let fold_point = FoldPoint::new(0, ix as u32);
 
             assert_eq!(
-                tab_snapshot.expected_expand_tabs(text.chars(), column),
-                tab_snapshot.expand_tabs(cursor, column)
+                tab_snapshot.expected_to_tab_point(fold_point),
+                tab_snapshot.fold_point_to_tab_point(fold_point),
+                "Failed with fold_point at column {ix}"
             );
         }
     }
@@ -1263,7 +1440,7 @@ mod tests {
             Default::default(),
         );
         let mut cursor = TabStopCursor::new(chunks);
-        assert!(cursor.seek(0).is_none());
+        assert!(cursor.seek_forward(0).is_none());
         let mut tab_stops = Vec::new();
 
         let mut all_tab_stops = Vec::new();
@@ -1279,7 +1456,7 @@ mod tests {
             }
         }
 
-        while let Some(tab_stop) = cursor.seek(u32::MAX) {
+        while let Some(tab_stop) = cursor.seek_forward(u32::MAX) {
             tab_stops.push(tab_stop);
         }
         pretty_assertions::assert_eq!(tab_stops.as_slice(), all_tab_stops.as_slice(),);
@@ -1314,7 +1491,7 @@ mod tests {
             }
         }
 
-        while let Some(tab_stop) = cursor.seek(u32::MAX) {
+        while let Some(tab_stop) = cursor.seek_forward(u32::MAX) {
             actual_tab_stops.push(tab_stop);
         }
         pretty_assertions::assert_eq!(actual_tab_stops.as_slice(), expected_tab_stops.as_slice(),);
@@ -1379,7 +1556,7 @@ mod tests {
 
             let mut found_tab_stops = Vec::new();
             let mut position = distance;
-            while let Some(tab_stop) = cursor.seek(position) {
+            while let Some(tab_stop) = cursor.seek_forward(position) {
                 found_tab_stops.push(tab_stop);
                 position = distance - tab_stop.byte_offset;
             }
@@ -1425,7 +1602,7 @@ mod tests {
             Default::default(),
         );
         let mut cursor = TabStopCursor::new(chunks);
-        assert!(cursor.seek(0).is_none());
+        assert!(cursor.seek_forward(0).is_none());
 
         let mut expected_tab_stops = Vec::new();
         let mut byte_offset = 0;
@@ -1441,7 +1618,7 @@ mod tests {
         }
 
         let mut actual_tab_stops = Vec::new();
-        while let Some(tab_stop) = cursor.seek(u32::MAX) {
+        while let Some(tab_stop) = cursor.seek_forward(u32::MAX) {
             actual_tab_stops.push(tab_stop);
         }
 
@@ -1487,7 +1664,7 @@ mod tests {
 
             let mut found_tab_stops = Vec::new();
             let mut position = distance;
-            while let Some(tab_stop) = cursor.seek(position) {
+            while let Some(tab_stop) = cursor.seek_forward(position) {
                 found_tab_stops.push(tab_stop);
                 position = distance - tab_stop.byte_offset;
             }
@@ -1519,166 +1696,4 @@ mod tests {
             }
         }
     }
-}
-
-struct TabStopCursor<'a, I>
-where
-    I: Iterator<Item = Chunk<'a>>,
-{
-    chunks: I,
-    byte_offset: u32,
-    char_offset: u32,
-    /// Chunk
-    /// last tab position iterated through
-    current_chunk: Option<(Chunk<'a>, u32)>,
-}
-
-impl<'a, I> TabStopCursor<'a, I>
-where
-    I: Iterator<Item = Chunk<'a>>,
-{
-    #[ztracing::instrument(skip_all)]
-    fn new(chunks: impl IntoIterator<Item = Chunk<'a>, IntoIter = I>) -> Self {
-        Self {
-            chunks: chunks.into_iter(),
-            byte_offset: 0,
-            char_offset: 0,
-            current_chunk: None,
-        }
-    }
-
-    #[ztracing::instrument(skip_all)]
-    fn bytes_until_next_char(&self) -> Option<usize> {
-        self.current_chunk.as_ref().and_then(|(chunk, idx)| {
-            let mut idx = *idx;
-            let mut diff = 0;
-            while idx > 0 && chunk.chars & (1u128.unbounded_shl(idx)) == 0 {
-                idx -= 1;
-                diff += 1;
-            }
-
-            if chunk.chars & (1 << idx) != 0 {
-                Some(
-                    (chunk.text[idx as usize..].chars().next()?)
-                        .len_utf8()
-                        .saturating_sub(diff),
-                )
-            } else {
-                None
-            }
-        })
-    }
-
-    #[ztracing::instrument(skip_all)]
-    fn is_char_boundary(&self) -> bool {
-        self.current_chunk
-            .as_ref()
-            .is_some_and(|(chunk, idx)| (chunk.chars & 1u128.unbounded_shl(*idx)) != 0)
-    }
-
-    /// distance: length to move forward while searching for the next tab stop
-    #[ztracing::instrument(skip_all)]
-    fn seek(&mut self, distance: u32) -> Option<TabStop> {
-        if distance == 0 {
-            return None;
-        }
-
-        let mut distance_traversed = 0;
-
-        while let Some((mut chunk, chunk_position)) = self
-            .current_chunk
-            .take()
-            .or_else(|| self.chunks.next().zip(Some(0)))
-        {
-            if chunk.tabs == 0 {
-                let chunk_distance = chunk.text.len() as u32 - chunk_position;
-                if chunk_distance + distance_traversed >= distance {
-                    let overshoot = distance_traversed.abs_diff(distance);
-
-                    self.byte_offset += overshoot;
-                    self.char_offset += get_char_offset(
-                        chunk_position..(chunk_position + overshoot).saturating_sub(1),
-                        chunk.chars,
-                    );
-
-                    if chunk_position + overshoot < 128 {
-                        self.current_chunk = Some((chunk, chunk_position + overshoot));
-                    }
-
-                    return None;
-                }
-
-                self.byte_offset += chunk_distance;
-                self.char_offset += get_char_offset(
-                    chunk_position..(chunk_position + chunk_distance).saturating_sub(1),
-                    chunk.chars,
-                );
-                distance_traversed += chunk_distance;
-                continue;
-            }
-            let tab_position = chunk.tabs.trailing_zeros() + 1;
-
-            if distance_traversed + tab_position - chunk_position > distance {
-                let cursor_position = distance_traversed.abs_diff(distance);
-
-                self.char_offset += get_char_offset(
-                    chunk_position..(chunk_position + cursor_position - 1),
-                    chunk.chars,
-                );
-                self.current_chunk = Some((chunk, cursor_position + chunk_position));
-                self.byte_offset += cursor_position;
-
-                return None;
-            }
-
-            self.byte_offset += tab_position - chunk_position;
-            self.char_offset += get_char_offset(chunk_position..(tab_position - 1), chunk.chars);
-
-            let tabstop = TabStop {
-                char_offset: self.char_offset,
-                byte_offset: self.byte_offset,
-            };
-
-            chunk.tabs = (chunk.tabs - 1) & chunk.tabs;
-
-            if tab_position as usize != chunk.text.len() {
-                self.current_chunk = Some((chunk, tab_position));
-            }
-
-            return Some(tabstop);
-        }
-
-        None
-    }
-
-    fn byte_offset(&self) -> u32 {
-        self.byte_offset
-    }
-
-    fn char_offset(&self) -> u32 {
-        self.char_offset
-    }
-}
-
-#[inline(always)]
-fn get_char_offset(range: Range<u32>, bit_map: u128) -> u32 {
-    if range.start == range.end {
-        return if (1u128 << range.start) & bit_map == 0 {
-            0
-        } else {
-            1
-        };
-    }
-    let end_shift: u128 = 127u128 - range.end as u128;
-    let mut bit_mask = (u128::MAX >> range.start) << range.start;
-    bit_mask = (bit_mask << end_shift) >> end_shift;
-    let bit_map = bit_map & bit_mask;
-
-    bit_map.count_ones()
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct TabStop {
-    char_offset: u32,
-    byte_offset: u32,
 }

@@ -2,7 +2,8 @@
 
 (string) @string
 
-(template_string (string_fragment) @string)
+(template_string
+  (string_fragment) @string)
 
 (jsx_element) @element
 

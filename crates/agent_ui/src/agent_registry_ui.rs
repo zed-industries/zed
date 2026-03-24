@@ -1,6 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
-use std::sync::OnceLock;
 
 use client::zed_urls;
 use collections::HashMap;
@@ -16,17 +14,13 @@ use project::{AgentRegistryStore, RegistryAgent};
 use settings::{Settings, SettingsStore, update_settings_file};
 use theme::ThemeSettings;
 use ui::{
-    Banner, ButtonStyle, ScrollableHandle, Severity, ToggleButtonGroup, ToggleButtonGroupSize,
+    ButtonStyle, ScrollableHandle, ToggleButtonGroup, ToggleButtonGroupSize,
     ToggleButtonGroupStyle, ToggleButtonSimple, Tooltip, WithScrollbar, prelude::*,
 };
 use workspace::{
     Workspace,
     item::{Item, ItemEvent},
 };
-
-/// Registry IDs for built-in agents that Zed already provides first-class support for.
-/// These are filtered out of the ACP Agent Registry UI to avoid showing duplicates.
-const BUILT_IN_REGISTRY_IDS: [&str; 4] = ["claude-acp", "claude-code-acp", "codex-acp", "gemini"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RegistryFilter {
@@ -41,28 +35,6 @@ enum RegistryInstallStatus {
     InstalledRegistry,
     InstalledCustom,
     InstalledExtension,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum BuiltInAgent {
-    Claude,
-    Codex,
-    Gemini,
-}
-
-fn keywords_by_agent_feature() -> &'static BTreeMap<BuiltInAgent, Vec<&'static str>> {
-    static KEYWORDS_BY_FEATURE: OnceLock<BTreeMap<BuiltInAgent, Vec<&'static str>>> =
-        OnceLock::new();
-    KEYWORDS_BY_FEATURE.get_or_init(|| {
-        BTreeMap::from_iter([
-            (
-                BuiltInAgent::Claude,
-                vec!["claude", "claude code", "claude agent"],
-            ),
-            (BuiltInAgent::Codex, vec!["codex", "codex cli"]),
-            (BuiltInAgent::Gemini, vec!["gemini", "gemini cli"]),
-        ])
-    })
 }
 
 #[derive(IntoElement)]
@@ -110,7 +82,6 @@ pub struct AgentRegistryPage {
     installed_statuses: HashMap<String, RegistryInstallStatus>,
     query_editor: Entity<Editor>,
     filter: RegistryFilter,
-    upsells: BTreeSet<BuiltInAgent>,
     _subscriptions: Vec<gpui::Subscription>,
 }
 
@@ -145,7 +116,6 @@ impl AgentRegistryPage {
                 installed_statuses: HashMap::default(),
                 query_editor,
                 filter: RegistryFilter::All,
-                upsells: BTreeSet::new(),
                 _subscriptions: subscriptions,
             };
 
@@ -162,8 +132,14 @@ impl AgentRegistryPage {
         self.registry_agents.sort_by(|left, right| {
             left.name()
                 .as_ref()
-                .cmp(right.name().as_ref())
-                .then_with(|| left.id().as_ref().cmp(right.id().as_ref()))
+                .to_lowercase()
+                .cmp(&right.name().as_ref().to_lowercase())
+                .then_with(|| {
+                    left.id()
+                        .as_ref()
+                        .to_lowercase()
+                        .cmp(&right.id().as_ref().to_lowercase())
+                })
         });
         self.filter_registry_agents(cx);
     }
@@ -173,7 +149,7 @@ impl AgentRegistryPage {
             .global::<SettingsStore>()
             .get::<AllAgentServersSettings>(None);
         self.installed_statuses.clear();
-        for (id, settings) in &settings.custom {
+        for (id, settings) in settings.iter() {
             let status = match settings {
                 CustomAgentServerSettings::Registry { .. } => {
                     RegistryInstallStatus::InstalledRegistry
@@ -205,7 +181,6 @@ impl AgentRegistryPage {
 
     fn filter_registry_agents(&mut self, cx: &mut Context<Self>) {
         self.refresh_installed_statuses(cx);
-        self.refresh_feature_upsells(cx);
         let search = self.search_query(cx).map(|search| search.to_lowercase());
         let filter = self.filter;
         let installed_statuses = self.installed_statuses.clone();
@@ -215,12 +190,6 @@ impl AgentRegistryPage {
             .iter()
             .enumerate()
             .filter(|(_, agent)| {
-                // Filter out built-in agents since they already appear in the main
-                // agent configuration UI and don't need to be installed from the registry.
-                if BUILT_IN_REGISTRY_IDS.contains(&agent.id().as_ref()) {
-                    return false;
-                }
-
                 let matches_search = search.as_ref().is_none_or(|query| {
                     let query = query.as_str();
                     agent.id().as_ref().to_lowercase().contains(query)
@@ -267,83 +236,6 @@ impl AgentRegistryPage {
             self.filter_registry_agents(cx);
             self.scroll_to_top(cx);
         }
-    }
-
-    fn refresh_feature_upsells(&mut self, cx: &mut Context<Self>) {
-        let Some(search) = self.search_query(cx) else {
-            self.upsells.clear();
-            return;
-        };
-
-        let search = search.to_lowercase();
-        let search_terms = search
-            .split_whitespace()
-            .map(|term| term.trim())
-            .collect::<Vec<_>>();
-
-        for (feature, keywords) in keywords_by_agent_feature() {
-            if keywords
-                .iter()
-                .any(|keyword| search_terms.contains(keyword))
-            {
-                self.upsells.insert(*feature);
-            } else {
-                self.upsells.remove(feature);
-            }
-        }
-    }
-
-    fn render_feature_upsell_banner(
-        &self,
-        label: SharedString,
-        docs_url: SharedString,
-    ) -> impl IntoElement {
-        let docs_url_button = Button::new("open_docs", "View Documentation")
-            .icon(IconName::ArrowUpRight)
-            .icon_size(IconSize::Small)
-            .icon_position(IconPosition::End)
-            .icon_color(Color::Muted)
-            .on_click({
-                move |_event, _window, cx| {
-                    telemetry::event!(
-                        "Documentation Viewed",
-                        source = "Agent Registry Feature Upsell",
-                        url = docs_url,
-                    );
-                    cx.open_url(&docs_url)
-                }
-            });
-
-        div().pt_4().px_4().child(
-            Banner::new()
-                .severity(Severity::Success)
-                .child(Label::new(label).mt_0p5())
-                .action_slot(docs_url_button),
-        )
-    }
-
-    fn render_feature_upsells(&self) -> impl IntoElement {
-        let mut container = v_flex();
-
-        for feature in &self.upsells {
-            let banner = match feature {
-                BuiltInAgent::Claude => self.render_feature_upsell_banner(
-                    "Claude Agent support is built-in to Zed!".into(),
-                    "https://zed.dev/docs/ai/external-agents#claude-agent".into(),
-                ),
-                BuiltInAgent::Codex => self.render_feature_upsell_banner(
-                    "Codex CLI support is built-in to Zed!".into(),
-                    "https://zed.dev/docs/ai/external-agents#codex-cli".into(),
-                ),
-                BuiltInAgent::Gemini => self.render_feature_upsell_banner(
-                    "Gemini CLI support is built-in to Zed!".into(),
-                    "https://zed.dev/docs/ai/external-agents#gemini-cli".into(),
-                ),
-            };
-            container = container.child(banner);
-        }
-
-        container
     }
 
     fn render_search(&self, cx: &mut Context<Self>) -> Div {
@@ -511,6 +403,22 @@ impl AgentRegistryPage {
             })
         });
 
+        let website_button = agent.website().map(|website| {
+            let website = website.clone();
+            let website_for_click = website.clone();
+            IconButton::new(
+                SharedString::from(format!("agent-website-{}", agent.id())),
+                IconName::Link,
+            )
+            .icon_size(IconSize::Small)
+            .tooltip(move |_, cx| {
+                Tooltip::with_meta("Visit Agent Website", None, website.clone(), cx)
+            })
+            .on_click(move |_, _, cx| {
+                cx.open_url(&website_for_click);
+            })
+        });
+
         AgentRegistryCard::new()
             .child(
                 h_flex()
@@ -549,7 +457,8 @@ impl AgentRegistryPage {
                                     .color(Color::Muted)
                                     .truncate(),
                             )
-                            .when_some(repository_button, |this, button| this.child(button)),
+                            .when_some(repository_button, |this, button| this.child(button))
+                            .when_some(website_button, |this, button| this.child(button)),
                     ),
             )
     }
@@ -575,15 +484,16 @@ impl AgentRegistryPage {
                 let agent_id = agent.id().to_string();
                 Button::new(button_id, "Install")
                     .style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                    .icon(IconName::Download)
-                    .icon_size(IconSize::Small)
-                    .icon_color(Color::Muted)
-                    .icon_position(IconPosition::Start)
+                    .start_icon(
+                        Icon::new(IconName::Download)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
                     .on_click(move |_, _, cx| {
                         let agent_id = agent_id.clone();
                         update_settings_file(fs.clone(), cx, move |settings, _| {
                             let agent_servers = settings.agent_servers.get_or_insert_default();
-                            agent_servers.custom.entry(agent_id).or_insert_with(|| {
+                            agent_servers.entry(agent_id).or_insert_with(|| {
                                 settings::CustomAgentServerSettings::Registry {
                                     default_mode: None,
                                     default_model: None,
@@ -607,13 +517,13 @@ impl AgentRegistryPage {
                             let Some(agent_servers) = settings.agent_servers.as_mut() else {
                                 return;
                             };
-                            if let Some(entry) = agent_servers.custom.get(agent_id.as_str())
+                            if let Some(entry) = agent_servers.get(agent_id.as_str())
                                 && matches!(
                                     entry,
                                     settings::CustomAgentServerSettings::Registry { .. }
                                 )
                             {
-                                agent_servers.custom.remove(agent_id.as_str());
+                                agent_servers.remove(agent_id.as_str());
                             }
                         });
                     })
@@ -649,9 +559,11 @@ impl Render for AgentRegistryPage {
                                 Button::new("learn-more", "Learn More")
                                     .style(ButtonStyle::Outlined)
                                     .size(ButtonSize::Medium)
-                                    .icon(IconName::ArrowUpRight)
-                                    .icon_color(Color::Muted)
-                                    .icon_size(IconSize::Small)
+                                    .end_icon(
+                                        Icon::new(IconName::ArrowUpRight)
+                                            .size(IconSize::Small)
+                                            .color(Color::Muted),
+                                    )
                                     .on_click(move |_, _, cx| {
                                         cx.open_url(&zed_urls::acp_registry_blog(cx))
                                     }),
@@ -708,14 +620,10 @@ impl Render for AgentRegistryPage {
                             ),
                     ),
             )
-            .child(self.render_feature_upsells())
             .child(v_flex().px_4().size_full().overflow_y_hidden().map(|this| {
                 let count = self.filtered_registry_indices.len();
-                let has_upsells = !self.upsells.is_empty();
-                if count == 0 && !has_upsells {
+                if count == 0 {
                     this.child(self.render_empty_state(cx)).into_any_element()
-                } else if count == 0 {
-                    this.into_any_element()
                 } else {
                     let scroll_handle = &self.list;
                     this.child(
