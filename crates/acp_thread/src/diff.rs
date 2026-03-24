@@ -149,6 +149,16 @@ impl Diff {
         }
     }
 
+    pub fn file_path(&self, cx: &App) -> Option<String> {
+        match self {
+            Self::Pending(PendingDiff { new_buffer, .. }) => new_buffer
+                .read(cx)
+                .file()
+                .map(|file| file.full_path(cx).to_string_lossy().into_owned()),
+            Self::Finalized(FinalizedDiff { path, .. }) => Some(path.clone()),
+        }
+    }
+
     pub fn multibuffer(&self) -> &Entity<MultiBuffer> {
         match self {
             Self::Pending(PendingDiff { multibuffer, .. }) => multibuffer,

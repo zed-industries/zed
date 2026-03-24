@@ -165,12 +165,13 @@ fn generate_test_function(
                                 dispatcher.clone(),
                                 Some(stringify!(#outer_fn_name)),
                             );
+                            let _entity_refcounts = #cx_varname.app.borrow().ref_counts_drop_handle();
                         ));
                         cx_teardowns.extend(quote!(
-                            dispatcher.run_until_parked();
-                            #cx_varname.executor().forbid_parking();
-                            #cx_varname.quit();
-                            dispatcher.run_until_parked();
+                            #cx_varname.run_until_parked();
+                            #cx_varname.update(|cx| { cx.background_executor().forbid_parking(); cx.quit(); });
+                            #cx_varname.run_until_parked();
+                            drop(#cx_varname);
                         ));
                         inner_fn_args.extend(quote!(&mut #cx_varname,));
                         continue;
@@ -191,10 +192,17 @@ fn generate_test_function(
                     &[#seeds],
                     #max_retries,
                     &mut |dispatcher, _seed| {
-                        let foreground_executor = gpui::ForegroundExecutor::new(std::sync::Arc::new(dispatcher.clone()));
+                        let exec = std::sync::Arc::new(dispatcher.clone());
                         #cx_vars
-                        foreground_executor.block_test(#inner_fn_name(#inner_fn_args));
+                        gpui::ForegroundExecutor::new(exec.clone()).block_test(#inner_fn_name(#inner_fn_args));
+                        drop(exec);
                         #cx_teardowns
+                        // Ideally we would only drop cancelled tasks, that way we could detect leaks due to task <-> entity
+                        // cycles as cancelled tasks will be dropped properly once the runnable gets run again
+                        //
+                        // async-task does not give us the power to do this just yet though
+                        dispatcher.drain_tasks();
+                        drop(dispatcher);
                     },
                     #on_failure_fn_name
                 );
@@ -229,13 +237,15 @@ fn generate_test_function(
                                    Some(stringify!(#outer_fn_name))
                                 );
                                 let mut #cx_varname_lock = #cx_varname.app.borrow_mut();
+                                let _entity_refcounts = #cx_varname_lock.ref_counts_drop_handle();
                             ));
                             inner_fn_args.extend(quote!(&mut #cx_varname_lock,));
                             cx_teardowns.extend(quote!(
                                     drop(#cx_varname_lock);
-                                    dispatcher.run_until_parked();
+                                    #cx_varname.run_until_parked();
                                     #cx_varname.update(|cx| { cx.background_executor().forbid_parking(); cx.quit(); });
-                                    dispatcher.run_until_parked();
+                                    #cx_varname.run_until_parked();
+                                    drop(#cx_varname);
                                 ));
                             continue;
                         }
@@ -246,12 +256,13 @@ fn generate_test_function(
                                     dispatcher.clone(),
                                     Some(stringify!(#outer_fn_name))
                                 );
+                                let _entity_refcounts = #cx_varname.app.borrow().ref_counts_drop_handle();
                             ));
                             cx_teardowns.extend(quote!(
-                                dispatcher.run_until_parked();
-                                #cx_varname.executor().forbid_parking();
-                                #cx_varname.quit();
-                                dispatcher.run_until_parked();
+                                #cx_varname.run_until_parked();
+                                #cx_varname.update(|cx| { cx.background_executor().forbid_parking(); cx.quit(); });
+                                #cx_varname.run_until_parked();
+                                drop(#cx_varname);
                             ));
                             inner_fn_args.extend(quote!(&mut #cx_varname,));
                             continue;
@@ -277,6 +288,12 @@ fn generate_test_function(
                         #cx_vars
                         #inner_fn_name(#inner_fn_args);
                         #cx_teardowns
+                        // Ideally we would only drop cancelled tasks, that way we could detect leaks due to task <-> entity
+                        // cycles as cancelled tasks will be dropped properly once they runnable gets run again
+                        //
+                        // async-task does not give us the power to do this just yet though
+                        dispatcher.drain_tasks();
+                        drop(dispatcher);
                     },
                     #on_failure_fn_name,
                 );

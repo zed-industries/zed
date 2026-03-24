@@ -48,7 +48,7 @@ use ui_input::InputField;
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
-use crate::provider::util::parse_tool_arguments;
+use crate::provider::util::{fix_streamed_json, parse_tool_arguments};
 
 actions!(bedrock, [Tab, TabPrev]);
 
@@ -642,10 +642,36 @@ impl LanguageModel for BedrockModel {
     }
 
     fn supports_thinking(&self) -> bool {
-        matches!(
-            self.model.mode(),
-            BedrockModelMode::Thinking { .. } | BedrockModelMode::AdaptiveThinking { .. }
-        )
+        self.model.supports_thinking()
+    }
+
+    fn supported_effort_levels(&self) -> Vec<language_model::LanguageModelEffortLevel> {
+        if self.model.supports_adaptive_thinking() {
+            vec![
+                language_model::LanguageModelEffortLevel {
+                    name: "Low".into(),
+                    value: "low".into(),
+                    is_default: false,
+                },
+                language_model::LanguageModelEffortLevel {
+                    name: "Medium".into(),
+                    value: "medium".into(),
+                    is_default: false,
+                },
+                language_model::LanguageModelEffortLevel {
+                    name: "High".into(),
+                    value: "high".into(),
+                    is_default: true,
+                },
+                language_model::LanguageModelEffortLevel {
+                    name: "Max".into(),
+                    value: "max".into(),
+                    is_default: false,
+                },
+            ]
+        } else {
+            Vec::new()
+        }
     }
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
@@ -656,6 +682,10 @@ impl LanguageModel for BedrockModel {
             // Add support for None - we'll filter tool calls at response
             LanguageModelToolChoice::None => self.model.supports_tool_use(),
         }
+    }
+
+    fn supports_streaming_tools(&self) -> bool {
+        true
     }
 
     fn telemetry_id(&self) -> String {
@@ -714,7 +744,7 @@ impl LanguageModel for BedrockModel {
             model_id,
             self.model.default_temperature(),
             self.model.max_output_tokens(),
-            self.model.mode(),
+            self.model.thinking_mode(),
             self.model.supports_caching(),
             self.model.supports_tool_use(),
             use_extended_context,
@@ -807,7 +837,7 @@ pub fn into_bedrock(
     model: String,
     default_temperature: f32,
     max_output_tokens: u64,
-    mode: BedrockModelMode,
+    thinking_mode: BedrockModelMode,
     supports_caching: bool,
     supports_tool_use: bool,
     allow_extended_context: bool,
@@ -1081,11 +1111,24 @@ pub fn into_bedrock(
         system: Some(system_message),
         tools: tool_config,
         thinking: if request.thinking_allowed {
-            match mode {
+            match thinking_mode {
                 BedrockModelMode::Thinking { budget_tokens } => {
                     Some(bedrock::Thinking::Enabled { budget_tokens })
                 }
-                BedrockModelMode::AdaptiveThinking { effort } => {
+                BedrockModelMode::AdaptiveThinking {
+                    effort: default_effort,
+                } => {
+                    let effort = request
+                        .thinking_effort
+                        .as_deref()
+                        .and_then(|e| match e {
+                            "low" => Some(bedrock::BedrockAdaptiveThinkingEffort::Low),
+                            "medium" => Some(bedrock::BedrockAdaptiveThinkingEffort::Medium),
+                            "high" => Some(bedrock::BedrockAdaptiveThinkingEffort::High),
+                            "max" => Some(bedrock::BedrockAdaptiveThinkingEffort::Max),
+                            _ => None,
+                        })
+                        .unwrap_or(default_effort);
                     Some(bedrock::Thinking::Adaptive { effort })
                 }
                 BedrockModelMode::Default => None,
@@ -1200,8 +1243,25 @@ pub fn map_to_language_model_completion_events(
                                     .get_mut(&cb_delta.content_block_index)
                                 {
                                     tool_use.input_json.push_str(tool_output.input());
+                                    if let Ok(input) = serde_json::from_str::<serde_json::Value>(
+                                        &fix_streamed_json(&tool_use.input_json),
+                                    ) {
+                                        Some(Ok(LanguageModelCompletionEvent::ToolUse(
+                                            LanguageModelToolUse {
+                                                id: tool_use.id.clone().into(),
+                                                name: tool_use.name.clone().into(),
+                                                is_input_complete: false,
+                                                raw_input: tool_use.input_json.clone(),
+                                                input,
+                                                thought_signature: None,
+                                            },
+                                        )))
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
                                 }
-                                None
                             }
                             Some(ContentBlockDelta::ReasoningContent(thinking)) => match thinking {
                                 ReasoningContentBlockDelta::Text(thoughts) => {
@@ -1553,7 +1613,8 @@ impl Render for ConfigurationView {
         }
 
         v_flex()
-            .size_full()
+            .min_w_0()
+            .w_full()
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::on_tab))
             .on_action(cx.listener(Self::on_tab_prev))

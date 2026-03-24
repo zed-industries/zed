@@ -6,8 +6,8 @@
 use anyhow::Result;
 use acp_thread::{AcpThread, AcpThreadEvent};
 use agent::ThreadStore;
-use acp_thread::AgentSessionInfo;
-use agent_client_protocol::{ContentBlock, TextContent};
+use agent_client_protocol::{self as acp, ContentBlock, TextContent};
+use util::path_list::PathList;
 use gpui::{App, Entity, WeakEntity};
 use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet};
@@ -432,8 +432,37 @@ fn ensure_thread_subscription(
                     );
                 }
             }
-            AcpThreadEvent::Stopped => {
+            AcpThreadEvent::Stopped(_) => {
                 flush_streaming_throttle(&thread_id_for_sub);
+
+                // AcpThread calls flush_streaming_text before emitting Stopped, so the
+                // Markdown entity now has the complete buffered text. Send a final
+                // message_added with the full content so the server gets the accumulated
+                // response even though EntryUpdated events during streaming carried empty
+                // content (text was still in the streaming buffer at that point).
+                let thread = thread_entity.read(cx);
+                let entries = thread.entries();
+                if let Some((final_idx, final_content)) = entries.iter().enumerate().rev().find_map(|(idx, entry)| {
+                    if let acp_thread::AgentThreadEntry::AssistantMessage(msg) = entry {
+                        let content = msg.content_only(cx);
+                        if !content.is_empty() {
+                            return Some((idx, content));
+                        }
+                    }
+                    None
+                }) {
+                    let _ = crate::send_websocket_event(SyncEvent::MessageAdded {
+                        acp_thread_id: thread_id_for_sub.clone(),
+                        message_id: final_idx.to_string(),
+                        role: "assistant".to_string(),
+                        content: final_content,
+                        entry_type: "text".to_string(),
+                        tool_name: String::new(),
+                        tool_status: String::new(),
+                        timestamp: chrono::Utc::now().timestamp(),
+                    });
+                }
+
                 let rid = crate::get_thread_request_id(&thread_id_for_sub)
                     .unwrap_or_default();
                 eprintln!(
@@ -705,43 +734,73 @@ fn create_new_thread_sync(
 
     let agent = match request.agent_name.as_deref() {
         Some("zed-agent") | None => ExternalAgent::NativeAgent,
-        Some(name) => ExternalAgent::Custom {
-            name: gpui::SharedString::from(name.to_string()),
-            command: project::agent_server_store::AgentServerCommand {
-                path: std::path::PathBuf::new(),
-                args: vec![],
-                env: None,
-            },
-        },
+        Some(name) => {
+            // Map Helix agent names to Zed registry agent IDs.
+            // Helix sends "claude" but the Zed registry uses "claude-acp".
+            let zed_name = match name {
+                "claude" => agent_servers::CLAUDE_AGENT_ID,
+                other => other,
+            };
+            ExternalAgent::Custom {
+                name: gpui::SharedString::from(zed_name.to_string()),
+                command: project::agent_server_store::AgentServerCommand {
+                    path: std::path::PathBuf::new(),
+                    args: vec![],
+                    env: None,
+                },
+            }
+        }
     };
 
     // Spawn async task to complete the connection and create the thread
     let request_clone = request.clone();
     let project_clone = project.clone();
     cx.spawn(async move |cx| {
-        let connection_task = cx.update(|cx| {
-            let server = agent.server(fs, acp_history_store.clone());
-            let agent_server_store = project.read(cx).agent_server_store().clone();
-            let delegate = agent_servers::AgentServerDelegate::new(
-                agent_server_store,
-                project.clone(),
-                None,
-                None,
-            );
-            server.connect(delegate, cx)
-        });
+        eprintln!("🚀 [THREAD_SERVICE] Spawn task started for request: {}", request_clone.request_id);
 
-        let (connection, _spawn_task): (std::rc::Rc<dyn acp_thread::AgentConnection>, _) = connection_task
-            .await
-            .log_err()
-            .ok_or_else(|| anyhow::anyhow!("Failed to connect to agent"))?;
+        // Retry connecting up to 10 times with 1s delay when the agent is not yet registered.
+        // This handles the race where the AgentRegistryStore's async network fetch (for registry
+        // agents like claude-acp) hasn't completed by the time the first message arrives.
+        let max_retries = 10u32;
+        let connection: std::rc::Rc<dyn acp_thread::AgentConnection> = {
+            let mut attempt = 0u32;
+            loop {
+                let connection_task = cx.update(|cx| {
+                    let server = agent.server(fs.clone(), acp_history_store.clone());
+                    let agent_server_store = project.read(cx).agent_server_store().clone();
+                    let delegate = agent_servers::AgentServerDelegate::new(
+                        agent_server_store,
+                        None,
+                    );
+                    eprintln!("🔌 [THREAD_SERVICE] Calling server.connect() (attempt {}/{})...", attempt + 1, max_retries + 1);
+                    server.connect(delegate, project.clone(), cx)
+                });
+
+                eprintln!("⏳ [THREAD_SERVICE] Awaiting connection task...");
+                match connection_task.await {
+                    Ok(conn) => {
+                        eprintln!("✅ [THREAD_SERVICE] Connected to agent successfully");
+                        break conn;
+                    }
+                    Err(e) if attempt < max_retries && e.to_string().contains("not registered") => {
+                        eprintln!("⚠️ [THREAD_SERVICE] Agent not registered yet (attempt {}/{}), retrying in 1s: {}", attempt + 1, max_retries, e);
+                        attempt += 1;
+                        cx.background_executor().timer(Duration::from_secs(1)).await;
+                    }
+                    Err(e) => {
+                        eprintln!("❌ [THREAD_SERVICE] Failed to connect to agent: {}", e);
+                        return Err(e);
+                    }
+                }
+            }
+        };
 
         // Authenticate if required
         let auth_methods = connection.auth_methods();
         if let Some(first_method) = auth_methods.first() {
             let connection_for_auth = connection.clone();
             let auth_task = cx.update(|cx| {
-                connection_for_auth.authenticate(first_method.id.clone(), cx)
+                connection_for_auth.authenticate(first_method.id().clone(), cx)
             });
             if let Err(e) = auth_task.await {
                 log::warn!("[THREAD_SERVICE] Authentication failed (continuing): {}", e);
@@ -764,9 +823,20 @@ fn create_new_thread_sync(
             });
         let connection_for_tools = connection.clone();
         let connection_for_model = connection.clone();
-        let thread_entity: Entity<AcpThread> = cx.update(|cx| {
-            connection.new_session(project_clone.clone(), &cwd, cx)
-        }).await?;
+        let work_dirs = PathList::new(&[cwd.clone()]);
+        eprintln!("🧵 [THREAD_SERVICE] Calling new_session() with cwd={:?}", cwd);
+        let thread_entity: Entity<AcpThread> = match cx.update(|cx| {
+            connection.new_session(project_clone.clone(), work_dirs, cx)
+        }).await {
+            Ok(entity) => {
+                eprintln!("✅ [THREAD_SERVICE] new_session() succeeded");
+                entity
+            }
+            Err(e) => {
+                eprintln!("❌ [THREAD_SERVICE] new_session() failed: {}", e);
+                return Err(e);
+            }
+        };
 
         // Wait for the NativeAgent's model list to be populated.
         // NativeAgent::new() spawns authenticate_all_language_model_providers()
@@ -915,8 +985,8 @@ fn create_new_thread_sync(
                 log::info!("✅ [THREAD_SERVICE] Send task completed successfully");
             }
             Err(e) => {
-                eprintln!("❌ [THREAD_SERVICE] Send task failed: {}", e);
-                log::error!("❌ [THREAD_SERVICE] Send task failed: {}", e);
+                eprintln!("❌ [THREAD_SERVICE] Send task failed: {:#}", e);
+                log::error!("❌ [THREAD_SERVICE] Send task failed: {:#}", e);
             }
         }
 
@@ -1031,11 +1101,9 @@ async fn load_thread_from_agent(
         let agent_server_store = project.read(cx).agent_server_store().clone();
         let delegate = agent_servers::AgentServerDelegate::new(
             agent_server_store,
-            project.clone(),
-            None,
             None,
         );
-        let connection_task = server.connect(delegate, cx);
+        let connection_task = server.connect(delegate, project.clone(), cx);
         // Use ZED_WORK_DIR for consistency with session storage
         let cwd = std::env::var("ZED_WORK_DIR")
             .ok()
@@ -1048,7 +1116,7 @@ async fn load_thread_from_agent(
         (connection_task, cwd)
     });
 
-    let (connection, _spawn_task): (std::rc::Rc<dyn acp_thread::AgentConnection>, _) = connection_task.await?;
+    let connection: std::rc::Rc<dyn acp_thread::AgentConnection> = connection_task.await?;
 
     eprintln!("✅ [THREAD_SERVICE] Connected to agent for loading thread");
     log::info!("✅ [THREAD_SERVICE] Connected to agent for loading thread");
@@ -1066,10 +1134,11 @@ async fn load_thread_from_agent(
     }
 
     // Load the thread from agent
-    let session_info = AgentSessionInfo::new(agent_client_protocol::SessionId::new(acp_thread_id.clone()));
+    let session_id = acp::SessionId::new(acp_thread_id.clone());
+    let work_dirs = PathList::new(&[cwd.clone()]);
     let project_clone = project.clone();
     let load_task = cx.update(|cx| {
-        connection.load_session(session_info, project_clone, &cwd, cx)
+        connection.load_session(session_id, project_clone, work_dirs, None, cx)
     });
 
     let thread_entity: Entity<AcpThread> = load_task.await?;
@@ -1156,13 +1225,11 @@ fn open_existing_thread_sync(
     // Create delegate for connection
     let delegate = agent_servers::AgentServerDelegate::new(
         agent_server_store,
-        project.clone(),
-        None, // status_tx
-        None, // new_version_tx
+        None,
     );
 
     // Connect to get AgentConnection
-    let connection_task = server.connect(delegate, cx);
+    let connection_task = server.connect(delegate, project.clone(), cx);
 
     // Use ZED_WORK_DIR for consistency with session storage
     let cwd = std::env::var("ZED_WORK_DIR")
@@ -1178,7 +1245,7 @@ fn open_existing_thread_sync(
     let request_clone = request.clone();
     let project_clone = project.clone();
     cx.spawn(async move |cx| {
-        let (connection, _spawn_task) = match connection_task.await {
+        let connection = match connection_task.await {
             Ok(result) => result,
             Err(e) => {
                 eprintln!("❌ [THREAD_SERVICE] Failed to connect to agent: {}", e);
@@ -1203,13 +1270,12 @@ fn open_existing_thread_sync(
         eprintln!("🔨 [THREAD_SERVICE] Calling connection.load_session() to load from agent...");
         log::info!("🔨 [THREAD_SERVICE] Calling connection.load_session() to load from agent...");
 
-        // Convert string to AgentSessionInfo
-        let session_info = AgentSessionInfo::new(agent_client_protocol::SessionId::new(request_clone.acp_thread_id.clone()));
-
         // Use the generic AgentConnection::load_session() method
         // This works for both NativeAgent (from local DB) and ACP agents (via session/load protocol)
+        let session_id = acp::SessionId::new(request_clone.acp_thread_id.clone());
+        let work_dirs = PathList::new(&[cwd.clone()]);
         let load_task = cx.update(|cx| {
-            connection.load_session(session_info, project_clone, &cwd, cx)
+            connection.load_session(session_id, project_clone, work_dirs, None, cx)
         });
 
         let thread_entity: Entity<AcpThread> = match load_task.await {

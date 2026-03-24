@@ -316,7 +316,9 @@ pub fn task_contexts(
 
     let lsp_task_sources = active_editor
         .as_ref()
-        .map(|active_editor| active_editor.update(cx, |editor, cx| editor.lsp_task_sources(cx)))
+        .map(|active_editor| {
+            active_editor.update(cx, |editor, cx| editor.lsp_task_sources(false, false, cx))
+        })
         .unwrap_or_default();
 
     let latest_selection = active_editor.as_ref().map(|active_editor| {
@@ -437,7 +439,10 @@ mod tests {
         let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
         let rust_language = Arc::new(
             Language::new(
-                LanguageConfig::default(),
+                LanguageConfig {
+                    name: "Rust".into(),
+                    ..Default::default()
+                },
                 Some(tree_sitter_rust::LANGUAGE.into()),
             )
             .with_outline_query(
@@ -453,7 +458,10 @@ mod tests {
 
         let typescript_language = Arc::new(
             Language::new(
-                LanguageConfig::default(),
+                LanguageConfig {
+                    name: "TypeScript".into(),
+                    ..Default::default()
+                },
                 Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
             )
             .with_outline_query(
@@ -532,6 +540,7 @@ mod tests {
                     (VariableName::WorktreeRoot, path!("/dir").into()),
                     (VariableName::Row, "1".into()),
                     (VariableName::Column, "1".into()),
+                    (VariableName::Language, "Rust".into()),
                 ]),
                 project_env: HashMap::default(),
             }
@@ -566,6 +575,7 @@ mod tests {
                     (VariableName::Column, "15".into()),
                     (VariableName::SelectedText, "is_i".into()),
                     (VariableName::Symbol, "this_is_a_rust_file".into()),
+                    (VariableName::Language, "Rust".into()),
                 ]),
                 project_env: HashMap::default(),
             }
@@ -594,6 +604,7 @@ mod tests {
                     (VariableName::Row, "1".into()),
                     (VariableName::Column, "1".into()),
                     (VariableName::Symbol, "this_is_a_test".into()),
+                    (VariableName::Language, "TypeScript".into()),
                 ]),
                 project_env: HashMap::default(),
             }

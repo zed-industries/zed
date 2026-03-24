@@ -17,14 +17,21 @@ ZED_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 # Helix repo is expected as a sibling of the zed repo (../helix relative to zed root)
 HELIX_DIR="$(cd "$ZED_DIR/../helix" 2>/dev/null && pwd || echo "")"
 
-# If ANTHROPIC_API_KEY not set, try sourcing from helix repo
-if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -n "$HELIX_DIR" ]; then
+# Source credentials from helix repo env files.
+# Always source ANTHROPIC_BASE_URL from the helix .env to get the Docker-friendly URL
+# (e.g. http://host.docker.internal:8081), which may differ from the host env that uses
+# hostname aliases (e.g. http://api:8080) that don't resolve inside Docker containers.
+if [ -n "$HELIX_DIR" ]; then
     for envfile in "$HELIX_DIR/.env" "$HELIX_DIR/.env.usercreds"; do
-        if [ -f "$envfile" ] && grep -q ANTHROPIC_API_KEY "$envfile"; then
-            set -a
-            source "$envfile"
-            set +a
-            break
+        if [ -f "$envfile" ]; then
+            # Always pick up ANTHROPIC_API_KEY and ANTHROPIC_BASE_URL from the file
+            if grep -q ANTHROPIC_API_KEY "$envfile"; then
+                [ -z "${ANTHROPIC_API_KEY:-}" ] && ANTHROPIC_API_KEY=$(grep '^ANTHROPIC_API_KEY=' "$envfile" | cut -d= -f2-)
+            fi
+            if grep -q ANTHROPIC_BASE_URL "$envfile"; then
+                ANTHROPIC_BASE_URL=$(grep '^ANTHROPIC_BASE_URL=' "$envfile" | cut -d= -f2-)
+                break
+            fi
         fi
     done
 fi
@@ -87,8 +94,15 @@ if [ -d "$CLAUDE_ACP_DIR/dist" ] && echo "$E2E_AGENTS" | grep -q "claude"; then
     echo "[setup] Mounting local claude-agent-acp from $CLAUDE_ACP_DIR"
 fi
 
+ANTHROPIC_BASE_URL_ARG=""
+if [ -n "${ANTHROPIC_BASE_URL:-}" ]; then
+    ANTHROPIC_BASE_URL_ARG="-e ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL"
+fi
+
 docker run --rm \
+    --add-host=host.docker.internal:host-gateway \
     -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
+    ${ANTHROPIC_BASE_URL_ARG} \
     -e E2E_AGENTS="$E2E_AGENTS" \
     -v "$SCREENSHOTS_DIR:/test/screenshots" \
     $CLAUDE_ACP_MOUNT \

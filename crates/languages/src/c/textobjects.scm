@@ -1,31 +1,34 @@
 (declaration
-    declarator: (function_declarator)) @function.around
+  declarator: (function_declarator)) @function.around
 
 (function_definition
-    body: (_
-        "{"
-        (_)* @function.inside
-        "}" )) @function.around
+  body: (_
+    "{"
+    (_)* @function.inside
+    "}")) @function.around
 
 (preproc_function_def
-    value: (_) @function.inside) @function.around
+  value: (_) @function.inside) @function.around
 
 (comment) @comment.around
 
 (struct_specifier
-    body: (_
-        "{"
-        (_)* @class.inside
-        "}")) @class.around
+  body: (_
+    "{"
+    (_)* @class.inside
+    "}")) @class.around
 
 (enum_specifier
-    body: (_
-        "{"
-        [(_) ","?]* @class.inside
-        "}")) @class.around
+  body: (_
+    "{"
+    [
+      (_)
+      ","?
+    ]* @class.inside
+    "}")) @class.around
 
 (union_specifier
-    body: (_
-        "{"
-        (_)* @class.inside
-        "}")) @class.around
+  body: (_
+    "{"
+    (_)* @class.inside
+    "}")) @class.around

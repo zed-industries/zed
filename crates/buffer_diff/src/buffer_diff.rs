@@ -843,6 +843,16 @@ impl BufferDiffInner<Entity<language::Buffer>> {
                 .end
                 .saturating_sub(prev_unstaged_hunk_buffer_end);
             let index_end = prev_unstaged_hunk_base_text_end + end_overshoot;
+
+            // Clamp to the index text bounds. The overshoot mapping assumes that
+            // text between unstaged hunks is identical in the buffer and index.
+            // When the buffer has been edited since the diff was computed, anchor
+            // positions shift while diff_base_byte_range values don't, which can
+            // cause index_end to exceed index_text.len().
+            // See `test_stage_all_with_stale_buffer` which would hit an assert
+            // without these min calls
+            let index_end = index_end.min(index_text.len());
+            let index_start = index_start.min(index_end);
             let index_byte_range = index_start..index_end;
 
             let replacement_text = match new_status {
@@ -1721,7 +1731,7 @@ impl BufferDiff {
             if let Some(language_registry) = language_registry {
                 base_text.set_language_registry(language_registry);
             }
-            base_text.set_language(language, cx);
+            base_text.set_language_async(language, cx);
             base_text.parsing_idle()
         });
         cx.spawn(async move |this, cx| {
@@ -1753,6 +1763,7 @@ impl BufferDiff {
         let should_compare_hunks = update.base_text_edits.is_some() || !base_text_changed;
         let parsing_idle = if let Some(diff) = update.base_text_edits {
             state.base_text.update(cx, |base_text, cx| {
+                base_text.set_sync_parse_timeout(None);
                 base_text.set_capability(Capability::ReadWrite, cx);
                 base_text.apply_diff(diff, cx);
                 base_text.set_capability(Capability::ReadOnly, cx);
@@ -1760,6 +1771,7 @@ impl BufferDiff {
             })
         } else if update.base_text_changed {
             state.base_text.update(cx, |base_text, cx| {
+                base_text.set_sync_parse_timeout(None);
                 base_text.set_capability(Capability::ReadWrite, cx);
                 base_text.set_text(new_state.base_text.clone(), cx);
                 base_text.set_capability(Capability::ReadOnly, cx);
@@ -2670,6 +2682,51 @@ mod tests {
             diff.set_secondary_diff(unstaged_diff);
             diff
         });
+
+        uncommitted_diff.update(cx, |diff, cx| {
+            diff.stage_or_unstage_all_hunks(true, &buffer, true, cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_stage_all_with_stale_buffer(cx: &mut TestAppContext) {
+        // Regression test for ZED-5R2: when the buffer is edited after the diff is
+        // computed but before staging, anchor positions shift while diff_base_byte_range
+        // values don't. If the primary (HEAD) hunk extends past the unstaged (index)
+        // hunk, an edit in the extension region shifts the primary hunk end without
+        // shifting the unstaged hunk end. The overshoot calculation then produces an
+        // index_end that exceeds index_text.len().
+        //
+        // Setup:
+        //   HEAD:   "aaa\nbbb\nccc\n"  (primary hunk covers lines 1-2)
+        //   Index:  "aaa\nbbb\nCCC\n"  (unstaged hunk covers line 1 only)
+        //   Buffer: "aaa\nBBB\nCCC\n"  (both lines differ from HEAD)
+        //
+        // The primary hunk spans buffer offsets 4..12, but the unstaged hunk only
+        // spans 4..8. The pending hunk extends 4 bytes past the unstaged hunk.
+        // An edit at offset 9 (inside "CCC") shifts the primary hunk end from 12
+        // to 13 but leaves the unstaged hunk end at 8, making index_end = 13 > 12.
+        let head_text = "aaa\nbbb\nccc\n";
+        let index_text = "aaa\nbbb\nCCC\n";
+        let buffer_text = "aaa\nBBB\nCCC\n";
+
+        let mut buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            buffer_text.to_string(),
+        );
+
+        let unstaged_diff = cx.new(|cx| BufferDiff::new_with_base_text(index_text, &buffer, cx));
+        let uncommitted_diff = cx.new(|cx| {
+            let mut diff = BufferDiff::new_with_base_text(head_text, &buffer, cx);
+            diff.set_secondary_diff(unstaged_diff);
+            diff
+        });
+
+        // Edit the buffer in the region between the unstaged hunk end (offset 8)
+        // and the primary hunk end (offset 12). This shifts the primary hunk end
+        // but not the unstaged hunk end.
+        buffer.edit([(9..9, "Z")]);
 
         uncommitted_diff.update(cx, |diff, cx| {
             diff.stage_or_unstage_all_hunks(true, &buffer, true, cx);
