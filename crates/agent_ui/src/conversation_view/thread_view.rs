@@ -2434,7 +2434,10 @@ impl ThreadView {
             .child(
                 Button::new("clear_queue", "Clear All")
                     .label_size(LabelSize::Small)
-                    .key_binding(KeyBinding::for_action(&ClearMessageQueue, cx))
+                    .key_binding(
+                        KeyBinding::for_action(&ClearMessageQueue, cx)
+                            .map(|kb| kb.size(rems_from_px(12.))),
+                    )
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.clear_queue(cx);
                         this.can_fast_track_queue = false;
@@ -2723,7 +2726,7 @@ impl ThreadView {
                             })
                             .key_binding(
                                 KeyBinding::for_action_in(&RejectAll, &focus_handle.clone(), cx)
-                                    .map(|kb| kb.size(rems_from_px(10.))),
+                                    .map(|kb| kb.size(rems_from_px(12.))),
                             )
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.reject_all(&RejectAll, window, cx);
@@ -2738,7 +2741,7 @@ impl ThreadView {
                             })
                             .key_binding(
                                 KeyBinding::for_action_in(&KeepAll, &focus_handle, cx)
-                                    .map(|kb| kb.size(rems_from_px(10.))),
+                                    .map(|kb| kb.size(rems_from_px(12.))),
                             )
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.keep_all(&KeepAll, window, cx);
@@ -6025,7 +6028,7 @@ impl ThreadView {
                                         focus_handle,
                                         cx,
                                     )
-                                    .map(|kb| kb.size(rems_from_px(10.))),
+                                    .map(|kb| kb.size(rems_from_px(12.))),
                                 )
                             })
                             .on_click(cx.listener({
@@ -6049,7 +6052,7 @@ impl ThreadView {
                                         focus_handle,
                                         cx,
                                     )
-                                    .map(|kb| kb.size(rems_from_px(10.))),
+                                    .map(|kb| kb.size(rems_from_px(12.))),
                                 )
                             })
                             .on_click(cx.listener({
@@ -6097,7 +6100,7 @@ impl ThreadView {
                                 &self.focus_handle(cx),
                                 cx,
                             )
-                            .map(|kb| kb.size(rems_from_px(10.))),
+                            .map(|kb| kb.size(rems_from_px(12.))),
                         )
                     }),
             )
@@ -6187,7 +6190,7 @@ impl ThreadView {
                                 &self.focus_handle(cx),
                                 cx,
                             )
-                            .map(|kb| kb.size(rems_from_px(10.))),
+                            .map(|kb| kb.size(rems_from_px(12.))),
                         )
                     }),
             )
@@ -6386,7 +6389,7 @@ impl ThreadView {
 
                         this.key_binding(
                             KeyBinding::for_action_in(action, focus_handle, cx)
-                                .map(|kb| kb.size(rems_from_px(10.))),
+                                .map(|kb| kb.size(rems_from_px(12.))),
                         )
                     })
                     .label_size(LabelSize::Small)
