@@ -55,6 +55,7 @@ pub struct ModelPickerDelegate {
     selected_description: Option<(usize, SharedString, bool)>,
     selected_model: Option<AgentModelInfo>,
     favorites: HashSet<ModelId>,
+    hidden: HashSet<ModelId>,
     _refresh_models_task: Task<()>,
     _settings_subscription: Subscription,
     focus_handle: FocusHandle,
@@ -110,12 +111,17 @@ impl ModelPickerDelegate {
                 // Only refresh if the favorites actually changed to avoid redundant work
                 // when other settings are modified (e.g., user editing settings.json)
                 let new_favorites = agent_server_for_subscription.favorite_model_ids(cx);
-                if new_favorites != picker.delegate.favorites {
+                let new_hidden = agent_server_for_subscription.hidden_model_ids(cx);
+                if new_favorites != picker.delegate.favorites
+                    || new_hidden != picker.delegate.hidden
+                {
                     picker.delegate.favorites = new_favorites;
+                    picker.delegate.hidden = new_hidden;
                     picker.refresh(window, cx);
                 }
             });
         let favorites = agent_server.favorite_model_ids(cx);
+        let hidden = agent_server.hidden_model_ids(cx);
 
         Self {
             selector,
@@ -127,6 +133,7 @@ impl ModelPickerDelegate {
             selected_index: 0,
             selected_description: None,
             favorites,
+            hidden,
             _refresh_models_task: refresh_models_task,
             _settings_subscription: settings_subscription,
             focus_handle,
@@ -157,7 +164,7 @@ impl ModelPickerDelegate {
 
         let favorite_models: Vec<_> = all_models
             .into_iter()
-            .filter(|model| self.favorites.contains(&model.id))
+            .filter(|model| self.favorites.contains(&model.id) && !self.hidden.contains(&model.id))
             .unique_by(|model| &model.id)
             .collect();
 
@@ -230,6 +237,7 @@ impl PickerDelegate for ModelPickerDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
         let favorites = self.favorites.clone();
+        let hidden = self.hidden.clone();
 
         cx.spawn_in(window, async move |this, cx| {
             let filtered_models = match this
@@ -247,7 +255,7 @@ impl PickerDelegate for ModelPickerDelegate {
 
             this.update_in(cx, |this, window, cx| {
                 this.delegate.filtered_entries =
-                    info_list_to_picker_entries(filtered_models, &favorites);
+                    info_list_to_picker_entries(filtered_models, &favorites, &hidden);
                 // Finds the currently selected model in the list
                 let new_index = this
                     .delegate
@@ -428,6 +436,7 @@ impl PickerDelegate for ModelPickerDelegate {
 fn info_list_to_picker_entries(
     model_list: AgentModelList,
     favorites: &HashSet<ModelId>,
+    hidden: &HashSet<ModelId>,
 ) -> Vec<ModelPickerEntry> {
     let mut entries = Vec::new();
 
@@ -438,7 +447,7 @@ fn info_list_to_picker_entries(
 
     let favorite_models: Vec<_> = all_models
         .iter()
-        .filter(|m| favorites.contains(&m.id))
+        .filter(|m| favorites.contains(&m.id) && !hidden.contains(&m.id))
         .unique_by(|m| &m.id)
         .collect();
 
@@ -456,14 +465,24 @@ fn info_list_to_picker_entries(
                 entries.push(ModelPickerEntry::Separator("All".into()));
             }
             for model in list {
+                if hidden.contains(&model.id) {
+                    continue;
+                }
                 let is_favorite = favorites.contains(&model.id);
                 entries.push(ModelPickerEntry::Model(model, is_favorite));
             }
         }
         AgentModelList::Grouped(index_map) => {
             for (group_name, models) in index_map {
+                let visible_models = models
+                    .into_iter()
+                    .filter(|model| !hidden.contains(&model.id))
+                    .collect::<Vec<_>>();
+                if visible_models.is_empty() {
+                    continue;
+                }
                 entries.push(ModelPickerEntry::Separator(group_name.0));
-                for model in models {
+                for model in visible_models {
                     let is_favorite = favorites.contains(&model.id);
                     entries.push(ModelPickerEntry::Model(model, is_favorite));
                 }

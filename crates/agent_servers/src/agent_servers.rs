@@ -76,6 +76,10 @@ pub trait AgentServer: Send {
         HashSet::default()
     }
 
+    fn hidden_model_ids(&self, _cx: &mut App) -> HashSet<agent_client_protocol::ModelId> {
+        HashSet::default()
+    }
+
     fn default_config_option(&self, _config_id: &str, _cx: &App) -> Option<String> {
         None
     }

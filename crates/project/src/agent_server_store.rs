@@ -1485,6 +1485,10 @@ pub enum CustomAgentServerSettings {
         ///
         /// Default: []
         favorite_models: Vec<String>,
+        /// The hidden models for this agent.
+        ///
+        /// Default: []
+        hidden_models: Vec<String>,
         /// Default values for session config options.
         ///
         /// This is a map from config option ID to value ID.
@@ -1519,6 +1523,10 @@ pub enum CustomAgentServerSettings {
         ///
         /// Default: []
         favorite_models: Vec<String>,
+        /// The hidden models for this agent.
+        ///
+        /// Default: []
+        hidden_models: Vec<String>,
         /// Default values for session config options.
         ///
         /// This is a map from config option ID to value ID.
@@ -1553,6 +1561,10 @@ pub enum CustomAgentServerSettings {
         ///
         /// Default: []
         favorite_models: Vec<String>,
+        /// The hidden models for this agent.
+        ///
+        /// Default: []
+        hidden_models: Vec<String>,
         /// Default values for session config options.
         ///
         /// This is a map from config option ID to value ID.
@@ -1607,6 +1619,14 @@ impl CustomAgentServerSettings {
         }
     }
 
+    pub fn hidden_models(&self) -> &[String] {
+        match self {
+            CustomAgentServerSettings::Custom { hidden_models, .. }
+            | CustomAgentServerSettings::Extension { hidden_models, .. }
+            | CustomAgentServerSettings::Registry { hidden_models, .. } => hidden_models,
+        }
+    }
+
     pub fn default_config_option(&self, config_id: &str) -> Option<&str> {
         match self {
             CustomAgentServerSettings::Custom {
@@ -1654,6 +1674,7 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
                 default_mode,
                 default_model,
                 favorite_models,
+                hidden_models,
                 default_config_options,
                 favorite_config_option_values,
             } => CustomAgentServerSettings::Custom {
@@ -1665,6 +1686,7 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
                 default_mode,
                 default_model,
                 favorite_models,
+                hidden_models,
                 default_config_options,
                 favorite_config_option_values,
             },
@@ -1674,6 +1696,7 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
                 default_model,
                 default_config_options,
                 favorite_models,
+                hidden_models,
                 favorite_config_option_values,
             } => CustomAgentServerSettings::Extension {
                 env,
@@ -1681,6 +1704,7 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
                 default_model,
                 default_config_options,
                 favorite_models,
+                hidden_models,
                 favorite_config_option_values,
             },
             settings::CustomAgentServerSettings::Registry {
@@ -1689,6 +1713,7 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
                 default_model,
                 default_config_options,
                 favorite_models,
+                hidden_models,
                 favorite_config_option_values,
             } => CustomAgentServerSettings::Registry {
                 env,
@@ -1696,6 +1721,7 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
                 default_model,
                 default_config_options,
                 favorite_models,
+                hidden_models,
                 favorite_config_option_values,
             },
         }

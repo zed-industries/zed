@@ -35,6 +35,7 @@ pub struct AgentSettings {
     pub thread_summary_model: Option<LanguageModelSelection>,
     pub inline_alternatives: Vec<LanguageModelSelection>,
     pub favorite_models: Vec<LanguageModelSelection>,
+    pub hidden_models: Vec<LanguageModelSelection>,
     pub default_profile: AgentProfileId,
     pub default_view: DefaultAgentView,
     pub profiles: IndexMap<AgentProfileId, AgentProfileSettings>,
@@ -83,6 +84,13 @@ impl AgentSettings {
 
     pub fn favorite_model_ids(&self) -> HashSet<ModelId> {
         self.favorite_models
+            .iter()
+            .map(|sel| ModelId::new(format!("{}/{}", sel.provider.0, sel.model)))
+            .collect()
+    }
+
+    pub fn hidden_model_ids(&self) -> HashSet<ModelId> {
+        self.hidden_models
             .iter()
             .map(|sel| ModelId::new(format!("{}/{}", sel.provider.0, sel.model)))
             .collect()
@@ -418,6 +426,7 @@ impl Settings for AgentSettings {
             thread_summary_model: agent.thread_summary_model,
             inline_alternatives: agent.inline_alternatives.unwrap_or_default(),
             favorite_models: agent.favorite_models,
+            hidden_models: agent.hidden_models,
             default_profile: AgentProfileId(agent.default_profile.unwrap()),
             default_view: agent.default_view.unwrap(),
             profiles: agent

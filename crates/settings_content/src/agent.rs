@@ -63,6 +63,9 @@ pub struct AgentSettingsContent {
     /// Favorite models to show at the top of the model selector.
     #[serde(default)]
     pub favorite_models: Vec<LanguageModelSelection>,
+    /// Models to hide from the model selectors.
+    #[serde(default)]
+    pub hidden_models: Vec<LanguageModelSelection>,
     /// Model to use for the inline assistant. Defaults to default_model when not specified.
     pub inline_assistant_model: Option<LanguageModelSelection>,
     /// Model to use for the inline assistant when streaming tools are enabled.
@@ -186,6 +189,16 @@ impl AgentSettingsContent {
 
     pub fn remove_favorite_model(&mut self, model: &LanguageModelSelection) {
         self.favorite_models.retain(|m| m != model);
+    }
+
+    pub fn add_hidden_model(&mut self, model: LanguageModelSelection) {
+        if !self.hidden_models.contains(&model) {
+            self.hidden_models.push(model);
+        }
+    }
+
+    pub fn remove_hidden_model(&mut self, model: &LanguageModelSelection) {
+        self.hidden_models.retain(|m| m != model);
     }
 
     pub fn set_tool_default_permission(&mut self, tool_id: &str, mode: ToolPermissionMode) {
@@ -397,6 +410,13 @@ pub enum CustomAgentServerSettings {
         /// Default: []
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         favorite_models: Vec<String>,
+        /// The hidden models for this agent.
+        ///
+        /// These are the model IDs as reported by the agent.
+        ///
+        /// Default: []
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        hidden_models: Vec<String>,
         /// Default values for session config options.
         ///
         /// This is a map from config option ID to value ID.
@@ -437,6 +457,13 @@ pub enum CustomAgentServerSettings {
         /// Default: []
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         favorite_models: Vec<String>,
+        /// The hidden models for this agent.
+        ///
+        /// These are the model IDs as reported by the agent.
+        ///
+        /// Default: []
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        hidden_models: Vec<String>,
         /// Default values for session config options.
         ///
         /// This is a map from config option ID to value ID.
@@ -477,6 +504,13 @@ pub enum CustomAgentServerSettings {
         /// Default: []
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         favorite_models: Vec<String>,
+        /// The hidden models for this agent.
+        ///
+        /// These are the model IDs as reported by the agent.
+        ///
+        /// Default: []
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        hidden_models: Vec<String>,
         /// Default values for session config options.
         ///
         /// This is a map from config option ID to value ID.

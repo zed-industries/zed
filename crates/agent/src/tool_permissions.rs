@@ -580,6 +580,7 @@ mod tests {
             thread_summary_model: None,
             inline_alternatives: vec![],
             favorite_models: vec![],
+            hidden_models: vec![],
             default_profile: AgentProfileId::default(),
             default_view: DefaultAgentView::Thread,
             profiles: Default::default(),

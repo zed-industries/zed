@@ -499,6 +499,7 @@ impl AgentRegistryPage {
                                     default_model: None,
                                     env: Default::default(),
                                     favorite_models: Vec::new(),
+                                    hidden_models: Vec::new(),
                                     default_config_options: HashMap::default(),
                                     favorite_config_option_values: HashMap::default(),
                                 }

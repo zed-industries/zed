@@ -13,7 +13,7 @@ use language_model::{
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
-use settings::Settings;
+use settings::{Settings, SettingsStore};
 use ui::prelude::*;
 use zed_actions::agent::OpenSettings;
 
@@ -59,9 +59,17 @@ fn all_models(cx: &App) -> GroupedModels {
     let providers = lm_registry.visible_providers();
 
     let mut favorites_index = FavoritesIndex::default();
+    let mut hidden_index = HiddenIndex::default();
 
     for sel in &AgentSettings::get_global(cx).favorite_models {
         favorites_index
+            .entry(sel.provider.0.clone().into())
+            .or_default()
+            .insert(sel.model.clone().into());
+    }
+
+    for sel in &AgentSettings::get_global(cx).hidden_models {
+        hidden_index
             .entry(sel.provider.0.clone().into())
             .or_default()
             .insert(sel.model.clone().into());
@@ -73,7 +81,7 @@ fn all_models(cx: &App) -> GroupedModels {
             provider
                 .recommended_models(cx)
                 .into_iter()
-                .map(|model| ModelInfo::new(&**provider, model, &favorites_index))
+                .map(|model| ModelInfo::new(&**provider, model, &favorites_index, &hidden_index))
         })
         .collect();
 
@@ -83,7 +91,7 @@ fn all_models(cx: &App) -> GroupedModels {
             provider
                 .provided_models(cx)
                 .into_iter()
-                .map(|model| ModelInfo::new(&**provider, model, &favorites_index))
+                .map(|model| ModelInfo::new(&**provider, model, &favorites_index, &hidden_index))
         })
         .collect();
 
@@ -91,12 +99,14 @@ fn all_models(cx: &App) -> GroupedModels {
 }
 
 type FavoritesIndex = HashMap<LanguageModelProviderId, HashSet<LanguageModelId>>;
+type HiddenIndex = HashMap<LanguageModelProviderId, HashSet<LanguageModelId>>;
 
 #[derive(Clone)]
 struct ModelInfo {
     model: Arc<dyn LanguageModel>,
     icon: IconOrSvg,
     is_favorite: bool,
+    is_hidden: bool,
 }
 
 impl ModelInfo {
@@ -104,8 +114,12 @@ impl ModelInfo {
         provider: &dyn LanguageModelProvider,
         model: Arc<dyn LanguageModel>,
         favorites_index: &FavoritesIndex,
+        hidden_index: &HiddenIndex,
     ) -> Self {
         let is_favorite = favorites_index
+            .get(&provider.id())
+            .map_or(false, |set| set.contains(&model.id()));
+        let is_hidden = hidden_index
             .get(&provider.id())
             .map_or(false, |set| set.contains(&model.id()));
 
@@ -113,6 +127,7 @@ impl ModelInfo {
             model,
             icon: provider.icon(),
             is_favorite,
+            is_hidden,
         }
     }
 }
@@ -152,24 +167,29 @@ impl LanguageModelPickerDelegate {
             get_active_model: Arc::new(get_active_model),
             on_toggle_favorite: Arc::new(on_toggle_favorite),
             _authenticate_all_providers_task: Self::authenticate_all_providers(cx),
-            _subscriptions: vec![cx.subscribe_in(
-                &LanguageModelRegistry::global(cx),
-                window,
-                |picker, _, event, window, cx| {
-                    match event {
-                        language_model::Event::ProviderStateChanged(_)
-                        | language_model::Event::AddedProvider(_)
-                        | language_model::Event::RemovedProvider(_) => {
-                            let query = picker.query(cx);
-                            picker.delegate.all_models = Arc::new(all_models(cx));
-                            // Update matches will automatically drop the previous task
-                            // if we get a provider event again
-                            picker.update_matches(query, window, cx)
+            _subscriptions: vec![
+                cx.subscribe_in(
+                    &LanguageModelRegistry::global(cx),
+                    window,
+                    |picker, _, event, window, cx| {
+                        match event {
+                            language_model::Event::ProviderStateChanged(_)
+                            | language_model::Event::AddedProvider(_)
+                            | language_model::Event::RemovedProvider(_) => {
+                                let query = picker.query(cx);
+                                picker.delegate.all_models = Arc::new(all_models(cx));
+                                picker.update_matches(query, window, cx)
+                            }
+                            _ => {}
                         }
-                        _ => {}
-                    }
-                },
-            )],
+                    },
+                ),
+                cx.observe_global_in::<SettingsStore>(window, |picker, window, cx| {
+                    let query = picker.query(cx);
+                    picker.delegate.all_models = Arc::new(all_models(cx));
+                    picker.update_matches(query, window, cx);
+                }),
+            ],
             popover_styles,
             focus_handle,
         }
@@ -301,12 +321,19 @@ impl GroupedModels {
     pub fn new(all: Vec<ModelInfo>, recommended: Vec<ModelInfo>) -> Self {
         let favorites = all
             .iter()
-            .filter(|info| info.is_favorite)
+            .filter(|info| info.is_favorite && !info.is_hidden)
             .cloned()
+            .collect();
+        let recommended = recommended
+            .into_iter()
+            .filter(|info| !info.is_hidden)
             .collect();
 
         let mut all_by_provider: IndexMap<_, Vec<ModelInfo>> = IndexMap::default();
         for model in all {
+            if model.is_hidden {
+                continue;
+            }
             let provider = model.model.provider_id();
             if let Some(models) = all_by_provider.get_mut(&provider) {
                 models.push(model);

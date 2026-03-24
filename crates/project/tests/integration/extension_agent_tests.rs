@@ -302,6 +302,7 @@ fn test_tilde_expansion_in_settings() {
         default_mode: None,
         default_model: None,
         favorite_models: vec![],
+        hidden_models: vec![],
         default_config_options: Default::default(),
         favorite_config_option_values: Default::default(),
     };

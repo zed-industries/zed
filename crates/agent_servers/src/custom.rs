@@ -198,6 +198,25 @@ impl AgentServer for CustomAgentServer {
             .unwrap_or_default()
     }
 
+    fn hidden_model_ids(&self, cx: &mut App) -> HashSet<acp::ModelId> {
+        let settings = cx.read_global(|settings: &SettingsStore, _| {
+            settings
+                .get::<AllAgentServersSettings>(None)
+                .get(self.agent_id().as_ref())
+                .cloned()
+        });
+
+        settings
+            .as_ref()
+            .map(|s| {
+                s.hidden_models()
+                    .iter()
+                    .map(|id| acp::ModelId::new(id.clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     fn toggle_favorite_model(
         &self,
         model_id: acp::ModelId,
@@ -433,6 +452,7 @@ fn default_settings_for_agent(
             default_mode: None,
             env: Default::default(),
             favorite_models: Vec::new(),
+            hidden_models: Vec::new(),
             default_config_options: Default::default(),
             favorite_config_option_values: Default::default(),
         }
@@ -442,6 +462,7 @@ fn default_settings_for_agent(
             default_mode: None,
             env: Default::default(),
             favorite_models: Vec::new(),
+            hidden_models: Vec::new(),
             default_config_options: Default::default(),
             favorite_config_option_values: Default::default(),
         }
@@ -539,6 +560,7 @@ mod tests {
                     default_mode: None,
                     default_model: None,
                     favorite_models: Vec::new(),
+                    hidden_models: Vec::new(),
                     default_config_options: HashMap::default(),
                     favorite_config_option_values: HashMap::default(),
                 },
@@ -561,6 +583,7 @@ mod tests {
                     default_mode: None,
                     default_model: None,
                     favorite_models: Vec::new(),
+                    hidden_models: Vec::new(),
                     default_config_options: HashMap::default(),
                     favorite_config_option_values: HashMap::default(),
                 },
