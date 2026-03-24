@@ -921,9 +921,7 @@ mod tests {
         let checkbox_cells: Vec<&str> = cell_texts
             .iter()
             .map(|cell| cell.trim())
-            .filter(|cell| {
-                *cell == "[x]" || *cell == "[X]" || *cell == "[ ]"
-            })
+            .filter(|cell| *cell == "[x]" || *cell == "[X]" || *cell == "[ ]")
             .collect();
 
         assert!(
