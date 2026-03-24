@@ -205,6 +205,33 @@ fn sanitize_url_punctuation<T: EventListener>(
     }
 }
 
+/// Returns the byte offset just past the first unbalanced `(` in `s`, or `None`
+/// if all parentheses are balanced. Used to strip prefixes like `Update(` from
+/// path matches while preserving balanced parens in filenames like `file(copy).txt`.
+fn first_unbalanced_open_paren(s: &str) -> Option<usize> {
+    let mut balance: i32 = 0;
+    let mut first_unmatched = None;
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' => {
+                if balance == 0 {
+                    first_unmatched = Some(i + c.len_utf8());
+                }
+                balance += 1;
+            }
+            ')' => {
+                balance -= 1;
+                if balance <= 0 {
+                    balance = 0;
+                    first_unmatched = None;
+                }
+            }
+            _ => {}
+        }
+    }
+    first_unmatched.filter(|_| balance > 0)
+}
+
 fn path_match<T>(
     term: &Term<T>,
     line_start: AlacPoint,
@@ -338,6 +365,16 @@ fn path_match<T>(
             path_range.end += line_start_offset;
             link_range.start += line_start_offset;
             link_range.end += line_start_offset;
+
+            // Strip prefix up to the first unbalanced `(` in the matched path.
+            // This handles delimiter parens like `Update(.claude/SKILL.md)` while
+            // preserving balanced parens in filenames like `file(copy).txt`.
+            // Analogous to `sanitize_url_punctuation` which strips unbalanced
+            // trailing `)` from URLs.
+            if let Some(trim) = first_unbalanced_open_paren(&line[path_range.clone()]) {
+                path_range.start += trim;
+                link_range.start = link_range.start.max(path_range.start);
+            }
 
             if !link_range.contains(&hovered_point_byte_offset) {
                 // No match, just skip.
@@ -971,13 +1008,9 @@ mod tests {
             }
 
             #[test]
-            #[should_panic(expected = "Path = «copy).yml»")]
-            // Filenames with parentheses in the middle (e.g. `file(copy).txt`) are not
-            // matched as a single path because `(` is treated as a path boundary. This is
-            // a tradeoff to support the more common `Tool(path)` pattern (e.g. Claude Code
-            // output like `Update(.claude/SKILL.md)`) where `(` is a delimiter, not part
-            // of the filename.
-            fn parens_in_filename_not_matched() {
+            // Filenames with balanced parentheses are preserved as a single path.
+            // Unbalanced leading `(` (e.g. `Update(.claude/SKILL.md)`) is stripped.
+            fn parens_in_filename() {
                 test_path!("‹«docker-compose.prod(👉copy).yml»›");
             }
         }
