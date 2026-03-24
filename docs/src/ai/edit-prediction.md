@@ -234,7 +234,7 @@ Copilot can provide multiple completion alternatives, and these can be navigated
 
 To use [Sweep](https://sweep.dev/) as your provider:
 
-1. Open the Settings Editor (`Cmd+,` on macOS, `Ctrl+,` on Linux/Windows)
+1. Open the Settings Editor ({#kb zed::OpenSettings})
 2. Search for "Edit Predictions" and click **Configure Providers**
 3. Find the Sweep section and enter your API key from the
    [Sweep dashboard](https://app.sweep.dev/)
@@ -256,7 +256,7 @@ After adding your API key, Sweep will appear in the provider dropdown in the sta
 
 To use [Mercury Coder](https://www.inceptionlabs.ai/) by Inception Labs as your provider:
 
-1. Open the Settings Editor (`Cmd+,` on macOS, `Ctrl+,` on Linux/Windows)
+1. Open the Settings Editor ({#kb zed::OpenSettings})
 2. Search for "Edit Predictions" and click **Configure Providers**
 3. Find the Mercury section and enter your API key from the
    [Inception Labs dashboard](https://platform.inceptionlabs.ai/dashboard/api-keys)
