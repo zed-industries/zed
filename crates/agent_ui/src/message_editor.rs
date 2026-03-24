@@ -162,7 +162,7 @@ impl EventEmitter<MessageEditorEvent> for MessageEditor {}
 const COMMAND_HINT_INLAY_ID: InlayId = InlayId::Hint(0);
 
 enum ResolvedPastedContextItem {
-    Image(gpui::Image),
+    Image(gpui::Image, gpui::SharedString),
     ProjectPath(ProjectPath),
 }
 
@@ -192,10 +192,16 @@ fn is_supported_external_image_path(path: &std::path::Path) -> bool {
 async fn load_image_from_external_path(
     path: PathBuf,
     cx: &mut gpui::AsyncWindowContext,
-) -> Option<gpui::Image> {
+) -> Option<(gpui::Image, gpui::SharedString)> {
     if !is_supported_external_image_path(&path) {
         return None;
     }
+
+    let name: gpui::SharedString = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|s| gpui::SharedString::from(s.to_owned()))
+        .unwrap_or_else(|| "Image".into());
 
     let Some((format, content)) = cx
         .background_spawn(async move {
@@ -209,8 +215,7 @@ async fn load_image_from_external_path(
     else {
         return None;
     };
-
-    Some(gpui::Image::from_bytes(format, content))
+    Some((gpui::Image::from_bytes(format, content), name))
 }
 
 async fn resolve_pasted_context_items(
@@ -228,14 +233,19 @@ async fn resolve_pasted_context_items(
             ClipboardEntry::String(_) => {}
             ClipboardEntry::Image(image) => {
                 if supports_images {
-                    items.push(ResolvedPastedContextItem::Image(image));
+                    items.push(ResolvedPastedContextItem::Image(
+                        image,
+                        "Pasted image".into(),
+                    ));
                 }
             }
             ClipboardEntry::ExternalPaths(paths) => {
                 for path in paths.paths().iter() {
-                    if let Some(image) = load_image_from_external_path(path.clone(), cx).await {
+                    if let Some((image, name)) =
+                        load_image_from_external_path(path.clone(), cx).await
+                    {
                         if supports_images {
-                            items.push(ResolvedPastedContextItem::Image(image));
+                            items.push(ResolvedPastedContextItem::Image(image, name));
                         }
                         continue;
                     }
@@ -345,9 +355,9 @@ async fn insert_resolved_pasted_context_items(
 
     for item in items {
         match item {
-            ResolvedPastedContextItem::Image(image) => {
+            ResolvedPastedContextItem::Image(image, name) => {
                 crate::mention_set::insert_images_as_context(
-                    vec![image],
+                    vec![(image, name)],
                     editor.clone(),
                     mention_set.clone(),
                     workspace.clone(),
