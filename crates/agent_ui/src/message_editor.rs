@@ -32,7 +32,7 @@ use project::{
 use prompt_store::PromptStore;
 use rope::Point;
 use settings::Settings;
-use std::{fmt::Write, ops::Range, path::PathBuf, rc::Rc, sync::Arc};
+use std::{fmt::Write, ops::Range, rc::Rc, sync::Arc};
 use theme::ThemeSettings;
 use ui::{ContextMenu, Disclosure, ElevationIndex, prelude::*};
 use util::paths::PathStyle;
@@ -161,61 +161,97 @@ impl EventEmitter<MessageEditorEvent> for MessageEditor {}
 
 const COMMAND_HINT_INLAY_ID: InlayId = InlayId::Hint(0);
 
+enum MentionInsertPosition {
+    AtCursor,
+    EndOfBuffer,
+}
+
+fn insert_mention_for_project_path(
+    project_path: &ProjectPath,
+    position: MentionInsertPosition,
+    editor: &Entity<Editor>,
+    mention_set: &Entity<MentionSet>,
+    project: &Entity<Project>,
+    workspace: &Entity<Workspace>,
+    supports_images: bool,
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<Task<()>> {
+    let (file_name, mention_uri) = {
+        let project = project.read(cx);
+        let path_style = project.path_style(cx);
+        let entry = project.entry_for_path(project_path, cx)?;
+        let worktree = project.worktree_for_id(project_path.worktree_id, cx)?;
+        let abs_path = worktree.read(cx).absolutize(&project_path.path);
+        let (file_name, _) = crate::completion_provider::extract_file_name_and_directory(
+            &project_path.path,
+            worktree.read(cx).root_name(),
+            path_style,
+        );
+        let mention_uri = if entry.is_dir() {
+            MentionUri::Directory { abs_path }
+        } else {
+            MentionUri::File { abs_path }
+        };
+        (file_name, mention_uri)
+    };
+
+    let mention_text = mention_uri.as_link().to_string();
+    let content_len = mention_text.len();
+
+    let text_anchor = match position {
+        MentionInsertPosition::AtCursor => editor.update(cx, |editor, cx| {
+            let buffer = editor.buffer().read(cx);
+            let snapshot = buffer.snapshot(cx);
+            let (_, _, buffer_snapshot) = snapshot.as_singleton()?;
+            let text_anchor = editor
+                .selections
+                .newest_anchor()
+                .start
+                .text_anchor
+                .bias_left(&buffer_snapshot);
+
+            editor.insert(&mention_text, window, cx);
+            editor.insert(" ", window, cx);
+
+            Some(text_anchor)
+        }),
+        MentionInsertPosition::EndOfBuffer => {
+            let multi_buffer = editor.read(cx).buffer().clone();
+            let buffer = multi_buffer.read(cx).as_singleton()?;
+            let anchor = buffer.update(cx, |buffer, _cx| buffer.anchor_before(buffer.len()));
+            let new_text = format!("{mention_text} ");
+            editor.update(cx, |editor, cx| {
+                editor.edit(
+                    [(
+                        multi_buffer::Anchor::max()..multi_buffer::Anchor::max(),
+                        new_text,
+                    )],
+                    cx,
+                );
+            });
+            Some(anchor)
+        }
+    }?;
+
+    Some(mention_set.update(cx, |mention_set, cx| {
+        mention_set.confirm_mention_completion(
+            file_name,
+            text_anchor,
+            content_len,
+            mention_uri,
+            supports_images,
+            editor.clone(),
+            workspace,
+            window,
+            cx,
+        )
+    }))
+}
+
 enum ResolvedPastedContextItem {
     Image(gpui::Image, gpui::SharedString),
     ProjectPath(ProjectPath),
-}
-
-fn image_format_from_external_path(format: image::ImageFormat) -> Option<gpui::ImageFormat> {
-    match format {
-        image::ImageFormat::Png => Some(gpui::ImageFormat::Png),
-        image::ImageFormat::Jpeg => Some(gpui::ImageFormat::Jpeg),
-        image::ImageFormat::WebP => Some(gpui::ImageFormat::Webp),
-        image::ImageFormat::Gif => Some(gpui::ImageFormat::Gif),
-        image::ImageFormat::Bmp => Some(gpui::ImageFormat::Bmp),
-        image::ImageFormat::Tiff => Some(gpui::ImageFormat::Tiff),
-        image::ImageFormat::Ico => Some(gpui::ImageFormat::Ico),
-        _ => None,
-    }
-}
-
-fn is_supported_external_image_path(path: &std::path::Path) -> bool {
-    matches!(
-        path.extension()
-            .and_then(|extension| extension.to_str())
-            .map(|extension| extension.to_ascii_lowercase())
-            .as_deref(),
-        Some("png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "tiff" | "tif" | "ico")
-    )
-}
-
-async fn load_image_from_external_path(
-    path: PathBuf,
-    cx: &mut gpui::AsyncWindowContext,
-) -> Option<(gpui::Image, gpui::SharedString)> {
-    if !is_supported_external_image_path(&path) {
-        return None;
-    }
-
-    let name: gpui::SharedString = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .map(|s| gpui::SharedString::from(s.to_owned()))
-        .unwrap_or_else(|| "Image".into());
-
-    let Some((format, content)) = cx
-        .background_spawn(async move {
-            let content = std::fs::read(&path).ok()?;
-            let format = image::guess_format(&content)
-                .ok()
-                .and_then(image_format_from_external_path)?;
-            Some((format, content))
-        })
-        .await
-    else {
-        return None;
-    };
-    Some((gpui::Image::from_bytes(format, content), name))
 }
 
 async fn resolve_pasted_context_items(
@@ -227,6 +263,7 @@ async fn resolve_pasted_context_items(
 ) -> (Vec<ResolvedPastedContextItem>, Vec<Entity<Worktree>>) {
     let mut items = Vec::new();
     let mut added_worktrees = Vec::new();
+    let default_image_name: SharedString = "Image".into();
 
     for entry in entries {
         match entry {
@@ -241,8 +278,18 @@ async fn resolve_pasted_context_items(
             }
             ClipboardEntry::ExternalPaths(paths) => {
                 for path in paths.paths().iter() {
-                    if let Some((image, name)) =
-                        load_image_from_external_path(path.clone(), cx).await
+                    if let Some((image, name)) = cx
+                        .background_spawn({
+                            let path = path.clone();
+                            let default_image_name = default_image_name.clone();
+                            async move {
+                                crate::mention_set::load_external_image_from_path(
+                                    &path,
+                                    &default_image_name,
+                                )
+                            }
+                        })
+                        .await
                     {
                         if supports_images {
                             items.push(ResolvedPastedContextItem::Image(image, name));
@@ -286,57 +333,17 @@ fn insert_project_path_as_context(
 
     cx.update(move |window, cx| {
         let project = workspace.read(cx).project().clone();
-        let Some((file_name, mention_uri)) = project.read_with(cx, |project, cx| {
-            let path_style = project.path_style(cx);
-            let entry = project.entry_for_path(&project_path, cx)?;
-            let worktree = project.worktree_for_id(project_path.worktree_id, cx)?;
-            let abs_path = worktree.read(cx).absolutize(&project_path.path);
-            let (file_name, _) = crate::completion_provider::extract_file_name_and_directory(
-                &project_path.path,
-                worktree.read(cx).root_name(),
-                path_style,
-            );
-            let mention_uri = if entry.is_dir() {
-                MentionUri::Directory { abs_path }
-            } else {
-                MentionUri::File { abs_path }
-            };
-            Some((file_name, mention_uri))
-        }) else {
-            return None;
-        };
-
-        let mention_text = mention_uri.as_link().to_string();
-        let (text_anchor, content_len) = editor.update(cx, |editor, cx| {
-            let buffer = editor.buffer().read(cx);
-            let snapshot = buffer.snapshot(cx);
-            let (_, _, buffer_snapshot) = snapshot.as_singleton().unwrap();
-            let text_anchor = editor
-                .selections
-                .newest_anchor()
-                .start
-                .text_anchor
-                .bias_left(&buffer_snapshot);
-
-            editor.insert(&mention_text, window, cx);
-            editor.insert(" ", window, cx);
-
-            (text_anchor, mention_text.len())
-        });
-
-        Some(mention_set.update(cx, |mention_set, cx| {
-            mention_set.confirm_mention_completion(
-                file_name,
-                text_anchor,
-                content_len,
-                mention_uri,
-                supports_images,
-                editor.clone(),
-                &workspace,
-                window,
-                cx,
-            )
-        }))
+        insert_mention_for_project_path(
+            &project_path,
+            MentionInsertPosition::AtCursor,
+            &editor,
+            &mention_set,
+            &project,
+            &workspace,
+            supports_images,
+            window,
+            cx,
+        )
     })
     .ok()
     .flatten()
@@ -1258,60 +1265,22 @@ impl MessageEditor {
             return;
         };
         let project = workspace.read(cx).project().clone();
-        let path_style = project.read(cx).path_style(cx);
-        let buffer = self.editor.read(cx).buffer().clone();
-        let Some(buffer) = buffer.read(cx).as_singleton() else {
-            return;
-        };
+        let supports_images = self.session_capabilities.read().supports_images();
         let mut tasks = Vec::new();
         for path in paths {
-            let Some(entry) = project.read(cx).entry_for_path(&path, cx) else {
-                continue;
-            };
-            let Some(worktree) = project.read(cx).worktree_for_id(path.worktree_id, cx) else {
-                continue;
-            };
-            let abs_path = worktree.read(cx).absolutize(&path.path);
-            let (file_name, _) = crate::completion_provider::extract_file_name_and_directory(
-                &path.path,
-                worktree.read(cx).root_name(),
-                path_style,
-            );
-
-            let uri = if entry.is_dir() {
-                MentionUri::Directory { abs_path }
-            } else {
-                MentionUri::File { abs_path }
-            };
-
-            let new_text = format!("{} ", uri.as_link());
-            let content_len = new_text.len() - 1;
-
-            let anchor = buffer.update(cx, |buffer, _cx| buffer.anchor_before(buffer.len()));
-
-            self.editor.update(cx, |message_editor, cx| {
-                message_editor.edit(
-                    [(
-                        multi_buffer::Anchor::max()..multi_buffer::Anchor::max(),
-                        new_text,
-                    )],
-                    cx,
-                );
-            });
-            let supports_images = self.session_capabilities.read().supports_images();
-            tasks.push(self.mention_set.update(cx, |mention_set, cx| {
-                mention_set.confirm_mention_completion(
-                    file_name,
-                    anchor,
-                    content_len,
-                    uri,
-                    supports_images,
-                    self.editor.clone(),
-                    &workspace,
-                    window,
-                    cx,
-                )
-            }));
+            if let Some(task) = insert_mention_for_project_path(
+                &path,
+                MentionInsertPosition::EndOfBuffer,
+                &self.editor,
+                &self.mention_set,
+                &project,
+                &workspace,
+                supports_images,
+                window,
+                cx,
+            ) {
+                tasks.push(task);
+            }
         }
         cx.spawn(async move |_, _| {
             join_all(tasks).await;
@@ -1597,45 +1566,20 @@ impl MessageEditor {
                     _ => return Ok::<(), anyhow::Error>(()),
                 };
 
-                let supported_formats = [
-                    ("png", gpui::ImageFormat::Png),
-                    ("jpg", gpui::ImageFormat::Jpeg),
-                    ("jpeg", gpui::ImageFormat::Jpeg),
-                    ("webp", gpui::ImageFormat::Webp),
-                    ("gif", gpui::ImageFormat::Gif),
-                    ("bmp", gpui::ImageFormat::Bmp),
-                    ("tiff", gpui::ImageFormat::Tiff),
-                    ("tif", gpui::ImageFormat::Tiff),
-                    ("ico", gpui::ImageFormat::Ico),
-                ];
-
-                let mut images = Vec::new();
-                for path in paths {
-                    let extension = path
-                        .extension()
-                        .and_then(|ext| ext.to_str())
-                        .map(|s| s.to_lowercase());
-
-                    let Some(format) = extension.and_then(|ext| {
-                        supported_formats
-                            .iter()
-                            .find(|(e, _)| *e == ext)
-                            .map(|(_, f)| *f)
-                    }) else {
-                        continue;
-                    };
-
-                    let Ok(content) = async_fs::read(&path).await else {
-                        continue;
-                    };
-
-                    let name: gpui::SharedString = path
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .map(|s| gpui::SharedString::from(s.to_owned()))
-                        .unwrap_or_else(|| "Image".into());
-                    images.push((gpui::Image::from_bytes(format, content), name));
-                }
+                let default_image_name: SharedString = "Image".into();
+                let images = cx
+                    .background_spawn(async move {
+                        paths
+                            .into_iter()
+                            .filter_map(|path| {
+                                crate::mention_set::load_external_image_from_path(
+                                    &path,
+                                    &default_image_name,
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .await;
 
                 crate::mention_set::insert_images_as_context(
                     images,
@@ -2043,7 +1987,7 @@ mod tests {
     use lsp::{CompletionContext, CompletionTriggerKind};
     use parking_lot::RwLock;
     use project::{CompletionIntent, Project, ProjectPath};
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     use text::Point;
     use ui::{App, Context, IntoElement, Render, SharedString, Window};
@@ -4074,76 +4018,13 @@ mod tests {
     #[gpui::test]
     async fn test_paste_external_file_path_inserts_file_mention(cx: &mut TestAppContext) {
         init_test(cx);
-
-        let app_state = cx.update(AppState::test);
-
-        cx.update(|cx| {
-            editor::init(cx);
-            workspace::init(app_state.clone(), cx);
-        });
-
-        app_state
-            .fs
-            .as_fake()
-            .insert_tree(path!("/project"), json!({"file.txt": "content"}))
-            .await;
-
-        let project = Project::test(app_state.fs.clone(), [path!("/project").as_ref()], cx).await;
-        let window =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace = window
-            .read_with(cx, |mw, _| mw.workspace().clone())
-            .unwrap();
-
-        let mut cx = VisualTestContext::from_window(window.into(), cx);
-
-        let thread_store = cx.new(|cx| ThreadStore::new(cx));
-
-        let (message_editor, editor) = workspace.update_in(&mut cx, |workspace, window, cx| {
-            let workspace_handle = cx.weak_entity();
-            let message_editor = cx.new(|cx| {
-                MessageEditor::new(
-                    workspace_handle,
-                    project.downgrade(),
-                    Some(thread_store),
-                    None,
-                    None,
-                    Default::default(),
-                    "Test Agent".into(),
-                    "Test",
-                    EditorMode::AutoHeight {
-                        max_lines: None,
-                        min_lines: 1,
-                    },
-                    window,
-                    cx,
-                )
-            });
-            workspace.active_pane().update(cx, |pane, cx| {
-                pane.add_item(
-                    Box::new(cx.new(|_| MessageEditorItem(message_editor.clone()))),
-                    true,
-                    true,
-                    None,
-                    window,
-                    cx,
-                );
-            });
-            message_editor.read(cx).focus_handle(cx).focus(window, cx);
-            let editor = message_editor.read(cx).editor().clone();
-            (message_editor, editor)
-        });
-
-        cx.write_to_clipboard(ClipboardItem {
-            entries: vec![ClipboardEntry::ExternalPaths(ExternalPaths(
-                vec![PathBuf::from(path!("/project/file.txt"))].into(),
-            ))],
-        });
-
-        message_editor.update_in(&mut cx, |message_editor, window, cx| {
-            message_editor.paste(&Paste, window, cx);
-        });
-        cx.run_until_parked();
+        let (message_editor, editor, mut cx) =
+            setup_paste_test_message_editor(json!({"file.txt": "content"}), cx).await;
+        paste_external_paths(
+            &message_editor,
+            vec![PathBuf::from(path!("/project/file.txt"))],
+            &mut cx,
+        );
 
         let expected_uri = MentionUri::File {
             abs_path: path!("/project/file.txt").into(),
@@ -4155,16 +4036,7 @@ mod tests {
             assert_eq!(editor.text(cx), format!("[@file.txt]({expected_uri}) "));
         });
 
-        let contents = message_editor
-            .update(&mut cx, |message_editor, cx| {
-                message_editor
-                    .mention_set()
-                    .update(cx, |mention_set, cx| mention_set.contents(false, cx))
-            })
-            .await
-            .unwrap()
-            .into_values()
-            .collect::<Vec<_>>();
+        let contents = mention_contents(&message_editor, &mut cx).await;
 
         let [(uri, Mention::Text { content, .. })] = contents.as_slice() else {
             panic!("Unexpected mentions");
@@ -4181,83 +4053,20 @@ mod tests {
     #[gpui::test]
     async fn test_paste_external_directory_path_inserts_directory_mention(cx: &mut TestAppContext) {
         init_test(cx);
-
-        let app_state = cx.update(AppState::test);
-
-        cx.update(|cx| {
-            editor::init(cx);
-            workspace::init(app_state.clone(), cx);
-        });
-
-        app_state
-            .fs
-            .as_fake()
-            .insert_tree(
-                path!("/project"),
-                json!({
-                    "src": {
-                        "main.rs": "fn main() {}\n",
-                    }
-                }),
-            )
-            .await;
-
-        let project = Project::test(app_state.fs.clone(), [path!("/project").as_ref()], cx).await;
-        let window =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace = window
-            .read_with(cx, |mw, _| mw.workspace().clone())
-            .unwrap();
-
-        let mut cx = VisualTestContext::from_window(window.into(), cx);
-
-        let thread_store = cx.new(|cx| ThreadStore::new(cx));
-
-        let (message_editor, editor) = workspace.update_in(&mut cx, |workspace, window, cx| {
-            let workspace_handle = cx.weak_entity();
-            let message_editor = cx.new(|cx| {
-                MessageEditor::new(
-                    workspace_handle,
-                    project.downgrade(),
-                    Some(thread_store),
-                    None,
-                    None,
-                    Default::default(),
-                    "Test Agent".into(),
-                    "Test",
-                    EditorMode::AutoHeight {
-                        max_lines: None,
-                        min_lines: 1,
-                    },
-                    window,
-                    cx,
-                )
-            });
-            workspace.active_pane().update(cx, |pane, cx| {
-                pane.add_item(
-                    Box::new(cx.new(|_| MessageEditorItem(message_editor.clone()))),
-                    true,
-                    true,
-                    None,
-                    window,
-                    cx,
-                );
-            });
-            message_editor.read(cx).focus_handle(cx).focus(window, cx);
-            let editor = message_editor.read(cx).editor().clone();
-            (message_editor, editor)
-        });
-
-        cx.write_to_clipboard(ClipboardItem {
-            entries: vec![ClipboardEntry::ExternalPaths(ExternalPaths(
-                vec![PathBuf::from(path!("/project/src"))].into(),
-            ))],
-        });
-
-        message_editor.update_in(&mut cx, |message_editor, window, cx| {
-            message_editor.paste(&Paste, window, cx);
-        });
-        cx.run_until_parked();
+        let (message_editor, editor, mut cx) = setup_paste_test_message_editor(
+            json!({
+                "src": {
+                    "main.rs": "fn main() {}\n",
+                }
+            }),
+            cx,
+        )
+        .await;
+        paste_external_paths(
+            &message_editor,
+            vec![PathBuf::from(path!("/project/src"))],
+            &mut cx,
+        );
 
         let expected_uri = MentionUri::Directory {
             abs_path: path!("/project/src").into(),
@@ -4269,16 +4078,7 @@ mod tests {
             assert_eq!(editor.text(cx), format!("[@src]({expected_uri}) "));
         });
 
-        let contents = message_editor
-            .update(&mut cx, |message_editor, cx| {
-                message_editor
-                    .mention_set()
-                    .update(cx, |mention_set, cx| mention_set.contents(false, cx))
-            })
-            .await
-            .unwrap()
-            .into_values()
-            .collect::<Vec<_>>();
+        let contents = mention_contents(&message_editor, &mut cx).await;
 
         let [(uri, Mention::Link)] = contents.as_slice() else {
             panic!("Unexpected mentions");
@@ -4294,65 +4094,8 @@ mod tests {
     #[gpui::test]
     async fn test_paste_external_file_path_inserts_at_cursor(cx: &mut TestAppContext) {
         init_test(cx);
-
-        let app_state = cx.update(AppState::test);
-
-        cx.update(|cx| {
-            editor::init(cx);
-            workspace::init(app_state.clone(), cx);
-        });
-
-        app_state
-            .fs
-            .as_fake()
-            .insert_tree(path!("/project"), json!({"file.txt": "content"}))
-            .await;
-
-        let project = Project::test(app_state.fs.clone(), [path!("/project").as_ref()], cx).await;
-        let window =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace = window
-            .read_with(cx, |mw, _| mw.workspace().clone())
-            .unwrap();
-
-        let mut cx = VisualTestContext::from_window(window.into(), cx);
-
-        let thread_store = cx.new(|cx| ThreadStore::new(cx));
-
-        let (message_editor, editor) = workspace.update_in(&mut cx, |workspace, window, cx| {
-            let workspace_handle = cx.weak_entity();
-            let message_editor = cx.new(|cx| {
-                MessageEditor::new(
-                    workspace_handle,
-                    project.downgrade(),
-                    Some(thread_store),
-                    None,
-                    None,
-                    Default::default(),
-                    "Test Agent".into(),
-                    "Test",
-                    EditorMode::AutoHeight {
-                        max_lines: None,
-                        min_lines: 1,
-                    },
-                    window,
-                    cx,
-                )
-            });
-            workspace.active_pane().update(cx, |pane, cx| {
-                pane.add_item(
-                    Box::new(cx.new(|_| MessageEditorItem(message_editor.clone()))),
-                    true,
-                    true,
-                    None,
-                    window,
-                    cx,
-                );
-            });
-            message_editor.read(cx).focus_handle(cx).focus(window, cx);
-            let editor = message_editor.read(cx).editor().clone();
-            (message_editor, editor)
-        });
+        let (message_editor, editor, mut cx) =
+            setup_paste_test_message_editor(json!({"file.txt": "content"}), cx).await;
 
         editor.update_in(&mut cx, |editor, window, cx| {
             editor.set_text("Hello world", window, cx);
@@ -4361,16 +4104,11 @@ mod tests {
             });
         });
 
-        cx.write_to_clipboard(ClipboardItem {
-            entries: vec![ClipboardEntry::ExternalPaths(ExternalPaths(
-                vec![PathBuf::from(path!("/project/file.txt"))].into(),
-            ))],
-        });
-
-        message_editor.update_in(&mut cx, |message_editor, window, cx| {
-            message_editor.paste(&Paste, window, cx);
-        });
-        cx.run_until_parked();
+        paste_external_paths(
+            &message_editor,
+            vec![PathBuf::from(path!("/project/file.txt"))],
+            &mut cx,
+        );
 
         let expected_uri = MentionUri::File {
             abs_path: path!("/project/file.txt").into(),
@@ -4387,67 +4125,12 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_paste_mixed_external_image_and_file_paths(cx: &mut TestAppContext) {
+    async fn test_paste_mixed_external_image_without_extension_and_file_path(
+        cx: &mut TestAppContext,
+    ) {
         init_test(cx);
-
-        let app_state = cx.update(AppState::test);
-
-        cx.update(|cx| {
-            editor::init(cx);
-            workspace::init(app_state.clone(), cx);
-        });
-
-        app_state
-            .fs
-            .as_fake()
-            .insert_tree(path!("/project"), json!({"file.txt": "content"}))
-            .await;
-
-        let project = Project::test(app_state.fs.clone(), [path!("/project").as_ref()], cx).await;
-        let window =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace = window
-            .read_with(cx, |mw, _| mw.workspace().clone())
-            .unwrap();
-
-        let mut cx = VisualTestContext::from_window(window.into(), cx);
-
-        let thread_store = cx.new(|cx| ThreadStore::new(cx));
-
-        let (message_editor, editor) = workspace.update_in(&mut cx, |workspace, window, cx| {
-            let workspace_handle = cx.weak_entity();
-            let message_editor = cx.new(|cx| {
-                MessageEditor::new(
-                    workspace_handle,
-                    project.downgrade(),
-                    Some(thread_store),
-                    None,
-                    None,
-                    Default::default(),
-                    "Test Agent".into(),
-                    "Test",
-                    EditorMode::AutoHeight {
-                        max_lines: None,
-                        min_lines: 1,
-                    },
-                    window,
-                    cx,
-                )
-            });
-            workspace.active_pane().update(cx, |pane, cx| {
-                pane.add_item(
-                    Box::new(cx.new(|_| MessageEditorItem(message_editor.clone()))),
-                    true,
-                    true,
-                    None,
-                    window,
-                    cx,
-                );
-            });
-            message_editor.read(cx).focus_handle(cx).focus(window, cx);
-            let editor = message_editor.read(cx).editor().clone();
-            (message_editor, editor)
-        });
+        let (message_editor, editor, mut cx) =
+            setup_paste_test_message_editor(json!({"file.txt": "content"}), cx).await;
 
         message_editor.update(&mut cx, |message_editor, _cx| {
             message_editor
@@ -4456,22 +4139,15 @@ mod tests {
                 .set_prompt_capabilities(acp::PromptCapabilities::new().image(true));
         });
 
-        let temporary_image_path = write_test_png_file();
-
-        cx.write_to_clipboard(ClipboardItem {
-            entries: vec![ClipboardEntry::ExternalPaths(ExternalPaths(
-                vec![
-                    temporary_image_path.clone(),
-                    PathBuf::from(path!("/project/file.txt")),
-                ]
-                .into(),
-            ))],
-        });
-
-        message_editor.update_in(&mut cx, |message_editor, window, cx| {
-            message_editor.paste(&Paste, window, cx);
-        });
-        cx.run_until_parked();
+        let temporary_image_path = write_test_png_file(None);
+        paste_external_paths(
+            &message_editor,
+            vec![
+                temporary_image_path.clone(),
+                PathBuf::from(path!("/project/file.txt")),
+            ],
+            &mut cx,
+        );
 
         std::fs::remove_file(&temporary_image_path).expect("remove temp png");
 
@@ -4489,16 +4165,7 @@ mod tests {
             );
         });
 
-        let contents = message_editor
-            .update(&mut cx, |message_editor, cx| {
-                message_editor
-                    .mention_set()
-                    .update(cx, |mention_set, cx| mention_set.contents(false, cx))
-            })
-            .await
-            .unwrap()
-            .into_values()
-            .collect::<Vec<_>>();
+        let contents = mention_contents(&message_editor, &mut cx).await;
 
         assert_eq!(contents.len(), 2);
         assert!(contents.iter().any(|(uri, mention)| {
@@ -4517,12 +4184,112 @@ mod tests {
         }));
     }
 
-    fn write_test_png_file() -> PathBuf {
+    async fn setup_paste_test_message_editor(
+        project_tree: Value,
+        cx: &mut TestAppContext,
+    ) -> (Entity<MessageEditor>, Entity<Editor>, VisualTestContext) {
+        let app_state = cx.update(AppState::test);
+
+        cx.update(|cx| {
+            editor::init(cx);
+            workspace::init(app_state.clone(), cx);
+        });
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/project"), project_tree)
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), [path!("/project").as_ref()], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+
+        let (message_editor, editor) = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let workspace_handle = cx.weak_entity();
+            let message_editor = cx.new(|cx| {
+                MessageEditor::new(
+                    workspace_handle,
+                    project.downgrade(),
+                    Some(thread_store),
+                    None,
+                    None,
+                    Default::default(),
+                    "Test Agent".into(),
+                    "Test",
+                    EditorMode::AutoHeight {
+                        max_lines: None,
+                        min_lines: 1,
+                    },
+                    window,
+                    cx,
+                )
+            });
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.add_item(
+                    Box::new(cx.new(|_| MessageEditorItem(message_editor.clone()))),
+                    true,
+                    true,
+                    None,
+                    window,
+                    cx,
+                );
+            });
+            message_editor.read(cx).focus_handle(cx).focus(window, cx);
+            let editor = message_editor.read(cx).editor().clone();
+            (message_editor, editor)
+        });
+
+        (message_editor, editor, cx)
+    }
+
+    fn paste_external_paths(
+        message_editor: &Entity<MessageEditor>,
+        paths: Vec<PathBuf>,
+        cx: &mut VisualTestContext,
+    ) {
+        cx.write_to_clipboard(ClipboardItem {
+            entries: vec![ClipboardEntry::ExternalPaths(ExternalPaths(paths.into()))],
+        });
+
+        message_editor.update_in(cx, |message_editor, window, cx| {
+            message_editor.paste(&Paste, window, cx);
+        });
+        cx.run_until_parked();
+    }
+
+    async fn mention_contents(
+        message_editor: &Entity<MessageEditor>,
+        cx: &mut VisualTestContext,
+    ) -> Vec<(MentionUri, Mention)> {
+        message_editor
+            .update(cx, |message_editor, cx| {
+                message_editor
+                    .mention_set()
+                    .update(cx, |mention_set, cx| mention_set.contents(false, cx))
+            })
+            .await
+            .unwrap()
+            .into_values()
+            .collect::<Vec<_>>()
+    }
+
+    fn write_test_png_file(extension: Option<&str>) -> PathBuf {
         let bytes = base64::prelude::BASE64_STANDARD
             .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
             .expect("decode png");
-        let path =
-            std::env::temp_dir().join(format!("zed-agent-ui-test-{}.png", uuid::Uuid::new_v4()));
+        let file_name = match extension {
+            Some(extension) => format!("zed-agent-ui-test-{}.{}", uuid::Uuid::new_v4(), extension),
+            None => format!("zed-agent-ui-test-{}", uuid::Uuid::new_v4()),
+        };
+        let path = std::env::temp_dir().join(file_name);
         std::fs::write(&path, bytes).expect("write temp png");
         path
     }
