@@ -162,8 +162,7 @@ impl PickerDelegate for IconThemeSelectorDelegate {
     ) {
         self.selection_completed = true;
 
-        // Ensure the previewed theme matches the currently highlighted item,
-        // since filtering without navigation may leave the global settings stale.
+        // Sync preview with the highlighted item before confirming.
         self.selected_theme = self.show_selected_theme(cx);
 
         let theme_settings = ThemeSettings::get_global(cx);
@@ -264,13 +263,15 @@ impl PickerDelegate for IconThemeSelectorDelegate {
                         .enumerate()
                         .find(|(_, mtch)| mtch.string.as_str() == selected.0.as_ref())
                         .map(|(ix, _)| ix)
-                        .unwrap_or(0);
+                        .unwrap_or_default();
                 } else {
                     this.delegate.selected_index = this
                         .delegate
                         .selected_index
                         .min(this.delegate.matches.len().saturating_sub(1));
                 }
+                // Keep stale selected_theme on empty matches so it can be
+                // re-resolved when the filter widens again.
                 if let Some(theme) = this.delegate.show_selected_theme(cx) {
                     this.delegate.selected_theme = Some(theme);
                 }

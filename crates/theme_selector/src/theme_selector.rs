@@ -353,9 +353,13 @@ impl PickerDelegate for ThemeSelectorDelegate {
     ) {
         self.selection_completed = true;
 
-        // Ensure the previewed theme matches the currently highlighted item,
-        // since filtering without navigation may leave `new_theme` stale.
-        self.selected_theme = self.show_selected_theme(cx);
+        // Sync preview with the highlighted item; bail if no matches.
+        if self.show_selected_theme(cx).is_none() {
+            self.selector
+                .update(cx, |_, cx| cx.emit(DismissEvent))
+                .ok();
+            return;
+        }
 
         let theme_name: Arc<str> = self.new_theme.name.as_str().into();
         let theme_appearance = self.new_theme.appearance;
@@ -450,13 +454,15 @@ impl PickerDelegate for ThemeSelectorDelegate {
                         .enumerate()
                         .find(|(_, mtch)| mtch.string == selected.name)
                         .map(|(ix, _)| ix)
-                        .unwrap_or(0);
+                        .unwrap_or_default();
                 } else {
                     this.delegate.selected_index = this
                         .delegate
                         .selected_index
                         .min(this.delegate.matches.len().saturating_sub(1));
                 }
+                // Keep stale selected_theme on empty matches so it can be
+                // re-resolved when the filter widens again.
                 if let Some(theme) = this.delegate.show_selected_theme(cx) {
                     this.delegate.selected_theme = Some(theme);
                 }
@@ -577,6 +583,17 @@ mod tests {
         });
     }
 
+    async fn setup_test(cx: &mut TestAppContext) -> Arc<workspace::AppState> {
+        let app_state = init_test(cx);
+        register_test_themes(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/test"), json!({}))
+            .await;
+        app_state
+    }
+
     fn open_theme_selector(
         workspace: &Entity<workspace::Workspace>,
         cx: &mut VisualTestContext,
@@ -621,20 +638,12 @@ mod tests {
     async fn test_theme_selector_preserves_selection_on_empty_filter(
         cx: &mut TestAppContext,
     ) {
-        let app_state = init_test(cx);
-        register_test_themes(cx);
-        app_state
-            .fs
-            .as_fake()
-            .insert_tree(path!("/test"), json!({}))
-            .await;
-
+        let app_state = setup_test(cx).await;
         let project = Project::test(app_state.fs.clone(), [path!("/test").as_ref()], cx).await;
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace =
             multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
-
         let picker = open_theme_selector(&workspace, cx);
 
         // Navigate to "Test Light" via arrow keys.
@@ -680,20 +689,12 @@ mod tests {
 
     #[gpui::test]
     async fn test_theme_selector_updates_preview_on_filter(cx: &mut TestAppContext) {
-        let app_state = init_test(cx);
-        register_test_themes(cx);
-        app_state
-            .fs
-            .as_fake()
-            .insert_tree(path!("/test"), json!({}))
-            .await;
-
+        let app_state = setup_test(cx).await;
         let project = Project::test(app_state.fs.clone(), [path!("/test").as_ref()], cx).await;
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace =
             multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
-
         let picker = open_theme_selector(&workspace, cx);
 
         // Filter to only show "Test Light".
@@ -718,20 +719,12 @@ mod tests {
     async fn test_theme_selector_confirm_after_filter_without_navigation(
         cx: &mut TestAppContext,
     ) {
-        let app_state = init_test(cx);
-        register_test_themes(cx);
-        app_state
-            .fs
-            .as_fake()
-            .insert_tree(path!("/test"), json!({}))
-            .await;
-
+        let app_state = setup_test(cx).await;
         let project = Project::test(app_state.fs.clone(), [path!("/test").as_ref()], cx).await;
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace =
             multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
-
         let picker = open_theme_selector(&workspace, cx);
 
         // Filter to "Test Light" and confirm without navigating with arrows.
