@@ -263,7 +263,7 @@ async fn resolve_pasted_context_items(
 ) -> (Vec<ResolvedPastedContextItem>, Vec<Entity<Worktree>>) {
     let mut items = Vec::new();
     let mut added_worktrees = Vec::new();
-    let default_image_name: SharedString = "Image".into();
+    let default_image_name: SharedString = MentionUri::PastedImage.name().into();
 
     for entry in entries {
         match entry {
@@ -272,7 +272,7 @@ async fn resolve_pasted_context_items(
                 if supports_images {
                     items.push(ResolvedPastedContextItem::Image(
                         image,
-                        "Pasted image".into(),
+                        default_image_name.clone(),
                     ));
                 }
             }
@@ -1220,6 +1220,9 @@ impl MessageEditor {
         let project = workspace.read(cx).project().clone();
         let project_is_local = project.read(cx).is_local();
         let supports_images = self.session_capabilities.read().supports_images();
+        if !project_is_local && !supports_images {
+            return false;
+        }
         let editor = self.editor.clone();
         let mention_set = self.mention_set.clone();
         let workspace = self.workspace.clone();
