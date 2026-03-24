@@ -6150,29 +6150,96 @@ mod tests {
             sidebar.selection = Some(1);
         });
 
+        let assert_sidebar_state = |sidebar: &mut Sidebar, _cx: &mut Context<Sidebar>| {
+            let mut project_headers = sidebar.contents.entries.iter().filter_map(|entry| {
+                if let ListEntry::ProjectHeader { label, .. } = entry {
+                    Some(label.as_ref())
+                } else {
+                    None
+                }
+            });
+
+            let Some(project_header) = project_headers.next() else {
+                panic!("expected exactly one sidebar project header named `project`, found none");
+            };
+            assert_eq!(
+                project_header, "project",
+                "expected the only sidebar project header to be `project`"
+            );
+            if let Some(unexpected_header) = project_headers.next() {
+                panic!(
+                    "expected exactly one sidebar project header named `project`, found extra header `{unexpected_header}`"
+                );
+            }
+
+            let mut saw_expected_thread = false;
+            for entry in &sidebar.contents.entries {
+                match entry {
+                    ListEntry::ProjectHeader { label, .. } => {
+                        assert_eq!(
+                            label.as_ref(),
+                            "project",
+                            "expected the only sidebar project header to be `project`"
+                        );
+                    }
+                    ListEntry::Thread(thread)
+                        if thread
+                            .session_info
+                            .title
+                            .as_ref()
+                            .map(|title| title.as_ref())
+                            == Some("WT Thread")
+                            && thread.worktree_name.as_ref().map(|name| name.as_ref())
+                                == Some("wt-feature-a") =>
+                    {
+                        saw_expected_thread = true;
+                    }
+                    ListEntry::Thread(thread) => {
+                        let title = thread
+                            .session_info
+                            .title
+                            .as_ref()
+                            .map(|title| title.as_ref())
+                            .unwrap_or("Untitled");
+                        let worktree_name = thread
+                            .worktree_name
+                            .as_ref()
+                            .map(|name| name.as_ref())
+                            .unwrap_or("<none>");
+                        panic!(
+                            "unexpected sidebar thread while opening linked worktree thread: title=`{title}`, worktree=`{worktree_name}`"
+                        );
+                    }
+                    ListEntry::ViewMore { .. } => {
+                        panic!("unexpected `View More` entry while opening linked worktree thread");
+                    }
+                    ListEntry::NewThread { .. } => {
+                        panic!(
+                            "unexpected `New Thread` entry while opening linked worktree thread"
+                        );
+                    }
+                }
+            }
+
+            assert!(
+                saw_expected_thread,
+                "expected the sidebar to keep showing `WT Thread {{wt-feature-a}}` under `project`"
+            );
+        };
+
+        sidebar
+            .update(cx, |_, cx| cx.observe_self(assert_sidebar_state))
+            .detach();
+
         let window = cx.windows()[0];
         cx.update_window(window, |_, window, cx| {
             window.dispatch_action(Confirm.boxed_clone(), cx);
         })
         .unwrap();
 
-        let mut saw_opened_worktree_workspace = false;
-        for _ in 0..50 {
-            if !cx.dispatcher.tick(false) {
-                break;
-            }
+        cx.run_until_parked();
 
-            let entries = visible_entries_as_strings(&sidebar, cx);
-            if entries.iter().any(|entry| entry == "v [wt-feature-a]") {
-                saw_opened_worktree_workspace = true;
-                break;
-            }
-        }
-
-        assert!(
-            !saw_opened_worktree_workspace,
-            "opening a linked-worktree thread should never briefly show the worktree as its own project in the sidebar"
-        );
+        sidebar.update(cx, assert_sidebar_state);
     }
 
     #[gpui::test]
