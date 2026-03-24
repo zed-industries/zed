@@ -2408,7 +2408,7 @@ impl Sidebar {
                 // when metadata is saved via ThreadMetadata::from_thread.
                 let target_workspace = match &next.workspace {
                     ThreadEntryWorkspace::Open(ws) => Some(ws.clone()),
-                    ThreadEntryWorkspace::Closed(_) => group_workspace.clone(),
+                    ThreadEntryWorkspace::Closed(_) => group_workspace,
                 };
 
                 if let Some(workspace) = target_workspace {
