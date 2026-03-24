@@ -669,6 +669,19 @@ impl Sidebar {
         let mut absorbed: HashMap<usize, (usize, SharedString)> = HashMap::new();
         let mut pending: HashMap<Arc<Path>, Vec<(usize, SharedString, Arc<Path>)>> = HashMap::new();
         let mut absorbed_workspace_by_path: HashMap<Arc<Path>, usize> = HashMap::new();
+        let workspace_indices_by_path: HashMap<Arc<Path>, Vec<usize>> = workspaces
+            .iter()
+            .enumerate()
+            .flat_map(|(index, workspace)| {
+                let paths = workspace_path_list(workspace, cx).paths().to_vec();
+                paths
+                    .into_iter()
+                    .map(move |path| (Arc::from(path.as_path()), index))
+            })
+            .fold(HashMap::new(), |mut map, (path, index)| {
+                map.entry(path).or_default().push(index);
+                map
+            });
 
         for (i, workspace) in workspaces.iter().enumerate() {
             for snapshot in root_repository_snapshots(workspace, cx) {
@@ -676,6 +689,29 @@ impl Sidebar {
                     main_repo_workspace
                         .entry(snapshot.work_directory_abs_path.clone())
                         .or_insert(i);
+
+                    for git_worktree in snapshot.linked_worktrees() {
+                        let worktree_path: Arc<Path> = Arc::from(git_worktree.path.as_path());
+                        if let Some(worktree_indices) =
+                            workspace_indices_by_path.get(worktree_path.as_ref())
+                        {
+                            for &worktree_idx in worktree_indices {
+                                if worktree_idx == i {
+                                    continue;
+                                }
+
+                                let worktree_name = linked_worktree_short_name(
+                                    &snapshot.original_repo_abs_path,
+                                    &git_worktree.path,
+                                )
+                                .unwrap_or_default();
+                                absorbed.insert(worktree_idx, (i, worktree_name.clone()));
+                                absorbed_workspace_by_path
+                                    .insert(worktree_path.clone(), worktree_idx);
+                            }
+                        }
+                    }
+
                     if let Some(waiting) = pending.remove(&snapshot.work_directory_abs_path) {
                         for (ws_idx, name, ws_path) in waiting {
                             absorbed.insert(ws_idx, (i, name));
@@ -2058,32 +2094,6 @@ impl Sidebar {
 
         cx.spawn_in(window, async move |this, cx| {
             let workspace = open_task.await?;
-
-            //
-            workspace
-                .update(cx, |workspace, cx| {
-                    workspace.project().read(cx).wait_for_initial_scan(cx)
-                })
-                .await;
-
-            workspace
-                .update(cx, |workspace, cx| {
-                    let repos = workspace
-                        .project()
-                        .read(cx)
-                        .git_store()
-                        .read(cx)
-                        .repositories()
-                        .values()
-                        .cloned()
-                        .collect::<Vec<_>>();
-
-                    let tasks = repos
-                        .into_iter()
-                        .map(|repo| repo.update(cx, |repo, _| repo.barrier()));
-                    futures::future::join_all(tasks)
-                })
-                .await;
 
             this.update_in(cx, |this, window, cx| {
                 this.activate_thread(agent, session_info, &workspace, window, cx);
@@ -6068,6 +6078,100 @@ mod tests {
             new_path_list,
             PathList::new(&[std::path::PathBuf::from("/wt-feature-a")]),
             "the new workspace should have been opened for the worktree path",
+        );
+    }
+
+    #[gpui::test]
+    async fn test_clicking_worktree_thread_does_not_briefly_render_as_separate_project(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        fs.insert_tree(
+            "/project",
+            serde_json::json!({
+                ".git": {
+                    "worktrees": {
+                        "feature-a": {
+                            "commondir": "../../",
+                            "HEAD": "ref: refs/heads/feature-a",
+                        },
+                    },
+                },
+                "src": {},
+            }),
+        )
+        .await;
+
+        fs.insert_tree(
+            "/wt-feature-a",
+            serde_json::json!({
+                ".git": "gitdir: /project/.git/worktrees/feature-a",
+                "src": {},
+            }),
+        )
+        .await;
+
+        fs.with_git_state(std::path::Path::new("/project/.git"), false, |state| {
+            state.worktrees.push(git::repository::Worktree {
+                path: std::path::PathBuf::from("/wt-feature-a"),
+                ref_name: Some("refs/heads/feature-a".into()),
+                sha: "aaa".into(),
+            });
+        })
+        .unwrap();
+
+        cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+        let main_project = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+        main_project
+            .update(cx, |p, cx| p.git_scans_complete(cx))
+            .await;
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            MultiWorkspace::test_new(main_project.clone(), window, cx)
+        });
+        let sidebar = setup_sidebar(&multi_workspace, cx);
+
+        let paths_wt = PathList::new(&[std::path::PathBuf::from("/wt-feature-a")]);
+        save_named_thread_metadata("thread-wt", "WT Thread", &paths_wt, cx).await;
+
+        multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
+        cx.run_until_parked();
+
+        assert_eq!(
+            visible_entries_as_strings(&sidebar, cx),
+            vec!["v [project]", "  WT Thread {wt-feature-a}"],
+        );
+
+        open_and_focus_sidebar(&sidebar, cx);
+        sidebar.update_in(cx, |sidebar, _window, _cx| {
+            sidebar.selection = Some(1);
+        });
+
+        let window = cx.windows()[0];
+        cx.update_window(window, |_, window, cx| {
+            window.dispatch_action(Confirm.boxed_clone(), cx);
+        })
+        .unwrap();
+
+        let mut saw_opened_worktree_workspace = false;
+        for _ in 0..50 {
+            if !cx.dispatcher.tick(false) {
+                break;
+            }
+
+            let entries = visible_entries_as_strings(&sidebar, cx);
+            if entries.iter().any(|entry| entry == "v [wt-feature-a]") {
+                saw_opened_worktree_workspace = true;
+                break;
+            }
+        }
+
+        assert!(
+            !saw_opened_worktree_workspace,
+            "opening a linked-worktree thread should never briefly show the worktree as its own project in the sidebar"
         );
     }
 
