@@ -6481,7 +6481,7 @@ mod tests {
         repository::repo_path,
         status::{StatusCode, UnmergedStatus, UnmergedStatusCode},
     };
-    use gpui::{px, TestAppContext, UpdateGlobal, VisualTestContext};
+    use gpui::{TestAppContext, UpdateGlobal, VisualTestContext, px};
     use indoc::indoc;
     use project::FakeFs;
     use serde_json::json;
@@ -7906,7 +7906,10 @@ mod tests {
         panel.update_in(cx, |panel, window, cx| {
             panel.focus_editor(&FocusEditor, window, cx);
             let editor_is_focused = panel.commit_editor.read(cx).is_focused(window);
-            assert!(editor_is_focused, "commit editor should be focused after focus_editor action");
+            assert!(
+                editor_is_focused,
+                "commit editor should be focused after focus_editor action"
+            );
             let context = panel.dispatch_context(window, cx);
             assert!(
                 context.contains("GitPanel"),
