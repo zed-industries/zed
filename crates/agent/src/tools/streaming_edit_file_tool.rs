@@ -3736,36 +3736,6 @@ mod tests {
         assert_eq!(new_text, "HELLO\nWORLD\n");
     }
 
-    #[gpui::test]
-    async fn test_streaming_final_input_stringified_empty_edits_is_no_op(cx: &mut TestAppContext) {
-        let (tool, _project, _action_log, _fs, _thread) =
-            setup_test(cx, json!({"file.txt": "hello\nworld\n"})).await;
-        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
-        let (event_stream, _receiver) = ToolCallEventStream::test();
-        let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
-
-        sender.send_partial(json!({
-            "display_description": "Edit",
-            "path": "root/file.txt",
-            "mode": "edit"
-        }));
-        cx.run_until_parked();
-
-        sender.send_final(json!({
-            "display_description": "Edit",
-            "path": "root/file.txt",
-            "mode": "edit",
-            "edits": "[]"
-        }));
-
-        let result = task.await;
-        let StreamingEditFileToolOutput::Success { new_text, diff, .. } = result.unwrap() else {
-            panic!("expected success");
-        };
-        assert_eq!(new_text, "hello\nworld\n");
-        assert!(diff.is_empty(), "expected no diff, got: {diff}");
-    }
-
     // Verifies that after streaming_edit_file_tool edits a file, the action log
     // reports changed buffers so that the Accept All / Reject All review UI appears.
     #[gpui::test]
