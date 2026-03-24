@@ -2269,9 +2269,7 @@ impl DisplaySnapshot {
             .unwrap_or(false)
     }
 
-    /// If the first non-whitespace content on `row` is a closing bracket
-    /// according to the language's bracket pair configuration, returns the
-    /// row's indent length. Returns `None` otherwise.
+    /// Returns the indent length of `row` if it starts with a closing bracket.
     fn closing_bracket_indent_len(&self, row: u32) -> Option<u32> {
         let snapshot = self.buffer_snapshot();
         let indent_len = self
