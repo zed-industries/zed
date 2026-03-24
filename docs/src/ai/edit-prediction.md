@@ -67,7 +67,7 @@ In `eager` mode, you can also use the `tab` key to accept edit predictions, unle
 
 ### Keybinding Example: Always Use Tab
 
-If you want to always use `tab` for accepting edit predictions, regardless of whether the LSP completions menu is open, you can add the following to your keymap:
+To always use `tab` for accepting edit predictions, regardless of whether the LSP completions menu is open, you can add the following to your keymap:
 
 ```json [keymap]
 [
@@ -84,7 +84,7 @@ After that, {#kb editor::ComposeCompletion} remains available for accepting LSP 
 
 ### Keybinding Example: Always Use Alt-Tab
 
-If you want to stop using `tab` for accepting edit predictions and always use `alt-tab` instead, unbind the default `tab` binding in the eager edit prediction context:
+To stop using `tab` for accepting edit predictions and always use `alt-tab` instead, unbind the default `tab` binding in the eager edit prediction context:
 
 ```json [keymap]
 [
@@ -101,7 +101,7 @@ After that, `alt-tab` remains available for accepting edit predictions, and on L
 
 ### Keybinding Example: Rebind Both Tab and Alt-Tab
 
-If you want to move both default accept bindings to something else, unbind them and add your replacement:
+To move both default accept bindings to something else, unbind them and add your replacement:
 
 ```json [keymap]
 [
