@@ -541,7 +541,10 @@ impl Dock {
                         PanelSizeState::default()
                     };
 
-                    this.remove_panel(&panel, window, cx);
+                    if !this.remove_panel(&panel, window, cx) {
+                        // Panel was already moved from this dock
+                        return;
+                    }
 
                     new_dock.update(cx, |new_dock, cx| {
                         let index =
