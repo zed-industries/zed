@@ -1,6 +1,6 @@
 ---
-title: AI Code Completion in Zed - Zeta, Copilot, Sweep, Mercury Coder
-description: Set up AI code completions in Zed with Zeta (built-in), GitHub Copilot, Sweep, Codestral, or Mercury Coder. Multi-line predictions on every keystroke.
+title: AI Code Completion in Zed - Zeta, Copilot, Codestral, Mercury Coder
+description: Set up AI code completions in Zed with Zeta (built-in), GitHub Copilot, Codestral, or Mercury Coder. Multi-line predictions on every keystroke.
 ---
 
 # Edit Prediction
@@ -8,7 +8,7 @@ description: Set up AI code completions in Zed with Zeta (built-in), GitHub Copi
 Edit Prediction is how Zed's AI code completions work: an LLM predicts the code you want to write.
 Each keystroke sends a new request to the edit prediction provider, which returns individual or multi-line suggestions that can be quickly accepted by pressing `tab`.
 
-The default provider is [Zeta, a proprietary open source and open dataset model](https://huggingface.co/zed-industries/zeta), but you can also use [other providers](#other-providers) like GitHub Copilot, Sweep, Mercury Coder, and Codestral.
+The default provider is [Zeta, a proprietary open source and open dataset model](https://huggingface.co/zed-industries/zeta), but you can also use [other providers](#other-providers) like GitHub Copilot, Mercury Coder, and Codestral.
 
 ## Configuring Zeta
 
@@ -337,28 +337,6 @@ Copilot can provide multiple completion alternatives, and these can be navigated
 
 - {#action editor::NextEditPrediction} ({#kb editor::NextEditPrediction}): To cycle to the next edit prediction
 - {#action editor::PreviousEditPrediction} ({#kb editor::PreviousEditPrediction}): To cycle to the previous edit prediction
-
-### Sweep {#sweep}
-
-To use [Sweep](https://sweep.dev/) as your provider:
-
-1. Open the Settings Editor (`Cmd+,` on macOS, `Ctrl+,` on Linux/Windows)
-2. Search for "Edit Predictions" and click **Configure Providers**
-3. Find the Sweep section and enter your API key from the
-   [Sweep dashboard](https://app.sweep.dev/)
-
-Alternatively, click the edit prediction icon in the status bar and select
-**Configure Providers** from the menu.
-
-After adding your API key, Sweep will appear in the provider dropdown in the status bar menu, where you can select it. You can also set it directly in your settings file:
-
-```json [settings]
-{
-  "edit_predictions": {
-    "provider": "sweep"
-  }
-}
-```
 
 ### Mercury Coder {#mercury-coder}
 

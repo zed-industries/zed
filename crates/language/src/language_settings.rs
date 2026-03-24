@@ -411,8 +411,6 @@ pub struct EditPredictionSettings {
     pub copilot: CopilotSettings,
     /// Settings specific to Codestral.
     pub codestral: CodestralSettings,
-    /// Settings specific to Sweep.
-    pub sweep: SweepSettings,
     /// Settings specific to Ollama.
     pub ollama: Option<OpenAiCompatibleEditPredictionSettings>,
     pub open_ai_compatible_api: Option<OpenAiCompatibleEditPredictionSettings>,
@@ -465,14 +463,6 @@ pub struct CodestralSettings {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct SweepSettings {
-    /// When enabled, Sweep will not store edit prediction inputs or outputs.
-    /// When disabled, Sweep may collect data including buffer contents,
-    /// diagnostics, file paths, repository names, and generated predictions
-    /// to improve the service.
-    pub privacy_mode: bool,
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct OpenAiCompatibleEditPredictionSettings {
     /// Model to use for completions.
@@ -715,10 +705,6 @@ impl settings::Settings for AllLanguageSettings {
             api_url: codestral.api_url,
         };
 
-        let sweep = edit_predictions.sweep.unwrap();
-        let sweep_settings = SweepSettings {
-            privacy_mode: sweep.privacy_mode.unwrap(),
-        };
         let ollama = edit_predictions.ollama.unwrap();
         let ollama_settings = ollama
             .model
@@ -782,7 +768,6 @@ impl settings::Settings for AllLanguageSettings {
                 mode: edit_predictions_mode,
                 copilot: copilot_settings,
                 codestral: codestral_settings,
-                sweep: sweep_settings,
                 ollama: ollama_settings,
                 open_ai_compatible_api: openai_compatible_settings,
                 enabled_in_text_threads,
