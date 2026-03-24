@@ -1007,11 +1007,8 @@ impl PickerDelegate for BranchListDelegate {
                                             .show_author_name;
                                         let has_author = show_author_name && author_name.is_some();
                                         let has_commit = commit_time.is_some();
-                                        let author_for_meta = if show_author_name {
-                                            author_name.clone()
-                                        } else {
-                                            None
-                                        };
+                                        let author_for_meta =
+                                            if show_author_name { author_name } else { None };
 
                                         let dot = || {
                                             Label::new("•")
