@@ -4,12 +4,16 @@ use std::sync::Arc;
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
 use command_palette_hooks::CommandPaletteFilter;
-use gpui::{App, Context, Entity, EntityId, Global, SharedString, Subscription, Task, prelude::*};
+use gpui::{
+    App, Context, Entity, EntityId, Global, SharedString, Subscription, Task, WeakEntity,
+    prelude::*,
+};
 use jupyter_websocket_client::RemoteServer;
 use language::{Language, LanguageName};
 use project::{Fs, Project, ProjectPath, WorktreeId};
 use remote::RemoteConnectionOptions;
 use settings::{Settings, SettingsStore};
+use terminal::Terminal;
 use util::rel_path::RelPath;
 
 use crate::kernels::{
@@ -31,6 +35,7 @@ pub struct ReplStore {
     selected_kernel_for_worktree: HashMap<WorktreeId, KernelSpecification>,
     kernel_specifications_for_worktree: HashMap<WorktreeId, Vec<KernelSpecification>>,
     active_python_toolchain_for_worktree: HashMap<WorktreeId, SharedString>,
+    terminal_repl_sessions: HashMap<(EntityId, String), WeakEntity<Terminal>>,
     remote_worktrees: HashSet<WorktreeId>,
     fetching_python_kernelspecs: HashSet<WorktreeId>,
     _subscriptions: Vec<Subscription>,
@@ -66,6 +71,7 @@ impl ReplStore {
             kernel_specifications_for_worktree: HashMap::default(),
             selected_kernel_for_worktree: HashMap::default(),
             active_python_toolchain_for_worktree: HashMap::default(),
+            terminal_repl_sessions: HashMap::default(),
             remote_worktrees: HashSet::default(),
             fetching_python_kernelspecs: HashSet::default(),
         };
@@ -109,6 +115,26 @@ impl ReplStore {
 
     pub fn sessions(&self) -> impl Iterator<Item = &Entity<Session>> {
         self.sessions.values()
+    }
+
+    pub fn terminal_repl_session(
+        &self,
+        editor_id: EntityId,
+        language_name: &str,
+    ) -> Option<WeakEntity<Terminal>> {
+        self.terminal_repl_sessions
+            .get(&(editor_id, language_name.to_ascii_lowercase()))
+            .cloned()
+    }
+
+    pub fn set_terminal_repl_session(
+        &mut self,
+        editor_id: EntityId,
+        language_name: &str,
+        terminal: WeakEntity<Terminal>,
+    ) {
+        self.terminal_repl_sessions
+            .insert((editor_id, language_name.to_ascii_lowercase()), terminal);
     }
 
     fn set_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {

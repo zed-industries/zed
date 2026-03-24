@@ -9,7 +9,6 @@ use util::ResultExt as _;
 use workspace::item::ItemEvent;
 use workspace::{Workspace, item::Item};
 
-use crate::jupyter_settings::JupyterSettings;
 use crate::repl_store::ReplStore;
 
 actions!(
@@ -121,10 +120,6 @@ pub fn init(cx: &mut App) {
                     .register_action({
                         let editor_handle = editor_handle.clone();
                         move |_: &Run, window, cx| {
-                            if !JupyterSettings::enabled(cx) {
-                                return;
-                            }
-
                             crate::run(editor_handle.clone(), true, window, cx).log_err();
                         }
                     })
@@ -133,10 +128,6 @@ pub fn init(cx: &mut App) {
                 editor
                     .register_action({
                         move |_: &RunInPlace, window, cx| {
-                            if !JupyterSettings::enabled(cx) {
-                                return;
-                            }
-
                             crate::run(editor_handle.clone(), false, window, cx).log_err();
                         }
                     })

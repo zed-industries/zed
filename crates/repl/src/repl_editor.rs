@@ -1,22 +1,166 @@
 //! REPL operations on an [`Editor`].
 
 use std::ops::Range;
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
+use collections::HashMap;
 use editor::{Editor, MultiBufferOffset};
 use gpui::{App, Entity, WeakEntity, Window, prelude::*};
 use language::{BufferSnapshot, Language, LanguageName, Point};
 use project::{ProjectItem as _, WorktreeId};
+use settings::Settings;
+use task::{HideStrategy, RevealStrategy, RevealTarget, SaveStrategy, Shell, SpawnInTerminal, TaskId};
+use terminal_view::terminal_panel::TerminalPanel;
 use workspace::{Workspace, notifications::NotificationId};
 
 use crate::kernels::PythonEnvKernelSpecification;
 use crate::repl_store::ReplStore;
+use crate::repl_settings::TerminalReplRevealTarget;
 use crate::session::SessionEvent;
 use crate::{
     ClearCurrentOutput, ClearOutputs, Interrupt, JupyterSettings, KernelSpecification, Restart,
-    Session, Shutdown,
+    ReplSettings, Session, Shutdown,
 };
+
+fn terminal_repl_command_for_language(language: &Arc<Language>, cx: &App) -> Option<String> {
+    let repl_settings = ReplSettings::get_global(cx);
+    repl_settings
+        .terminal_repl_command(language.name().as_ref())
+        .or_else(|| repl_settings.terminal_repl_command(language.code_fence_block_name().as_ref()))
+        .map(ToOwned::to_owned)
+}
+
+fn spawn_task_for_terminal_repl(
+    command_line: &str,
+    language_name: &str,
+    editor_id: gpui::EntityId,
+    working_directory: Option<PathBuf>,
+    reveal_target: RevealTarget,
+) -> Result<SpawnInTerminal> {
+    let parsed_command = shlex::split(command_line)
+        .ok_or_else(|| anyhow!("Invalid REPL command for language {language_name}: {command_line}"))?;
+
+    let (command, args) = parsed_command
+        .split_first()
+        .map(|(command, args)| (command.clone(), args.to_vec()))
+        .ok_or_else(|| anyhow!("REPL command for language {language_name} is empty"))?;
+
+    let label = format!("{language_name} REPL");
+
+    Ok(SpawnInTerminal {
+        id: TaskId(format!(
+            "repl-terminal-{}-{}",
+            editor_id,
+            language_name.to_ascii_lowercase()
+        )),
+        full_label: label.clone(),
+        label,
+        command: Some(command),
+        args,
+        command_label: command_line.to_owned(),
+        cwd: working_directory,
+        env: HashMap::default(),
+        use_new_terminal: false,
+        allow_concurrent_runs: false,
+        reveal: RevealStrategy::NoFocus,
+        reveal_target,
+        hide: HideStrategy::Never,
+        shell: Shell::System,
+        show_summary: false,
+        show_command: false,
+        show_rerun: false,
+        save: SaveStrategy::None,
+    })
+}
+
+fn send_to_terminal_repl(
+    editor: &Entity<Editor>,
+    language_name: &str,
+    command_line: &str,
+    selected_text: String,
+    window: &mut Window,
+    cx: &mut App,
+) -> Result<()> {
+    let mut input = selected_text;
+    if !input.ends_with('\n') {
+        input.push('\n');
+    }
+
+    let editor_id = editor.entity_id();
+    let store = ReplStore::global(cx);
+    let existing_terminal = store
+        .read(cx)
+        .terminal_repl_session(editor_id, language_name)
+        .and_then(|terminal| terminal.upgrade());
+
+    if let Some(existing_terminal) = existing_terminal {
+        existing_terminal.update(cx, |terminal, _| {
+            terminal.input(input.into_bytes());
+        });
+        return Ok(());
+    }
+
+    let workspace = editor
+        .read(cx)
+        .workspace()
+        .ok_or_else(|| anyhow!("editor has no workspace"))?;
+    let working_directory = editor.read(cx).working_directory(cx);
+    let reveal_target_setting = ReplSettings::get_global(cx).terminal_repl_reveal_target;
+    let spawn_task =
+        spawn_task_for_terminal_repl(
+            command_line,
+            language_name,
+            editor_id,
+            working_directory,
+            reveal_target_setting.reveal_target(),
+        )?;
+
+    let terminal_task = workspace.update(cx, |workspace, cx| {
+        match reveal_target_setting {
+            TerminalReplRevealTarget::Dock => {
+                let Some(terminal_panel) = workspace.panel::<TerminalPanel>(cx) else {
+                    return gpui::Task::ready(Err(anyhow!("terminal panel is unavailable")));
+                };
+
+                terminal_panel.update(cx, |terminal_panel, cx| {
+                    terminal_panel.add_terminal_task(spawn_task, RevealStrategy::NoFocus, window, cx)
+                })
+            }
+            TerminalReplRevealTarget::Center => {
+                TerminalPanel::add_center_terminal(workspace, window, cx, move |project, cx| {
+                    project.create_terminal_task(spawn_task, cx)
+                })
+            }
+        }
+    });
+
+    let store = store.clone();
+    let language_name = language_name.to_string();
+    let bytes = input.into_bytes();
+    cx.spawn(async move |cx| {
+        let terminal = terminal_task.await?;
+        store.update(cx, |store, _| {
+            store.set_terminal_repl_session(editor_id, &language_name, terminal.clone());
+        });
+
+        let Some(terminal) = terminal.upgrade() else {
+            return Err(anyhow!(
+                "terminal REPL was closed before code could be sent"
+            ));
+        };
+
+        terminal.update(cx, |terminal, _| {
+            terminal.input(bytes);
+        });
+
+        anyhow::Ok(())
+    })
+    .detach_and_log_err(cx);
+
+    Ok(())
+}
 
 pub fn assign_kernelspec(
     kernel_specification: KernelSpecification,
@@ -188,10 +332,9 @@ pub fn run(
     cx: &mut App,
 ) -> Result<()> {
     let store = ReplStore::global(cx);
-    if !store.read(cx).is_enabled() {
-        return Ok(());
+    if store.read(cx).is_enabled() {
+        store.update(cx, |store, cx| store.ensure_kernelspecs(cx));
     }
-    store.update(cx, |store, cx| store.ensure_kernelspecs(cx));
 
     let editor = editor.upgrade().context("editor was dropped")?;
     let selected_range = editor
@@ -217,6 +360,35 @@ pub fn run(
         let Some(language) = multibuffer.read(cx).language_at(runnable_range.start, cx) else {
             continue;
         };
+
+        let selected_text;
+        let anchor_range;
+        let next_cursor;
+        {
+            let snapshot = multibuffer.read(cx).read(cx);
+            selected_text = snapshot
+                .text_for_range(runnable_range.clone())
+                .collect::<String>();
+            anchor_range = snapshot.anchor_before(runnable_range.start)
+                ..snapshot.anchor_after(runnable_range.end);
+            next_cursor = next_cell_point.map(|point| snapshot.anchor_after(point));
+        }
+
+        if let Some(command_line) = terminal_repl_command_for_language(&language, cx) {
+            send_to_terminal_repl(
+                &editor,
+                language.name().as_ref(),
+                &command_line,
+                selected_text,
+                window,
+                cx,
+            )?;
+            continue;
+        }
+
+        if !store.read(cx).is_enabled() {
+            continue;
+        }
 
         let kernel_specification = store
             .read(cx)
@@ -255,19 +427,6 @@ pub fn run(
 
             session
         };
-
-        let selected_text;
-        let anchor_range;
-        let next_cursor;
-        {
-            let snapshot = multibuffer.read(cx).read(cx);
-            selected_text = snapshot
-                .text_for_range(runnable_range.clone())
-                .collect::<String>();
-            anchor_range = snapshot.anchor_before(runnable_range.start)
-                ..snapshot.anchor_after(runnable_range.end);
-            next_cursor = next_cell_point.map(|point| snapshot.anchor_after(point));
-        }
 
         session.update(cx, |session, cx| {
             session.execute(

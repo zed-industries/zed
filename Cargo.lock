@@ -14479,6 +14479,7 @@ dependencies = [
  "settings",
  "shlex",
  "smol",
+ "task",
  "telemetry",
  "terminal",
  "terminal_view",
