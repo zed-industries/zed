@@ -88,6 +88,12 @@
     },
   },
   {
+    "context": "MessageEditor > Editor",
+    "bindings": {
+      "shift-enter": "editor::Newline",
+    },
+  },
+  {
     "context": "BufferSearchBar",
     "bindings": {
       "shift-enter": "search::SelectPreviousMatch",
