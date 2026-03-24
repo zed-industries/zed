@@ -1500,8 +1500,13 @@ impl Project {
                 )
             });
 
-            let agent_server_store =
-                cx.new(|_| AgentServerStore::remote(REMOTE_SERVER_PROJECT_ID, remote.clone()));
+            let agent_server_store = cx.new(|_| {
+                AgentServerStore::remote(
+                    REMOTE_SERVER_PROJECT_ID,
+                    remote.clone(),
+                    worktree_store.clone(),
+                )
+            });
 
             cx.subscribe(&remote, Self::on_remote_client_event).detach();
 
@@ -2294,8 +2299,11 @@ impl Project {
         self.worktree_store.read(cx).visible_worktrees(cx)
     }
 
-    pub fn default_path_list(&self, cx: &App) -> PathList {
-        let worktree_roots = self
+    pub(crate) fn default_visible_worktree_paths(
+        worktree_store: &WorktreeStore,
+        cx: &App,
+    ) -> Vec<PathBuf> {
+        worktree_store
             .visible_worktrees(cx)
             .sorted_by(|left, right| {
                 left.read(cx)
@@ -2311,7 +2319,12 @@ impl Project {
                     Some(path.to_path_buf())
                 }
             })
-            .collect::<Vec<_>>();
+            .collect()
+    }
+
+    pub fn default_path_list(&self, cx: &App) -> PathList {
+        let worktree_roots =
+            Self::default_visible_worktree_paths(&self.worktree_store.read(cx), cx);
 
         if worktree_roots.is_empty() {
             PathList::new(&[paths::home_dir().as_path()])
