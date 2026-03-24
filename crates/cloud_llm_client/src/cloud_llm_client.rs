@@ -197,6 +197,7 @@ pub enum EditPredictionRejectReason {
 #[serde(rename_all = "snake_case")]
 pub enum CompletionIntent {
     UserPrompt,
+    Subagent,
     ToolResults,
     ThreadSummarization,
     ThreadContextSummarization,

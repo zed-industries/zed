@@ -5191,6 +5191,11 @@ async fn test_subagent_thread_inherits_parent_thread_properties(cx: &mut TestApp
             subagent_thread.parent_thread_id(),
             Some(parent_thread.read(cx).id().clone())
         );
+
+        let request = subagent_thread
+            .build_completion_request(CompletionIntent::UserPrompt, cx)
+            .unwrap();
+        assert_eq!(request.intent, Some(CompletionIntent::Subagent));
     });
 }
 

@@ -2699,6 +2699,13 @@ impl Thread {
         completion_intent: CompletionIntent,
         cx: &App,
     ) -> Result<LanguageModelRequest> {
+        let completion_intent =
+            if self.is_subagent() && completion_intent == CompletionIntent::UserPrompt {
+                CompletionIntent::Subagent
+            } else {
+                completion_intent
+            };
+
         let model = self.model().context("No language model configured")?;
         let tools = if let Some(turn) = self.running_turn.as_ref() {
             turn.tools
