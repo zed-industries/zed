@@ -12208,6 +12208,232 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_panel_size_state_persistence(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        // Fixed-width panel: pixel size is persisted to KVP and restored on re-add.
+        {
+            let project = Project::test(fs.clone(), [], cx).await;
+            let (multi_workspace, cx) =
+                cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+            let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+            workspace.update(cx, |workspace, _cx| {
+                workspace.set_random_database_id();
+                workspace.bounds.size.width = px(800.);
+            });
+
+            let panel = workspace.update_in(cx, |workspace, window, cx| {
+                let panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 100, cx));
+                workspace.add_panel(panel.clone(), window, cx);
+                workspace.toggle_dock(DockPosition::Left, window, cx);
+                panel
+            });
+
+            workspace.update_in(cx, |workspace, window, cx| {
+                workspace.resize_left_dock(px(350.), window, cx);
+            });
+
+            cx.run_until_parked();
+
+            let persisted = workspace.read_with(cx, |workspace, cx| {
+                workspace.persisted_panel_size_state(TestPanel::panel_key(), cx)
+            });
+            assert_eq!(
+                persisted.and_then(|s| s.size),
+                Some(px(350.)),
+                "fixed-width panel size should be persisted to KVP"
+            );
+
+            // Remove the panel and re-add a fresh instance with the same key.
+            // The new instance should have its size state restored from KVP.
+            workspace.update_in(cx, |workspace, window, cx| {
+                workspace.remove_panel(&panel, window, cx);
+            });
+
+            workspace.update_in(cx, |workspace, window, cx| {
+                let new_panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 100, cx));
+                workspace.add_panel(new_panel, window, cx);
+
+                let left_dock = workspace.left_dock().read(cx);
+                let size_state = left_dock
+                    .panel::<TestPanel>()
+                    .and_then(|p| left_dock.stored_panel_size_state(&p));
+                assert_eq!(
+                    size_state.and_then(|s| s.size),
+                    Some(px(350.)),
+                    "re-added fixed-width panel should restore persisted size from KVP"
+                );
+            });
+        }
+
+        // Flexible panel: both pixel size and ratio are persisted and restored.
+        {
+            let project = Project::test(fs.clone(), [], cx).await;
+            let (multi_workspace, cx) =
+                cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+            let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+            workspace.update(cx, |workspace, _cx| {
+                workspace.set_random_database_id();
+                workspace.bounds.size.width = px(800.);
+            });
+
+            let panel = workspace.update_in(cx, |workspace, window, cx| {
+                let item = cx.new(|cx| {
+                    TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "one.txt", cx)])
+                });
+                workspace.add_item_to_active_pane(Box::new(item), None, true, window, cx);
+
+                let panel = cx.new(|cx| TestPanel::new_flexible(DockPosition::Right, 100, cx));
+                workspace.add_panel(panel.clone(), window, cx);
+                workspace.toggle_dock(DockPosition::Right, window, cx);
+                panel
+            });
+
+            workspace.update_in(cx, |workspace, window, cx| {
+                workspace.resize_right_dock(px(300.), window, cx);
+            });
+
+            cx.run_until_parked();
+
+            let persisted = workspace
+                .read_with(cx, |workspace, cx| {
+                    workspace.persisted_panel_size_state(TestPanel::panel_key(), cx)
+                })
+                .expect("flexible panel state should be persisted to KVP");
+            assert_eq!(
+                persisted.size,
+                Some(px(300.)),
+                "flexible panel pixel size should be persisted"
+            );
+            let original_ratio = persisted
+                .flexible_size_ratio
+                .expect("flexible panel ratio should be persisted");
+
+            // Remove the panel and re-add: both size and ratio should be restored.
+            workspace.update_in(cx, |workspace, window, cx| {
+                workspace.remove_panel(&panel, window, cx);
+            });
+
+            workspace.update_in(cx, |workspace, window, cx| {
+                let new_panel = cx.new(|cx| TestPanel::new_flexible(DockPosition::Right, 100, cx));
+                workspace.add_panel(new_panel, window, cx);
+
+                let right_dock = workspace.right_dock().read(cx);
+                let size_state = right_dock
+                    .panel::<TestPanel>()
+                    .and_then(|p| right_dock.stored_panel_size_state(&p))
+                    .expect("re-added flexible panel should have restored size state from KVP");
+                assert_eq!(
+                    size_state.size,
+                    Some(px(300.)),
+                    "re-added flexible panel should restore persisted pixel size"
+                );
+                assert_eq!(
+                    size_state.flexible_size_ratio,
+                    Some(original_ratio),
+                    "re-added flexible panel should restore persisted ratio"
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
+    async fn test_flexible_panel_left_dock_sizing(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        workspace.update(cx, |workspace, _cx| {
+            workspace.bounds.size.width = px(900.);
+        });
+
+        // Step 1: Add a tab to the center pane then open a flexible panel in the left
+        // dock. With one full-width center pane the default ratio is 0.5, so the panel
+        // and the center pane each take half the workspace width.
+        workspace.update_in(cx, |workspace, window, cx| {
+            let item = cx.new(|cx| {
+                TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "one.txt", cx)])
+            });
+            workspace.add_item_to_active_pane(Box::new(item), None, true, window, cx);
+
+            let panel = cx.new(|cx| TestPanel::new_flexible(DockPosition::Left, 100, cx));
+            workspace.add_panel(panel, window, cx);
+            workspace.toggle_dock(DockPosition::Left, window, cx);
+
+            let left_dock = workspace.left_dock().read(cx);
+            let left_width = left_dock
+                .active_panel()
+                .map(|p| workspace.resolved_dock_panel_size(&left_dock, p.as_ref(), window, cx))
+                .expect("left dock should have an active panel");
+
+            assert_eq!(
+                left_width,
+                workspace.bounds.size.width / 2.,
+                "flexible left panel should split evenly with the center pane"
+            );
+        });
+
+        // Step 2: Split the center pane vertically (top/bottom). Vertical splits do not
+        // change horizontal width fractions, so the flexible panel stays at the same
+        // width as each half of the split.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.split_pane(
+                workspace.active_pane().clone(),
+                SplitDirection::Down,
+                window,
+                cx,
+            );
+
+            let left_dock = workspace.left_dock().read(cx);
+            let left_width = left_dock
+                .active_panel()
+                .map(|p| workspace.resolved_dock_panel_size(&left_dock, p.as_ref(), window, cx))
+                .expect("left dock should still have an active panel after vertical split");
+
+            assert_eq!(
+                left_width,
+                workspace.bounds.size.width / 2.,
+                "flexible left panel width should match each vertically-split pane"
+            );
+        });
+
+        // Step 3: Open a fixed-width panel in the right dock. The right dock's default
+        // size reduces the available width, so the flexible left panel and the center
+        // panes all shrink proportionally to accommodate it.
+        workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 200, cx));
+            workspace.add_panel(panel, window, cx);
+            workspace.toggle_dock(DockPosition::Right, window, cx);
+
+            let right_dock = workspace.right_dock().read(cx);
+            let right_width = right_dock
+                .active_panel()
+                .map(|p| workspace.resolved_dock_panel_size(&right_dock, p.as_ref(), window, cx))
+                .expect("right dock should have an active panel");
+
+            let left_dock = workspace.left_dock().read(cx);
+            let left_width = left_dock
+                .active_panel()
+                .map(|p| workspace.resolved_dock_panel_size(&left_dock, p.as_ref(), window, cx))
+                .expect("left dock should still have an active panel");
+
+            let available_width = workspace.bounds.size.width - right_width;
+            assert_eq!(
+                left_width,
+                available_width / 2.,
+                "flexible left panel should shrink proportionally as the right dock takes space"
+            );
+        });
+    }
+
     struct TestModal(FocusHandle);
 
     impl TestModal {

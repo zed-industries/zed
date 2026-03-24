@@ -562,8 +562,9 @@ impl Dock {
                         .ok();
                 }
             }),
-            cx.subscribe_in(&panel, window, {
-                let workspace = workspace.clone();
+            cx.subscribe_in(
+                &panel,
+                window,
                 move |this, panel, event, window, cx| match event {
                     PanelEvent::ZoomIn => {
                         this.set_panel_zoomed(&panel.to_any(), true, window, cx);
@@ -612,8 +613,8 @@ impl Dock {
                             this.set_open(false, window, cx);
                         }
                     }
-                }
-            }),
+                },
+            ),
         ];
 
         let index = match self
