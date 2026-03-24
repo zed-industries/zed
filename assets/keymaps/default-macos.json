@@ -383,6 +383,13 @@
     },
   },
   {
+    "context": "AcpThread > Editor && mode == full",
+    "use_key_equivalents": true,
+    "bindings": {
+      "alt-enter": "editor::OpenExcerpts",
+    },
+  },
+  {
     "context": "AcpThread > Editor && !use_modifier_to_send",
     "use_key_equivalents": true,
     "bindings": {
@@ -1447,7 +1454,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-,": "zed::OpenSettings",
-    }
+    },
   },
   {
     "context": "SettingsWindow",

@@ -5500,7 +5500,7 @@ impl ThreadView {
             matches!(tool_call.kind, acp::ToolKind::Edit) || tool_call.diffs().next().is_some();
 
         let is_cancelled_edit = is_edit && matches!(tool_call.status, ToolCallStatus::Canceled);
-        let (has_revealed_diff, tool_call_output_focus) = tool_call
+        let (has_revealed_diff, tool_call_output_focus, tool_call_output_focus_handle) = tool_call
             .diffs()
             .next()
             .and_then(|diff| {
@@ -5511,9 +5511,10 @@ impl ThreadView {
                     .and_then(|entry| entry.editor_for_diff(diff))?;
                 let has_revealed_diff = diff.read(cx).has_revealed_range(cx);
                 let has_focus = editor.read(cx).is_focused(window);
-                Some((has_revealed_diff, has_focus))
+                let focus_handle = editor.focus_handle(cx);
+                Some((has_revealed_diff, has_focus, focus_handle))
             })
-            .unwrap_or((false, false));
+            .unwrap_or_else(|| (false, false, focus_handle.clone()));
 
         let use_card_layout = needs_confirmation || is_edit || is_terminal_tool;
 
@@ -5881,10 +5882,11 @@ impl ThreadView {
                                     .when(tool_call_output_focus, |this| {
                                         this.child(
                                             Button::new("open-file-button", "Open File")
+                                                .style(ButtonStyle::Outlined)
                                                 .label_size(LabelSize::Small)
                                                 .style(ButtonStyle::OutlinedGhost)
                                                 .key_binding(
-                                                    KeyBinding::for_action(&OpenExcerpts, cx)
+                                                    KeyBinding::for_action_in(&OpenExcerpts, &tool_call_output_focus_handle, cx)
                                                         .map(|s| s.size(rems_from_px(12.))),
                                                 )
                                                 .on_click(|_, window, cx| {
