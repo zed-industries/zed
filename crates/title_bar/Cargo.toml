@@ -14,6 +14,7 @@ doctest = false
 
 [features]
 default = []
+external_websocket_sync = ["dep:external_websocket_sync"]
 stories = ["dep:story"]
 test-support = [
     "call/test-support",
@@ -38,7 +39,7 @@ chrono.workspace = true
 client.workspace = true
 cloud_api_types.workspace = true
 db.workspace = true
-external_websocket_sync.workspace = true
+external_websocket_sync = { workspace = true, optional = true }
 feature_flags.workspace = true
 git_ui.workspace = true
 gpui = { workspace = true, features = ["screen-capture"] }
