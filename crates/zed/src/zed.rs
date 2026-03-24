@@ -2265,6 +2265,29 @@ mod tests {
         open_new, open_paths, pane,
     };
 
+    async fn flush_workspace_serialization(
+        window: &WindowHandle<MultiWorkspace>,
+        cx: &mut TestAppContext,
+    ) {
+        let all_tasks = window
+            .update(cx, |multi_workspace, window, cx| {
+                let mut tasks = multi_workspace
+                    .workspaces()
+                    .iter()
+                    .map(|workspace| {
+                        workspace.update(cx, |workspace, cx| {
+                            workspace.flush_serialization(window, cx)
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                tasks.push(multi_workspace.flush_serialization());
+                tasks
+            })
+            .unwrap();
+
+        futures::future::join_all(all_tasks).await;
+    }
+
     #[gpui::test]
     async fn test_open_non_existing_file(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
@@ -5868,7 +5891,8 @@ mod tests {
             .unwrap();
 
         cx.run_until_parked();
-        cx.executor().advance_clock(SERIALIZATION_THROTTLE_TIME);
+        flush_workspace_serialization(&window_a, cx).await;
+        flush_workspace_serialization(&window_b, cx).await;
         cx.run_until_parked();
 
         // Verify all workspaces retained their session_ids.
