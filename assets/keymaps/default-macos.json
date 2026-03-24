@@ -39,7 +39,6 @@
       "cmd-+": ["zed::IncreaseBufferFontSize", { "persist": false }],
       "cmd--": ["zed::DecreaseBufferFontSize", { "persist": false }],
       "cmd-0": ["zed::ResetBufferFontSize", { "persist": false }],
-      "cmd-,": "zed::OpenSettings",
       "cmd-alt-,": "zed::OpenSettingsFile",
       "cmd-q": "zed::Quit",
       "cmd-h": "zed::Hide",
@@ -1440,6 +1439,15 @@
       "ctrl-space": "git::WorktreeFromDefault",
       "cmd-shift-backspace": "git::DeleteWorktree",
     },
+  },
+  {
+    // Handled under a more specific context to avoid conflicts with the
+    // `OpenCurrentFile` keybind from the settings UI
+    "context": "!SettingsWindow",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-,": "zed::OpenSettings",
+    }
   },
   {
     "context": "SettingsWindow",
