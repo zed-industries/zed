@@ -73,7 +73,7 @@ use language::{
     Bias, BinaryStatus, Buffer, BufferRow, BufferSnapshot, CachedLspAdapter, Capability, CodeLabel,
     CodeLabelExt, Diagnostic, DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff,
     File as _, Language, LanguageName, LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate,
-    LspInstaller, ManifestDelegate, ManifestName, ModelineSettings, Patch, PointUtf16,
+    LspInstaller, ManifestDelegate, ManifestName, ModelineSettings, OffsetUtf16, Patch, PointUtf16,
     TextBufferSnapshot, ToOffset, ToOffsetUtf16,
     ToPointUtf16, Toolchain, Transaction, Unclipped,
     language_settings::{
@@ -1720,14 +1720,14 @@ impl LocalLspStore {
                             let (utf16_range, byte_ranges) =
                                 buffer.handle.read_with(cx, |buffer, _cx| {
                                     let snapshot = buffer.snapshot();
-                                    let mut min_start_utf16 = usize::MAX;
-                                    let mut max_end_utf16 = 0usize;
+                                    let mut min_start_utf16 = OffsetUtf16(usize::MAX);
+                                    let mut max_end_utf16 = OffsetUtf16(0);
                                     let mut byte_ranges = Vec::with_capacity(ranges.len());
                                     for range in ranges {
-                                        let start_utf16 = range.start.to_offset_utf16(&snapshot).0;
-                                        let end_utf16 = range.end.to_offset_utf16(&snapshot).0;
-                                        min_start_utf16 = min_start_utf16.min(start_utf16);
-                                        max_end_utf16 = max_end_utf16.max(end_utf16);
+                                        let start_utf16 = range.start.to_offset_utf16(&snapshot);
+                                        let end_utf16 = range.end.to_offset_utf16(&snapshot);
+                                        min_start_utf16.0 = min_start_utf16.0.min(start_utf16.0);
+                                        max_end_utf16.0 = max_end_utf16.0.max(end_utf16.0);
 
                                         let start_byte = range.start.to_offset(&snapshot);
                                         let end_byte = range.end.to_offset(&snapshot);

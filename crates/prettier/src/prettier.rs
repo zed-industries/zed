@@ -3,7 +3,7 @@ use collections::{HashMap, HashSet};
 use fs::Fs;
 use gpui::{AsyncApp, Entity};
 use language::language_settings::{LanguageSettings, PrettierSettings};
-use language::{Buffer, Diff, Language};
+use language::{Buffer, Diff, Language, OffsetUtf16};
 use lsp::{LanguageServer, LanguageServerId};
 use node_runtime::NodeRuntime;
 use paths::default_prettier_dir;
@@ -348,7 +348,7 @@ impl Prettier {
         buffer: &Entity<Buffer>,
         buffer_path: Option<PathBuf>,
         ignore_dir: Option<PathBuf>,
-        range_utf16: Option<Range<usize>>,
+        range_utf16: Option<Range<OffsetUtf16>>,
         request_timeout: Duration,
         cx: &mut AsyncApp,
     ) -> anyhow::Result<Diff> {
@@ -479,8 +479,8 @@ impl Prettier {
                                 plugins,
                                 prettier_options,
                                 ignore_path,
-                                range_start: range_utf16.as_ref().map(|r| r.start),
-                                range_end: range_utf16.as_ref().map(|r| r.end),
+                                range_start: range_utf16.as_ref().map(|r| r.start.0),
+                                range_end: range_utf16.as_ref().map(|r| r.end.0),
                             },
                         })
                 })
