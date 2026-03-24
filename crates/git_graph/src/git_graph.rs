@@ -2383,48 +2383,33 @@ impl workspace::SerializableItem for GitGraph {
             return Task::ready(Err(anyhow::anyhow!("No git graph to deserialize")));
         };
 
+        let window_handle = window.window_handle();
         let project = project.read(cx);
         let git_store = project.git_store().clone();
-
-        let (tx, rx) = std::sync::mpsc::channel::<()>();
         let wait = project.wait_for_initial_scan(cx);
 
-        cx.background_spawn(async move {
+        cx.spawn(async move |cx| {
             wait.await;
-            tx.send(()).ok();
+
+            cx.update_window(window_handle, |_, window, cx| {
+                let path = repo_work_path.as_path();
+
+                let repositories = git_store.read(cx).repositories();
+                let repo_id = repositories.iter().find_map(|(&repo_id, repo)| {
+                    if repo.read(cx).snapshot().work_directory_abs_path.as_ref() == path {
+                        Some(repo_id)
+                    } else {
+                        None
+                    }
+                });
+
+                let Some(repo_id) = repo_id else {
+                    return Err(anyhow::anyhow!("Repository not found for path: {:?}", path));
+                };
+
+                Ok(cx.new(|cx| GitGraph::new(repo_id, git_store, workspace, window, cx)))
+            })?
         })
-        .detach();
-
-        if let Err(err) = rx.recv() {
-            return Task::ready(Err(anyhow::anyhow!(
-                "Failed to wait for initial scan: {:?}",
-                err
-            )));
-        }
-
-        let path = repo_work_path.as_path();
-        let repo_id = git_store
-            .read(cx)
-            .repositories()
-            .iter()
-            .find_map(|(&repo_id, repo)| {
-                if repo.read(cx).snapshot().work_directory_abs_path.as_ref() == path {
-                    Some(repo_id)
-                } else {
-                    None
-                }
-            });
-
-        let Some(repo_id) = repo_id else {
-            return Task::ready(Err(anyhow::anyhow!(
-                "Repository not found for path: {:?}",
-                path
-            )));
-        };
-
-        Task::ready(Ok(
-            cx.new(|cx| GitGraph::new(repo_id, git_store, workspace, window, cx))
-        ))
     }
 
     fn serialize(
