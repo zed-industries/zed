@@ -1782,7 +1782,7 @@ impl LocalLspStore {
                     let logger = zlog::scoped!(logger => "command");
 
                     if buffer.ranges.is_some() {
-                        zlog::trace!(logger => "External formatter does not support range formatting; skipping");
+                        zlog::debug!(logger => "External formatter does not support range formatting; skipping");
                         continue;
                     }
 
