@@ -10,7 +10,7 @@ pub fn highlight_style(id: HighlightId, theme: &SyntaxTheme) -> Option<Highlight
         .map(|entry| entry.1)
 }
 
-pub fn highlight_name<'a>(id: HighlightId, theme: &'a SyntaxTheme) -> Option<&'a str> {
+pub fn highlight_name(id: HighlightId, theme: &SyntaxTheme) -> Option<&str> {
     theme
         .highlights
         .get(id.index() as usize)

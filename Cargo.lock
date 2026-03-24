@@ -9702,6 +9702,7 @@ dependencies = [
  "tree-sitter-gitcommit",
  "tree-sitter-go",
  "tree-sitter-python",
+ "tree-sitter-rust",
  "tree-sitter-typescript",
  "unindent",
  "url",
