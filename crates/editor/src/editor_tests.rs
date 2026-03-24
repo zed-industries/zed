@@ -1121,7 +1121,93 @@ fn test_cancel(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_fold_action(cx: &mut TestAppContext) {
+async fn test_fold_action(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+    cx.set_state(indoc! {"
+        impl Foo {
+            // Hello!
+
+            fn a() {
+                1
+            }
+
+            fn b() {
+                2
+            }
+
+            fn c() {
+                3
+            }
+        }ˇ
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(7), 0)..DisplayPoint::new(DisplayRow(12), 0)
+            ]);
+        });
+        editor.fold(&Fold, window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            "
+                impl Foo {
+                    // Hello!
+
+                    fn a() {
+                        1
+                    }
+
+                    fn b() {⋯}
+
+                    fn c() {⋯}
+                }
+            "
+            .unindent(),
+        );
+
+        editor.fold(&Fold, window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            "
+                impl Foo {⋯}
+            "
+            .unindent(),
+        );
+
+        editor.unfold_lines(&UnfoldLines, window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            "
+                impl Foo {
+                    // Hello!
+
+                    fn a() {
+                        1
+                    }
+
+                    fn b() {⋯}
+
+                    fn c() {⋯}
+                }
+            "
+            .unindent(),
+        );
+
+        editor.unfold_lines(&UnfoldLines, window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            editor.buffer.read(cx).read(cx).text()
+        );
+    });
+}
+
+#[gpui::test]
+fn test_fold_action_without_language(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|window, cx| {
@@ -1390,62 +1476,6 @@ fn test_fold_action_multiple_line_breaks(cx: &mut TestAppContext) {
     });
 }
 
-fn rust_language_with_brackets_and_overrides() -> Arc<Language> {
-    Arc::new(
-        Language::new(
-            LanguageConfig {
-                brackets: BracketPairConfig {
-                    pairs: vec![
-                        BracketPair {
-                            start: "{".into(),
-                            end: "}".into(),
-                            close: true,
-                            surround: true,
-                            newline: true,
-                        },
-                        BracketPair {
-                            start: "(".into(),
-                            end: ")".into(),
-                            close: true,
-                            surround: true,
-                            newline: true,
-                        },
-                        BracketPair {
-                            start: "[".into(),
-                            end: "]".into(),
-                            close: true,
-                            surround: true,
-                            newline: true,
-                        },
-                    ],
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::LANGUAGE.into()),
-        )
-        .with_queries(LanguageQueries {
-            brackets: Some(Cow::from(indoc! {"
-                (\"{\" @open \"}\" @close)
-                (\"(\" @open \")\" @close)
-                (\"[\" @open \"]\" @close)
-            "})),
-            overrides: Some(Cow::from(indoc! {"
-                [
-                  (string_literal)
-                  (raw_string_literal)
-                ] @string
-                [
-                  (line_comment)
-                  (block_comment)
-                ] @comment.inclusive
-            "})),
-            ..Default::default()
-        })
-        .expect("Could not parse queries"),
-    )
-}
-
 #[gpui::test]
 async fn test_fold_with_unindented_multiline_raw_string(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
@@ -1504,9 +1534,7 @@ async fn test_fold_with_unindented_multiline_raw_string_includes_closing_bracket
 
     let mut cx = EditorTestContext::new(cx).await;
 
-    let language = rust_language_with_brackets_and_overrides();
-
-    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(rust_lang()), cx));
     cx.set_state(indoc! {"
         ˇfn main() {
             let s = r#\"
@@ -1585,9 +1613,7 @@ async fn test_fold_with_unindented_multiline_block_comment_includes_closing_brac
 
     let mut cx = EditorTestContext::new(cx).await;
 
-    let language = rust_language_with_brackets_and_overrides();
-
-    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(rust_lang()), cx));
     cx.set_state(indoc! {"
         ˇfn main() {
             let x = 1;

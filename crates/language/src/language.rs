@@ -2801,6 +2801,46 @@ pub fn rust_lang() -> Arc<Language> {
                 ..Default::default()
             },
             line_comments: vec!["// ".into(), "/// ".into(), "//! ".into()],
+            brackets: BracketPairConfig {
+                pairs: vec![
+                    BracketPair {
+                        start: "{".into(),
+                        end: "}".into(),
+                        close: true,
+                        surround: false,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "[".into(),
+                        end: "]".into(),
+                        close: true,
+                        surround: false,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "(".into(),
+                        end: ")".into(),
+                        close: true,
+                        surround: false,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "<".into(),
+                        end: ">".into(),
+                        close: false,
+                        surround: false,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "\"".into(),
+                        end: "\"".into(),
+                        close: true,
+                        surround: false,
+                        newline: false,
+                    },
+                ],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::LANGUAGE.into()),
