@@ -2128,7 +2128,6 @@ impl ThreadView {
         let queue_expanded = self.queue_expanded;
 
         v_flex()
-            .mt_1()
             .mx_2()
             .bg(self.activity_bar_bg(cx))
             .border_1()
@@ -2136,9 +2135,9 @@ impl ThreadView {
             .border_color(cx.theme().colors().border)
             .rounded_t_md()
             .shadow(vec![gpui::BoxShadow {
-                color: gpui::black().opacity(0.15),
+                color: gpui::black().opacity(0.12),
                 offset: point(px(1.), px(-1.)),
-                blur_radius: px(3.),
+                blur_radius: px(2.),
                 spread_radius: px(0.),
             }])
             .when(!plan.is_empty(), |this| {
