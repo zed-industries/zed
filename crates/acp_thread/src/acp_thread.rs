@@ -2072,6 +2072,11 @@ impl AcpThread {
         cx.notify();
     }
 
+    pub fn clear_plan(&mut self, cx: &mut Context<Self>) {
+        self.plan.entries.clear();
+        cx.notify();
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn send_raw(
         &mut self,
