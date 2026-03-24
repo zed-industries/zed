@@ -291,7 +291,6 @@ impl SidebarThreadMetadataStore {
     }
 
     pub fn save(&mut self, metadata: ThreadMetadata, cx: &mut Context<Self>) {
-        dbg!("SAVE");
         if !cx.has_flag::<AgentV2FeatureFlag>() {
             return;
         }
@@ -302,7 +301,6 @@ impl SidebarThreadMetadataStore {
     }
 
     pub fn delete(&mut self, session_id: acp::SessionId, cx: &mut Context<Self>) {
-        dbg!("DELETE");
         if !cx.has_flag::<AgentV2FeatureFlag>() {
             return;
         }
@@ -313,7 +311,6 @@ impl SidebarThreadMetadataStore {
     }
 
     fn new(db: ThreadMetadataDb, cx: &mut Context<Self>) -> Self {
-        dbg!("NEW");
         let weak_store = cx.weak_entity();
 
         cx.observe_new::<acp_thread::AcpThread>(move |thread, _window, cx| {
@@ -350,9 +347,7 @@ impl SidebarThreadMetadataStore {
         let _db_operations_task = cx.spawn({
             let db = db.clone();
             async move |this, cx| {
-                dbg!("DB_OPERATIONS_TASK");
                 while let Ok(first_update) = rx.recv().await {
-                    dbg!("UPDATE");
                     let mut updates = vec![first_update];
                     while let Ok(update) = rx.try_recv() {
                         updates.push(update);
