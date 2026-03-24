@@ -8,20 +8,22 @@ use anyhow::{Context as _, Result, anyhow};
 use collections::HashMap;
 use editor::{Editor, MultiBufferOffset};
 use gpui::{App, Entity, WeakEntity, Window, prelude::*};
-use language::{BufferSnapshot, Language, LanguageName, Point};
+use language::{BufferSnapshot, Language, LanguageName, Point, ToPoint as _};
 use project::{ProjectItem as _, WorktreeId};
 use settings::Settings;
-use task::{HideStrategy, RevealStrategy, RevealTarget, SaveStrategy, Shell, SpawnInTerminal, TaskId};
+use task::{
+    HideStrategy, RevealStrategy, RevealTarget, SaveStrategy, Shell, SpawnInTerminal, TaskId,
+};
 use terminal_view::terminal_panel::TerminalPanel;
 use workspace::{Workspace, notifications::NotificationId};
 
 use crate::kernels::PythonEnvKernelSpecification;
-use crate::repl_store::ReplStore;
 use crate::repl_settings::TerminalReplRevealTarget;
+use crate::repl_store::ReplStore;
 use crate::session::SessionEvent;
 use crate::{
-    ClearCurrentOutput, ClearOutputs, Interrupt, JupyterSettings, KernelSpecification, Restart,
-    ReplSettings, Session, Shutdown,
+    ClearCurrentOutput, ClearOutputs, Interrupt, JupyterSettings, KernelSpecification,
+    ReplSettings, Restart, Session, Shutdown,
 };
 
 fn terminal_repl_command_for_language(language: &Arc<Language>, cx: &App) -> Option<String> {
@@ -39,8 +41,9 @@ fn spawn_task_for_terminal_repl(
     working_directory: Option<PathBuf>,
     reveal_target: RevealTarget,
 ) -> Result<SpawnInTerminal> {
-    let parsed_command = shlex::split(command_line)
-        .ok_or_else(|| anyhow!("Invalid REPL command for language {language_name}: {command_line}"))?;
+    let parsed_command = shlex::split(command_line).ok_or_else(|| {
+        anyhow!("Invalid REPL command for language {language_name}: {command_line}")
+    })?;
 
     let (command, args) = parsed_command
         .split_first()
@@ -108,31 +111,28 @@ fn send_to_terminal_repl(
         .ok_or_else(|| anyhow!("editor has no workspace"))?;
     let working_directory = editor.read(cx).working_directory(cx);
     let reveal_target_setting = ReplSettings::get_global(cx).terminal_repl_reveal_target;
-    let spawn_task =
-        spawn_task_for_terminal_repl(
-            command_line,
-            language_name,
-            editor_id,
-            working_directory,
-            reveal_target_setting.reveal_target(),
-        )?;
+    let spawn_task = spawn_task_for_terminal_repl(
+        command_line,
+        language_name,
+        editor_id,
+        working_directory,
+        reveal_target_setting.reveal_target(),
+    )?;
 
-    let terminal_task = workspace.update(cx, |workspace, cx| {
-        match reveal_target_setting {
-            TerminalReplRevealTarget::Dock => {
-                let Some(terminal_panel) = workspace.panel::<TerminalPanel>(cx) else {
-                    return gpui::Task::ready(Err(anyhow!("terminal panel is unavailable")));
-                };
+    let terminal_task = workspace.update(cx, |workspace, cx| match reveal_target_setting {
+        TerminalReplRevealTarget::Dock => {
+            let Some(terminal_panel) = workspace.panel::<TerminalPanel>(cx) else {
+                return gpui::Task::ready(Err(anyhow!("terminal panel is unavailable")));
+            };
 
-                terminal_panel.update(cx, |terminal_panel, cx| {
-                    terminal_panel.add_terminal_task(spawn_task, RevealStrategy::NoFocus, window, cx)
-                })
-            }
-            TerminalReplRevealTarget::Center => {
-                TerminalPanel::add_center_terminal(workspace, window, cx, move |project, cx| {
-                    project.create_terminal_task(spawn_task, cx)
-                })
-            }
+            terminal_panel.update(cx, |terminal_panel, cx| {
+                terminal_panel.add_terminal_task(spawn_task, RevealStrategy::NoFocus, window, cx)
+            })
+        }
+        TerminalReplRevealTarget::Center => {
+            TerminalPanel::add_center_terminal(workspace, window, cx, move |project, cx| {
+                project.create_terminal_task(spawn_task, cx)
+            })
         }
     });
 
@@ -160,6 +160,16 @@ fn send_to_terminal_repl(
     .detach_and_log_err(cx);
 
     Ok(())
+}
+
+/// Returns the range of the innermost outline symbol (function, class, etc.) that contains
+/// `position`, using tree-sitter outline queries. Falls back to `None` if no symbol is found.
+fn enclosing_syntax_range(buffer: &BufferSnapshot, position: Point) -> Option<Range<Point>> {
+    let symbols = buffer.symbols_containing(position, None);
+    let innermost = symbols.last()?;
+    let start = innermost.range.start.to_point(buffer);
+    let end = innermost.range.end.to_point(buffer);
+    Some(start..end)
 }
 
 pub fn assign_kernelspec(
@@ -353,6 +363,7 @@ pub fn run(
         return Ok(());
     };
 
+    let is_cursor_only = selected_range.start == selected_range.end;
     let (runnable_ranges, next_cell_point) =
         runnable_ranges(&buffer.read(cx).snapshot(), selected_range, cx);
 
@@ -375,11 +386,27 @@ pub fn run(
         }
 
         if let Some(command_line) = terminal_repl_command_for_language(&language, cx) {
+            // When there is no explicit selection (cursor only), try to expand to the
+            // enclosing syntax block (e.g. the whole function or class the cursor sits in).
+            let text_to_send = if is_cursor_only {
+                let buffer_snapshot = buffer.read(cx).snapshot();
+                if let Some(symbol_range) =
+                    enclosing_syntax_range(&buffer_snapshot, runnable_range.start)
+                {
+                    buffer_snapshot
+                        .text_for_range(symbol_range)
+                        .collect::<String>()
+                } else {
+                    selected_text
+                }
+            } else {
+                selected_text
+            };
             send_to_terminal_repl(
                 &editor,
                 language.name().as_ref(),
                 &command_line,
-                selected_text,
+                text_to_send,
                 window,
                 cx,
             )?;
