@@ -37,7 +37,6 @@ pub mod thread_metadata_store;
 pub mod threads_archive_view;
 mod ui;
 
-use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -56,15 +55,13 @@ use language::{
 use language_model::{
     ConfiguredModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
 };
-use project::{AgentId, DisableAiSettings, Project, ProjectPath, Worktree};
+use project::{AgentId, DisableAiSettings};
 use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{DockPosition, DockSide, LanguageModelSelection, Settings as _, SettingsStore};
 use std::any::TypeId;
 use workspace::Workspace;
-
-use util::ResultExt as _;
 
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
 pub use crate::agent_panel::{
@@ -323,33 +320,6 @@ impl ManageProfiles {
             customize_tools: Some(profile_id),
         }
     }
-}
-
-pub(crate) fn resolve_external_paths_to_project_paths(
-    project: Entity<Project>,
-    paths: Vec<PathBuf>,
-    cx: &mut App,
-) -> Task<(Vec<ProjectPath>, Vec<Entity<Worktree>>)> {
-    let tasks = paths
-        .into_iter()
-        .map(|path| Workspace::project_path_for_path(project.clone(), &path, false, cx))
-        .collect::<Vec<_>>();
-
-    cx.background_spawn(async move {
-        let mut project_paths = Vec::new();
-        let mut worktrees = Vec::new();
-
-        let opened_paths = futures::future::join_all(tasks).await;
-
-        for entry in opened_paths {
-            if let Some((worktree, project_path)) = entry.log_err() {
-                worktrees.push(worktree);
-                project_paths.push(project_path);
-            }
-        }
-
-        (project_paths, worktrees)
-    })
 }
 
 #[derive(Clone)]
