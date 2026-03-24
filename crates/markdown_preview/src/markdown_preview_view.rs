@@ -6,7 +6,6 @@ use std::time::Duration;
 use anyhow::Result;
 use editor::scroll::Autoscroll;
 use editor::{Editor, EditorEvent, MultiBufferOffset, SelectionEffects};
-use fs::normalize_path;
 use gpui::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, ImageSource, InteractiveElement,
     IntoElement, IsZero, Pixels, Render, Resource, RetainAllImageCache, ScrollHandle, SharedString,
@@ -19,6 +18,7 @@ use markdown::{
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{WithScrollbar, prelude::*};
+use util::normalize_path;
 use workspace::item::{Item, ItemHandle};
 use workspace::{OpenOptions, OpenVisible, Pane, Workspace};
 

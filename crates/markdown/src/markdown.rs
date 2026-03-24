@@ -2850,7 +2850,7 @@ mod tests {
     #[test]
     fn test_table_checkbox_detection() {
         let md = "| Done |\n|------|\n| [x] |\n| [ ] |";
-        let (events, _, _) = crate::parser::parse_markdown(md);
+        let events = crate::parser::parse_markdown_with_options(md, false).events;
 
         let mut in_table = false;
         let mut cell_texts: Vec<String> = Vec::new();

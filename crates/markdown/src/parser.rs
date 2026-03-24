@@ -889,6 +889,51 @@ mod tests {
     }
 
     #[test]
+    fn test_table_checkboxes_remain_text_in_cells() {
+        let markdown = "\
+| Done | Task    |
+|------|---------|
+| [x]  | Fix bug |
+| [ ]  | Add feature |";
+        let parsed = parse_markdown_with_options(markdown, false);
+
+        let mut in_table = false;
+        let mut saw_task_list_marker = false;
+        let mut cell_texts = Vec::new();
+        let mut current_cell = String::new();
+
+        for (range, event) in &parsed.events {
+            match event {
+                Start(Table(_)) => in_table = true,
+                End(MarkdownTagEnd::Table) => in_table = false,
+                Start(TableCell) => current_cell.clear(),
+                End(MarkdownTagEnd::TableCell) => {
+                    if in_table {
+                        cell_texts.push(current_cell.clone());
+                    }
+                }
+                Text if in_table => current_cell.push_str(&markdown[range.clone()]),
+                TaskListMarker(_) if in_table => saw_task_list_marker = true,
+                _ => {}
+            }
+        }
+
+        let checkbox_cells: Vec<&str> = cell_texts
+            .iter()
+            .map(|cell| cell.trim())
+            .filter(|cell| {
+                *cell == "[x]" || *cell == "[X]" || *cell == "[ ]"
+            })
+            .collect();
+
+        assert!(
+            !saw_task_list_marker,
+            "Table checkboxes should remain text, not task-list markers"
+        );
+        assert_eq!(checkbox_cells, vec!["[x]", "[ ]"]);
+    }
+
+    #[test]
     fn test_extract_code_content_range() {
         let input = "```let x = 5;```";
         assert_eq!(extract_code_content_range(input), 3..13);
