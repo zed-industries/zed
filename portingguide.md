@@ -168,7 +168,8 @@ These files contain Helix-specific changes that must be preserved during rebases
 
 ### `crates/title_bar/`
 - **Helix connection status indicator**: Shows WebSocket connection status in the title bar
-- Depends on `external_websocket_sync` crate
+- **`external_websocket_sync` must be optional**: In `title_bar/Cargo.toml`, the dep must be `external_websocket_sync = { workspace = true, optional = true }` and the `[features]` section must include `external_websocket_sync = ["dep:external_websocket_sync"]`. Without this, `#[cfg(feature = "external_websocket_sync")]` always evaluates to false and the icon never renders.
+- **Feature propagation**: `crates/zed/Cargo.toml`'s `external_websocket_sync` feature must include `"title_bar/external_websocket_sync"` to enable the feature when building with Helix support.
 
 ### `crates/http_client_tls/src/http_client_tls.rs`
 - **`NoCertVerifier`**: Skips TLS certificate verification when `ZED_HTTP_INSECURE_TLS=1`
