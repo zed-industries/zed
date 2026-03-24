@@ -27,9 +27,9 @@ use client::{Client, UserStore, zed_urls};
 use cloud_api_types::Plan;
 
 use gpui::{
-    Action, AnyElement, App, Context, Corner, Element, Empty, Entity, Focusable,
-    InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
-    StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window, actions, div,
+    Action, AnyElement, App, Context, Corner, Element, Entity, Focusable, InteractiveElement,
+    IntoElement, MouseButton, ParentElement, Render, StatefulInteractiveElement, Styled,
+    Subscription, WeakEntity, Window, actions, div,
 };
 use onboarding_banner::OnboardingBanner;
 use project::{Project, git_store::GitStoreEvent, trusted_worktrees::TrustedWorktrees};
@@ -1164,22 +1164,19 @@ impl TitleBar {
         let show_user_picture = TitleBarSettings::get_global(cx).show_user_picture;
 
         let trigger = if is_signed_in && show_user_picture {
-            let avatar = user_avatar
-                .clone()
-                .map(|avatar| Avatar::new(avatar))
-                .map(|avatar| {
-                    if show_update_button {
-                        avatar.indicator(
-                            div()
-                                .absolute()
-                                .bottom_0()
-                                .right_0()
-                                .child(Indicator::dot().color(Color::Accent)),
-                        )
-                    } else {
-                        avatar
-                    }
-                });
+            let avatar = user_avatar.map(|avatar| Avatar::new(avatar)).map(|avatar| {
+                if show_update_button {
+                    avatar.indicator(
+                        div()
+                            .absolute()
+                            .bottom_0()
+                            .right_0()
+                            .child(Indicator::dot().color(Color::Accent)),
+                    )
+                } else {
+                    avatar
+                }
+            });
 
             ButtonLike::new("user-menu").children(avatar)
         } else {
