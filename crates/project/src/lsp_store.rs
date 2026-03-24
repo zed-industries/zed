@@ -11898,9 +11898,13 @@ impl LspStore {
             }
         }
         for (path, _, _) in changes {
-            if let Some(file_name) = path.file_name()
-                && local.watched_manifest_filenames.contains(file_name)
-            {
+            let should_refresh_for_manifest = path
+                .file_name()
+                .is_some_and(|file_name| local.watched_manifest_filenames.contains(file_name));
+            let should_refresh_for_local_settings =
+                path.ends_with(paths::local_settings_file_relative_path());
+
+            if should_refresh_for_manifest || should_refresh_for_local_settings {
                 self.request_workspace_config_refresh();
                 break;
             }
