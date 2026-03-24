@@ -599,7 +599,7 @@ impl SplittableEditor {
                             let workspace = this.workspace.clone();
                             let split = *split;
                             Editor::open_buffers_in_workspace(
-                                workspace, translated, split, window, cx,
+                                workspace, translated, None, split, window, cx,
                             );
                         }
                     }

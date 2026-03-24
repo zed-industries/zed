@@ -67,7 +67,7 @@ use util::{
 };
 use workspace::{
     CloseActiveItem, CloseAllItems, CloseOtherItems, MultiWorkspace, NavigationEntry, OpenOptions,
-    ViewId,
+    SplitDirection, ViewId,
     item::{FollowEvent, FollowableItem, Item, ItemHandle, SaveOptions},
     register_project_item,
 };
@@ -22311,6 +22311,121 @@ async fn test_multibuffer_in_navigation_history(cx: &mut TestAppContext) {
             "Should navigate back from the 3rd buffer to the multi buffer"
         );
         assert_eq!(active_item.buffer_kind(cx), ItemBufferKind::Multibuffer);
+    });
+}
+
+#[gpui::test]
+async fn test_multibuffer_go_to_file_uses_multibuffer_pane(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "left.rs": sample_text(6, 6, 'm'),
+            "main.rs": sample_text(6, 6, 'a'),
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+
+    let worktree_id = workspace.update_in(cx, |workspace, _window, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        })
+    });
+
+    let left_pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+    workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, rel_path("left.rs")),
+                Some(left_pane.downgrade()),
+                true,
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    let left_item_id = left_pane.read_with(cx, |pane, _| pane.active_item().unwrap().item_id());
+
+    let right_pane = workspace.update_in(cx, |workspace, window, cx| {
+        workspace.split_pane(left_pane.clone(), SplitDirection::Right, window, cx)
+    });
+
+    let main_buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
+        })
+        .await
+        .unwrap();
+    let multi_buffer = cx.new(|cx| {
+        let mut multi_buffer = MultiBuffer::new(ReadWrite);
+        multi_buffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            main_buffer,
+            [Point::new(0, 0)..Point::new(2, 0)],
+            0,
+            cx,
+        );
+        multi_buffer
+    });
+    let right_editor = cx.new_window_entity(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            multi_buffer,
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+    let right_multibuffer_item_id = right_pane.update_in(cx, |pane, window, cx| {
+        pane.add_item(Box::new(right_editor.clone()), true, true, None, window, cx);
+        pane.active_item().unwrap().item_id()
+    });
+
+    left_pane.update_in(cx, |pane, window, cx| {
+        pane.activate_item(0, true, true, window, cx);
+    });
+    cx.run_until_parked();
+
+    workspace.read_with(cx, |workspace, _| {
+        assert_eq!(workspace.active_pane().entity_id(), left_pane.entity_id());
+    });
+
+    right_editor.update_in(cx, |editor, window, cx| {
+        editor.open_excerpts_common(
+            Some(JumpData::MultiBufferRow {
+                row: MultiBufferRow(0),
+                line_offset_from_top: 0,
+            }),
+            false,
+            window,
+            cx,
+        );
+    });
+    cx.run_until_parked();
+
+    left_pane.read_with(cx, |pane, _cx| {
+        assert_eq!(
+            pane.active_item().unwrap().item_id(),
+            left_item_id,
+            "navigating to a file from the right pane should not replace the left pane item",
+        );
+    });
+    right_pane.read_with(cx, |pane, _cx| {
+        assert_ne!(
+            pane.active_item().unwrap().item_id(),
+            right_multibuffer_item_id,
+            "navigating to a file should replace the multibuffer with the opened excerpt",
+        );
     });
 }
 

@@ -24757,6 +24757,7 @@ impl Editor {
         Self::open_buffers_in_workspace(
             workspace.downgrade(),
             new_selections_by_buffer,
+            Some(cx.entity().entity_id()),
             split,
             window,
             cx,
@@ -24769,6 +24770,7 @@ impl Editor {
             Entity<language::Buffer>,
             (Vec<Range<BufferOffset>>, Option<u32>),
         >,
+        pane_item_id: Option<EntityId>,
         split: bool,
         window: &mut Window,
         cx: &mut App,
@@ -24782,7 +24784,9 @@ impl Editor {
                     let pane = if split {
                         workspace.adjacent_pane(window, cx)
                     } else {
-                        workspace.active_pane().clone()
+                        pane_item_id
+                            .and_then(|id| workspace.pane_for_item_id(id))
+                            .unwrap_or_else(|| workspace.active_pane().clone())
                     };
 
                     for (buffer, (ranges, scroll_offset)) in new_selections_by_buffer {
