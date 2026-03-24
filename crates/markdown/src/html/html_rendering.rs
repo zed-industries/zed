@@ -550,7 +550,7 @@ mod tests {
         let rendered_lines = rendered
             .lines
             .iter()
-            .map(|line| line.layout.wrapped_text().to_string())
+            .map(|line| line.layout.wrapped_text())
             .collect::<Vec<_>>();
 
         assert_eq!(
@@ -603,7 +603,7 @@ mod tests {
             .text
             .lines
             .iter()
-            .map(|line| line.layout.wrapped_text().to_string())
+            .map(|line| line.layout.wrapped_text())
             .collect::<Vec<_>>();
 
         assert_eq!(rendered_lines[0], "Hello");
