@@ -24427,6 +24427,13 @@ impl Editor {
         let theme_settings = theme::ThemeSettings::get_global(cx);
         let theme = cx.theme();
         let accent_colors = theme.accents().clone();
+        let editor_background = theme.colors().editor_background;
+        let auto_accent_colors =
+            AccentColors(crate::bracket_colorization::bracket_colorization_accents(
+                &accent_colors.0,
+                theme.appearance,
+                editor_background,
+            ));
 
         let accent_overrides = theme_settings
             .theme_overrides
@@ -24446,7 +24453,7 @@ impl Editor {
             .collect();
 
         Some(AccentData {
-            colors: accent_colors,
+            colors: auto_accent_colors,
             overrides: accent_overrides,
         })
     }

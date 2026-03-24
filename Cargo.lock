@@ -5471,6 +5471,7 @@ dependencies = [
  "menu",
  "multi_buffer",
  "ordered-float 2.10.1",
+ "palette",
  "parking_lot",
  "pretty_assertions",
  "project",
