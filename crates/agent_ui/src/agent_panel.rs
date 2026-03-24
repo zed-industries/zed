@@ -26,7 +26,6 @@ use zed_actions::agent::{
     ResolveConflictedFilesWithAgent, ResolveConflictsWithAgent, ReviewBranchDiff,
 };
 
-use crate::ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal, HoldForDefault};
 use crate::{
     AddContextServer, AgentDiffPane, ConversationView, CopyThreadToClipboard, CycleStartThreadIn,
     Follow, InlineAssistant, LoadThreadFromClipboard, NewTextThread, NewThread,
@@ -41,6 +40,10 @@ use crate::{
 use crate::{
     Agent, AgentInitialContent, ExternalSourcePrompt, NewExternalAgentThread,
     NewNativeAgentThreadFromSummary,
+};
+use crate::{
+    DEFAULT_THREAD_TITLE,
+    ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal, HoldForDefault},
 };
 use crate::{
     ExpandMessageEditor, ThreadHistoryView,
@@ -75,8 +78,8 @@ use search::{BufferSearchBar, buffer_search};
 use settings::{Settings, update_settings_file};
 use theme::ThemeSettings;
 use ui::{
-    Button, Callout, ContextMenu, ContextMenuEntry, DocumentationSide, KeyBinding, PopoverMenu,
-    PopoverMenuHandle, SpinnerLabel, Tab, Tooltip, prelude::*, utils::WithRemSize,
+    Button, Callout, CommonAnimationExt, ContextMenu, ContextMenuEntry, DocumentationSide,
+    KeyBinding, PopoverMenu, PopoverMenuHandle, Tab, Tooltip, prelude::*, utils::WithRemSize,
 };
 use util::{ResultExt as _, debug_panic};
 use workspace::{
@@ -92,7 +95,6 @@ use zed_actions::{
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
 const RECENTLY_UPDATED_MENU_LIMIT: usize = 6;
-const DEFAULT_THREAD_TITLE: &str = "New Thread";
 
 fn read_serialized_panel(
     workspace_id: workspace::WorkspaceId,
@@ -222,7 +224,7 @@ pub fn init(cx: &mut App) {
                 .register_action(|workspace, _: &OpenAgentDiff, window, cx| {
                     let thread = workspace
                         .panel::<AgentPanel>(cx)
-                        .and_then(|panel| panel.read(cx).active_conversation().cloned())
+                        .and_then(|panel| panel.read(cx).active_conversation_view().cloned())
                         .and_then(|conversation| {
                             conversation
                                 .read(cx)
@@ -404,17 +406,17 @@ pub fn init(cx: &mut App) {
                         });
                     },
                 )
-                .register_action(|workspace, action: &StartThreadIn, _window, cx| {
+                .register_action(|workspace, action: &StartThreadIn, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         panel.update(cx, |panel, cx| {
-                            panel.set_start_thread_in(action, cx);
+                            panel.set_start_thread_in(action, window, cx);
                         });
                     }
                 })
-                .register_action(|workspace, _: &CycleStartThreadIn, _window, cx| {
+                .register_action(|workspace, _: &CycleStartThreadIn, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         panel.update(cx, |panel, cx| {
-                            panel.cycle_start_thread_in(cx);
+                            panel.cycle_start_thread_in(window, cx);
                         });
                     }
                 });
@@ -775,11 +777,7 @@ impl AgentPanel {
             SerializedActiveThread {
                 session_id: thread.session_id().0.to_string(),
                 agent_type: self.selected_agent_type.clone(),
-                title: if title.as_ref() != DEFAULT_THREAD_TITLE {
-                    Some(title.to_string())
-                } else {
-                    None
-                },
+                title: title.map(|t| t.to_string()),
                 work_dirs: work_dirs.map(|dirs| dirs.serialize()),
             }
         });
@@ -1188,18 +1186,6 @@ impl AgentPanel {
             .unwrap_or(false)
     }
 
-    pub fn active_conversation(&self) -> Option<&Entity<ConversationView>> {
-        match &self.active_view {
-            ActiveView::AgentThread {
-                conversation_view, ..
-            } => Some(conversation_view),
-            ActiveView::Uninitialized
-            | ActiveView::TextThread { .. }
-            | ActiveView::History { .. }
-            | ActiveView::Configuration => None,
-        }
-    }
-
     pub fn new_thread(&mut self, _action: &NewThread, window: &mut Window, cx: &mut Context<Self>) {
         self.new_agent_thread(AgentType::NativeAgent, window, cx);
     }
@@ -1411,7 +1397,7 @@ impl AgentPanel {
     }
 
     fn expand_message_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(conversation_view) = self.active_conversation() else {
+        let Some(conversation_view) = self.active_conversation_view() else {
             return;
         };
 
@@ -1737,7 +1723,7 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         if let Some(workspace) = self.workspace.upgrade()
-            && let Some(conversation_view) = self.active_conversation()
+            && let Some(conversation_view) = self.active_conversation_view()
             && let Some(active_thread) = conversation_view.read(cx).active_thread().cloned()
         {
             active_thread.update(cx, |thread, cx| {
@@ -2263,7 +2249,12 @@ impl AgentPanel {
         &self.start_thread_in
     }
 
-    fn set_start_thread_in(&mut self, action: &StartThreadIn, cx: &mut Context<Self>) {
+    fn set_start_thread_in(
+        &mut self,
+        action: &StartThreadIn,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if matches!(action, StartThreadIn::NewWorktree) && !cx.has_flag::<AgentV2FeatureFlag>() {
             return;
         }
@@ -2285,16 +2276,19 @@ impl AgentPanel {
             }
         };
         self.start_thread_in = new_target;
+        if let Some(thread) = self.active_thread_view(cx) {
+            thread.update(cx, |thread, cx| thread.focus_handle(cx).focus(window, cx));
+        }
         self.serialize(cx);
         cx.notify();
     }
 
-    fn cycle_start_thread_in(&mut self, cx: &mut Context<Self>) {
+    fn cycle_start_thread_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let next = match self.start_thread_in {
             StartThreadIn::LocalProject => StartThreadIn::NewWorktree,
             StartThreadIn::NewWorktree => StartThreadIn::LocalProject,
         };
-        self.set_start_thread_in(&next, cx);
+        self.set_start_thread_in(&next, window, cx);
     }
 
     fn reset_start_thread_in_to_default(&mut self, cx: &mut Context<Self>) {
@@ -2302,7 +2296,13 @@ impl AgentPanel {
         let default = AgentSettings::get_global(cx).new_thread_location;
         let start_thread_in = match default {
             NewThreadLocation::LocalProject => StartThreadIn::LocalProject,
-            NewThreadLocation::NewWorktree => StartThreadIn::NewWorktree,
+            NewThreadLocation::NewWorktree => {
+                if self.project_has_git_repository(cx) {
+                    StartThreadIn::NewWorktree
+                } else {
+                    StartThreadIn::LocalProject
+                }
+            }
         };
         if self.start_thread_in != start_thread_in {
             self.start_thread_in = start_thread_in;
@@ -2536,7 +2536,7 @@ impl AgentPanel {
     }
 
     pub fn active_thread_is_draft(&self, cx: &App) -> bool {
-        self.active_conversation().is_some() && !self.active_thread_has_messages(cx)
+        self.active_conversation_view().is_some() && !self.active_thread_has_messages(cx)
     }
 
     fn handle_first_send_requested(
@@ -2828,8 +2828,7 @@ impl AgentPanel {
                     None => {
                         this.update_in(cx, |this, window, cx| {
                             this.set_worktree_creation_error(
-                                "Failed to generate a branch name: all typewriter names are taken"
-                                    .into(),
+                                "Failed to generate a unique branch name".into(),
                                 window,
                                 cx,
                             );
@@ -2946,12 +2945,34 @@ impl AgentPanel {
             })?
             .await?;
 
-        let panels_task = new_window_handle.update(cx, |_, _, cx| {
-            new_workspace.update(cx, |workspace, _cx| workspace.take_panels_task())
-        })?;
+        let panels_task = new_workspace.update(cx, |workspace, _cx| workspace.take_panels_task());
+
         if let Some(task) = panels_task {
             task.await.log_err();
         }
+
+        new_workspace
+            .update(cx, |workspace, cx| {
+                workspace.project().read(cx).wait_for_initial_scan(cx)
+            })
+            .await;
+
+        new_workspace
+            .update(cx, |workspace, cx| {
+                let repos = workspace
+                    .project()
+                    .read(cx)
+                    .repositories(cx)
+                    .values()
+                    .cloned()
+                    .collect::<Vec<_>>();
+
+                let tasks = repos
+                    .into_iter()
+                    .map(|repo| repo.update(cx, |repo, _| repo.barrier()));
+                futures::future::join_all(tasks)
+            })
+            .await;
 
         let initial_content = AgentInitialContent::ContentBlock {
             blocks: content,
@@ -2973,8 +2994,7 @@ impl AgentPanel {
                 }
 
                 // If we had an active buffer, remap its path and reopen it.
-                let should_zoom_agent_panel = active_file_path.is_none();
-
+                let had_active_file = active_file_path.is_some();
                 let remapped_active_path = active_file_path.and_then(|original_path| {
                     let best_match = path_remapping
                         .iter()
@@ -2997,7 +3017,7 @@ impl AgentPanel {
                     None
                 });
 
-                if !should_zoom_agent_panel && remapped_active_path.is_none() {
+                if had_active_file && remapped_active_path.is_none() {
                     log::warn!(
                         "Active file could not be remapped to the new worktree; it will not be reopened"
                     );
@@ -3026,13 +3046,7 @@ impl AgentPanel {
                 // (equivalent to cmd-esc fullscreen behavior).
                 // This must happen after focus_panel, which activates
                 // and opens the panel in the dock.
-                if should_zoom_agent_panel {
-                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                        panel.update(cx, |_panel, cx| {
-                            cx.emit(PanelEvent::ZoomIn);
-                        });
-                    }
-                }
+
                 if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                     panel.update(cx, |panel, cx| {
                         panel.external_thread(
@@ -3185,7 +3199,7 @@ impl Panel for AgentPanel {
     }
 
     fn activation_priority(&self) -> u32 {
-        3
+        8
     }
 
     fn enabled(&self, cx: &App) -> bool {
@@ -3219,7 +3233,7 @@ impl AgentPanel {
                     .map(|r| r.read(cx).title_editor.clone())
                 {
                     if is_generating_title {
-                        Label::new("New Thread…")
+                        Label::new(DEFAULT_THREAD_TITLE)
                             .color(Color::Muted)
                             .truncate()
                             .with_animation(
@@ -3930,7 +3944,7 @@ impl AgentPanel {
         };
 
         let is_thread_loading = self
-            .active_conversation()
+            .active_conversation_view()
             .map(|thread| thread.read(cx).is_loading())
             .unwrap_or(false);
 
@@ -3984,6 +3998,8 @@ impl AgentPanel {
 
         let is_text_thread = matches!(&self.active_view, ActiveView::TextThread { .. });
 
+        let is_full_screen = self.is_zoomed(window, cx);
+
         let use_v2_empty_toolbar =
             has_v2_flag && is_empty_state && !is_in_history_or_config && !is_text_thread;
 
@@ -4028,7 +4044,7 @@ impl AgentPanel {
                 .trigger_with_tooltip(agent_selector_button, {
                     move |_window, cx| {
                         Tooltip::for_action_in(
-                            "New Thread\u{2026}",
+                            "New Thread…",
                             &ToggleNewThreadMenu,
                             &focus_handle,
                             cx,
@@ -4053,9 +4069,10 @@ impl AgentPanel {
                         .gap(DynamicSpacing::Base04.rems(cx))
                         .pl(DynamicSpacing::Base04.rems(cx))
                         .child(agent_selector_menu)
-                        .when(has_visible_worktrees, |this| {
-                            this.child(self.render_start_thread_in_selector(cx))
-                        }),
+                        .when(
+                            has_visible_worktrees && self.project_has_git_repository(cx),
+                            |this| this.child(self.render_start_thread_in_selector(cx)),
+                        ),
                 )
                 .child(
                     h_flex()
@@ -4070,6 +4087,20 @@ impl AgentPanel {
                                 Corner::TopRight,
                                 cx,
                             ))
+                        })
+                        .when(is_full_screen, |this| {
+                            this.child(
+                                IconButton::new("disable-full-screen", IconName::Minimize)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(move |_, cx| {
+                                        Tooltip::for_action("Disable Full Screen", &ToggleZoom, cx)
+                                    })
+                                    .on_click({
+                                        cx.listener(move |_, _, window, cx| {
+                                            window.dispatch_action(ToggleZoom.boxed_clone(), cx);
+                                        })
+                                    }),
+                            )
                         })
                         .child(self.render_panel_options_menu(window, cx)),
                 )
@@ -4123,6 +4154,20 @@ impl AgentPanel {
                                 cx,
                             ))
                         })
+                        .when(is_full_screen, |this| {
+                            this.child(
+                                IconButton::new("disable-full-screen", IconName::Minimize)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(move |_, cx| {
+                                        Tooltip::for_action("Disable Full Screen", &ToggleZoom, cx)
+                                    })
+                                    .on_click({
+                                        cx.listener(move |_, _, window, cx| {
+                                            window.dispatch_action(ToggleZoom.boxed_clone(), cx);
+                                        })
+                                    }),
+                            )
+                        })
                         .child(self.render_panel_options_menu(window, cx)),
                 )
                 .into_any_element()
@@ -4134,41 +4179,31 @@ impl AgentPanel {
         match status {
             WorktreeCreationStatus::Creating => Some(
                 h_flex()
+                    .absolute()
+                    .bottom_12()
                     .w_full()
-                    .px(DynamicSpacing::Base06.rems(cx))
-                    .py(DynamicSpacing::Base02.rems(cx))
-                    .gap_2()
-                    .bg(cx.theme().colors().surface_background)
-                    .border_b_1()
-                    .border_color(cx.theme().colors().border)
-                    .child(SpinnerLabel::new().size(LabelSize::Small))
+                    .p_2()
+                    .gap_1()
+                    .justify_center()
+                    .bg(cx.theme().colors().editor_background)
                     .child(
-                        Label::new("Creating worktree…")
+                        Icon::new(IconName::LoadCircle)
+                            .size(IconSize::Small)
+                            .color(Color::Muted)
+                            .with_rotate_animation(3),
+                    )
+                    .child(
+                        Label::new("Creating Worktree…")
                             .color(Color::Muted)
                             .size(LabelSize::Small),
                     )
                     .into_any_element(),
             ),
             WorktreeCreationStatus::Error(message) => Some(
-                h_flex()
-                    .w_full()
-                    .px(DynamicSpacing::Base06.rems(cx))
-                    .py(DynamicSpacing::Base02.rems(cx))
-                    .gap_2()
-                    .bg(cx.theme().colors().surface_background)
-                    .border_b_1()
-                    .border_color(cx.theme().colors().border)
-                    .child(
-                        Icon::new(IconName::Warning)
-                            .size(IconSize::Small)
-                            .color(Color::Warning),
-                    )
-                    .child(
-                        Label::new(message.clone())
-                            .color(Color::Warning)
-                            .size(LabelSize::Small)
-                            .truncate(),
-                    )
+                Callout::new()
+                    .icon(IconName::Warning)
+                    .severity(Severity::Warning)
+                    .title(message.clone())
                     .into_any_element(),
             ),
         }
@@ -4604,14 +4639,13 @@ impl Render for AgentPanel {
             .on_action(cx.listener(Self::reset_font_size))
             .on_action(cx.listener(Self::toggle_zoom))
             .on_action(cx.listener(|this, _: &ReauthenticateAgent, window, cx| {
-                if let Some(conversation_view) = this.active_conversation() {
+                if let Some(conversation_view) = this.active_conversation_view() {
                     conversation_view.update(cx, |conversation_view, cx| {
                         conversation_view.reauthenticate(window, cx)
                     })
                 }
             }))
             .child(self.render_toolbar(window, cx))
-            .children(self.render_worktree_creation_status(cx))
             .children(self.render_workspace_trust_message(cx))
             .children(self.render_onboarding(window, cx))
             .map(|parent| {
@@ -4668,6 +4702,7 @@ impl Render for AgentPanel {
                     ActiveView::Configuration => parent.children(self.configuration.clone()),
                 }
             })
+            .children(self.render_worktree_creation_status(cx))
             .children(self.render_trial_end_upsell(window, cx));
 
         match self.active_view.which_font_size_used() {
@@ -4800,7 +4835,7 @@ impl AgentPanelDelegate for ConcreteAssistantPanelDelegate {
             // Wait to create a new context until the workspace is no longer
             // being updated.
             cx.defer_in(window, move |panel, window, cx| {
-                if let Some(conversation_view) = panel.active_conversation() {
+                if let Some(conversation_view) = panel.active_conversation_view() {
                     conversation_view.update(cx, |conversation_view, cx| {
                         conversation_view.insert_selections(window, cx);
                     });
@@ -4838,7 +4873,7 @@ impl AgentPanelDelegate for ConcreteAssistantPanelDelegate {
             // Wait to create a new context until the workspace is no longer
             // being updated.
             cx.defer_in(window, move |panel, window, cx| {
-                if let Some(conversation_view) = panel.active_conversation() {
+                if let Some(conversation_view) = panel.active_conversation_view() {
                     conversation_view.update(cx, |conversation_view, cx| {
                         conversation_view.insert_terminal_text(text, window, cx);
                     });
@@ -4904,7 +4939,7 @@ impl AgentPanel {
     /// This is a test-only accessor that exposes the private `active_thread_view()`
     /// method for test assertions. Not compiled into production builds.
     pub fn active_thread_view_for_tests(&self) -> Option<&Entity<ConversationView>> {
-        self.active_conversation()
+        self.active_conversation_view()
     }
 
     /// Sets the start_thread_in value directly, bypassing validation.
@@ -5094,7 +5129,7 @@ mod tests {
                 "workspace A agent type should be restored"
             );
             assert!(
-                panel.active_conversation().is_some(),
+                panel.active_conversation_view().is_some(),
                 "workspace A should have its active thread restored"
             );
         });
@@ -5114,7 +5149,7 @@ mod tests {
                 "workspace B agent type should be restored"
             );
             assert!(
-                panel.active_conversation().is_none(),
+                panel.active_conversation_view().is_none(),
                 "workspace B should have no active thread"
             );
         });
@@ -5566,7 +5601,7 @@ mod tests {
         send_message(&panel, &mut cx);
 
         let weak_view_a = panel.read_with(&cx, |panel, _cx| {
-            panel.active_conversation().unwrap().downgrade()
+            panel.active_conversation_view().unwrap().downgrade()
         });
         let session_id_a = active_session_id(&panel, &cx);
 
@@ -5973,8 +6008,8 @@ mod tests {
         });
 
         // Change thread target to NewWorktree.
-        panel.update(cx, |panel, cx| {
-            panel.set_start_thread_in(&StartThreadIn::NewWorktree, cx);
+        panel.update_in(cx, |panel, window, cx| {
+            panel.set_start_thread_in(&StartThreadIn::NewWorktree, window, cx);
         });
 
         panel.read_with(cx, |panel, _cx| {
@@ -6196,11 +6231,11 @@ mod tests {
         // Set the selected agent to Codex (a custom agent) and start_thread_in
         // to NewWorktree. We do this AFTER opening the thread because
         // open_external_thread_with_server overrides selected_agent_type.
-        panel.update(cx, |panel, cx| {
+        panel.update_in(cx, |panel, window, cx| {
             panel.selected_agent_type = AgentType::Custom {
                 id: CODEX_ID.into(),
             };
-            panel.set_start_thread_in(&StartThreadIn::NewWorktree, cx);
+            panel.set_start_thread_in(&StartThreadIn::NewWorktree, window, cx);
         });
 
         // Verify the panel has the Codex agent selected.

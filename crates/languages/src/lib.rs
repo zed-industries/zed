@@ -191,7 +191,7 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
             context: Some(python_context_provider),
             toolchain: Some(python_toolchain_provider),
             manifest_name: Some(SharedString::new_static("pyproject.toml").into()),
-            ..Default::default()
+            semantic_token_rules: Some(python::semantic_token_rules()),
         },
         LanguageInfo {
             name: "rust",

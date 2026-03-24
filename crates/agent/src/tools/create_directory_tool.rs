@@ -241,7 +241,10 @@ mod tests {
         );
 
         auth.response
-            .send(acp::PermissionOptionId::new("allow").into())
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
             .unwrap();
 
         let result = task.await;
@@ -359,7 +362,10 @@ mod tests {
         );
 
         auth.response
-            .send(acp::PermissionOptionId::new("allow").into())
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
             .unwrap();
 
         assert!(

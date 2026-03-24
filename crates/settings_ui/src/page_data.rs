@@ -3481,7 +3481,7 @@ fn window_and_layout_page() -> SettingsPage {
         ]
     }
 
-    fn title_bar_section() -> [SettingsPageItem; 9] {
+    fn title_bar_section() -> [SettingsPageItem; 10] {
         [
             SettingsPageItem::SectionHeader("Title Bar"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -3647,6 +3647,122 @@ fn window_and_layout_page() -> SettingsPage {
                 }),
                 metadata: None,
                 files: USER,
+            }),
+            SettingsPageItem::DynamicItem(DynamicItem {
+                discriminant: SettingItem {
+                    files: USER,
+                    title: "Button Layout",
+                    description:
+                        "(Linux only) choose how window control buttons are laid out in the titlebar.",
+                    field: Box::new(SettingField {
+                        json_path: Some("title_bar.button_layout$"),
+                        pick: |settings_content| {
+                            Some(
+                                &dynamic_variants::<settings::WindowButtonLayoutContent>()[settings_content
+                                    .title_bar
+                                    .as_ref()?
+                                    .button_layout
+                                    .as_ref()?
+                                    .discriminant()
+                                    as usize],
+                            )
+                        },
+                        write: |settings_content, value| {
+                            let Some(value) = value else {
+                                settings_content
+                                    .title_bar
+                                    .get_or_insert_default()
+                                    .button_layout = None;
+                                return;
+                            };
+
+                            let current_custom_layout = settings_content
+                                .title_bar
+                                .as_ref()
+                                .and_then(|title_bar| title_bar.button_layout.as_ref())
+                                .and_then(|button_layout| match button_layout {
+                                    settings::WindowButtonLayoutContent::Custom(layout) => {
+                                        Some(layout.clone())
+                                    }
+                                    _ => None,
+                                });
+
+                            let button_layout = match value {
+                                settings::WindowButtonLayoutContentDiscriminants::PlatformDefault => {
+                                    settings::WindowButtonLayoutContent::PlatformDefault
+                                }
+                                settings::WindowButtonLayoutContentDiscriminants::Standard => {
+                                    settings::WindowButtonLayoutContent::Standard
+                                }
+                                settings::WindowButtonLayoutContentDiscriminants::Custom => {
+                                    settings::WindowButtonLayoutContent::Custom(
+                                        current_custom_layout.unwrap_or_else(|| {
+                                            "close:minimize,maximize".to_string()
+                                        }),
+                                    )
+                                }
+                            };
+
+                            settings_content
+                                .title_bar
+                                .get_or_insert_default()
+                                .button_layout = Some(button_layout);
+                        },
+                    }),
+                    metadata: None,
+                },
+                pick_discriminant: |settings_content| {
+                    Some(
+                        settings_content
+                            .title_bar
+                            .as_ref()?
+                            .button_layout
+                            .as_ref()?
+                            .discriminant() as usize,
+                    )
+                },
+                fields: dynamic_variants::<settings::WindowButtonLayoutContent>()
+                    .into_iter()
+                    .map(|variant| match variant {
+                        settings::WindowButtonLayoutContentDiscriminants::PlatformDefault => {
+                            vec![]
+                        }
+                        settings::WindowButtonLayoutContentDiscriminants::Standard => vec![],
+                        settings::WindowButtonLayoutContentDiscriminants::Custom => vec![
+                            SettingItem {
+                                files: USER,
+                                title: "Custom Button Layout",
+                                description:
+                                    "GNOME-style layout string such as \"close:minimize,maximize\".",
+                                field: Box::new(SettingField {
+                                    json_path: Some("title_bar.button_layout"),
+                                    pick: |settings_content| match settings_content
+                                        .title_bar
+                                        .as_ref()?
+                                        .button_layout
+                                        .as_ref()?
+                                    {
+                                        settings::WindowButtonLayoutContent::Custom(layout) => {
+                                            Some(layout)
+                                        }
+                                        _ => DEFAULT_EMPTY_STRING,
+                                    },
+                                    write: |settings_content, value| {
+                                        settings_content
+                                            .title_bar
+                                            .get_or_insert_default()
+                                            .button_layout = value
+                                            .map(settings::WindowButtonLayoutContent::Custom);
+                                    },
+                                }),
+                                metadata: Some(Box::new(SettingsFieldMetadata {
+                                    placeholder: Some("close:minimize,maximize"),
+                                    ..Default::default()
+                                })),
+                            },
+                        ],
+                    })
+                    .collect(),
             }),
         ]
     }
@@ -6922,101 +7038,8 @@ fn collaboration_page() -> SettingsPage {
         ]
     }
 
-    fn experimental_section() -> [SettingsPageItem; 9] {
+    fn audio_settings() -> [SettingsPageItem; 3] {
         [
-            SettingsPageItem::SectionHeader("Experimental"),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Rodio Audio",
-                description: "Opt into the new audio system.",
-                field: Box::new(SettingField {
-                    json_path: Some("audio.experimental.rodio_audio"),
-                    pick: |settings_content| settings_content.audio.as_ref()?.rodio_audio.as_ref(),
-                    write: |settings_content, value| {
-                        settings_content.audio.get_or_insert_default().rodio_audio = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Auto Microphone Volume",
-                description: "Automatically adjust microphone volume (requires rodio audio).",
-                field: Box::new(SettingField {
-                    json_path: Some("audio.experimental.auto_microphone_volume"),
-                    pick: |settings_content| {
-                        settings_content
-                            .audio
-                            .as_ref()?
-                            .auto_microphone_volume
-                            .as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .audio
-                            .get_or_insert_default()
-                            .auto_microphone_volume = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Auto Speaker Volume",
-                description: "Automatically adjust volume of other call members (requires rodio audio).",
-                field: Box::new(SettingField {
-                    json_path: Some("audio.experimental.auto_speaker_volume"),
-                    pick: |settings_content| {
-                        settings_content
-                            .audio
-                            .as_ref()?
-                            .auto_speaker_volume
-                            .as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .audio
-                            .get_or_insert_default()
-                            .auto_speaker_volume = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Denoise",
-                description: "Remove background noises (requires rodio audio).",
-                field: Box::new(SettingField {
-                    json_path: Some("audio.experimental.denoise"),
-                    pick: |settings_content| settings_content.audio.as_ref()?.denoise.as_ref(),
-                    write: |settings_content, value| {
-                        settings_content.audio.get_or_insert_default().denoise = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Legacy Audio Compatible",
-                description: "Use audio parameters compatible with previous versions (requires rodio audio).",
-                field: Box::new(SettingField {
-                    json_path: Some("audio.experimental.legacy_audio_compatible"),
-                    pick: |settings_content| {
-                        settings_content
-                            .audio
-                            .as_ref()?
-                            .legacy_audio_compatible
-                            .as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .audio
-                            .get_or_insert_default()
-                            .legacy_audio_compatible = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
             SettingsPageItem::ActionLink(ActionLink {
                 title: "Test Audio".into(),
                 description: Some("Test your microphone and speaker setup".into()),
@@ -7077,7 +7100,7 @@ fn collaboration_page() -> SettingsPage {
 
     SettingsPage {
         title: "Collaboration",
-        items: concat_sections![calls_section(), experimental_section()],
+        items: concat_sections![calls_section(), audio_settings()],
     }
 }
 

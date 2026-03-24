@@ -894,7 +894,7 @@ impl TextThreadEditor {
                         |_, _, _, _| Empty.into_any_element(),
                     )
                     .with_metadata(CreaseMetadata {
-                        icon_path: SharedString::from(IconName::Ai.path()),
+                        icon_path: SharedString::from(IconName::ZedAgent.path()),
                         label: "Thinking Process".into(),
                     }),
                 );
@@ -2256,7 +2256,7 @@ impl TextThreadEditor {
         let provider_icon = active_provider
             .as_ref()
             .map(|p| p.icon())
-            .unwrap_or(IconOrSvg::Icon(IconName::Ai));
+            .unwrap_or(IconOrSvg::Icon(IconName::ZedAgent));
 
         let (color, icon) = if self.language_model_selector_menu_handle.is_deployed() {
             (Color::Accent, IconName::ChevronUp)

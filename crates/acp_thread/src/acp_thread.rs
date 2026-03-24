@@ -502,13 +502,15 @@ pub enum SelectedPermissionParams {
 #[derive(Debug)]
 pub struct SelectedPermissionOutcome {
     pub option_id: acp::PermissionOptionId,
+    pub option_kind: acp::PermissionOptionKind,
     pub params: Option<SelectedPermissionParams>,
 }
 
 impl SelectedPermissionOutcome {
-    pub fn new(option_id: acp::PermissionOptionId) -> Self {
+    pub fn new(option_id: acp::PermissionOptionId, option_kind: acp::PermissionOptionKind) -> Self {
         Self {
             option_id,
+            option_kind,
             params: None,
         }
     }
@@ -516,12 +518,6 @@ impl SelectedPermissionOutcome {
     pub fn params(mut self, params: Option<SelectedPermissionParams>) -> Self {
         self.params = params;
         self
-    }
-}
-
-impl From<acp::PermissionOptionId> for SelectedPermissionOutcome {
-    fn from(option_id: acp::PermissionOptionId) -> Self {
-        Self::new(option_id)
     }
 }
 
@@ -924,6 +920,7 @@ impl Plan {
                 }
                 acp::PlanEntryStatus::InProgress => {
                     stats.in_progress_entry = stats.in_progress_entry.or(Some(entry));
+                    stats.pending += 1;
                 }
                 acp::PlanEntryStatus::Completed => {
                     stats.completed += 1;
@@ -1013,7 +1010,7 @@ pub struct AcpThread {
     session_id: acp::SessionId,
     work_dirs: Option<PathList>,
     parent_session_id: Option<acp::SessionId>,
-    title: SharedString,
+    title: Option<SharedString>,
     provisional_title: Option<SharedString>,
     entries: Vec<AgentThreadEntry>,
     plan: Plan,
@@ -1176,7 +1173,7 @@ impl Error for LoadError {}
 impl AcpThread {
     pub fn new(
         parent_session_id: Option<acp::SessionId>,
-        title: impl Into<SharedString>,
+        title: Option<SharedString>,
         work_dirs: Option<PathList>,
         connection: Rc<dyn AgentConnection>,
         project: Entity<Project>,
@@ -1203,7 +1200,7 @@ impl AcpThread {
             shared_buffers: Default::default(),
             entries: Default::default(),
             plan: Default::default(),
-            title: title.into(),
+            title,
             provisional_title: None,
             project,
             running_turn: None,
@@ -1259,10 +1256,10 @@ impl AcpThread {
         &self.project
     }
 
-    pub fn title(&self) -> SharedString {
-        self.provisional_title
+    pub fn title(&self) -> Option<SharedString> {
+        self.title
             .clone()
-            .unwrap_or_else(|| self.title.clone())
+            .or_else(|| self.provisional_title.clone())
     }
 
     pub fn has_provisional_title(&self) -> bool {
@@ -1387,8 +1384,8 @@ impl AcpThread {
                 if let acp::MaybeUndefined::Value(title) = info_update.title {
                     let had_provisional = self.provisional_title.take().is_some();
                     let title: SharedString = title.into();
-                    if title != self.title {
-                        self.title = title;
+                    if self.title.as_ref() != Some(&title) {
+                        self.title = Some(title);
                         cx.emit(AcpThreadEvent::TitleUpdated);
                     } else if had_provisional {
                         cx.emit(AcpThreadEvent::TitleUpdated);
@@ -1676,8 +1673,8 @@ impl AcpThread {
 
     pub fn set_title(&mut self, title: SharedString, cx: &mut Context<Self>) -> Task<Result<()>> {
         let had_provisional = self.provisional_title.take().is_some();
-        if title != self.title {
-            self.title = title.clone();
+        if self.title.as_ref() != Some(&title) {
+            self.title = Some(title.clone());
             cx.emit(AcpThreadEvent::TitleUpdated);
             if let Some(set_title) = self.connection.set_title(&self.session_id, cx) {
                 return set_title.run(title, cx);
@@ -2012,14 +2009,13 @@ impl AcpThread {
         &mut self,
         id: acp::ToolCallId,
         outcome: SelectedPermissionOutcome,
-        option_kind: acp::PermissionOptionKind,
         cx: &mut Context<Self>,
     ) {
         let Some((ix, call)) = self.tool_call_mut(&id) else {
             return;
         };
 
-        let new_status = match option_kind {
+        let new_status = match outcome.option_kind {
             acp::PermissionOptionKind::RejectOnce | acp::PermissionOptionKind::RejectAlways => {
                 ToolCallStatus::Rejected
             }
@@ -4297,7 +4293,7 @@ mod tests {
             let thread = cx.new(|cx| {
                 AcpThread::new(
                     None,
-                    "Test",
+                    None,
                     Some(work_dirs),
                     self.clone(),
                     project,
@@ -4999,7 +4995,7 @@ mod tests {
 
         // Initial title is the default.
         thread.read_with(cx, |thread, _| {
-            assert_eq!(thread.title().as_ref(), "Test");
+            assert_eq!(thread.title(), None);
         });
 
         // Setting a provisional title updates the display title.
@@ -5007,7 +5003,10 @@ mod tests {
             thread.set_provisional_title("Hello, can you help…".into(), cx);
         });
         thread.read_with(cx, |thread, _| {
-            assert_eq!(thread.title().as_ref(), "Hello, can you help…");
+            assert_eq!(
+                thread.title().as_ref().map(|s| s.as_str()),
+                Some("Hello, can you help…")
+            );
         });
 
         // The provisional title should NOT have propagated to the connection.
@@ -5024,7 +5023,10 @@ mod tests {
         });
         task.await.expect("set_title should succeed");
         thread.read_with(cx, |thread, _| {
-            assert_eq!(thread.title().as_ref(), "Helping with Rust question");
+            assert_eq!(
+                thread.title().as_ref().map(|s| s.as_str()),
+                Some("Helping with Rust question")
+            );
         });
         assert_eq!(
             set_title_calls.borrow().as_slice(),
@@ -5088,7 +5090,10 @@ mod tests {
         result.expect("session info update should succeed");
 
         thread.read_with(cx, |thread, _| {
-            assert_eq!(thread.title().as_ref(), "Helping with Rust question");
+            assert_eq!(
+                thread.title().as_ref().map(|s| s.as_str()),
+                Some("Helping with Rust question")
+            );
             assert!(
                 !thread.has_provisional_title(),
                 "session info title update should clear provisional title"

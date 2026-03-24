@@ -575,7 +575,7 @@ impl ThreadsArchiveView {
                                                 .when(can_unarchive, |this| {
                                                     this.child(
                                                         Button::new("unarchive-thread", "Restore")
-                                                            .style(ButtonStyle::OutlinedGhost)
+                                                            .style(ButtonStyle::Filled)
                                                             .label_size(LabelSize::Small)
                                                             .when(is_focused, |this| {
                                                                 this.key_binding(
@@ -606,6 +606,7 @@ impl ThreadsArchiveView {
                                                             "delete-thread",
                                                             IconName::Trash,
                                                         )
+                                                        .style(ButtonStyle::Filled)
                                                         .icon_size(IconSize::Small)
                                                         .icon_color(Color::Muted)
                                                         .tooltip({

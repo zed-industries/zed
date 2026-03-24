@@ -47,7 +47,7 @@ use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt as _};
 use fs::Fs;
-use gpui::{Action, App, Context, Entity, SharedString, Window, actions};
+use gpui::{Action, App, Context, Entity, SharedString, UpdateGlobal, Window, actions};
 use language::{
     LanguageRegistry,
     language_settings::{AllLanguageSettings, EditPredictionProvider},
@@ -59,7 +59,7 @@ use project::{AgentId, DisableAiSettings};
 use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{LanguageModelSelection, Settings as _, SettingsStore};
+use settings::{DockPosition, DockSide, LanguageModelSelection, Settings as _, SettingsStore};
 use std::any::TypeId;
 use workspace::Workspace;
 
@@ -79,6 +79,8 @@ pub use text_thread_editor::{AgentPanelDelegate, TextThreadEditor};
 pub(crate) use thread_history::ThreadHistory;
 pub(crate) use thread_history_view::*;
 use zed_actions;
+
+pub const DEFAULT_THREAD_TITLE: &str = "New Thread";
 
 actions!(
     agent,
@@ -411,6 +413,31 @@ pub fn init(
 
     cx.on_flags_ready(|_, cx| {
         update_command_palette_filter(cx);
+    })
+    .detach();
+
+    cx.observe_flag::<AgentV2FeatureFlag, _>(|is_enabled, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_default_settings(cx, |defaults| {
+                if is_enabled {
+                    defaults.agent.get_or_insert_default().dock = Some(DockPosition::Left);
+                    defaults.project_panel.get_or_insert_default().dock = Some(DockSide::Right);
+                    defaults.outline_panel.get_or_insert_default().dock = Some(DockSide::Right);
+                    defaults.collaboration_panel.get_or_insert_default().dock =
+                        Some(DockPosition::Right);
+                    defaults.git_panel.get_or_insert_default().dock = Some(DockPosition::Right);
+                    defaults.notification_panel.get_or_insert_default().button = Some(false);
+                } else {
+                    defaults.agent.get_or_insert_default().dock = Some(DockPosition::Right);
+                    defaults.project_panel.get_or_insert_default().dock = Some(DockSide::Left);
+                    defaults.outline_panel.get_or_insert_default().dock = Some(DockSide::Left);
+                    defaults.collaboration_panel.get_or_insert_default().dock =
+                        Some(DockPosition::Left);
+                    defaults.git_panel.get_or_insert_default().dock = Some(DockPosition::Left);
+                    defaults.notification_panel.get_or_insert_default().button = Some(true);
+                }
+            });
+        });
     })
     .detach();
 }

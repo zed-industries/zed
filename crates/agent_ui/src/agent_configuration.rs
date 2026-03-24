@@ -517,11 +517,7 @@ impl AgentConfiguration {
         }
     }
 
-    fn render_context_servers_section(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn render_context_servers_section(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let context_server_ids = self.context_server_store.read(cx).server_ids();
 
         let add_server_popover = PopoverMenu::new("add-server-popover")
@@ -601,7 +597,7 @@ impl AgentConfiguration {
                         } else {
                             parent.children(itertools::intersperse_with(
                                 context_server_ids.iter().cloned().map(|context_server_id| {
-                                    self.render_context_server(context_server_id, window, cx)
+                                    self.render_context_server(context_server_id, cx)
                                         .into_any_element()
                                 }),
                                 || {
@@ -618,7 +614,6 @@ impl AgentConfiguration {
     fn render_context_server(
         &self,
         context_server_id: ContextServerId,
-        window: &mut Window,
         cx: &Context<Self>,
     ) -> impl use<> + IntoElement {
         let server_status = self
@@ -646,6 +641,9 @@ impl AgentConfiguration {
         } else {
             None
         };
+        let auth_required = matches!(server_status, ContextServerStatus::AuthRequired);
+        let authenticating = matches!(server_status, ContextServerStatus::Authenticating);
+        let context_server_store = self.context_server_store.clone();
 
         let tool_count = self
             .context_server_registry
@@ -689,11 +687,33 @@ impl AgentConfiguration {
                 Indicator::dot().color(Color::Muted).into_any_element(),
                 "Server is stopped.",
             ),
+            ContextServerStatus::AuthRequired => (
+                Indicator::dot().color(Color::Warning).into_any_element(),
+                "Authentication required.",
+            ),
+            ContextServerStatus::Authenticating => (
+                Icon::new(IconName::LoadCircle)
+                    .size(IconSize::XSmall)
+                    .color(Color::Accent)
+                    .with_keyed_rotate_animation(
+                        SharedString::from(format!("{}-authenticating", context_server_id.0)),
+                        3,
+                    )
+                    .into_any_element(),
+                "Waiting for authorization...",
+            ),
         };
+
         let is_remote = server_configuration
             .as_ref()
             .map(|config| matches!(config.as_ref(), ContextServerConfiguration::Http { .. }))
             .unwrap_or(false);
+
+        let should_show_logout_button = server_configuration.as_ref().is_some_and(|config| {
+            matches!(config.as_ref(), ContextServerConfiguration::Http { .. })
+                && !config.has_static_auth_header()
+        });
+
         let context_server_configuration_menu = PopoverMenu::new("context-server-config-menu")
             .trigger_with_tooltip(
                 IconButton::new("context-server-config-menu", IconName::Settings)
@@ -708,6 +728,7 @@ impl AgentConfiguration {
                 let language_registry = self.language_registry.clone();
                 let workspace = self.workspace.clone();
                 let context_server_registry = self.context_server_registry.clone();
+                let context_server_store = context_server_store.clone();
 
                 move |window, cx| {
                     Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
@@ -754,6 +775,17 @@ impl AgentConfiguration {
                                 .ok();
                             }
                         }))
+                        .when(should_show_logout_button, |this| {
+                            this.entry("Log Out", None, {
+                                let context_server_store = context_server_store.clone();
+                                let context_server_id = context_server_id.clone();
+                                move |_window, cx| {
+                                    context_server_store.update(cx, |store, cx| {
+                                        store.logout_server(&context_server_id, cx).log_err();
+                                    });
+                                }
+                            })
+                        })
                         .separator()
                         .entry("Uninstall", None, {
                             let fs = fs.clone();
@@ -809,6 +841,9 @@ impl AgentConfiguration {
                     }))
                 }
             });
+
+        let feedback_base_container =
+            || h_flex().py_1().min_w_0().w_full().gap_1().justify_between();
 
         v_flex()
             .min_w_0()
@@ -868,6 +903,7 @@ impl AgentConfiguration {
                                 .on_click({
                                     let context_server_manager = self.context_server_store.clone();
                                     let fs = self.fs.clone();
+                                    let context_server_id = context_server_id.clone();
 
                                     move |state, _window, cx| {
                                         let is_enabled = match state {
@@ -915,30 +951,111 @@ impl AgentConfiguration {
             )
             .map(|parent| {
                 if let Some(error) = error {
+                    return parent
+                        .child(
+                            feedback_base_container()
+                                .child(
+                                    h_flex()
+                                        .pr_4()
+                                        .min_w_0()
+                                        .w_full()
+                                        .gap_2()
+                                        .child(
+                                            Icon::new(IconName::XCircle)
+                                                .size(IconSize::XSmall)
+                                                .color(Color::Error),
+                                        )
+                                        .child(
+                                            div().min_w_0().flex_1().child(
+                                                Label::new(error)
+                                                    .color(Color::Muted)
+                                                    .size(LabelSize::Small),
+                                            ),
+                                        ),
+                                )
+                                .when(should_show_logout_button, |this| {
+                                    this.child(
+                                        Button::new("error-logout-server", "Log Out")
+                                            .style(ButtonStyle::Outlined)
+                                            .label_size(LabelSize::Small)
+                                            .on_click({
+                                                let context_server_store =
+                                                    context_server_store.clone();
+                                                let context_server_id =
+                                                    context_server_id.clone();
+                                                move |_event, _window, cx| {
+                                                    context_server_store.update(
+                                                        cx,
+                                                        |store, cx| {
+                                                            store
+                                                                .logout_server(
+                                                                    &context_server_id,
+                                                                    cx,
+                                                                )
+                                                                .log_err();
+                                                        },
+                                                    );
+                                                }
+                                            }),
+                                    )
+                                }),
+                        );
+                }
+                if auth_required {
                     return parent.child(
-                        h_flex()
-                            .gap_2()
-                            .pr_4()
-                            .items_start()
+                        feedback_base_container()
                             .child(
                                 h_flex()
-                                    .flex_none()
-                                    .h(window.line_height() / 1.6_f32)
-                                    .justify_center()
+                                    .pr_4()
+                                    .min_w_0()
+                                    .w_full()
+                                    .gap_2()
                                     .child(
-                                        Icon::new(IconName::XCircle)
+                                        Icon::new(IconName::Info)
                                             .size(IconSize::XSmall)
-                                            .color(Color::Error),
+                                            .color(Color::Muted),
+                                    )
+                                    .child(
+                                        Label::new("Authenticate to connect this server")
+                                            .color(Color::Muted)
+                                            .size(LabelSize::Small),
                                     ),
                             )
                             .child(
-                                div().w_full().child(
-                                    Label::new(error)
-                                        .buffer_font(cx)
-                                        .color(Color::Muted)
-                                        .size(LabelSize::Small),
-                                ),
+                                Button::new("error-logout-server", "Authenticate")
+                                    .style(ButtonStyle::Outlined)
+                                    .label_size(LabelSize::Small)
+                                    .on_click({
+                                        let context_server_store = context_server_store.clone();
+                                        let context_server_id = context_server_id.clone();
+                                        move |_event, _window, cx| {
+                                            context_server_store.update(cx, |store, cx| {
+                                                store
+                                                    .authenticate_server(&context_server_id, cx)
+                                                    .log_err();
+                                            });
+                                        }
+                                    }),
                             ),
+                    );
+                }
+                if authenticating {
+                    return parent.child(
+                        h_flex()
+                            .mt_1()
+                            .pr_4()
+                            .min_w_0()
+                            .w_full()
+                            .gap_2()
+                            .child(
+                                div().size_3().flex_shrink_0(), // Alignment Div
+                            )
+                            .child(
+                                Label::new("Authenticating…")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                            ),
+
                     );
                 }
                 parent
@@ -1234,7 +1351,7 @@ impl Render for AgentConfiguration {
                             .min_w_0()
                             .overflow_y_scroll()
                             .child(self.render_agent_servers_section(cx))
-                            .child(self.render_context_servers_section(window, cx))
+                            .child(self.render_context_servers_section(cx))
                             .child(self.render_provider_configuration_section(cx)),
                     )
                     .vertical_scrollbar_for(&self.scroll_handle, window, cx),

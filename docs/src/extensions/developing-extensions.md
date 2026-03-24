@@ -48,8 +48,6 @@ description = "Example extension"
 repository = "https://github.com/your-name/my-zed-extension"
 ```
 
-> **Note:** If you are working on a theme extension with the intent to publish it later, suffix your theme extension ID with `-theme`. Otherwise, this may be raised during [extension publishing](#publishing-your-extension).
-
 In addition to this, there are several other optional files and directories that can be used to add functionality to a Zed extension. An example directory structure of an extension that provides all capabilities is as follows:
 
 ```
@@ -144,7 +142,24 @@ Your license file should be at the root of your extension repository. Any filena
 
 > This license requirement applies only to your extension code itself (the code that gets compiled into the extension binary).
 > It does not apply to any tools your extension may download or interact with, such as language servers or other external dependencies.
-> If your repository contains both extension code and other projects (like a language server), you are not required to relicense those other projects—only the extension code needs to be one of the aforementioned accepted licenses.
+> If your repository contains both extension code and other projects (like a language server), you are not required to relicense those other projects — only the extension code needs to be one of the aforementioned accepted licenses.
+
+## Extension Publishing Prerequisites
+
+Before publishing your extension, make sure that you have chosen a unique extension ID for your extension in the [extension manifest](#directory-structure-of-a-zed-extension).
+This will be the primary identifier for your extension and cannot be changed after your extension has been published.
+Also, ensure that you have filled out all the required fields in the manifest.
+
+Furthermore, please make sure that your extension fulfills the following preconditions before you move on to publishing your extension:
+
+- Extension IDs and names must not contain the words `zed`, `Zed` or `extension`, since they are all Zed extensions.
+- Your extension ID should provide some information on what your extension tries to accomplish. E.g. for themes, it should be suffixed with `-theme`, snippet extensions should be suffixed with `-snippets` and so on. An exception to that rule are extension that provide support for languages or popular tooling that people would expect to find under that ID. You can take a look at the list of [existing extensions](https://github.com/zed-industries/extensions/blob/main/extensions.toml) to get a grasp on how this usually is enforced.
+- Extensions should provide something that is not yet available in the marketplace as opposed to fixing something that could be resolved within an existing extension. For example, if you find that an existing extension's support for a language server is not functioning properly, first try contributing a fix to the existing extension as opposed to submitting a new extension immediately.
+  - If you receive no response or reaction within the upstream repository within a reasonable amount of time, feel free to submit a pull request that aims to fix said issue. Please ensure that you provide your previous efforts within the pull request to the extensions repository for adding your extension. Zed maintainers will then decide on how to proceed on a case by case basis.
+- Extensions that intend to provide a language, debugger or MCP server must not ship the language server as part of the extension. Instead, the extension should either download the language server or check for the availability of the language server in the users environment using the APIs as provided by the [Zed Rust Extension API](https://docs.rs/zed_extension_api/latest/zed_extension_api/).
+- Themes and icon themes should not be published as part of extensions that provide other features, e.g. language support. Instead, they should be published as a distinct extension. This also applies to theme and icon themes living in the same repository.
+
+Note that non-compliance will be raised during the publishing process by reviewers and delay the release of your extension.
 
 ## Publishing your extension
 
@@ -152,12 +167,14 @@ To publish an extension, open a PR to [the `zed-industries/extensions` repo](htt
 
 In your PR, do the following:
 
-1. Add your extension as a Git submodule within the `extensions/` directory
+1. Add your extension as a Git submodule within the `extensions/` directory under the `extensions/{extension-id}` path
 
 ```sh
-git submodule add https://github.com/your-username/foobar-zed.git extensions/foobar
-git add extensions/foobar
+git submodule add https://github.com/your-username/foobar-zed.git extensions/my-extension
+git add extensions/my-extension
 ```
+
+> **Note:** Your extension must live under te
 
 > All extension submodules must use HTTPS URLs and not SSH URLS (`git@github.com`).
 
@@ -169,13 +186,20 @@ submodule = "extensions/my-extension"
 version = "0.0.1"
 ```
 
-> If your extension is in a subdirectory within the submodule you can use the `path` field to point to where the extension resides.
+If your extension is in a subdirectory within the submodule, you can use the `path` field to point to where the extension resides:
+
+```toml
+[my-extension]
+submodule = "extensions-my-extension"
+path = "packages/zed"
+version = "0.0.1"
+```
+
+> Note that the [required extension license](#extension-license-requirements) must reside at the specified path, a license at the root of the repository will not work. However, you are free to symlink an existing license within the repository or choose an alternative license from the list of accepted licenses for the extension code.
 
 3. Run `pnpm sort-extensions` to ensure `extensions.toml` and `.gitmodules` are sorted
 
 Once your PR is merged, the extension will be packaged and published to the Zed extension registry.
-
-> Extension IDs and names should not contain `zed` or `Zed`, since they are all Zed extensions.
 
 ## Updating an extension
 

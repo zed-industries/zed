@@ -1,3 +1,4 @@
+use crate::DEFAULT_THREAD_TITLE;
 use crate::SendImmediately;
 use crate::ThreadHistory;
 use crate::{
@@ -14,7 +15,6 @@ use acp_thread::MentionUri;
 use agent::ThreadStore;
 use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
-use collections::HashSet;
 use editor::{
     Addon, AnchorRangeExt, ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode,
     EditorStyle, Inlay, MultiBuffer, MultiBufferOffset, MultiBufferSnapshot, ToOffset,
@@ -25,7 +25,7 @@ use gpui::{
     AppContext, ClipboardEntry, Context, Entity, EventEmitter, FocusHandle, Focusable, ImageFormat,
     KeyContext, SharedString, Subscription, Task, TextStyle, WeakEntity,
 };
-use language::{Buffer, Language, language_settings::InlayHintKind};
+use language::{Buffer, language_settings::InlayHintKind};
 use parking_lot::RwLock;
 use project::AgentId;
 use project::{CompletionIntent, InlayHint, InlayHintLabel, InlayId, Project, Worktree};
@@ -151,7 +151,10 @@ pub enum MessageEditorEvent {
     Cancel,
     Focus,
     LostFocus,
-    InputAttempted(Arc<str>),
+    InputAttempted {
+        text: Arc<str>,
+        cursor_offset: usize,
+    },
 }
 
 impl EventEmitter<MessageEditorEvent> for MessageEditor {}
@@ -172,16 +175,18 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let language = Language::new(
-            language::LanguageConfig {
-                completion_query_characters: HashSet::from_iter(['.', '-', '_', '@']),
-                ..Default::default()
-            },
-            None,
-        );
+        let language_registry = project
+            .upgrade()
+            .map(|project| project.read(cx).languages().clone());
 
         let editor = cx.new(|cx| {
-            let buffer = cx.new(|cx| Buffer::local("", cx).with_language(Arc::new(language), cx));
+            let buffer = cx.new(|cx| {
+                let buffer = Buffer::local("", cx);
+                if let Some(language_registry) = language_registry.as_ref() {
+                    buffer.set_language_registry(language_registry.clone());
+                }
+                buffer
+            });
             let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
 
             let mut editor = Editor::new(mode, buffer, None, window, cx);
@@ -255,7 +260,15 @@ impl MessageEditor {
                     && editor.read(cx).read_only(cx)
                     && !text.is_empty()
                 {
-                    cx.emit(MessageEditorEvent::InputAttempted(text.clone()));
+                    let editor = editor.read(cx);
+                    let cursor_anchor = editor.selections.newest_anchor().head();
+                    let cursor_offset = cursor_anchor
+                        .to_offset(&editor.buffer().read(cx).snapshot(cx))
+                        .0;
+                    cx.emit(MessageEditorEvent::InputAttempted {
+                        text: text.clone(),
+                        cursor_offset,
+                    });
                 }
 
                 if let EditorEvent::Edited { .. } = event
@@ -286,6 +299,22 @@ impl MessageEditor {
                 }
             }
         }));
+
+        if let Some(language_registry) = language_registry {
+            let editor = editor.clone();
+            cx.spawn(async move |_, cx| {
+                let markdown = language_registry.language_for_name("Markdown").await?;
+                editor.update(cx, |editor, cx| {
+                    if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
+                        buffer.update(cx, |buffer, cx| {
+                            buffer.set_language(Some(markdown), cx);
+                        });
+                    }
+                });
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+        }
 
         Self {
             editor,
@@ -370,7 +399,7 @@ impl MessageEditor {
         };
         let thread_title = title
             .filter(|title| !title.is_empty())
-            .unwrap_or_else(|| SharedString::new_static("New Thread"));
+            .unwrap_or_else(|| SharedString::new_static(DEFAULT_THREAD_TITLE));
         let uri = MentionUri::Thread {
             id: session_id,
             name: thread_title.to_string(),
@@ -1349,7 +1378,12 @@ impl MessageEditor {
                         continue;
                     };
 
-                    images.push(gpui::Image::from_bytes(format, content));
+                    let name: gpui::SharedString = path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|s| gpui::SharedString::from(s.to_owned()))
+                        .unwrap_or_else(|| "Image".into());
+                    images.push((gpui::Image::from_bytes(format, content), name));
                 }
 
                 crate::mention_set::insert_images_as_context(
@@ -1555,6 +1589,21 @@ impl MessageEditor {
 
     pub fn text(&self, cx: &App) -> String {
         self.editor.read(cx).text(cx)
+    }
+
+    pub fn set_cursor_offset(
+        &mut self,
+        offset: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.editor.update(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let offset = snapshot.clip_offset(MultiBufferOffset(offset), text::Bias::Left);
+            editor.change_selections(Default::default(), window, cx, |selections| {
+                selections.select_ranges([offset..offset]);
+            });
+        });
     }
 
     pub fn insert_text(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {

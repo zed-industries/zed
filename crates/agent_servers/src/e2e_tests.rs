@@ -208,8 +208,10 @@ pub async fn test_tool_call_with_permission<T, F>(
     thread.update(cx, |thread, cx| {
         thread.authorize_tool_call(
             tool_call_id,
-            allow_option_id.into(),
-            acp::PermissionOptionKind::AllowOnce,
+            acp_thread::SelectedPermissionOutcome::new(
+                allow_option_id,
+                acp::PermissionOptionKind::AllowOnce,
+            ),
             cx,
         );
 

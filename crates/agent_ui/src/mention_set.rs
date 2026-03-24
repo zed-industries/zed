@@ -739,7 +739,7 @@ mod tests {
 /// Inserts a list of images into the editor as context mentions.
 /// This is the shared implementation used by both paste and file picker operations.
 pub(crate) async fn insert_images_as_context(
-    images: Vec<gpui::Image>,
+    images: Vec<(gpui::Image, SharedString)>,
     editor: Entity<Editor>,
     mention_set: Entity<MentionSet>,
     workspace: WeakEntity<Workspace>,
@@ -751,7 +751,7 @@ pub(crate) async fn insert_images_as_context(
 
     let replacement_text = MentionUri::PastedImage.as_link().to_string();
 
-    for image in images {
+    for (image, name) in images {
         let Some((excerpt_id, text_anchor, multibuffer_anchor)) = editor
             .update_in(cx, |editor, window, cx| {
                 let snapshot = editor.snapshot(window, cx);
@@ -785,7 +785,7 @@ pub(crate) async fn insert_images_as_context(
                 excerpt_id,
                 text_anchor,
                 content_len,
-                MentionUri::PastedImage.name().into(),
+                name.clone(),
                 IconName::Image.path().into(),
                 None,
                 None,
@@ -856,10 +856,11 @@ pub(crate) fn paste_images_as_context(
 
     Some(window.spawn(cx, async move |mut cx| {
         use itertools::Itertools;
-        let (mut images, paths) = clipboard
+        let default_name: SharedString = MentionUri::PastedImage.name().into();
+        let (mut images, paths): (Vec<(gpui::Image, SharedString)>, Vec<_>) = clipboard
             .into_entries()
             .filter_map(|entry| match entry {
-                ClipboardEntry::Image(image) => Some(Either::Left(image)),
+                ClipboardEntry::Image(image) => Some(Either::Left((image, default_name.clone()))),
                 ClipboardEntry::ExternalPaths(paths) => Some(Either::Right(paths)),
                 _ => None,
             })
@@ -870,24 +871,32 @@ pub(crate) fn paste_images_as_context(
                 cx.background_spawn(async move {
                     let mut images = vec![];
                     for path in paths.into_iter().flat_map(|paths| paths.paths().to_owned()) {
-                        let Ok(content) = async_fs::read(path).await else {
+                        let Ok(content) = async_fs::read(&path).await else {
                             continue;
                         };
                         let Ok(format) = image::guess_format(&content) else {
                             continue;
                         };
-                        images.push(gpui::Image::from_bytes(
-                            match format {
-                                image::ImageFormat::Png => gpui::ImageFormat::Png,
-                                image::ImageFormat::Jpeg => gpui::ImageFormat::Jpeg,
-                                image::ImageFormat::WebP => gpui::ImageFormat::Webp,
-                                image::ImageFormat::Gif => gpui::ImageFormat::Gif,
-                                image::ImageFormat::Bmp => gpui::ImageFormat::Bmp,
-                                image::ImageFormat::Tiff => gpui::ImageFormat::Tiff,
-                                image::ImageFormat::Ico => gpui::ImageFormat::Ico,
-                                _ => continue,
-                            },
-                            content,
+                        let name: SharedString = path
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .map(|s| SharedString::from(s.to_owned()))
+                            .unwrap_or_else(|| default_name.clone());
+                        images.push((
+                            gpui::Image::from_bytes(
+                                match format {
+                                    image::ImageFormat::Png => gpui::ImageFormat::Png,
+                                    image::ImageFormat::Jpeg => gpui::ImageFormat::Jpeg,
+                                    image::ImageFormat::WebP => gpui::ImageFormat::Webp,
+                                    image::ImageFormat::Gif => gpui::ImageFormat::Gif,
+                                    image::ImageFormat::Bmp => gpui::ImageFormat::Bmp,
+                                    image::ImageFormat::Tiff => gpui::ImageFormat::Tiff,
+                                    image::ImageFormat::Ico => gpui::ImageFormat::Ico,
+                                    _ => continue,
+                                },
+                                content,
+                            ),
+                            name,
                         ));
                     }
                     images

@@ -1,4 +1,4 @@
-use crate::SelectPermissionGranularity;
+use crate::{DEFAULT_THREAD_TITLE, SelectPermissionGranularity};
 use std::cell::RefCell;
 
 use acp_thread::ContentBlock;
@@ -405,7 +405,11 @@ impl ThreadView {
             let can_edit = thread.update(cx, |thread, cx| thread.can_set_title(cx));
             let editor = cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_text(thread.read(cx).title(), window, cx);
+                if let Some(title) = thread.read(cx).title() {
+                    editor.set_text(title, window, cx);
+                } else {
+                    editor.set_text(DEFAULT_THREAD_TITLE, window, cx);
+                }
                 editor.set_read_only(!can_edit);
                 editor
             });
@@ -581,7 +585,7 @@ impl ThreadView {
                 self.cancel_editing(&Default::default(), window, cx);
             }
             MessageEditorEvent::LostFocus => {}
-            MessageEditorEvent::InputAttempted(_) => {}
+            MessageEditorEvent::InputAttempted { .. } => {}
         }
     }
 
@@ -718,7 +722,7 @@ impl ThreadView {
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Cancel) => {
                 self.cancel_editing(&Default::default(), window, cx);
             }
-            ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::InputAttempted(_)) => {}
+            ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::InputAttempted { .. }) => {}
             ViewEvent::OpenDiffLocation {
                 path,
                 position,
@@ -1052,7 +1056,7 @@ impl ThreadView {
                     .ok();
                 }
             });
-            if is_first_message {
+            if is_first_message && thread.read_with(cx, |thread, _cx| thread.title().is_none())? {
                 let text: String = contents
                     .iter()
                     .filter_map(|block| match block {
@@ -1066,7 +1070,7 @@ impl ThreadView {
                     .join(" ");
                 let text = text.lines().next().unwrap_or("").trim();
                 if !text.is_empty() {
-                    let title: SharedString = util::truncate_and_trailoff(text, 20).into();
+                    let title: SharedString = util::truncate_and_trailoff(text, 200).into();
                     thread.update(cx, |thread, cx| {
                         thread.set_provisional_title(title, cx);
                     })?;
@@ -1436,6 +1440,7 @@ impl ThreadView {
         &mut self,
         index: usize,
         inserted_text: Option<&str>,
+        cursor_offset: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -1451,6 +1456,9 @@ impl ThreadView {
         if message_editor.read(cx).is_empty(cx) {
             message_editor.update(cx, |editor, cx| {
                 editor.set_message(queued_content, window, cx);
+                if let Some(offset) = cursor_offset {
+                    editor.set_cursor_offset(offset, window, cx);
+                }
                 if let Some(inserted_text) = inserted_text.as_deref() {
                     editor.insert_text(inserted_text, window, cx);
                 }
@@ -1459,8 +1467,16 @@ impl ThreadView {
             return true;
         }
 
+        // Adjust cursor offset accounting for existing content
+        let existing_len = message_editor.read(cx).text(cx).len();
+        let separator = "\n\n";
+
         message_editor.update(cx, |editor, cx| {
-            editor.append_message(queued_content, Some("\n\n"), window, cx);
+            editor.append_message(queued_content, Some(separator), window, cx);
+            if let Some(offset) = cursor_offset {
+                let adjusted_offset = existing_len + separator.len() + offset;
+                editor.set_cursor_offset(adjusted_offset, window, cx);
+            }
             if let Some(inserted_text) = inserted_text.as_deref() {
                 editor.insert_text(inserted_text, window, cx);
             }
@@ -1537,7 +1553,7 @@ impl ThreadView {
             EditorEvent::Blurred => {
                 if title_editor.read(cx).text(cx).is_empty() {
                     title_editor.update(cx, |editor, cx| {
-                        editor.set_text("New Thread", window, cx);
+                        editor.set_text(DEFAULT_THREAD_TITLE, window, cx);
                     });
                 }
             }
@@ -1576,12 +1592,11 @@ impl ThreadView {
         session_id: acp::SessionId,
         tool_call_id: acp::ToolCallId,
         outcome: SelectedPermissionOutcome,
-        option_kind: acp::PermissionOptionKind,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.conversation.update(cx, |conversation, cx| {
-            conversation.authorize_tool_call(session_id, tool_call_id, outcome, option_kind, cx);
+            conversation.authorize_tool_call(session_id, tool_call_id, outcome, cx);
         });
         if self.should_be_following {
             self.workspace
@@ -1644,8 +1659,7 @@ impl ThreadView {
         self.authorize_tool_call(
             self.id.clone(),
             tool_call_id,
-            option_id.into(),
-            option_kind,
+            SelectedPermissionOutcome::new(option_id, option_kind),
             window,
             cx,
         );
@@ -1736,16 +1750,9 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        let (choices, dropdown_with_patterns) = match options {
-            PermissionOptions::Dropdown(choices) => (choices.as_slice(), None),
-            PermissionOptions::DropdownWithPatterns {
-                choices,
-                patterns,
-                tool_name,
-            } => (
-                choices.as_slice(),
-                Some((patterns.as_slice(), tool_name.as_str())),
-            ),
+        let choices = match options {
+            PermissionOptions::Dropdown(choices) => choices.as_slice(),
+            PermissionOptions::DropdownWithPatterns { choices, .. } => choices.as_slice(),
             _ => {
                 let kind = if is_allow {
                     acp::PermissionOptionKind::AllowOnce
@@ -1759,34 +1766,9 @@ impl ThreadView {
         let selection = self.permission_selections.get(&tool_call_id);
 
         // When in per-command pattern mode, use the checked patterns.
-        if let Some(PermissionSelection::SelectedPatterns(checked)) = selection
-            && let Some((patterns, tool_name)) = dropdown_with_patterns
-        {
-            let checked_patterns: Vec<_> = patterns
-                .iter()
-                .enumerate()
-                .filter(|(index, _)| checked.contains(index))
-                .map(|(_, cp)| cp.pattern.clone())
-                .collect();
-
-            if !checked_patterns.is_empty() {
-                let (option_id_str, kind) = if is_allow {
-                    (
-                        format!("always_allow:{}", tool_name),
-                        acp::PermissionOptionKind::AllowAlways,
-                    )
-                } else {
-                    (
-                        format!("always_deny:{}", tool_name),
-                        acp::PermissionOptionKind::RejectAlways,
-                    )
-                };
-                let outcome =
-                    SelectedPermissionOutcome::new(acp::PermissionOptionId::new(option_id_str))
-                        .params(Some(SelectedPermissionParams::Terminal {
-                            patterns: checked_patterns,
-                        }));
-                self.authorize_tool_call(session_id, tool_call_id, outcome, kind, window, cx);
+        if let Some(PermissionSelection::SelectedPatterns(checked)) = selection {
+            if let Some(outcome) = options.build_outcome_for_checked_patterns(checked, is_allow) {
+                self.authorize_tool_call(session_id, tool_call_id, outcome, window, cx);
                 return Some(());
             }
         }
@@ -1797,32 +1779,9 @@ impl ThreadView {
             .unwrap_or_else(|| choices.len().saturating_sub(1));
 
         let selected_choice = choices.get(selected_index).or(choices.last())?;
+        let outcome = selected_choice.build_outcome(is_allow);
 
-        let selected_option = if is_allow {
-            &selected_choice.allow
-        } else {
-            &selected_choice.deny
-        };
-
-        let params = if !selected_choice.sub_patterns.is_empty() {
-            Some(SelectedPermissionParams::Terminal {
-                patterns: selected_choice.sub_patterns.clone(),
-            })
-        } else {
-            None
-        };
-
-        let outcome =
-            SelectedPermissionOutcome::new(selected_option.option_id.clone()).params(params);
-
-        self.authorize_tool_call(
-            session_id,
-            tool_call_id,
-            outcome,
-            selected_option.kind,
-            window,
-            cx,
-        );
+        self.authorize_tool_call(session_id, tool_call_id, outcome, window, cx);
 
         Some(())
     }
@@ -3091,7 +3050,7 @@ impl ThreadView {
                                             })
                                             .on_click(cx.listener(move |this, _, window, cx| {
                                                 this.move_queued_message_to_main_editor(
-                                                    index, None, window, cx,
+                                                    index, None, None, window, cx,
                                                 );
                                             })),
                                     )
@@ -3165,7 +3124,7 @@ impl ThreadView {
                                             })
                                             .on_click(cx.listener(move |this, _, window, cx| {
                                                 this.move_queued_message_to_main_editor(
-                                                    index, None, window, cx,
+                                                    index, None, None, window, cx,
                                                 );
                                             })),
                                     )
@@ -4656,7 +4615,10 @@ impl ThreadView {
             .language_for_name("Markdown");
 
         let thread = self.thread.read(cx);
-        let thread_title = thread.title().to_string();
+        let thread_title = thread
+            .title()
+            .unwrap_or_else(|| DEFAULT_THREAD_TITLE.into())
+            .to_string();
         let markdown = thread.to_markdown(cx);
 
         let project = workspace.read(cx).project().clone();
@@ -6435,8 +6397,7 @@ impl ThreadView {
                             this.authorize_tool_call(
                                 session_id.clone(),
                                 tool_call_id.clone(),
-                                option_id.clone().into(),
-                                option_kind,
+                                SelectedPermissionOutcome::new(option_id.clone(), option_kind),
                                 window,
                                 cx,
                             );
@@ -7068,7 +7029,7 @@ impl ThreadView {
 
         let thread_title = thread
             .as_ref()
-            .map(|t| t.read(cx).title())
+            .and_then(|t| t.read(cx).title())
             .filter(|t| !t.is_empty());
         let tool_call_label = tool_call.label.read(cx).source().to_string();
         let has_tool_call_label = !tool_call_label.is_empty();
@@ -8220,7 +8181,7 @@ impl Render for ThreadView {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &EditFirstQueuedMessage, window, cx| {
-                this.move_queued_message_to_main_editor(0, None, window, cx);
+                this.move_queued_message_to_main_editor(0, None, None, window, cx);
             }))
             .on_action(cx.listener(|this, _: &ClearMessageQueue, _, cx| {
                 this.local_queued_messages.clear();

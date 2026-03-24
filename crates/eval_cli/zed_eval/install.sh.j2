@@ -22,6 +22,12 @@ apt-get install -y --no-install-recommends \
 curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
 apt-get install -y --no-install-recommends nodejs
 
+# Preinstall basedpyright in Zed's language server cache to avoid first-run npm install latency.
+ZED_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/zed"
+BASEDPYRIGHT_DIR="$ZED_DATA_DIR/languages/basedpyright"
+mkdir -p "$BASEDPYRIGHT_DIR"
+npm install --prefix "$BASEDPYRIGHT_DIR" --save-exact basedpyright
+
 # Install uv (needed for running Python tests in SWE-bench tasks).
 curl -LsSf https://astral.sh/uv/install.sh | sh
 . "$HOME/.local/bin/env"

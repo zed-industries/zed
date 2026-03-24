@@ -21,6 +21,8 @@ use ui::{App, Context, SharedString};
 use util::ResultExt as _;
 use workspace::PathList;
 
+use crate::DEFAULT_THREAD_TITLE;
+
 pub fn init(cx: &mut App) {
     SidebarThreadMetadataStore::init_global(cx);
 
@@ -81,11 +83,15 @@ fn migrate_thread_metadata(cx: &mut App) {
                 .collect::<Vec<_>>()
         });
 
+        log::info!("Migrating {} thread store entries", metadata.len());
+
         // Manually save each entry to the database and call reload, otherwise
         // we'll end up triggering lots of reloads after each save
         for entry in metadata {
             db.save(entry).await?;
         }
+
+        log::info!("Finished migrating thread store entries");
 
         let _ = store.update(cx, |store, cx| store.reload(cx));
         Ok(())
@@ -134,7 +140,9 @@ impl ThreadMetadata {
     pub fn from_thread(thread: &Entity<acp_thread::AcpThread>, cx: &App) -> Self {
         let thread_ref = thread.read(cx);
         let session_id = thread_ref.session_id().clone();
-        let title = thread_ref.title();
+        let title = thread_ref
+            .title()
+            .unwrap_or_else(|| DEFAULT_THREAD_TITLE.into());
         let updated_at = Utc::now();
 
         let agent_id = thread_ref.connection().agent_id();
@@ -987,7 +995,7 @@ mod tests {
             cx.new(|cx| {
                 acp_thread::AcpThread::new(
                     Some(regular_session_id.clone()),
-                    "Subagent Thread",
+                    Some("Subagent Thread".into()),
                     None,
                     connection.clone(),
                     project.clone(),

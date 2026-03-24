@@ -162,6 +162,7 @@ pub struct TitleBar {
 impl Render for TitleBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let title_bar_settings = *TitleBarSettings::get_global(cx);
+        let button_layout = title_bar_settings.button_layout;
 
         let show_menus = show_menus(cx);
 
@@ -266,6 +267,7 @@ impl Render for TitleBar {
 
         if show_menus {
             self.platform_titlebar.update(cx, |this, _| {
+                this.set_button_layout(button_layout);
                 this.set_children(
                     self.application_menu
                         .clone()
@@ -293,6 +295,7 @@ impl Render for TitleBar {
                 .into_any_element()
         } else {
             self.platform_titlebar.update(cx, |this, _| {
+                this.set_button_layout(button_layout);
                 this.set_children(children);
             });
             self.platform_titlebar.clone().into_any_element()
@@ -360,6 +363,7 @@ impl TitleBar {
             }),
         );
         subscriptions.push(cx.observe(&user_store, |_a, _, cx| cx.notify()));
+        subscriptions.push(cx.observe_button_layout_changed(window, |_, _, cx| cx.notify()));
         if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
             subscriptions.push(cx.subscribe(&trusted_worktrees, |_, _, _, cx| {
                 cx.notify();
@@ -908,14 +912,7 @@ impl TitleBar {
         };
 
         let branch_name = branch_name?;
-        let button_text = if let Some(worktree_name) = linked_worktree_name {
-            format!("{}/{}", worktree_name, branch_name)
-        } else {
-            branch_name
-        };
-
         let settings = TitleBarSettings::get_global(cx);
-
         let effective_repository = Some(repository);
 
         Some(
@@ -931,21 +928,42 @@ impl TitleBar {
                     ))
                 })
                 .trigger_with_tooltip(
-                    Button::new("project_branch_trigger", button_text)
+                    ButtonLike::new("project_branch_trigger")
                         .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                        .label_size(LabelSize::Small)
-                        .color(Color::Muted)
-                        .when(settings.show_branch_icon, |branch_button| {
-                            let (icon, icon_color) = icon_info;
-                            branch_button.start_icon(
-                                Icon::new(icon).size(IconSize::Indicator).color(icon_color),
-                            )
-                        }),
+                        .child(
+                            h_flex()
+                                .gap_0p5()
+                                .when(settings.show_branch_icon, |this| {
+                                    let (icon, icon_color) = icon_info;
+                                    this.child(
+                                        Icon::new(icon).size(IconSize::XSmall).color(icon_color),
+                                    )
+                                })
+                                .when_some(linked_worktree_name.as_ref(), |this, worktree_name| {
+                                    this.child(
+                                        Label::new(worktree_name)
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                    .child(
+                                        Label::new("/").size(LabelSize::Small).color(
+                                            Color::Custom(
+                                                cx.theme().colors().text_muted.opacity(0.4),
+                                            ),
+                                        ),
+                                    )
+                                })
+                                .child(
+                                    Label::new(branch_name)
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                ),
+                        ),
                     move |_window, cx| {
                         Tooltip::with_meta(
-                            "Recent Branches",
+                            "Git Switcher",
                             Some(&zed_actions::git::Branch),
-                            "Local branches only",
+                            "Worktrees, Branches, and Stashes",
                             cx,
                         )
                     },

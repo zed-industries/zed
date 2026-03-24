@@ -1,9 +1,8 @@
 use acp_thread::{
     AcpThread, AcpThreadEvent, AgentSessionInfo, AgentThreadEntry, AssistantMessage,
     AssistantMessageChunk, AuthRequired, LoadError, MentionUri, PermissionOptionChoice,
-    PermissionOptions, PermissionPattern, RetryStatus, SelectedPermissionOutcome,
-    SelectedPermissionParams, ThreadStatus, ToolCall, ToolCallContent, ToolCallStatus,
-    UserMessageId,
+    PermissionOptions, PermissionPattern, RetryStatus, SelectedPermissionOutcome, ThreadStatus,
+    ToolCall, ToolCallContent, ToolCallStatus, UserMessageId,
 };
 use acp_thread::{AgentConnection, Plan};
 use action_log::{ActionLog, ActionLogTelemetry, DiffStats};
@@ -40,6 +39,7 @@ use parking_lot::RwLock;
 use project::{AgentId, AgentServerStore, Project, ProjectEntryId};
 use prompt_store::{PromptId, PromptStore};
 
+use crate::DEFAULT_THREAD_TITLE;
 use crate::message_editor::SessionCapabilities;
 use rope::Point;
 use settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore};
@@ -248,8 +248,7 @@ impl Conversation {
         self.authorize_tool_call(
             session_id.clone(),
             tool_call_id,
-            option.option_id.clone().into(),
-            option.kind,
+            SelectedPermissionOutcome::new(option.option_id.clone(), option.kind),
             cx,
         );
         Some(())
@@ -260,7 +259,6 @@ impl Conversation {
         session_id: acp::SessionId,
         tool_call_id: acp::ToolCallId,
         outcome: SelectedPermissionOutcome,
-        option_kind: acp::PermissionOptionKind,
         cx: &mut Context<Self>,
     ) {
         let Some(thread) = self.threads.get(&session_id) else {
@@ -272,11 +270,11 @@ impl Conversation {
             "Agent Tool Call Authorized",
             agent = agent_telemetry_id,
             session = session_id,
-            option = option_kind
+            option = outcome.option_kind
         );
 
         thread.update(cx, |thread, cx| {
-            thread.authorize_tool_call(tool_call_id, outcome, option_kind, cx);
+            thread.authorize_tool_call(tool_call_id, outcome, cx);
         });
         cx.notify();
     }
@@ -551,7 +549,7 @@ impl ConversationView {
                 (
                     Some(thread.session_id().clone()),
                     thread.work_dirs().cloned(),
-                    Some(thread.title()),
+                    thread.title(),
                 )
             })
             .unwrap_or((None, None, None));
@@ -1106,9 +1104,12 @@ impl ConversationView {
         &self.workspace
     }
 
-    pub fn title(&self, _cx: &App) -> SharedString {
+    pub fn title(&self, cx: &App) -> SharedString {
         match &self.server_state {
-            ServerState::Connected(_) => "New Thread".into(),
+            ServerState::Connected(view) => view
+                .active_view()
+                .and_then(|v| v.read(cx).thread.read(cx).title())
+                .unwrap_or_else(|| DEFAULT_THREAD_TITLE.into()),
             ServerState::Loading(_) => "Loading…".into(),
             ServerState::LoadError { error, .. } => match error {
                 LoadError::Unsupported { .. } => {
@@ -1172,12 +1173,19 @@ impl ConversationView {
         &mut self,
         index: usize,
         inserted_text: Option<&str>,
+        cursor_offset: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(active) = self.active_thread() {
             active.update(cx, |active, cx| {
-                active.move_queued_message_to_main_editor(index, inserted_text, window, cx);
+                active.move_queued_message_to_main_editor(
+                    index,
+                    inserted_text,
+                    cursor_offset,
+                    window,
+                    cx,
+                );
             });
         }
     }
@@ -1350,8 +1358,9 @@ impl ConversationView {
                 );
             }
             AcpThreadEvent::TitleUpdated => {
-                let title = thread.read(cx).title();
-                if let Some(active_thread) = self.thread_view(&thread_id) {
+                if let Some(title) = thread.read(cx).title()
+                    && let Some(active_thread) = self.thread_view(&thread_id)
+                {
                     let title_editor = active_thread.read(cx).title_editor.clone();
                     title_editor.update(cx, |editor, cx| {
                         if editor.text(cx) != title {
@@ -2190,8 +2199,16 @@ impl ConversationView {
                 &editor,
                 window,
                 move |this, _editor, event, window, cx| match event {
-                    MessageEditorEvent::InputAttempted(text) => this
-                        .move_queued_message_to_main_editor(index, Some(text.as_ref()), window, cx),
+                    MessageEditorEvent::InputAttempted {
+                        text,
+                        cursor_offset,
+                    } => this.move_queued_message_to_main_editor(
+                        index,
+                        Some(text.as_ref()),
+                        Some(*cursor_offset),
+                        window,
+                        cx,
+                    ),
                     MessageEditorEvent::LostFocus => {
                         this.save_queued_message_at_index(index, cx);
                     }
@@ -3610,7 +3627,7 @@ pub(crate) mod tests {
         C: 'static + AgentConnection + Send + Clone,
     {
         fn logo(&self) -> ui::IconName {
-            ui::IconName::Ai
+            ui::IconName::ZedAgent
         }
 
         fn agent_id(&self) -> AgentId {
@@ -3708,7 +3725,7 @@ pub(crate) mod tests {
         cx.new(|cx| {
             AcpThread::new(
                 None,
-                name,
+                Some(name.into()),
                 None,
                 connection,
                 project,
@@ -3908,7 +3925,7 @@ pub(crate) mod tests {
             Task::ready(Ok(cx.new(|cx| {
                 AcpThread::new(
                     None,
-                    "AuthGatedAgent",
+                    None,
                     Some(work_dirs),
                     self,
                     project,
@@ -3982,7 +3999,7 @@ pub(crate) mod tests {
                 let action_log = cx.new(|_| ActionLog::new(project.clone()));
                 AcpThread::new(
                     None,
-                    "SaboteurAgentConnection",
+                    None,
                     Some(work_dirs),
                     self,
                     project,
@@ -4052,7 +4069,7 @@ pub(crate) mod tests {
                 let action_log = cx.new(|_| ActionLog::new(project.clone()));
                 AcpThread::new(
                     None,
-                    "RefusalAgentConnection",
+                    None,
                     Some(work_dirs),
                     self,
                     project,
@@ -4132,7 +4149,7 @@ pub(crate) mod tests {
             let thread = cx.new(|cx| {
                 AcpThread::new(
                     None,
-                    "CwdCapturingConnection",
+                    None,
                     Some(work_dirs),
                     self.clone(),
                     project,
@@ -4167,7 +4184,7 @@ pub(crate) mod tests {
             let thread = cx.new(|cx| {
                 AcpThread::new(
                     None,
-                    "CwdCapturingConnection",
+                    None,
                     Some(work_dirs),
                     self.clone(),
                     project,
@@ -6109,7 +6126,7 @@ pub(crate) mod tests {
             assert_eq!(editor.text(cx), "My Custom Title");
         });
         thread.read_with(cx, |thread, _cx| {
-            assert_eq!(thread.title().as_ref(), "My Custom Title");
+            assert_eq!(thread.title(), Some("My Custom Title".into()));
         });
     }
 
@@ -6195,7 +6212,7 @@ pub(crate) mod tests {
         cx.new(|cx| {
             AcpThread::new(
                 parent_session_id,
-                "Test Thread",
+                None,
                 None,
                 connection,
                 project,
@@ -6271,8 +6288,10 @@ pub(crate) mod tests {
                 conversation.authorize_tool_call(
                     acp::SessionId::new("session-1"),
                     acp::ToolCallId::new("tc-1"),
-                    acp::PermissionOptionId::new("allow-1").into(),
-                    acp::PermissionOptionKind::AllowOnce,
+                    SelectedPermissionOutcome::new(
+                        acp::PermissionOptionId::new("allow-1"),
+                        acp::PermissionOptionKind::AllowOnce,
+                    ),
                     cx,
                 );
             });
@@ -6294,8 +6313,10 @@ pub(crate) mod tests {
                 conversation.authorize_tool_call(
                     acp::SessionId::new("session-1"),
                     acp::ToolCallId::new("tc-2"),
-                    acp::PermissionOptionId::new("allow-2").into(),
-                    acp::PermissionOptionKind::AllowOnce,
+                    SelectedPermissionOutcome::new(
+                        acp::PermissionOptionId::new("allow-2"),
+                        acp::PermissionOptionKind::AllowOnce,
+                    ),
                     cx,
                 );
             });
@@ -6433,8 +6454,10 @@ pub(crate) mod tests {
                 conversation.authorize_tool_call(
                     acp::SessionId::new("thread-a"),
                     acp::ToolCallId::new("tc-a"),
-                    acp::PermissionOptionId::new("allow-a").into(),
-                    acp::PermissionOptionKind::AllowOnce,
+                    SelectedPermissionOutcome::new(
+                        acp::PermissionOptionId::new("allow-a"),
+                        acp::PermissionOptionKind::AllowOnce,
+                    ),
                     cx,
                 );
             });
@@ -6472,7 +6495,7 @@ pub(crate) mod tests {
             // Main editor must be empty for this path — it is by default, but
             // assert to make the precondition explicit.
             assert!(thread.message_editor.read(cx).is_empty(cx));
-            thread.move_queued_message_to_main_editor(0, None, window, cx);
+            thread.move_queued_message_to_main_editor(0, None, None, window, cx);
         });
 
         cx.run_until_parked();
@@ -6517,7 +6540,7 @@ pub(crate) mod tests {
                 vec![],
                 cx,
             );
-            thread.move_queued_message_to_main_editor(0, None, window, cx);
+            thread.move_queued_message_to_main_editor(0, None, None, window, cx);
         });
 
         cx.run_until_parked();
@@ -6703,7 +6726,7 @@ pub(crate) mod tests {
             let thread = cx.new(|cx| {
                 AcpThread::new(
                     None,
-                    "CloseCapableConnection",
+                    Some("CloseCapableConnection".into()),
                     Some(work_dirs),
                     self,
                     project,

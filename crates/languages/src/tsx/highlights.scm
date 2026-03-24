@@ -268,7 +268,6 @@
   "abstract"
   "as"
   "async"
-  "await"
   "debugger"
   "declare"
   "default"
@@ -318,6 +317,7 @@
 ] @keyword.import
 
 [
+  "await"
   "break"
   "case"
   "catch"
