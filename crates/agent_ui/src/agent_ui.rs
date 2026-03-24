@@ -47,7 +47,7 @@ use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt as _};
 use fs::Fs;
-use gpui::{Action, App, AppContext as _, Context, Entity, SharedString, Task,, UpdateGlobal, Window, actions};
+use gpui::{Action, App, Context, Entity, SharedString, UpdateGlobal, Window, actions};
 use language::{
     LanguageRegistry,
     language_settings::{AllLanguageSettings, EditPredictionProvider},
