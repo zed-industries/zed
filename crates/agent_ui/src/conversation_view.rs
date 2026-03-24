@@ -2546,7 +2546,9 @@ impl ConversationView {
         task.detach_and_log_err(cx);
 
         if let Some(store) = SidebarThreadMetadataStore::try_global(cx) {
-            store.update(cx, |store, cx| store.delete(session_id.clone(), cx));
+            store
+                .update(cx, |store, cx| store.delete(session_id.clone(), cx))
+                .detach_and_log_err(cx);
         }
     }
 }
