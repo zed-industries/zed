@@ -145,6 +145,7 @@ enum AgentServerStoreState {
             Option<SharedString>,
         )>,
         _subscriptions: Vec<Subscription>,
+        registry_subscribed: bool,
     },
     Remote {
         project_id: u64,
@@ -400,13 +401,26 @@ impl AgentServerStore {
             settings: old_settings,
             http_client,
             extension_agents,
-            ..
+            _subscriptions,
+            registry_subscribed,
         } = &mut self.state
         else {
             debug_panic!("Non-local projects should never attempt to reregister. This is a bug!");
 
             return;
         };
+
+        // Lazily subscribe to AgentRegistryStore if it wasn't available at
+        // construction time (startup race: AgentServerStore may be created
+        // before AgentRegistryStore is set as a global).
+        if !*registry_subscribed {
+            if let Some(registry_store) = AgentRegistryStore::try_global(cx) {
+                _subscriptions.push(cx.observe(&registry_store, |this, _, cx| {
+                    this.reregister_agents(cx);
+                }));
+                *registry_subscribed = true;
+            }
+        }
 
         let new_settings = cx
             .global::<SettingsStore>()
@@ -589,10 +603,12 @@ impl AgentServerStore {
         let mut subscriptions = vec![cx.observe_global::<SettingsStore>(|this, cx| {
             this.agent_servers_settings_changed(cx);
         })];
+        let mut registry_subscribed = false;
         if let Some(registry_store) = AgentRegistryStore::try_global(cx) {
             subscriptions.push(cx.observe(&registry_store, |this, _, cx| {
                 this.reregister_agents(cx);
             }));
+            registry_subscribed = true;
         }
         let mut this = Self {
             state: AgentServerStoreState::Local {
@@ -604,6 +620,7 @@ impl AgentServerStore {
                 settings: None,
                 extension_agents: vec![],
                 _subscriptions: subscriptions,
+                registry_subscribed,
             },
             external_agents: HashMap::default(),
         };
