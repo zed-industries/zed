@@ -538,7 +538,7 @@ mod tests {
                 snapshot.is_line_folded(MultiBufferRow(0)),
                 "Indentation-based fold should work on the function"
             );
-            assert_eq!(editor.display_text(cx), "fn main() {⋯\n}\n",);
+            assert_eq!(editor.display_text(cx), "fn main() {⋯}\n",);
         });
 
         cx.update_editor(|editor, window, cx| {
@@ -666,7 +666,7 @@ mod tests {
                 snapshot.is_line_folded(MultiBufferRow(0)),
                 "Indentation-based fold should work again after switching back"
             );
-            assert_eq!(editor.display_text(cx), "fn main() {⋯\n}\n",);
+            assert_eq!(editor.display_text(cx), "fn main() {⋯}\n",);
         });
     }
 
