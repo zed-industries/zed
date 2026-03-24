@@ -145,7 +145,11 @@ impl ModelPickerDelegate {
     }
 
     pub fn favorites_count(&self) -> usize {
-        self.favorites.len()
+        let Some(models) = &self.models else {
+            return 0;
+        };
+
+        visible_favorite_models(models, &self.favorites, &self.hidden).len()
     }
 
     pub fn cycle_favorite_models(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
@@ -157,16 +161,7 @@ impl ModelPickerDelegate {
             return;
         };
 
-        let all_models: Vec<&AgentModelInfo> = match models {
-            AgentModelList::Flat(list) => list.iter().collect(),
-            AgentModelList::Grouped(index_map) => index_map.values().flatten().collect(),
-        };
-
-        let favorite_models: Vec<_> = all_models
-            .into_iter()
-            .filter(|model| self.favorites.contains(&model.id) && !self.hidden.contains(&model.id))
-            .unique_by(|model| &model.id)
-            .collect();
+        let favorite_models = visible_favorite_models(models, &self.favorites, &self.hidden);
 
         if favorite_models.is_empty() {
             return;
@@ -201,6 +196,23 @@ impl ModelPickerDelegate {
             cx.notify();
         }
     }
+}
+
+fn visible_favorite_models<'a>(
+    models: &'a AgentModelList,
+    favorites: &HashSet<ModelId>,
+    hidden: &HashSet<ModelId>,
+) -> Vec<&'a AgentModelInfo> {
+    let all_models: Vec<&AgentModelInfo> = match models {
+        AgentModelList::Flat(list) => list.iter().collect(),
+        AgentModelList::Grouped(index_map) => index_map.values().flatten().collect(),
+    };
+
+    all_models
+        .into_iter()
+        .filter(|model| favorites.contains(&model.id) && !hidden.contains(&model.id))
+        .unique_by(|model| &model.id)
+        .collect()
 }
 
 impl PickerDelegate for ModelPickerDelegate {
@@ -824,6 +836,25 @@ mod tests {
 
         let with_duplicates = create_favorites(vec!["model-a", "model-a", "model-b"]);
         assert_eq!(with_duplicates.len(), 2);
+    }
+
+    #[gpui::test]
+    fn test_visible_favorites_exclude_hidden_and_missing_models(_cx: &mut TestAppContext) {
+        let models = create_model_list(vec![(
+            "group",
+            vec!["visible-favorite", "hidden-favorite", "regular-model"],
+        )]);
+        let favorites = create_favorites(vec![
+            "visible-favorite",
+            "hidden-favorite",
+            "missing-favorite",
+        ]);
+        let hidden = create_favorites(vec!["hidden-favorite"]);
+
+        let visible = visible_favorite_models(&models, &favorites, &hidden);
+
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].id.0.as_ref(), "visible-favorite");
     }
 
     #[gpui::test]
