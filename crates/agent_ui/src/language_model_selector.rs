@@ -98,16 +98,6 @@ fn all_models(cx: &App) -> GroupedModels {
     GroupedModels::new(all, recommended)
 }
 
-fn is_hidden_model(model: &ConfiguredModel, cx: &App) -> bool {
-    AgentSettings::get_global(cx)
-        .hidden_models
-        .iter()
-        .any(|selection| {
-            selection.provider.0.as_ref() == model.provider.id().0.as_ref()
-                && selection.model.as_ref() == model.model.id().0.as_ref()
-        })
-}
-
 type FavoritesIndex = HashMap<LanguageModelProviderId, HashSet<LanguageModelId>>;
 type HiddenIndex = HashMap<LanguageModelProviderId, HashSet<LanguageModelId>>;
 
@@ -168,12 +158,7 @@ impl LanguageModelPickerDelegate {
         let on_model_changed = Arc::new(on_model_changed);
         let models = all_models(cx);
         let active_model = get_active_model(cx);
-        let entries = models.entries(
-            active_model.as_ref(),
-            active_model
-                .as_ref()
-                .is_some_and(|active_model| is_hidden_model(active_model, cx)),
-        );
+        let entries = models.entries();
 
         Self {
             on_model_changed,
@@ -363,11 +348,7 @@ impl GroupedModels {
         }
     }
 
-    fn entries(
-        &self,
-        active_model: Option<&ConfiguredModel>,
-        include_hidden_active: bool,
-    ) -> Vec<LanguageModelPickerEntry> {
+    fn entries(&self) -> Vec<LanguageModelPickerEntry> {
         let mut entries = Vec::new();
 
         if !self.favorites.is_empty() {
@@ -396,56 +377,6 @@ impl GroupedModels {
             }
         }
 
-        prepend_active_model_entry(entries, self, active_model, include_hidden_active)
-    }
-}
-
-fn prepend_active_model_entry(
-    mut entries: Vec<LanguageModelPickerEntry>,
-    grouped_models: &GroupedModels,
-    active_model: Option<&ConfiguredModel>,
-    include_hidden_active: bool,
-) -> Vec<LanguageModelPickerEntry> {
-    let Some(active_model) = active_model else {
-        return entries;
-    };
-
-    if !include_hidden_active {
-        return entries;
-    };
-
-    let active_provider_id = active_model.provider.id();
-    let active_model_id = active_model.model.id();
-
-    if entries.iter().any(|entry| {
-        matches!(
-            entry,
-            LanguageModelPickerEntry::Model(model)
-                if model.model.provider_id() == active_provider_id
-                    && model.model.id() == active_model_id
-        )
-    }) {
-        return entries;
-    }
-
-    let active_info = grouped_models
-        .favorites
-        .iter()
-        .chain(grouped_models.recommended.iter())
-        .chain(grouped_models.all.values().flatten())
-        .find(|model| {
-            model.model.provider_id() == active_provider_id && model.model.id() == active_model_id
-        })
-        .cloned()
-        .unwrap_or_else(|| ModelInfo {
-            model: active_model.model.clone(),
-            icon: active_model.provider.icon(),
-            is_favorite: false,
-            is_hidden: true,
-        });
-
-    entries.insert(0, LanguageModelPickerEntry::Model(active_info));
-    entries.insert(0, LanguageModelPickerEntry::Separator("Current".into()));
     entries
 }
 
@@ -612,12 +543,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
 
         cx.spawn_in(window, async move |this, cx| {
             this.update_in(cx, |this, window, cx| {
-                this.delegate.filtered_entries = filtered_models.entries(
-                    active_model.as_ref(),
-                    active_model
-                        .as_ref()
-                        .is_some_and(|active_model| is_hidden_model(active_model, cx)),
-                );
+                this.delegate.filtered_entries = filtered_models.entries();
                 // Finds the currently selected model in the list
                 let new_index =
                     Self::get_active_model_index(&this.delegate.filtered_entries, active_model);
@@ -721,7 +647,7 @@ mod tests {
     use language_model::{
         LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
         LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
-        LanguageModelRequest, LanguageModelToolChoice, fake_provider::FakeLanguageModelProvider,
+        LanguageModelRequest, LanguageModelToolChoice,
     };
     use ui::IconName;
 
@@ -985,7 +911,7 @@ mod tests {
         );
 
         let grouped_models = GroupedModels::new(all_models, recommended_models);
-        let entries = grouped_models.entries(None, false);
+        let entries = grouped_models.entries();
 
         assert!(matches!(
             entries.first(),
@@ -1001,7 +927,7 @@ mod tests {
         let all_models = create_models(vec![("zed", "claude"), ("zed", "gemini")]);
 
         let grouped_models = GroupedModels::new(all_models, recommended_models);
-        let entries = grouped_models.entries(None, false);
+        let entries = grouped_models.entries();
 
         assert!(matches!(
             entries.first(),
@@ -1021,7 +947,7 @@ mod tests {
         );
 
         let grouped_models = GroupedModels::new(all_models, recommended_models);
-        let entries = grouped_models.entries(None, false);
+        let entries = grouped_models.entries();
 
         for entry in &entries {
             if let LanguageModelPickerEntry::Model(info) = entry {
@@ -1065,35 +991,4 @@ mod tests {
         );
     }
 
-    #[gpui::test]
-    fn test_hidden_active_model_is_preserved_in_entries(_cx: &mut TestAppContext) {
-        let recommended_models = create_models(vec![]);
-        let all_models = create_models_with_metadata(
-            vec![("zed", "claude"), ("zed", "gemini")],
-            vec![],
-            vec![("zed", "claude")],
-        );
-
-        let grouped_models = GroupedModels::new(all_models, recommended_models);
-        let active_model = ConfiguredModel {
-            provider: Arc::new(
-                FakeLanguageModelProvider::new(
-                    LanguageModelProviderId::from("zed".to_string()),
-                    LanguageModelProviderName::from("zed".to_string()),
-                )
-                .with_models(vec![Arc::new(TestLanguageModel::new("claude", "zed"))]),
-            ),
-            model: Arc::new(TestLanguageModel::new("claude", "zed")),
-        };
-        let entries = grouped_models.entries(Some(&active_model), true);
-
-        assert!(matches!(
-            entries.first(),
-            Some(LanguageModelPickerEntry::Separator(s)) if s == "Current"
-        ));
-        assert!(matches!(
-            entries.get(1),
-            Some(LanguageModelPickerEntry::Model(info)) if info.model.telemetry_id() == "zed/claude"
-        ));
-    }
 }
