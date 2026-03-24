@@ -855,9 +855,6 @@ impl Dock {
 
             if entry.panel.supports_flexible_size(window, cx) {
                 entry.size_state.flexible_size_ratio = ratio;
-                if size.is_some() {
-                    entry.size_state.size = size;
-                }
             } else {
                 entry.size_state.size = size;
             }
@@ -900,9 +897,6 @@ impl Dock {
             let size = size.map(|size| size.max(RESIZE_HANDLE_SIZE).round());
             if entry.panel.supports_flexible_size(window, cx) {
                 entry.size_state.flexible_size_ratio = ratio;
-                if size.is_some() {
-                    entry.size_state.size = size;
-                }
             } else {
                 entry.size_state.size = size;
             }

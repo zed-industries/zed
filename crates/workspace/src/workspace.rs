@@ -12305,9 +12305,8 @@ mod tests {
                 })
                 .expect("flexible panel state should be persisted to KVP");
             assert_eq!(
-                persisted.size,
-                Some(px(300.)),
-                "flexible panel pixel size should be persisted"
+                persisted.size, None,
+                "flexible panel should not persist a redundant pixel size"
             );
             let original_ratio = persisted
                 .flexible_size_ratio
@@ -12328,9 +12327,8 @@ mod tests {
                     .and_then(|p| right_dock.stored_panel_size_state(&p))
                     .expect("re-added flexible panel should have restored size state from KVP");
                 assert_eq!(
-                    size_state.size,
-                    Some(px(300.)),
-                    "re-added flexible panel should restore persisted pixel size"
+                    size_state.size, None,
+                    "re-added flexible panel should not have a persisted pixel size"
                 );
                 assert_eq!(
                     size_state.flexible_size_ratio,
