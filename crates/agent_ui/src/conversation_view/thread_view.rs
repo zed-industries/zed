@@ -5741,7 +5741,6 @@ impl ThreadView {
                             .group(&card_header_id)
                             .relative()
                             .w_full()
-                            .gap_1()
                             .justify_between()
                             .when(use_card_layout, |this| {
                                 this.p_0p5()
@@ -5760,7 +5759,6 @@ impl ThreadView {
                             ))
                             .child(
                                 h_flex()
-                                    .gap_0p5()
                                     .when(is_collapsible || failed_or_canceled, |this| {
                                         let diff_for_discard = if has_revealed_diff
                                             && is_cancelled_edit
@@ -5773,10 +5771,7 @@ impl ThreadView {
 
                                         this.child(
                                             h_flex()
-                                                .px_1()
-                                                .when_some(diff_for_discard.clone(), |this, _| {
-                                                    this.pr_0p5()
-                                                })
+                                                .pr_0p5()
                                                 .gap_1()
                                                 .when(is_collapsible, |this| {
                                                     this.child(
@@ -5886,7 +5881,6 @@ impl ThreadView {
                                             Button::new("open-file-button", "Open File")
                                                 .style(ButtonStyle::Outlined)
                                                 .label_size(LabelSize::Small)
-                                                .style(ButtonStyle::OutlinedGhost)
                                                 .key_binding(
                                                     KeyBinding::for_action_in(&OpenExcerpts, &tool_call_output_focus_handle, cx)
                                                         .map(|s| s.size(rems_from_px(12.))),
@@ -6468,10 +6462,10 @@ impl ThreadView {
 
         let file_icon = if has_location {
             FileIcons::get_icon(&tool_call.locations[0].path, cx)
-                .map(Icon::from_path)
-                .unwrap_or(Icon::new(IconName::ToolPencil))
+                .map(|from_path| Icon::from_path(from_path).color(Color::Muted))
+                .unwrap_or(Icon::new(IconName::ToolPencil).color(Color::Muted))
         } else {
-            Icon::new(IconName::ToolPencil)
+            Icon::new(IconName::ToolPencil).color(Color::Muted)
         };
 
         let tool_icon = if is_file && has_failed && has_revealed_diff {
