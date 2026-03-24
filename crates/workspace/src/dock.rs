@@ -956,24 +956,16 @@ impl Dock {
         {
             if let Some(workspace) = self.workspace.upgrade() {
                 let workspace = workspace.read(cx);
-                let ratio = entry
-                    .size_state
-                    .flexible_size_ratio
-                    .or_else(|| workspace.default_flexible_dock_ratio(self.position, cx));
-
-                if let Some(ratio) = ratio {
-                    return workspace
-                        .flexible_dock_size(self.position, ratio, window, cx)
-                        .unwrap_or_else(|| {
-                            entry
-                                .size_state
-                                .size
-                                .unwrap_or_else(|| entry.panel.default_size(window, cx))
-                        });
-                }
+                return resolve_panel_size(
+                    entry.size_state,
+                    entry.panel.as_ref(),
+                    self.position,
+                    workspace,
+                    window,
+                    cx,
+                );
             }
         }
-
         entry
             .size_state
             .size
@@ -1002,13 +994,42 @@ impl Dock {
             .map(|id| i64::from(id).to_string())
             .or(workspace.session_id())?;
         let kvp = KeyValueStore::global(cx);
-        let scope = kvp.scoped("dock_panel_size");
+        let scope = kvp.scoped(PANEL_SIZE_STATE_KEY);
         scope
             .read(&format!("{workspace_id}:{panel_key}"))
             .log_err()
             .flatten()
             .and_then(|json| serde_json::from_str::<PanelSizeState>(&json).log_err())
     }
+}
+
+pub(crate) fn resolve_panel_size(
+    size_state: PanelSizeState,
+    panel: &dyn PanelHandle,
+    position: DockPosition,
+    workspace: &Workspace,
+    window: &Window,
+    cx: &App,
+) -> Pixels {
+    if position.axis() == Axis::Horizontal && panel.supports_flexible_size(window, cx) {
+        let ratio = size_state
+            .flexible_size_ratio
+            .or_else(|| workspace.default_flexible_dock_ratio(position, cx));
+
+        if let Some(ratio) = ratio {
+            return workspace
+                .flexible_dock_size(position, ratio, window, cx)
+                .unwrap_or_else(|| {
+                    size_state
+                        .size
+                        .unwrap_or_else(|| panel.default_size(window, cx))
+                });
+        }
+    }
+
+    size_state
+        .size
+        .unwrap_or_else(|| panel.default_size(window, cx))
 }
 
 impl Render for Dock {

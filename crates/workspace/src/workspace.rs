@@ -2216,26 +2216,7 @@ impl Workspace {
         cx: &App,
     ) -> Pixels {
         let size_state = dock.stored_panel_size_state(panel).unwrap_or_default();
-
-        if dock.position().axis() == Axis::Horizontal && panel.supports_flexible_size(window, cx) {
-            let ratio = size_state
-                .flexible_size_ratio
-                .or_else(|| self.default_flexible_dock_ratio(dock.position(), cx));
-
-            if let Some(ratio) = ratio {
-                return self
-                    .flexible_dock_size(dock.position(), ratio, window, cx)
-                    .unwrap_or_else(|| {
-                        size_state
-                            .size
-                            .unwrap_or_else(|| panel.default_size(window, cx))
-                    });
-            }
-        }
-
-        size_state
-            .size
-            .unwrap_or_else(|| panel.default_size(window, cx))
+        dock::resolve_panel_size(size_state, panel, dock.position(), self, window, cx)
     }
 
     pub fn flexible_dock_ratio_for_size(
