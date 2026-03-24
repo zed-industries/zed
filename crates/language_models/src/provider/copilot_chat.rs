@@ -350,22 +350,7 @@ impl LanguageModel for CopilotChatLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let is_user_initiated = request.intent.is_none_or(|intent| match intent {
-            CompletionIntent::UserPrompt
-            | CompletionIntent::ThreadContextSummarization
-            | CompletionIntent::InlineAssist
-            | CompletionIntent::TerminalInlineAssist
-            | CompletionIntent::GenerateGitCommitMessage => true,
-
-            // Subagent requests are agent-initiated: Copilot will send
-            // `X-Initiator: agent` so they do not consume the user's
-            // premium request quota.
-            CompletionIntent::SubagentPrompt
-            | CompletionIntent::ToolResults
-            | CompletionIntent::ThreadSummarization
-            | CompletionIntent::CreateFile
-            | CompletionIntent::EditFile => false,
-        });
+        let is_user_initiated = is_user_initiated_intent(request.intent);
 
         if self.model.supports_messages() {
             let location = intent_to_chat_location(request.intent);
@@ -1073,6 +1058,29 @@ fn compute_thinking_budget(
     )
 }
 
+/// Returns `true` when the request should be billed against the user's premium
+/// quota.  Agent-initiated intents (e.g. subagent turns, tool results) return
+/// `false`, causing Copilot to send `X-Initiator: agent` and skip quota
+/// consumption.
+fn is_user_initiated_intent(intent: Option<CompletionIntent>) -> bool {
+    intent.is_none_or(|intent| match intent {
+        CompletionIntent::UserPrompt
+        | CompletionIntent::ThreadContextSummarization
+        | CompletionIntent::InlineAssist
+        | CompletionIntent::TerminalInlineAssist
+        | CompletionIntent::GenerateGitCommitMessage => true,
+
+        // Subagent requests are agent-initiated: Copilot will send
+        // `X-Initiator: agent` so they do not consume the user's
+        // premium request quota.
+        CompletionIntent::SubagentPrompt
+        | CompletionIntent::ToolResults
+        | CompletionIntent::ThreadSummarization
+        | CompletionIntent::CreateFile
+        | CompletionIntent::EditFile => false,
+    })
+}
+
 fn intent_to_chat_location(intent: Option<CompletionIntent>) -> ChatLocation {
     match intent {
         Some(CompletionIntent::UserPrompt) => ChatLocation::Agent,
@@ -1653,6 +1661,44 @@ mod tests {
             reasoning_text_value,
             Some("Let me check the directory".to_string()),
             "Should capture reasoning_text"
+        );
+    }
+
+    #[test]
+    fn test_subagent_prompt_chat_location() {
+        // SubagentPrompt must map to the Agent chat location, just like
+        // UserPrompt and ToolResults, so the request is routed correctly.
+        assert_eq!(
+            intent_to_chat_location(Some(CompletionIntent::SubagentPrompt)),
+            ChatLocation::Agent,
+        );
+    }
+
+    #[test]
+    fn test_subagent_prompt_is_not_user_initiated() {
+        // SubagentPrompt must NOT be user-initiated so that Copilot sends
+        // `X-Initiator: agent` and does not consume the user's premium quota.
+        assert!(
+            !is_user_initiated_intent(Some(CompletionIntent::SubagentPrompt)),
+            "SubagentPrompt should not be user-initiated"
+        );
+
+        // Sanity-check the positive case: UserPrompt IS user-initiated.
+        assert!(
+            is_user_initiated_intent(Some(CompletionIntent::UserPrompt)),
+            "UserPrompt should be user-initiated"
+        );
+
+        // ToolResults are also agent-initiated and must not consume quota.
+        assert!(
+            !is_user_initiated_intent(Some(CompletionIntent::ToolResults)),
+            "ToolResults should not be user-initiated"
+        );
+
+        // A request with no intent defaults to user-initiated.
+        assert!(
+            is_user_initiated_intent(None),
+            "None intent should default to user-initiated"
         );
     }
 }
