@@ -5868,46 +5868,9 @@ mod tests {
             })
             .unwrap();
 
-        // --- Flush serialization deterministically ---
+        cx.run_until_parked();
         cx.executor().advance_clock(SERIALIZATION_THROTTLE_TIME);
         cx.run_until_parked();
-
-        let flush_tasks = vec![
-            window_a
-                .update(cx, |multi_workspace, window, cx| {
-                    let mut tasks: Vec<_> = multi_workspace
-                        .workspaces()
-                        .iter()
-                        .map(|workspace| {
-                            workspace.update(cx, |workspace, cx| {
-                                workspace.flush_serialization(window, cx)
-                            })
-                        })
-                        .collect();
-                    tasks.push(multi_workspace.flush_serialization());
-                    tasks
-                })
-                .unwrap(),
-            window_b
-                .update(cx, |multi_workspace, window, cx| {
-                    let mut tasks: Vec<_> = multi_workspace
-                        .workspaces()
-                        .iter()
-                        .map(|workspace| {
-                            workspace.update(cx, |workspace, cx| {
-                                workspace.flush_serialization(window, cx)
-                            })
-                        })
-                        .collect();
-                    tasks.push(multi_workspace.flush_serialization());
-                    tasks
-                })
-                .unwrap(),
-        ]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>();
-        join_all(flush_tasks).await;
 
         // Verify all workspaces retained their session_ids.
         let db = cx.update(|cx| workspace::WorkspaceDb::global(cx));
