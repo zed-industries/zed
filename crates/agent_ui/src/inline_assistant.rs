@@ -2234,8 +2234,7 @@ pub mod test {
     }
 }
 
-#[cfg(any(test, feature = "unit-eval"))]
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(all(test, feature = "unit-eval"))]
 pub mod evals {
     use std::str::FromStr;
 
