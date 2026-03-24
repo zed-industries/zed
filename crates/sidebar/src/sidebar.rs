@@ -6870,7 +6870,7 @@ mod tests {
         );
 
         // Thread 1 should still appear in the sidebar with its worktree chip
-        // (Thraed 2 was archived so it is gone from the list).
+        // (Thread 2 was archived so it is gone from the list).
         let entries_after = visible_entries_as_strings(&sidebar, cx);
         assert!(
             entries_after.iter().any(|s| s.contains("{wt-feature-a}")),
