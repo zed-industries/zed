@@ -522,7 +522,7 @@ impl PickerDelegate for StashListDelegate {
                 .child(
                     h_flex()
                         .w_full()
-                        .gap_2()
+                        .gap_2p5()
                         .child(
                             Icon::new(IconName::BoxOpen)
                                 .size(IconSize::Small)

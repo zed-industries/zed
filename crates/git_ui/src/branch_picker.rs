@@ -968,7 +968,7 @@ impl PickerDelegate for BranchListDelegate {
                 .child(
                     h_flex()
                         .w_full()
-                        .gap_2()
+                        .gap_2p5()
                         .flex_grow()
                         .child(
                             Icon::new(entry_icon)
@@ -1021,6 +1021,8 @@ impl PickerDelegate for BranchListDelegate {
                                         };
 
                                         h_flex()
+                                            .w_full()
+                                            .min_w_0()
                                             .gap_1p5()
                                             .when_some(author_for_meta, |this, author| {
                                                 this.child(
@@ -1041,9 +1043,10 @@ impl PickerDelegate for BranchListDelegate {
                                                 this.when(has_commit, |this| this.child(dot()))
                                                     .child(
                                                         Label::new(subj.to_string())
-                                                            .truncate()
                                                             .color(Color::Muted)
-                                                            .size(LabelSize::Small),
+                                                            .size(LabelSize::Small)
+                                                            .truncate()
+                                                            .flex_1(),
                                                     )
                                             })
                                             .when(!has_commit, |this| {

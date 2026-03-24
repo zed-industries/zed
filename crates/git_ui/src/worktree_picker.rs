@@ -796,7 +796,7 @@ impl PickerDelegate for WorktreeListDelegate {
                 .child(
                     h_flex()
                         .w_full()
-                        .gap_2()
+                        .gap_2p5()
                         .child(
                             Icon::new(entry_icon)
                                 .color(Color::Muted)
@@ -813,12 +813,13 @@ impl PickerDelegate for WorktreeListDelegate {
                             } else {
                                 this.child(
                                     h_flex()
+                                        .w_full()
+                                        .min_w_0()
                                         .gap_1p5()
                                         .child(
                                             Label::new(sha)
                                                 .size(LabelSize::Small)
-                                                .color(Color::Muted)
-                                                .buffer_font(cx),
+                                                .color(Color::Muted),
                                         )
                                         .child(
                                             Label::new("•")
@@ -830,7 +831,8 @@ impl PickerDelegate for WorktreeListDelegate {
                                             Label::new(sublabel)
                                                 .truncate()
                                                 .color(Color::Muted)
-                                                .size(LabelSize::Small),
+                                                .size(LabelSize::Small)
+                                                .flex_1(),
                                         )
                                         .into_any_element(),
                                 )
