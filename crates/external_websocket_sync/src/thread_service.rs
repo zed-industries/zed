@@ -1084,14 +1084,20 @@ async fn load_thread_from_agent(
     // Select agent based on agent_name
     let agent = match agent_name.as_deref() {
         Some("zed-agent") | Some("") | None => ExternalAgent::NativeAgent,
-        Some(name) => ExternalAgent::Custom {
-            name: gpui::SharedString::from(name.to_string()),
-            command: project::agent_server_store::AgentServerCommand {
-                path: std::path::PathBuf::new(),
-                args: vec![],
-                env: None,
-            },
-        },
+        Some(name) => {
+            let zed_name = match name {
+                "claude" => agent_servers::CLAUDE_AGENT_ID,
+                other => other,
+            };
+            ExternalAgent::Custom {
+                name: gpui::SharedString::from(zed_name.to_string()),
+                command: project::agent_server_store::AgentServerCommand {
+                    path: std::path::PathBuf::new(),
+                    args: vec![],
+                    env: None,
+                },
+            }
+        }
     };
 
     let server = agent.server(fs, acp_history_store.clone());
@@ -1205,14 +1211,20 @@ fn open_existing_thread_sync(
     // Select agent based on agent_name (same logic as create_new_thread_sync)
     let agent = match request.agent_name.as_deref() {
         Some("zed-agent") | Some("") | None => ExternalAgent::NativeAgent,
-        Some(name) => ExternalAgent::Custom {
-            name: gpui::SharedString::from(name.to_string()),
-            command: project::agent_server_store::AgentServerCommand {
-                path: std::path::PathBuf::new(),
-                args: vec![],
-                env: None,
-            },
-        },
+        Some(name) => {
+            let zed_name = match name {
+                "claude" => agent_servers::CLAUDE_AGENT_ID,
+                other => other,
+            };
+            ExternalAgent::Custom {
+                name: gpui::SharedString::from(zed_name.to_string()),
+                command: project::agent_server_store::AgentServerCommand {
+                    path: std::path::PathBuf::new(),
+                    args: vec![],
+                    env: None,
+                },
+            }
+        }
     };
     eprintln!("🔧 [THREAD_SERVICE] Selected agent: {:?}", agent);
     log::info!("🔧 [THREAD_SERVICE] Selected agent: {:?}", agent);
