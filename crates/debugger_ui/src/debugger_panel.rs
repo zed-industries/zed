@@ -55,7 +55,6 @@ impl FeatureFlag for DebuggerHistoryFeatureFlag {
 const DEBUG_PANEL_KEY: &str = "DebugPanel";
 
 pub struct DebugPanel {
-    size: Pixels,
     active_session: Option<Entity<DebugSession>>,
     project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
@@ -93,7 +92,6 @@ impl DebugPanel {
             );
 
             Self {
-                size: px(300.),
                 sessions_with_children: Default::default(),
                 active_session: None,
                 focus_handle,
@@ -1573,7 +1571,7 @@ impl Panel for DebugPanel {
     }
 
     fn default_size(&self, _window: &Window, _: &App) -> Pixels {
-        self.size
+        px(300.)
     }
 
     fn remote_id() -> Option<proto::PanelId> {
@@ -1633,13 +1631,6 @@ impl Render for DebugPanel {
         }
 
         v_flex()
-            .when(!self.is_zoomed, |this| {
-                this.when_else(
-                    self.position(window, cx) == DockPosition::Bottom,
-                    |this| this.max_h(self.size),
-                    |this| this.max_w(self.size),
-                )
-            })
             .size_full()
             .key_context("DebugPanel")
             .child(h_flex().children(self.top_controls_strip(window, cx)))
