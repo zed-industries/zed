@@ -154,9 +154,11 @@ impl RefreshLlmTokenListener {
 
     fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
         client.add_message_to_client_handler({
-            let this = cx.entity();
+            let this = cx.weak_entity();
             move |message, cx| {
-                Self::handle_refresh_llm_token(this.clone(), message, cx);
+                if let Some(this) = this.upgrade() {
+                    Self::handle_refresh_llm_token(this, message, cx);
+                }
             }
         });
 

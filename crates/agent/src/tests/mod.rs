@@ -3461,7 +3461,6 @@ async fn test_update_plan_tool_updates_thread_events(cx: &mut TestAppContext) {
             {
                 "step": "Inspect the code",
                 "status": "completed",
-                "priority": "high"
             },
             {
                 "step": "Implement the tool",
@@ -3470,7 +3469,6 @@ async fn test_update_plan_tool_updates_thread_events(cx: &mut TestAppContext) {
             {
                 "step": "Run tests",
                 "status": "pending",
-                "priority": "low"
             }
         ]
     });
@@ -3497,7 +3495,6 @@ async fn test_update_plan_tool_updates_thread_events(cx: &mut TestAppContext) {
                     {
                         "step": "Inspect the code",
                         "status": "completed",
-                        "priority": "high"
                     },
                     {
                         "step": "Implement the tool",
@@ -3506,7 +3503,6 @@ async fn test_update_plan_tool_updates_thread_events(cx: &mut TestAppContext) {
                     {
                         "step": "Run tests",
                         "status": "pending",
-                        "priority": "low"
                     }
                 ]
             }))
@@ -3531,7 +3527,7 @@ async fn test_update_plan_tool_updates_thread_events(cx: &mut TestAppContext) {
         acp::Plan::new(vec![
             acp::PlanEntry::new(
                 "Inspect the code",
-                acp::PlanEntryPriority::High,
+                acp::PlanEntryPriority::Medium,
                 acp::PlanEntryStatus::Completed,
             ),
             acp::PlanEntry::new(
@@ -3541,7 +3537,7 @@ async fn test_update_plan_tool_updates_thread_events(cx: &mut TestAppContext) {
             ),
             acp::PlanEntry::new(
                 "Run tests",
-                acp::PlanEntryPriority::Low,
+                acp::PlanEntryPriority::Medium,
                 acp::PlanEntryStatus::Pending,
             ),
         ])

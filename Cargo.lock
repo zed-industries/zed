@@ -1278,7 +1278,6 @@ name = "audio"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-tar",
  "collections",
  "cpal",
  "crossbeam",
@@ -1290,7 +1289,6 @@ dependencies = [
  "rodio",
  "serde",
  "settings",
- "smol",
  "thiserror 2.0.17",
  "util",
 ]
@@ -5914,6 +5912,7 @@ dependencies = [
  "clap",
  "client",
  "ctrlc",
+ "db",
  "debug_adapter_extension",
  "env_logger 0.11.8",
  "extension",
@@ -18591,9 +18590,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-rust"
-version = "0.24.0"
+version = "0.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b9b18034c684a2420722be8b2a91c9c44f2546b631c039edf575ccba8c61be1"
+checksum = "f715f73a0687261ddb686f0d64a1e5af57bd199c4d12be5fdda6676ce1885bf9"
 dependencies = [
  "cc",
  "tree-sitter-language",

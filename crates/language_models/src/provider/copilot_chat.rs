@@ -1046,7 +1046,7 @@ fn into_copilot_chat(
         tools,
         tool_choice: tool_choice.map(|choice| match choice {
             LanguageModelToolChoice::Auto => ToolChoice::Auto,
-            LanguageModelToolChoice::Any => ToolChoice::Any,
+            LanguageModelToolChoice::Any => ToolChoice::Required,
             LanguageModelToolChoice::None => ToolChoice::None,
         }),
         thinking_budget: None,
@@ -1255,7 +1255,7 @@ fn into_copilot_responses(
 
     let mapped_tool_choice = tool_choice.map(|choice| match choice {
         LanguageModelToolChoice::Auto => responses::ToolChoice::Auto,
-        LanguageModelToolChoice::Any => responses::ToolChoice::Any,
+        LanguageModelToolChoice::Any => responses::ToolChoice::Required,
         LanguageModelToolChoice::None => responses::ToolChoice::None,
     });
 

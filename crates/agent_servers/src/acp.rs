@@ -203,11 +203,15 @@ impl AcpConnection {
             builder.build_std_command(Some(command.path.display().to_string()), &command.args);
         child.envs(command.env.iter().flatten());
         if let Some(cwd) = project.update(cx, |project, cx| {
-            project
-                .default_path_list(cx)
-                .ordered_paths()
-                .next()
-                .cloned()
+            if project.is_local() {
+                project
+                    .default_path_list(cx)
+                    .ordered_paths()
+                    .next()
+                    .cloned()
+            } else {
+                None
+            }
         }) {
             child.current_dir(cwd);
         }

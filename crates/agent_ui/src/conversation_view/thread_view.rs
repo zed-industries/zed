@@ -585,7 +585,7 @@ impl ThreadView {
                 self.cancel_editing(&Default::default(), window, cx);
             }
             MessageEditorEvent::LostFocus => {}
-            MessageEditorEvent::InputAttempted(_) => {}
+            MessageEditorEvent::InputAttempted { .. } => {}
         }
     }
 
@@ -722,7 +722,7 @@ impl ThreadView {
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Cancel) => {
                 self.cancel_editing(&Default::default(), window, cx);
             }
-            ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::InputAttempted(_)) => {}
+            ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::InputAttempted { .. }) => {}
             ViewEvent::OpenDiffLocation {
                 path,
                 position,
@@ -1440,6 +1440,7 @@ impl ThreadView {
         &mut self,
         index: usize,
         inserted_text: Option<&str>,
+        cursor_offset: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -1455,6 +1456,9 @@ impl ThreadView {
         if message_editor.read(cx).is_empty(cx) {
             message_editor.update(cx, |editor, cx| {
                 editor.set_message(queued_content, window, cx);
+                if let Some(offset) = cursor_offset {
+                    editor.set_cursor_offset(offset, window, cx);
+                }
                 if let Some(inserted_text) = inserted_text.as_deref() {
                     editor.insert_text(inserted_text, window, cx);
                 }
@@ -1463,8 +1467,16 @@ impl ThreadView {
             return true;
         }
 
+        // Adjust cursor offset accounting for existing content
+        let existing_len = message_editor.read(cx).text(cx).len();
+        let separator = "\n\n";
+
         message_editor.update(cx, |editor, cx| {
-            editor.append_message(queued_content, Some("\n\n"), window, cx);
+            editor.append_message(queued_content, Some(separator), window, cx);
+            if let Some(offset) = cursor_offset {
+                let adjusted_offset = existing_len + separator.len() + offset;
+                editor.set_cursor_offset(adjusted_offset, window, cx);
+            }
             if let Some(inserted_text) = inserted_text.as_deref() {
                 editor.insert_text(inserted_text, window, cx);
             }
@@ -3038,7 +3050,7 @@ impl ThreadView {
                                             })
                                             .on_click(cx.listener(move |this, _, window, cx| {
                                                 this.move_queued_message_to_main_editor(
-                                                    index, None, window, cx,
+                                                    index, None, None, window, cx,
                                                 );
                                             })),
                                     )
@@ -3112,7 +3124,7 @@ impl ThreadView {
                                             })
                                             .on_click(cx.listener(move |this, _, window, cx| {
                                                 this.move_queued_message_to_main_editor(
-                                                    index, None, window, cx,
+                                                    index, None, None, window, cx,
                                                 );
                                             })),
                                     )
@@ -8169,7 +8181,7 @@ impl Render for ThreadView {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &EditFirstQueuedMessage, window, cx| {
-                this.move_queued_message_to_main_editor(0, None, window, cx);
+                this.move_queued_message_to_main_editor(0, None, None, window, cx);
             }))
             .on_action(cx.listener(|this, _: &ClearMessageQueue, _, cx| {
                 this.local_queued_messages.clear();
