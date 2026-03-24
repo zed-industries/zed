@@ -266,8 +266,12 @@ impl PickerDelegate for ModelPickerDelegate {
             };
 
             this.update_in(cx, |this, window, cx| {
-                this.delegate.filtered_entries =
-                    info_list_to_picker_entries(filtered_models, &favorites, &hidden);
+                this.delegate.filtered_entries = info_list_to_picker_entries(
+                    filtered_models,
+                    &favorites,
+                    &hidden,
+                    this.delegate.selected_model.as_ref().map(|model| &model.id),
+                );
                 // Finds the currently selected model in the list
                 let new_index = this
                     .delegate
@@ -449,6 +453,7 @@ fn info_list_to_picker_entries(
     model_list: AgentModelList,
     favorites: &HashSet<ModelId>,
     hidden: &HashSet<ModelId>,
+    selected_model_id: Option<&ModelId>,
 ) -> Vec<ModelPickerEntry> {
     let mut entries = Vec::new();
 
@@ -502,6 +507,45 @@ fn info_list_to_picker_entries(
         }
     }
 
+    prepend_selected_model_entry(entries, &all_models, favorites, hidden, selected_model_id)
+}
+
+fn prepend_selected_model_entry(
+    mut entries: Vec<ModelPickerEntry>,
+    all_models: &[&AgentModelInfo],
+    favorites: &HashSet<ModelId>,
+    hidden: &HashSet<ModelId>,
+    selected_model_id: Option<&ModelId>,
+) -> Vec<ModelPickerEntry> {
+    let Some(selected_model_id) = selected_model_id else {
+        return entries;
+    };
+
+    if !hidden.contains(selected_model_id) {
+        return entries;
+    }
+
+    if entries.iter().any(|entry| {
+        matches!(entry, ModelPickerEntry::Model(model, _) if model.id == *selected_model_id)
+    }) {
+        return entries;
+    }
+
+    let Some(selected_model) = all_models
+        .iter()
+        .find(|model| model.id == *selected_model_id)
+    else {
+        return entries;
+    };
+
+    entries.insert(
+        0,
+        ModelPickerEntry::Model(
+            (*selected_model).clone(),
+            favorites.contains(selected_model_id),
+        ),
+    );
+    entries.insert(0, ModelPickerEntry::Separator("Current".into()));
     entries
 }
 
@@ -692,7 +736,8 @@ mod tests {
         ]);
         let favorites = create_favorites(vec!["zed/gemini"]);
 
-        let entries = info_list_to_picker_entries(models, &favorites);
+        let hidden = create_favorites(vec![]);
+        let entries = info_list_to_picker_entries(models, &favorites, &hidden, None);
 
         assert!(matches!(
             entries.first(),
@@ -708,7 +753,8 @@ mod tests {
         let models = create_model_list(vec![("zed", vec!["zed/claude", "zed/gemini"])]);
         let favorites = create_favorites(vec![]);
 
-        let entries = info_list_to_picker_entries(models, &favorites);
+        let hidden = create_favorites(vec![]);
+        let entries = info_list_to_picker_entries(models, &favorites, &hidden, None);
 
         assert!(matches!(
             entries.first(),
@@ -724,7 +770,8 @@ mod tests {
         ]);
         let favorites = create_favorites(vec!["zed/claude"]);
 
-        let entries = info_list_to_picker_entries(models, &favorites);
+        let hidden = create_favorites(vec![]);
+        let entries = info_list_to_picker_entries(models, &favorites, &hidden, None);
 
         for entry in &entries {
             if let ModelPickerEntry::Model(info, is_favorite) = entry {
@@ -745,7 +792,8 @@ mod tests {
         ]);
         let favorites = create_favorites(vec!["zed/gemini", "openai/gpt-5"]);
 
-        let entries = info_list_to_picker_entries(models, &favorites);
+        let hidden = create_favorites(vec![]);
+        let entries = info_list_to_picker_entries(models, &favorites, &hidden, None);
         let model_ids = get_entry_model_ids(&entries);
 
         assert_eq!(model_ids[0], "zed/gemini");
@@ -766,7 +814,8 @@ mod tests {
 
         let favorites = create_favorites(vec!["zed/claude"]);
 
-        let entries = info_list_to_picker_entries(models, &favorites);
+        let hidden = create_favorites(vec![]);
+        let entries = info_list_to_picker_entries(models, &favorites, &hidden, None);
         let labels = get_entry_labels(&entries);
 
         assert_eq!(
@@ -810,7 +859,8 @@ mod tests {
         ]);
         let favorites = create_favorites(vec!["zed/gemini"]);
 
-        let entries = info_list_to_picker_entries(models, &favorites);
+        let hidden = create_favorites(vec![]);
+        let entries = info_list_to_picker_entries(models, &favorites, &hidden, None);
 
         assert!(matches!(
             entries.first(),
@@ -879,7 +929,8 @@ mod tests {
         ]);
         let favorites = create_favorites(vec!["favorite-model"]);
 
-        let entries = info_list_to_picker_entries(models, &favorites);
+        let hidden = create_favorites(vec![]);
+        let entries = info_list_to_picker_entries(models, &favorites, &hidden, None);
 
         for entry in &entries {
             if let ModelPickerEntry::Model(info, is_favorite) = entry {
@@ -890,5 +941,19 @@ mod tests {
                 }
             }
         }
+    }
+    #[gpui::test]
+    fn test_selected_hidden_model_is_preserved_in_entries(_cx: &mut TestAppContext) {
+        let models = create_model_list(vec![("group", vec!["hidden-model", "visible-model"])]);
+        let favorites = create_favorites(vec![]);
+        let hidden = create_favorites(vec!["hidden-model"]);
+        let selected = ModelId::new("hidden-model".to_string());
+
+        let entries = info_list_to_picker_entries(models, &favorites, &hidden, Some(&selected));
+        let labels = get_entry_labels(&entries);
+
+        assert_eq!(labels[0], "Current");
+        assert_eq!(labels[1], "hidden-model");
+        assert!(labels.contains(&"visible-model"));
     }
 }
