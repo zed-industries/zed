@@ -245,6 +245,7 @@ These are missing in latest `dima` branch (I had them implemented at same point)
 - Zed Agent, External Agents and text thread title summaries are now generated on every AI message received
 - change `agent::OpenActiveThreadAsMarkdown` to always open to end of buffer instead of start, and when there are more than 90k lines, open as `Plain Text` because Markdown lags hard for me, see `crates/agent_ui/src/acp/thread_view.rs`
 - always allow all edits, otherwise it kepts asking for "Allow All Edits" every single time a new ACP thread is started which is just annoying. Note that it still asks for tool permissions
+- fix: ACP sessions with session modes (e.g. Claude Code's brave/bypassPermissions mode) now respect the `always_allow_tool_actions` setting — previously `respect_always_allow_setting` was set to `false` when `session_modes` existed, causing tool permission prompts even with brave mode enabled
 - show command output for `acp::ToolKind::Execute` always below the `Run Command` view in a plain text view to preserve newlines
   - I added `prepare_execute_tool_output_from_qwen()` to strip trailing and leading information for cleaner output
 - allow `New From Summary` for ACP agents, instead of only for Zed Agent
