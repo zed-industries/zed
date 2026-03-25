@@ -256,7 +256,7 @@ func (d *testDriver) syncEventCallback(sessionID string, syncMsg *types.SyncMess
 		if acpThreadID == d.round.phase8ThreadID || acpThreadID == d.round.phase9ThreadID {
 			isCurrentRoundThread = true
 		}
-		if !isCurrentRoundThread && acpThreadID != "" && len(d.round.threadIDs) > 0 {
+		if !isCurrentRoundThread && acpThreadID != "" {
 			d.mu.Unlock()
 			log.Printf("[%s] Ignoring stale completion (wrong thread): req=%s thread=%s",
 				agentName, requestID, truncate(acpThreadID, 12))
