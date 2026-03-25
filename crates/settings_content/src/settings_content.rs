@@ -277,15 +277,6 @@ pub enum ProfileBase {
     Default,
 }
 
-impl std::fmt::Display for ProfileBase {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ProfileBase::User => write!(f, "User"),
-            ProfileBase::Default => write!(f, "Default"),
-        }
-    }
-}
-
 /// A named settings profile that can temporarily override settings.
 #[with_fallible_options]
 #[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
