@@ -4,7 +4,7 @@ mod configure_context_server_tools_modal;
 mod manage_profiles_modal;
 mod tool_picker;
 
-use std::{ops::Range, sync::Arc};
+use std::{ops::Range, rc::Rc, sync::Arc, time::Duration};
 
 use agent::ContextServerRegistry;
 use anyhow::Result;
@@ -16,8 +16,9 @@ use extension::ExtensionManifest;
 use extension_host::ExtensionStore;
 use fs::Fs;
 use gpui::{
-    Action, AnyView, App, AsyncWindowContext, Corner, Entity, EventEmitter, FocusHandle, Focusable,
-    ScrollHandle, Subscription, Task, WeakEntity,
+    Action, Animation, AnimationExt, AnyView, App, AsyncWindowContext, Corner, Entity,
+    EventEmitter, FocusHandle, Focusable, ScrollHandle, Subscription, Task, WeakEntity,
+    pulsating_between,
 };
 use itertools::Itertools;
 use language::LanguageRegistry;
@@ -34,8 +35,8 @@ use project::{
 use settings::{Settings, SettingsStore, update_settings_file};
 use ui::{
     ButtonStyle, Chip, CommonAnimationExt, ContextMenu, ContextMenuEntry, Disclosure, Divider,
-    DividerColor, ElevationIndex, Indicator, LabelSize, PopoverMenu, Switch, Tooltip,
-    WithScrollbar, prelude::*,
+    DividerColor, ElevationIndex, IconWithIndicator, Indicator, LabelSize, PopoverMenu, Switch,
+    Tooltip, WithScrollbar, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::{Workspace, create_and_open_local_file};
@@ -45,29 +46,32 @@ pub(crate) use configure_context_server_modal::ConfigureContextServerModal;
 pub(crate) use configure_context_server_tools_modal::ConfigureContextServerToolsModal;
 pub(crate) use manage_profiles_modal::ManageProfilesModal;
 
-use crate::agent_configuration::add_llm_provider_modal::{
-    AddLlmProviderModal, LlmCompatibleProvider,
+use crate::{
+    Agent,
+    agent_configuration::add_llm_provider_modal::{AddLlmProviderModal, LlmCompatibleProvider},
+    agent_connection_store::{AgentConnectionStatus, AgentConnectionStore},
 };
 
 pub struct AgentConfiguration {
     fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
     agent_server_store: Entity<AgentServerStore>,
+    agent_connection_store: Entity<AgentConnectionStore>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     configuration_views_by_provider: HashMap<LanguageModelProviderId, AnyView>,
     context_server_store: Entity<ContextServerStore>,
     expanded_provider_configurations: HashMap<LanguageModelProviderId, bool>,
     context_server_registry: Entity<ContextServerRegistry>,
-    _registry_subscription: Subscription,
+    _subscriptions: Vec<Subscription>,
     scroll_handle: ScrollHandle,
-    _check_for_gemini: Task<()>,
 }
 
 impl AgentConfiguration {
     pub fn new(
         fs: Arc<dyn Fs>,
         agent_server_store: Entity<AgentServerStore>,
+        agent_connection_store: Entity<AgentConnectionStore>,
         context_server_store: Entity<ContextServerStore>,
         context_server_registry: Entity<ContextServerRegistry>,
         language_registry: Arc<LanguageRegistry>,
@@ -77,25 +81,27 @@ impl AgentConfiguration {
     ) -> Self {
         let focus_handle = cx.focus_handle();
 
-        let registry_subscription = cx.subscribe_in(
-            &LanguageModelRegistry::global(cx),
-            window,
-            |this, _, event: &language_model::Event, window, cx| match event {
-                language_model::Event::AddedProvider(provider_id) => {
-                    let provider = LanguageModelRegistry::read_global(cx).provider(provider_id);
-                    if let Some(provider) = provider {
-                        this.add_provider_configuration_view(&provider, window, cx);
+        let subscriptions = vec![
+            cx.subscribe_in(
+                &LanguageModelRegistry::global(cx),
+                window,
+                |this, _, event: &language_model::Event, window, cx| match event {
+                    language_model::Event::AddedProvider(provider_id) => {
+                        let provider = LanguageModelRegistry::read_global(cx).provider(provider_id);
+                        if let Some(provider) = provider {
+                            this.add_provider_configuration_view(&provider, window, cx);
+                        }
                     }
-                }
-                language_model::Event::RemovedProvider(provider_id) => {
-                    this.remove_provider_configuration_view(provider_id);
-                }
-                _ => {}
-            },
-        );
-
-        cx.subscribe(&context_server_store, |_, _, _, cx| cx.notify())
-            .detach();
+                    language_model::Event::RemovedProvider(provider_id) => {
+                        this.remove_provider_configuration_view(provider_id);
+                    }
+                    _ => {}
+                },
+            ),
+            cx.subscribe(&agent_server_store, |_, _, _, cx| cx.notify()),
+            cx.observe(&agent_connection_store, |_, _, cx| cx.notify()),
+            cx.subscribe(&context_server_store, |_, _, _, cx| cx.notify()),
+        ];
 
         let mut this = Self {
             fs,
@@ -104,13 +110,14 @@ impl AgentConfiguration {
             focus_handle,
             configuration_views_by_provider: HashMap::default(),
             agent_server_store,
+            agent_connection_store,
             context_server_store,
             expanded_provider_configurations: HashMap::default(),
             context_server_registry,
-            _registry_subscription: registry_subscription,
+            _subscriptions: subscriptions,
             scroll_handle: ScrollHandle::new(),
-            _check_for_gemini: Task::ready(()),
         };
+
         this.build_provider_configuration_views(window, cx);
         this
     }
@@ -1065,12 +1072,12 @@ impl AgentConfiguration {
     fn render_agent_servers_section(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let agent_server_store = self.agent_server_store.read(cx);
 
-        let user_defined_agents = agent_server_store
+        let agents = agent_server_store
             .external_agents()
             .cloned()
             .collect::<Vec<_>>();
 
-        let user_defined_agents: Vec<_> = user_defined_agents
+        let agents: Vec<_> = agents
             .into_iter()
             .map(|name| {
                 let icon = if let Some(icon_path) = agent_server_store.agent_icon(&name) {
@@ -1159,24 +1166,31 @@ impl AgentConfiguration {
                         "All agents connected through the Agent Client Protocol.",
                         add_agent_popover.into_any_element(),
                     ))
-                    .child(v_flex().p_4().pt_0().gap_2().map(|mut parent| {
-                        let mut first = true;
-                        for (name, icon, display_name, source) in user_defined_agents {
-                            if !first {
-                                parent = parent
-                                    .child(Divider::horizontal().color(DividerColor::BorderFaded));
-                            }
-                            first = false;
-                            parent = parent.child(self.render_agent_server(
-                                icon,
-                                name,
-                                display_name,
-                                source,
-                                cx,
-                            ));
-                        }
-                        parent
-                    })),
+                    .child(
+                        v_flex()
+                            .p_4()
+                            .pt_0()
+                            .gap_2()
+                            .children(Itertools::intersperse_with(
+                                agents
+                                    .into_iter()
+                                    .map(|(name, icon, display_name, source)| {
+                                        self.render_agent_server(
+                                            icon,
+                                            name,
+                                            display_name,
+                                            source,
+                                            cx,
+                                        )
+                                        .into_any_element()
+                                    }),
+                                || {
+                                    Divider::horizontal()
+                                        .color(DividerColor::BorderFaded)
+                                        .into_any_element()
+                                },
+                            )),
+                    ),
             )
     }
 
@@ -1221,6 +1235,38 @@ impl AgentConfiguration {
         };
 
         let agent_server_name = AgentId(id.clone());
+        let agent = Agent::Custom {
+            id: agent_server_name.clone(),
+        };
+        let connection_status = self
+            .agent_connection_store
+            .read(cx)
+            .connection_status(&agent, cx);
+
+        let restart_button = matches!(
+            connection_status,
+            AgentConnectionStatus::Connected | AgentConnectionStatus::Connecting
+        )
+        .then(|| {
+            IconButton::new(
+                SharedString::from(format!("restart-{}", id)),
+                IconName::RotateCw,
+            )
+            .disabled(connection_status == AgentConnectionStatus::Connecting)
+            .icon_color(Color::Muted)
+            .icon_size(IconSize::Small)
+            .tooltip(Tooltip::text("Restart Agent Connection"))
+            .on_click(cx.listener({
+                let agent = agent.clone();
+                move |this, _, _window, cx| {
+                    let server: Rc<dyn agent_servers::AgentServer> =
+                        Rc::new(agent_servers::CustomAgentServer::new(agent.id()));
+                    this.agent_connection_store.update(cx, |store, cx| {
+                        store.restart_connection(agent.clone(), server, cx);
+                    });
+                }
+            }))
+        });
 
         let uninstall_button = match source {
             ExternalAgentSource::Extension => Some(
@@ -1307,7 +1353,40 @@ impl AgentConfiguration {
             .child(
                 h_flex()
                     .gap_1p5()
-                    .child(icon)
+                    .child({
+                        let (icon, status_tooltip) = match connection_status {
+                            AgentConnectionStatus::Disconnected => {
+                                (icon.into_any_element(), "Server not started")
+                            }
+                            AgentConnectionStatus::Connecting => (
+                                div()
+                                    .child(icon)
+                                    .with_animation(
+                                        format!("agent-status-indicator-{id}"),
+                                        Animation::new(Duration::from_secs(2))
+                                            .repeat()
+                                            .with_easing(pulsating_between(0.4, 0.8)),
+                                        |div, delta| div.opacity(delta),
+                                    )
+                                    .into_any_element(),
+                                "Starting",
+                            ),
+                            AgentConnectionStatus::Connected => (
+                                IconWithIndicator::new(
+                                    icon,
+                                    Some(Indicator::dot().color(Color::Success)),
+                                )
+                                .into_any_element(),
+                                "Running",
+                            ),
+                        };
+
+                        div()
+                            .id(format!("agent-status-{id}"))
+                            .flex_none()
+                            .tooltip(Tooltip::text(status_tooltip))
+                            .child(icon)
+                    })
                     .child(Label::new(display_name))
                     .when_some(source_badge, |this, (tooltip_id, tooltip_message, icon)| {
                         this.child(
@@ -1317,16 +1396,19 @@ impl AgentConfiguration {
                                 .tooltip(Tooltip::text(tooltip_message))
                                 .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted)),
                         )
-                    })
-                    .child(
-                        Icon::new(IconName::Check)
-                            .color(Color::Success)
-                            .size(IconSize::Small),
-                    ),
+                    }),
             )
-            .when_some(uninstall_button, |this, uninstall_button| {
-                this.child(uninstall_button)
-            })
+            .when(
+                restart_button.is_some() || uninstall_button.is_some(),
+                |this| {
+                    this.child(
+                        h_flex()
+                            .gap_0p5()
+                            .children(restart_button)
+                            .children(uninstall_button),
+                    )
+                },
+            )
     }
 }
 
