@@ -72,6 +72,7 @@ struct StateInner {
     scrollbar_drag_start_height: Option<Pixels>,
     measuring_behavior: ListMeasuringBehavior,
     pending_scroll: Option<PendingScrollFraction>,
+    follow_tail: bool,
 }
 
 /// Keeps track of a fractional scroll position within an item for restoration
@@ -102,6 +103,9 @@ pub struct ListScrollEvent {
 
     /// Whether the list has been scrolled.
     pub is_scrolled: bool,
+
+    /// Whether the list is currently in follow-tail mode (auto-scrolling to end).
+    pub is_following_tail: bool,
 }
 
 /// The sizing behavior to apply during layout.
@@ -236,6 +240,7 @@ impl ListState {
             scrollbar_drag_start_height: None,
             measuring_behavior: ListMeasuringBehavior::default(),
             pending_scroll: None,
+            follow_tail: false,
         })));
         this.splice(0..0, item_count);
         this
@@ -392,6 +397,32 @@ impl ListState {
             item_ix: cursor.start().count,
             offset_in_item: new_pixel_offset - cursor.start().height,
         });
+    }
+
+    /// Scroll the list to the very end (past the last item).
+    ///
+    /// Unlike [`scroll_to_reveal_item`], this uses the total item count as the
+    /// anchor, so the list's layout pass will walk backwards from the end and
+    /// always show the bottom of the last item — even when that item is still
+    /// growing (e.g. during streaming).
+    pub fn scroll_to_end(&self) {
+        let state = &mut *self.0.borrow_mut();
+        let item_count = state.items.summary().count;
+        state.logical_scroll_top = Some(ListOffset {
+            item_ix: item_count,
+            offset_in_item: px(0.),
+        });
+    }
+
+    pub fn set_follow_tail(&self, follow: bool) {
+        self.0.borrow_mut().follow_tail = follow;
+        if follow {
+            self.scroll_to_end();
+        }
+    }
+
+    pub fn is_following_tail(&self) -> bool {
+        self.0.borrow().follow_tail
     }
 
     /// Scroll the list to the given offset
@@ -574,6 +605,11 @@ impl StateInner {
             });
         }
 
+        // Turn follow-tail off when the user scrolls away from the bottom
+        if self.follow_tail && (scroll_max - new_scroll_top) >= px(1.0) {
+            self.follow_tail = false;
+        }
+
         if let Some(handler) = self.scroll_handler.as_mut() {
             let visible_range = Self::visible_range(&self.items, height, scroll_top);
             handler(
@@ -581,6 +617,7 @@ impl StateInner {
                     visible_range,
                     count: self.items.summary().count,
                     is_scrolled: self.logical_scroll_top.is_some(),
+                    is_following_tail: self.follow_tail,
                 },
                 window,
                 cx,
@@ -670,6 +707,15 @@ impl StateInner {
         let mut rendered_height = padding.top;
         let mut max_item_width = px(0.);
         let mut scroll_top = self.logical_scroll_top();
+
+        if self.follow_tail {
+            scroll_top = ListOffset {
+                item_ix: self.items.summary().count,
+                offset_in_item: px(0.),
+            };
+            self.logical_scroll_top = Some(scroll_top);
+        }
+
         let mut rendered_focused_item = false;
 
         let available_item_space = size(
@@ -796,6 +842,14 @@ impl StateInner {
                     let mut element = render_item(cursor.start().0, window, cx);
                     element.layout_as_root(available_item_space, window, cx)
                 };
+
+                // An item in the leading overdraw is partially visible (scrolled
+                // just above the top edge). If it contains the focused element we
+                // must mark it so the off-screen focused-item path below doesn't
+                // render a duplicate of it outside the list bounds.
+                if item.contains_focused(window, cx) {
+                    rendered_focused_item = true;
+                }
 
                 leading_overdraw += size.height;
                 measured_items.push_front(ListItem::Measured {
