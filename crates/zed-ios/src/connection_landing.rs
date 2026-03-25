@@ -454,7 +454,12 @@ impl SavedHost {
 enum LandingMode {
     Default,
     AddHost,
+    /// Editing host-level fields (name, host, username, port, password).
+    /// The `usize` is the index of any entry in the group — all entries
+    /// sharing the same (host, username, port) will be updated on save.
     EditHost(usize),
+    /// Editing only the project path of a single entry.
+    EditProject(usize),
     /// Adding a new project path to an existing host. Connection details are
     /// pre-filled from an existing entry via `switch_to_add_project`.
     AddProjectToHost,
@@ -628,7 +633,6 @@ impl ConnectionLanding {
             host.port.to_string()
         };
         let password_text = host.password.clone().unwrap_or_default();
-        let project_path_text = host.project_path.clone().unwrap_or_default();
 
         self.name_editor.update(cx, |editor, cx| {
             editor.set_text(name_text, window, cx);
@@ -645,11 +649,21 @@ impl ConnectionLanding {
         self.password_editor.update(cx, |editor, cx| {
             editor.set_text(password_text, window, cx);
         });
+        self.mode = LandingMode::EditHost(index);
+        self.name_editor.focus_handle(cx).focus(window, cx);
+        cx.notify();
+    }
+
+    fn switch_to_edit_project(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(host) = self.saved_hosts.get(index) else {
+            return;
+        };
+        let project_path_text = host.project_path.clone().unwrap_or_default();
         self.project_path_editor.update(cx, |editor, cx| {
             editor.set_text(project_path_text, window, cx);
         });
-        self.mode = LandingMode::EditHost(index);
-        self.name_editor.focus_handle(cx).focus(window, cx);
+        self.mode = LandingMode::EditProject(index);
+        self.project_path_editor.focus_handle(cx).focus(window, cx);
         cx.notify();
     }
 
@@ -702,6 +716,24 @@ impl ConnectionLanding {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // EditProject only touches the project path — handle it separately.
+        if let LandingMode::EditProject(index) = self.mode {
+            let project_path_text = self.project_path_editor.read(cx).text(cx);
+            let project_path = if project_path_text.is_empty() {
+                None
+            } else {
+                Some(project_path_text.to_string())
+            };
+            if let Some(entry) = self.saved_hosts.get_mut(index) {
+                entry.project_path = project_path;
+            }
+            self.persist_hosts();
+            self.mode = LandingMode::Default;
+            self.focus_handle.focus(window, cx);
+            cx.notify();
+            return;
+        }
+
         let name = self.name_editor.read(cx).text(cx);
         let host = self.host_editor.read(cx).text(cx);
         let username = self.username_editor.read(cx).text(cx);
@@ -727,24 +759,39 @@ impl ConnectionLanding {
         let nickname = if name.is_empty() {
             None
         } else {
-            Some(SharedString::from(name))
-        };
-
-        let updated = SavedHost {
-            nickname,
-            host: SharedString::from(host),
-            username: SharedString::from(username),
-            port,
-            password,
-            project_path,
-            status: ConnectionStatus::Disconnected,
+            Some(SharedString::from(name.clone()))
         };
 
         match self.mode {
             LandingMode::EditHost(index) if index < self.saved_hosts.len() => {
-                self.saved_hosts[index] = updated;
+                // Find the old group key so we can update all entries that share it.
+                let old_host = self.saved_hosts[index].host.clone();
+                let old_username = self.saved_hosts[index].username.clone();
+                let old_port = self.saved_hosts[index].port;
+
+                for entry in &mut self.saved_hosts {
+                    if entry.host == old_host
+                        && entry.username == old_username
+                        && entry.port == old_port
+                    {
+                        entry.nickname = nickname.clone();
+                        entry.host = SharedString::from(host.clone());
+                        entry.username = SharedString::from(username.clone());
+                        entry.port = port;
+                        entry.password = password.clone();
+                    }
+                }
             }
             _ => {
+                let updated = SavedHost {
+                    nickname,
+                    host: SharedString::from(host),
+                    username: SharedString::from(username),
+                    port,
+                    password,
+                    project_path,
+                    status: ConnectionStatus::Disconnected,
+                };
                 self.saved_hosts.push(updated);
             }
         }
@@ -1448,6 +1495,7 @@ impl ConnectionLanding {
 
             let border = colors.border;
             let surface_bg = colors.surface_background;
+            let hover_bg = colors.ghost_element_hover;
             let mut first_group = true;
 
             for (_host, _username, _port, indices) in &groups {
@@ -1495,12 +1543,23 @@ impl ConnectionLanding {
 
                 // Host header row.
                 let add_project_index = first_idx;
+                let edit_host_index = first_idx;
                 group_container = group_container.child(
                     h_flex()
+                        .id(SharedString::from(format!("host-header-{first_idx}")))
                         .px_4()
                         .py_2()
                         .gap_3()
                         .items_center()
+                        .when(editing, |this| {
+                            this.cursor_pointer()
+                                .hover(move |style| style.bg(hover_bg))
+                                .on_click(cx.listener(
+                                    move |this, _event, window, cx| {
+                                        this.switch_to_edit_host(edit_host_index, window, cx);
+                                    },
+                                ))
+                        })
                         .child(
                             Icon::new(IconName::Server)
                                 .size(IconSize::Small)
@@ -1638,7 +1697,7 @@ impl ConnectionLanding {
             })
             .when(is_editing, |this| {
                 this.on_click(cx.listener(move |this, _event, window, cx| {
-                    this.switch_to_edit_host(index, window, cx);
+                    this.switch_to_edit_project(index, window, cx);
                 }))
             })
             .child(
@@ -1700,10 +1759,14 @@ impl ConnectionLanding {
 
     fn render_add_host_form(
         &self,
-        editing_index: Option<usize>,
-        project_only: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let show_host_fields = matches!(
+            self.mode,
+            LandingMode::AddHost | LandingMode::EditHost(_)
+        );
+        let show_project_field = !matches!(self.mode, LandingMode::EditHost(_));
+
         let colors = cx.theme().colors();
         let name_focus = self
             .name_editor
@@ -1733,15 +1796,19 @@ impl ConnectionLanding {
         let project_path_focus = self
             .project_path_editor
             .focus_handle(cx)
-            .tab_index(if project_only { 0 } else { 5 })
+            .tab_index(if show_host_fields { 5 } else { 0 })
             .tab_stop(true);
 
-        let (form_title, confirm_label) = if project_only {
-            ("ADD PROJECT", "Add Project")
-        } else if editing_index.is_some() {
-            ("EDIT CONNECTION", "Save")
-        } else {
-            ("NEW CONNECTION", "Add Host")
+        let (form_title, confirm_label) = match &self.mode {
+            LandingMode::AddProjectToHost | LandingMode::EditProject(_) => {
+                if matches!(self.mode, LandingMode::EditProject(_)) {
+                    ("EDIT PROJECT PATH", "Save")
+                } else {
+                    ("ADD PROJECT", "Add Project")
+                }
+            }
+            LandingMode::EditHost(_) => ("EDIT HOST", "Save"),
+            _ => ("NEW CONNECTION", "Add Host"),
         };
 
         let border = colors.border;
@@ -1758,7 +1825,7 @@ impl ConnectionLanding {
             .flex_col()
             .gap_3();
 
-        if !project_only {
+        if show_host_fields {
             form_fields = form_fields
                 .child(
                     v_flex()
@@ -1855,27 +1922,29 @@ impl ConnectionLanding {
                 );
         }
 
-        form_fields = form_fields.child(
-            v_flex()
-                .gap_1()
-                .child(
-                    Label::new("Project Path")
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                )
-                .child(
-                    div()
-                        .id("project-path-field")
-                        .track_focus(&project_path_focus)
-                        .rounded_md()
-                        .border_1()
-                        .border_color(border)
-                        .bg(editor_bg)
-                        .px_2()
-                        .py_1()
-                        .child(self.project_path_editor.clone()),
-                ),
-        );
+        if show_project_field {
+            form_fields = form_fields.child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        Label::new("Project Path")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        div()
+                            .id("project-path-field")
+                            .track_focus(&project_path_focus)
+                            .rounded_md()
+                            .border_1()
+                            .border_color(border)
+                            .bg(editor_bg)
+                            .px_2()
+                            .py_1()
+                            .child(self.project_path_editor.clone()),
+                    ),
+            );
+        }
 
         v_flex()
             .id("add-host-form")
@@ -1936,14 +2005,11 @@ impl Render for ConnectionLanding {
             LandingMode::Default => {
                 content = content.child(self.render_hosts_list(cx));
             }
-            LandingMode::AddHost => {
-                content = content.child(self.render_add_host_form(None, false, cx));
-            }
-            LandingMode::EditHost(index) => {
-                content = content.child(self.render_add_host_form(Some(*index), false, cx));
-            }
-            LandingMode::AddProjectToHost => {
-                content = content.child(self.render_add_host_form(None, true, cx));
+            LandingMode::AddHost
+            | LandingMode::EditHost(_)
+            | LandingMode::EditProject(_)
+            | LandingMode::AddProjectToHost => {
+                content = content.child(self.render_add_host_form(cx));
             }
         }
 
