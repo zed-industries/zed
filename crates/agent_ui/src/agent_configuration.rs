@@ -4,7 +4,7 @@ mod configure_context_server_tools_modal;
 mod manage_profiles_modal;
 mod tool_picker;
 
-use std::{ops::Range, rc::Rc, sync::Arc, time::Duration};
+use std::{ops::Range, rc::Rc, sync::Arc};
 
 use agent::ContextServerRegistry;
 use anyhow::Result;
@@ -16,9 +16,8 @@ use extension::ExtensionManifest;
 use extension_host::ExtensionStore;
 use fs::Fs;
 use gpui::{
-    Action, Animation, AnimationExt, AnyView, App, AsyncWindowContext, Corner, Entity,
-    EventEmitter, FocusHandle, Focusable, ScrollHandle, Subscription, Task, WeakEntity,
-    pulsating_between,
+    Action, AnyView, App, AsyncWindowContext, Corner, Entity, EventEmitter, FocusHandle, Focusable,
+    ScrollHandle, Subscription, Task, WeakEntity,
 };
 use itertools::Itertools;
 use language::LanguageRegistry;
@@ -34,9 +33,9 @@ use project::{
 };
 use settings::{Settings, SettingsStore, update_settings_file};
 use ui::{
-    ButtonStyle, Chip, CommonAnimationExt, ContextMenu, ContextMenuEntry, Disclosure, Divider,
-    DividerColor, ElevationIndex, IconWithIndicator, Indicator, LabelSize, PopoverMenu, Switch,
-    Tooltip, WithScrollbar, prelude::*,
+    AiSettingItem, AiSettingItemSource, AiSettingItemStatus, ButtonStyle, Chip, ContextMenu,
+    ContextMenuEntry, Disclosure, Divider, DividerColor, ElevationIndex, LabelSize, PopoverMenu,
+    Switch, Tooltip, WithScrollbar, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::{Workspace, create_and_open_local_file};
@@ -658,57 +657,19 @@ impl AgentConfiguration {
             .tools_for_server(&context_server_id)
             .count();
 
-        let (source_icon, source_tooltip) = if provided_by_extension {
-            (
-                IconName::ZedSrcExtension,
-                "This MCP server was installed from an extension.",
-            )
+        let source = if provided_by_extension {
+            AiSettingItemSource::Extension
         } else {
-            (
-                IconName::ZedSrcCustom,
-                "This custom MCP server was installed directly.",
-            )
+            AiSettingItemSource::Custom
         };
 
-        let (status_indicator, tooltip_text) = match server_status {
-            ContextServerStatus::Starting => (
-                Icon::new(IconName::LoadCircle)
-                    .size(IconSize::XSmall)
-                    .color(Color::Accent)
-                    .with_keyed_rotate_animation(
-                        SharedString::from(format!("{}-starting", context_server_id.0)),
-                        3,
-                    )
-                    .into_any_element(),
-                "Server is starting.",
-            ),
-            ContextServerStatus::Running => (
-                Indicator::dot().color(Color::Success).into_any_element(),
-                "Server is active.",
-            ),
-            ContextServerStatus::Error(_) => (
-                Indicator::dot().color(Color::Error).into_any_element(),
-                "Server has an error.",
-            ),
-            ContextServerStatus::Stopped => (
-                Indicator::dot().color(Color::Muted).into_any_element(),
-                "Server is stopped.",
-            ),
-            ContextServerStatus::AuthRequired => (
-                Indicator::dot().color(Color::Warning).into_any_element(),
-                "Authentication required.",
-            ),
-            ContextServerStatus::Authenticating => (
-                Icon::new(IconName::LoadCircle)
-                    .size(IconSize::XSmall)
-                    .color(Color::Accent)
-                    .with_keyed_rotate_animation(
-                        SharedString::from(format!("{}-authenticating", context_server_id.0)),
-                        3,
-                    )
-                    .into_any_element(),
-                "Waiting for authorization...",
-            ),
+        let status = match server_status {
+            ContextServerStatus::Starting => AiSettingItemStatus::Starting,
+            ContextServerStatus::Running => AiSettingItemStatus::Running,
+            ContextServerStatus::Error(_) => AiSettingItemStatus::Error,
+            ContextServerStatus::Stopped => AiSettingItemStatus::Stopped,
+            ContextServerStatus::AuthRequired => AiSettingItemStatus::AuthRequired,
+            ContextServerStatus::Authenticating => AiSettingItemStatus::Authenticating,
         };
 
         let is_remote = server_configuration
@@ -852,221 +813,156 @@ impl AgentConfiguration {
         let feedback_base_container =
             || h_flex().py_1().min_w_0().w_full().gap_1().justify_between();
 
-        v_flex()
-            .min_w_0()
-            .id(item_id.clone())
-            .child(
-                h_flex()
-                    .min_w_0()
-                    .w_full()
-                    .justify_between()
+        let details: Option<AnyElement> = if let Some(error) = error {
+            Some(
+                feedback_base_container()
                     .child(
                         h_flex()
-                            .flex_1()
-                            .min_w_0()
-                            .child(
-                                h_flex()
-                                    .id(format!("tooltip-{}", item_id))
-                                    .h_full()
-                                    .w_3()
-                                    .mr_2()
-                                    .justify_center()
-                                    .tooltip(Tooltip::text(tooltip_text))
-                                    .child(status_indicator),
-                            )
-                            .child(Label::new(item_id).flex_shrink_0().truncate())
-                            .child(
-                                div()
-                                    .id("extension-source")
-                                    .min_w_0()
-                                    .mt_0p5()
-                                    .mx_1()
-                                    .tooltip(Tooltip::text(source_tooltip))
-                                    .child(
-                                        Icon::new(source_icon)
-                                            .size(IconSize::Small)
-                                            .color(Color::Muted),
-                                    ),
-                            )
-                            .when(is_running, |this| {
-                                this.child(
-                                    Label::new(if tool_count == 1 {
-                                        SharedString::from("1 tool")
-                                    } else {
-                                        SharedString::from(format!("{} tools", tool_count))
-                                    })
-                                    .color(Color::Muted)
-                                    .size(LabelSize::Small),
-                                )
-                            }),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_0p5()
-                            .flex_none()
-                            .child(context_server_configuration_menu)
-                            .child(
-                            Switch::new("context-server-switch", is_running.into())
-                                .on_click({
-                                    let context_server_manager = self.context_server_store.clone();
-                                    let fs = self.fs.clone();
-                                    let context_server_id = context_server_id.clone();
-
-                                    move |state, _window, cx| {
-                                        let is_enabled = match state {
-                                            ToggleState::Unselected
-                                            | ToggleState::Indeterminate => {
-                                                context_server_manager.update(cx, |this, cx| {
-                                                    this.stop_server(&context_server_id, cx)
-                                                        .log_err();
-                                                });
-                                                false
-                                            }
-                                            ToggleState::Selected => {
-                                                context_server_manager.update(cx, |this, cx| {
-                                                    if let Some(server) =
-                                                        this.get_server(&context_server_id)
-                                                    {
-                                                        this.start_server(server, cx);
-                                                    }
-                                                });
-                                                true
-                                            }
-                                        };
-                                        update_settings_file(fs.clone(), cx, {
-                                            let context_server_id = context_server_id.clone();
-
-                                            move |settings, _| {
-                                                settings
-                                                    .project
-                                                    .context_servers
-                                                    .entry(context_server_id.0)
-                                                    .or_insert_with(|| {
-                                                        settings::ContextServerSettingsContent::Extension {
-                                                            enabled: is_enabled,
-                                                            remote: false,
-                                                            settings: serde_json::json!({}),
-                                                        }
-                                                    })
-                                                    .set_enabled(is_enabled);
-                                            }
-                                        });
-                                    }
-                                }),
-                        ),
-                    ),
-            )
-            .map(|parent| {
-                if let Some(error) = error {
-                    return parent
-                        .child(
-                            feedback_base_container()
-                                .child(
-                                    h_flex()
-                                        .pr_4()
-                                        .min_w_0()
-                                        .w_full()
-                                        .gap_2()
-                                        .child(
-                                            Icon::new(IconName::XCircle)
-                                                .size(IconSize::XSmall)
-                                                .color(Color::Error),
-                                        )
-                                        .child(
-                                            div().min_w_0().flex_1().child(
-                                                Label::new(error)
-                                                    .color(Color::Muted)
-                                                    .size(LabelSize::Small),
-                                            ),
-                                        ),
-                                )
-                                .when(should_show_logout_button, |this| {
-                                    this.child(
-                                        Button::new("error-logout-server", "Log Out")
-                                            .style(ButtonStyle::Outlined)
-                                            .label_size(LabelSize::Small)
-                                            .on_click({
-                                                let context_server_store =
-                                                    context_server_store.clone();
-                                                let context_server_id =
-                                                    context_server_id.clone();
-                                                move |_event, _window, cx| {
-                                                    context_server_store.update(
-                                                        cx,
-                                                        |store, cx| {
-                                                            store
-                                                                .logout_server(
-                                                                    &context_server_id,
-                                                                    cx,
-                                                                )
-                                                                .log_err();
-                                                        },
-                                                    );
-                                                }
-                                            }),
-                                    )
-                                }),
-                        );
-                }
-                if auth_required {
-                    return parent.child(
-                        feedback_base_container()
-                            .child(
-                                h_flex()
-                                    .pr_4()
-                                    .min_w_0()
-                                    .w_full()
-                                    .gap_2()
-                                    .child(
-                                        Icon::new(IconName::Info)
-                                            .size(IconSize::XSmall)
-                                            .color(Color::Muted),
-                                    )
-                                    .child(
-                                        Label::new("Authenticate to connect this server")
-                                            .color(Color::Muted)
-                                            .size(LabelSize::Small),
-                                    ),
-                            )
-                            .child(
-                                Button::new("error-logout-server", "Authenticate")
-                                    .style(ButtonStyle::Outlined)
-                                    .label_size(LabelSize::Small)
-                                    .on_click({
-                                        let context_server_store = context_server_store.clone();
-                                        let context_server_id = context_server_id.clone();
-                                        move |_event, _window, cx| {
-                                            context_server_store.update(cx, |store, cx| {
-                                                store
-                                                    .authenticate_server(&context_server_id, cx)
-                                                    .log_err();
-                                            });
-                                        }
-                                    }),
-                            ),
-                    );
-                }
-                if authenticating {
-                    return parent.child(
-                        h_flex()
-                            .mt_1()
                             .pr_4()
                             .min_w_0()
                             .w_full()
                             .gap_2()
                             .child(
-                                div().size_3().flex_shrink_0(), // Alignment Div
+                                Icon::new(IconName::XCircle)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Error),
+                            )
+                            .child(div().min_w_0().flex_1().child(
+                                Label::new(error).color(Color::Muted).size(LabelSize::Small),
+                            )),
+                    )
+                    .when(should_show_logout_button, |this| {
+                        this.child(
+                            Button::new("error-logout-server", "Log Out")
+                                .style(ButtonStyle::Outlined)
+                                .label_size(LabelSize::Small)
+                                .on_click({
+                                    let context_server_store = context_server_store.clone();
+                                    let context_server_id = context_server_id.clone();
+                                    move |_event, _window, cx| {
+                                        context_server_store.update(cx, |store, cx| {
+                                            store.logout_server(&context_server_id, cx).log_err();
+                                        });
+                                    }
+                                }),
+                        )
+                    })
+                    .into_any_element(),
+            )
+        } else if auth_required {
+            Some(
+                feedback_base_container()
+                    .child(
+                        h_flex()
+                            .pr_4()
+                            .min_w_0()
+                            .w_full()
+                            .gap_2()
+                            .child(
+                                Icon::new(IconName::Info)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted),
                             )
                             .child(
-                                Label::new("Authenticating…")
+                                Label::new("Authenticate to connect this server")
                                     .color(Color::Muted)
                                     .size(LabelSize::Small),
                             ),
+                    )
+                    .child(
+                        Button::new("error-logout-server", "Authenticate")
+                            .style(ButtonStyle::Outlined)
+                            .label_size(LabelSize::Small)
+                            .on_click({
+                                let context_server_store = context_server_store.clone();
+                                let context_server_id = context_server_id.clone();
+                                move |_event, _window, cx| {
+                                    context_server_store.update(cx, |store, cx| {
+                                        store.authenticate_server(&context_server_id, cx).log_err();
+                                    });
+                                }
+                            }),
+                    )
+                    .into_any_element(),
+            )
+        } else if authenticating {
+            Some(
+                h_flex()
+                    .mt_1()
+                    .pr_4()
+                    .min_w_0()
+                    .w_full()
+                    .gap_2()
+                    .child(div().size_3().flex_shrink_0())
+                    .child(
+                        Label::new("Authenticating…")
+                            .color(Color::Muted)
+                            .size(LabelSize::Small),
+                    )
+                    .into_any_element(),
+            )
+        } else {
+            None
+        };
 
-                    );
-                }
-                parent
+        let tool_label = if is_running {
+            Some(if tool_count == 1 {
+                SharedString::from("1 tool")
+            } else {
+                SharedString::from(format!("{} tools", tool_count))
             })
+        } else {
+            None
+        };
+
+        AiSettingItem::new(item_id.clone(), item_id, status, source)
+            .action(context_server_configuration_menu)
+            .action(
+                Switch::new("context-server-switch", is_running.into()).on_click({
+                    let context_server_manager = self.context_server_store.clone();
+                    let fs = self.fs.clone();
+                    let context_server_id = context_server_id.clone();
+
+                    move |state, _window, cx| {
+                        let is_enabled = match state {
+                            ToggleState::Unselected | ToggleState::Indeterminate => {
+                                context_server_manager.update(cx, |this, cx| {
+                                    this.stop_server(&context_server_id, cx).log_err();
+                                });
+                                false
+                            }
+                            ToggleState::Selected => {
+                                context_server_manager.update(cx, |this, cx| {
+                                    if let Some(server) = this.get_server(&context_server_id) {
+                                        this.start_server(server, cx);
+                                    }
+                                });
+                                true
+                            }
+                        };
+                        update_settings_file(fs.clone(), cx, {
+                            let context_server_id = context_server_id.clone();
+
+                            move |settings, _| {
+                                settings
+                                    .project
+                                    .context_servers
+                                    .entry(context_server_id.0)
+                                    .or_insert_with(|| {
+                                        settings::ContextServerSettingsContent::Extension {
+                                            enabled: is_enabled,
+                                            remote: false,
+                                            settings: serde_json::json!({}),
+                                        }
+                                    })
+                                    .set_enabled(is_enabled);
+                            }
+                        });
+                    }
+                }),
+            )
+            .when_some(tool_label, |this, label| this.detail_label(label))
+            .when_some(details, |this, details| this.details(details))
     }
 
     fn render_agent_servers_section(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1214,30 +1110,17 @@ impl AgentConfiguration {
                 .color(Color::Muted),
         };
 
-        let source_badge = match source {
-            ExternalAgentSource::Extension => Some((
-                SharedString::new(format!("agent-source-{}", id)),
-                SharedString::from(format!(
-                    "The {} agent was installed from an extension.",
-                    display_name
-                )),
-                IconName::ZedSrcExtension,
-            )),
-            ExternalAgentSource::Registry => Some((
-                SharedString::new(format!("agent-source-{}", id)),
-                SharedString::from(format!(
-                    "The {} agent was installed from the ACP registry.",
-                    display_name
-                )),
-                IconName::AcpRegistry,
-            )),
-            ExternalAgentSource::Custom => None,
+        let source_kind = match source {
+            ExternalAgentSource::Extension => AiSettingItemSource::Extension,
+            ExternalAgentSource::Registry => AiSettingItemSource::Registry,
+            ExternalAgentSource::Custom => AiSettingItemSource::Custom,
         };
 
         let agent_server_name = AgentId(id.clone());
         let agent = Agent::Custom {
             id: agent_server_name.clone(),
         };
+
         let connection_status = self
             .agent_connection_store
             .read(cx)
@@ -1347,68 +1230,16 @@ impl AgentConfiguration {
             }
         };
 
-        h_flex()
-            .gap_1()
-            .justify_between()
-            .child(
-                h_flex()
-                    .gap_1p5()
-                    .child({
-                        let (icon, status_tooltip) = match connection_status {
-                            AgentConnectionStatus::Disconnected => {
-                                (icon.into_any_element(), "Server not started")
-                            }
-                            AgentConnectionStatus::Connecting => (
-                                div()
-                                    .child(icon)
-                                    .with_animation(
-                                        format!("agent-status-indicator-{id}"),
-                                        Animation::new(Duration::from_secs(2))
-                                            .repeat()
-                                            .with_easing(pulsating_between(0.4, 0.8)),
-                                        |div, delta| div.opacity(delta),
-                                    )
-                                    .into_any_element(),
-                                "Starting",
-                            ),
-                            AgentConnectionStatus::Connected => (
-                                IconWithIndicator::new(
-                                    icon,
-                                    Some(Indicator::dot().color(Color::Success)),
-                                )
-                                .into_any_element(),
-                                "Running",
-                            ),
-                        };
+        let status = match connection_status {
+            AgentConnectionStatus::Disconnected => AiSettingItemStatus::Stopped,
+            AgentConnectionStatus::Connecting => AiSettingItemStatus::Starting,
+            AgentConnectionStatus::Connected => AiSettingItemStatus::Running,
+        };
 
-                        div()
-                            .id(format!("agent-status-{id}"))
-                            .flex_none()
-                            .tooltip(Tooltip::text(status_tooltip))
-                            .child(icon)
-                    })
-                    .child(Label::new(display_name))
-                    .when_some(source_badge, |this, (tooltip_id, tooltip_message, icon)| {
-                        this.child(
-                            div()
-                                .id(tooltip_id)
-                                .flex_none()
-                                .tooltip(Tooltip::text(tooltip_message))
-                                .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted)),
-                        )
-                    }),
-            )
-            .when(
-                restart_button.is_some() || uninstall_button.is_some(),
-                |this| {
-                    this.child(
-                        h_flex()
-                            .gap_0p5()
-                            .children(restart_button)
-                            .children(uninstall_button),
-                    )
-                },
-            )
+        AiSettingItem::new(id, display_name, status, source_kind)
+            .icon(icon)
+            .when_some(restart_button, |this, button| this.action(button))
+            .when_some(uninstall_button, |this, button| this.action(button))
     }
 }
 

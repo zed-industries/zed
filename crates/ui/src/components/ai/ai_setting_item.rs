@@ -20,7 +20,7 @@ impl AiSettingItemStatus {
             Self::Running => "Server is active.",
             Self::Error => "Server has an error.",
             Self::AuthRequired => "Authentication required.",
-            Self::Authenticating => "Waiting for authorization...",
+            Self::Authenticating => "Waiting for authorization…",
         }
     }
 }
@@ -44,8 +44,8 @@ impl AiSettingItemSource {
     fn tooltip_text(&self, label: &str) -> String {
         match self {
             Self::Extension => format!("{label} was installed from an extension."),
-            Self::Custom => format!("{label} was configured manually."),
             Self::Registry => format!("{label} was installed from the ACP registry."),
+            Self::Custom => format!("{label} was configured manually."),
         }
     }
 }
@@ -130,16 +130,13 @@ impl RenderOnce for AiSettingItem {
             AiSettingItemStatus::AuthRequired => {
                 Indicator::dot().color(Color::Warning).into_any_element()
             }
-            AiSettingItemStatus::Starting => Icon::new(IconName::LoadCircle)
-                .size(IconSize::XSmall)
-                .color(Color::Accent)
-                .with_keyed_rotate_animation(format!("{}-starting", id), 3)
-                .into_any_element(),
-            AiSettingItemStatus::Authenticating => Icon::new(IconName::LoadCircle)
-                .size(IconSize::XSmall)
-                .color(Color::Accent)
-                .with_keyed_rotate_animation(format!("{}-authenticating", id), 3)
-                .into_any_element(),
+            AiSettingItemStatus::Starting | AiSettingItemStatus::Authenticating => {
+                Icon::new(IconName::LoadCircle)
+                    .size(IconSize::XSmall)
+                    .color(Color::Muted)
+                    .with_keyed_rotate_animation(format!("{}-starting", id), 3)
+                    .into_any_element()
+            }
         };
 
         v_flex()
