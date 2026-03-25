@@ -2639,21 +2639,24 @@ mod tests {
         let mut store = SettingsStore::new(cx, &default_settings());
         store.register_setting::<AutoUpdateSetting>();
 
-        // Default auto_update is true
         assert_eq!(
             store.get::<AutoUpdateSetting>(None),
             &AutoUpdateSetting { auto_update: true }
         );
 
-        // User sets auto_update to false and defines a profile with base: "default"
+        // User sets auto_update to false and defines two profiles with base: "default",
+        // one with an explicit empty settings object and one without.
         store
             .set_user_settings(
                 r#"{
                     "auto_update": false,
                     "profiles": {
-                        "clean_slate": {
+                        "with_settings": {
                             "base": "default",
                             "settings": {}
+                        },
+                        "without_settings": {
+                            "base": "default"
                         }
                     }
                 }"#,
@@ -2661,20 +2664,21 @@ mod tests {
             )
             .unwrap();
 
-        // Without profile active, user setting applies
         assert_eq!(
             store.get::<AutoUpdateSetting>(None),
             &AutoUpdateSetting { auto_update: false }
         );
 
-        // Activate the profile with base: "default"
-        cx.set_global(ActiveSettingsProfileName("clean_slate".to_string()));
-        store.recompute_values(None, cx);
+        // Both profiles should behave the same: user settings are skipped,
+        // so we get the default value.
+        for profile_name in ["with_settings", "without_settings"] {
+            cx.set_global(ActiveSettingsProfileName(profile_name.to_string()));
+            store.recompute_values(None, cx);
 
-        // With profile active, user settings are skipped, so we get the default value
-        assert_eq!(
-            store.get::<AutoUpdateSetting>(None),
-            &AutoUpdateSetting { auto_update: true }
-        );
+            assert_eq!(
+                store.get::<AutoUpdateSetting>(None),
+                &AutoUpdateSetting { auto_update: true }
+            );
+        }
     }
 }
