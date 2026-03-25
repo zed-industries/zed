@@ -1,9 +1,6 @@
 use crate::{context::LoadedContext, inline_prompt_editor::CodegenStatus};
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
-use uuid::Uuid;
-
-use cloud_llm_client::CompletionIntent;
 use collections::HashSet;
 use editor::{Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint};
 use futures::{
@@ -16,7 +13,7 @@ use futures::{
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task};
 use language::{Buffer, IndentKind, LanguageName, Point, TransactionId, line_diff};
 use language_model::{
-    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    CompletionIntent, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelRequestTool, LanguageModelTextStream, LanguageModelToolChoice,
     LanguageModelToolUse, Role, TokenUsage,
@@ -40,6 +37,7 @@ use std::{
     time::Instant,
 };
 use streaming_diff::{CharOperation, LineDiff, LineOperation, StreamingDiff};
+use uuid::Uuid;
 
 /// Use this tool when you cannot or should not make a rewrite. This includes:
 /// - The user's request is unclear, ambiguous, or nonsensical

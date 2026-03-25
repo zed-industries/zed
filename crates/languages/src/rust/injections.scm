@@ -10,7 +10,7 @@
     (scoped_identifier
       (identifier) @_macro_name .)
   ]
-  (#not-any-of? @_macro_name "view" "html" "bsn")
+  (#not-any-of? @_macro_name "view" "html")
   (token_tree) @injection.content
   (#set! injection.language "rust"))
 

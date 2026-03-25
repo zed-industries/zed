@@ -788,6 +788,12 @@ impl<D: PickerDelegate> Picker<D> {
                     this.handle_click(ix, event.modifiers.platform, window, cx)
                 }),
             )
+            .on_hover(cx.listener(move |this, hovered: &bool, window, cx| {
+                if *hovered {
+                    this.set_selected_index(ix, None, false, window, cx);
+                    cx.notify();
+                }
+            }))
             .children(self.delegate.render_match(
                 ix,
                 ix == self.delegate.selected_index(),

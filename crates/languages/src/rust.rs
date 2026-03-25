@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
 use futures::lock::OwnedMutexGuard;
-use gpui::{App, AppContext, AsyncApp, SharedString, Task};
+use gpui::{App, AppContext, AsyncApp, Entity, SharedString, Task};
 use http_client::github::AssetKind;
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 use http_client::github_download::{GithubBinaryMetadata, download_server_binary};
@@ -32,7 +32,7 @@ use util::rel_path::RelPath;
 use util::{ResultExt, maybe};
 
 use crate::LanguageDir;
-use crate::language_settings::language_settings;
+use crate::language_settings::LanguageSettings;
 
 pub(crate) fn semantic_token_rules() -> SemanticTokenRules {
     let content = LanguageDir::get("rust/semantic_token_rules.json")
@@ -202,6 +202,7 @@ impl RustLspAdapter {
     async fn build_asset_name() -> String {
         let extension = match Self::GITHUB_ASSET_KIND {
             AssetKind::TarGz => "tar.gz",
+            AssetKind::TarBz2 => "tar.bz2",
             AssetKind::Gz => "gz",
             AssetKind::Zip => "zip",
         };
@@ -706,7 +707,7 @@ impl LspInstaller for RustLspAdapter {
         } = version;
         let destination_path = container_dir.join(format!("rust-analyzer-{name}"));
         let server_path = match Self::GITHUB_ASSET_KIND {
-            AssetKind::TarGz | AssetKind::Gz => destination_path.clone(), // Tar and gzip extract in place.
+            AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Gz => destination_path.clone(), // Tar and gzip extract in place.
             AssetKind::Zip => destination_path.clone().join("rust-analyzer.exe"), // zip contains a .exe
         };
 
@@ -898,23 +899,16 @@ impl ContextProvider for RustContextProvider {
 
     fn associated_tasks(
         &self,
-        file: Option<Arc<dyn language::File>>,
+        buffer: Option<Entity<Buffer>>,
         cx: &App,
     ) -> Task<Option<TaskTemplates>> {
         const DEFAULT_RUN_NAME_STR: &str = "RUST_DEFAULT_PACKAGE_RUN";
         const CUSTOM_TARGET_DIR: &str = "RUST_TARGET_DIR";
 
-        let language_sets = language_settings(Some("Rust".into()), file.as_ref(), cx);
-        let package_to_run = language_sets
-            .tasks
-            .variables
-            .get(DEFAULT_RUN_NAME_STR)
-            .cloned();
-        let custom_target_dir = language_sets
-            .tasks
-            .variables
-            .get(CUSTOM_TARGET_DIR)
-            .cloned();
+        let language = LanguageName::new_static("Rust");
+        let settings = LanguageSettings::resolve(buffer.map(|b| b.read(cx)), Some(&language), cx);
+        let package_to_run = settings.tasks.variables.get(DEFAULT_RUN_NAME_STR).cloned();
+        let custom_target_dir = settings.tasks.variables.get(CUSTOM_TARGET_DIR).cloned();
         let run_task_args = if let Some(package_to_run) = package_to_run {
             vec!["run".into(), "-p".into(), package_to_run]
         } else {
@@ -1280,8 +1274,8 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
             None => return Ok(None),
         };
         let path = match RustLspAdapter::GITHUB_ASSET_KIND {
-            AssetKind::TarGz | AssetKind::Gz => path, // Tar and gzip extract in place.
-            AssetKind::Zip => path.join("rust-analyzer.exe"), // zip contains a .exe
+            AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Gz => path, // Tar and gzip extract in place.
+            AssetKind::Zip => path.join("rust-analyzer.exe"),             // zip contains a .exe
         };
 
         anyhow::Ok(Some(LanguageServerBinary {

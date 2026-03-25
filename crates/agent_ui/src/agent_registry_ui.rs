@@ -403,6 +403,22 @@ impl AgentRegistryPage {
             })
         });
 
+        let website_button = agent.website().map(|website| {
+            let website = website.clone();
+            let website_for_click = website.clone();
+            IconButton::new(
+                SharedString::from(format!("agent-website-{}", agent.id())),
+                IconName::Link,
+            )
+            .icon_size(IconSize::Small)
+            .tooltip(move |_, cx| {
+                Tooltip::with_meta("Visit Agent Website", None, website.clone(), cx)
+            })
+            .on_click(move |_, _, cx| {
+                cx.open_url(&website_for_click);
+            })
+        });
+
         AgentRegistryCard::new()
             .child(
                 h_flex()
@@ -441,7 +457,8 @@ impl AgentRegistryPage {
                                     .color(Color::Muted)
                                     .truncate(),
                             )
-                            .when_some(repository_button, |this, button| this.child(button)),
+                            .when_some(repository_button, |this, button| this.child(button))
+                            .when_some(website_button, |this, button| this.child(button)),
                     ),
             )
     }

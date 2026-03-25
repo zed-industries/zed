@@ -40,6 +40,7 @@ editor.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
+livekit_client.workspace = true
 log.workspace = true
 menu.workspace = true
 notifications.workspace = true
@@ -59,6 +60,7 @@ title_bar.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true
+zed_actions.workspace = true
 
 [dev-dependencies]
 call = { workspace = true, features = ["test-support"] }

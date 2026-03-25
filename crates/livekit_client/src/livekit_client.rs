@@ -1,19 +1,21 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use audio::AudioSettings;
 use collections::HashMap;
 use futures::{SinkExt, channel::mpsc};
 use gpui::{App, AsyncApp, ScreenCaptureSource, ScreenCaptureStream, Task};
 use gpui_tokio::Tokio;
-use log::info;
+
 use playback::capture_local_video_track;
 use settings::Settings;
+use std::sync::{Arc, atomic::AtomicU64};
 
+#[cfg(target_os = "linux")]
+mod linux;
 mod playback;
 
-use crate::{
-    LocalTrack, Participant, RemoteTrack, RoomEvent, TrackPublication,
-    livekit_client::playback::Speaker,
-};
+use crate::{ConnectionQuality, LocalTrack, Participant, RemoteTrack, RoomEvent, TrackPublication};
+pub use livekit::SessionStats;
+pub use livekit::webrtc::stats::RtcStats;
 pub use playback::AudioStream;
 pub(crate) use playback::{RemoteVideoFrame, play_remote_video_track};
 
@@ -107,8 +109,8 @@ impl Room {
         user_name: String,
         is_staff: bool,
         cx: &mut AsyncApp,
-    ) -> Result<(LocalTrackPublication, playback::AudioStream)> {
-        let (track, stream) = self
+    ) -> Result<(LocalTrackPublication, playback::AudioStream, Arc<AtomicU64>)> {
+        let (track, stream, input_lag_us) = self
             .playback
             .capture_local_microphone_track(user_name, is_staff, &cx)?;
         let publication = self
@@ -123,7 +125,7 @@ impl Room {
             )
             .await?;
 
-        Ok((publication, stream))
+        Ok((publication, stream, input_lag_us))
     }
 
     pub async fn unpublish_local_track(
@@ -139,28 +141,37 @@ impl Room {
         track: &RemoteAudioTrack,
         cx: &mut App,
     ) -> Result<playback::AudioStream> {
-        let speaker: Speaker =
-            serde_urlencoded::from_str(&track.0.name()).unwrap_or_else(|_| Speaker {
-                name: track.0.name(),
-                is_staff: false,
-                sends_legacy_audio: true,
-            });
+        let output_audio_device = AudioSettings::get_global(cx).output_audio_device.clone();
+        Ok(self
+            .playback
+            .play_remote_audio_track(&track.0, output_audio_device))
+    }
 
-        if AudioSettings::get_global(cx).rodio_audio {
-            info!("Using experimental.rodio_audio audio pipeline for output");
-            playback::play_remote_audio_track(&track.0, speaker, cx)
-        } else if speaker.sends_legacy_audio {
-            let output_audio_device = AudioSettings::get_global(cx).output_audio_device.clone();
-            Ok(self
-                .playback
-                .play_remote_audio_track(&track.0, output_audio_device))
-        } else {
-            Err(anyhow!("Client version too old to play audio in call"))
-        }
+    pub async fn get_stats(&self) -> Result<livekit::SessionStats> {
+        self.room.get_stats().await.map_err(anyhow::Error::from)
+    }
+
+    /// Returns a `Task` that fetches room stats on the Tokio runtime.
+    ///
+    /// LiveKit's SDK is Tokio-based, so the stats fetch must run within
+    /// a Tokio context rather than on GPUI's smol-based background executor.
+    pub fn stats_task(&self, cx: &impl gpui::AppContext) -> Task<Result<livekit::SessionStats>> {
+        let inner = self.room.clone();
+        Tokio::spawn_result(cx, async move {
+            inner.get_stats().await.map_err(anyhow::Error::from)
+        })
     }
 }
 
 impl LocalParticipant {
+    pub fn connection_quality(&self) -> ConnectionQuality {
+        connection_quality_from_livekit(self.0.connection_quality())
+    }
+
+    pub fn audio_level(&self) -> f32 {
+        self.0.audio_level()
+    }
+
     pub async fn publish_screenshare_track(
         &self,
         source: &dyn ScreenCaptureSource,
@@ -205,6 +216,33 @@ impl LocalParticipant {
             .map(LocalTrackPublication)
             .context("unpublishing a track")
     }
+
+    #[cfg(target_os = "linux")]
+    pub async fn publish_screenshare_track_wayland(
+        &self,
+        cx: &mut AsyncApp,
+    ) -> Result<(
+        LocalTrackPublication,
+        Box<dyn ScreenCaptureStream>,
+        futures::channel::oneshot::Receiver<()>,
+    )> {
+        let (track, stop_flag, feed_task, failure_rx) =
+            linux::start_wayland_desktop_capture(cx).await?;
+        let options = livekit::options::TrackPublishOptions {
+            source: livekit::track::TrackSource::Screenshare,
+            video_codec: livekit::options::VideoCodec::VP8,
+            ..Default::default()
+        };
+        let publication = self
+            .publish_track(livekit::track::LocalTrack::Video(track.0), options, cx)
+            .await?;
+
+        Ok((
+            publication,
+            Box::new(linux::WaylandScreenCaptureStream::new(stop_flag, feed_task)),
+            failure_rx,
+        ))
+    }
 }
 
 impl LocalTrackPublication {
@@ -234,6 +272,14 @@ impl LocalTrackPublication {
 }
 
 impl RemoteParticipant {
+    pub fn connection_quality(&self) -> ConnectionQuality {
+        connection_quality_from_livekit(self.0.connection_quality())
+    }
+
+    pub fn audio_level(&self) -> f32 {
+        self.0.audio_level()
+    }
+
     pub fn identity(&self) -> ParticipantIdentity {
         ParticipantIdentity(self.0.identity().0)
     }
@@ -296,6 +342,31 @@ impl Participant {
                 ParticipantIdentity(remote_participant.0.identity().0)
             }
         }
+    }
+
+    pub fn connection_quality(&self) -> ConnectionQuality {
+        match self {
+            Participant::Local(local_participant) => local_participant.connection_quality(),
+            Participant::Remote(remote_participant) => remote_participant.connection_quality(),
+        }
+    }
+
+    pub fn audio_level(&self) -> f32 {
+        match self {
+            Participant::Local(local_participant) => local_participant.audio_level(),
+            Participant::Remote(remote_participant) => remote_participant.audio_level(),
+        }
+    }
+}
+
+fn connection_quality_from_livekit(
+    quality: livekit::prelude::ConnectionQuality,
+) -> ConnectionQuality {
+    match quality {
+        livekit::prelude::ConnectionQuality::Excellent => ConnectionQuality::Excellent,
+        livekit::prelude::ConnectionQuality::Good => ConnectionQuality::Good,
+        livekit::prelude::ConnectionQuality::Poor => ConnectionQuality::Poor,
+        livekit::prelude::ConnectionQuality::Lost => ConnectionQuality::Lost,
     }
 }
 
@@ -474,6 +545,13 @@ fn room_event_from_livekit(event: livekit::RoomEvent) -> Option<RoomEvent> {
         },
         livekit::RoomEvent::Reconnecting => RoomEvent::Reconnecting,
         livekit::RoomEvent::Reconnected => RoomEvent::Reconnected,
+        livekit::RoomEvent::ConnectionQualityChanged {
+            quality,
+            participant,
+        } => RoomEvent::ConnectionQualityChanged {
+            participant: participant_from_livekit(participant),
+            quality: connection_quality_from_livekit(quality),
+        },
         _ => {
             log::trace!("dropping livekit event: {:?}", event);
             return None;

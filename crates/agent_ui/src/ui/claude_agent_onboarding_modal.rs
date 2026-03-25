@@ -1,8 +1,8 @@
+use agent_servers::CLAUDE_AGENT_ID;
 use gpui::{
     ClickEvent, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, MouseDownEvent, Render,
     linear_color_stop, linear_gradient,
 };
-use project::agent_server_store::CLAUDE_AGENT_NAME;
 use ui::{TintColor, Vector, VectorName, prelude::*};
 use workspace::{ModalView, Workspace};
 
@@ -39,7 +39,7 @@ impl ClaudeCodeOnboardingModal {
                 panel.update(cx, |panel, cx| {
                     panel.new_agent_thread(
                         AgentType::Custom {
-                            name: CLAUDE_AGENT_NAME.into(),
+                            id: CLAUDE_AGENT_ID.into(),
                         },
                         window,
                         cx,
