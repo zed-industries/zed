@@ -116,6 +116,10 @@ type testDriver struct {
 	// Incremented on every round transition. Goroutines capture the value
 	// before sleeping and check it hasn't changed when they wake up.
 	roundGeneration int
+
+	// Per-phase timeout tracking
+	phaseStarted time.Time
+	phaseTimedOut map[int]bool // phases that timed out (skip in validation)
 }
 
 type roundResult struct {
@@ -427,6 +431,74 @@ func (d *testDriver) sendQueryUiState(queryID string) {
 	}
 }
 
+const phaseTimeout = 90 * time.Second
+
+// startPhaseTimeout launches a watchdog that fires if the current phase
+// doesn't complete within phaseTimeout. On timeout it dumps diagnostic
+// state and advances to the next round (failing the current one).
+func (d *testDriver) startPhaseTimeout(phase int) {
+	d.mu.Lock()
+	d.phaseStarted = time.Now()
+	gen := d.roundGeneration
+	agent := d.round.agentName
+	d.mu.Unlock()
+
+	go func() {
+		time.Sleep(phaseTimeout)
+		d.mu.Lock()
+		if d.roundGeneration != gen {
+			d.mu.Unlock()
+			return // round already advanced
+		}
+		if d.phase != phase {
+			d.mu.Unlock()
+			return // phase already advanced
+		}
+		// Phase timed out — dump state
+		if d.phaseTimedOut == nil {
+			d.phaseTimedOut = make(map[int]bool)
+		}
+		d.phaseTimedOut[phase] = true
+		eventCount := len(d.round.events)
+		threadCount := len(d.round.threadIDs)
+		threads := make([]string, len(d.round.threadIDs))
+		copy(threads, d.round.threadIDs)
+		completions := make(map[string][]string)
+		for k, v := range d.round.completions {
+			completions[k] = v
+		}
+		d.mu.Unlock()
+
+		log.Printf("\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+		log.Printf("  [%s] PHASE %d TIMED OUT after %s", agent, phase, phaseTimeout)
+		log.Printf("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+		log.Printf("[%s] State at timeout:", agent)
+		log.Printf("[%s]   Events received: %d", agent, eventCount)
+		log.Printf("[%s]   Threads: %d %v", agent, threadCount, threads)
+		log.Printf("[%s]   Completions: %v", agent, completions)
+
+		// Dump recent events
+		d.mu.Lock()
+		events := d.round.events
+		d.mu.Unlock()
+		start := 0
+		if len(events) > 10 {
+			start = len(events) - 10
+		}
+		for i := start; i < len(events); i++ {
+			data, _ := json.Marshal(events[i].Data)
+			dataStr := string(data)
+			if len(dataStr) > 200 {
+				dataStr = dataStr[:200] + "..."
+			}
+			log.Printf("[%s]   event %d: type=%s data=%s", agent, i, events[i].EventType, dataStr)
+		}
+
+		log.Printf("[%s] ABORTING: phase %d timed out — phases are sequential, cannot continue", agent, phase)
+		os.Exit(1)
+	}()
+}
+
 // --- Phase execution ---
 
 func (d *testDriver) advanceAfterCompletion(completedPhase int) {
@@ -563,6 +635,7 @@ func (d *testDriver) runPhase1() {
 	log.Printf("\n==================================================")
 	log.Printf("  [%s] PHASE 1: Basic thread creation", agent)
 	log.Printf("==================================================")
+	d.startPhaseTimeout(1)
 	d.mu.Lock()
 	d.round.phase1ChatSentAt = time.Now()
 	d.mu.Unlock()
@@ -574,6 +647,7 @@ func (d *testDriver) runPhase2() {
 	log.Printf("\n==================================================")
 	log.Printf("  [%s] PHASE 2: Follow-up on existing thread", agent)
 	log.Printf("==================================================")
+	d.startPhaseTimeout(2)
 	d.mu.Lock()
 	if len(d.round.threadIDs) == 0 {
 		d.mu.Unlock()
@@ -591,6 +665,7 @@ func (d *testDriver) runPhase3() {
 	log.Printf("\n==================================================")
 	log.Printf("  [%s] PHASE 3: New thread (simulating thread transition)", agent)
 	log.Printf("==================================================")
+	d.startPhaseTimeout(3)
 	d.sendChatMessage("What is 10 + 10? Reply with just the number.", d.round.reqID("phase3"), agent)
 }
 
@@ -599,6 +674,7 @@ func (d *testDriver) runPhase4() {
 	log.Printf("\n==================================================")
 	log.Printf("  [%s] PHASE 4: Follow-up to non-visible thread", agent)
 	log.Printf("==================================================")
+	d.startPhaseTimeout(4)
 	d.mu.Lock()
 	if len(d.round.threadIDs) < 2 {
 		d.mu.Unlock()
@@ -616,6 +692,7 @@ func (d *testDriver) runPhase5() {
 	log.Printf("\n==================================================")
 	log.Printf("  [%s] PHASE 5: Simulate user input (Zed -> Helix sync)", agent)
 	log.Printf("==================================================")
+	d.startPhaseTimeout(5)
 	d.mu.Lock()
 	if len(d.round.threadIDs) == 0 {
 		d.mu.Unlock()
@@ -633,6 +710,7 @@ func (d *testDriver) runPhase6() {
 	log.Printf("\n==================================================")
 	log.Printf("  [%s] PHASE 6: Query UI state", agent)
 	log.Printf("==================================================")
+	d.startPhaseTimeout(6)
 	d.sendQueryUiState(fmt.Sprintf("query-phase6-%s", agent))
 }
 
@@ -641,6 +719,7 @@ func (d *testDriver) runPhase7() {
 	log.Printf("\n==================================================")
 	log.Printf("  [%s] PHASE 7: Open thread + follow-up chat", agent)
 	log.Printf("==================================================")
+	d.startPhaseTimeout(7)
 	d.mu.Lock()
 	if len(d.round.threadIDs) < 2 {
 		d.mu.Unlock()
@@ -665,6 +744,7 @@ func (d *testDriver) runPhase8() {
 	log.Printf("\n==================================================")
 	log.Printf("  [%s] PHASE 8: Mid-stream interrupt", agent)
 	log.Printf("==================================================")
+	d.startPhaseTimeout(8)
 	// Send a question that will generate a streaming response long enough for us
 	// to send an interrupt before it completes. The syncEventCallback will fire the
 	// interrupt the moment the first assistant token arrives.
@@ -680,6 +760,7 @@ func (d *testDriver) runPhase9() {
 	log.Printf("\n==================================================")
 	log.Printf("  [%s] PHASE 9: Rapid 3-turn cancel (regression test)", agent)
 	log.Printf("==================================================")
+	d.startPhaseTimeout(9)
 	log.Println("  Sends chat_message, then while streaming, fires")
 	log.Println("  simulate_user_input + chat_message back-to-back.")
 	log.Println("  Without the fix, the thread hangs permanently.")
@@ -704,6 +785,7 @@ func (d *testDriver) runPhase10() {
 	log.Printf("\n==================================================")
 	log.Printf("  [%s] PHASE 10: User-created thread (multi-thread sync)", agent)
 	log.Printf("==================================================")
+	d.startPhaseTimeout(10)
 	log.Println("  Injects a synthetic user_created_thread event via")
 	log.Println("  ProcessSyncEvent, then verifies session + work session")
 	log.Println("  are created, then sends a chat on the new thread.")
@@ -803,6 +885,7 @@ func (d *testDriver) runPhase11() {
 	log.Printf("\n==================================================")
 	log.Printf("  [%s] PHASE 11: Spectask routing (most recently active session)", agent)
 	log.Printf("==================================================")
+	d.startPhaseTimeout(11)
 	log.Println("  Sets SpecTaskID on Thread A and B sessions, then uses")
 	log.Println("  FindConnectedSessionForSpecTask to verify routing picks")
 	log.Println("  the most recently active thread, sends a message, and")
