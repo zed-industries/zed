@@ -843,10 +843,6 @@ impl StateInner {
                     element.layout_as_root(available_item_space, window, cx)
                 };
 
-                if item.contains_focused(window, cx) {
-                    rendered_focused_item = true;
-                }
-
                 leading_overdraw += size.height;
                 measured_items.push_front(ListItem::Measured {
                     size,
