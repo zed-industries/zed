@@ -31,7 +31,10 @@ impl Render for ActiveFileName {
             return Empty.into_any_element();
         };
 
-        let tooltip_text = self.full_path.clone().unwrap_or_else(|| project_path.clone());
+        let tooltip_text = self
+            .full_path
+            .clone()
+            .unwrap_or_else(|| project_path.clone());
 
         div()
             .child(
