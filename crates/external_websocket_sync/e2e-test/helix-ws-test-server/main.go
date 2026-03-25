@@ -458,6 +458,10 @@ func (d *testDriver) advanceAfterCompletion(completedPhase int) {
 		d.runPhase9()
 	case 11:
 		d.mu.Lock()
+		if d.round.phase11Completed {
+			d.mu.Unlock()
+			return // Already advanced — ignore duplicate completion
+		}
 		d.round.phase11Completed = true
 		d.mu.Unlock()
 		log.Printf("[%s] Phase 11: ✅ Routed message completed", d.round.agentName)
