@@ -17,7 +17,7 @@ pub fn wrap_profile_settings(value: &mut Value) -> Result<()> {
     for profile_value in profiles_map.values_mut() {
         if profile_value
             .as_object()
-            .is_some_and(|m| m.contains_key("settings"))
+            .is_some_and(|m| m.contains_key("settings") || m.contains_key("base"))
         {
             continue;
         }
