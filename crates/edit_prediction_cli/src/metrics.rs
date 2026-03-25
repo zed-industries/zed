@@ -107,18 +107,8 @@ pub struct DeltaChrFMetrics {
     pub score: f64,
     pub beta: f64,
     pub counts: ClassificationMetrics,
-    pub average_precision: f64,
-    pub average_recall: f64,
-}
-
-impl DeltaChrFMetrics {
-    pub fn precision(&self) -> f64 {
-        self.counts.precision()
-    }
-
-    pub fn recall(&self) -> f64 {
-        self.counts.recall()
-    }
+    pub precision: f64,
+    pub recall: f64,
 }
 
 /// Computes delta-chrF metrics that compare two sets of edits.
@@ -129,13 +119,13 @@ impl DeltaChrFMetrics {
 ///
 /// Returns a score from 0.0 to 100.0, where 100.0 means the actual edits perfectly match
 /// the expected edits.
-pub fn delta_chr_f_metrics(original: &str, expected: &str, actual: &str) -> DeltaChrFMetrics {
+pub fn delta_chr_f(original: &str, expected: &str, actual: &str) -> DeltaChrFMetrics {
     if original == expected && expected == actual {
         return DeltaChrFMetrics {
             score: 100.0,
             beta: CHR_F_BETA,
-            average_precision: 1.0,
-            average_recall: 1.0,
+            precision: 1.0,
+            recall: 1.0,
             ..DeltaChrFMetrics::default()
         };
     }
@@ -191,29 +181,21 @@ pub fn delta_chr_f_metrics(original: &str, expected: &str, actual: &str) -> Delt
         score,
         beta: CHR_F_BETA,
         counts: total_counts,
-        average_precision,
-        average_recall,
+        precision: average_precision,
+        recall: average_recall,
     }
-}
-
-/// Computes a delta-chrF score that compares two sets of edits.
-///
-/// Returns a score from 0.0 to 100.0, where 100.0 means the actual edits perfectly match
-/// the expected edits.
-pub fn delta_chr_f(original: &str, expected: &str, actual: &str) -> f64 {
-    delta_chr_f_metrics(original, expected, actual).score
 }
 
 /// Reference implementation of delta-chrF metrics (original, non-optimized version).
 /// Used for testing that the optimized version produces identical results.
 #[cfg(test)]
-fn delta_chr_f_metrics_reference(original: &str, expected: &str, actual: &str) -> DeltaChrFMetrics {
+fn delta_chr_f_reference(original: &str, expected: &str, actual: &str) -> DeltaChrFMetrics {
     if original == expected && expected == actual {
         return DeltaChrFMetrics {
             score: 100.0,
             beta: CHR_F_BETA,
-            average_precision: 1.0,
-            average_recall: 1.0,
+            precision: 1.0,
+            recall: 1.0,
             ..DeltaChrFMetrics::default()
         };
     }
@@ -259,8 +241,8 @@ fn delta_chr_f_metrics_reference(original: &str, expected: &str, actual: &str) -
         score,
         beta: CHR_F_BETA,
         counts: total_counts,
-        average_precision,
-        average_recall,
+        precision: average_precision,
+        recall: average_recall,
     }
 }
 
@@ -730,7 +712,7 @@ mod test_optimization {
         ];
 
         for (original, expected, actual) in test_cases {
-            let score = delta_chr_f(original, expected, actual);
+            let score = delta_chr_f(original, expected, actual).score;
             // Just verify it produces a reasonable score (0-100)
             assert!(
                 score >= 0.0 && score <= 100.0,
@@ -799,8 +781,8 @@ mod test_optimization {
         ];
 
         for (original, expected, actual) in test_cases {
-            let optimized_metrics = delta_chr_f_metrics(original, expected, actual);
-            let reference_metrics = delta_chr_f_metrics_reference(original, expected, actual);
+            let optimized_metrics = delta_chr_f(original, expected, actual);
+            let reference_metrics = delta_chr_f_reference(original, expected, actual);
 
             assert!(
                 (optimized_metrics.score - reference_metrics.score).abs() < 1e-10,
@@ -823,15 +805,8 @@ mod test_optimization {
                 optimized_metrics.counts.false_negatives,
                 reference_metrics.counts.false_negatives
             );
-            assert!((optimized_metrics.precision() - reference_metrics.precision()).abs() < 1e-10);
-            assert!((optimized_metrics.recall() - reference_metrics.recall()).abs() < 1e-10);
-            assert!(
-                (optimized_metrics.average_precision - reference_metrics.average_precision).abs()
-                    < 1e-10
-            );
-            assert!(
-                (optimized_metrics.average_recall - reference_metrics.average_recall).abs() < 1e-10
-            );
+            assert!((optimized_metrics.precision - reference_metrics.precision).abs() < 1e-10);
+            assert!((optimized_metrics.recall - reference_metrics.recall).abs() < 1e-10);
         }
     }
 
@@ -841,14 +816,14 @@ mod test_optimization {
         let expected = "one three";
         let actual = "one two four";
 
-        let metrics = delta_chr_f_metrics(original, expected, actual);
+        let metrics = delta_chr_f(original, expected, actual);
 
         assert!(metrics.score > 20.0 && metrics.score < 40.0);
         assert!(metrics.counts.true_positives > 0);
         assert!(metrics.counts.false_positives > 0);
         assert!(metrics.counts.false_negatives > 0);
-        assert!(metrics.precision() > 0.0 && metrics.precision() < 1.0);
-        assert!(metrics.recall() > 0.0 && metrics.recall() < 1.0);
+        assert!(metrics.precision > 0.0 && metrics.precision < 1.0);
+        assert!(metrics.recall > 0.0 && metrics.recall < 1.0);
         assert_eq!(metrics.beta, CHR_F_BETA);
     }
 }
@@ -874,7 +849,7 @@ mod test {
         let original = "fn main() {    println!(\"Hello\");}";
         let expected = "fn main() {    println!(\"Hello, World!\");}";
 
-        let score = delta_chr_f(original, expected, expected);
+        let score = delta_chr_f(original, expected, expected).score;
         assert!((score - 100.0).abs() < 1e-2);
     }
 
@@ -886,7 +861,7 @@ mod test {
         let actual = "one two four"; // deleted "three", added "four"
 
         // Then the score should be low
-        let score = delta_chr_f(original, expected, actual);
+        let score = delta_chr_f(original, expected, actual).score;
         assert!(score > 20.0 && score < 40.0);
     }
 
@@ -898,7 +873,7 @@ mod test {
 
         // We got the edit location right, but the replacement text is wrong.
         // Deleted ngrams will match, bringing the score somewhere in the middle.
-        let score = delta_chr_f(original, expected, actual);
+        let score = delta_chr_f(original, expected, actual).score;
         assert!(score > 40.0 && score < 60.0);
     }
 
@@ -910,7 +885,7 @@ mod test {
         let actual = "prefix old suffix"; // no change
 
         // Then the score should be low (all expected changes are false negatives)
-        let score = delta_chr_f(original, expected, actual);
+        let score = delta_chr_f(original, expected, actual).score;
         assert!(score < 20.0);
     }
 
@@ -922,14 +897,14 @@ mod test {
         let actual = "helloextraworld"; // added "extra"
 
         // Then the score should be low (all actual changes are false positives)
-        let score = delta_chr_f(original, expected, actual);
+        let score = delta_chr_f(original, expected, actual).score;
         assert!(score < 20.0);
     }
 
     #[test]
     fn test_delta_chr_f_no_changes() {
         let text = "unchanged text";
-        let score = delta_chr_f(text, text, text);
+        let score = delta_chr_f(text, text, text).score;
         assert!((score - 100.0).abs() < 1e-2);
     }
 

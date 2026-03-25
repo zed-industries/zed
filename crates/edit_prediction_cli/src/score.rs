@@ -122,8 +122,7 @@ pub async fn run_scoring(
         let mut best_patch_idx: Option<usize> = None;
 
         for (idx, expected) in expected_texts.iter().enumerate() {
-            let delta_chr_f_metrics =
-                metrics::delta_chr_f_metrics(original_text, expected, &actual_text);
+            let delta_chr_f_metrics = metrics::delta_chr_f(original_text, expected, &actual_text);
             if delta_chr_f_metrics.score > best_delta_chr_f_metrics.score {
                 best_delta_chr_f_metrics = delta_chr_f_metrics;
                 best_patch_idx = Some(idx);
@@ -190,8 +189,8 @@ pub async fn run_scoring(
             delta_chr_f_true_positives: best_delta_chr_f_metrics.counts.true_positives,
             delta_chr_f_false_positives: best_delta_chr_f_metrics.counts.false_positives,
             delta_chr_f_false_negatives: best_delta_chr_f_metrics.counts.false_negatives,
-            delta_chr_f_precision: best_delta_chr_f_metrics.average_precision,
-            delta_chr_f_recall: best_delta_chr_f_metrics.average_recall,
+            delta_chr_f_precision: best_delta_chr_f_metrics.precision,
+            delta_chr_f_recall: best_delta_chr_f_metrics.recall,
             delta_chr_f_beta: best_delta_chr_f_metrics.beta,
             braces_disbalance,
             exact_lines_tp: best_exact_lines.true_positives,
