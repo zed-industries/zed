@@ -1179,7 +1179,8 @@ impl AgentPanel {
     }
 
     pub fn new_thread(&mut self, _action: &NewThread, window: &mut Window, cx: &mut Context<Self>) {
-        self.new_agent_thread(AgentType::NativeAgent, window, cx);
+        self.reset_start_thread_in_to_default(cx);
+        self.external_thread(None, None, None, None, None, true, window, cx);
     }
 
     fn new_native_agent_thread_from_summary(
