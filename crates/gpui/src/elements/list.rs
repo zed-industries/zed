@@ -1465,15 +1465,20 @@ mod test {
     fn test_bottom_aligned_scrollbar_offset_at_end(cx: &mut TestAppContext) {
         let cx = cx.add_empty_window();
 
-        // 10 items × 50 px = 500 px content, viewport = 100 px → max_offset = 400 px.
-        // Overdraw of 500 px ensures every item is measured in the first paint.
-        let state = ListState::new(10, crate::ListAlignment::Bottom, px(500.));
+        const ITEMS: usize = 10;
+        const ITEM_SIZE: f32 = 50.0;
+
+        let state = ListState::new(
+            ITEMS,
+            crate::ListAlignment::Bottom,
+            px(ITEMS as f32 * ITEM_SIZE),
+        );
 
         struct TestView(ListState);
         impl Render for TestView {
             fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
                 list(self.0.clone(), |_, _, _| {
-                    div().h(px(50.)).w_full().into_any()
+                    div().h(px(ITEM_SIZE)).w_full().into_any()
                 })
                 .w_full()
                 .h_full()
@@ -1486,7 +1491,7 @@ mod test {
 
         // Bottom-aligned lists start pinned to the end: logical_scroll_top returns
         // item_ix == item_count, meaning no explicit scroll position has been set.
-        assert_eq!(state.logical_scroll_top().item_ix, 10);
+        assert_eq!(state.logical_scroll_top().item_ix, ITEMS);
 
         let max_offset = state.max_offset_for_scrollbar();
         let scroll_offset = state.scroll_px_offset_for_scrollbar();
