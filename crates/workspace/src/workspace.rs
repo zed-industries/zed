@@ -8010,23 +8010,6 @@ impl Render for Workspace {
             log::info!("Rendered first frame");
         }
 
-        #[cfg(target_os = "ios")]
-        {
-            static RENDER_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-            let count = RENDER_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            if count < 10 || count % 60 == 0 {
-                let bg = cx.theme().colors().background;
-                log::info!(
-                    "[workspace] render #{}, panes: {}, titlebar: {}, is_remote: {}, bg: {:?}",
-                    count,
-                    self.center.panes().len(),
-                    self.titlebar_item.is_some(),
-                    self.project.read(cx).is_remote(),
-                    bg,
-                );
-            }
-        }
-
         let centered_layout = self.centered_layout
             && self.center.panes().len() == 1
             && self.active_item(cx).is_some();

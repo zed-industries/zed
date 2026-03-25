@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use theme::ActiveTheme;
 use ui::{
     ButtonCommon, ButtonLike, ButtonStyle, Clickable, Color, ContextMenu, FixedWidth, Headline,
-    Icon, IconButton, IconName, IconSize, Indicator, Label, LabelCommon, LabelSize, PopoverMenu,
+    Icon, IconButton, IconName, IconSize, Label, LabelCommon, LabelSize, PopoverMenu,
     Vector, VectorName, h_flex, rems_from_px, v_flex,
 };
 use util::ResultExt;
@@ -44,13 +44,17 @@ struct HostConnection {
 /// Global registry of active SSH connections. Holding entity handles keeps
 /// workspaces (and their projects/SSH sessions) alive even when the window
 /// root is swapped back to the landing screen.
-struct ActiveConnections(Vec<HostConnection>);
+struct ActiveConnections {
+    hosts: Vec<HostConnection>,
+    /// Per-project errors that persist across navigation. Key is (host, username, port, path).
+    project_errors: Vec<((String, String, u16, String), SharedString)>,
+}
 
 impl Global for ActiveConnections {}
 
 impl ActiveConnections {
     fn find_by_host(&self, host: &str, username: &str, port: u16) -> Option<&HostConnection> {
-        self.0
+        self.hosts
             .iter()
             .find(|c| c.host == host && c.username == username && c.port == port)
     }
@@ -61,7 +65,7 @@ impl ActiveConnections {
         username: &str,
         port: u16,
     ) -> Option<&mut HostConnection> {
-        self.0
+        self.hosts
             .iter_mut()
             .find(|c| c.host == host && c.username == username && c.port == port)
     }
@@ -78,13 +82,48 @@ impl ActiveConnections {
     }
 
     fn remove_by_project(&mut self, project_id: gpui::EntityId) {
-        for host_conn in &mut self.0 {
+        for host_conn in &mut self.hosts {
             host_conn
                 .workspaces
                 .retain(|w| w.project.entity_id() != project_id);
         }
         // Remove host connections with no remaining workspaces.
-        self.0.retain(|hc| !hc.workspaces.is_empty());
+        self.hosts.retain(|hc| !hc.workspaces.is_empty());
+    }
+
+    fn set_project_error(
+        &mut self,
+        host: &str,
+        username: &str,
+        port: u16,
+        path: &str,
+        error: SharedString,
+    ) {
+        let key = (host.to_string(), username.to_string(), port, path.to_string());
+        if let Some(entry) = self.project_errors.iter_mut().find(|(k, _)| *k == key) {
+            entry.1 = error;
+        } else {
+            self.project_errors.push((key, error));
+        }
+    }
+
+    fn clear_project_error(&mut self, host: &str, username: &str, port: u16, path: &str) {
+        let key = (host.to_string(), username.to_string(), port, path.to_string());
+        self.project_errors.retain(|(k, _)| *k != key);
+    }
+
+    fn get_project_error(
+        &self,
+        host: &str,
+        username: &str,
+        port: u16,
+        path: &str,
+    ) -> Option<&SharedString> {
+        let key = (host.to_string(), username.to_string(), port, path.to_string());
+        self.project_errors
+            .iter()
+            .find(|(k, _)| *k == key)
+            .map(|(_, msg)| msg)
     }
 }
 
@@ -94,7 +133,10 @@ fn active_connections_mut(cx: &mut App) -> &mut ActiveConnections {
 
 /// Initialize the active connections registry. Call once during app setup.
 pub fn init_active_connections(cx: &mut App) {
-    cx.set_global(ActiveConnections(Vec::new()));
+    cx.set_global(ActiveConnections {
+        hosts: Vec::new(),
+        project_errors: Vec::new(),
+    });
 }
 
 // ─── Workspace switcher status bar item ──────────────────────────────────────
@@ -174,7 +216,7 @@ impl Render for WorkspaceSwitcher {
                                 .try_global::<ActiveConnections>()
                                 .map(|active_conns| {
                                     active_conns
-                                        .0
+                                        .hosts
                                         .iter()
                                         .flat_map(|hc| {
                                             let all: Vec<_> = hc.workspaces.iter().map(|w| w.workspace.clone()).collect();
@@ -402,25 +444,11 @@ impl SavedHost {
         }
     }
 
-    fn status_color(&self) -> Color {
-        match &self.status {
-            ConnectionStatus::Disconnected => Color::Muted,
-            ConnectionStatus::Connecting => Color::Warning,
-            ConnectionStatus::Connected => Color::Success,
-            ConnectionStatus::HostConnected => Color::Success,
-            ConnectionStatus::Error(_) => Color::Error,
-        }
+    fn is_open(&self) -> bool {
+        matches!(self.status, ConnectionStatus::Connected)
     }
 
-    fn status_label(&self) -> SharedString {
-        match &self.status {
-            ConnectionStatus::Disconnected => "Disconnected".into(),
-            ConnectionStatus::Connecting => "Connecting\u{2026}".into(),
-            ConnectionStatus::Connected => "Connected".into(),
-            ConnectionStatus::HostConnected => "Host connected".into(),
-            ConnectionStatus::Error(message) => message.clone(),
-        }
-    }
+
 }
 
 enum LandingMode {
@@ -448,6 +476,12 @@ pub struct ConnectionLanding {
     password_editor: Entity<Editor>,
     project_path_editor: Entity<Editor>,
     password_prompt: Option<PasswordPromptState>,
+    error_detail: Option<ErrorDetailState>,
+}
+
+struct ErrorDetailState {
+    host_index: usize,
+    message: SharedString,
 }
 
 struct PasswordPromptState {
@@ -495,7 +529,7 @@ impl ConnectionLanding {
             .map(SavedHost::from_entry)
             .collect();
 
-        // Restore connection status for hosts with active connections.
+        // Restore connection status and errors for hosts with active connections.
         if let Some(active) = cx.try_global::<ActiveConnections>() {
             for host in &mut saved_hosts {
                 let path = host.project_path.as_deref().unwrap_or("");
@@ -504,6 +538,10 @@ impl ConnectionLanding {
                     .is_some()
                 {
                     host.status = ConnectionStatus::Connected;
+                } else if let Some(error_msg) =
+                    active.get_project_error(&host.host, &host.username, host.port, path)
+                {
+                    host.status = ConnectionStatus::Error(error_msg.clone());
                 } else if active
                     .find_by_host(&host.host, &host.username, host.port)
                     .is_some()
@@ -525,6 +563,7 @@ impl ConnectionLanding {
             password_editor,
             project_path_editor,
             password_prompt: None,
+            error_detail: None,
         }
     }
 
@@ -723,6 +762,15 @@ impl ConnectionLanding {
         };
 
         let path = host.project_path.clone().unwrap_or_default();
+        let error_host = host.host.to_string();
+        let error_username = host.username.to_string();
+        let error_port = host.port;
+        let error_path = path.clone();
+
+        // Clear any previous error for this project.
+        active_connections_mut(cx).clear_project_error(
+            &error_host, &error_username, error_port, &error_path,
+        );
 
         // Case 1: Exact host+path already open → activate that workspace.
         if let Some(active) = cx
@@ -763,34 +811,45 @@ impl ConnectionLanding {
             let username_str = host.username.to_string();
             let port_val = host.port;
 
-            cx.spawn(async move |this, cx| {
-                let result = Self::add_workspace_for_path(
-                    landing_window,
-                    remote_connection,
-                    path.clone(),
-                    host_str.clone(),
-                    username_str.clone(),
-                    port_val,
-                    delegate,
-                    app_state,
-                    cx,
-                )
-                .await;
+            cx.spawn({
+                let error_host = error_host.clone();
+                let error_username = error_username.clone();
+                let error_path = error_path.clone();
+                async move |this, cx| {
+                    let result = Self::add_workspace_for_path(
+                        landing_window,
+                        remote_connection,
+                        path.clone(),
+                        host_str.clone(),
+                        username_str.clone(),
+                        port_val,
+                        delegate,
+                        app_state,
+                        cx,
+                    )
+                    .await;
 
-                if let Err(error) = result {
-                    let error_message = format!("{error:#}");
-                    log::error!("[zed-ios] workspace creation failed: {error_message}");
-                    let updated = this
-                        .update(cx, |this, cx| {
-                            if let Some(host) = this.saved_hosts.get_mut(index) {
-                                host.status =
-                                    ConnectionStatus::Error(SharedString::from(error_message.clone()));
-                                cx.notify();
-                            }
-                        })
-                        .is_ok();
-                    if !updated {
-                        cx.update(|cx| Self::navigate_to_landing(landing_window, cx));
+                    if let Err(error) = result {
+                        let error_message = format!("{error:#}");
+                        log::error!("[zed-ios] workspace creation failed: {error_message}");
+                        let error_shared = SharedString::from(error_message.clone());
+                        cx.update(|cx| {
+                            active_connections_mut(cx).set_project_error(
+                                &error_host, &error_username, error_port, &error_path, error_shared,
+                            );
+                        });
+                        let updated = this
+                            .update(cx, |this, cx| {
+                                if let Some(host) = this.saved_hosts.get_mut(index) {
+                                    host.status =
+                                        ConnectionStatus::Error(SharedString::from(error_message.clone()));
+                                    cx.notify();
+                                }
+                            })
+                            .is_ok();
+                        if !updated {
+                            cx.update(|cx| Self::navigate_to_landing(landing_window, cx));
+                        }
                     }
                 }
             })
@@ -841,6 +900,13 @@ impl ConnectionLanding {
             if let Err(error) = result {
                 let error_message = format!("{error:#}");
                 log::error!("[zed-ios] SSH connection failed: {error_message}");
+
+                let error_shared = SharedString::from(error_message.clone());
+                cx.update(|cx| {
+                    active_connections_mut(cx).set_project_error(
+                        &error_host, &error_username, error_port, &error_path, error_shared,
+                    );
+                });
 
                 let updated = this
                     .update(cx, |this, cx| {
@@ -973,7 +1039,7 @@ impl ConnectionLanding {
                         // Find the host that still has workspaces (sibling).
                         // Collect remaining workspaces to switch to if any exist.
                         let remaining: Option<Vec<Entity<workspace::Workspace>>> = active
-                            .0
+                            .hosts
                             .iter()
                             .find(|hc| !hc.workspaces.is_empty())
                             .map(|hc| hc.workspaces.iter().map(|w| w.workspace.clone()).collect());
@@ -1088,7 +1154,7 @@ impl ConnectionLanding {
                 workspace::MultiWorkspace::new(workspace_entity.clone(), window, cx)
             });
 
-            active_connections_mut(cx).0.push(HostConnection {
+            active_connections_mut(cx).hosts.push(HostConnection {
                 remote_connection,
                 workspaces: vec![WorkspaceEntry {
                     workspace: workspace_entity,
@@ -1228,6 +1294,60 @@ impl ConnectionLanding {
             )
     }
 
+    fn render_error_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let state = self
+            .error_detail
+            .as_ref()
+            .expect("called without error detail");
+        let colors = cx.theme().colors();
+        let host_index = state.host_index;
+
+        div()
+            .id("error-overlay")
+            .absolute()
+            .size_full()
+            .bg(colors.background.opacity(0.9))
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap_4()
+            .child(
+                Icon::new(IconName::Warning)
+                    .size(IconSize::Medium)
+                    .color(Color::Error),
+            )
+            .child(
+                div()
+                    .w(rems_from_px(480.))
+                    .px_4()
+                    .child(
+                        Label::new(state.message.clone())
+                            .color(Color::Muted),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        ui::Button::new("error-dismiss", "Dismiss")
+                            .style(ButtonStyle::Subtle)
+                            .on_click(cx.listener(|this, _, _window, cx| {
+                                this.error_detail = None;
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        ui::Button::new("error-retry", "Retry")
+                            .style(ButtonStyle::Filled)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.error_detail = None;
+                                this.connect_host(host_index, window, cx);
+                            })),
+                    ),
+            )
+    }
+
     fn remove_host(&mut self, index: usize, _window: &mut Window, cx: &mut Context<Self>) {
         if index < self.saved_hosts.len() {
             self.saved_hosts.remove(index);
@@ -1336,10 +1456,29 @@ impl ConnectionLanding {
                 let display_name = host.display_name();
                 let address_line = host.address_line();
 
-                // Check if any entry in this group is connected.
-                let group_connected = indices
+                // Host header reflects connection-level state only, not project errors.
+                let open_count = indices
                     .iter()
-                    .any(|&i| matches!(self.saved_hosts[i].status, ConnectionStatus::Connected));
+                    .filter(|&&i| matches!(self.saved_hosts[i].status, ConnectionStatus::Connected))
+                    .count();
+                let total_count = indices.len();
+                let host_has_connection = indices.iter().any(|&i| {
+                    matches!(
+                        self.saved_hosts[i].status,
+                        ConnectionStatus::Connected | ConnectionStatus::HostConnected
+                    )
+                });
+                let has_connecting = indices
+                    .iter()
+                    .any(|&i| matches!(self.saved_hosts[i].status, ConnectionStatus::Connecting));
+
+                let (group_icon_color, group_status_label, group_status_color) = if has_connecting {
+                    (Color::Warning, "Connecting\u{2026}".to_string(), Color::Default)
+                } else if host_has_connection {
+                    (Color::Default, format!("Connected ({open_count}/{total_count})"), Color::Default)
+                } else {
+                    (Color::Muted, "Disconnected".to_string(), Color::Muted)
+                };
 
                 if !first_group {
                     list = list.child(div().h_2());
@@ -1365,7 +1504,7 @@ impl ConnectionLanding {
                         .child(
                             Icon::new(IconName::Server)
                                 .size(IconSize::Small)
-                                .color(Color::Muted),
+                                .color(group_icon_color),
                         )
                         .child(
                             v_flex()
@@ -1377,9 +1516,11 @@ impl ConnectionLanding {
                                 ),
                         )
                         .child(div().flex_grow())
-                        .when(group_connected, |this| {
-                            this.child(Indicator::dot().color(Color::Success))
-                        })
+                        .child(
+                            Label::new(group_status_label)
+                                .size(LabelSize::XSmall)
+                                .color(group_status_color),
+                        )
                         .when(editing, |this| {
                             this.child(
                                 IconButton::new(
@@ -1436,16 +1577,29 @@ impl ConnectionLanding {
             .as_deref()
             .unwrap_or("(no project path)");
         let path_label = SharedString::from(path_label.to_string());
-        let status_color = host.status_color();
-        let status_label = host.status_label();
+        let is_open = host.is_open();
+        let is_error = matches!(host.status, ConnectionStatus::Error(_));
+        let error_message = if let ConnectionStatus::Error(msg) = &host.status {
+            Some(msg.clone())
+        } else {
+            None
+        };
+        let truncated_error = error_message.as_ref().map(|msg| {
+            let s = msg.to_string();
+            if s.len() > 40 {
+                SharedString::from(format!("{}…", &s[..40]))
+            } else {
+                msg.clone()
+            }
+        });
         let is_editing = self.editing_hosts;
         let is_connectable = !is_editing
+            && !is_error
             && matches!(
                 host.status,
                 ConnectionStatus::Disconnected
                     | ConnectionStatus::Connected
                     | ConnectionStatus::HostConnected
-                    | ConnectionStatus::Error(_)
             );
 
         let hover_bg = colors.ghost_element_hover;
@@ -1471,6 +1625,17 @@ impl ConnectionLanding {
                     this.connect_host(index, window, cx);
                 }))
             })
+            .when(is_error && !is_editing, |this| {
+                this.on_click(cx.listener(move |this, _event, _window, cx| {
+                    if let Some(ConnectionStatus::Error(msg)) = this.saved_hosts.get(index).map(|h| &h.status) {
+                        this.error_detail = Some(ErrorDetailState {
+                            host_index: index,
+                            message: msg.clone(),
+                        });
+                        cx.notify();
+                    }
+                }))
+            })
             .when(is_editing, |this| {
                 this.on_click(cx.listener(move |this, _event, window, cx| {
                     this.switch_to_edit_host(index, window, cx);
@@ -1481,9 +1646,9 @@ impl ConnectionLanding {
                     .gap_2()
                     .items_center()
                     .child(
-                        Icon::new(IconName::Folder)
+                        Icon::new(if is_open { IconName::FolderOpen } else { IconName::Folder })
                             .size(IconSize::Small)
-                            .color(Color::Muted),
+                            .color(if is_error { Color::Error } else if is_open { Color::Accent } else { Color::Muted }),
                     )
                     .child(Label::new(path_label).size(LabelSize::Small).color(Color::Default)),
             )
@@ -1491,12 +1656,28 @@ impl ConnectionLanding {
                 h_flex()
                     .gap_2()
                     .items_center()
-                    .child(Indicator::dot().color(status_color))
-                    .child(
-                        Label::new(status_label)
-                            .size(LabelSize::XSmall)
-                            .color(Color::Muted),
-                    )
+                    .when_some(truncated_error, |this, msg| {
+                        this.child(
+                            Label::new(msg)
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                    })
+                    .when(is_error && !self.editing_hosts, |this| {
+                        this.child(
+                            IconButton::new(
+                                SharedString::from(format!("retry-host-{index}")),
+                                IconName::RotateCw,
+                            )
+                            .size(ui::ButtonSize::Compact)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .style(ButtonStyle::Transparent)
+                            .on_click(cx.listener(move |this, _event, window, cx| {
+                                this.connect_host(index, window, cx);
+                            })),
+                        )
+                    })
                     .when(self.editing_hosts, |this| {
                         this.child(
                             IconButton::new(
@@ -1768,6 +1949,10 @@ impl Render for ConnectionLanding {
 
         if self.password_prompt.is_some() {
             content = content.child(self.render_password_overlay(cx));
+        }
+
+        if self.error_detail.is_some() {
+            content = content.child(self.render_error_overlay(cx));
         }
 
         content
