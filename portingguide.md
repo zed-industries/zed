@@ -326,6 +326,8 @@ pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<()> {
 
 **Symptom:** Phase 8 (mid-stream interrupt) times out for Claude Code agent. User pressing stop/interrupt in Zed while Claude Code is streaming causes the thread to hang permanently.
 
+**Note:** Even if the claude-agent-acp cancel bugs (#442, #423) are fully fixed upstream, the drop approach should be kept as a defensive measure. Any ACP agent that doesn't properly respond to `CancelNotification` would cause the same deadlock. The drop approach makes Zed resilient to buggy agent implementations without changing protocol semantics (the cancel notification is still sent).
+
 ## Environment Variables
 
 | Variable | Purpose | Default |
