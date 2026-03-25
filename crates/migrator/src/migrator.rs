@@ -248,6 +248,7 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             &SETTINGS_QUERY_2026_03_16,
         ),
         MigrationType::Json(migrations::m_2026_03_31::remove_text_thread_settings),
+        MigrationType::Json(migrations::m_2026_04_02::wrap_profile_settings),
     ];
     run_migrations(text, migrations)
 }
@@ -4522,6 +4523,48 @@ mod tests {
     }
 
     #[test]
+    fn test_wrap_profile_settings() {
+        assert_migrate_settings(
+            &r#"
+                {
+                    "buffer_font_size": 14,
+                    "profiles": {
+                        "Presenting": {
+                            "buffer_font_size": 20,
+                            "theme": "One Light"
+                        },
+                        "Minimal": {
+                            "vim_mode": true
+                        }
+                    }
+                }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "buffer_font_size": 14,
+                    "profiles": {
+                        "Presenting": {
+                            "settings": {
+                                "buffer_font_size": 20,
+                                "theme": "One Light"
+                            }
+                        },
+                        "Minimal": {
+                            "settings": {
+                                "vim_mode": true
+                            }
+                        }
+                    }
+                }
+            "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
     fn test_remove_text_thread_settings_only_default_view() {
         assert_migrate_with_migrations(
             &[MigrationType::Json(
@@ -4582,6 +4625,38 @@ mod tests {
         "mode": "eager"
     }
 }"#,
+            None,
+        );
+    }
+
+    #[test]
+    fn test_wrap_profile_settings_already_migrated() {
+        assert_migrate_settings(
+            &r#"
+                {
+                    "profiles": {
+                        "Presenting": {
+                            "settings": {
+                                "buffer_font_size": 20
+                            }
+                        }
+                    }
+                }
+            "#
+            .unindent(),
+            None,
+        );
+    }
+
+    #[test]
+    fn test_wrap_profile_settings_no_profiles() {
+        assert_migrate_settings(
+            &r#"
+                {
+                    "buffer_font_size": 14
+                }
+            "#
+            .unindent(),
             None,
         );
     }
