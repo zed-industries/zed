@@ -7369,9 +7369,9 @@ impl Workspace {
                 .resize_all_panels_in_dock
                 .contains(&DockPosition::Left)
             {
-                left_dock.resize_all_panels_with_ratio(Some(size), ratio, window, cx);
+                left_dock.resize_all_panels(Some(size), ratio, window, cx);
             } else {
-                left_dock.resize_active_panel_with_ratio(Some(size), ratio, window, cx);
+                left_dock.resize_active_panel(Some(size), ratio, window, cx);
             }
         });
     }
@@ -7393,9 +7393,9 @@ impl Workspace {
                 .resize_all_panels_in_dock
                 .contains(&DockPosition::Right)
             {
-                right_dock.resize_all_panels_with_ratio(Some(size), ratio, window, cx);
+                right_dock.resize_all_panels(Some(size), ratio, window, cx);
             } else {
-                right_dock.resize_active_panel_with_ratio(Some(size), ratio, window, cx);
+                right_dock.resize_active_panel(Some(size), ratio, window, cx);
             }
         });
     }
@@ -7407,9 +7407,9 @@ impl Workspace {
                 .resize_all_panels_in_dock
                 .contains(&DockPosition::Bottom)
             {
-                bottom_dock.resize_all_panels(Some(size), window, cx);
+                bottom_dock.resize_all_panels(Some(size), None, window, cx);
             } else {
-                bottom_dock.resize_active_panel(Some(size), window, cx);
+                bottom_dock.resize_active_panel(Some(size), None, window, cx);
             }
         });
     }
