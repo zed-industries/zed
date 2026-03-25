@@ -22,12 +22,12 @@ use git_ui::file_diff_view::FileDiffView;
 use gpui::{
     Action, AnyElement, App, AsyncWindowContext, Bounds, ClipboardEntry as GpuiClipboardEntry,
     ClipboardItem, Context, CursorStyle, DismissEvent, Div, DragMoveEvent, Entity, EventEmitter,
-    ExternalPaths, FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement, KeyContext,
-    ListHorizontalSizingBehavior, ListSizingBehavior, Modifiers, ModifiersChangedEvent,
-    MouseButton, MouseDownEvent, ParentElement, PathPromptOptions, Pixels, Point, PromptLevel,
-    Render, ScrollStrategy, Stateful, Styled, Subscription, Task, UniformListScrollHandle,
-    WeakEntity, Window, actions, anchored, deferred, div, hsla, linear_color_stop, linear_gradient,
-    point, px, size, transparent_white, uniform_list,
+    ExternalPaths, FocusHandle, Focusable, FontWeight, Hsla, Image as GpuiImage,
+    InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Modifiers,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, ParentElement, PathPromptOptions, Pixels,
+    Point, PromptLevel, Render, ScrollStrategy, Stateful, Styled, Subscription, Task,
+    UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, div, hsla,
+    linear_color_stop, linear_gradient, point, px, size, transparent_white, uniform_list,
 };
 use language::DiagnosticSeverity;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
@@ -3052,6 +3052,11 @@ impl ProjectPanel {
             return;
         }
 
+        if let Some(image) = self.image_from_system_clipboard(cx) {
+            self.paste_image(image, window, cx);
+            return;
+        }
+
         maybe!({
             let (worktree, entry) = self.selected_entry_handle(cx)?;
             let entry = entry.clone();
@@ -3835,6 +3840,16 @@ impl ProjectPanel {
         None
     }
 
+    fn image_from_system_clipboard(&self, cx: &App) -> Option<GpuiImage> {
+        let clipboard_item = cx.read_from_clipboard()?;
+        for entry in clipboard_item.entries() {
+            if let GpuiClipboardEntry::Image(image) = entry {
+                return Some(image.clone());
+            }
+        }
+        None
+    }
+
     fn has_pasteable_content(&self, cx: &App) -> bool {
         if self
             .clipboard
@@ -3843,7 +3858,10 @@ impl ProjectPanel {
         {
             return true;
         }
-        self.external_paths_from_system_clipboard(cx).is_some()
+        if self.external_paths_from_system_clipboard(cx).is_some() {
+            return true;
+        }
+        self.image_from_system_clipboard(cx).is_some()
     }
 
     fn selected_entry_handle<'a>(
@@ -4257,6 +4275,74 @@ impl ProjectPanel {
                 }
             }
         });
+    }
+
+    fn paste_image(&mut self, image: GpuiImage, window: &mut Window, cx: &mut Context<Self>) {
+        let target_entry_id = self
+            .selection
+            .map(|s| s.entry_id)
+            .or(self.state.last_worktree_root_id);
+        let Some(target_entry_id) = target_entry_id else {
+            return;
+        };
+
+        let Some((worktree, target_directory)) = maybe!({
+            let project = self.project.read(cx);
+            let worktree = project.worktree_for_entry(target_entry_id, cx)?;
+            let entry = worktree.read(cx).entry_for_id(target_entry_id)?;
+            let target_directory = if entry.is_dir() {
+                entry.path.clone()
+            } else {
+                entry.path.parent()?.into()
+            };
+            Some((worktree, target_directory))
+        }) else {
+            return;
+        };
+
+        let file_path = {
+            let worktree_ref = worktree.read(cx);
+            let mut candidate = target_directory.join(RelPath::unix("image.png").unwrap());
+            let mut counter = 1u32;
+            while worktree_ref.entry_for_path(&candidate).is_some() {
+                let next = format!("image {counter}.png");
+                candidate = target_directory.join(RelPath::unix(&next).unwrap());
+                counter += 1;
+            }
+            candidate
+        };
+
+        let worktree_id = worktree.read(cx).id();
+        let content = image.bytes;
+        let task = worktree.update(cx, |worktree, cx| {
+            worktree.create_entry(file_path, false, Some(content), cx)
+        });
+
+        cx.spawn_in(window, async move |this, cx| {
+            async move {
+                let entry = task.await?;
+                if let CreatedEntry::Included(entry) = entry {
+                    this.update_in(cx, |this, window, cx| {
+                        this.selection = Some(SelectedEntry {
+                            worktree_id,
+                            entry_id: entry.id,
+                        });
+                        this.marked_entries.clear();
+                        this.expand_entry(worktree_id, entry.id, cx);
+                        this.update_visible_entries(None, false, false, window, cx);
+
+                        let settings = ProjectPanelSettings::get_global(cx);
+                        if settings.auto_open.should_open_on_paste() {
+                            this.open_entry(entry.id, true, false, cx);
+                        }
+                    })?;
+                }
+                anyhow::Ok(())
+            }
+            .log_err()
+            .await
+        })
+        .detach();
     }
 
     fn drop_external_files(

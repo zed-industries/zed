@@ -2603,6 +2603,127 @@ async fn test_paste_external_paths(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_paste_clipboard_image(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    set_auto_open_settings(
+        cx,
+        ProjectPanelAutoOpenSettings {
+            on_paste: Some(false),
+            ..Default::default()
+        },
+    );
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "subdir": {}
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    let png_bytes: Vec<u8> = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+    cx.write_to_clipboard(ClipboardItem {
+        entries: vec![GpuiClipboardEntry::Image(GpuiImage::from_bytes(
+            gpui::ImageFormat::Png,
+            png_bytes.clone(),
+        ))],
+    });
+
+    select_path(&panel, "root/subdir", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.paste(&Default::default(), window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &[
+            "v root",
+            "    v subdir",
+            "          image.png  <== selected",
+        ],
+    );
+
+    let content = fs
+        .load_bytes(Path::new(path!("/root/subdir/image.png")))
+        .await
+        .unwrap();
+    assert_eq!(content, png_bytes);
+}
+
+#[gpui::test]
+async fn test_paste_clipboard_image_auto_increment(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    set_auto_open_settings(
+        cx,
+        ProjectPanelAutoOpenSettings {
+            on_paste: Some(false),
+            ..Default::default()
+        },
+    );
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "subdir": {
+                "image.png": "existing"
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    let png_bytes: Vec<u8> = vec![0x89, 0x50, 0x4E, 0x47];
+    cx.write_to_clipboard(ClipboardItem {
+        entries: vec![GpuiClipboardEntry::Image(GpuiImage::from_bytes(
+            gpui::ImageFormat::Png,
+            png_bytes.clone(),
+        ))],
+    });
+
+    select_path(&panel, "root/subdir", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.paste(&Default::default(), window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &[
+            "v root",
+            "    v subdir",
+            "          image.png",
+            "          image 1.png  <== selected",
+        ],
+    );
+
+    let content = fs
+        .load_bytes(Path::new(path!("/root/subdir/image 1.png")))
+        .await
+        .unwrap();
+    assert_eq!(content, png_bytes);
+}
+
+#[gpui::test]
 async fn test_copy_and_cut_write_to_system_clipboard(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 

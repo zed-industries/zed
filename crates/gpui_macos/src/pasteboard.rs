@@ -73,9 +73,20 @@ impl Pasteboard {
 
             // Next, check for a plain string.
             if let Some(string_entry) = self.read_string_from_pasteboard() {
-                return Some(ClipboardItem {
-                    entries: vec![string_entry],
-                });
+                let mut entries = vec![string_entry];
+
+                // Also check for image data that may coexist with text
+                // (e.g., copying an image from a browser puts both URL text
+                // and image data on the pasteboard). String goes first for
+                // backward compatibility.
+                for format in ImageFormat::iter() {
+                    if let Some(image_entry) = self.read_image_entry(format) {
+                        entries.push(image_entry);
+                        break;
+                    }
+                }
+
+                return Some(ClipboardItem { entries });
             }
 
             // Finally, try the various supported image types.
@@ -89,7 +100,7 @@ impl Pasteboard {
         None
     }
 
-    fn read_image(&self, format: ImageFormat) -> Option<ClipboardItem> {
+    fn read_image_entry(&self, format: ImageFormat) -> Option<ClipboardEntry> {
         let ut_type: UTType = format.into();
 
         unsafe {
@@ -98,15 +109,18 @@ impl Pasteboard {
                 self.data_for_type(ut_type.inner_mut()).map(|bytes| {
                     let bytes = bytes.to_vec();
                     let id = hash(&bytes);
-
-                    ClipboardItem {
-                        entries: vec![ClipboardEntry::Image(Image { format, bytes, id })],
-                    }
+                    ClipboardEntry::Image(Image { format, bytes, id })
                 })
             } else {
                 None
             }
         }
+    }
+
+    fn read_image(&self, format: ImageFormat) -> Option<ClipboardItem> {
+        self.read_image_entry(format).map(|entry| ClipboardItem {
+            entries: vec![entry],
+        })
     }
 
     unsafe fn read_string_from_pasteboard(&self) -> Option<ClipboardEntry> {
@@ -520,6 +534,65 @@ mod tests {
                 assert_eq!(img.bytes, png_bytes);
             }
             other => panic!("expected Image, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_read_text_and_image() {
+        let pasteboard = Pasteboard::unique();
+
+        let png_bytes: &[u8] = &[
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+            0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0x9C, 0x62, 0x00, 0x00, 0x00, 0x02, 0x00, 0x01, 0xE5, 0x27, 0xDE, 0xFC, 0x00, 0x00,
+            0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+        ];
+
+        let url_text = "https://example.com/image.png";
+
+        unsafe {
+            let ns_png_type = NSPasteboardTypePNG;
+            let types_array =
+                NSArray::arrayWithObjects(nil, &[NSPasteboardTypeString, ns_png_type]);
+            pasteboard.inner.declareTypes_owner(types_array, nil);
+
+            let text_data = NSData::dataWithBytes_length_(
+                nil,
+                url_text.as_ptr() as *const c_void,
+                url_text.len() as u64,
+            );
+            pasteboard
+                .inner
+                .setData_forType(text_data, NSPasteboardTypeString);
+
+            let image_data = NSData::dataWithBytes_length_(
+                nil,
+                png_bytes.as_ptr() as *const c_void,
+                png_bytes.len() as u64,
+            );
+            pasteboard.inner.setData_forType(image_data, ns_png_type);
+        }
+
+        let item = pasteboard
+            .read()
+            .expect("should read clipboard with text and image");
+
+        assert_eq!(item.entries.len(), 2);
+
+        match &item.entries[0] {
+            ClipboardEntry::String(s) => {
+                assert_eq!(s.text(), url_text);
+            }
+            other => panic!("expected String first, got {:?}", other),
+        }
+
+        match &item.entries[1] {
+            ClipboardEntry::Image(img) => {
+                assert_eq!(img.format, ImageFormat::Png);
+                assert_eq!(img.bytes, png_bytes);
+            }
+            other => panic!("expected Image second, got {:?}", other),
         }
     }
 }
