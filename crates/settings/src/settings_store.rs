@@ -2635,6 +2635,41 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_settings_profile_with_user_base(cx: &mut App) {
+        let mut store = SettingsStore::new(cx, &default_settings());
+        store.register_setting::<AutoUpdateSetting>();
+
+        store
+            .set_user_settings(
+                r#"{
+                    "auto_update": false,
+                    "profiles": {
+                        "explicit_user": {
+                            "base": "user",
+                            "settings": {}
+                        },
+                        "implicit_user": {
+                            "settings": {}
+                        }
+                    }
+                }"#,
+                cx,
+            )
+            .unwrap();
+
+        // Both profiles should preserve user settings since base defaults to "user".
+        for profile_name in ["explicit_user", "implicit_user"] {
+            cx.set_global(ActiveSettingsProfileName(profile_name.to_string()));
+            store.recompute_values(None, cx);
+
+            assert_eq!(
+                store.get::<AutoUpdateSetting>(None),
+                &AutoUpdateSetting { auto_update: false }
+            );
+        }
+    }
+
+    #[gpui::test]
     fn test_settings_profile_with_default_base(cx: &mut App) {
         let mut store = SettingsStore::new(cx, &default_settings());
         store.register_setting::<AutoUpdateSetting>();
