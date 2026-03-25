@@ -10976,12 +10976,8 @@ mod tests {
             self.position = position;
         }
 
-        fn size(&self, _window: &Window, _: &App) -> Pixels {
+        fn default_size(&self, _window: &Window, _: &App) -> Pixels {
             self.size
-        }
-
-        fn set_size(&mut self, size: Option<Pixels>, _: &mut Window, _: &mut Context<Self>) {
-            self.size = size.unwrap_or(px(300.));
         }
 
         fn icon(&self, _: &Window, _: &App) -> Option<ui::IconName> {
