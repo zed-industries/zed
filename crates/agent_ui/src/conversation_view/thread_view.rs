@@ -3247,22 +3247,98 @@ impl ThreadView {
                 })
         };
 
-        if show_split {
-            let max_output_tokens = self
-                .as_native_thread(cx)
-                .and_then(|thread| thread.read(cx).model())
-                .and_then(|model| model.max_output_tokens())
-                .unwrap_or(0);
+        let used = crate::text_thread_editor::humanize_token_count(usage.used_tokens);
+        let max = crate::text_thread_editor::humanize_token_count(usage.max_tokens);
+        let input_tokens_label =
+            crate::text_thread_editor::humanize_token_count(usage.input_tokens);
+        let output_tokens_label =
+            crate::text_thread_editor::humanize_token_count(usage.output_tokens);
 
+        let progress_ratio = if usage.max_tokens > 0 {
+            usage.used_tokens as f32 / usage.max_tokens as f32
+        } else {
+            0.0
+        };
+        let percentage = format!("{}%", (progress_ratio * 100.0).round() as u32);
+
+        let tooltip_separator_color = Color::Custom(cx.theme().colors().text_disabled.opacity(0.6));
+
+        let (user_rules_count, first_user_rules_id, project_rules_count, project_entry_ids) = self
+            .as_native_thread(cx)
+            .map(|thread| {
+                let project_context = thread.read(cx).project_context().read(cx);
+                let user_rules_count = project_context.user_rules.len();
+                let first_user_rules_id = project_context.user_rules.first().map(|r| r.uuid.0);
+                let project_entry_ids = project_context
+                    .worktrees
+                    .iter()
+                    .filter_map(|wt| wt.rules_file.as_ref())
+                    .map(|rf| ProjectEntryId::from_usize(rf.project_entry_id))
+                    .collect::<Vec<_>>();
+                let project_rules_count = project_entry_ids.len();
+                (
+                    user_rules_count,
+                    first_user_rules_id,
+                    project_rules_count,
+                    project_entry_ids,
+                )
+            })
+            .unwrap_or_default();
+
+        let workspace = self.workspace.clone();
+
+        let max_output_tokens = self
+            .as_native_thread(cx)
+            .and_then(|thread| thread.read(cx).model())
+            .and_then(|model| model.max_output_tokens())
+            .unwrap_or(0);
+        let input_max_label = crate::text_thread_editor::humanize_token_count(
+            usage.max_tokens.saturating_sub(max_output_tokens),
+        );
+        let output_max_label = crate::text_thread_editor::humanize_token_count(max_output_tokens);
+
+        let build_tooltip = {
+            let input_max_label = input_max_label.clone();
+            let output_max_label = output_max_label.clone();
+            move |_window: &mut Window, cx: &mut App| {
+                let percentage = percentage.clone();
+                let used = used.clone();
+                let max = max.clone();
+                let input_tokens_label = input_tokens_label.clone();
+                let output_tokens_label = output_tokens_label.clone();
+                let input_max_label = input_max_label.clone();
+                let output_max_label = output_max_label.clone();
+                let project_entry_ids = project_entry_ids.clone();
+                let workspace = workspace.clone();
+                cx.new(move |_cx| TokenUsageTooltip {
+                    percentage,
+                    used,
+                    max,
+                    input_tokens: input_tokens_label,
+                    output_tokens: output_tokens_label,
+                    input_max: input_max_label,
+                    output_max: output_max_label,
+                    show_split,
+                    separator_color: tooltip_separator_color,
+                    user_rules_count,
+                    first_user_rules_id,
+                    project_rules_count,
+                    project_entry_ids,
+                    workspace,
+                })
+                .into()
+            }
+        };
+
+        if show_split {
             let input = crate::text_thread_editor::humanize_token_count(usage.input_tokens);
-            let input_max = crate::text_thread_editor::humanize_token_count(
-                usage.max_tokens.saturating_sub(max_output_tokens),
-            );
+            let input_max = input_max_label;
             let output = crate::text_thread_editor::humanize_token_count(usage.output_tokens);
-            let output_max = crate::text_thread_editor::humanize_token_count(max_output_tokens);
+            let output_max = output_max_label;
 
             Some(
                 h_flex()
+                    .id("split_token_usage")
                     .flex_shrink_0()
                     .gap_1()
                     .mr_1p5()
@@ -3306,50 +3382,15 @@ impl ThreadView {
                                     .color(Color::Muted),
                             ),
                     )
+                    .hoverable_tooltip(build_tooltip)
                     .into_any_element(),
             )
         } else {
-            let used = crate::text_thread_editor::humanize_token_count(usage.used_tokens);
-            let max = crate::text_thread_editor::humanize_token_count(usage.max_tokens);
-            let progress_ratio = if usage.max_tokens > 0 {
-                usage.used_tokens as f32 / usage.max_tokens as f32
-            } else {
-                0.0
-            };
-
             let progress_color = if progress_ratio >= 0.85 {
                 cx.theme().status().warning
             } else {
                 cx.theme().colors().text_muted
             };
-            let separator_color = Color::Custom(cx.theme().colors().text_disabled.opacity(0.6));
-
-            let percentage = format!("{}%", (progress_ratio * 100.0).round() as u32);
-
-            let (user_rules_count, first_user_rules_id, project_rules_count, project_entry_ids) =
-                self.as_native_thread(cx)
-                    .map(|thread| {
-                        let project_context = thread.read(cx).project_context().read(cx);
-                        let user_rules_count = project_context.user_rules.len();
-                        let first_user_rules_id =
-                            project_context.user_rules.first().map(|r| r.uuid.0);
-                        let project_entry_ids = project_context
-                            .worktrees
-                            .iter()
-                            .filter_map(|wt| wt.rules_file.as_ref())
-                            .map(|rf| ProjectEntryId::from_usize(rf.project_entry_id))
-                            .collect::<Vec<_>>();
-                        let project_rules_count = project_entry_ids.len();
-                        (
-                            user_rules_count,
-                            first_user_rules_id,
-                            project_rules_count,
-                            project_entry_ids,
-                        )
-                    })
-                    .unwrap_or_default();
-
-            let workspace = self.workspace.clone();
 
             Some(
                 h_flex()
@@ -3366,25 +3407,7 @@ impl ThreadView {
                         .stroke_width(px(2.))
                         .progress_color(progress_color),
                     )
-                    .hoverable_tooltip(move |_window, cx| {
-                        let percentage = percentage.clone();
-                        let used = used.clone();
-                        let max = max.clone();
-                        let project_entry_ids = project_entry_ids.clone();
-                        let workspace = workspace.clone();
-                        cx.new(move |_cx| TokenUsageTooltip {
-                            percentage,
-                            used,
-                            max,
-                            separator_color,
-                            user_rules_count,
-                            first_user_rules_id,
-                            project_rules_count,
-                            project_entry_ids,
-                            workspace,
-                        })
-                        .into()
-                    })
+                    .hoverable_tooltip(build_tooltip)
                     .into_any_element(),
             )
         }
@@ -3937,6 +3960,11 @@ struct TokenUsageTooltip {
     percentage: String,
     used: String,
     max: String,
+    input_tokens: String,
+    output_tokens: String,
+    input_max: String,
+    output_max: String,
+    show_split: bool,
     separator_color: Color,
     user_rules_count: usize,
     first_user_rules_id: Option<uuid::Uuid>,
@@ -3951,6 +3979,11 @@ impl Render for TokenUsageTooltip {
         let percentage = self.percentage.clone();
         let used = self.used.clone();
         let max = self.max.clone();
+        let input_tokens = self.input_tokens.clone();
+        let output_tokens = self.output_tokens.clone();
+        let input_max = self.input_max.clone();
+        let output_max = self.output_max.clone();
+        let show_split = self.show_split;
         let user_rules_count = self.user_rules_count;
         let first_user_rules_id = self.first_user_rules_id;
         let project_rules_count = self.project_rules_count;
@@ -3960,20 +3993,44 @@ impl Render for TokenUsageTooltip {
         ui::tooltip_container(cx, move |container, cx| {
             container
                 .min_w_40()
-                .child(
-                    Label::new("Context")
-                        .color(Color::Muted)
-                        .size(LabelSize::Small),
-                )
-                .child(
-                    h_flex()
-                        .gap_0p5()
-                        .child(Label::new(percentage.clone()))
-                        .child(Label::new("•").color(separator_color).mx_1())
-                        .child(Label::new(used.clone()))
-                        .child(Label::new("/").color(separator_color))
-                        .child(Label::new(max.clone()).color(Color::Muted)),
-                )
+                .when(!show_split, |this| {
+                    this.child(
+                        Label::new("Context")
+                            .color(Color::Muted)
+                            .size(LabelSize::Small),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_0p5()
+                            .child(Label::new(percentage.clone()))
+                            .child(Label::new("\u{2022}").color(separator_color).mx_1())
+                            .child(Label::new(used.clone()))
+                            .child(Label::new("/").color(separator_color))
+                            .child(Label::new(max.clone()).color(Color::Muted)),
+                    )
+                })
+                .when(show_split, |this| {
+                    this.child(
+                        v_flex()
+                            .gap_0p5()
+                            .child(
+                                h_flex()
+                                    .gap_0p5()
+                                    .child(Label::new("Input:").color(Color::Muted).mr_0p5())
+                                    .child(Label::new(input_tokens))
+                                    .child(Label::new("/").color(separator_color))
+                                    .child(Label::new(input_max).color(Color::Muted)),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_0p5()
+                                    .child(Label::new("Output:").color(Color::Muted).mr_0p5())
+                                    .child(Label::new(output_tokens))
+                                    .child(Label::new("/").color(separator_color))
+                                    .child(Label::new(output_max).color(Color::Muted)),
+                            ),
+                    )
+                })
                 .when(
                     user_rules_count > 0 || project_rules_count > 0,
                     move |this| {
