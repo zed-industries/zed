@@ -975,16 +975,11 @@ impl GitPanel {
         let mut dispatch_context = KeyContext::new_with_defaults();
         dispatch_context.add("GitPanel");
 
-        if window
-            .focused(cx)
-            .is_some_and(|focused| self.focus_handle == focused)
-        {
-            dispatch_context.add("menu");
-            dispatch_context.add("ChangesList");
-        }
-
         if self.commit_editor.read(cx).is_focused(window) {
             dispatch_context.add("CommitEditor");
+        } else if self.focus_handle.contains_focused(window, cx) {
+            dispatch_context.add("menu");
+            dispatch_context.add("ChangesList");
         }
 
         dispatch_context
@@ -2276,6 +2271,7 @@ impl GitPanel {
                 RewrapOptions {
                     override_language_settings: false,
                     preserve_existing_whitespace: true,
+                    line_length: None,
                 },
                 cx,
             );
@@ -5157,7 +5153,9 @@ impl GitPanel {
                         }),
                 )
             })
-            .child(git_status_icon(status))
+            .when(status_style != StatusStyle::LabelColor, |el| {
+                el.child(git_status_icon(status))
+            })
             .map(|this| {
                 if tree_view {
                     this.pl(px(depth as f32 * TREE_INDENT)).child(
@@ -6485,7 +6483,7 @@ mod tests {
         repository::repo_path,
         status::{StatusCode, UnmergedStatus, UnmergedStatusCode},
     };
-    use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
+    use gpui::{TestAppContext, UpdateGlobal, VisualTestContext, px};
     use indoc::indoc;
     use project::FakeFs;
     use serde_json::json;
@@ -7870,5 +7868,134 @@ mod tests {
         // "Update tracked"
         let message = panel.update(cx, |panel, cx| panel.suggest_commit_message(cx));
         assert_eq!(message, Some("Update tracked".to_string()));
+    }
+
+    #[gpui::test]
+    async fn test_dispatch_context_with_focus_states(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "tracked": "tracked\n",
+            }),
+        )
+        .await;
+
+        fs.set_head_and_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("tracked", "old tracked\n".into())],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+        let panel = workspace.update_in(cx, GitPanel::new);
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        // Case 1: Focus the commit editor — should have "CommitEditor" but NOT "menu"/"ChangesList"
+        panel.update_in(cx, |panel, window, cx| {
+            panel.focus_editor(&FocusEditor, window, cx);
+            let editor_is_focused = panel.commit_editor.read(cx).is_focused(window);
+            assert!(
+                editor_is_focused,
+                "commit editor should be focused after focus_editor action"
+            );
+            let context = panel.dispatch_context(window, cx);
+            assert!(
+                context.contains("GitPanel"),
+                "should always have GitPanel context"
+            );
+            assert!(
+                context.contains("CommitEditor"),
+                "should have CommitEditor context when commit editor is focused"
+            );
+            assert!(
+                !context.contains("menu"),
+                "should not have menu context when commit editor is focused"
+            );
+            assert!(
+                !context.contains("ChangesList"),
+                "should not have ChangesList context when commit editor is focused"
+            );
+        });
+
+        // Case 2: Focus the panel's focus handle directly — should have "menu" and "ChangesList".
+        // We force a draw via simulate_resize to ensure the dispatch tree is populated,
+        // since contains_focused() depends on the rendered dispatch tree.
+        panel.update_in(cx, |panel, window, cx| {
+            panel.focus_handle.focus(window, cx);
+        });
+        cx.simulate_resize(gpui::size(px(800.), px(600.)));
+
+        panel.update_in(cx, |panel, window, cx| {
+            let context = panel.dispatch_context(window, cx);
+            assert!(
+                context.contains("GitPanel"),
+                "should always have GitPanel context"
+            );
+            assert!(
+                context.contains("menu"),
+                "should have menu context when changes list is focused"
+            );
+            assert!(
+                context.contains("ChangesList"),
+                "should have ChangesList context when changes list is focused"
+            );
+            assert!(
+                !context.contains("CommitEditor"),
+                "should not have CommitEditor context when changes list is focused"
+            );
+        });
+
+        // Case 3: Switch back to commit editor and verify context switches correctly
+        panel.update_in(cx, |panel, window, cx| {
+            panel.focus_editor(&FocusEditor, window, cx);
+        });
+
+        panel.update_in(cx, |panel, window, cx| {
+            let context = panel.dispatch_context(window, cx);
+            assert!(
+                context.contains("CommitEditor"),
+                "should have CommitEditor after switching focus back to editor"
+            );
+            assert!(
+                !context.contains("menu"),
+                "should not have menu after switching focus back to editor"
+            );
+        });
+
+        // Case 4: Re-focus changes list and verify it transitions back correctly
+        panel.update_in(cx, |panel, window, cx| {
+            panel.focus_handle.focus(window, cx);
+        });
+        cx.simulate_resize(gpui::size(px(800.), px(600.)));
+
+        panel.update_in(cx, |panel, window, cx| {
+            assert!(
+                panel.focus_handle.contains_focused(window, cx),
+                "panel focus handle should report contains_focused when directly focused"
+            );
+            let context = panel.dispatch_context(window, cx);
+            assert!(
+                context.contains("menu"),
+                "should have menu context after re-focusing changes list"
+            );
+            assert!(
+                context.contains("ChangesList"),
+                "should have ChangesList context after re-focusing changes list"
+            );
+        });
     }
 }

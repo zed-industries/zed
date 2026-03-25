@@ -526,7 +526,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
 
     command_output_tx
         .unbounded_send(Ok(SlashCommandEvent::StartSection {
-            icon: IconName::Ai,
+            icon: IconName::ZedAgent,
             label: "src/main.rs".into(),
             metadata: None,
         }))
@@ -870,7 +870,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                             rng.random_range(section_start..=output_text.len()),
                         );
                         events.push(Ok(SlashCommandEvent::StartSection {
-                            icon: IconName::Ai,
+                            icon: IconName::ZedAgent,
                             label: "section".into(),
                             metadata: None,
                         }));

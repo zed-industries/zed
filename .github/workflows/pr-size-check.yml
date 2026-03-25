@@ -1,36 +1,40 @@
-# PR Size Check
+# PR Size Check — Compute
 #
-# Comments on PRs that exceed the 400 LOC soft limit with a friendly reminder
-# to consider splitting. Does NOT block the PR — advisory only.
-# Also adds size labels (size/S, size/M, size/L, size/XL) for tracking.
+# Calculates PR size and saves the result as an artifact. A companion
+# workflow (pr-size-label.yml) picks up the artifact via workflow_run
+# and applies labels + comments with write permissions.
 #
-# Security note: Uses actions/github-script (JavaScript API) — no shell
-# interpolation of untrusted input. PR body is accessed via the JS API,
-# not via expression interpolation in run: blocks.
+# This two-workflow split is required because fork PRs receive a
+# read-only GITHUB_TOKEN. The compute step needs no write access;
+# the label/comment step runs via workflow_run on the base repo with
+# full write permissions.
+#
+# Security note: This workflow only reads PR file data via the JS API
+# and writes a JSON artifact. No untrusted input is interpolated into
+# shell commands.
 
 name: PR Size Check
 
 on:
-  pull_request_target:
+  pull_request:
     types: [opened, synchronize]
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
-  check-size:
+  compute-size:
     if: github.repository_owner == 'zed-industries'
-    permissions:
-      contents: read
-      pull-requests: write  # PR comments
-      issues: write         # label management (GitHub routes labels through Issues API)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Calculate PR size and label
+      - name: Calculate PR size
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         with:
           script: |
+            const fs = require('fs');
+
             const { data: files } = await github.rest.pulls.listFiles({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -56,15 +60,15 @@ jobs:
               }
             }
 
-            // Assign size label
+            // Assign size bracket
             const SIZE_BRACKETS = [
-              ['size/S',  0,       100,  '0e8a16'],
-              ['size/M',  100,     400,  'fbca04'],
-              ['size/L',  400,     800,  'e99695'],
-              ['size/XL', 800, Infinity, 'b60205'],
+              ['Size S',  0,       100,  '0e8a16'],
+              ['Size M',  100,     400,  'fbca04'],
+              ['Size L',  400,     800,  'e99695'],
+              ['Size XL', 800, Infinity, 'b60205'],
             ];
 
-            let sizeLabel = 'size/S';
+            let sizeLabel = 'Size S';
             let labelColor = '0e8a16';
             for (const [label, min, max, color] of SIZE_BRACKETS) {
               if (totalChanges >= min && totalChanges < max) {
@@ -74,99 +78,32 @@ jobs:
               }
             }
 
-            // Remove existing size labels, then apply the current one
-            const existingLabels = (await github.rest.issues.listLabelsOnIssue({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            })).data.map(l => l.name);
+            // Check if the author wrote content in the "How to Review" section.
+            const rawBody = context.payload.pull_request.body || '';
+            const howToReview = rawBody.match(/## How to Review\s*\n([\s\S]*?)(?=\n## |$)/i);
+            const hasReviewGuidance = howToReview
+              ? howToReview[1].replace(/<!--[\s\S]*?-->/g, '').trim().length > 0
+              : false;
 
-            for (const label of existingLabels) {
-              if (label.startsWith('size/')) {
-                await github.rest.issues.removeLabel({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: context.issue.number,
-                  name: label,
-                });
-              }
-            }
+            const result = {
+              pr_number: context.issue.number,
+              total_changes: totalChanges,
+              size_label: sizeLabel,
+              label_color: labelColor,
+              has_review_guidance: hasReviewGuidance,
+            };
 
-            // Create the label if it doesn't exist (ignore 422 = already exists)
-            try {
-              await github.rest.issues.createLabel({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                name: sizeLabel,
-                color: labelColor,
-              });
-            } catch (e) {
-              if (e.status !== 422) throw e;
-            }
+            console.log(`PR #${result.pr_number}: ${totalChanges} LOC, ${sizeLabel}`);
 
-            await github.rest.issues.addLabels({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              labels: [sizeLabel],
-            });
+            fs.mkdirSync('pr-size', { recursive: true });
+            fs.writeFileSync('pr-size/result.json', JSON.stringify(result));
 
-            // For large PRs (400+ LOC): auto-apply large-pr label and comment once
-            if (totalChanges >= 400) {
-              // Auto-apply the large-pr label
-              if (!existingLabels.includes('large-pr')) {
-                try {
-                  await github.rest.issues.createLabel({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    name: 'large-pr',
-                    color: 'e99695',
-                  });
-                } catch (e) {
-                  if (e.status !== 422) throw e;
-                }
-
-                await github.rest.issues.addLabels({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: context.issue.number,
-                  labels: ['large-pr'],
-                });
-              }
-
-              // Comment once with guidance
-              const MARKER = '<!-- pr-size-check -->';
-              const { data: comments } = await github.rest.issues.listComments({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-              });
-
-              const alreadyCommented = comments.some(c => c.body.includes(MARKER));
-              if (!alreadyCommented) {
-                const prBody = context.payload.pull_request.body || '';
-                const guidedTourPresent = /how to review|guided tour|read.*in.*order/i.test(prBody);
-
-                let body = `${MARKER}\n`;
-                body += `### :straight_ruler: PR Size: **${totalChanges} lines changed** (${sizeLabel})\n\n`;
-                body += `Please note: this PR exceeds the 400 LOC soft limit.\n`;
-                body += `- Consider **splitting** into separate PRs if the changes are separable\n`;
-                body += `- Ensure the PR description includes a **guided tour** in the "How to Review" section so reviewers know where to start\n`;
-
-                if (guidedTourPresent) {
-                  body += `\n:white_check_mark: Guided tour detected — thank you!\n`;
-                }
-
-                await github.rest.issues.createComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: context.issue.number,
-                  body: body,
-                });
-              }
-            }
-
-            console.log(`PR #${context.issue.number}: ${totalChanges} LOC changed, labeled ${sizeLabel}`);
+      - name: Upload size result
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pr-size-result
+          path: pr-size/
+          retention-days: 1
 defaults:
   run:
     shell: bash -euxo pipefail {0}

@@ -17,7 +17,7 @@ use agent_ui::{AgentDiffToolbar, AgentPanelDelegate};
 use anyhow::Context as _;
 pub use app_menus::*;
 use assets::Assets;
-use audio::{AudioSettings, REPLAY_DURATION};
+
 use breadcrumbs::Breadcrumbs;
 use client::zed_urls;
 use collections::VecDeque;
@@ -69,7 +69,7 @@ use settings::{
     update_settings_file,
 };
 use sidebar::Sidebar;
-use std::time::Duration;
+
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
@@ -84,9 +84,7 @@ use util::rel_path::RelPath;
 use util::{ResultExt, asset_str, maybe};
 use uuid::Uuid;
 use vim_mode_setting::VimModeSetting;
-use workspace::notifications::{
-    NotificationId, SuppressEvent, dismiss_app_notification, show_app_notification,
-};
+use workspace::notifications::{NotificationId, dismiss_app_notification, show_app_notification};
 
 use workspace::{
     AppState, MultiWorkspace, NewFile, NewWindow, OpenLog, Panel, Toast, Workspace,
@@ -94,8 +92,7 @@ use workspace::{
     notifications::simple_message_notification::MessageNotification, open_new,
 };
 use workspace::{
-    CloseIntent, CloseProject, CloseWindow, NotificationFrame, RestoreBanner,
-    with_active_or_new_workspace,
+    CloseIntent, CloseProject, CloseWindow, RestoreBanner, with_active_or_new_workspace,
 };
 use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
@@ -144,10 +141,6 @@ actions!(
 actions!(
     dev,
     [
-        /// Stores last 30s of audio from zed staff using the experimental rodio
-        /// audio system (including yourself) on the current call in a tar file
-        /// in the current working directory.
-        CaptureRecentAudio,
         /// Opens a prompt to enter a URL to open.
         OpenUrlPrompt,
     ]
@@ -1148,9 +1141,6 @@ fn register_actions(
                     .detach_and_log_err(cx);
                 }
             }
-        })
-        .register_action(|workspace, _: &CaptureRecentAudio, window, cx| {
-            capture_recent_audio(workspace, window, cx);
         });
 
     #[cfg(not(target_os = "windows"))]
@@ -2141,84 +2131,6 @@ fn open_settings_file(
     .detach_and_log_err(cx);
 }
 
-fn capture_recent_audio(workspace: &mut Workspace, _: &mut Window, cx: &mut Context<Workspace>) {
-    struct CaptureRecentAudioNotification {
-        focus_handle: gpui::FocusHandle,
-        save_result: Option<Result<(PathBuf, Duration), anyhow::Error>>,
-        _save_task: Task<anyhow::Result<()>>,
-    }
-
-    impl gpui::EventEmitter<DismissEvent> for CaptureRecentAudioNotification {}
-    impl gpui::EventEmitter<SuppressEvent> for CaptureRecentAudioNotification {}
-    impl gpui::Focusable for CaptureRecentAudioNotification {
-        fn focus_handle(&self, _cx: &App) -> gpui::FocusHandle {
-            self.focus_handle.clone()
-        }
-    }
-    impl workspace::notifications::Notification for CaptureRecentAudioNotification {}
-
-    impl Render for CaptureRecentAudioNotification {
-        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            let message = match &self.save_result {
-                None => format!(
-                    "Saving up to {} seconds of recent audio",
-                    REPLAY_DURATION.as_secs(),
-                ),
-                Some(Ok((path, duration))) => format!(
-                    "Saved {} seconds of all audio to {}",
-                    duration.as_secs(),
-                    path.display(),
-                ),
-                Some(Err(e)) => format!("Error saving audio replays: {e:?}"),
-            };
-
-            NotificationFrame::new()
-                .with_title(Some("Saved Audio"))
-                .show_suppress_button(false)
-                .on_close(cx.listener(|_, _, _, cx| {
-                    cx.emit(DismissEvent);
-                }))
-                .with_content(message)
-        }
-    }
-
-    impl CaptureRecentAudioNotification {
-        fn new(cx: &mut Context<Self>) -> Self {
-            if AudioSettings::get_global(cx).rodio_audio {
-                let executor = cx.background_executor().clone();
-                let save_task = cx.default_global::<audio::Audio>().save_replays(executor);
-                let _save_task = cx.spawn(async move |this, cx| {
-                    let res = save_task.await;
-                    this.update(cx, |this, cx| {
-                        this.save_result = Some(res);
-                        cx.notify();
-                    })
-                });
-
-                Self {
-                    focus_handle: cx.focus_handle(),
-                    _save_task,
-                    save_result: None,
-                }
-            } else {
-                Self {
-                    focus_handle: cx.focus_handle(),
-                    _save_task: Task::ready(Ok(())),
-                    save_result: Some(Err(anyhow::anyhow!(
-                        "Capturing recent audio is only supported on the experimental rodio audio pipeline"
-                    ))),
-                }
-            }
-        }
-    }
-
-    workspace.show_notification(
-        NotificationId::unique::<CaptureRecentAudioNotification>(),
-        cx,
-        |cx| cx.new(CaptureRecentAudioNotification::new),
-    );
-}
-
 /// Eagerly loads the active theme and icon theme based on the selections in the
 /// theme settings.
 ///
@@ -2461,7 +2373,7 @@ mod tests {
             .update(cx, |multi_workspace, window, cx| {
                 multi_workspace.workspace().update(cx, |workspace, cx| {
                     assert_eq!(workspace.worktrees(cx).count(), 2);
-                    assert!(workspace.left_dock().read(cx).is_open());
+                    assert!(workspace.right_dock().read(cx).is_open());
                     assert!(
                         workspace
                             .active_pane()
@@ -2520,7 +2432,7 @@ mod tests {
                         .collect::<Vec<_>>(),
                     &[Path::new(path!("/root/e")).into()]
                 );
-                assert!(workspace.left_dock().read(cx).is_open());
+                assert!(workspace.right_dock().read(cx).is_open());
                 assert!(workspace.active_pane().focus_handle(cx).is_focused(window));
             })
             .unwrap();

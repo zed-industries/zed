@@ -128,6 +128,7 @@ pub struct LocalWorktree {
     scan_requests_tx: channel::Sender<ScanRequest>,
     path_prefixes_to_scan_tx: channel::Sender<PathPrefixScanRequest>,
     is_scanning: (watch::Sender<bool>, watch::Receiver<bool>),
+    snapshot_subscriptions: VecDeque<(usize, oneshot::Sender<()>)>,
     _background_scanner_tasks: Vec<Task<()>>,
     update_observer: Option<UpdateObservationState>,
     fs: Arc<dyn Fs>,
@@ -470,6 +471,7 @@ impl Worktree {
                 next_entry_id,
                 snapshot,
                 is_scanning: watch::channel_with(true),
+                snapshot_subscriptions: Default::default(),
                 update_observer: None,
                 scan_requests_tx,
                 path_prefixes_to_scan_tx,
@@ -711,6 +713,16 @@ impl Worktree {
             Worktree::Remote(this) => {
                 this.update_observer.take();
             }
+        }
+    }
+
+    pub fn wait_for_snapshot(
+        &mut self,
+        scan_id: usize,
+    ) -> impl Future<Output = Result<()>> + use<> {
+        match self {
+            Worktree::Local(this) => this.wait_for_snapshot(scan_id).boxed(),
+            Worktree::Remote(this) => this.wait_for_snapshot(scan_id).boxed(),
         }
     }
 
@@ -1170,6 +1182,15 @@ impl LocalWorktree {
         if !repo_changes.is_empty() {
             cx.emit(Event::UpdatedGitRepositories(repo_changes));
         }
+
+        while let Some((scan_id, _)) = self.snapshot_subscriptions.front() {
+            if self.snapshot.completed_scan_id >= *scan_id {
+                let (_, tx) = self.snapshot_subscriptions.pop_front().unwrap();
+                tx.send(()).ok();
+            } else {
+                break;
+            }
+        }
     }
 
     fn changed_repos(
@@ -1283,6 +1304,28 @@ impl LocalWorktree {
                     break;
                 }
             }
+        }
+    }
+
+    pub fn wait_for_snapshot(
+        &mut self,
+        scan_id: usize,
+    ) -> impl Future<Output = Result<()>> + use<> {
+        let (tx, rx) = oneshot::channel();
+        if self.snapshot.completed_scan_id >= scan_id {
+            tx.send(()).ok();
+        } else {
+            match self
+                .snapshot_subscriptions
+                .binary_search_by_key(&scan_id, |probe| probe.0)
+            {
+                Ok(ix) | Err(ix) => self.snapshot_subscriptions.insert(ix, (scan_id, tx)),
+            }
+        }
+
+        async move {
+            rx.await?;
+            Ok(())
         }
     }
 

@@ -22,7 +22,7 @@ use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 
-use crate::provider::util::parse_tool_arguments;
+use crate::provider::util::{fix_streamed_json, parse_tool_arguments};
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("mistral");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("Mistral");
@@ -647,7 +647,7 @@ impl MistralEventMapper {
 
                 if !entry.id.is_empty() && !entry.name.is_empty() {
                     if let Ok(input) = serde_json::from_str::<serde_json::Value>(
-                        &partial_json_fixer::fix_json(&entry.arguments),
+                        &fix_streamed_json(&entry.arguments),
                     ) {
                         events.push(Ok(LanguageModelCompletionEvent::ToolUse(
                             LanguageModelToolUse {

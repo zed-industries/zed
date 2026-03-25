@@ -161,7 +161,10 @@ pub struct TitleBar {
 
 impl Render for TitleBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_multi_workspace(window, cx);
+
         let title_bar_settings = *TitleBarSettings::get_global(cx);
+        let button_layout = title_bar_settings.button_layout;
 
         let show_menus = show_menus(cx);
 
@@ -266,6 +269,7 @@ impl Render for TitleBar {
 
         if show_menus {
             self.platform_titlebar.update(cx, |this, _| {
+                this.set_button_layout(button_layout);
                 this.set_children(
                     self.application_menu
                         .clone()
@@ -293,6 +297,7 @@ impl Render for TitleBar {
                 .into_any_element()
         } else {
             self.platform_titlebar.update(cx, |this, _| {
+                this.set_button_layout(button_layout);
                 this.set_children(children);
             });
             self.platform_titlebar.clone().into_any_element()
@@ -360,6 +365,7 @@ impl TitleBar {
             }),
         );
         subscriptions.push(cx.observe(&user_store, |_a, _, cx| cx.notify()));
+        subscriptions.push(cx.observe_button_layout_changed(window, |_, _, cx| cx.notify()));
         if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
             subscriptions.push(cx.subscribe(&trusted_worktrees, |_, _, _, cx| {
                 cx.notify();
@@ -441,6 +447,46 @@ impl TitleBar {
         this
     }
 
+    /// Used to update the title bar state in case the workspace has
+    /// been moved to a new window through the threads sidebar.
+    fn sync_multi_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let current = window
+            .root::<MultiWorkspace>()
+            .flatten()
+            .map(|mw| mw.entity_id());
+
+        let tracked = self
+            .multi_workspace
+            .as_ref()
+            .and_then(|weak| weak.upgrade())
+            .map(|mw| mw.entity_id());
+
+        if current == tracked {
+            return;
+        }
+
+        let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() else {
+            self.multi_workspace = None;
+            return;
+        };
+
+        let is_open = multi_workspace.read(cx).sidebar_open();
+        self.platform_titlebar.update(cx, |titlebar, cx| {
+            titlebar.set_workspace_sidebar_open(is_open, cx);
+        });
+
+        let platform_titlebar = self.platform_titlebar.clone();
+        let subscription = cx.observe(&multi_workspace, move |_this, mw, cx| {
+            let is_open = mw.read(cx).sidebar_open();
+            platform_titlebar.update(cx, |titlebar, cx| {
+                titlebar.set_workspace_sidebar_open(is_open, cx);
+            });
+        });
+
+        self.multi_workspace = Some(multi_workspace.downgrade());
+        self._subscriptions.push(subscription);
+    }
+
     fn worktree_count(&self, cx: &App) -> usize {
         self.project.read(cx).visible_worktrees(cx).count()
     }
@@ -512,14 +558,15 @@ impl TitleBar {
         let git_store = project.git_store().read(cx);
         let worktree_path = worktree.read(cx).abs_path();
 
-        for repo in git_store.repositories().values() {
-            let repo_path = &repo.read(cx).work_directory_abs_path;
-            if worktree_path == *repo_path || worktree_path.starts_with(repo_path.as_ref()) {
-                return Some(repo.clone());
-            }
-        }
-
-        None
+        git_store
+            .repositories()
+            .values()
+            .filter(|repo| {
+                let repo_path = &repo.read(cx).work_directory_abs_path;
+                worktree_path == *repo_path || worktree_path.starts_with(repo_path.as_ref())
+            })
+            .max_by_key(|repo| repo.read(cx).work_directory_abs_path.as_os_str().len())
+            .cloned()
     }
 
     fn render_remote_project_connection(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -742,7 +789,7 @@ impl TitleBar {
 
         if is_sidebar_open && is_threads_list_view_active {
             return self
-                .render_project_name_with_sidebar_popover(display_name, is_project_selected, cx)
+                .render_recent_projects_popover(display_name, is_project_selected, cx)
                 .into_any_element();
         }
 
@@ -801,51 +848,66 @@ impl TitleBar {
             .into_any_element()
     }
 
-    /// When the sidebar is open, the title bar's project name button becomes a
-    /// plain button that toggles the sidebar's popover (so the popover is always
-    /// anchored to the sidebar). Both buttons show their selected state together.
-    fn render_project_name_with_sidebar_popover(
+    fn render_recent_projects_popover(
         &self,
         display_name: String,
         is_project_selected: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let multi_workspace = self.multi_workspace.clone();
+        let workspace = self.workspace.clone();
 
-        let is_popover_deployed = multi_workspace
+        let focus_handle = workspace
+            .upgrade()
+            .map(|w| w.read(cx).focus_handle(cx))
+            .unwrap_or_else(|| cx.focus_handle());
+
+        let sibling_workspace_ids: HashSet<WorkspaceId> = self
+            .multi_workspace
             .as_ref()
             .and_then(|mw| mw.upgrade())
-            .map(|mw| mw.read(cx).is_recent_projects_popover_deployed(cx))
-            .unwrap_or(false);
+            .map(|mw| {
+                mw.read(cx)
+                    .workspaces()
+                    .iter()
+                    .filter_map(|ws| ws.read(cx).database_id())
+                    .collect()
+            })
+            .unwrap_or_default();
 
-        Button::new("project_name_trigger", display_name)
-            .label_size(LabelSize::Small)
-            .when(self.worktree_count(cx) > 1, |this| {
-                this.end_icon(
-                    Icon::new(IconName::ChevronDown)
-                        .size(IconSize::XSmall)
-                        .color(Color::Muted),
-                )
-            })
-            .toggle_state(is_popover_deployed)
-            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-            .when(!is_project_selected, |s| s.color(Color::Muted))
-            .tooltip(move |_window, cx| {
-                Tooltip::for_action(
-                    "Recent Projects",
-                    &zed_actions::OpenRecent {
-                        create_new_window: false,
-                    },
+        PopoverMenu::new("sidebar-title-recent-projects-menu")
+            .menu(move |window, cx| {
+                Some(recent_projects::RecentProjects::popover(
+                    workspace.clone(),
+                    sibling_workspace_ids.clone(),
+                    false,
+                    focus_handle.clone(),
+                    window,
                     cx,
-                )
+                ))
             })
-            .on_click(move |_, window, cx| {
-                if let Some(mw) = multi_workspace.as_ref().and_then(|mw| mw.upgrade()) {
-                    mw.update(cx, |mw, cx| {
-                        mw.toggle_recent_projects_popover(window, cx);
-                    });
-                }
-            })
+            .trigger_with_tooltip(
+                Button::new("project_name_trigger", display_name)
+                    .label_size(LabelSize::Small)
+                    .when(self.worktree_count(cx) > 1, |this| {
+                        this.end_icon(
+                            Icon::new(IconName::ChevronDown)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                    })
+                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                    .when(!is_project_selected, |s| s.color(Color::Muted)),
+                move |_window, cx| {
+                    Tooltip::for_action(
+                        "Recent Projects",
+                        &zed_actions::OpenRecent {
+                            create_new_window: false,
+                        },
+                        cx,
+                    )
+                },
+            )
+            .anchor(gpui::Corner::TopLeft)
     }
 
     fn render_project_branch(
@@ -892,14 +954,7 @@ impl TitleBar {
         };
 
         let branch_name = branch_name?;
-        let button_text = if let Some(worktree_name) = linked_worktree_name {
-            format!("{}/{}", worktree_name, branch_name)
-        } else {
-            branch_name
-        };
-
         let settings = TitleBarSettings::get_global(cx);
-
         let effective_repository = Some(repository);
 
         Some(
@@ -915,21 +970,42 @@ impl TitleBar {
                     ))
                 })
                 .trigger_with_tooltip(
-                    Button::new("project_branch_trigger", button_text)
+                    ButtonLike::new("project_branch_trigger")
                         .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                        .label_size(LabelSize::Small)
-                        .color(Color::Muted)
-                        .when(settings.show_branch_icon, |branch_button| {
-                            let (icon, icon_color) = icon_info;
-                            branch_button.start_icon(
-                                Icon::new(icon).size(IconSize::Indicator).color(icon_color),
-                            )
-                        }),
+                        .child(
+                            h_flex()
+                                .gap_0p5()
+                                .when(settings.show_branch_icon, |this| {
+                                    let (icon, icon_color) = icon_info;
+                                    this.child(
+                                        Icon::new(icon).size(IconSize::XSmall).color(icon_color),
+                                    )
+                                })
+                                .when_some(linked_worktree_name.as_ref(), |this, worktree_name| {
+                                    this.child(
+                                        Label::new(worktree_name)
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                    .child(
+                                        Label::new("/").size(LabelSize::Small).color(
+                                            Color::Custom(
+                                                cx.theme().colors().text_muted.opacity(0.4),
+                                            ),
+                                        ),
+                                    )
+                                })
+                                .child(
+                                    Label::new(branch_name)
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                ),
+                        ),
                     move |_window, cx| {
                         Tooltip::with_meta(
-                            "Recent Branches",
+                            "Git Switcher",
                             Some(&zed_actions::git::Branch),
-                            "Local branches only",
+                            "Worktrees, Branches, and Stashes",
                             cx,
                         )
                     },

@@ -370,7 +370,7 @@ pub enum Tool {
 #[serde(rename_all = "lowercase")]
 pub enum ToolChoice {
     Auto,
-    Any,
+    Required,
     None,
 }
 
@@ -1735,5 +1735,23 @@ mod tests {
 
         // Only /v1/messages endpoint -> supports_response = false (doesn't have /responses)
         assert!(!model_with_messages.supports_response());
+    }
+
+    #[test]
+    fn test_tool_choice_required_serializes_as_required() {
+        // Regression test: ToolChoice::Required must serialize as "required" (not "any")
+        // for OpenAI-compatible APIs. Reverting the rename would break this.
+        assert_eq!(
+            serde_json::to_string(&ToolChoice::Required).unwrap(),
+            "\"required\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ToolChoice::Auto).unwrap(),
+            "\"auto\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ToolChoice::None).unwrap(),
+            "\"none\""
+        );
     }
 }

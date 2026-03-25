@@ -2,6 +2,7 @@ mod dev_container_suggest;
 pub mod disconnected_overlay;
 mod remote_connections;
 mod remote_servers;
+pub mod sidebar_recent_projects;
 mod ssh_config;
 
 use std::{
@@ -201,17 +202,19 @@ fn get_branch_for_worktree(
     cx: &App,
 ) -> Option<SharedString> {
     let worktree_abs_path = worktree.abs_path();
-    for repo in repositories {
-        let repo = repo.read(cx);
-        if repo.work_directory_abs_path == worktree_abs_path
-            || worktree_abs_path.starts_with(&*repo.work_directory_abs_path)
-        {
-            if let Some(branch) = &repo.branch {
-                return Some(SharedString::from(branch.name().to_string()));
-            }
-        }
-    }
-    None
+    repositories
+        .iter()
+        .filter(|repo| {
+            let repo_path = &repo.read(cx).work_directory_abs_path;
+            *repo_path == worktree_abs_path || worktree_abs_path.starts_with(repo_path.as_ref())
+        })
+        .max_by_key(|repo| repo.read(cx).work_directory_abs_path.as_os_str().len())
+        .and_then(|repo| {
+            repo.read(cx)
+                .branch
+                .as_ref()
+                .map(|branch| SharedString::from(branch.name().to_string()))
+        })
 }
 
 pub fn init(cx: &mut App) {
@@ -524,7 +527,7 @@ pub fn add_wsl_distro(
 pub struct RecentProjects {
     pub picker: Entity<Picker<RecentProjectsDelegate>>,
     rem_width: f32,
-    _subscription: Subscription,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl ModalView for RecentProjects {
@@ -548,6 +551,7 @@ impl RecentProjects {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let style = delegate.style;
         let picker = cx.new(|cx| {
             Picker::list(delegate, window, cx)
                 .list_measure_all()
@@ -559,7 +563,21 @@ impl RecentProjects {
             picker.delegate.focus_handle = picker_focus_handle;
         });
 
-        let _subscription = cx.subscribe(&picker, |_, _, _, cx| cx.emit(DismissEvent));
+        let mut subscriptions = vec![cx.subscribe(&picker, |_, _, _, cx| cx.emit(DismissEvent))];
+
+        if style == ProjectPickerStyle::Popover {
+            let picker_focus = picker.focus_handle(cx);
+            subscriptions.push(
+                cx.on_focus_out(&picker_focus, window, |this, _, window, cx| {
+                    let submenu_focused = this.picker.update(cx, |picker, cx| {
+                        picker.delegate.actions_menu_handle.is_focused(window, cx)
+                    });
+                    if !submenu_focused {
+                        cx.emit(DismissEvent);
+                    }
+                }),
+            );
+        }
         // We do not want to block the UI on a potentially lengthy call to DB, so we're gonna swap
         // out workspace locations once the future runs to completion.
         let db = WorkspaceDb::global(cx);
@@ -583,7 +601,7 @@ impl RecentProjects {
         Self {
             picker,
             rem_width,
-            _subscription,
+            _subscriptions: subscriptions,
         }
     }
 
@@ -928,7 +946,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         };
 
         if has_siblings_to_show {
-            entries.push(ProjectPickerEntry::Header("Open on This Window".into()));
+            entries.push(ProjectPickerEntry::Header("This Window".into()));
 
             if is_empty_query {
                 for (id, (workspace_id, _, _, _)) in self.workspaces.iter().enumerate() {
@@ -1633,7 +1651,7 @@ impl PickerDelegate for RecentProjectsDelegate {
     }
 }
 
-fn icon_for_remote_connection(options: Option<&RemoteConnectionOptions>) -> IconName {
+pub(crate) fn icon_for_remote_connection(options: Option<&RemoteConnectionOptions>) -> IconName {
     match options {
         None => IconName::Screen,
         Some(options) => match options {
@@ -1647,7 +1665,7 @@ fn icon_for_remote_connection(options: Option<&RemoteConnectionOptions>) -> Icon
 }
 
 // Compute the highlighted text for the name and path
-fn highlights_for_path(
+pub(crate) fn highlights_for_path(
     path: &Path,
     match_positions: &Vec<usize>,
     path_start_offset: usize,

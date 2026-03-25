@@ -209,20 +209,32 @@ impl HighlightsTreeView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(editor) = active_item
-            .filter(|item| item.item_id() != cx.entity_id())
-            .and_then(|item| item.downcast::<Editor>())
-        else {
-            self.clear(cx);
-            return;
+        let active_editor = match active_item {
+            Some(active_item) => {
+                if active_item.item_id() == cx.entity_id() {
+                    return;
+                } else {
+                    match active_item.downcast::<Editor>() {
+                        Some(active_editor) => active_editor,
+                        None => {
+                            self.clear(cx);
+                            return;
+                        }
+                    }
+                }
+            }
+            None => {
+                self.clear(cx);
+                return;
+            }
         };
 
         let is_different_editor = self
             .editor
             .as_ref()
-            .is_none_or(|state| state.editor != editor);
+            .is_none_or(|state| state.editor != active_editor);
         if is_different_editor {
-            self.set_editor(editor, window, cx);
+            self.set_editor(active_editor, window, cx);
         }
     }
 

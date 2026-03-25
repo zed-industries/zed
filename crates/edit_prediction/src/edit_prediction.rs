@@ -1,5 +1,4 @@
 use anyhow::Result;
-use arrayvec::ArrayVec;
 use client::{Client, EditPredictionUsage, UserStore};
 use cloud_api_types::{OrganizationId, SubmitEditPredictionFeedbackBody};
 use cloud_llm_client::predict_edits_v3::{
@@ -27,6 +26,7 @@ use gpui::{
     http_client::{self, AsyncBody, Method},
     prelude::*,
 };
+use heapless::Vec as ArrayVec;
 use language::language_settings::all_language_settings;
 use language::{Anchor, Buffer, File, Point, TextBufferSnapshot, ToOffset, ToPoint};
 use language::{BufferSnapshot, OffsetRangeExt};
@@ -102,6 +102,7 @@ actions!(
 /// Maximum number of events to track.
 const EVENT_COUNT_MAX: usize = 10;
 const CHANGE_GROUPING_LINE_SPAN: u32 = 8;
+const EDIT_HISTORY_DIFF_SIZE_LIMIT: usize = 2048 * 3; // ~2048 tokens or ~50% of typical prompt budget
 const COLLABORATOR_EDIT_LOCALITY_CONTEXT_TOKENS: usize = 512;
 const LAST_CHANGE_GROUPING_TIME: Duration = Duration::from_secs(1);
 const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_choice";
@@ -331,7 +332,7 @@ struct ProjectState {
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
     current_prediction: Option<CurrentEditPrediction>,
     next_pending_prediction_id: usize,
-    pending_predictions: ArrayVec<PendingPrediction, 2>,
+    pending_predictions: ArrayVec<PendingPrediction, 2, u8>,
     debug_tx: Option<mpsc::UnboundedSender<DebugEvent>>,
     last_edit_prediction_refresh: Option<(EntityId, Instant)>,
     last_jump_prediction_refresh: Option<(EntityId, Instant)>,
@@ -723,6 +724,12 @@ fn compute_diff_between_snapshots_in_range(
         .point_to_offset(Point::new(new_context_end_row + 1, 0).min(new_snapshot.max_point()));
     let old_edit_range = old_start_line_offset..old_end_line_offset;
     let new_edit_range = new_start_line_offset..new_end_line_offset;
+
+    if new_edit_range.len() > EDIT_HISTORY_DIFF_SIZE_LIMIT
+        || old_edit_range.len() > EDIT_HISTORY_DIFF_SIZE_LIMIT
+    {
+        return None;
+    }
 
     let old_region_text: String = old_snapshot.text_for_range(old_edit_range).collect();
     let new_region_text: String = new_snapshot.text_for_range(new_edit_range).collect();
@@ -1410,7 +1417,23 @@ impl EditPredictionStore {
             return;
         }
 
+        let is_recordable_history_edit =
+            compute_diff_between_snapshots_in_range(&old_snapshot, &new_snapshot, &edit_range)
+                .is_some();
+
         let events = &mut project_state.events;
+
+        if !is_recordable_history_edit {
+            if let Some(event) = project_state.last_event.take() {
+                if let Some(event) = event.finalize(&project_state.license_detection_watchers, cx) {
+                    if events.len() + 1 >= EVENT_COUNT_MAX {
+                        events.pop_front();
+                    }
+                    events.push_back(event);
+                }
+            }
+            return;
+        }
 
         if let Some(last_event) = project_state.last_event.as_mut() {
             let is_next_snapshot_of_same_buffer = old_snapshot.remote_id()
@@ -2288,18 +2311,24 @@ impl EditPredictionStore {
         });
 
         if project_state.pending_predictions.len() < max_pending_predictions {
-            project_state.pending_predictions.push(PendingPrediction {
-                id: pending_prediction_id,
-                task,
-                drop_on_cancel,
-            });
+            project_state
+                .pending_predictions
+                .push(PendingPrediction {
+                    id: pending_prediction_id,
+                    task,
+                    drop_on_cancel,
+                })
+                .unwrap();
         } else {
             let pending_prediction = project_state.pending_predictions.pop().unwrap();
-            project_state.pending_predictions.push(PendingPrediction {
-                id: pending_prediction_id,
-                task,
-                drop_on_cancel,
-            });
+            project_state
+                .pending_predictions
+                .push(PendingPrediction {
+                    id: pending_prediction_id,
+                    task,
+                    drop_on_cancel,
+                })
+                .unwrap();
             project_state.cancel_pending_prediction(pending_prediction, cx);
         }
     }

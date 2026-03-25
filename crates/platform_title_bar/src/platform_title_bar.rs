@@ -3,9 +3,9 @@ mod system_window_tabs;
 
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
 use gpui::{
-    AnyElement, App, Context, Decorations, Entity, Hsla, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, StatefulInteractiveElement, Styled, Window, WindowControlArea, div,
-    px,
+    Action, AnyElement, App, Context, Decorations, Entity, Hsla, InteractiveElement, IntoElement,
+    MouseButton, ParentElement, StatefulInteractiveElement, Styled, Window, WindowButtonLayout,
+    WindowControlArea, div, px,
 };
 use project::DisableAiSettings;
 use settings::Settings;
@@ -31,6 +31,7 @@ pub struct PlatformTitleBar {
     children: SmallVec<[AnyElement; 2]>,
     should_move: bool,
     system_window_tabs: Entity<SystemWindowTabs>,
+    button_layout: Option<WindowButtonLayout>,
     workspace_sidebar_open: bool,
 }
 
@@ -45,6 +46,7 @@ impl PlatformTitleBar {
             children: SmallVec::new(),
             should_move: false,
             system_window_tabs,
+            button_layout: None,
             workspace_sidebar_open: false,
         }
     }
@@ -66,6 +68,24 @@ impl PlatformTitleBar {
         T: IntoIterator<Item = AnyElement>,
     {
         self.children = children.into_iter().collect();
+    }
+
+    pub fn set_button_layout(&mut self, button_layout: Option<WindowButtonLayout>) {
+        self.button_layout = button_layout;
+    }
+
+    fn effective_button_layout(
+        &self,
+        decorations: &Decorations,
+        cx: &App,
+    ) -> Option<WindowButtonLayout> {
+        if self.platform_style == PlatformStyle::Linux
+            && matches!(decorations, Decorations::Client { .. })
+        {
+            self.button_layout.or_else(|| cx.button_layout())
+        } else {
+            None
+        }
     }
 
     pub fn init(cx: &mut App) {
@@ -95,6 +115,7 @@ impl Render for PlatformTitleBar {
         let close_action = Box::new(workspace::CloseWindow);
         let children = mem::take(&mut self.children);
 
+        let button_layout = self.effective_button_layout(&decorations, cx);
         let is_multiworkspace_sidebar_open =
             PlatformTitleBar::is_multi_workspace_enabled(cx) && self.is_workspace_sidebar_open();
 
@@ -150,6 +171,14 @@ impl Render for PlatformTitleBar {
                     && !is_multiworkspace_sidebar_open
                 {
                     this.pl(px(TRAFFIC_LIGHT_PADDING))
+                } else if let Some(button_layout) =
+                    button_layout.filter(|button_layout| button_layout.left[0].is_some())
+                {
+                    this.child(platform_linux::LinuxWindowControls::new(
+                        "left-window-controls",
+                        button_layout.left,
+                        close_action.as_ref().boxed_clone(),
+                    ))
                 } else {
                     this.pl_2()
                 }
@@ -188,14 +217,22 @@ impl Render for PlatformTitleBar {
                     PlatformStyle::Mac => title_bar,
                     PlatformStyle::Linux => {
                         if matches!(decorations, Decorations::Client { .. }) {
-                            title_bar
-                                .child(platform_linux::LinuxWindowControls::new(close_action))
-                                .when(supported_controls.window_menu, |titlebar| {
-                                    titlebar
-                                        .on_mouse_down(MouseButton::Right, move |ev, window, _| {
-                                            window.show_window_menu(ev.position)
-                                        })
+                            let mut result = title_bar;
+                            if let Some(button_layout) = button_layout
+                                .filter(|button_layout| button_layout.right[0].is_some())
+                            {
+                                result = result.child(platform_linux::LinuxWindowControls::new(
+                                    "right-window-controls",
+                                    button_layout.right,
+                                    close_action.as_ref().boxed_clone(),
+                                ));
+                            }
+
+                            result.when(supported_controls.window_menu, |titlebar| {
+                                titlebar.on_mouse_down(MouseButton::Right, move |ev, window, _| {
+                                    window.show_window_menu(ev.position)
                                 })
+                            })
                         } else {
                             title_bar
                         }

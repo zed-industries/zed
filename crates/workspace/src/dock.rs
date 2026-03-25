@@ -911,7 +911,7 @@ impl Render for PanelButtons {
             DockPosition::Bottom | DockPosition::Right => (Corner::BottomRight, Corner::TopRight),
         };
 
-        let buttons: Vec<_> = dock
+        let mut buttons: Vec<_> = dock
             .panel_entries
             .iter()
             .enumerate()
@@ -1004,12 +1004,18 @@ impl Render for PanelButtons {
             })
             .collect();
 
+        if dock_position == DockPosition::Right {
+            buttons.reverse();
+        }
+
         let has_buttons = !buttons.is_empty();
 
         h_flex()
             .gap_1()
             .when(
-                has_buttons && dock.position == DockPosition::Bottom,
+                has_buttons
+                    && (dock.position == DockPosition::Bottom
+                        || dock.position == DockPosition::Right),
                 |this| this.child(Divider::vertical().color(DividerColor::Border)),
             )
             .children(buttons)

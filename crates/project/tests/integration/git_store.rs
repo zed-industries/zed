@@ -1287,7 +1287,10 @@ mod git_worktrees {
         assert_eq!(worktrees.len(), 2);
         assert_eq!(worktrees[0].path, PathBuf::from(path!("/root")));
         assert_eq!(worktrees[1].path, worktree_1_directory);
-        assert_eq!(worktrees[1].ref_name.as_ref(), "refs/heads/feature-branch");
+        assert_eq!(
+            worktrees[1].ref_name,
+            Some("refs/heads/feature-branch".into())
+        );
         assert_eq!(worktrees[1].sha.as_ref(), "abc123");
 
         let worktree_2_directory = worktrees_directory.join("bugfix-branch");
@@ -1316,13 +1319,13 @@ mod git_worktrees {
 
         let worktree_1 = worktrees
             .iter()
-            .find(|worktree| worktree.ref_name.as_ref() == "refs/heads/feature-branch")
+            .find(|worktree| worktree.ref_name == Some("refs/heads/feature-branch".into()))
             .expect("should find feature-branch worktree");
         assert_eq!(worktree_1.path, worktree_1_directory);
 
         let worktree_2 = worktrees
             .iter()
-            .find(|worktree| worktree.ref_name.as_ref() == "refs/heads/bugfix-branch")
+            .find(|worktree| worktree.ref_name == Some("refs/heads/bugfix-branch".into()))
             .expect("should find bugfix-branch worktree");
         assert_eq!(worktree_2.path, worktree_2_directory);
         assert_eq!(worktree_2.sha.as_ref(), "fake-sha");

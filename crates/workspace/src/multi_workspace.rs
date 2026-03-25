@@ -11,8 +11,10 @@ use project::Project;
 use settings::Settings;
 use std::future::Future;
 use std::path::PathBuf;
+use std::sync::Arc;
 use ui::prelude::*;
 use util::ResultExt;
+use zed_actions::agents_sidebar::MoveWorkspaceToNewWindow;
 
 const SIDEBAR_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
 
@@ -26,8 +28,14 @@ actions!(
     [
         /// Toggles the workspace switcher sidebar.
         ToggleWorkspaceSidebar,
+        /// Closes the workspace sidebar.
+        CloseWorkspaceSidebar,
         /// Moves focus to or from the workspace sidebar without closing it.
         FocusWorkspaceSidebar,
+        /// Switches to the next workspace.
+        NextWorkspace,
+        /// Switches to the previous workspace.
+        PreviousWorkspace,
     ]
 );
 
@@ -41,8 +49,7 @@ pub trait Sidebar: Focusable + Render + Sized {
     fn width(&self, cx: &App) -> Pixels;
     fn set_width(&mut self, width: Option<Pixels>, cx: &mut Context<Self>);
     fn has_notifications(&self, cx: &App) -> bool;
-    fn toggle_recent_projects_popover(&self, window: &mut Window, cx: &mut App);
-    fn is_recent_projects_popover_deployed(&self) -> bool;
+
     fn is_threads_list_view_active(&self) -> bool {
         true
     }
@@ -59,8 +66,7 @@ pub trait SidebarHandle: 'static + Send + Sync {
     fn has_notifications(&self, cx: &App) -> bool;
     fn to_any(&self) -> AnyView;
     fn entity_id(&self) -> EntityId;
-    fn toggle_recent_projects_popover(&self, window: &mut Window, cx: &mut App);
-    fn is_recent_projects_popover_deployed(&self, cx: &App) -> bool;
+
     fn is_threads_list_view_active(&self, cx: &App) -> bool;
 }
 
@@ -105,16 +111,6 @@ impl<T: Sidebar> SidebarHandle for Entity<T> {
 
     fn entity_id(&self) -> EntityId {
         Entity::entity_id(self)
-    }
-
-    fn toggle_recent_projects_popover(&self, window: &mut Window, cx: &mut App) {
-        self.update(cx, |this, cx| {
-            this.toggle_recent_projects_popover(window, cx);
-        });
-    }
-
-    fn is_recent_projects_popover_deployed(&self, cx: &App) -> bool {
-        self.read(cx).is_recent_projects_popover_deployed()
     }
 
     fn is_threads_list_view_active(&self, cx: &App) -> bool {
@@ -203,18 +199,6 @@ impl MultiWorkspace {
             .map_or(false, |s| s.has_notifications(cx))
     }
 
-    pub fn toggle_recent_projects_popover(&self, window: &mut Window, cx: &mut App) {
-        if let Some(sidebar) = &self.sidebar {
-            sidebar.toggle_recent_projects_popover(window, cx);
-        }
-    }
-
-    pub fn is_recent_projects_popover_deployed(&self, cx: &App) -> bool {
-        self.sidebar
-            .as_ref()
-            .map_or(false, |s| s.is_recent_projects_popover_deployed(cx))
-    }
-
     pub fn is_threads_list_view_active(&self, cx: &App) -> bool {
         self.sidebar
             .as_ref()
@@ -238,6 +222,16 @@ impl MultiWorkspace {
                 sidebar.prepare_for_focus(window, cx);
                 sidebar.focus(window, cx);
             }
+        }
+    }
+
+    pub fn close_sidebar_action(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.multi_workspace_enabled(cx) {
+            return;
+        }
+
+        if self.sidebar_open {
+            self.close_sidebar(window, cx);
         }
     }
 
@@ -284,7 +278,7 @@ impl MultiWorkspace {
         cx.notify();
     }
 
-    fn close_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn close_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sidebar_open = false;
         let has_notifications = self.sidebar_has_notifications(cx);
         let show_toggle = self.multi_workspace_enabled(cx);
@@ -415,6 +409,29 @@ impl MultiWorkspace {
             cx.emit(MultiWorkspaceEvent::ActiveWorkspaceChanged);
         }
         cx.notify();
+    }
+
+    fn cycle_workspace(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
+        let count = self.workspaces.len() as isize;
+        if count <= 1 {
+            return;
+        }
+        let current = self.active_workspace_index as isize;
+        let next = ((current + delta).rem_euclid(count)) as usize;
+        self.activate_index(next, window, cx);
+    }
+
+    fn next_workspace(&mut self, _: &NextWorkspace, window: &mut Window, cx: &mut Context<Self>) {
+        self.cycle_workspace(1, window, cx);
+    }
+
+    fn previous_workspace(
+        &mut self,
+        _: &PreviousWorkspace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cycle_workspace(-1, window, cx);
     }
 
     fn serialize(&mut self, cx: &mut App) {
@@ -621,9 +638,14 @@ impl MultiWorkspace {
         })
     }
 
-    pub fn remove_workspace(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn remove_workspace(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<Workspace>> {
         if self.workspaces.len() <= 1 || index >= self.workspaces.len() {
-            return;
+            return None;
         }
 
         let removed_workspace = self.workspaces.remove(index);
@@ -633,6 +655,16 @@ impl MultiWorkspace {
         } else if self.active_workspace_index > index {
             self.active_workspace_index -= 1;
         }
+
+        // Clear session_id and cancel any in-flight serialization on the
+        // removed workspace. Without this, a pending throttle timer from
+        // `serialize_workspace` could fire and write the old session_id
+        // back to the DB, resurrecting the workspace on next launch.
+        removed_workspace.update(cx, |workspace, _cx| {
+            workspace.session_id.take();
+            workspace._schedule_serialize_workspace.take();
+            workspace._serialize_workspace_task.take();
+        });
 
         if let Some(workspace_id) = removed_workspace.read(cx).database_id() {
             let db = crate::persistence::WorkspaceDb::global(cx);
@@ -654,6 +686,49 @@ impl MultiWorkspace {
         ));
         cx.emit(MultiWorkspaceEvent::ActiveWorkspaceChanged);
         cx.notify();
+
+        Some(removed_workspace)
+    }
+
+    pub fn move_workspace_to_new_window(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.workspaces.len() <= 1 || index >= self.workspaces.len() {
+            return;
+        }
+
+        let Some(workspace) = self.remove_workspace(index, window, cx) else {
+            return;
+        };
+
+        let app_state: Arc<crate::AppState> = workspace.read(cx).app_state().clone();
+
+        cx.defer(move |cx| {
+            let options = (app_state.build_window_options)(None, cx);
+
+            let Ok(window) = cx.open_window(options, |window, cx| {
+                cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
+            }) else {
+                return;
+            };
+
+            let _ = window.update(cx, |_, window, _| {
+                window.activate_window();
+            });
+        });
+    }
+
+    fn move_active_workspace_to_new_window(
+        &mut self,
+        _: &MoveWorkspaceToNewWindow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let index = self.active_workspace_index;
+        self.move_workspace_to_new_window(index, window, cx);
     }
 
     pub fn open_project(
@@ -763,10 +838,18 @@ impl Render for MultiWorkspace {
                         },
                     ))
                     .on_action(cx.listener(
+                        |this: &mut Self, _: &CloseWorkspaceSidebar, window, cx| {
+                            this.close_sidebar_action(window, cx);
+                        },
+                    ))
+                    .on_action(cx.listener(
                         |this: &mut Self, _: &FocusWorkspaceSidebar, window, cx| {
                             this.focus_sidebar(window, cx);
                         },
                     ))
+                    .on_action(cx.listener(Self::next_workspace))
+                    .on_action(cx.listener(Self::previous_workspace))
+                    .on_action(cx.listener(Self::move_active_workspace_to_new_window))
                 })
                 .when(
                     self.sidebar_open() && self.multi_workspace_enabled(cx),

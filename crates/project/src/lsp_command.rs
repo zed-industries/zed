@@ -2636,11 +2636,10 @@ impl LspCommand for GetCodeActions {
             relevant_diagnostics.push(entry.to_lsp_diagnostic_stub()?);
         }
 
-        let supported =
-            Self::supported_code_action_kinds(language_server.adapter_server_capabilities());
-
         let only = if let Some(requested) = &self.kinds {
-            if let Some(supported_kinds) = supported {
+            if let Some(supported_kinds) =
+                Self::supported_code_action_kinds(language_server.adapter_server_capabilities())
+            {
                 let filtered = requested
                     .iter()
                     .filter(|requested_kind| {
@@ -2655,7 +2654,7 @@ impl LspCommand for GetCodeActions {
                 Some(requested.clone())
             }
         } else {
-            supported
+            None
         };
 
         Ok(lsp::CodeActionParams {

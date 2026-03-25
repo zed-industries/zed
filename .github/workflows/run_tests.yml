@@ -263,6 +263,39 @@ jobs:
     - name: steps::show_sccache_stats
       run: sccache --show-stats || true
     timeout-minutes: 60
+  clippy_mac_x86_64:
+    needs:
+    - orchestrate
+    if: needs.orchestrate.outputs.run_tests == 'true'
+    runs-on: namespace-profile-mac-large
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::setup_cargo_config
+      run: |
+        mkdir -p ./../.cargo
+        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+        path: ~/.rustup
+    - name: steps::install_rustup_target
+      run: rustup target add x86_64-apple-darwin
+    - name: steps::setup_sccache
+      run: ./script/setup-sccache
+      env:
+        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        SCCACHE_BUCKET: sccache-zed
+    - name: steps::clippy
+      run: ./script/clippy --target x86_64-apple-darwin
+    - name: steps::show_sccache_stats
+      run: sccache --show-stats || true
+    timeout-minutes: 60
   run_tests_windows:
     needs:
     - orchestrate
@@ -731,6 +764,7 @@ jobs:
     - clippy_windows
     - clippy_linux
     - clippy_mac
+    - clippy_mac_x86_64
     - run_tests_windows
     - run_tests_linux
     - run_tests_mac
@@ -760,6 +794,7 @@ jobs:
         check_result "clippy_windows" "$RESULT_CLIPPY_WINDOWS"
         check_result "clippy_linux" "$RESULT_CLIPPY_LINUX"
         check_result "clippy_mac" "$RESULT_CLIPPY_MAC"
+        check_result "clippy_mac_x86_64" "$RESULT_CLIPPY_MAC_X86_64"
         check_result "run_tests_windows" "$RESULT_RUN_TESTS_WINDOWS"
         check_result "run_tests_linux" "$RESULT_RUN_TESTS_LINUX"
         check_result "run_tests_mac" "$RESULT_RUN_TESTS_MAC"
@@ -779,6 +814,7 @@ jobs:
         RESULT_CLIPPY_WINDOWS: ${{ needs.clippy_windows.result }}
         RESULT_CLIPPY_LINUX: ${{ needs.clippy_linux.result }}
         RESULT_CLIPPY_MAC: ${{ needs.clippy_mac.result }}
+        RESULT_CLIPPY_MAC_X86_64: ${{ needs.clippy_mac_x86_64.result }}
         RESULT_RUN_TESTS_WINDOWS: ${{ needs.run_tests_windows.result }}
         RESULT_RUN_TESTS_LINUX: ${{ needs.run_tests_linux.result }}
         RESULT_RUN_TESTS_MAC: ${{ needs.run_tests_mac.result }}

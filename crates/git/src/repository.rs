@@ -212,18 +212,25 @@ impl Branch {
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Worktree {
     pub path: PathBuf,
-    pub ref_name: SharedString,
+    pub ref_name: Option<SharedString>,
     // todo(git_worktree) This type should be a Oid
     pub sha: SharedString,
 }
 
 impl Worktree {
-    pub fn branch(&self) -> &str {
-        self.ref_name
-            .as_ref()
-            .strip_prefix("refs/heads/")
-            .or_else(|| self.ref_name.as_ref().strip_prefix("refs/remotes/"))
-            .unwrap_or(self.ref_name.as_ref())
+    /// Returns a display name for the worktree, suitable for use in the UI.
+    ///
+    /// If the worktree is attached to a branch, returns the branch name.
+    /// Otherwise, returns the short SHA of the worktree's HEAD commit.
+    pub fn display_name(&self) -> &str {
+        match self.ref_name {
+            Some(ref ref_name) => ref_name
+                .strip_prefix("refs/heads/")
+                .or_else(|| ref_name.strip_prefix("refs/remotes/"))
+                .unwrap_or(ref_name),
+            // Detached HEAD — show the short SHA as a fallback.
+            None => &self.sha[..self.sha.len().min(SHORT_SHA_LENGTH)],
+        }
     }
 }
 
@@ -251,12 +258,10 @@ pub fn parse_worktrees_from_str<T: AsRef<str>>(raw_worktrees: T) -> Vec<Worktree
             // Ignore other lines: detached, bare, locked, prunable, etc.
         }
 
-        // todo(git_worktree) We should add a test for detach head state
-        // a detach head will have ref_name as none so we would skip it
-        if let (Some(path), Some(sha), Some(ref_name)) = (path, sha, ref_name) {
+        if let (Some(path), Some(sha)) = (path, sha) {
             worktrees.push(Worktree {
                 path: PathBuf::from(path),
-                ref_name: ref_name.into(),
+                ref_name: ref_name.map(Into::into),
                 sha: sha.into(),
             })
         }
@@ -943,6 +948,7 @@ impl RealGitRepository {
             self.any_git_binary_path.clone(),
             self.working_directory()
                 .with_context(|| "Can't run git commands without a working directory")?,
+            self.path(),
             self.executor.clone(),
             self.is_trusted(),
         ))
@@ -997,6 +1003,7 @@ pub async fn get_git_committer(cx: &AsyncApp) -> GitCommitter {
     let git = GitBinary::new(
         git_binary_path.unwrap_or(PathBuf::from("git")),
         paths::home_dir().clone(),
+        paths::home_dir().join(".git"),
         cx.background_executor().clone(),
         true,
     );
@@ -2154,6 +2161,7 @@ impl GitRepository for RealGitRepository {
         cx: AsyncApp,
     ) -> BoxFuture<'_, Result<RemoteCommandOutput>> {
         let working_directory = self.working_directory();
+        let git_directory = self.path();
         let executor = cx.background_executor().clone();
         let git_binary_path = self.system_git_binary_path.clone();
         let is_trusted = self.is_trusted();
@@ -2165,6 +2173,7 @@ impl GitRepository for RealGitRepository {
             let git = GitBinary::new(
                 git_binary_path,
                 working_directory,
+                git_directory,
                 executor.clone(),
                 is_trusted,
             );
@@ -2196,6 +2205,7 @@ impl GitRepository for RealGitRepository {
         cx: AsyncApp,
     ) -> BoxFuture<'_, Result<RemoteCommandOutput>> {
         let working_directory = self.working_directory();
+        let git_directory = self.path();
         let executor = cx.background_executor().clone();
         let git_binary_path = self.system_git_binary_path.clone();
         let is_trusted = self.is_trusted();
@@ -2207,6 +2217,7 @@ impl GitRepository for RealGitRepository {
             let git = GitBinary::new(
                 git_binary_path,
                 working_directory,
+                git_directory,
                 executor.clone(),
                 is_trusted,
             );
@@ -2236,6 +2247,7 @@ impl GitRepository for RealGitRepository {
         cx: AsyncApp,
     ) -> BoxFuture<'_, Result<RemoteCommandOutput>> {
         let working_directory = self.working_directory();
+        let git_directory = self.path();
         let remote_name = format!("{}", fetch_options);
         let git_binary_path = self.system_git_binary_path.clone();
         let executor = cx.background_executor().clone();
@@ -2248,6 +2260,7 @@ impl GitRepository for RealGitRepository {
             let git = GitBinary::new(
                 git_binary_path,
                 working_directory,
+                git_directory,
                 executor.clone(),
                 is_trusted,
             );
@@ -2900,6 +2913,7 @@ async fn exclude_files(git: &GitBinary) -> Result<GitExcludeOverride> {
 pub(crate) struct GitBinary {
     git_binary_path: PathBuf,
     working_directory: PathBuf,
+    git_directory: PathBuf,
     executor: BackgroundExecutor,
     index_file_path: Option<PathBuf>,
     envs: HashMap<String, String>,
@@ -2910,12 +2924,14 @@ impl GitBinary {
     pub(crate) fn new(
         git_binary_path: PathBuf,
         working_directory: PathBuf,
+        git_directory: PathBuf,
         executor: BackgroundExecutor,
         is_trusted: bool,
     ) -> Self {
         Self {
             git_binary_path,
             working_directory,
+            git_directory,
             executor,
             index_file_path: None,
             envs: HashMap::default(),
@@ -2961,12 +2977,9 @@ impl GitBinary {
 
         // Copy the default index file so that Git doesn't have to rebuild the
         // whole index from scratch. This might fail if this is an empty repository.
-        smol::fs::copy(
-            self.working_directory.join(".git").join("index"),
-            &index_file_path,
-        )
-        .await
-        .ok();
+        smol::fs::copy(self.git_directory.join("index"), &index_file_path)
+            .await
+            .ok();
 
         self.index_file_path = Some(index_file_path.clone());
         let result = f(self).await;
@@ -2980,19 +2993,13 @@ impl GitBinary {
     }
 
     pub async fn with_exclude_overrides(&self) -> Result<GitExcludeOverride> {
-        let path = self
-            .working_directory
-            .join(".git")
-            .join("info")
-            .join("exclude");
+        let path = self.git_directory.join("info").join("exclude");
 
         GitExcludeOverride::new(path).await
     }
 
     fn path_for_index_id(&self, id: Uuid) -> PathBuf {
-        self.working_directory
-            .join(".git")
-            .join(format!("index-{}.tmp", id))
+        self.git_directory.join(format!("index-{}.tmp", id))
     }
 
     pub async fn run<S>(&self, args: &[S]) -> Result<String>
@@ -3317,6 +3324,7 @@ mod tests {
         let git = GitBinary::new(
             PathBuf::from("git"),
             dir.path().to_path_buf(),
+            dir.path().join(".git"),
             cx.executor(),
             false,
         );
@@ -3330,6 +3338,7 @@ mod tests {
         let git = GitBinary::new(
             PathBuf::from("git"),
             dir.path().to_path_buf(),
+            dir.path().join(".git"),
             cx.executor(),
             false,
         );
@@ -3349,6 +3358,7 @@ mod tests {
         let git = GitBinary::new(
             PathBuf::from("git"),
             dir.path().to_path_buf(),
+            dir.path().join(".git"),
             cx.executor(),
             false,
         );
@@ -3374,6 +3384,7 @@ mod tests {
         let git = GitBinary::new(
             PathBuf::from("git"),
             dir.path().to_path_buf(),
+            dir.path().join(".git"),
             cx.executor(),
             true,
         );
@@ -3392,6 +3403,7 @@ mod tests {
         let git = GitBinary::new(
             PathBuf::from("git"),
             dir.path().to_path_buf(),
+            dir.path().join(".git"),
             cx.executor(),
             true,
         );
@@ -3403,6 +3415,27 @@ mod tests {
         assert!(
             !output.status.success(),
             "hooksPath should NOT be overridden for trusted repos"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_path_for_index_id_uses_real_git_directory(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let working_directory = PathBuf::from("/code/worktree");
+        let git_directory = PathBuf::from("/code/repo/.git/modules/worktree");
+        let git = GitBinary::new(
+            PathBuf::from("git"),
+            working_directory,
+            git_directory.clone(),
+            cx.executor(),
+            false,
+        );
+
+        let path = git.path_for_index_id(Uuid::nil());
+
+        assert_eq!(
+            path,
+            git_directory.join(format!("index-{}.tmp", Uuid::nil()))
         );
     }
 
@@ -3765,7 +3798,7 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
         assert_eq!(result[0].sha.as_ref(), "abc123def");
-        assert_eq!(result[0].ref_name.as_ref(), "refs/heads/main");
+        assert_eq!(result[0].ref_name, Some("refs/heads/main".into()));
 
         // Multiple worktrees
         let input = "worktree /home/user/project\nHEAD abc123\nbranch refs/heads/main\n\n\
@@ -3773,23 +3806,30 @@ mod tests {
         let result = parse_worktrees_from_str(input);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
-        assert_eq!(result[0].ref_name.as_ref(), "refs/heads/main");
+        assert_eq!(result[0].ref_name, Some("refs/heads/main".into()));
         assert_eq!(result[1].path, PathBuf::from("/home/user/project-wt"));
-        assert_eq!(result[1].ref_name.as_ref(), "refs/heads/feature");
+        assert_eq!(result[1].ref_name, Some("refs/heads/feature".into()));
 
-        // Detached HEAD entry (should be skipped since ref_name won't parse)
+        // Detached HEAD entry (included with ref_name: None)
         let input = "worktree /home/user/project\nHEAD abc123\nbranch refs/heads/main\n\n\
                       worktree /home/user/detached\nHEAD def456\ndetached\n\n";
         let result = parse_worktrees_from_str(input);
-        assert_eq!(result.len(), 1);
+        assert_eq!(result.len(), 2);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
+        assert_eq!(result[0].ref_name, Some("refs/heads/main".into()));
+        assert_eq!(result[1].path, PathBuf::from("/home/user/detached"));
+        assert_eq!(result[1].ref_name, None);
+        assert_eq!(result[1].sha.as_ref(), "def456");
 
-        // Bare repo entry (should be skipped)
+        // Bare repo entry (included with ref_name: None)
         let input = "worktree /home/user/bare.git\nHEAD abc123\nbare\n\n\
                       worktree /home/user/project\nHEAD def456\nbranch refs/heads/main\n\n";
         let result = parse_worktrees_from_str(input);
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].path, PathBuf::from("/home/user/bare.git"));
+        assert_eq!(result[0].ref_name, None);
+        assert_eq!(result[1].path, PathBuf::from("/home/user/project"));
+        assert_eq!(result[1].ref_name, Some("refs/heads/main".into()));
 
         // Extra porcelain lines (locked, prunable) should be ignored
         let input = "worktree /home/user/project\nHEAD abc123\nbranch refs/heads/main\n\n\
@@ -3798,11 +3838,14 @@ mod tests {
         let result = parse_worktrees_from_str(input);
         assert_eq!(result.len(), 3);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
-        assert_eq!(result[0].ref_name.as_ref(), "refs/heads/main");
+        assert_eq!(result[0].ref_name, Some("refs/heads/main".into()));
         assert_eq!(result[1].path, PathBuf::from("/home/user/locked-wt"));
-        assert_eq!(result[1].ref_name.as_ref(), "refs/heads/locked-branch");
+        assert_eq!(result[1].ref_name, Some("refs/heads/locked-branch".into()));
         assert_eq!(result[2].path, PathBuf::from("/home/user/prunable-wt"));
-        assert_eq!(result[2].ref_name.as_ref(), "refs/heads/prunable-branch");
+        assert_eq!(
+            result[2].ref_name,
+            Some("refs/heads/prunable-branch".into())
+        );
 
         // Leading/trailing whitespace on lines should be tolerated
         let input =
@@ -3811,7 +3854,7 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
         assert_eq!(result[0].sha.as_ref(), "abc123");
-        assert_eq!(result[0].ref_name.as_ref(), "refs/heads/main");
+        assert_eq!(result[0].ref_name, Some("refs/heads/main".into()));
 
         // Windows-style line endings should be handled
         let input = "worktree /home/user/project\r\nHEAD abc123\r\nbranch refs/heads/main\r\n\r\n";
@@ -3819,7 +3862,7 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
         assert_eq!(result[0].sha.as_ref(), "abc123");
-        assert_eq!(result[0].ref_name.as_ref(), "refs/heads/main");
+        assert_eq!(result[0].ref_name, Some("refs/heads/main".into()));
     }
 
     #[gpui::test]
@@ -3886,7 +3929,7 @@ mod tests {
 
         let new_worktree = worktrees
             .iter()
-            .find(|w| w.branch() == "test-branch")
+            .find(|w| w.display_name() == "test-branch")
             .expect("should find worktree with test-branch");
         assert_eq!(
             new_worktree.path.canonicalize().unwrap(),
@@ -3948,7 +3991,7 @@ mod tests {
         let worktrees = repo.worktrees().await.unwrap();
         assert_eq!(worktrees.len(), 1);
         assert!(
-            worktrees.iter().all(|w| w.branch() != "to-remove"),
+            worktrees.iter().all(|w| w.display_name() != "to-remove"),
             "removed worktree should not appear in list"
         );
         assert!(!worktree_path.exists());
@@ -4050,7 +4093,7 @@ mod tests {
         assert_eq!(worktrees.len(), 2);
         let moved_worktree = worktrees
             .iter()
-            .find(|w| w.branch() == "old-name")
+            .find(|w| w.display_name() == "old-name")
             .expect("should find worktree by branch name");
         assert_eq!(
             moved_worktree.path.canonicalize().unwrap(),
@@ -4090,13 +4133,20 @@ mod tests {
         /// Force a Git garbage collection on the repository.
         fn gc(&self) -> BoxFuture<'_, Result<()>> {
             let working_directory = self.working_directory();
+            let git_directory = self.path();
             let git_binary_path = self.any_git_binary_path.clone();
             let executor = self.executor.clone();
             self.executor
                 .spawn(async move {
                     let git_binary_path = git_binary_path.clone();
                     let working_directory = working_directory?;
-                    let git = GitBinary::new(git_binary_path, working_directory, executor, true);
+                    let git = GitBinary::new(
+                        git_binary_path,
+                        working_directory,
+                        git_directory,
+                        executor,
+                        true,
+                    );
                     git.run(&["gc", "--prune"]).await?;
                     Ok(())
                 })
