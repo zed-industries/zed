@@ -687,20 +687,29 @@ pub fn setup_thread_handler(
                             continue;
                         }
                         Err(e) => {
-                            // Thread can't be reloaded (e.g. ACP agent like Claude Code
-                            // doesn't retain old sessions). Fall through to create a new
-                            // thread so the message still gets delivered. The new thread
-                            // will have a different acp_thread_id, but that's better than
-                            // the message hanging forever.
+                            // Thread can't be reloaded. This should be rare now that
+                            // THREAD_KEEP_ALIVE keeps all thread entities alive.
+                            // Report the error back to Helix rather than silently
+                            // creating a new thread (which would lose conversation context).
                             eprintln!(
-                                "⚠️ [THREAD_SERVICE] Failed to load thread {} from agent: {} - creating new thread as fallback",
+                                "❌ [THREAD_SERVICE] Failed to load thread {} from agent: {} - sending error to Helix",
                                 existing_thread_id, e
                             );
-                            log::warn!(
-                                "⚠️ [THREAD_SERVICE] Failed to load thread {} from agent: {} - creating new thread as fallback",
+                            log::error!(
+                                "❌ [THREAD_SERVICE] Failed to load thread {} from agent: {}",
                                 existing_thread_id, e
                             );
-                            // Fall through to create_new_thread_sync below
+
+                            let error_event = SyncEvent::ThreadLoadError {
+                                acp_thread_id: existing_thread_id.clone(),
+                                request_id: request.request_id.clone(),
+                                error: format!("Failed to load thread: {}", e),
+                            };
+                            if let Err(send_err) = crate::send_websocket_event(error_event) {
+                                eprintln!("❌ [THREAD_SERVICE] Failed to send error event: {}", send_err);
+                            }
+
+                            continue;
                         }
                     }
                 }
