@@ -24,6 +24,13 @@ use crate::{ExternalAgent, ThreadCreationRequest, ThreadOpenRequest, SyncEvent};
 static THREAD_REGISTRY: parking_lot::Mutex<Option<Arc<RwLock<HashMap<String, Entity<AcpThread>>>>>> =
     parking_lot::Mutex::new(None);
 
+/// Global map of acp_thread_id -> agent_session_id
+/// The agent (e.g. Claude Code) uses its own session IDs that differ from Zed's thread UUIDs.
+/// We store this mapping when a thread is created so we can pass the correct session ID
+/// to load_session when reloading a thread that was unloaded.
+static THREAD_AGENT_SESSION_MAP: parking_lot::Mutex<Option<Arc<RwLock<HashMap<String, String>>>>> =
+    parking_lot::Mutex::new(None);
+
 /// Global map of thread_id -> current_request_id
 /// Tracks the request_id for the CURRENT/LATEST message being processed by each thread
 /// This ensures message_completed events use the correct request_id (not the first one)
@@ -71,6 +78,11 @@ pub fn init_thread_registry() {
     let mut registry = THREAD_REGISTRY.lock();
     if registry.is_none() {
         *registry = Some(Arc::new(RwLock::new(HashMap::new())));
+    }
+
+    let mut session_map = THREAD_AGENT_SESSION_MAP.lock();
+    if session_map.is_none() {
+        *session_map = Some(Arc::new(RwLock::new(HashMap::new())));
     }
 
     let mut request_map = THREAD_REQUEST_MAP.lock();
@@ -287,6 +299,21 @@ pub fn set_thread_request_id(acp_thread_id: String, request_id: String) {
 pub fn get_thread_request_id(acp_thread_id: &str) -> Option<String> {
     let map = THREAD_REQUEST_MAP.lock();
     map.as_ref()?.read().get(acp_thread_id).cloned()
+}
+
+/// Store the agent's session ID for a thread, so we can pass it to load_session later.
+/// The agent (e.g. Claude Code) assigns its own session ID which differs from the Zed thread UUID.
+pub fn set_agent_session_id(acp_thread_id: &str, agent_session_id: String) {
+    let map = THREAD_AGENT_SESSION_MAP.lock();
+    if let Some(m) = map.as_ref() {
+        m.write().insert(acp_thread_id.to_string(), agent_session_id);
+    }
+}
+
+/// Get the agent's session ID for a thread (for passing to load_session).
+pub fn get_agent_session_id(acp_thread_id: &str) -> Option<String> {
+    let map = THREAD_AGENT_SESSION_MAP.lock();
+    map.as_ref().and_then(|m| m.read().get(acp_thread_id).cloned())
 }
 
 /// Register an active thread (stores strong reference to keep thread alive)
@@ -899,8 +926,16 @@ fn create_new_thread_sync(
 
         // Register thread for follow-up messages (strong reference keeps it alive)
         register_thread(acp_thread_id.clone(), thread_entity.clone());
-        eprintln!("📋 [THREAD_SERVICE] Registered thread: {} (strong reference)", acp_thread_id);
-        log::info!("📋 [THREAD_SERVICE] Registered thread: {} (strong reference)", acp_thread_id);
+
+        // Store the agent's session ID so load_session uses the right ID later.
+        // ACP agents like Claude Code assign their own session IDs that differ
+        // from the Zed thread UUID.
+        cx.update(|cx| {
+            let agent_sid = thread_entity.read(cx).session_id().to_string();
+            eprintln!("📋 [THREAD_SERVICE] Registered thread: {} → agent session: {}", acp_thread_id, agent_sid);
+            log::info!("📋 [THREAD_SERVICE] Registered thread: {} → agent session: {}", acp_thread_id, agent_sid);
+            set_agent_session_id(&acp_thread_id, agent_sid);
+        });
 
         // Send agent_ready event to Helix (signals that agent is ready to receive prompts)
         // This prevents race conditions where Helix sends continue prompts before agent is initialized
@@ -1127,8 +1162,12 @@ async fn load_thread_from_agent(
         }
     }
 
-    // Load the thread from agent
-    let session_id = acp::SessionId::new(acp_thread_id.clone());
+    // Load the thread from agent using the agent's own session ID (not the Zed thread UUID).
+    // ACP agents like Claude Code assign their own session IDs during new_session.
+    let agent_sid = get_agent_session_id(&acp_thread_id).unwrap_or_else(|| acp_thread_id.clone());
+    eprintln!("📂 [THREAD_SERVICE] load_session: zed_thread={} agent_session={}", acp_thread_id, agent_sid);
+    log::info!("📂 [THREAD_SERVICE] load_session: zed_thread={} agent_session={}", acp_thread_id, agent_sid);
+    let session_id = acp::SessionId::new(agent_sid);
     let work_dirs = PathList::new(&[cwd.clone()]);
     let project_clone = project.clone();
     let load_task = cx.update(|cx| {
@@ -1151,8 +1190,9 @@ async fn load_thread_from_agent(
 
     // Register thread for future access
     register_thread(loaded_thread_id.clone(), thread_entity.clone());
-    eprintln!("📋 [THREAD_SERVICE] Registered loaded thread: {}", loaded_thread_id);
-    log::info!("📋 [THREAD_SERVICE] Registered loaded thread: {}", loaded_thread_id);
+    set_agent_session_id(&acp_thread_id, loaded_thread_id.clone());
+    eprintln!("📋 [THREAD_SERVICE] Registered loaded thread: {} → agent session: {}", acp_thread_id, loaded_thread_id);
+    log::info!("📋 [THREAD_SERVICE] Registered loaded thread: {} → agent session: {}", acp_thread_id, loaded_thread_id);
 
     // Send agent_ready event to Helix (signals that agent is ready to receive prompts)
     let agent_name_for_ready = agent_name.clone().unwrap_or_else(|| "zed-agent".to_string());
@@ -1296,8 +1336,14 @@ fn open_existing_thread_sync(
 
         // Register thread for future access (strong reference keeps it alive)
         register_thread(acp_thread_id.clone(), thread_entity.clone());
-        eprintln!("📋 [THREAD_SERVICE] Registered thread: {} (strong reference)", acp_thread_id);
-        log::info!("📋 [THREAD_SERVICE] Registered thread: {} (strong reference)", acp_thread_id);
+        if !request_clone.acp_thread_id.is_empty() {
+            set_agent_session_id(&request_clone.acp_thread_id, acp_thread_id.clone());
+            eprintln!("📋 [THREAD_SERVICE] Registered thread: {} → agent session: {}", request_clone.acp_thread_id, acp_thread_id);
+            log::info!("📋 [THREAD_SERVICE] Registered thread: {} → agent session: {}", request_clone.acp_thread_id, acp_thread_id);
+        } else {
+            eprintln!("📋 [THREAD_SERVICE] Registered thread: {} (strong reference)", acp_thread_id);
+            log::info!("📋 [THREAD_SERVICE] Registered thread: {} (strong reference)", acp_thread_id);
+        }
 
         // Send agent_ready event to Helix (signals that agent is ready to receive prompts)
         let agent_name_for_ready = request_clone.agent_name.clone().unwrap_or_else(|| "zed-agent".to_string());
