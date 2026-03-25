@@ -24,6 +24,14 @@ use crate::{ExternalAgent, ThreadCreationRequest, ThreadOpenRequest, SyncEvent};
 static THREAD_REGISTRY: parking_lot::Mutex<Option<Arc<RwLock<HashMap<String, Entity<AcpThread>>>>>> =
     parking_lot::Mutex::new(None);
 
+/// Keeps strong references to ALL threads ever created/loaded, preventing them
+/// from being released when the UI switches to a different thread. Unlike
+/// THREAD_REGISTRY (which gets cleaned up by unregister_thread on UI transitions),
+/// this map is append-only. This ensures follow-up messages to non-visible threads
+/// can find the thread entity without needing load_session.
+static THREAD_KEEP_ALIVE: parking_lot::Mutex<Option<Arc<RwLock<HashMap<String, Entity<AcpThread>>>>>> =
+    parking_lot::Mutex::new(None);
+
 /// Global map of acp_thread_id -> agent_session_id
 /// The agent (e.g. Claude Code) uses its own session IDs that differ from Zed's thread UUIDs.
 /// We store this mapping when a thread is created so we can pass the correct session ID
@@ -78,6 +86,11 @@ pub fn init_thread_registry() {
     let mut registry = THREAD_REGISTRY.lock();
     if registry.is_none() {
         *registry = Some(Arc::new(RwLock::new(HashMap::new())));
+    }
+
+    let mut keep_alive = THREAD_KEEP_ALIVE.lock();
+    if keep_alive.is_none() {
+        *keep_alive = Some(Arc::new(RwLock::new(HashMap::new())));
     }
 
     let mut session_map = THREAD_AGENT_SESSION_MAP.lock();
@@ -338,7 +351,13 @@ pub fn register_thread(acp_thread_id: String, thread: Entity<AcpThread>) {
                 );
             }
         }
-        map.insert(acp_thread_id, thread);
+        map.insert(acp_thread_id.clone(), thread.clone());
+    }
+
+    // Also keep a permanent strong reference so the entity survives UI transitions
+    let keep_alive = THREAD_KEEP_ALIVE.lock();
+    if let Some(ka) = keep_alive.as_ref() {
+        ka.write().insert(acp_thread_id, thread);
     }
 }
 
@@ -368,8 +387,16 @@ pub fn unregister_thread(acp_thread_id: &str) {
 
 /// Get an active thread as weak reference
 pub fn get_thread(acp_thread_id: &str) -> Option<WeakEntity<AcpThread>> {
+    // Check the active registry first
     let registry = THREAD_REGISTRY.lock();
-    registry.as_ref()?.read().get(acp_thread_id).map(|e| e.downgrade())
+    if let Some(entity) = registry.as_ref().and_then(|r| r.read().get(acp_thread_id).cloned()) {
+        return Some(entity.downgrade());
+    }
+    drop(registry);
+
+    // Fall back to the keep-alive map (threads survive UI transitions here)
+    let keep_alive = THREAD_KEEP_ALIVE.lock();
+    keep_alive.as_ref().and_then(|ka| ka.read().get(acp_thread_id).map(|e| e.downgrade()))
 }
 
 /// Ensure a thread has an event subscription for syncing to Helix.
