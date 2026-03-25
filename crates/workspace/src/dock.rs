@@ -1017,7 +1017,7 @@ pub(crate) fn resolve_panel_size(
     if position.axis() == Axis::Horizontal && panel.supports_flexible_size(window, cx) {
         let ratio = size_state
             .flexible_size_ratio
-            .or_else(|| workspace.default_flexible_dock_ratio(position, cx));
+            .or_else(|| workspace.default_flexible_dock_ratio(position));
 
         if let Some(ratio) = ratio {
             return workspace

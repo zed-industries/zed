@@ -2261,18 +2261,9 @@ impl Workspace {
         Some((workspace_width - opposite_width).max(RESIZE_HANDLE_SIZE))
     }
 
-    pub fn default_flexible_dock_ratio(&self, position: DockPosition, cx: &App) -> Option<f32> {
+    pub fn default_flexible_dock_ratio(&self, position: DockPosition) -> Option<f32> {
         if position.axis() != Axis::Horizontal {
             return None;
-        }
-
-        if self
-            .center
-            .panes()
-            .iter()
-            .all(|pane| pane.read(cx).items_len() == 0)
-        {
-            return Some(1.0);
         }
 
         let pane = self.last_active_center_pane.clone()?.upgrade()?;
@@ -12268,15 +12259,6 @@ mod tests {
             let panel = cx.new(|cx| TestPanel::new_flexible(DockPosition::Right, 100, cx));
             workspace.add_panel(panel, window, cx);
             workspace.toggle_dock(DockPosition::Right, window, cx);
-
-            let dock = workspace.right_dock().read(cx);
-            let workspace_width = workspace.bounds.size.width;
-            let expanded_width = dock
-                .active_panel()
-                .map(|panel| workspace.resolved_dock_panel_size(&dock, panel.as_ref(), window, cx))
-                .expect("flexible dock should fill the center when there are no tabs");
-
-            assert_eq!(expanded_width, workspace_width);
         });
 
         let (panel, resized_width, ratio_basis_width) =
