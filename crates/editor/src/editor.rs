@@ -601,7 +601,11 @@ pub fn make_inlay_hints_style(cx: &App) -> HighlightStyle {
         .inlay_hints
         .show_background;
 
-    let mut style = cx.theme().syntax().get("hint");
+    let mut style = cx
+        .theme()
+        .syntax()
+        .style_for_name("hint")
+        .unwrap_or_default();
 
     if style.color.is_none() {
         style.color = Some(cx.theme().status().hint);

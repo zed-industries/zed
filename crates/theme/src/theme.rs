@@ -258,30 +258,25 @@ impl ThemeFamily {
         };
         refined_accent_colors.merge(&theme.style.accents);
 
-        let syntax_highlights = theme
-            .style
-            .syntax
-            .iter()
-            .map(|(syntax_token, highlight)| {
-                (
-                    syntax_token.clone(),
-                    HighlightStyle {
-                        color: highlight
-                            .color
-                            .as_ref()
-                            .and_then(|color| try_parse_color(color).ok()),
-                        background_color: highlight
-                            .background_color
-                            .as_ref()
-                            .and_then(|color| try_parse_color(color).ok()),
-                        font_style: highlight.font_style.map(|s| s.into_gpui()),
-                        font_weight: highlight.font_weight.map(|w| w.into_gpui()),
-                        ..Default::default()
-                    },
-                )
-            })
-            .collect::<Vec<_>>();
-        let syntax_theme = SyntaxTheme::merge(Arc::new(SyntaxTheme::default()), syntax_highlights);
+        let syntax_highlights = theme.style.syntax.iter().map(|(syntax_token, highlight)| {
+            (
+                syntax_token.clone(),
+                HighlightStyle {
+                    color: highlight
+                        .color
+                        .as_ref()
+                        .and_then(|color| try_parse_color(color).ok()),
+                    background_color: highlight
+                        .background_color
+                        .as_ref()
+                        .and_then(|color| try_parse_color(color).ok()),
+                    font_style: highlight.font_style.map(|s| s.into_gpui()),
+                    font_weight: highlight.font_weight.map(|w| w.into_gpui()),
+                    ..Default::default()
+                },
+            )
+        });
+        let syntax_theme = Arc::new(SyntaxTheme::new(syntax_highlights));
 
         let window_background_appearance = theme
             .style
@@ -379,12 +374,6 @@ impl Theme {
     #[inline(always)]
     pub fn status(&self) -> &StatusColors {
         &self.styles.status
-    }
-
-    /// Returns the color for the syntax node with the given name.
-    #[inline(always)]
-    pub fn syntax_color(&self, name: &str) -> Hsla {
-        self.syntax().color(name)
     }
 
     /// Returns the [`Appearance`] for the theme.

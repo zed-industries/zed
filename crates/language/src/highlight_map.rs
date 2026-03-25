@@ -4,15 +4,9 @@ use gpui::HighlightStyle;
 use theme::SyntaxTheme;
 
 pub fn highlight_style(id: HighlightId, theme: &SyntaxTheme) -> Option<HighlightStyle> {
-    theme
-        .highlights
-        .get(id.index() as usize)
-        .map(|entry| entry.1)
+    theme.get(id.index() as usize).cloned()
 }
 
 pub fn highlight_name(id: HighlightId, theme: &SyntaxTheme) -> Option<&str> {
-    theme
-        .highlights
-        .get(id.index() as usize)
-        .map(|entry| entry.0.as_str())
+    theme.get_capture_name(id.index() as usize)
 }

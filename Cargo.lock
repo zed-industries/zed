@@ -9360,6 +9360,7 @@ dependencies = [
  "async-trait",
  "clock",
  "collections",
+ "criterion",
  "ctor",
  "diffy",
  "ec4rs",
@@ -21972,7 +21973,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.230.0"
+version = "0.231.0"
 dependencies = [
  "acp_thread",
  "acp_tools",

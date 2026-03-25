@@ -375,7 +375,9 @@ impl HighlightsTreeView {
                                             rule.style
                                                 .iter()
                                                 .find(|style_name| {
-                                                    semantic_theme.get_opt(style_name).is_some()
+                                                    semantic_theme
+                                                        .style_for_name(style_name)
+                                                        .is_some()
                                                 })
                                                 .map(|style_name| {
                                                     SharedString::from(style_name.clone())

@@ -11,8 +11,8 @@ const DEFAULT_SYNTAX_HIGHLIGHT_ID: HighlightId = HighlightId(u32::MAX);
 impl HighlightMap {
     pub fn new(capture_names: &[&str], highlight_names: &[&str]) -> Self {
         // For each capture name in the highlight query, find the longest
-        // key in the theme's syntax styles that matches all of the
-        // dot-separated components of the capture name.
+        // key in the theme's syntax styles that is a dot-delimited prefix
+        // of the capture name.
         HighlightMap(
             capture_names
                 .iter()
@@ -21,16 +21,13 @@ impl HighlightMap {
                         .iter()
                         .enumerate()
                         .filter_map(|(i, key)| {
-                            let mut len = 0;
-                            let capture_parts = capture_name.split('.');
-                            for key_part in key.split('.') {
-                                if capture_parts.clone().any(|part| part == key_part) {
-                                    len += 1;
+                            capture_name.strip_prefix(key).and_then(|remainder| {
+                                if remainder.is_empty() || remainder.starts_with('.') {
+                                    Some((i, key.len()))
                                 } else {
-                                    return None;
+                                    None
                                 }
-                            }
-                            Some((i, len))
+                            })
                         })
                         .max_by_key(|(_, len)| *len)
                         .map_or(DEFAULT_SYNTAX_HIGHLIGHT_ID, |(i, _)| HighlightId(i as u32))
@@ -103,5 +100,17 @@ mod tests {
         assert_eq!(map.get(1), HighlightId(2));
         // "variable.builtin.self" best matches "variable.builtin" (index 4)
         assert_eq!(map.get(2), HighlightId(4));
+    }
+
+    #[test]
+    fn test_highlight_map_requires_dot_delimited_prefix_matches() {
+        let highlight_names = &["foo.baz", "foo", "foo.bar"];
+        let capture_names = &["foo.bar.baz"];
+
+        let map = HighlightMap::new(capture_names, highlight_names);
+
+        // "foo.baz" is not a prefix match for "foo.bar.baz", so the
+        // longest valid dot-delimited prefix is "foo.bar" (index 2).
+        assert_eq!(map.get(0), HighlightId(2));
     }
 }

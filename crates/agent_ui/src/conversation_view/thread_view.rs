@@ -2540,7 +2540,17 @@ impl ThreadView {
                 this.border_b_1().border_color(cx.theme().colors().border)
             })
             .child(Disclosure::new("plan_disclosure", plan_expanded))
-            .child(title)
+            .child(title.flex_1())
+            .child(
+                IconButton::new("dismiss-plan", IconName::Close)
+                    .icon_size(IconSize::XSmall)
+                    .shape(ui::IconButtonShape::Square)
+                    .tooltip(Tooltip::text("Clear plan"))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.thread.update(cx, |thread, cx| thread.clear_plan(cx));
+                        cx.stop_propagation();
+                    })),
+            )
             .on_click(cx.listener(|this, _, _, cx| {
                 this.plan_expanded = !this.plan_expanded;
                 cx.notify();

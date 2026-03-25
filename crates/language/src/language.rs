@@ -1049,11 +1049,12 @@ impl Language {
         if let Some(grammar) = self.grammar.as_ref()
             && let Some(highlights_config) = &grammar.highlights_config
         {
-            let highlight_names: Vec<&str> = theme
-                .highlights
-                .iter()
-                .map(|(name, _)| name.as_str())
-                .collect();
+            let mut highlight_names = Vec::new();
+            let mut highlight_index = 0;
+            while let Some(highlight_name) = theme.get_capture_name(highlight_index) {
+                highlight_names.push(highlight_name);
+                highlight_index += 1;
+            }
             *grammar.highlight_map.lock() =
                 HighlightMap::new(highlights_config.query.capture_names(), &highlight_names);
         }

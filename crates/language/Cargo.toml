@@ -101,6 +101,11 @@ toml.workspace = true
 unindent.workspace = true
 util = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "highlight_map"
+harness = false
 
 [package.metadata.cargo-machete]
 ignored = ["tracing"]
