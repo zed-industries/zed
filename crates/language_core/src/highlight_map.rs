@@ -14,6 +14,7 @@ impl HighlightMap {
         Self(highlight_ids.into_iter().collect())
     }
 
+    #[inline]
     pub fn get(&self, capture_id: u32) -> HighlightId {
         self.0
             .get(capture_id as usize)
@@ -26,14 +27,9 @@ impl HighlightId {
     pub const TABSTOP_INSERT_ID: HighlightId = HighlightId(u32::MAX - 1);
     pub const TABSTOP_REPLACE_ID: HighlightId = HighlightId(u32::MAX - 2);
 
+    #[inline]
     pub fn is_default(&self) -> bool {
         *self == DEFAULT_SYNTAX_HIGHLIGHT_ID
-    }
-
-    /// Returns the underlying index. Useful for extension traits that need
-    /// to look up theme data by index.
-    pub fn index(&self) -> u32 {
-        self.0
     }
 }
 
