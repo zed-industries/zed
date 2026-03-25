@@ -4239,7 +4239,7 @@ fn window_and_layout_page() -> SettingsPage {
 }
 
 fn panels_page() -> SettingsPage {
-    fn project_panel_section() -> [SettingsPageItem; 23] {
+    fn project_panel_section() -> [SettingsPageItem; 24] {
         [
             SettingsPageItem::SectionHeader("Project Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -4683,7 +4683,7 @@ fn panels_page() -> SettingsPage {
                 title: "Hide Root",
                 description: "Whether to hide the root entry when only one folder is open in the window.",
                 field: Box::new(SettingField {
-                    json_path: Some("project_panel.drag_and_drop"),
+                    json_path: Some("project_panel.hide_root"),
                     pick: |settings_content| {
                         settings_content.project_panel.as_ref()?.hide_root.as_ref()
                     },
