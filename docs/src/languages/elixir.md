@@ -7,7 +7,7 @@ description: "Configure Elixir language support in Zed, including language serve
 
 Elixir support is available through the [Elixir extension](https://github.com/zed-extensions/elixir).
 
-- Tree-sitters:
+- Tree-sitter grammars:
   - [elixir-lang/tree-sitter-elixir](https://github.com/elixir-lang/tree-sitter-elixir)
   - [phoenixframework/tree-sitter-heex](https://github.com/phoenixframework/tree-sitter-heex)
 - Language Servers:
