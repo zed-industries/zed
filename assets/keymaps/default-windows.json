@@ -334,6 +334,7 @@
       "alt-tab": "agent::CycleFavoriteModels",
       "alt-l": "agent::CycleFavoriteModels",
       "ctrl-;": "agent::OpenAddContextMenu",
+      "ctrl-alt-v": "agent::ToggleVoiceRecording",
       "ctrl-alt-k": "agent::ToggleThinkingMode",
       "ctrl-alt-'": "agent::ToggleThinkingEffortMenu",
       "ctrl-'": "agent::CycleThinkingEffort",

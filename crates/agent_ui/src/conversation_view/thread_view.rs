@@ -8867,7 +8867,7 @@ impl ThreadView {
                             "Start Voice Input"
                         }
                     }
-                    SpeechToTextTriggerMode::Hold => "Hold to Record Voice Input",
+                    SpeechToTextTriggerMode::Hold => "Hold to Record Dictation",
                 };
 
                 Tooltip::for_action_in(label, &ToggleVoiceRecording, &focus_handle, cx)

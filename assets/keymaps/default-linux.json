@@ -332,6 +332,7 @@
       // `alt-l` is provided as an alternative to `alt-tab` as the latter breaks on Linux under the `AcpThread > Editor` context
       "alt-l": "agent::CycleFavoriteModels",
       "ctrl-;": "agent::OpenAddContextMenu",
+      "ctrl-alt-v": "agent::ToggleVoiceRecording",
       "ctrl-alt-k": "agent::ToggleThinkingMode",
       "ctrl-alt-'": "agent::ToggleThinkingEffortMenu",
       "ctrl-'": "agent::CycleThinkingEffort",

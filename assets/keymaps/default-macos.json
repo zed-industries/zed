@@ -376,6 +376,7 @@
       "shift-tab": "agent::CycleModeSelector",
       "alt-tab": "agent::CycleFavoriteModels",
       "ctrl-;": "agent::OpenAddContextMenu",
+      "cmd-alt-v": "agent::ToggleVoiceRecording",
       "cmd-alt-k": "agent::ToggleThinkingMode",
       "cmd-alt-'": "agent::ToggleThinkingEffortMenu",
       "ctrl-'": "agent::CycleThinkingEffort",
