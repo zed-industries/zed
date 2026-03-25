@@ -59,20 +59,23 @@ pub fn hover_at(
 
         if let Some(anchor) = anchor {
             editor.hover_state.hiding_delay_task = None;
-            editor.hover_state.closest_mouse_distance = None;
+            if let Some(pos) = mouse_position {
+                editor.hover_state.safe_triangle_apex = Some(pos);
+            }
             show_hover(editor, anchor, false, window, cx);
         } else {
-            let mut getting_closer = false;
-            if let Some(mouse_position) = mouse_position {
-                getting_closer = editor.hover_state.is_mouse_getting_closer(mouse_position);
-            }
+            let in_safe_zone = mouse_position
+                .is_some_and(|pos| editor.hover_state.is_mouse_in_safe_zone(pos));
 
-            // If we are moving away and a timer is already running, just let it count down.
-            if !getting_closer && editor.hover_state.hiding_delay_task.is_some() {
+            if in_safe_zone {
+                editor.hover_state.hiding_delay_task = None;
                 return;
             }
 
-            // If we are moving closer, or if no timer is running at all, start/restart the 300ms timer.
+            if editor.hover_state.hiding_delay_task.is_some() {
+                return;
+            }
+
             let delay = Duration::from_millis(300u64);
             let task = cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(delay).await;
@@ -183,7 +186,7 @@ pub fn hover_at_inlay(
         let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay.0;
 
         editor.hover_state.hiding_delay_task = None;
-        editor.hover_state.closest_mouse_distance = None;
+        editor.hover_state.safe_triangle_apex = None;
 
         let task = cx.spawn_in(window, async move |this, cx| {
             async move {
@@ -247,7 +250,7 @@ pub fn hide_hover(editor: &mut Editor, cx: &mut Context<Editor>) -> bool {
     editor.hover_state.info_task = None;
     editor.hover_state.triggered_from = None;
     editor.hover_state.hiding_delay_task = None;
-    editor.hover_state.closest_mouse_distance = None;
+    editor.hover_state.safe_triangle_apex = None;
 
     editor.clear_background_highlights(HighlightKey::HoverState, cx);
 
@@ -287,7 +290,7 @@ fn show_hover(
     let provider = editor.semantics_provider.clone()?;
 
     editor.hover_state.hiding_delay_task = None;
-    editor.hover_state.closest_mouse_distance = None;
+    editor.hover_state.safe_triangle_apex = None;
 
     if !ignore_timeout {
         if same_info_hover(editor, &snapshot, anchor)
@@ -816,19 +819,26 @@ pub struct HoverState {
     pub diagnostic_popover: Option<DiagnosticPopover>,
     pub triggered_from: Option<Anchor>,
     pub info_task: Option<Task<Option<()>>>,
-    pub closest_mouse_distance: Option<Pixels>,
+    pub safe_triangle_apex: Option<gpui::Point<Pixels>>,
     pub hiding_delay_task: Option<Task<()>>,
 }
+
+const SAFE_TRIANGLE_MARGIN: Pixels = px(10.0);
 
 impl HoverState {
     pub fn visible(&self) -> bool {
         !self.info_popovers.is_empty() || self.diagnostic_popover.is_some()
     }
 
-    pub fn is_mouse_getting_closer(&mut self, mouse_position: gpui::Point<Pixels>) -> bool {
+    pub fn is_mouse_in_safe_zone(&self, mouse_position: gpui::Point<Pixels>) -> bool {
         if !self.visible() {
             return false;
         }
+
+        let apex = match self.safe_triangle_apex {
+            Some(apex) => apex,
+            None => return false,
+        };
 
         let mut popover_bounds = Vec::new();
         for info_popover in &self.info_popovers {
@@ -842,41 +852,65 @@ impl HoverState {
             }
         }
 
-        if popover_bounds.is_empty() {
-            return false;
-        }
-
-        let distance = popover_bounds
+        popover_bounds
             .iter()
-            .map(|bounds| self.distance_from_point_to_bounds(mouse_position, *bounds))
-            .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-            .unwrap_or(px(f32::MAX));
-
-        if let Some(closest_distance) = self.closest_mouse_distance {
-            if distance > closest_distance + px(4.0) {
-                return false;
-            }
-        }
-
-        self.closest_mouse_distance =
-            Some(distance.min(self.closest_mouse_distance.unwrap_or(distance)));
-        true
+            .any(|bounds| Self::point_in_safe_zone(mouse_position, apex, *bounds))
     }
 
-    fn distance_from_point_to_bounds(
-        &self,
+    fn point_in_safe_zone(
         point: gpui::Point<Pixels>,
+        apex: gpui::Point<Pixels>,
         bounds: Bounds<Pixels>,
-    ) -> Pixels {
-        let center_x = bounds.origin.x + bounds.size.width / 2.;
-        let center_y = bounds.origin.y + bounds.size.height / 2.;
-        let dx: f32 = ((point.x - center_x).abs() - bounds.size.width / 2.)
-            .max(px(0.0))
-            .into();
-        let dy: f32 = ((point.y - center_y).abs() - bounds.size.height / 2.)
-            .max(px(0.0))
-            .into();
-        px((dx.powi(2) + dy.powi(2)).sqrt())
+    ) -> bool {
+        let margin = SAFE_TRIANGLE_MARGIN;
+        let left = bounds.origin.x - margin;
+        let right = bounds.origin.x + bounds.size.width + margin;
+        let top = bounds.origin.y - margin;
+        let bottom = bounds.origin.y + bounds.size.height + margin;
+
+        if point.x >= left && point.x <= right && point.y >= top && point.y <= bottom {
+            return true;
+        }
+
+        let tl = gpui::point(left, top);
+        let tr = gpui::point(right, top);
+        let br = gpui::point(right, bottom);
+        let bl = gpui::point(left, bottom);
+
+        let edges = [(tl, tr), (tr, br), (br, bl), (bl, tl)];
+        edges
+            .iter()
+            .any(|(c1, c2)| Self::point_in_triangle(point, apex, *c1, *c2))
+    }
+
+    fn point_in_triangle(
+        p: gpui::Point<Pixels>,
+        a: gpui::Point<Pixels>,
+        b: gpui::Point<Pixels>,
+        c: gpui::Point<Pixels>,
+    ) -> bool {
+        let d1 = Self::cross_2d(p, a, b);
+        let d2 = Self::cross_2d(p, b, c);
+        let d3 = Self::cross_2d(p, c, a);
+
+        let has_neg = d1 < 0.0 || d2 < 0.0 || d3 < 0.0;
+        let has_pos = d1 > 0.0 || d2 > 0.0 || d3 > 0.0;
+
+        !(has_neg && has_pos)
+    }
+
+    fn cross_2d(
+        p1: gpui::Point<Pixels>,
+        p2: gpui::Point<Pixels>,
+        p3: gpui::Point<Pixels>,
+    ) -> f32 {
+        let p1x: f32 = p1.x.into();
+        let p1y: f32 = p1.y.into();
+        let p2x: f32 = p2.x.into();
+        let p2y: f32 = p2.y.into();
+        let p3x: f32 = p3.x.into();
+        let p3y: f32 = p3.y.into();
+        (p1x - p3x) * (p2y - p3y) - (p2x - p3x) * (p1y - p3y)
     }
 
     pub(crate) fn render(
@@ -1016,7 +1050,6 @@ impl InfoPopover {
             .on_mouse_move({
                 move |_, _, cx: &mut App| {
                     this.update(cx, |editor, _| {
-                        editor.hover_state.closest_mouse_distance = Some(px(0.0));
                         editor.hover_state.hiding_delay_task = None;
                     })
                     .ok();
@@ -1117,7 +1150,6 @@ impl DiagnosticPopover {
                 let this = this.clone();
                 move |_, _, cx: &mut App| {
                     this.update(cx, |editor, _| {
-                        editor.hover_state.closest_mouse_distance = Some(px(0.0));
                         editor.hover_state.hiding_delay_task = None;
                     })
                     .ok();
