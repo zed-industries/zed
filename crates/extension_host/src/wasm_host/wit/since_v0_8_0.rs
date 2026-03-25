@@ -941,6 +941,7 @@ impl ExtensionImports for WasmState {
                         );
                         Ok(serde_json::to_string(&settings::LanguageSettings {
                             tab_size: settings.tab_size,
+                            preferred_line_length: settings.preferred_line_length,
                         })?)
                     }
                     "lsp" => {

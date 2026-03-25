@@ -18,7 +18,9 @@ use gpui::{
 use indoc::indoc;
 use language::{
     EditPredictionsMode, File, Language,
-    language_settings::{self, AllLanguageSettings, EditPredictionProvider, all_language_settings},
+    language_settings::{
+        AllLanguageSettings, EditPredictionProvider, LanguageSettings, all_language_settings,
+    },
 };
 use project::{DisableAiSettings, Project};
 use regex::Regex;
@@ -674,8 +676,7 @@ impl EditPredictionButton {
         let language_state = self.language.as_ref().map(|language| {
             (
                 language.clone(),
-                language_settings::language_settings(Some(language.name()), None, cx)
-                    .show_edit_predictions,
+                LanguageSettings::resolve(None, Some(&language.name()), cx).show_edit_predictions,
             )
         });
 
@@ -1599,8 +1600,7 @@ fn emit_edit_prediction_menu_opened(
 ) {
     let language_name = language.as_ref().map(|l| l.name());
     let edit_predictions_enabled_for_language =
-        language_settings::language_settings(language_name, file.as_ref(), cx)
-            .show_edit_predictions;
+        LanguageSettings::resolve(None, language_name.as_ref(), cx).show_edit_predictions;
     let file_extension = file
         .as_ref()
         .and_then(|f| {

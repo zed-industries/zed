@@ -51,8 +51,8 @@ use futures::{
     future::{Shared, try_join_all},
 };
 use gpui::{
-    Action, AnyEntity, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Bounds, Context,
-    CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
+    Action, AnyEntity, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Axis, Bounds,
+    Context, CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke, ManagedView, MouseButton,
     PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription,
     SystemWindowTabController, Task, Tiling, WeakEntity, WindowBounds, WindowHandle, WindowId,
@@ -2127,6 +2127,150 @@ impl Workspace {
         }
     }
 
+    pub fn panel_size_state<T: Panel>(&self, cx: &App) -> Option<dock::PanelSizeState> {
+        self.all_docks().into_iter().find_map(|dock| {
+            let dock = dock.read(cx);
+            let panel = dock.panel::<T>()?;
+            dock.stored_panel_size_state(&panel)
+        })
+    }
+
+    pub fn persisted_panel_size_state(
+        &self,
+        panel_key: &'static str,
+        cx: &App,
+    ) -> Option<dock::PanelSizeState> {
+        dock::Dock::load_persisted_size_state(self, panel_key, cx)
+    }
+
+    pub fn persist_panel_size_state(
+        &self,
+        panel_key: &str,
+        size_state: dock::PanelSizeState,
+        cx: &mut App,
+    ) {
+        let Some(workspace_id) = self
+            .database_id()
+            .map(|id| i64::from(id).to_string())
+            .or(self.session_id())
+        else {
+            return;
+        };
+
+        let kvp = db::kvp::KeyValueStore::global(cx);
+        let panel_key = panel_key.to_string();
+        cx.background_spawn(async move {
+            let scope = kvp.scoped(dock::PANEL_SIZE_STATE_KEY);
+            scope
+                .write(
+                    format!("{workspace_id}:{panel_key}"),
+                    serde_json::to_string(&size_state)?,
+                )
+                .await
+        })
+        .detach_and_log_err(cx);
+    }
+
+    pub fn set_panel_size_state<T: Panel>(
+        &mut self,
+        size_state: dock::PanelSizeState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(panel) = self.panel::<T>(cx) else {
+            return false;
+        };
+
+        let dock = self.dock_at_position(panel.position(window, cx));
+        let did_set = dock.update(cx, |dock, cx| {
+            dock.set_panel_size_state(&panel, size_state, cx)
+        });
+
+        if did_set {
+            self.persist_panel_size_state(T::panel_key(), size_state, cx);
+        }
+
+        did_set
+    }
+
+    pub fn flexible_dock_size(
+        &self,
+        position: DockPosition,
+        ratio: f32,
+        window: &Window,
+        cx: &App,
+    ) -> Option<Pixels> {
+        if position.axis() != Axis::Horizontal {
+            return None;
+        }
+
+        let available_width = self.available_width_for_horizontal_dock(position, window, cx)?;
+        Some((available_width * ratio.clamp(0.0, 1.0)).max(RESIZE_HANDLE_SIZE))
+    }
+
+    pub fn resolved_dock_panel_size(
+        &self,
+        dock: &Dock,
+        panel: &dyn PanelHandle,
+        window: &Window,
+        cx: &App,
+    ) -> Pixels {
+        let size_state = dock.stored_panel_size_state(panel).unwrap_or_default();
+        dock::resolve_panel_size(size_state, panel, dock.position(), self, window, cx)
+    }
+
+    pub fn flexible_dock_ratio_for_size(
+        &self,
+        position: DockPosition,
+        size: Pixels,
+        window: &Window,
+        cx: &App,
+    ) -> Option<f32> {
+        if position.axis() != Axis::Horizontal {
+            return None;
+        }
+
+        let available_width = self.available_width_for_horizontal_dock(position, window, cx)?;
+        let available_width = available_width.max(RESIZE_HANDLE_SIZE);
+        Some((size / available_width).clamp(0.0, 1.0))
+    }
+
+    fn available_width_for_horizontal_dock(
+        &self,
+        position: DockPosition,
+        window: &Window,
+        cx: &App,
+    ) -> Option<Pixels> {
+        let workspace_width = self.bounds.size.width;
+        if workspace_width <= Pixels::ZERO {
+            return None;
+        }
+
+        let opposite_position = match position {
+            DockPosition::Left => DockPosition::Right,
+            DockPosition::Right => DockPosition::Left,
+            DockPosition::Bottom => return None,
+        };
+
+        let opposite_width = self
+            .dock_at_position(opposite_position)
+            .read(cx)
+            .stored_active_panel_size(window, cx)
+            .unwrap_or(Pixels::ZERO);
+
+        Some((workspace_width - opposite_width).max(RESIZE_HANDLE_SIZE))
+    }
+
+    pub fn default_flexible_dock_ratio(&self, position: DockPosition) -> Option<f32> {
+        if position.axis() != Axis::Horizontal {
+            return None;
+        }
+
+        let pane = self.last_active_center_pane.clone()?.upgrade()?;
+        let pane_fraction = self.center.width_fraction_for_pane(&pane).unwrap_or(1.0);
+        Some((pane_fraction / (1.0 + pane_fraction)).clamp(0.0, 1.0))
+    }
+
     pub fn is_edited(&self) -> bool {
         self.window_edited
     }
@@ -2144,9 +2288,25 @@ impl Workspace {
         let dock_position = panel.position(window, cx);
         let dock = self.dock_at_position(dock_position);
         let any_panel = panel.to_any();
+        let persisted_size_state =
+            self.persisted_panel_size_state(T::panel_key(), cx)
+                .or_else(|| {
+                    load_legacy_panel_size(T::panel_key(), dock_position, self, cx).map(|size| {
+                        let state = dock::PanelSizeState {
+                            size: Some(size),
+                            flexible_size_ratio: None,
+                        };
+                        self.persist_panel_size_state(T::panel_key(), state, cx);
+                        state
+                    })
+                });
 
         dock.update(cx, |dock, cx| {
-            dock.add_panel(panel, self.weak_self.clone(), window, cx)
+            let index = dock.add_panel(panel.clone(), self.weak_self.clone(), window, cx);
+            if let Some(size_state) = persisted_size_state {
+                dock.set_panel_size_state(&panel, size_state, cx);
+            }
+            index
         });
 
         cx.emit(Event::PanelAdded(any_panel));
@@ -4730,11 +4890,15 @@ impl Workspace {
             .into_iter()
             .find(|dock| dock.focus_handle(cx).contains_focused(window, cx));
 
-        if let Some(dock) = active_dock {
-            let Some(panel_size) = dock.read(cx).active_panel_size(window, cx) else {
+        if let Some(dock_entity) = active_dock {
+            let dock = dock_entity.read(cx);
+            let Some(panel_size) = dock
+                .active_panel()
+                .map(|panel| self.resolved_dock_panel_size(&dock, panel.as_ref(), window, cx))
+            else {
                 return;
             };
-            match dock.read(cx).position() {
+            match dock.position() {
                 DockPosition::Left => self.resize_left_dock(panel_size + amount, window, cx),
                 DockPosition::Bottom => self.resize_bottom_dock(panel_size + amount, window, cx),
                 DockPosition::Right => self.resize_right_dock(panel_size + amount, window, cx),
@@ -6754,24 +6918,33 @@ impl Workspace {
                 |workspace: &mut Workspace, _: &ResetActiveDockSize, window, cx| {
                     for dock in workspace.all_docks() {
                         if dock.focus_handle(cx).contains_focused(window, cx) {
-                            let Some(panel) = dock.read(cx).active_panel() else {
-                                return;
-                            };
-
-                            // Set to `None`, then the size will fall back to the default.
-                            panel.clone().set_size(None, window, cx);
-
+                            let panel = dock.read(cx).active_panel().cloned();
+                            if let Some(panel) = panel {
+                                dock.update(cx, |dock, cx| {
+                                    dock.set_panel_size_state(
+                                        panel.as_ref(),
+                                        dock::PanelSizeState::default(),
+                                        cx,
+                                    );
+                                });
+                            }
                             return;
                         }
                     }
                 },
             ))
             .on_action(cx.listener(
-                |workspace: &mut Workspace, _: &ResetOpenDocksSize, window, cx| {
+                |workspace: &mut Workspace, _: &ResetOpenDocksSize, _window, cx| {
                     for dock in workspace.all_docks() {
-                        if let Some(panel) = dock.read(cx).visible_panel() {
-                            // Set to `None`, then the size will fall back to the default.
-                            panel.clone().set_size(None, window, cx);
+                        let panel = dock.read(cx).visible_panel().cloned();
+                        if let Some(panel) = panel {
+                            dock.update(cx, |dock, cx| {
+                                dock.set_panel_size_state(
+                                    panel.as_ref(),
+                                    dock::PanelSizeState::default(),
+                                    cx,
+                                );
+                            });
                         }
                     }
                 },
@@ -7183,21 +7356,22 @@ impl Workspace {
 
         self.right_dock.read_with(cx, |right_dock, cx| {
             let right_dock_size = right_dock
-                .active_panel_size(window, cx)
+                .stored_active_panel_size(window, cx)
                 .unwrap_or(Pixels::ZERO);
             if right_dock_size + size > workspace_width {
                 size = workspace_width - right_dock_size
             }
         });
 
+        let ratio = self.flexible_dock_ratio_for_size(DockPosition::Left, size, window, cx);
         self.left_dock.update(cx, |left_dock, cx| {
             if WorkspaceSettings::get_global(cx)
                 .resize_all_panels_in_dock
                 .contains(&DockPosition::Left)
             {
-                left_dock.resize_all_panels(Some(size), window, cx);
+                left_dock.resize_all_panels(Some(size), ratio, window, cx);
             } else {
-                left_dock.resize_active_panel(Some(size), window, cx);
+                left_dock.resize_active_panel(Some(size), ratio, window, cx);
             }
         });
     }
@@ -7207,20 +7381,21 @@ impl Workspace {
         let mut size = new_size.min(workspace_width - RESIZE_HANDLE_SIZE);
         self.left_dock.read_with(cx, |left_dock, cx| {
             let left_dock_size = left_dock
-                .active_panel_size(window, cx)
+                .stored_active_panel_size(window, cx)
                 .unwrap_or(Pixels::ZERO);
             if left_dock_size + size > workspace_width {
                 size = workspace_width - left_dock_size
             }
         });
+        let ratio = self.flexible_dock_ratio_for_size(DockPosition::Right, size, window, cx);
         self.right_dock.update(cx, |right_dock, cx| {
             if WorkspaceSettings::get_global(cx)
                 .resize_all_panels_in_dock
                 .contains(&DockPosition::Right)
             {
-                right_dock.resize_all_panels(Some(size), window, cx);
+                right_dock.resize_all_panels(Some(size), ratio, window, cx);
             } else {
-                right_dock.resize_active_panel(Some(size), window, cx);
+                right_dock.resize_active_panel(Some(size), ratio, window, cx);
             }
         });
     }
@@ -7232,9 +7407,9 @@ impl Workspace {
                 .resize_all_panels_in_dock
                 .contains(&DockPosition::Bottom)
             {
-                bottom_dock.resize_all_panels(Some(size), window, cx);
+                bottom_dock.resize_all_panels(Some(size), None, window, cx);
             } else {
-                bottom_dock.resize_active_panel(Some(size), window, cx);
+                bottom_dock.resize_active_panel(Some(size), None, window, cx);
             }
         });
     }
@@ -7615,7 +7790,10 @@ fn adjust_active_dock_size_by_px(
         return;
     };
     let dock = active_dock.read(cx);
-    let Some(panel_size) = dock.active_panel_size(window, cx) else {
+    let Some(panel_size) = dock
+        .active_panel()
+        .map(|panel| workspace.resolved_dock_panel_size(&dock, panel.as_ref(), window, cx))
+    else {
         return;
     };
     let dock_pos = dock.position();
@@ -7631,10 +7809,12 @@ fn adjust_open_docks_size_by_px(
     let docks = workspace
         .all_docks()
         .into_iter()
-        .filter_map(|dock| {
-            if dock.read(cx).is_open() {
-                let dock = dock.read(cx);
-                let panel_size = dock.active_panel_size(window, cx)?;
+        .filter_map(|dock_entity| {
+            let dock = dock_entity.read(cx);
+            if dock.is_open() {
+                let panel_size = dock.active_panel().map(|panel| {
+                    workspace.resolved_dock_panel_size(&dock, panel.as_ref(), window, cx)
+                })?;
                 let dock_pos = dock.position();
                 Some((panel_size, dock_pos, px))
             } else {
@@ -9198,6 +9378,9 @@ pub fn create_and_open_local_file(
                         .read_with(cx, |project, cx| project.try_windows_path_to_wsl(path, cx));
                     cx.spawn_in(window, async move |workspace, cx| {
                         let path = path.await?;
+
+                        let path = fs.canonicalize(&path).await.unwrap_or(path);
+
                         let mut items = workspace
                             .update_in(cx, |workspace, window, cx| {
                                 workspace.open_paths(
@@ -10108,6 +10291,57 @@ pub fn with_active_or_new_workspace(
     }
 }
 
+/// Reads a panel's pixel size from its legacy KVP format and deletes the legacy
+/// key. This migration path only runs once per panel per workspace.
+fn load_legacy_panel_size(
+    panel_key: &str,
+    dock_position: DockPosition,
+    workspace: &Workspace,
+    cx: &mut App,
+) -> Option<Pixels> {
+    #[derive(Deserialize)]
+    struct LegacyPanelState {
+        #[serde(default)]
+        width: Option<Pixels>,
+        #[serde(default)]
+        height: Option<Pixels>,
+    }
+
+    let workspace_id = workspace
+        .database_id()
+        .map(|id| i64::from(id).to_string())
+        .or_else(|| workspace.session_id())?;
+
+    let legacy_key = match panel_key {
+        "ProjectPanel" => {
+            format!("{}-{:?}", "ProjectPanel", workspace_id)
+        }
+        "OutlinePanel" => {
+            format!("{}-{:?}", "OutlinePanel", workspace_id)
+        }
+        "GitPanel" => {
+            format!("{}-{:?}", "GitPanel", workspace_id)
+        }
+        "TerminalPanel" => {
+            format!("{:?}-{:?}", "TerminalPanel", workspace_id)
+        }
+        _ => return None,
+    };
+
+    let kvp = db::kvp::KeyValueStore::global(cx);
+    let json = kvp.read_kvp(&legacy_key).log_err().flatten()?;
+    let state = serde_json::from_str::<LegacyPanelState>(&json).log_err()?;
+    let size = match dock_position {
+        DockPosition::Bottom => state.height,
+        DockPosition::Left | DockPosition::Right => state.width,
+    }?;
+
+    cx.background_spawn(async move { kvp.delete_kvp(legacy_key).await })
+        .detach_and_log_err(cx);
+
+    Some(size)
+}
+
 #[cfg(test)]
 mod tests {
     use std::{cell::RefCell, rc::Rc, sync::Arc, time::Duration};
@@ -10979,6 +11213,128 @@ mod tests {
         pane.read_with(cx, |pane, _| {
             assert!(!pane.can_navigate_backward());
             assert!(pane.can_navigate_forward());
+        });
+    }
+
+    /// Tests that the navigation history deduplicates entries for the same item.
+    ///
+    /// When navigating back and forth between items (e.g., A -> B -> A -> B -> A -> B -> C),
+    /// the navigation history deduplicates by keeping only the most recent visit to each item,
+    /// resulting in [A, B, C] instead of [A, B, A, B, A, B, C]. This ensures that Go Back (Ctrl-O)
+    /// navigates through unique items efficiently: C -> B -> A, rather than bouncing between
+    /// repeated entries: C -> B -> A -> B -> A -> B -> A.
+    ///
+    /// This behavior prevents the navigation history from growing unnecessarily large and provides
+    /// a better user experience by eliminating redundant navigation steps when jumping between files.
+    #[gpui::test]
+    async fn test_navigation_history_deduplication(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let item_a = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "a.txt", cx)])
+        });
+        let item_b = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(2, "b.txt", cx)])
+        });
+        let item_c = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(3, "c.txt", cx)])
+        });
+
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item_a.clone()), None, true, window, cx);
+            workspace.add_item_to_active_pane(Box::new(item_b.clone()), None, true, window, cx);
+            workspace.add_item_to_active_pane(Box::new(item_c.clone()), None, true, window, cx);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.activate_item(&item_a, false, false, window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.activate_item(&item_b, false, false, window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.activate_item(&item_a, false, false, window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.activate_item(&item_b, false, false, window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.activate_item(&item_a, false, false, window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.activate_item(&item_b, false, false, window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.activate_item(&item_c, false, false, window, cx);
+        });
+        cx.run_until_parked();
+
+        let backward_count = pane.read_with(cx, |pane, cx| {
+            let mut count = 0;
+            pane.nav_history().for_each_entry(cx, &mut |_, _| {
+                count += 1;
+            });
+            count
+        });
+        assert!(
+            backward_count <= 4,
+            "Should have at most 4 entries, got {}",
+            backward_count
+        );
+
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.go_back(pane.downgrade(), window, cx)
+            })
+            .await
+            .unwrap();
+
+        let active_item = workspace.read_with(cx, |workspace, cx| {
+            workspace.active_item(cx).unwrap().item_id()
+        });
+        assert_eq!(
+            active_item,
+            item_b.entity_id(),
+            "After first go_back, should be at item B"
+        );
+
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.go_back(pane.downgrade(), window, cx)
+            })
+            .await
+            .unwrap();
+
+        let active_item = workspace.read_with(cx, |workspace, cx| {
+            workspace.active_item(cx).unwrap().item_id()
+        });
+        assert_eq!(
+            active_item,
+            item_a.entity_id(),
+            "After second go_back, should be at item A"
+        );
+
+        pane.read_with(cx, |pane, _| {
+            assert!(pane.can_navigate_forward(), "Should be able to go forward");
         });
     }
 
@@ -11884,6 +12240,348 @@ mod tests {
             assert_eq!(active_item.item_id(), last_item.item_id());
         });
     }
+
+    #[gpui::test]
+    async fn test_flexible_dock_sizing(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        workspace.update(cx, |workspace, _cx| {
+            workspace.bounds.size.width = px(800.);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new_flexible(DockPosition::Right, 100, cx));
+            workspace.add_panel(panel, window, cx);
+            workspace.toggle_dock(DockPosition::Right, window, cx);
+        });
+
+        let (panel, resized_width, ratio_basis_width) =
+            workspace.update_in(cx, |workspace, window, cx| {
+                let item = cx.new(|cx| {
+                    TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "one.txt", cx)])
+                });
+                workspace.add_item_to_active_pane(Box::new(item), None, true, window, cx);
+
+                let dock = workspace.right_dock().read(cx);
+                let workspace_width = workspace.bounds.size.width;
+                let initial_width = dock
+                    .active_panel()
+                    .map(|panel| {
+                        workspace.resolved_dock_panel_size(&dock, panel.as_ref(), window, cx)
+                    })
+                    .expect("flexible dock should have an initial width");
+
+                assert_eq!(initial_width, workspace_width / 2.);
+
+                workspace.resize_right_dock(px(300.), window, cx);
+
+                let dock = workspace.right_dock().read(cx);
+                let resized_width = dock
+                    .active_panel()
+                    .map(|panel| {
+                        workspace.resolved_dock_panel_size(&dock, panel.as_ref(), window, cx)
+                    })
+                    .expect("flexible dock should keep its resized width");
+
+                assert_eq!(resized_width, px(300.));
+
+                let panel = workspace
+                    .right_dock()
+                    .read(cx)
+                    .visible_panel()
+                    .expect("flexible dock should have a visible panel")
+                    .panel_id();
+
+                (panel, resized_width, workspace_width)
+            });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_dock(DockPosition::Right, window, cx);
+            workspace.toggle_dock(DockPosition::Right, window, cx);
+
+            let dock = workspace.right_dock().read(cx);
+            let reopened_width = dock
+                .active_panel()
+                .map(|panel| workspace.resolved_dock_panel_size(&dock, panel.as_ref(), window, cx))
+                .expect("flexible dock should restore when reopened");
+
+            assert_eq!(reopened_width, resized_width);
+
+            let right_dock = workspace.right_dock().read(cx);
+            let flexible_panel = right_dock
+                .visible_panel()
+                .expect("flexible dock should still have a visible panel");
+            assert_eq!(flexible_panel.panel_id(), panel);
+            assert_eq!(
+                right_dock
+                    .stored_panel_size_state(flexible_panel.as_ref())
+                    .and_then(|size_state| size_state.flexible_size_ratio),
+                Some(resized_width.to_f64() as f32 / workspace.bounds.size.width.to_f64() as f32)
+            );
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.split_pane(
+                workspace.active_pane().clone(),
+                SplitDirection::Right,
+                window,
+                cx,
+            );
+
+            let dock = workspace.right_dock().read(cx);
+            let split_width = dock
+                .active_panel()
+                .map(|panel| workspace.resolved_dock_panel_size(&dock, panel.as_ref(), window, cx))
+                .expect("flexible dock should keep its user-resized proportion");
+
+            assert_eq!(split_width, px(300.));
+
+            workspace.bounds.size.width = px(1600.);
+
+            let dock = workspace.right_dock().read(cx);
+            let resized_window_width = dock
+                .active_panel()
+                .map(|panel| workspace.resolved_dock_panel_size(&dock, panel.as_ref(), window, cx))
+                .expect("flexible dock should preserve proportional size on window resize");
+
+            assert_eq!(
+                resized_window_width,
+                workspace.bounds.size.width
+                    * (resized_width.to_f64() as f32 / ratio_basis_width.to_f64() as f32)
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_panel_size_state_persistence(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        // Fixed-width panel: pixel size is persisted to KVP and restored on re-add.
+        {
+            let project = Project::test(fs.clone(), [], cx).await;
+            let (multi_workspace, cx) =
+                cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+            let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+            workspace.update(cx, |workspace, _cx| {
+                workspace.set_random_database_id();
+                workspace.bounds.size.width = px(800.);
+            });
+
+            let panel = workspace.update_in(cx, |workspace, window, cx| {
+                let panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 100, cx));
+                workspace.add_panel(panel.clone(), window, cx);
+                workspace.toggle_dock(DockPosition::Left, window, cx);
+                panel
+            });
+
+            workspace.update_in(cx, |workspace, window, cx| {
+                workspace.resize_left_dock(px(350.), window, cx);
+            });
+
+            cx.run_until_parked();
+
+            let persisted = workspace.read_with(cx, |workspace, cx| {
+                workspace.persisted_panel_size_state(TestPanel::panel_key(), cx)
+            });
+            assert_eq!(
+                persisted.and_then(|s| s.size),
+                Some(px(350.)),
+                "fixed-width panel size should be persisted to KVP"
+            );
+
+            // Remove the panel and re-add a fresh instance with the same key.
+            // The new instance should have its size state restored from KVP.
+            workspace.update_in(cx, |workspace, window, cx| {
+                workspace.remove_panel(&panel, window, cx);
+            });
+
+            workspace.update_in(cx, |workspace, window, cx| {
+                let new_panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 100, cx));
+                workspace.add_panel(new_panel, window, cx);
+
+                let left_dock = workspace.left_dock().read(cx);
+                let size_state = left_dock
+                    .panel::<TestPanel>()
+                    .and_then(|p| left_dock.stored_panel_size_state(&p));
+                assert_eq!(
+                    size_state.and_then(|s| s.size),
+                    Some(px(350.)),
+                    "re-added fixed-width panel should restore persisted size from KVP"
+                );
+            });
+        }
+
+        // Flexible panel: both pixel size and ratio are persisted and restored.
+        {
+            let project = Project::test(fs.clone(), [], cx).await;
+            let (multi_workspace, cx) =
+                cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+            let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+            workspace.update(cx, |workspace, _cx| {
+                workspace.set_random_database_id();
+                workspace.bounds.size.width = px(800.);
+            });
+
+            let panel = workspace.update_in(cx, |workspace, window, cx| {
+                let item = cx.new(|cx| {
+                    TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "one.txt", cx)])
+                });
+                workspace.add_item_to_active_pane(Box::new(item), None, true, window, cx);
+
+                let panel = cx.new(|cx| TestPanel::new_flexible(DockPosition::Right, 100, cx));
+                workspace.add_panel(panel.clone(), window, cx);
+                workspace.toggle_dock(DockPosition::Right, window, cx);
+                panel
+            });
+
+            workspace.update_in(cx, |workspace, window, cx| {
+                workspace.resize_right_dock(px(300.), window, cx);
+            });
+
+            cx.run_until_parked();
+
+            let persisted = workspace
+                .read_with(cx, |workspace, cx| {
+                    workspace.persisted_panel_size_state(TestPanel::panel_key(), cx)
+                })
+                .expect("flexible panel state should be persisted to KVP");
+            assert_eq!(
+                persisted.size, None,
+                "flexible panel should not persist a redundant pixel size"
+            );
+            let original_ratio = persisted
+                .flexible_size_ratio
+                .expect("flexible panel ratio should be persisted");
+
+            // Remove the panel and re-add: both size and ratio should be restored.
+            workspace.update_in(cx, |workspace, window, cx| {
+                workspace.remove_panel(&panel, window, cx);
+            });
+
+            workspace.update_in(cx, |workspace, window, cx| {
+                let new_panel = cx.new(|cx| TestPanel::new_flexible(DockPosition::Right, 100, cx));
+                workspace.add_panel(new_panel, window, cx);
+
+                let right_dock = workspace.right_dock().read(cx);
+                let size_state = right_dock
+                    .panel::<TestPanel>()
+                    .and_then(|p| right_dock.stored_panel_size_state(&p))
+                    .expect("re-added flexible panel should have restored size state from KVP");
+                assert_eq!(
+                    size_state.size, None,
+                    "re-added flexible panel should not have a persisted pixel size"
+                );
+                assert_eq!(
+                    size_state.flexible_size_ratio,
+                    Some(original_ratio),
+                    "re-added flexible panel should restore persisted ratio"
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
+    async fn test_flexible_panel_left_dock_sizing(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        workspace.update(cx, |workspace, _cx| {
+            workspace.bounds.size.width = px(900.);
+        });
+
+        // Step 1: Add a tab to the center pane then open a flexible panel in the left
+        // dock. With one full-width center pane the default ratio is 0.5, so the panel
+        // and the center pane each take half the workspace width.
+        workspace.update_in(cx, |workspace, window, cx| {
+            let item = cx.new(|cx| {
+                TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "one.txt", cx)])
+            });
+            workspace.add_item_to_active_pane(Box::new(item), None, true, window, cx);
+
+            let panel = cx.new(|cx| TestPanel::new_flexible(DockPosition::Left, 100, cx));
+            workspace.add_panel(panel, window, cx);
+            workspace.toggle_dock(DockPosition::Left, window, cx);
+
+            let left_dock = workspace.left_dock().read(cx);
+            let left_width = left_dock
+                .active_panel()
+                .map(|p| workspace.resolved_dock_panel_size(&left_dock, p.as_ref(), window, cx))
+                .expect("left dock should have an active panel");
+
+            assert_eq!(
+                left_width,
+                workspace.bounds.size.width / 2.,
+                "flexible left panel should split evenly with the center pane"
+            );
+        });
+
+        // Step 2: Split the center pane vertically (top/bottom). Vertical splits do not
+        // change horizontal width fractions, so the flexible panel stays at the same
+        // width as each half of the split.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.split_pane(
+                workspace.active_pane().clone(),
+                SplitDirection::Down,
+                window,
+                cx,
+            );
+
+            let left_dock = workspace.left_dock().read(cx);
+            let left_width = left_dock
+                .active_panel()
+                .map(|p| workspace.resolved_dock_panel_size(&left_dock, p.as_ref(), window, cx))
+                .expect("left dock should still have an active panel after vertical split");
+
+            assert_eq!(
+                left_width,
+                workspace.bounds.size.width / 2.,
+                "flexible left panel width should match each vertically-split pane"
+            );
+        });
+
+        // Step 3: Open a fixed-width panel in the right dock. The right dock's default
+        // size reduces the available width, so the flexible left panel and the center
+        // panes all shrink proportionally to accommodate it.
+        workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 200, cx));
+            workspace.add_panel(panel, window, cx);
+            workspace.toggle_dock(DockPosition::Right, window, cx);
+
+            let right_dock = workspace.right_dock().read(cx);
+            let right_width = right_dock
+                .active_panel()
+                .map(|p| workspace.resolved_dock_panel_size(&right_dock, p.as_ref(), window, cx))
+                .expect("right dock should have an active panel");
+
+            let left_dock = workspace.left_dock().read(cx);
+            let left_width = left_dock
+                .active_panel()
+                .map(|p| workspace.resolved_dock_panel_size(&left_dock, p.as_ref(), window, cx))
+                .expect("left dock should still have an active panel");
+
+            let available_width = workspace.bounds.size.width - right_width;
+            assert_eq!(
+                left_width,
+                available_width / 2.,
+                "flexible left panel should shrink proportionally as the right dock takes space"
+            );
+        });
+    }
+
     struct TestModal(FocusHandle);
 
     impl TestModal {
@@ -11937,12 +12635,10 @@ mod tests {
             );
             assert_eq!(
                 left_dock.read(cx).active_panel_size(window, cx).unwrap(),
-                panel_1.size(window, cx)
+                px(300.)
             );
 
-            left_dock.update(cx, |left_dock, cx| {
-                left_dock.resize_active_panel(Some(px(1337.)), window, cx)
-            });
+            workspace.resize_left_dock(px(1337.), window, cx);
             assert_eq!(
                 workspace
                     .right_dock()
@@ -12028,7 +12724,7 @@ mod tests {
             let bottom_dock = workspace.bottom_dock();
             assert_eq!(
                 bottom_dock.read(cx).active_panel_size(window, cx).unwrap(),
-                panel_1.size(window, cx),
+                px(300.),
             );
             // Close bottom dock and move panel_1 back to the left.
             bottom_dock.update(cx, |bottom_dock, cx| {
@@ -13826,6 +14522,74 @@ mod tests {
                 "Dock should stay open when its zoomed panel (without pane()) still has focus"
             );
             assert!(panel.is_zoomed(window, cx));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_panels_stay_open_after_position_change_and_settings_update(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        // Add two panels to the left dock and open it.
+        let (panel_a, panel_b) = workspace.update_in(cx, |workspace, window, cx| {
+            let panel_a = cx.new(|cx| TestPanel::new(DockPosition::Left, 100, cx));
+            let panel_b = cx.new(|cx| TestPanel::new(DockPosition::Left, 101, cx));
+            workspace.add_panel(panel_a.clone(), window, cx);
+            workspace.add_panel(panel_b.clone(), window, cx);
+            workspace.left_dock().update(cx, |dock, cx| {
+                dock.set_open(true, window, cx);
+                dock.activate_panel(0, window, cx);
+            });
+            (panel_a, panel_b)
+        });
+
+        workspace.update_in(cx, |workspace, _, cx| {
+            assert!(workspace.left_dock().read(cx).is_open());
+        });
+
+        // Simulate a feature flag changing default dock positions: both panels
+        // move from Left to Right.
+        workspace.update_in(cx, |_workspace, _window, cx| {
+            panel_a.update(cx, |p, _cx| p.position = DockPosition::Right);
+            panel_b.update(cx, |p, _cx| p.position = DockPosition::Right);
+            cx.update_global::<SettingsStore, _>(|_, _| {});
+        });
+
+        // Both panels should now be in the right dock.
+        workspace.update_in(cx, |workspace, _, cx| {
+            let right_dock = workspace.right_dock().read(cx);
+            assert_eq!(right_dock.panels_len(), 2);
+        });
+
+        // Open the right dock and activate panel_b (simulating the user
+        // opening the panel after it moved).
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.right_dock().update(cx, |dock, cx| {
+                dock.set_open(true, window, cx);
+                dock.activate_panel(1, window, cx);
+            });
+        });
+
+        // Now trigger another SettingsStore change
+        workspace.update_in(cx, |_workspace, _window, cx| {
+            cx.update_global::<SettingsStore, _>(|_, _| {});
+        });
+
+        workspace.update_in(cx, |workspace, _, cx| {
+            assert!(
+                workspace.right_dock().read(cx).is_open(),
+                "Right dock should still be open after a settings change"
+            );
+            assert_eq!(
+                workspace.right_dock().read(cx).panels_len(),
+                2,
+                "Both panels should still be in the right dock"
+            );
         });
     }
 }

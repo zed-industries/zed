@@ -670,6 +670,19 @@ impl Sidebar {
         let mut absorbed: HashMap<usize, (usize, SharedString)> = HashMap::new();
         let mut pending: HashMap<Arc<Path>, Vec<(usize, SharedString, Arc<Path>)>> = HashMap::new();
         let mut absorbed_workspace_by_path: HashMap<Arc<Path>, usize> = HashMap::new();
+        let workspace_indices_by_path: HashMap<Arc<Path>, Vec<usize>> = workspaces
+            .iter()
+            .enumerate()
+            .flat_map(|(index, workspace)| {
+                let paths = workspace_path_list(workspace, cx).paths().to_vec();
+                paths
+                    .into_iter()
+                    .map(move |path| (Arc::from(path.as_path()), index))
+            })
+            .fold(HashMap::new(), |mut map, (path, index)| {
+                map.entry(path).or_default().push(index);
+                map
+            });
 
         for (i, workspace) in workspaces.iter().enumerate() {
             for snapshot in root_repository_snapshots(workspace, cx) {
@@ -677,6 +690,29 @@ impl Sidebar {
                     main_repo_workspace
                         .entry(snapshot.work_directory_abs_path.clone())
                         .or_insert(i);
+
+                    for git_worktree in snapshot.linked_worktrees() {
+                        let worktree_path: Arc<Path> = Arc::from(git_worktree.path.as_path());
+                        if let Some(worktree_indices) =
+                            workspace_indices_by_path.get(worktree_path.as_ref())
+                        {
+                            for &worktree_idx in worktree_indices {
+                                if worktree_idx == i {
+                                    continue;
+                                }
+
+                                let worktree_name = linked_worktree_short_name(
+                                    &snapshot.original_repo_abs_path,
+                                    &git_worktree.path,
+                                )
+                                .unwrap_or_default();
+                                absorbed.insert(worktree_idx, (i, worktree_name.clone()));
+                                absorbed_workspace_by_path
+                                    .insert(worktree_path.clone(), worktree_idx);
+                            }
+                        }
+                    }
+
                     if let Some(waiting) = pending.remove(&snapshot.work_directory_abs_path) {
                         for (ws_idx, name, ws_path) in waiting {
                             absorbed.insert(ws_idx, (i, name));
@@ -2120,6 +2156,7 @@ impl Sidebar {
 
         cx.spawn_in(window, async move |this, cx| {
             let workspace = open_task.await?;
+
             this.update_in(cx, |this, window, cx| {
                 this.activate_thread(agent, session_info, &workspace, window, cx);
             })?;
@@ -2156,14 +2193,12 @@ impl Sidebar {
         cx: &mut Context<Self>,
     ) {
         // Eagerly save thread metadata so that the sidebar is updated immediately
-        SidebarThreadMetadataStore::global(cx)
-            .update(cx, |store, cx| {
-                store.save(
-                    ThreadMetadata::from_session_info(agent.id(), &session_info),
-                    cx,
-                )
-            })
-            .detach_and_log_err(cx);
+        SidebarThreadMetadataStore::global(cx).update(cx, |store, cx| {
+            store.save(
+                ThreadMetadata::from_session_info(agent.id(), &session_info),
+                cx,
+            )
+        });
 
         if let Some(path_list) = &session_info.work_dirs {
             if let Some(workspace) = self.find_current_workspace_for_path_list(path_list, cx) {
@@ -2439,8 +2474,7 @@ impl Sidebar {
         }
 
         SidebarThreadMetadataStore::global(cx)
-            .update(cx, |store, cx| store.delete(session_id.clone(), cx))
-            .detach_and_log_err(cx);
+            .update(cx, |store, cx| store.delete(session_id.clone(), cx));
     }
 
     fn remove_selected_thread(
@@ -2892,15 +2926,21 @@ impl Sidebar {
             .h(header_height)
             .mt_px()
             .pb_px()
-            .when(traffic_lights, |this| {
-                this.pl(px(ui::utils::TRAFFIC_LIGHT_PADDING))
+            .map(|this| {
+                if traffic_lights {
+                    this.pl(px(ui::utils::TRAFFIC_LIGHT_PADDING))
+                } else {
+                    this.pl_1p5()
+                }
             })
             .pr_1p5()
             .gap_1()
             .when(!no_open_projects, |this| {
                 this.border_b_1()
                     .border_color(cx.theme().colors().border)
-                    .child(Divider::vertical().color(ui::DividerColor::Border))
+                    .when(traffic_lights, |this| {
+                        this.child(Divider::vertical().color(ui::DividerColor::Border))
+                    })
                     .child(
                         div().ml_1().child(
                             Icon::new(IconName::MagnifyingGlass)
@@ -3304,10 +3344,10 @@ mod tests {
             created_at: None,
             folder_paths: path_list,
         };
-        let task = cx.update(|cx| {
+        cx.update(|cx| {
             SidebarThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(metadata, cx))
         });
-        task.await.unwrap();
+        cx.run_until_parked();
     }
 
     fn open_and_focus_sidebar(sidebar: &Entity<Sidebar>, cx: &mut gpui::VisualTestContext) {
@@ -6120,6 +6160,167 @@ mod tests {
             PathList::new(&[std::path::PathBuf::from("/wt-feature-a")]),
             "the new workspace should have been opened for the worktree path",
         );
+    }
+
+    #[gpui::test]
+    async fn test_clicking_worktree_thread_does_not_briefly_render_as_separate_project(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        fs.insert_tree(
+            "/project",
+            serde_json::json!({
+                ".git": {
+                    "worktrees": {
+                        "feature-a": {
+                            "commondir": "../../",
+                            "HEAD": "ref: refs/heads/feature-a",
+                        },
+                    },
+                },
+                "src": {},
+            }),
+        )
+        .await;
+
+        fs.insert_tree(
+            "/wt-feature-a",
+            serde_json::json!({
+                ".git": "gitdir: /project/.git/worktrees/feature-a",
+                "src": {},
+            }),
+        )
+        .await;
+
+        fs.with_git_state(std::path::Path::new("/project/.git"), false, |state| {
+            state.worktrees.push(git::repository::Worktree {
+                path: std::path::PathBuf::from("/wt-feature-a"),
+                ref_name: Some("refs/heads/feature-a".into()),
+                sha: "aaa".into(),
+            });
+        })
+        .unwrap();
+
+        cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+        let main_project = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+        main_project
+            .update(cx, |p, cx| p.git_scans_complete(cx))
+            .await;
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            MultiWorkspace::test_new(main_project.clone(), window, cx)
+        });
+        let sidebar = setup_sidebar(&multi_workspace, cx);
+
+        let paths_wt = PathList::new(&[std::path::PathBuf::from("/wt-feature-a")]);
+        save_named_thread_metadata("thread-wt", "WT Thread", &paths_wt, cx).await;
+
+        multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
+        cx.run_until_parked();
+
+        assert_eq!(
+            visible_entries_as_strings(&sidebar, cx),
+            vec!["v [project]", "  WT Thread {wt-feature-a}"],
+        );
+
+        open_and_focus_sidebar(&sidebar, cx);
+        sidebar.update_in(cx, |sidebar, _window, _cx| {
+            sidebar.selection = Some(1);
+        });
+
+        let assert_sidebar_state = |sidebar: &mut Sidebar, _cx: &mut Context<Sidebar>| {
+            let mut project_headers = sidebar.contents.entries.iter().filter_map(|entry| {
+                if let ListEntry::ProjectHeader { label, .. } = entry {
+                    Some(label.as_ref())
+                } else {
+                    None
+                }
+            });
+
+            let Some(project_header) = project_headers.next() else {
+                panic!("expected exactly one sidebar project header named `project`, found none");
+            };
+            assert_eq!(
+                project_header, "project",
+                "expected the only sidebar project header to be `project`"
+            );
+            if let Some(unexpected_header) = project_headers.next() {
+                panic!(
+                    "expected exactly one sidebar project header named `project`, found extra header `{unexpected_header}`"
+                );
+            }
+
+            let mut saw_expected_thread = false;
+            for entry in &sidebar.contents.entries {
+                match entry {
+                    ListEntry::ProjectHeader { label, .. } => {
+                        assert_eq!(
+                            label.as_ref(),
+                            "project",
+                            "expected the only sidebar project header to be `project`"
+                        );
+                    }
+                    ListEntry::Thread(thread)
+                        if thread
+                            .session_info
+                            .title
+                            .as_ref()
+                            .map(|title| title.as_ref())
+                            == Some("WT Thread")
+                            && thread.worktree_name.as_ref().map(|name| name.as_ref())
+                                == Some("wt-feature-a") =>
+                    {
+                        saw_expected_thread = true;
+                    }
+                    ListEntry::Thread(thread) => {
+                        let title = thread
+                            .session_info
+                            .title
+                            .as_ref()
+                            .map(|title| title.as_ref())
+                            .unwrap_or("Untitled");
+                        let worktree_name = thread
+                            .worktree_name
+                            .as_ref()
+                            .map(|name| name.as_ref())
+                            .unwrap_or("<none>");
+                        panic!(
+                            "unexpected sidebar thread while opening linked worktree thread: title=`{title}`, worktree=`{worktree_name}`"
+                        );
+                    }
+                    ListEntry::ViewMore { .. } => {
+                        panic!("unexpected `View More` entry while opening linked worktree thread");
+                    }
+                    ListEntry::NewThread { .. } => {
+                        panic!(
+                            "unexpected `New Thread` entry while opening linked worktree thread"
+                        );
+                    }
+                }
+            }
+
+            assert!(
+                saw_expected_thread,
+                "expected the sidebar to keep showing `WT Thread {{wt-feature-a}}` under `project`"
+            );
+        };
+
+        sidebar
+            .update(cx, |_, cx| cx.observe_self(assert_sidebar_state))
+            .detach();
+
+        let window = cx.windows()[0];
+        cx.update_window(window, |_, window, cx| {
+            window.dispatch_action(Confirm.boxed_clone(), cx);
+        })
+        .unwrap();
+
+        cx.run_until_parked();
+
+        sidebar.update(cx, assert_sidebar_state);
     }
 
     #[gpui::test]

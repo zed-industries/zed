@@ -13,6 +13,7 @@ mod highlight_map;
 mod language_registry;
 pub mod language_settings;
 mod manifest;
+pub mod modeline;
 mod outline;
 pub mod proto;
 mod syntax_map;
@@ -52,6 +53,7 @@ use lsp::{
     CodeActionKind, InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions, Uri,
 };
 pub use manifest::{ManifestDelegate, ManifestName, ManifestProvider, ManifestQuery};
+pub use modeline::{ModelineSettings, parse_modeline};
 use parking_lot::Mutex;
 use regex::Regex;
 use semver::Version;
@@ -152,6 +154,7 @@ pub static PLAIN_TEXT: LazyLock<Arc<Language>> = LazyLock::new(|| {
             matcher: LanguageMatcher {
                 path_suffixes: vec!["txt".to_owned()],
                 first_line_pattern: None,
+                modeline_aliases: vec!["text".to_owned(), "txt".to_owned()],
             },
             brackets: BracketPairConfig {
                 pairs: vec![
@@ -1497,6 +1500,46 @@ pub fn rust_lang() -> Arc<Language> {
                 ..Default::default()
             },
             line_comments: vec!["// ".into(), "/// ".into(), "//! ".into()],
+            brackets: BracketPairConfig {
+                pairs: vec![
+                    BracketPair {
+                        start: "{".into(),
+                        end: "}".into(),
+                        close: true,
+                        surround: false,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "[".into(),
+                        end: "]".into(),
+                        close: true,
+                        surround: false,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "(".into(),
+                        end: ")".into(),
+                        close: true,
+                        surround: false,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "<".into(),
+                        end: ">".into(),
+                        close: false,
+                        surround: false,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "\"".into(),
+                        end: "\"".into(),
+                        close: true,
+                        surround: false,
+                        newline: false,
+                    },
+                ],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::LANGUAGE.into()),

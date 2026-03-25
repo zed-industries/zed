@@ -250,16 +250,24 @@ pub struct LanguageMatcher {
     )]
     #[schemars(schema_with = "regex_json_schema")]
     pub first_line_pattern: Option<Regex>,
+    /// Alternative names for this language used in vim/emacs modelines.
+    /// These are matched case-insensitively against the `mode` (emacs) or
+    /// `filetype`/`ft` (vim) specified in the modeline.
+    #[serde(default)]
+    pub modeline_aliases: Vec<String>,
 }
 
 impl Ord for LanguageMatcher {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.path_suffixes.cmp(&other.path_suffixes).then_with(|| {
-            self.first_line_pattern
-                .as_ref()
-                .map(Regex::as_str)
-                .cmp(&other.first_line_pattern.as_ref().map(Regex::as_str))
-        })
+        self.path_suffixes
+            .cmp(&other.path_suffixes)
+            .then_with(|| {
+                self.first_line_pattern
+                    .as_ref()
+                    .map(Regex::as_str)
+                    .cmp(&other.first_line_pattern.as_ref().map(Regex::as_str))
+            })
+            .then_with(|| self.modeline_aliases.cmp(&other.modeline_aliases))
     }
 }
 
@@ -276,6 +284,7 @@ impl PartialEq for LanguageMatcher {
         self.path_suffixes == other.path_suffixes
             && self.first_line_pattern.as_ref().map(Regex::as_str)
                 == other.first_line_pattern.as_ref().map(Regex::as_str)
+            && self.modeline_aliases == other.modeline_aliases
     }
 }
 

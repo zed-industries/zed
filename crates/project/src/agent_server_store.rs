@@ -12,6 +12,7 @@ use fs::Fs;
 use gpui::{AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task};
 use http_client::{HttpClient, github::AssetKind};
 use node_runtime::NodeRuntime;
+use percent_encoding::percent_decode_str;
 use remote::RemoteClient;
 use rpc::{
     AnyProtoClient, TypedEnvelope,
@@ -22,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, SettingsStore};
 use sha2::{Digest, Sha256};
 use task::Shell;
+use url::Url;
 use util::{ResultExt as _, debug_panic};
 
 use crate::ProjectEnvironment;
@@ -981,6 +983,58 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
     }
 }
 
+fn asset_kind_for_archive_url(archive_url: &str) -> Result<AssetKind> {
+    let archive_path = Url::parse(archive_url)
+        .ok()
+        .map(|url| url.path().to_string())
+        .unwrap_or_else(|| archive_url.to_string());
+
+    if archive_path.ends_with(".zip") {
+        Ok(AssetKind::Zip)
+    } else if archive_path.ends_with(".tar.gz") || archive_path.ends_with(".tgz") {
+        Ok(AssetKind::TarGz)
+    } else if archive_path.ends_with(".tar.bz2") || archive_path.ends_with(".tbz2") {
+        Ok(AssetKind::TarBz2)
+    } else {
+        bail!("unsupported archive type in URL: {archive_url}");
+    }
+}
+
+struct GithubReleaseArchive {
+    repo_name_with_owner: String,
+    tag: String,
+    asset_name: String,
+}
+
+fn github_release_archive_from_url(archive_url: &str) -> Option<GithubReleaseArchive> {
+    fn decode_path_segment(segment: &str) -> Option<String> {
+        percent_decode_str(segment)
+            .decode_utf8()
+            .ok()
+            .map(|segment| segment.into_owned())
+    }
+
+    let url = Url::parse(archive_url).ok()?;
+    if url.scheme() != "https" || url.host_str()? != "github.com" {
+        return None;
+    }
+
+    let segments = url.path_segments()?.collect::<Vec<_>>();
+    if segments.len() < 6 || segments[2] != "releases" || segments[3] != "download" {
+        return None;
+    }
+
+    Some(GithubReleaseArchive {
+        repo_name_with_owner: format!("{}/{}", segments[0], segments[1]),
+        tag: decode_path_segment(segments[4])?,
+        asset_name: segments[5..]
+            .iter()
+            .map(|segment| decode_path_segment(segment))
+            .collect::<Option<Vec<_>>>()?
+            .join("/"),
+    })
+}
+
 pub struct LocalExtensionArchiveAgent {
     pub fs: Arc<dyn Fs>,
     pub http_client: Arc<dyn HttpClient>,
@@ -1075,41 +1129,27 @@ impl ExternalAgentServer for LocalExtensionArchiveAgent {
                 let sha256 = if let Some(provided_sha) = &target_config.sha256 {
                     // Use provided SHA256
                     Some(provided_sha.clone())
-                } else if archive_url.starts_with("https://github.com/") {
+                } else if let Some(github_archive) = github_release_archive_from_url(archive_url) {
                     // Try to fetch SHA256 from GitHub API
-                    // Parse URL to extract repo and tag/file info
-                    // Format: https://github.com/owner/repo/releases/download/tag/file.zip
-                    if let Some(caps) = archive_url.strip_prefix("https://github.com/") {
-                        let parts: Vec<&str> = caps.split('/').collect();
-                        if parts.len() >= 6 && parts[2] == "releases" && parts[3] == "download" {
-                            let repo = format!("{}/{}", parts[0], parts[1]);
-                            let tag = parts[4];
-                            let filename = parts[5..].join("/");
-
-                            // Try to get release info from GitHub
-                            if let Ok(release) = ::http_client::github::get_release_by_tag_name(
-                                &repo,
-                                tag,
-                                http_client.clone(),
-                            )
-                            .await
-                            {
-                                // Find matching asset
-                                if let Some(asset) =
-                                    release.assets.iter().find(|a| a.name == filename)
-                                {
-                                    // Strip "sha256:" prefix if present
-                                    asset.digest.as_ref().map(|d| {
-                                        d.strip_prefix("sha256:")
-                                            .map(|s| s.to_string())
-                                            .unwrap_or_else(|| d.clone())
-                                    })
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
+                    if let Ok(release) = ::http_client::github::get_release_by_tag_name(
+                        &github_archive.repo_name_with_owner,
+                        &github_archive.tag,
+                        http_client.clone(),
+                    )
+                    .await
+                    {
+                        // Find matching asset
+                        if let Some(asset) = release
+                            .assets
+                            .iter()
+                            .find(|a| a.name == github_archive.asset_name)
+                        {
+                            // Strip "sha256:" prefix if present
+                            asset.digest.as_ref().map(|d| {
+                                d.strip_prefix("sha256:")
+                                    .map(|s| s.to_string())
+                                    .unwrap_or_else(|| d.clone())
+                            })
                         } else {
                             None
                         }
@@ -1120,14 +1160,7 @@ impl ExternalAgentServer for LocalExtensionArchiveAgent {
                     None
                 };
 
-                // Determine archive type from URL
-                let asset_kind = if archive_url.ends_with(".zip") {
-                    AssetKind::Zip
-                } else if archive_url.ends_with(".tar.gz") || archive_url.ends_with(".tgz") {
-                    AssetKind::TarGz
-                } else {
-                    anyhow::bail!("unsupported archive type in URL: {}", archive_url);
-                };
+                let asset_kind = asset_kind_for_archive_url(archive_url)?;
 
                 // Download and extract
                 ::http_client::github_download::download_server_binary(
@@ -1268,35 +1301,24 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
             if !fs.is_dir(&version_dir).await {
                 let sha256 = if let Some(provided_sha) = &target_config.sha256 {
                     Some(provided_sha.clone())
-                } else if archive_url.starts_with("https://github.com/") {
-                    if let Some(caps) = archive_url.strip_prefix("https://github.com/") {
-                        let parts: Vec<&str> = caps.split('/').collect();
-                        if parts.len() >= 6 && parts[2] == "releases" && parts[3] == "download" {
-                            let repo = format!("{}/{}", parts[0], parts[1]);
-                            let tag = parts[4];
-                            let filename = parts[5..].join("/");
-
-                            if let Ok(release) = ::http_client::github::get_release_by_tag_name(
-                                &repo,
-                                tag,
-                                http_client.clone(),
-                            )
-                            .await
-                            {
-                                if let Some(asset) =
-                                    release.assets.iter().find(|a| a.name == filename)
-                                {
-                                    asset.digest.as_ref().and_then(|d| {
-                                        d.strip_prefix("sha256:")
-                                            .map(|s| s.to_string())
-                                            .or_else(|| Some(d.clone()))
-                                    })
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
+                } else if let Some(github_archive) = github_release_archive_from_url(archive_url) {
+                    if let Ok(release) = ::http_client::github::get_release_by_tag_name(
+                        &github_archive.repo_name_with_owner,
+                        &github_archive.tag,
+                        http_client.clone(),
+                    )
+                    .await
+                    {
+                        if let Some(asset) = release
+                            .assets
+                            .iter()
+                            .find(|a| a.name == github_archive.asset_name)
+                        {
+                            asset.digest.as_ref().and_then(|d| {
+                                d.strip_prefix("sha256:")
+                                    .map(|s| s.to_string())
+                                    .or_else(|| Some(d.clone()))
+                            })
                         } else {
                             None
                         }
@@ -1307,13 +1329,7 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
                     None
                 };
 
-                let asset_kind = if archive_url.ends_with(".zip") {
-                    AssetKind::Zip
-                } else if archive_url.ends_with(".tar.gz") || archive_url.ends_with(".tgz") {
-                    AssetKind::TarGz
-                } else {
-                    anyhow::bail!("unsupported archive type in URL: {}", archive_url);
-                };
+                let asset_kind = asset_kind_for_archive_url(archive_url)?;
 
                 ::http_client::github_download::download_server_binary(
                     &*http_client,
@@ -1664,6 +1680,79 @@ impl CustomAgentServerSettings {
                 .get(config_id)
                 .map(|v| v.as_slice()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_supported_archive_suffixes() {
+        assert!(matches!(
+            asset_kind_for_archive_url("https://example.com/agent.zip"),
+            Ok(AssetKind::Zip)
+        ));
+        assert!(matches!(
+            asset_kind_for_archive_url("https://example.com/agent.zip?download=1"),
+            Ok(AssetKind::Zip)
+        ));
+        assert!(matches!(
+            asset_kind_for_archive_url("https://example.com/agent.tar.gz"),
+            Ok(AssetKind::TarGz)
+        ));
+        assert!(matches!(
+            asset_kind_for_archive_url("https://example.com/agent.tar.gz?download=1#latest"),
+            Ok(AssetKind::TarGz)
+        ));
+        assert!(matches!(
+            asset_kind_for_archive_url("https://example.com/agent.tgz"),
+            Ok(AssetKind::TarGz)
+        ));
+        assert!(matches!(
+            asset_kind_for_archive_url("https://example.com/agent.tgz#download"),
+            Ok(AssetKind::TarGz)
+        ));
+        assert!(matches!(
+            asset_kind_for_archive_url("https://example.com/agent.tar.bz2"),
+            Ok(AssetKind::TarBz2)
+        ));
+        assert!(matches!(
+            asset_kind_for_archive_url("https://example.com/agent.tar.bz2?download=1"),
+            Ok(AssetKind::TarBz2)
+        ));
+        assert!(matches!(
+            asset_kind_for_archive_url("https://example.com/agent.tbz2"),
+            Ok(AssetKind::TarBz2)
+        ));
+        assert!(matches!(
+            asset_kind_for_archive_url("https://example.com/agent.tbz2#download"),
+            Ok(AssetKind::TarBz2)
+        ));
+    }
+
+    #[test]
+    fn parses_github_release_archive_urls() {
+        let github_archive = github_release_archive_from_url(
+            "https://github.com/owner/repo/releases/download/release%2F2.3.5/agent.tar.bz2?download=1",
+        )
+        .unwrap();
+
+        assert_eq!(github_archive.repo_name_with_owner, "owner/repo");
+        assert_eq!(github_archive.tag, "release/2.3.5");
+        assert_eq!(github_archive.asset_name, "agent.tar.bz2");
+    }
+
+    #[test]
+    fn rejects_unsupported_archive_suffixes() {
+        let error = asset_kind_for_archive_url("https://example.com/agent.tar.xz")
+            .err()
+            .map(|error| error.to_string());
+
+        assert_eq!(
+            error,
+            Some("unsupported archive type in URL: https://example.com/agent.tar.xz".to_string())
+        );
     }
 }
 

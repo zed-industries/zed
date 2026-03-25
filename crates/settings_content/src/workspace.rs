@@ -741,8 +741,12 @@ pub struct ProjectPanelSettingsContent {
     pub sort_mode: Option<ProjectPanelSortMode>,
     /// Whether to show error and warning count badges next to file names in the project panel.
     ///
-    /// Default: true
+    /// Default: false
     pub diagnostic_badges: Option<bool>,
+    /// Whether to show a git status indicator next to file names in the project panel.
+    ///
+    /// Default: false
+    pub git_status_indicator: Option<bool>,
 }
 
 #[derive(

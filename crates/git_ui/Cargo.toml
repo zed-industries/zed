@@ -21,7 +21,6 @@ anyhow.workspace = true
 askpass.workspace = true
 buffer_diff.workspace = true
 call.workspace = true
-cloud_llm_client.workspace = true
 collections.workspace = true
 component.workspace = true
 db.workspace = true

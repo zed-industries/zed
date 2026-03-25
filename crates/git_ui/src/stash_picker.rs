@@ -468,7 +468,7 @@ impl PickerDelegate for StashListDelegate {
         ix: usize,
         selected: bool,
         _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let entry_match = &self.matches[ix];
 
@@ -501,16 +501,46 @@ impl PickerDelegate for StashListDelegate {
                     .size(LabelSize::Small),
             );
 
+        let focus_handle = self.focus_handle.clone();
+
+        let drop_button = |entry_ix: usize| {
+            IconButton::new(("drop-stash", entry_ix), IconName::Trash)
+                .icon_size(IconSize::Small)
+                .tooltip(move |_, cx| {
+                    Tooltip::for_action_in("Drop Stash", &DropStashItem, &focus_handle, cx)
+                })
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.delegate.drop_stash_at(entry_ix, window, cx);
+                }))
+        };
+
         Some(
             ListItem::new(format!("stash-{ix}"))
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
-                .child(v_flex().w_full().child(stash_label).child(branch_info))
+                .child(
+                    h_flex()
+                        .w_full()
+                        .gap_2p5()
+                        .child(
+                            Icon::new(IconName::BoxOpen)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .child(div().w_full().child(stash_label).child(branch_info)),
+                )
                 .tooltip(Tooltip::text(format!(
                     "stash@{{{}}}",
                     entry_match.entry.index
-                ))),
+                )))
+                .map(|this| {
+                    if selected {
+                        this.end_slot(drop_button(ix))
+                    } else {
+                        this.end_hover_slot(drop_button(ix))
+                    }
+                }),
         )
     }
 

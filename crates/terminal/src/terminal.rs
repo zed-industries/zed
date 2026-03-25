@@ -2556,7 +2556,7 @@ mod tests {
         Point, TestAppContext, bounds, point, size,
     };
     use parking_lot::Mutex;
-    use rand::{Rng, distr, rngs::ThreadRng};
+    use rand::{Rng, distr, rngs::StdRng};
     use smol::channel::Receiver;
     use task::{Shell, ShellBuilder};
 
@@ -2877,9 +2877,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_mouse_to_cell_test() {
-        let mut rng = rand::rng();
+    #[gpui::test]
+    fn test_mouse_to_cell_test(mut rng: StdRng) {
         const ITERATIONS: usize = 10;
         const PRECISION: usize = 1000;
 
@@ -2927,10 +2926,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_mouse_to_cell_clamp() {
-        let mut rng = rand::rng();
-
+    #[gpui::test]
+    fn test_mouse_to_cell_clamp(mut rng: StdRng) {
         let size = crate::TerminalBounds {
             cell_width: Pixels::from(10.),
             line_height: Pixels::from(10.),
@@ -2961,12 +2958,12 @@ mod tests {
         );
     }
 
-    fn get_cells(size: TerminalBounds, rng: &mut ThreadRng) -> Vec<Vec<char>> {
+    fn get_cells(size: TerminalBounds, rng: &mut StdRng) -> Vec<Vec<char>> {
         let mut cells = Vec::new();
 
-        for _ in 0..((size.height() / size.line_height()) as usize) {
+        for _ in 0..size.num_lines() {
             let mut row_vec = Vec::new();
-            for _ in 0..((size.width() / size.cell_width()) as usize) {
+            for _ in 0..size.num_columns() {
                 let cell_char = rng.sample(distr::Alphanumeric) as char;
                 row_vec.push(cell_char)
             }
