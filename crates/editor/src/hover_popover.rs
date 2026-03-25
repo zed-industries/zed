@@ -2182,4 +2182,97 @@ mod tests {
             InlayOffset(MultiBufferOffset(104))..InlayOffset(MultiBufferOffset(108))
         );
     }
+
+    #[test]
+    fn test_point_in_triangle() {
+        let a = gpui::point(px(0.0), px(0.0));
+        let b = gpui::point(px(10.0), px(0.0));
+        let c = gpui::point(px(0.0), px(10.0));
+
+        assert!(HoverState::point_in_triangle(
+            gpui::point(px(2.0), px(2.0)),
+            a,
+            b,
+            c
+        ));
+        assert!(HoverState::point_in_triangle(a, a, b, c));
+        assert!(HoverState::point_in_triangle(
+            gpui::point(px(5.0), px(0.0)),
+            a,
+            b,
+            c
+        ));
+        assert!(!HoverState::point_in_triangle(
+            gpui::point(px(6.0), px(6.0)),
+            a,
+            b,
+            c
+        ));
+        assert!(!HoverState::point_in_triangle(
+            gpui::point(px(-1.0), px(-1.0)),
+            a,
+            b,
+            c
+        ));
+    }
+
+    #[test]
+    fn test_point_in_safe_zone_inside_bounds() {
+        let point = gpui::point(px(105.0), px(55.0));
+        let apex = gpui::point(px(50.0), px(50.0));
+        let bounds = Bounds {
+            origin: gpui::point(px(100.0), px(50.0)),
+            size: gpui::size(px(200.0), px(100.0)),
+        };
+
+        assert!(HoverState::point_in_safe_zone(point, apex, bounds));
+    }
+
+    #[test]
+    fn test_point_in_safe_zone_on_path_to_popover() {
+        let apex = gpui::point(px(50.0), px(100.0));
+        let bounds = Bounds {
+            origin: gpui::point(px(200.0), px(50.0)),
+            size: gpui::size(px(300.0), px(100.0)),
+        };
+
+        // Point on the diagonal path from apex toward the popover
+        assert!(HoverState::point_in_safe_zone(
+            gpui::point(px(120.0), px(80.0)),
+            apex,
+            bounds
+        ));
+    }
+
+    #[test]
+    fn test_point_in_safe_zone_outside() {
+        let apex = gpui::point(px(50.0), px(100.0));
+        let bounds = Bounds {
+            origin: gpui::point(px(200.0), px(50.0)),
+            size: gpui::size(px(300.0), px(100.0)),
+        };
+
+        // Point far away from both apex and popover
+        assert!(!HoverState::point_in_safe_zone(
+            gpui::point(px(50.0), px(300.0)),
+            apex,
+            bounds
+        ));
+    }
+
+    #[test]
+    fn test_point_in_safe_zone_opposite_side_of_apex() {
+        let apex = gpui::point(px(50.0), px(100.0));
+        let bounds = Bounds {
+            origin: gpui::point(px(200.0), px(50.0)),
+            size: gpui::size(px(300.0), px(100.0)),
+        };
+
+        // Point on the opposite side of the apex from the popover
+        assert!(!HoverState::point_in_safe_zone(
+            gpui::point(px(10.0), px(100.0)),
+            apex,
+            bounds
+        ));
+    }
 }
