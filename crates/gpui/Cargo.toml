@@ -236,5 +236,9 @@ name = "grid_layout"
 path = "examples/grid_layout.rs"
 
 [[example]]
+name = "bottom_list_scrollbar"
+path = "examples/bottom_list_scrollbar.rs"
+
+[[example]]
 name = "mouse_pressure"
 path = "examples/mouse_pressure.rs"
