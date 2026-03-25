@@ -12,8 +12,8 @@ use chrono::Utc;
 use editor::Editor;
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagViewExt as _};
 use gpui::{
-    Action as _, AnyElement, App, Context, Entity, FocusHandle, Focusable, ListState, Pixels,
-    Render, SharedString, WeakEntity, Window, WindowHandle, list, prelude::*, px,
+    Action as _, AnyElement, App, Context, Entity, FocusHandle, Focusable, KeyContext, ListState,
+    Pixels, Render, SharedString, WeakEntity, Window, WindowHandle, list, prelude::*, px,
 };
 use menu::{
     Cancel, Confirm, SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious,
@@ -1732,6 +1732,21 @@ impl Sidebar {
         self.update_entries(cx);
     }
 
+    fn dispatch_context(&self, window: &Window, cx: &Context<Self>) -> KeyContext {
+        let mut dispatch_context = KeyContext::new_with_defaults();
+        dispatch_context.add("ThreadsSidebar");
+        dispatch_context.add("menu");
+
+        let identifier = if self.filter_editor.focus_handle(cx).is_focused(window) {
+            "editing"
+        } else {
+            "not_editing"
+        };
+
+        dispatch_context.add(identifier);
+        dispatch_context
+    }
+
     fn focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.focus_handle.is_focused(window) {
             return;
@@ -3067,7 +3082,7 @@ impl Render for Sidebar {
 
         v_flex()
             .id("workspace-sidebar")
-            .key_context("ThreadsSidebar")
+            .key_context(self.dispatch_context(window, cx))
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))
