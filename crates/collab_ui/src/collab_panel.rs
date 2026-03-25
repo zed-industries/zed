@@ -535,7 +535,6 @@ impl CollabPanel {
     }
 
     fn update_entries(&mut self, select_same_item: bool, cx: &mut Context<Self>) {
-        let channel_store = self.channel_store.read(cx);
         let user_store = self.user_store.read(cx);
         let query = self.filter_editor.read(cx).text(cx);
         let fg_executor = cx.foreground_executor();
@@ -687,10 +686,12 @@ impl CollabPanel {
 
         let previous_len = self.favorite_channels.len();
         self.favorite_channels
-            .retain(|id| channel_store.channel_for_id(*id).is_some());
+            .retain(|id| self.channel_store.read(cx).channel_for_id(*id).is_some());
         if self.favorite_channels.len() != previous_len {
             self.serialize(cx);
         }
+
+        let channel_store = self.channel_store.read(cx);
 
         if !self.favorite_channels.is_empty() {
             let favorite_channels: Vec<_> = self
