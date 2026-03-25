@@ -358,7 +358,6 @@ impl TeacherBackend {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum PredictionProvider {
-    Sweep,
     Mercury,
     Zeta1,
     Zeta2(ZetaFormat),
@@ -379,7 +378,6 @@ impl Default for PredictionProvider {
 impl std::fmt::Display for PredictionProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PredictionProvider::Sweep => write!(f, "sweep"),
             PredictionProvider::Mercury => write!(f, "mercury"),
             PredictionProvider::Zeta1 => write!(f, "zeta1"),
             PredictionProvider::Zeta2(format) => write!(f, "zeta2:{format}"),
@@ -407,7 +405,6 @@ impl std::str::FromStr for PredictionProvider {
 
         let provider_lower = provider.to_lowercase();
         match provider_lower.as_str() {
-            "sweep" => Ok(PredictionProvider::Sweep),
             "mercury" => Ok(PredictionProvider::Mercury),
             "zeta1" => Ok(PredictionProvider::Zeta1),
             "zeta2" => {
@@ -452,7 +449,7 @@ impl std::str::FromStr for PredictionProvider {
             }
             _ => {
                 anyhow::bail!(
-                    "unknown provider `{provider}`. Valid options: sweep, mercury, zeta1, zeta2, zeta2:<version>, teacher, teacher:<backend>, teacher-multi-region, teacher-multi-region:<backend>, teacher-non-batching, teacher-multi-region-non-batching, repair\n\
+                    "unknown provider `{provider}`. Valid options: mercury, zeta1, zeta2, zeta2:<version>, teacher, teacher:<backend>, teacher-multi-region, teacher-multi-region:<backend>, teacher-non-batching, teacher-multi-region-non-batching, repair\n\
                  For zeta2, you can optionally specify a version like `zeta2:ordered` or `zeta2:V0113_Ordered`.\n\
                  For teacher providers, you can specify a backend like `teacher:sonnet46`, `teacher-multi-region:sonnet46`, `teacher-multi-region-non-batching:sonnet46`, or `teacher:gpt52`.\n\
                  Available zeta versions:\n{}",

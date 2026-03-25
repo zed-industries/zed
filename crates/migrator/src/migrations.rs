@@ -305,6 +305,12 @@ pub(crate) mod m_2026_02_25 {
     pub(crate) use settings::migrate_builtin_agent_servers_to_registry;
 }
 
+pub(crate) mod m_2026_03_16 {
+    mod settings;
+
+    pub(crate) use settings::SETTINGS_PATTERNS;
+}
+
 pub(crate) mod m_2026_03_23 {
     mod keymap;
 

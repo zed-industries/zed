@@ -1585,13 +1585,6 @@
       "model": "codestral-latest",
       "max_tokens": 150,
     },
-    "sweep": {
-      // When enabled, Sweep will not store edit prediction inputs or outputs.
-      // When disabled, Sweep may collect data including buffer contents,
-      // diagnostics, file paths, repository names, and generated predictions
-      // to improve the service.
-      "privacy_mode": false,
-    },
     "ollama": {
       "api_url": "http://localhost:11434",
       "model": "qwen2.5-coder:7b-base",
@@ -2029,6 +2022,9 @@
       "remove_trailing_whitespace_on_save": false,
       "ensure_final_newline_on_save": false,
     },
+    "EEx": {
+      "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "..."],
+    },
     "Elixir": {
       "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "..."],
     },
@@ -2055,7 +2051,7 @@
         "allowed": true,
       },
     },
-    "HEEX": {
+    "HEEx": {
       "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "..."],
     },
     "HTML": {
