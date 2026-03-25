@@ -14,7 +14,7 @@ jobs:
     runs-on: namespace-profile-16x32-ubuntu-2204
     steps:
     - id: generate-token
-      name: bump_patch_version::run_bump_patch_version
+      name: steps::authenticate_as_zippy
       uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
       with:
         app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}

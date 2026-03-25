@@ -593,25 +593,19 @@ pub(crate) fn generate_token<'a>(
     app_id_source: &'a str,
     app_secret_source: &'a str,
 ) -> GenerateAppToken<'a> {
-    generate_token_with_job_name(function_name(1), app_id_source, app_secret_source)
+    generate_token_with_job_name(app_id_source, app_secret_source)
 }
 
 pub fn authenticate_as_zippy() -> (Step<Use>, StepOutput) {
-    generate_token_with_job_name(
-        function_name(1),
-        vars::ZED_ZIPPY_APP_ID,
-        vars::ZED_ZIPPY_APP_PRIVATE_KEY,
-    )
-    .into()
+    generate_token_with_job_name(vars::ZED_ZIPPY_APP_ID, vars::ZED_ZIPPY_APP_PRIVATE_KEY).into()
 }
 
 fn generate_token_with_job_name<'a>(
-    job_name: String,
     app_id_source: &'a str,
     app_secret_source: &'a str,
 ) -> GenerateAppToken<'a> {
     GenerateAppToken {
-        job_name,
+        job_name: function_name(1),
         app_id: app_id_source,
         app_secret: app_secret_source,
         repository_target: None,

@@ -74,7 +74,7 @@ jobs:
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - id: generate-token
-      name: extension_bump::bump_extension_version
+      name: steps::generate_token
       uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
       with:
         app-id: ${{ secrets.app-id }}
@@ -162,7 +162,7 @@ jobs:
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - id: generate-token
-      name: extension_bump::create_version_label
+      name: steps::generate_token
       uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
       with:
         app-id: ${{ secrets.app-id }}
@@ -212,7 +212,7 @@ jobs:
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - id: generate-token
-      name: extension_bump::trigger_release
+      name: steps::generate_token
       uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
       with:
         app-id: ${{ secrets.app-id }}
