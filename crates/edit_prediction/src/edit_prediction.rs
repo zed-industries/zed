@@ -50,7 +50,8 @@ use std::path::Path;
 use std::rc::Rc;
 use std::str::FromStr as _;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
+
 use thiserror::Error;
 use util::{RangeExt as _, ResultExt as _};
 
@@ -171,7 +172,6 @@ pub struct EditPredictionModelInput {
     position: Anchor,
     events: Vec<Arc<zeta_prompt::Event>>,
     related_files: Vec<RelatedFile>,
-    recent_paths: VecDeque<ProjectPath>,
     trigger: PredictEditsRequestTrigger,
     diagnostic_search_range: Range<Point>,
     debug_tx: Option<mpsc::UnboundedSender<DebugEvent>>,
@@ -1301,24 +1301,16 @@ impl EditPredictionStore {
         }
         let old_file = mem::replace(&mut registered_buffer.file, new_file.clone());
         let old_snapshot = mem::replace(&mut registered_buffer.snapshot, new_snapshot.clone());
-        let mut num_edits = 0usize;
-        let mut total_deleted = 0usize;
-        let mut total_inserted = 0usize;
         let mut edit_range: Option<Range<Anchor>> = None;
-        let mut last_offset: Option<usize> = None;
         let now = cx.background_executor().now();
 
-        for (edit, anchor_range) in
+        for (_edit, anchor_range) in
             new_snapshot.anchored_edits_since::<usize>(&old_snapshot.version)
         {
-            num_edits += 1;
-            total_deleted += edit.old.len();
-            total_inserted += edit.new.len();
             edit_range = Some(match edit_range {
                 None => anchor_range,
                 Some(acc) => acc.start..anchor_range.end,
             });
-            last_offset = Some(edit.new.end);
         }
 
         let Some(edit_range) = edit_range else {
@@ -1717,7 +1709,7 @@ impl EditPredictionStore {
         &mut self,
         project: &Entity<Project>,
         display_type: edit_prediction_types::SuggestionDisplayType,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) {
         let Some(project_state) = self.projects.get_mut(&project.entity_id()) else {
             return;
@@ -1739,8 +1731,6 @@ impl EditPredictionStore {
         if is_first_non_jump_show {
             current_prediction.was_shown = true;
         }
-
-        let display_type_changed = previous_shown_with != Some(display_type);
 
         if is_first_non_jump_show {
             self.shown_predictions
@@ -2301,8 +2291,6 @@ impl EditPredictionStore {
             && self.is_data_collection_enabled(cx)
             && matches!(self.edit_prediction_model, EditPredictionModel::Zeta);
 
-        let recent_paths = project_state.recent_paths.clone();
-
         let inputs = EditPredictionModelInput {
             project: project.clone(),
             buffer: active_buffer,
@@ -2310,7 +2298,6 @@ impl EditPredictionStore {
             position,
             events,
             related_files,
-            recent_paths,
             trigger,
             diagnostic_search_range: diagnostic_search_range,
             debug_tx,
