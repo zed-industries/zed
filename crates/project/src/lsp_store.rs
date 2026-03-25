@@ -149,6 +149,8 @@ pub use language::Location;
 pub use lsp_store::inlay_hints::{CacheInlayHints, InvalidationStrategy};
 #[cfg(any(test, feature = "test-support"))]
 pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
+#[cfg(any(test, feature = "test-support"))]
+pub use prettier::RANGE_FORMAT_SUFFIX as TEST_PRETTIER_RANGE_FORMAT_SUFFIX;
 pub use semantic_tokens::{
     BufferSemanticToken, BufferSemanticTokens, RefreshForServer, SemanticTokenStylizer, TokenType,
 };
@@ -1714,6 +1716,10 @@ impl LocalLspStore {
                 zlog::trace!(logger => "formatting");
                 let _timer = zlog::time!(logger => "Formatting buffer via prettier");
 
+                // When selection ranges are provided (via FormatSelections), we pass the
+                // encompassing UTF-16 range to Prettier so it can scope its formatting.
+                // After diffing, we filter the resulting edits to only keep those that
+                // overlap with the original byte-level selection ranges.
                 let (range_utf16, byte_ranges) = match buffer.ranges.as_ref() {
                     Some(ranges) if !ranges.is_empty() => {
                         let (utf16_range, byte_ranges) =
@@ -1764,7 +1770,7 @@ impl LocalLspStore {
                     });
                     if diff.edits.is_empty() {
                         zlog::trace!(logger => "No changes within selection");
-                        continue;
+                        return Ok(());
                     }
                 }
 
@@ -1782,7 +1788,7 @@ impl LocalLspStore {
 
                 if buffer.ranges.is_some() {
                     zlog::debug!(logger => "External formatter does not support range formatting; skipping");
-                    continue;
+                    return Ok(());
                 }
 
                 zlog::trace!(logger => "formatting");
