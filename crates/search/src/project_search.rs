@@ -2740,7 +2740,7 @@ pub mod tests {
                 settings.update_user_settings(cx, |settings| {
                     settings.theme.experimental_theme_overrides = Some(ThemeStyleContent {
                         colors: ThemeColorsContent {
-                            search_active_match_background: Some("#ff0000ff".to_string()),
+                            search_active_match_background: Some("#ff0000ff".into()),
                             ..Default::default()
                         },
                         ..Default::default()

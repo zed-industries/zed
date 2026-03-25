@@ -1,3 +1,7 @@
+use std::fs::File;
+use std::io::Write;
+use std::path::PathBuf;
+
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use schemars::schema_for;
@@ -8,6 +12,10 @@ use theme::{IconThemeFamilyContent, ThemeFamilyContent};
 pub struct Args {
     #[arg(value_enum)]
     pub schema_type: SchemaType,
+
+    /// The path to write the output to.
+    #[arg(long, short)]
+    pub output: Option<PathBuf>,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
@@ -23,19 +31,26 @@ fn main() -> Result<()> {
 
     let args = Args::parse();
 
-    match args.schema_type {
+    let schema_json = match args.schema_type {
         SchemaType::Theme => {
             let schema = schema_for!(ThemeFamilyContent);
-            println!("{}", serde_json::to_string_pretty(&schema)?);
+            serde_json::to_string_pretty(&schema)?
         }
         SchemaType::IconTheme => {
             let schema = schema_for!(IconThemeFamilyContent);
-            println!("{}", serde_json::to_string_pretty(&schema)?);
+            serde_json::to_string_pretty(&schema)?
         }
         SchemaType::Project => {
             let schema = schema_for!(ProjectSettingsContent);
-            println!("{}", serde_json::to_string_pretty(&schema)?);
+            serde_json::to_string_pretty(&schema)?
         }
+    };
+
+    if let Some(output_path) = args.output {
+        let mut file = File::create(output_path)?;
+        file.write_all(schema_json.as_bytes())?;
+    } else {
+        println!("{}", schema_json);
     }
 
     Ok(())
