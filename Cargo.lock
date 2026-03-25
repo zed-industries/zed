@@ -8229,6 +8229,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "image_gen_panel"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "credentials_provider",
+ "editor",
+ "google_ai",
+ "gpui",
+ "http_client",
+ "image",
+ "language_model",
+ "language_models",
+ "paths",
+ "serde",
+ "serde_json",
+ "ui",
+ "util",
+ "workspace",
+ "zed_actions",
+]
+
+[[package]]
 name = "image_viewer"
 version = "0.1.0"
 dependencies = [
@@ -20782,6 +20805,7 @@ dependencies = [
  "gpui_tokio",
  "http_client",
  "image",
+ "image_gen_panel",
  "image_viewer",
  "inspector_ui",
  "install_cli",

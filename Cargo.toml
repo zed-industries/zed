@@ -88,6 +88,7 @@ members = [
     "crates/http_client",
     "crates/http_client_tls",
     "crates/icons",
+    "crates/image_gen_panel",
     "crates/image_viewer",
     "crates/inspector_ui",
     "crates/install_cli",
@@ -318,6 +319,7 @@ html_to_markdown = { path = "crates/html_to_markdown" }
 http_client = { path = "crates/http_client" }
 http_client_tls = { path = "crates/http_client_tls" }
 icons = { path = "crates/icons" }
+image_gen_panel = { path = "crates/image_gen_panel" }
 image_viewer = { path = "crates/image_viewer" }
 edit_prediction_types = { path = "crates/edit_prediction_types" }
 edit_prediction_ui = { path = "crates/edit_prediction_ui" }

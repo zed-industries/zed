@@ -519,12 +519,17 @@ pub fn into_google(
             temperature: request.temperature.map(|t| t as f64).or(Some(1.0)),
             thinking_config: match (request.thinking_allowed, mode) {
                 (true, GoogleModelMode::Thinking { budget_tokens }) => {
-                    budget_tokens.map(|thinking_budget| ThinkingConfig { thinking_budget })
+                    budget_tokens.map(|thinking_budget| ThinkingConfig {
+                        thinking_budget: Some(thinking_budget),
+                        thinking_level: None,
+                    })
                 }
                 _ => None,
             },
             top_p: None,
             top_k: None,
+            response_modalities: None,
+            image_config: None,
         }),
         safety_settings: None,
         tools: (!request.tools.is_empty()).then(|| {

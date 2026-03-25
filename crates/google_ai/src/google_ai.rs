@@ -63,6 +63,40 @@ pub async fn stream_generate_content(
     }
 }
 
+pub async fn generate_content(
+    client: &dyn HttpClient,
+    api_url: &str,
+    api_key: &str,
+    mut request: GenerateContentRequest,
+) -> Result<GenerateContentResponse> {
+    let api_key = api_key.trim();
+    validate_generate_content_request(&request)?;
+
+    let model_id = mem::take(&mut request.model.model_id);
+
+    let uri = format!("{api_url}/v1beta/models/{model_id}:generateContent?key={api_key}");
+
+    let request_builder = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("Content-Type", "application/json");
+
+    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
+    let mut response = client.send(request).await?;
+    let mut text = String::new();
+    response.body_mut().read_to_string(&mut text).await?;
+
+    if response.status().is_success() {
+        Ok(serde_json::from_str::<GenerateContentResponse>(&text)?)
+    } else {
+        Err(anyhow!(
+            "error during generateContent, status code: {:?}, body: {}",
+            response.status(),
+            text
+        ))
+    }
+}
+
 pub async fn count_tokens(
     client: &dyn HttpClient,
     api_url: &str,
@@ -297,7 +331,19 @@ pub struct UsageMetadata {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThinkingConfig {
-    pub thinking_budget: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_budget: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_level: Option<ThinkingLevel>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ThinkingLevel {
+    Minimal,
+    Low,
+    Medium,
+    High,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -317,6 +363,19 @@ pub struct GenerationConfig {
     pub top_k: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking_config: Option<ThinkingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_modalities: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_config: Option<ImageConfig>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aspect_ratio: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_size: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

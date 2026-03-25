@@ -415,6 +415,14 @@ pub fn initialize_workspace(
             }
         });
 
+        workspace.register_action(|workspace, _: &zed_actions::OpenImageGen, window, cx| {
+            let http_client = workspace.client().http_client().clone();
+            let panel = cx.new(|cx| {
+                image_gen_panel::ImageGenPanel::new(http_client, window, cx)
+            });
+            workspace.add_item_to_active_pane(Box::new(panel), None, true, window, cx);
+        });
+
         let search_button = cx.new(|_| search::search_status_button::SearchButton::new());
         let diagnostic_summary =
             cx.new(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));

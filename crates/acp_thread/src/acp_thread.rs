@@ -1358,10 +1358,16 @@ impl AcpThread {
             let idx = entries_len - 1;
             cx.emit(AcpThreadEvent::EntryUpdated(idx));
         } else {
+            let effective_id = message_id.or_else(|| {
+                self.connection
+                    .truncate(&self.session_id, cx)
+                    .is_some()
+                    .then(UserMessageId::new)
+            });
             let content = ContentBlock::new(chunk.clone(), &language_registry, path_style, cx);
             self.push_entry(
                 AgentThreadEntry::UserMessage(UserMessage {
-                    id: message_id,
+                    id: effective_id,
                     content,
                     chunks: vec![chunk],
                     checkpoint: None,

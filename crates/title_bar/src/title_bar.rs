@@ -867,6 +867,10 @@ impl TitleBar {
                         "Extensions",
                         zed_actions::Extensions::default().boxed_clone(),
                     )
+                    .action(
+                        "Image Generator",
+                        zed_actions::OpenImageGen.boxed_clone(),
+                    )
                     .when(is_signed_in, |this| {
                         this.separator()
                             .action("Sign Out", client::SignOut.boxed_clone())

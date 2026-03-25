@@ -434,20 +434,33 @@ impl AgentsPanel {
                 }
             }
             ThreadHistoryEvent::OpenInPanel(entry) => {
-                let agent_server: Rc<dyn AgentServer> = entry
+                let agent_choice = entry
                     .meta
                     .as_ref()
                     .and_then(|m| {
                         let cli = m.get(CLI_SOURCE_KEY)?.as_str()?;
                         if cli.to_lowercase().contains("codex") {
-                            Some(Rc::new(agent_servers::Codex) as Rc<dyn AgentServer>)
+                            Some(agent_ui::ExternalAgent::Codex)
                         } else {
-                            Some(Rc::new(agent_servers::ClaudeCode) as Rc<dyn AgentServer>)
+                            Some(agent_ui::ExternalAgent::ClaudeCode)
                         }
                     })
-                    .unwrap_or_else(|| Rc::new(agent_servers::ClaudeCode));
+                    .unwrap_or(agent_ui::ExternalAgent::ClaudeCode);
 
-                self.open_thread_with_cli_server(entry.clone(), agent_server, window, cx);
+                let workspace = self.workspace.clone();
+                workspace.update(cx, |workspace, cx| {
+                    if let Some(panel) = workspace.panel::<agent_ui::AgentPanel>(cx) {
+                        panel.update(cx, |panel, cx| {
+                            panel.external_thread(
+                                Some(agent_choice),
+                                Some(entry.clone()),
+                                None,
+                                window,
+                                cx,
+                            );
+                        });
+                    }
+                });
             }
             ThreadHistoryEvent::EditContent(entry) => {
                 let session_id = entry.session_id.clone();

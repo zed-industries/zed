@@ -551,6 +551,15 @@ actions!(
         ToggleFocus
     ]
 );
+
+actions!(
+    image_gen_panel,
+    [
+        /// Opens the image generator.
+        OpenImageGen
+    ]
+);
+
 actions!(
     debugger,
     [
