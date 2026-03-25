@@ -2529,22 +2529,28 @@
     "format_dap_log_messages": true,
     "button": true,
   },
-  // Configures any number of settings profiles that are temporarily applied on
-  // top of your existing user settings when selected from
-  // `settings profile selector: toggle`.
+  // Configures any number of settings profiles that are temporarily applied
+  // when selected from `settings profile selector: toggle`.
+  //
+  // Each profile has an optional `base` ("user" or "default") and a `settings`
+  // object. When `base` is "user" (the default), the profile applies on top of
+  // your user settings. When `base` is "default", user settings are ignored and
+  // the profile applies on top of Zed's defaults.
+  //
   // Examples:
   // "profiles": {
   //   "Presenting": {
-  //     "agent_ui_font_size": 20.0,
-  //     "buffer_font_size": 20.0,
-  //     "theme": "One Light",
-  //     "ui_font_size": 20.0
+  //     "settings": {
+  //       "agent_ui_font_size": 20.0,
+  //       "buffer_font_size": 20.0,
+  //       "theme": "One Light",
+  //       "ui_font_size": 20.0
+  //     }
   //   },
-  //   "Python (ty)": {
-  //     "languages": {
-  //       "Python": {
-  //         "language_servers": ["ty"]
-  //       }
+  //   "Clean Slate": {
+  //     "base": "default",
+  //     "settings": {
+  //       "theme": "Ayu Dark"
   //     }
   //   }
   // }

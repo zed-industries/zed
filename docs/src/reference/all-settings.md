@@ -3002,21 +3002,36 @@ If you wish to exclude certain hosts from using the proxy, set the `NO_PROXY` en
 
 ## Profiles
 
-- Description: Configuration profiles that can be applied on top of existing settings
+- Description: Configuration profiles that can be temporarily applied on top of existing settings or Zed's defaults.
 - Setting: `profiles`
 - Default: `{}`
 
 **Options**
 
-Configuration object for defining settings profiles. Example:
+Each profile is an object with the following optional fields:
+
+- `base`: What settings to start from before applying the profile's overrides.
+  - `"user"` (default): Apply on top of your current user settings.
+  - `"default"`: Apply on top of Zed's default settings, ignoring user customizations.
+- `settings`: The settings overrides for this profile.
+
+Examples:
 
 ```json [settings]
 {
   "profiles": {
     "presentation": {
-      "buffer_font_size": 20,
-      "ui_font_size": 18,
-      "theme": "One Light"
+      "settings": {
+        "buffer_font_size": 20,
+        "ui_font_size": 18,
+        "theme": "One Light"
+      }
+    },
+    "clean_slate": {
+      "base": "default",
+      "settings": {
+        "theme": "Ayu Dark"
+      }
     }
   }
 }
