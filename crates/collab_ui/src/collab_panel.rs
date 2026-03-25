@@ -535,9 +535,8 @@ impl CollabPanel {
     }
 
     fn update_entries(&mut self, select_same_item: bool, cx: &mut Context<Self>) {
-        let user_store = self.user_store.read(cx);
         let query = self.filter_editor.read(cx).text(cx);
-        let fg_executor = cx.foreground_executor();
+        let fg_executor = cx.foreground_executor().clone();
         let executor = cx.background_executor().clone();
 
         let prev_selected_entry = self.selection.and_then(|ix| self.entries.get(ix).cloned());
@@ -563,7 +562,7 @@ impl CollabPanel {
                 }
 
                 // Populate the active user.
-                if let Some(user) = user_store.current_user() {
+                if let Some(user) = self.user_store.read(cx).current_user() {
                     self.match_candidates.clear();
                     self.match_candidates
                         .push(StringMatchCandidate::new(0, &user.github_login));
@@ -692,6 +691,7 @@ impl CollabPanel {
         }
 
         let channel_store = self.channel_store.read(cx);
+        let user_store = self.user_store.read(cx);
 
         if !self.favorite_channels.is_empty() {
             let favorite_channels: Vec<_> = self
