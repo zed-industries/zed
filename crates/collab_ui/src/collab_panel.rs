@@ -61,6 +61,8 @@ actions!(
         ///
         /// Use `collab::OpenChannelNotes` to open the channel notes for the current call.
         OpenSelectedChannelNotes,
+        /// Toggles whether the selected channel is in the Favorites section.
+        ToggleSelectedChannelFavorite,
         /// Starts moving a channel to a new location.
         StartMoveChannel,
         /// Moves the selected item to the current location.
@@ -2055,6 +2057,17 @@ impl CollabPanel {
         }
     }
 
+    fn toggle_selected_channel_favorite(
+        &mut self,
+        _: &ToggleSelectedChannelFavorite,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(channel) = self.selected_channel() {
+            self.toggle_favorite_channel(channel.id, cx);
+        }
+    }
+
     fn set_channel_visibility(
         &mut self,
         channel_id: ChannelId,
@@ -3154,16 +3167,25 @@ impl CollabPanel {
                     .pr_1p5()
                     .gap_0p5()
                     .bg(cx.theme().colors().background.opacity(0.5))
-                    .child(
+                    .child({
+                        let focus_handle = self.focus_handle.clone();
                         IconButton::new("channel_favorite", favorite_icon)
                             .icon_size(IconSize::Small)
                             .icon_color(favorite_color)
                             .on_click(cx.listener(move |this, _, _window, cx| {
                                 this.toggle_favorite_channel(channel_id, cx)
                             }))
-                            .tooltip(Tooltip::text(favorite_tooltip)),
-                    )
-                    .child(
+                            .tooltip(move |_window, cx| {
+                                Tooltip::for_action_in(
+                                    favorite_tooltip,
+                                    &ToggleSelectedChannelFavorite,
+                                    &focus_handle,
+                                    cx,
+                                )
+                            })
+                    })
+                    .child({
+                        let focus_handle = self.focus_handle.clone();
                         IconButton::new("channel_notes", IconName::Reader)
                             .icon_size(IconSize::Small)
                             .when(!has_notes_notification, |this| {
@@ -3172,8 +3194,15 @@ impl CollabPanel {
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.open_channel_notes(channel_id, window, cx)
                             }))
-                            .tooltip(Tooltip::text("Open Channel Notes")),
-                    ),
+                            .tooltip(move |_window, cx| {
+                                Tooltip::for_action_in(
+                                    "Open Channel Notes",
+                                    &OpenSelectedChannelNotes,
+                                    &focus_handle,
+                                    cx,
+                                )
+                            })
+                    }),
             )
     }
 
@@ -3273,6 +3302,7 @@ impl Render for CollabPanel {
             .on_action(cx.listener(CollabPanel::show_inline_context_menu))
             .on_action(cx.listener(CollabPanel::rename_selected_channel))
             .on_action(cx.listener(CollabPanel::open_selected_channel_notes))
+            .on_action(cx.listener(CollabPanel::toggle_selected_channel_favorite))
             .on_action(cx.listener(CollabPanel::collapse_selected_channel))
             .on_action(cx.listener(CollabPanel::expand_selected_channel))
             .on_action(cx.listener(CollabPanel::start_move_selected_channel))
