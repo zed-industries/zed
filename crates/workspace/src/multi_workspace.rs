@@ -424,6 +424,23 @@ impl MultiWorkspace {
                 }
             }
 
+            #[cfg(target_os = "ios")]
+            {
+                // On iOS, remove_window() is a no-op.  Close the project so
+                // that project::Event::Closed triggers navigation back to the
+                // connection landing screen.
+                for workspace in this
+                    .update(cx, |mw, _| mw.workspaces().to_vec())?
+                {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.project().update(cx, |project, cx| {
+                            project.close(cx);
+                        });
+                    });
+                }
+            }
+
+            #[cfg(not(target_os = "ios"))]
             cx.update(|window, _cx| {
                 window.remove_window();
             })?;

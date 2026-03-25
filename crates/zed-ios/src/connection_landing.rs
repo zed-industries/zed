@@ -20,6 +20,42 @@ use ui::{
 };
 use util::ResultExt;
 
+/// Minimal titlebar for the iPad workspace with a back button and path label.
+struct IosTitleBar {
+    path: SharedString,
+}
+
+impl Render for IosTitleBar {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = cx.theme().colors();
+        h_flex()
+            .w_full()
+            .h(rems_from_px(36.0))
+            .px(rems_from_px(8.0))
+            .items_center()
+            .gap(rems_from_px(8.0))
+            .bg(colors.title_bar_background)
+            .border_b_1()
+            .border_color(colors.border)
+            .child(
+                IconButton::new("disconnect", IconName::ArrowLeft)
+                    .icon_size(IconSize::Small)
+                    .style(ButtonStyle::Subtle)
+                    .on_click(|_event, window, cx| {
+                        window.dispatch_action(
+                            Box::new(workspace::CloseWindow),
+                            cx,
+                        );
+                    }),
+            )
+            .child(
+                Label::new(self.path.clone())
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            )
+    }
+}
+
 /// On-disk representation of a saved SSH host.
 #[derive(Clone, Serialize, Deserialize)]
 struct SavedHostEntry {
@@ -558,7 +594,7 @@ impl ConnectionLanding {
             })
             .await;
 
-        let (_worktree_id, project_path) = match project_path_result {
+        let (_worktree, project_path) = match project_path_result {
             Ok(result) => result,
             Err(error) => {
                 log::error!("[zed-ios] project path resolution failed: {error:#}");
@@ -566,12 +602,13 @@ impl ConnectionLanding {
             }
         };
 
-        // 5. Create the workspace with the remote project and replace_root.
+        // 5. Create the workspace, wrap it in MultiWorkspace, set an iOS
+        //    titlebar with a disconnect button, and replace_root.
         log::info!("[zed-ios] replacing root with remote workspace");
         let app_state_for_workspace = app_state.clone();
         let project_for_workspace = project.clone();
         let workspace_entity = landing_window.update(cx, |_, window, cx| {
-            window.replace_root(cx, |window, cx| {
+            let workspace = cx.new(|cx| {
                 workspace::Workspace::new(
                     None,
                     project_for_workspace,
@@ -579,7 +616,17 @@ impl ConnectionLanding {
                     window,
                     cx,
                 )
-            })
+            });
+            let titlebar = cx.new(|_cx| IosTitleBar {
+                path: SharedString::from(path.to_owned()),
+            });
+            workspace.update(cx, |workspace, cx| {
+                workspace.set_titlebar_item(titlebar.into(), window, cx);
+            });
+            window.replace_root(cx, |window, cx| {
+                workspace::MultiWorkspace::new(workspace.clone(), window, cx)
+            });
+            workspace
         })?;
         log::info!("[zed-ios] remote workspace is now the root");
 
