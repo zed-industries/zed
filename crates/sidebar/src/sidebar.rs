@@ -1738,9 +1738,9 @@ impl Sidebar {
         dispatch_context.add("menu");
 
         let identifier = if self.filter_editor.focus_handle(cx).is_focused(window) {
-            "editing"
+            "searching"
         } else {
-            "not_editing"
+            "not_searching"
         };
 
         dispatch_context.add(identifier);
