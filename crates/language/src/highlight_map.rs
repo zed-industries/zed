@@ -1,5 +1,6 @@
 pub use language_core::highlight_map::{HighlightId, HighlightMap};
 
+use std::sync::Arc;
 use theme::SyntaxTheme;
 
 pub fn build_highlight_map(capture_names: &[&str], theme: &SyntaxTheme) -> HighlightMap {
@@ -11,7 +12,7 @@ pub fn build_highlight_map(capture_names: &[&str], theme: &SyntaxTheme) -> Highl
                     .highlight_id(capture_name)
                     .map_or(HighlightId::default(), HighlightId)
             })
-            .collect::<Vec<_>>(),
+            .collect::<Arc<[HighlightId]>>(),
     )
 }
 
