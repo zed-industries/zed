@@ -62,9 +62,9 @@ use std::{
 use theme::ThemeSettings;
 use ui::{
     Color, ContextMenu, ContextMenuEntry, DecoratedIcon, Divider, Icon, IconDecoration,
-    IconDecorationKind, IndentGuideColors, IndentGuideLayout, KeyBinding, Label, LabelSize,
-    ListItem, ListItemSpacing, ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate, Tooltip,
-    WithScrollbar, prelude::*, v_flex,
+    IconDecorationKind, IndentGuideColors, IndentGuideLayout, Indicator, KeyBinding, Label,
+    LabelSize, ListItem, ListItemSpacing, ScrollAxes, ScrollableHandle, Scrollbars,
+    StickyCandidate, Tooltip, WithScrollbar, prelude::*, v_flex,
 };
 use util::{
     ResultExt, TakeUntilExt, TryFutureExt, maybe,
@@ -5819,9 +5819,18 @@ impl ProjectPanel {
                                         )
                                     })
                                     .when_some(git_indicator, |this, (label, color)| {
-                                        this.child(
-                                            Label::new(label).size(LabelSize::Small).color(color),
-                                        )
+                                        let git_indicator = if kind.is_dir() {
+                                            Indicator::dot()
+                                                .color(Color::Custom(color.color(cx).opacity(0.5)))
+                                                .into_any_element()
+                                        } else {
+                                            Label::new(label)
+                                                .size(LabelSize::Small)
+                                                .color(color)
+                                                .into_any_element()
+                                        };
+
+                                        this.child(git_indicator)
                                     })
                                     .when_some(symlink_element, |this, el| this.child(el))
                                     .into_any_element(),
