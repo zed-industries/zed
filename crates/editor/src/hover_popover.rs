@@ -2236,7 +2236,6 @@ mod tests {
             size: gpui::size(px(300.0), px(100.0)),
         };
 
-        // Point on the diagonal path from apex toward the popover
         assert!(HoverState::point_in_safe_zone(
             gpui::point(px(120.0), px(80.0)),
             apex,
@@ -2252,7 +2251,6 @@ mod tests {
             size: gpui::size(px(300.0), px(100.0)),
         };
 
-        // Point far away from both apex and popover
         assert!(!HoverState::point_in_safe_zone(
             gpui::point(px(50.0), px(300.0)),
             apex,
@@ -2268,7 +2266,6 @@ mod tests {
             size: gpui::size(px(300.0), px(100.0)),
         };
 
-        // Point on the opposite side of the apex from the popover
         assert!(!HoverState::point_in_safe_zone(
             gpui::point(px(10.0), px(100.0)),
             apex,
