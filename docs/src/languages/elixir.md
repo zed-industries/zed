@@ -16,15 +16,15 @@ Elixir support is available through the [Elixir extension](https://github.com/ze
   - [elixir-tools/next-ls](https://github.com/elixir-tools/next-ls)
   - [lexical-lsp/lexical](https://github.com/lexical-lsp/lexical)
 
-The Elixir extension also supports [EEx](https://hexdocs.pm/eex/EEx.html) (Embedded Elixir) templates and [HEEx](https://hexdocs.pm/phoenix/components.html#heex) templates, a mix of HTML and EEx used by Phoenix LiveView applications.
+Furthermore, the extension provides support for [EEx](https://hexdocs.pm/eex/EEx.html) (Embedded Elixir) templates and [HEEx](https://hexdocs.pm/phoenix/components.html#heex) templates, a mix of HTML and EEx used by Phoenix LiveView applications.
 
 ## Language Servers
 
-The Elixir extension offers language server support for ElixirLS, Expert, Next LS, and Lexical. By default, ElixirLS is enabled, but this can be changed or disabled in Settings ({#kb zed::OpenSettings}) under Languages > Elixir/EEx/HEEx, or directly in your settings file.
+The Elixir extension offers language server support for ElixirLS, Expert, Next LS, and Lexical. By default, only ElixirLS is enabled. You can change or disable the enabled language servers in your settings ({#kb zed::OpenSettings}) under Languages > Elixir/EEx/HEEx or directly within your settings file.
 
-Some of the language servers can also accept initialization or workspace configuration options; what each one accepts is outlined in the sections below. These can be passed in your settings file via `lsp` > `initialization_options` and `lsp` > `settings` respectively.
+Some of the language servers can also accept initialization or workspace configuration options. See the sections below for an outline of what each server supports. The configuration can be passed in your settings file via `lsp.{language-server-id}.initialization_options` and `lsp.{language-server-id}.settings` respectively.
 
-See the [Configuring Zed](../configuring-zed.md#settings-files) guide for more information on how to edit your settings file.
+Visit the [Configuring Zed](../configuring-zed.md#settings-files) guide for more information on how to edit your settings file.
 
 ### Using ElixirLS
 
@@ -64,7 +64,7 @@ Enable Expert by adding the following to your settings file:
 
 Expert can accept workspace configuration options.
 
-The following example sets the minimum number of characters required for a project symbols search to return results:
+The following example sets the minimum number of characters required for a project symbol search to return results:
 
 ```json [settings]
   "lsp": {
@@ -100,7 +100,7 @@ Enable Next LS by adding the following to your settings file:
 
 Next LS can accept initialization options.
 
-Completions are an experimental feature in Next LS, but they are enabled by default on Zed. They can be disabled again by adding the following to your settings file:
+Completions are an experimental feature within Next LS, but they are enabled by default in Zed. They can be disabled again by adding the following to your settings file:
 
 ```json [settings]
   "lsp": {
@@ -116,7 +116,7 @@ Completions are an experimental feature in Next LS, but they are enabled by defa
   }
 ```
 
-Next LS also has an extension for [Credo](https://hexdocs.pm/credo/overview.html) detection; this is enabled by default, but can be disabled by adding the following to your settings file:
+Next LS also has an extension for [Credo](https://hexdocs.pm/credo/overview.html) integration which is enabled by default. You can disable this by adding the following section to your settings file:
 
 ```json [settings]
   "lsp": {
@@ -132,7 +132,7 @@ Next LS also has an extension for [Credo](https://hexdocs.pm/credo/overview.html
   }
 ```
 
-It is also possible to pass CLI options to Credo. The following example passes `--min-priority high` to it:
+Next LS can also pass CLI options directly to Credo. The following example passes `--min-priority high` to it:
 
 ```json [settings]
   "lsp": {
