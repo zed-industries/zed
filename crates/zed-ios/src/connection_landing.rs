@@ -1253,7 +1253,7 @@ impl ConnectionLanding {
                                     .items_center()
                                     .child(Headline::new("Welcome to Zed"))
                                     .child(
-                                        Icon::new(IconName::Sparkle)
+                                        Icon::new(IconName::Tablet)
                                             .size(IconSize::Medium)
                                             .color(Color::Accent),
                                     ),
