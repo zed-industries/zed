@@ -2023,7 +2023,8 @@ async fn test_buffer_diagnostics_multiple_servers(cx: &mut TestAppContext) {
             *buffer_diagnostics.summary(),
             DiagnosticSummary {
                 warning_count: 2,
-                error_count: 0
+                error_count: 0,
+                info_count: 0,
             }
         );
     })

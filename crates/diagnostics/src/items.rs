@@ -33,8 +33,9 @@ impl Render for DiagnosticIndicator {
             return indicator.hidden();
         }
 
+        let include_warnings = ProjectSettings::get_global(cx).diagnostics.include_warnings;
         let diagnostic_indicator = match (self.summary.error_count, self.summary.warning_count) {
-            (0, 0) => h_flex().child(
+            (0, 0) if !include_warnings || self.summary.info_count == 0 => h_flex().child(
                 Icon::new(IconName::Check)
                     .size(IconSize::Small)
                     .color(Color::Default),
@@ -56,6 +57,14 @@ impl Render for DiagnosticIndicator {
                             .color(Color::Warning),
                     )
                     .child(Label::new(warning_count.to_string()).size(LabelSize::Small))
+                })
+                .when(self.summary.info_count > 0 && include_warnings, |this| {
+                    this.child(
+                        Icon::new(IconName::Info)
+                            .size(IconSize::Small)
+                            .color(Color::Info),
+                    )
+                    .child(Label::new(self.summary.info_count.to_string()).size(LabelSize::Small))
                 }),
         };
 

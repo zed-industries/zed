@@ -2700,6 +2700,7 @@ async fn test_omitted_diagnostics(cx: &mut gpui::TestAppContext) {
                 DiagnosticSummary {
                     error_count: 1,
                     warning_count: 0,
+                    info_count: 0,
                 }
             )]
         );
@@ -2996,6 +2997,7 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
             DiagnosticSummary {
                 error_count: 1,
                 warning_count: 0,
+                info_count: 0,
             }
         );
     });
@@ -3022,6 +3024,7 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
             DiagnosticSummary {
                 error_count: 0,
                 warning_count: 0,
+                info_count: 0,
             }
         );
     });
@@ -3683,6 +3686,7 @@ async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppC
             DiagnosticSummary {
                 error_count: 2,
                 warning_count: 0,
+                info_count: 0,
             }
         );
     });
@@ -3746,6 +3750,7 @@ async fn test_diagnostic_summaries_cleared_on_worktree_entry_removal(
             DiagnosticSummary {
                 error_count: 1,
                 warning_count: 1,
+                info_count: 0,
             }
         );
     });
@@ -3761,6 +3766,7 @@ async fn test_diagnostic_summaries_cleared_on_worktree_entry_removal(
             DiagnosticSummary {
                 error_count: 0,
                 warning_count: 1,
+                info_count: 0,
             },
         );
     });
@@ -3805,6 +3811,7 @@ async fn test_diagnostic_summaries_cleared_on_server_restart(cx: &mut gpui::Test
             DiagnosticSummary {
                 error_count: 1,
                 warning_count: 0,
+                info_count: 0,
             }
         );
     });
@@ -3835,6 +3842,7 @@ async fn test_diagnostic_summaries_cleared_on_server_restart(cx: &mut gpui::Test
             DiagnosticSummary {
                 error_count: 0,
                 warning_count: 0,
+                info_count: 0,
             }
         );
     });
@@ -3924,6 +3932,7 @@ async fn test_diagnostic_summaries_cleared_on_buffer_reload(cx: &mut gpui::TestA
             DiagnosticSummary {
                 error_count: 1,
                 warning_count: 0,
+                info_count: 0,
             }
         );
     });
