@@ -204,12 +204,12 @@ mod tests {
     #[test]
     fn test_is_emoji_presentation() {
         let cases = [
-            ('a', false),
-            ('Z', false),
-            ('1', false),
-            ('漢', false),
-            ('中', false),
-            ('カ', false),
+            ("a", false),
+            ("Z", false),
+            ("1", false),
+            ("漢", false),
+            ("中", false),
+            ("カ", false),
             ("©", false),
             ("♥", false),
             ("1", false),
