@@ -7,7 +7,7 @@ description: "Configure Elixir language support in Zed, including language serve
 
 Elixir support is available through the [Elixir extension](https://github.com/zed-extensions/elixir).
 
-- Tree-sitter grammars:
+- Tree-sitter Grammars:
   - [elixir-lang/tree-sitter-elixir](https://github.com/elixir-lang/tree-sitter-elixir)
   - [phoenixframework/tree-sitter-heex](https://github.com/phoenixframework/tree-sitter-heex)
 - Language Servers:
@@ -20,13 +20,15 @@ The Elixir extension also supports [EEx](https://hexdocs.pm/eex/EEx.html) (Embed
 
 ## Language Servers
 
-The Elixir extension offers language server support for `elixir-ls`, `expert`, `next-ls`, and `lexical`.
+The Elixir extension offers language server support for ElixirLS, Expert, Next LS, and Lexical. By default, ElixirLS is enabled, but this can be changed or disabled in Settings ({#kb zed::OpenSettings}) under Languages > Elixir/EEx/HEEx, or directly in your settings file.
 
-### ElixirLS
+Some of the language servers can also accept initialization or workspace configuration options; what each one accepts is outlined in the sections below. These can be passed in your settings file via `lsp` > `initialization_options` and `lsp` > `settings` respectively.
 
-`elixir-ls` is enabled by default.
+See the [Configuring Zed](../configuring-zed.md#settings-files) guide for more information on how to edit your settings file.
 
-You can pass additional workspace configuration options to it via `lsp` > `settings` in your settings file ([how to edit](../configuring-zed.md#settings-files)).
+### Using ElixirLS
+
+ElixirLS can accept workspace configuration options.
 
 The following example disables [Dialyzer](https://github.com/elixir-lsp/elixir-ls#dialyzer-integration):
 
@@ -40,11 +42,11 @@ The following example disables [Dialyzer](https://github.com/elixir-lsp/elixir-l
   }
 ```
 
-See [ElixirLS configuration settings](https://github.com/elixir-lsp/elixir-ls#elixirls-configuration-settings) for more options.
+See the official list of [ElixirLS configuration settings](https://github.com/elixir-lsp/elixir-ls#elixirls-configuration-settings) for all available options.
 
-### Expert
+### Using Expert
 
-Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages > Elixir, Languages > EEx, and Languages > HEEx, or add to your settings file ([how to edit](../configuring-zed.md#settings-files)):
+Enable Expert by adding the following to your settings file:
 
 ```json [settings]
   "languages": {
@@ -60,7 +62,7 @@ Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages
   }
 ```
 
-You can pass additional workspace configuration options to Expert via `lsp` > `settings` in your settings file.
+Expert can accept workspace configuration options.
 
 The following example sets the minimum number of characters required for a project symbols search to return results:
 
@@ -76,11 +78,11 @@ The following example sets the minimum number of characters required for a proje
   }
 ```
 
-See [Expert configuration](https://expert-lsp.org/docs/configuration/) for more options.
+See the [Expert configuration](https://expert-lsp.org/docs/configuration/) page for all available options.
 
-### Next LS
+### Using Next LS
 
-Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages > Elixir, Languages > EEx, and Languages > HEEx, or add to your settings file ([how to edit](../configuring-zed.md#settings-files)):
+Enable Next LS by adding the following to your settings file:
 
 ```json [settings]
   "languages": {
@@ -96,9 +98,9 @@ Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages
   }
 ```
 
-You can pass additional initialization options to Next LS via `lsp` > `initialization_options` in your settings file.
+Next LS can accept initialization options.
 
-Next LS has completions enabled by default on Zed. This is an experimental feature, so it can be disabled by adding the following to your settings file:
+Completions are an experimental feature in Next LS, but they are enabled by default on Zed. They can be disabled again by adding the following to your settings file:
 
 ```json [settings]
   "lsp": {
@@ -114,7 +116,7 @@ Next LS has completions enabled by default on Zed. This is an experimental featu
   }
 ```
 
-Next LS also has [Credo](https://hexdocs.pm/credo/overview.html) detection support enabled by default. This can be disabled by adding the following to your settings file:
+Next LS also has an extension for [Credo](https://hexdocs.pm/credo/overview.html) detection; this is enabled by default, but can be disabled by adding the following to your settings file:
 
 ```json [settings]
   "lsp": {
@@ -146,9 +148,11 @@ It is also possible to pass CLI options to Credo. The following example passes `
   }
 ```
 
-### Lexical
+See the [Credo Command Line Switches](https://hexdocs.pm/credo/suggest_command.html#command-line-switches) page for more CLI options.
 
-Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages > Elixir, Languages > EEx, and Languages > HEEx, or add to your settings file ([how to edit](../configuring-zed.md#settings-files)):
+### Using Lexical
+
+Enable Lexical by adding the following to your settings file:
 
 ```json [settings]
   "languages": {
@@ -166,9 +170,7 @@ Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages
 
 ## Formatting without a language server
 
-If you prefer to work without a language server but would still like code formatting from [Mix](https://hexdocs.pm/mix/Mix.html), you can configure it as an external formatter.
-
-Configure formatting in Settings ({#kb zed::OpenSettings}) under Languages > Elixir, Languages > EEx, and Languages > HEEx, or add to your settings file ([how to edit](../configuring-zed.md#settings-files)):
+If you prefer to work without a language server but would still like code formatting from [Mix](https://hexdocs.pm/mix/Mix.html), you can configure it as an external formatter by adding the following to your settings file:
 
 ```json [settings]
   "languages": {
@@ -207,7 +209,7 @@ Configure formatting in Settings ({#kb zed::OpenSettings}) under Languages > Eli
 
 ## Using the Tailwind CSS Language Server with HEEx templates
 
-To get all features (autocomplete, linting, and hover docs) from the [Tailwind CSS language server](https://github.com/tailwindlabs/tailwindcss-intellisense/tree/HEAD/packages/tailwindcss-language-server#readme) in HEEx templates, add the following to your settings file ([how to edit](../configuring-zed.md#settings-files)):
+To get all features (autocomplete, linting, and hover docs) from the [Tailwind CSS language server](https://github.com/tailwindlabs/tailwindcss-intellisense/tree/HEAD/packages/tailwindcss-language-server#readme) in HEEx templates, add the following to your settings file:
 
 ```json [settings]
   "lsp": {
