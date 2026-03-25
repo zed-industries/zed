@@ -337,6 +337,93 @@ async fn test_remote_project_search_single_cpu(
 }
 
 #[gpui::test]
+async fn test_remote_project_search_excludes_deleted_open_buffers(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project1": {
+                ".git": {},
+                "README.md": "# project 1",
+                "src": {
+                    "deleted.rs": "const DELETED_SEARCH_NEEDLE: &str = \"deleted-search-needle\";",
+                }
+            },
+        }),
+    )
+    .await;
+
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+
+    let worktree_id = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
+        })
+        .await
+        .unwrap()
+        .0
+        .read_with(cx, |worktree, _| worktree.id());
+
+    cx.run_until_parked();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("src/deleted.rs")), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+
+    cx.run_until_parked();
+    server_cx.run_until_parked();
+
+    fs.remove_file(
+        path!("/code/project1/src/deleted.rs").as_ref(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+
+    server_cx.run_until_parked();
+    cx.run_until_parked();
+    server_cx.run_until_parked();
+    cx.run_until_parked();
+
+    buffer.read_with(cx, |buffer, _| {
+        assert!(buffer.file().unwrap().disk_state().is_deleted());
+    });
+    server_cx.read(|cx| {
+        let server_buffer = headless
+            .read(cx)
+            .buffer_store
+            .read(cx)
+            .get(buffer_id)
+            .unwrap();
+        assert!(
+            server_buffer
+                .read(cx)
+                .file()
+                .unwrap()
+                .disk_state()
+                .is_deleted()
+        );
+    });
+
+    do_search_and_assert(
+        &project,
+        "deleted-search-needle",
+        Default::default(),
+        false,
+        &[],
+        cx.clone(),
+    )
+    .await;
+}
+
+#[gpui::test]
 async fn test_remote_project_search_inclusion(
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,

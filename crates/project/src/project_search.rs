@@ -164,6 +164,8 @@ impl Search {
             let buffer = handle.read(cx);
             if !buffers.is_searchable(&buffer.remote_id()) {
                 continue;
+            } else if Self::buffer_has_deleted_file(&buffer) {
+                continue;
             } else if let Some(entry_id) = buffer.entry_id(cx) {
                 open_buffers.insert(entry_id);
             } else {
@@ -585,6 +587,9 @@ impl Search {
             .flatten()
             .filter(|buffer| {
                 let b = buffer.read(cx);
+                if Self::buffer_has_deleted_file(&b) {
+                    return false;
+                }
                 if let Some(file) = b.file() {
                     if !search_query.match_path(file.path()) {
                         return false;
@@ -614,6 +619,12 @@ impl Search {
         });
 
         buffers
+    }
+
+    fn buffer_has_deleted_file(buffer: &Buffer) -> bool {
+        buffer
+            .file()
+            .is_some_and(|file| file.disk_state().is_deleted())
     }
 }
 
