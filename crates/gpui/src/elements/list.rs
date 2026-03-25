@@ -843,10 +843,6 @@ impl StateInner {
                     element.layout_as_root(available_item_space, window, cx)
                 };
 
-                // An item in the leading overdraw is partially visible (scrolled
-                // just above the top edge). If it contains the focused element we
-                // must mark it so the off-screen focused-item path below doesn't
-                // render a duplicate of it outside the list bounds.
                 if item.contains_focused(window, cx) {
                     rendered_focused_item = true;
                 }
