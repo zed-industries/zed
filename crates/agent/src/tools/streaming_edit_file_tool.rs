@@ -111,6 +111,7 @@ pub enum StreamingEditFileMode {
 }
 
 /// A single edit operation that replaces old text with new text
+/// Properly escape all text fields as valid JSON strings
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Edit {
     /// The exact text to find in the file. This will be matched using fuzzy matching
