@@ -8,7 +8,7 @@ use crate::{Editor, HighlightKey};
 use collections::{HashMap, HashSet};
 use gpui::{AppContext as _, Context, HighlightStyle};
 use itertools::Itertools;
-use language::{BufferRow, BufferSnapshot, language_settings};
+use language::{BufferRow, BufferSnapshot, language_settings::LanguageSettings};
 use multi_buffer::{Anchor, ExcerptId};
 use ui::{ActiveTheme, utils::ensure_minimum_contrast};
 
@@ -29,14 +29,9 @@ impl Editor {
         let excerpt_data: Vec<(ExcerptId, BufferSnapshot, Range<usize>)> = visible_excerpts
             .into_iter()
             .filter_map(|(excerpt_id, (buffer, _, buffer_range))| {
-                let buffer_snapshot = buffer.read(cx).snapshot();
-                if language_settings::language_settings(
-                    buffer_snapshot.language().map(|language| language.name()),
-                    buffer_snapshot.file(),
-                    cx,
-                )
-                .colorize_brackets
-                {
+                let buffer = buffer.read(cx);
+                let buffer_snapshot = buffer.snapshot();
+                if LanguageSettings::for_buffer(&buffer, cx).colorize_brackets {
                     Some((excerpt_id, buffer_snapshot, buffer_range))
                 } else {
                     None

@@ -1173,12 +1173,19 @@ impl ConversationView {
         &mut self,
         index: usize,
         inserted_text: Option<&str>,
+        cursor_offset: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(active) = self.active_thread() {
             active.update(cx, |active, cx| {
-                active.move_queued_message_to_main_editor(index, inserted_text, window, cx);
+                active.move_queued_message_to_main_editor(
+                    index,
+                    inserted_text,
+                    cursor_offset,
+                    window,
+                    cx,
+                );
             });
         }
     }
@@ -2192,8 +2199,16 @@ impl ConversationView {
                 &editor,
                 window,
                 move |this, _editor, event, window, cx| match event {
-                    MessageEditorEvent::InputAttempted(text) => this
-                        .move_queued_message_to_main_editor(index, Some(text.as_ref()), window, cx),
+                    MessageEditorEvent::InputAttempted {
+                        text,
+                        cursor_offset,
+                    } => this.move_queued_message_to_main_editor(
+                        index,
+                        Some(text.as_ref()),
+                        Some(*cursor_offset),
+                        window,
+                        cx,
+                    ),
                     MessageEditorEvent::LostFocus => {
                         this.save_queued_message_at_index(index, cx);
                     }
@@ -2531,9 +2546,7 @@ impl ConversationView {
         task.detach_and_log_err(cx);
 
         if let Some(store) = SidebarThreadMetadataStore::try_global(cx) {
-            store
-                .update(cx, |store, cx| store.delete(session_id.clone(), cx))
-                .detach_and_log_err(cx);
+            store.update(cx, |store, cx| store.delete(session_id.clone(), cx));
         }
     }
 }
@@ -3612,7 +3625,7 @@ pub(crate) mod tests {
         C: 'static + AgentConnection + Send + Clone,
     {
         fn logo(&self) -> ui::IconName {
-            ui::IconName::Ai
+            ui::IconName::ZedAgent
         }
 
         fn agent_id(&self) -> AgentId {
@@ -6480,7 +6493,7 @@ pub(crate) mod tests {
             // Main editor must be empty for this path — it is by default, but
             // assert to make the precondition explicit.
             assert!(thread.message_editor.read(cx).is_empty(cx));
-            thread.move_queued_message_to_main_editor(0, None, window, cx);
+            thread.move_queued_message_to_main_editor(0, None, None, window, cx);
         });
 
         cx.run_until_parked();
@@ -6525,7 +6538,7 @@ pub(crate) mod tests {
                 vec![],
                 cx,
             );
-            thread.move_queued_message_to_main_editor(0, None, window, cx);
+            thread.move_queued_message_to_main_editor(0, None, None, window, cx);
         });
 
         cx.run_until_parked();

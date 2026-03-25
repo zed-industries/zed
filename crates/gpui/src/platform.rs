@@ -1242,6 +1242,13 @@ impl PlatformInputHandler {
             .update(|window, cx| self.handler.accepts_text_input(window, cx))
             .unwrap_or(true)
     }
+
+    #[allow(dead_code)]
+    pub fn query_prefers_ime_for_printable_keys(&mut self) -> bool {
+        self.cx
+            .update(|window, cx| self.handler.prefers_ime_for_printable_keys(window, cx))
+            .unwrap_or(false)
+    }
 }
 
 /// A struct representing a selection in a text buffer, in UTF16 characters.
@@ -1354,6 +1361,18 @@ pub trait InputHandler: 'static {
     /// Returns whether this handler is accepting text input to be inserted.
     fn accepts_text_input(&mut self, _window: &mut Window, _cx: &mut App) -> bool {
         true
+    }
+
+    /// Returns whether printable keys should be routed to the IME before keybinding
+    /// matching when a non-ASCII input source (e.g. Japanese, Korean, Chinese IME)
+    /// is active. This prevents multi-stroke keybindings like `jj` from intercepting
+    /// keys that the IME should compose.
+    ///
+    /// Defaults to `false`. The editor overrides this based on whether it expects
+    /// character input (e.g. Vim insert mode returns `true`, normal mode returns `false`).
+    /// The terminal keeps the default `false` so that raw keys reach the terminal process.
+    fn prefers_ime_for_printable_keys(&mut self, _window: &mut Window, _cx: &mut App) -> bool {
+        false
     }
 }
 

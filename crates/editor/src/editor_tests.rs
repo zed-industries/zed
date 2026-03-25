@@ -23,7 +23,7 @@ use gpui::{
 };
 use indoc::indoc;
 use language::{
-    BracketPairConfig,
+    BracketPair, BracketPairConfig,
     Capability::ReadWrite,
     DiagnosticSourceKind, FakeLspAdapter, IndentGuideSettings, LanguageConfig,
     LanguageConfigOverride, LanguageMatcher, LanguageName, LanguageQueries, Override, Point,
@@ -1121,7 +1121,93 @@ fn test_cancel(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_fold_action(cx: &mut TestAppContext) {
+async fn test_fold_action(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+    cx.set_state(indoc! {"
+        impl Foo {
+            // Hello!
+
+            fn a() {
+                1
+            }
+
+            fn b() {
+                2
+            }
+
+            fn c() {
+                3
+            }
+        }ˇ
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(7), 0)..DisplayPoint::new(DisplayRow(12), 0)
+            ]);
+        });
+        editor.fold(&Fold, window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            "
+                impl Foo {
+                    // Hello!
+
+                    fn a() {
+                        1
+                    }
+
+                    fn b() {⋯}
+
+                    fn c() {⋯}
+                }
+            "
+            .unindent(),
+        );
+
+        editor.fold(&Fold, window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            "
+                impl Foo {⋯}
+            "
+            .unindent(),
+        );
+
+        editor.unfold_lines(&UnfoldLines, window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            "
+                impl Foo {
+                    // Hello!
+
+                    fn a() {
+                        1
+                    }
+
+                    fn b() {⋯}
+
+                    fn c() {⋯}
+                }
+            "
+            .unindent(),
+        );
+
+        editor.unfold_lines(&UnfoldLines, window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            editor.buffer.read(cx).read(cx).text()
+        );
+    });
+}
+
+#[gpui::test]
+fn test_fold_action_without_language(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|window, cx| {
@@ -1441,6 +1527,36 @@ async fn test_fold_with_unindented_multiline_raw_string(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
+async fn test_fold_with_unindented_multiline_raw_string_includes_closing_bracket(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+    cx.set_state(indoc! {"
+        ˇfn main() {
+            let s = r#\"
+        a
+        b
+        c
+        \"#;
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_level(&FoldAtLevel(1), window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            indoc! {"
+                fn main() {⋯}
+            "},
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_fold_with_unindented_multiline_block_comment(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -1484,6 +1600,35 @@ async fn test_fold_with_unindented_multiline_block_comment(cx: &mut TestAppConte
             indoc! {"
                 fn main() {⋯
                 }
+            "},
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_fold_with_unindented_multiline_block_comment_includes_closing_bracket(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+    cx.set_state(indoc! {"
+        ˇfn main() {
+            let x = 1;
+            /*
+        unindented comment line
+            */
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_level(&FoldAtLevel(1), window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            indoc! {"
+                fn main() {⋯}
             "},
         );
     });
@@ -23761,8 +23906,7 @@ async fn test_indent_guide_with_folds(cx: &mut TestAppContext) {
             "
             fn main() {
                 if a {
-                    b(⋯
-                    )
+                    b(⋯)
                 } else {
                     e(
                         f
@@ -32581,10 +32725,12 @@ async fn test_local_worktree_trust(cx: &mut TestAppContext) {
     let fake_language_server = fake_language_servers.next();
 
     cx.read(|cx| {
-        let file = buffer_before_approval.read(cx).file();
         assert_eq!(
-            language::language_settings::language_settings(Some("Rust".into()), file, cx)
-                .language_servers,
+            language::language_settings::LanguageSettings::for_buffer(
+                buffer_before_approval.read(cx),
+                cx
+            )
+            .language_servers,
             ["...".to_string()],
             "local .zed/settings.json must not apply before trust approval"
         )
@@ -32612,10 +32758,12 @@ async fn test_local_worktree_trust(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     cx.read(|cx| {
-        let file = buffer_before_approval.read(cx).file();
         assert_eq!(
-            language::language_settings::language_settings(Some("Rust".into()), file, cx)
-                .language_servers,
+            language::language_settings::LanguageSettings::for_buffer(
+                buffer_before_approval.read(cx),
+                cx
+            )
+            .language_servers,
             ["override-rust-analyzer".to_string()],
             "local .zed/settings.json should apply after trust approval"
         )

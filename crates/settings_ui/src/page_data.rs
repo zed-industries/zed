@@ -1294,17 +1294,13 @@ fn keymap_page() -> SettingsPage {
     fn modal_editing_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SectionHeader("Modal Editing"),
-            // todo(settings_ui): Vim/Helix Mode should be apart of one type because it's undefined
-            // behavior to have them both enabled at the same time
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Vim Mode",
                 description: "Enable Vim mode and key bindings.",
                 field: Box::new(SettingField {
                     json_path: Some("vim_mode"),
                     pick: |settings_content| settings_content.vim_mode.as_ref(),
-                    write: |settings_content, value| {
-                        settings_content.vim_mode = value;
-                    },
+                    write: write_vim_mode,
                 }),
                 metadata: None,
                 files: USER,
@@ -1315,9 +1311,7 @@ fn keymap_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("helix_mode"),
                     pick: |settings_content| settings_content.helix_mode.as_ref(),
-                    write: |settings_content, value| {
-                        settings_content.helix_mode = value;
-                    },
+                    write: write_helix_mode,
                 }),
                 metadata: None,
                 files: USER,
@@ -4355,7 +4349,7 @@ fn window_and_layout_page() -> SettingsPage {
 }
 
 fn panels_page() -> SettingsPage {
-    fn project_panel_section() -> [SettingsPageItem; 23] {
+    fn project_panel_section() -> [SettingsPageItem; 24] {
         [
             SettingsPageItem::SectionHeader("Project Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -4704,6 +4698,28 @@ fn panels_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
+                title: "Git Status Indicator",
+                description: "Show a git status indicator next to file names in the project panel.",
+                field: Box::new(SettingField {
+                    json_path: Some("project_panel.git_status_indicator"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .git_status_indicator
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .git_status_indicator = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
                 title: "Sticky Scroll",
                 description: "Whether to stick parent directories at top of the project panel.",
                 field: Box::new(SettingField {
@@ -4777,7 +4793,7 @@ fn panels_page() -> SettingsPage {
                 title: "Hide Root",
                 description: "Whether to hide the root entry when only one folder is open in the window.",
                 field: Box::new(SettingField {
-                    json_path: Some("project_panel.drag_and_drop"),
+                    json_path: Some("project_panel.hide_root"),
                     pick: |settings_content| {
                         settings_content.project_panel.as_ref()?.hide_root.as_ref()
                     },
@@ -7038,101 +7054,8 @@ fn collaboration_page() -> SettingsPage {
         ]
     }
 
-    fn experimental_section() -> [SettingsPageItem; 9] {
+    fn audio_settings() -> [SettingsPageItem; 3] {
         [
-            SettingsPageItem::SectionHeader("Experimental"),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Rodio Audio",
-                description: "Opt into the new audio system.",
-                field: Box::new(SettingField {
-                    json_path: Some("audio.experimental.rodio_audio"),
-                    pick: |settings_content| settings_content.audio.as_ref()?.rodio_audio.as_ref(),
-                    write: |settings_content, value| {
-                        settings_content.audio.get_or_insert_default().rodio_audio = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Auto Microphone Volume",
-                description: "Automatically adjust microphone volume (requires rodio audio).",
-                field: Box::new(SettingField {
-                    json_path: Some("audio.experimental.auto_microphone_volume"),
-                    pick: |settings_content| {
-                        settings_content
-                            .audio
-                            .as_ref()?
-                            .auto_microphone_volume
-                            .as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .audio
-                            .get_or_insert_default()
-                            .auto_microphone_volume = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Auto Speaker Volume",
-                description: "Automatically adjust volume of other call members (requires rodio audio).",
-                field: Box::new(SettingField {
-                    json_path: Some("audio.experimental.auto_speaker_volume"),
-                    pick: |settings_content| {
-                        settings_content
-                            .audio
-                            .as_ref()?
-                            .auto_speaker_volume
-                            .as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .audio
-                            .get_or_insert_default()
-                            .auto_speaker_volume = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Denoise",
-                description: "Remove background noises (requires rodio audio).",
-                field: Box::new(SettingField {
-                    json_path: Some("audio.experimental.denoise"),
-                    pick: |settings_content| settings_content.audio.as_ref()?.denoise.as_ref(),
-                    write: |settings_content, value| {
-                        settings_content.audio.get_or_insert_default().denoise = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Legacy Audio Compatible",
-                description: "Use audio parameters compatible with previous versions (requires rodio audio).",
-                field: Box::new(SettingField {
-                    json_path: Some("audio.experimental.legacy_audio_compatible"),
-                    pick: |settings_content| {
-                        settings_content
-                            .audio
-                            .as_ref()?
-                            .legacy_audio_compatible
-                            .as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .audio
-                            .get_or_insert_default()
-                            .legacy_audio_compatible = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
             SettingsPageItem::ActionLink(ActionLink {
                 title: "Test Audio".into(),
                 description: Some("Test your microphone and speaker setup".into()),
@@ -7193,7 +7116,7 @@ fn collaboration_page() -> SettingsPage {
 
     SettingsPage {
         title: "Collaboration",
-        items: concat_sections![calls_section(), experimental_section()],
+        items: concat_sections![calls_section(), audio_settings()],
     }
 }
 
@@ -8642,7 +8565,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
         ]
     }
 
-    fn miscellaneous_section() -> [SettingsPageItem; 6] {
+    fn miscellaneous_section() -> [SettingsPageItem; 7] {
         [
             SettingsPageItem::SectionHeader("Miscellaneous"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -8736,6 +8659,19 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.colorize_brackets = value;
                         })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Vim/Emacs Modeline Support",
+                description: "Number of lines to search for modelines (set to 0 to disable).",
+                field: Box::new(SettingField {
+                    json_path: Some("modeline_lines"),
+                    pick: |settings_content| settings_content.modeline_lines.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.modeline_lines = value;
                     },
                 }),
                 metadata: None,
@@ -9286,4 +9222,68 @@ where
     T::Discriminant: strum::VariantArray,
 {
     <<T as strum::IntoDiscriminant>::Discriminant as strum::VariantArray>::VARIANTS
+}
+
+/// Updates the `vim_mode` setting, disabling `helix_mode` if present and
+/// `vim_mode` is being enabled.
+fn write_vim_mode(settings: &mut SettingsContent, value: Option<bool>) {
+    if value == Some(true) && settings.helix_mode == Some(true) {
+        settings.helix_mode = Some(false);
+    }
+    settings.vim_mode = value;
+}
+
+/// Updates the `helix_mode` setting, disabling `vim_mode` if present and
+/// `helix_mode` is being enabled.
+fn write_helix_mode(settings: &mut SettingsContent, value: Option<bool>) {
+    if value == Some(true) && settings.vim_mode == Some(true) {
+        settings.vim_mode = Some(false);
+    }
+    settings.helix_mode = value;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_write_vim_helix_mode() {
+        // Enabling vim mode while `vim_mode` and `helix_mode` are not yet set
+        // should only update the `vim_mode` setting.
+        let mut settings = SettingsContent::default();
+        write_vim_mode(&mut settings, Some(true));
+        assert_eq!(settings.vim_mode, Some(true));
+        assert_eq!(settings.helix_mode, None);
+
+        // Enabling helix mode while `vim_mode` and `helix_mode` are not yet set
+        // should only update the `helix_mode` setting.
+        let mut settings = SettingsContent::default();
+        write_helix_mode(&mut settings, Some(true));
+        assert_eq!(settings.helix_mode, Some(true));
+        assert_eq!(settings.vim_mode, None);
+
+        // Disabling helix mode should only touch `helix_mode` setting when
+        // `vim_mode` is not set.
+        write_helix_mode(&mut settings, Some(false));
+        assert_eq!(settings.helix_mode, Some(false));
+        assert_eq!(settings.vim_mode, None);
+
+        // Enabling vim mode should update `vim_mode` but leave `helix_mode`
+        // untouched.
+        write_vim_mode(&mut settings, Some(true));
+        assert_eq!(settings.vim_mode, Some(true));
+        assert_eq!(settings.helix_mode, Some(false));
+
+        // Enabling helix mode should update `helix_mode` and disable
+        // `vim_mode`.
+        write_helix_mode(&mut settings, Some(true));
+        assert_eq!(settings.helix_mode, Some(true));
+        assert_eq!(settings.vim_mode, Some(false));
+
+        // Enabling vim mode should update `vim_mode` and disable
+        // `helix_mode`.
+        write_vim_mode(&mut settings, Some(true));
+        assert_eq!(settings.vim_mode, Some(true));
+        assert_eq!(settings.helix_mode, Some(false));
+    }
 }

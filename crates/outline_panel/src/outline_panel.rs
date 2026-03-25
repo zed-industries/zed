@@ -23,7 +23,7 @@ use gpui::{
     uniform_list,
 };
 use itertools::Itertools;
-use language::language_settings::language_settings;
+use language::language_settings::LanguageSettings;
 use language::{Anchor, BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
 use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use std::{
@@ -108,7 +108,6 @@ type HighlightStyleData = Arc<OnceLock<Vec<(Range<usize>, HighlightStyle)>>>;
 
 pub struct OutlinePanel {
     fs: Arc<dyn Fs>,
-    width: Option<Pixels>,
     project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
     active: bool,
@@ -663,7 +662,6 @@ pub enum Event {
 
 #[derive(Serialize, Deserialize)]
 struct SerializedOutlinePanel {
-    width: Option<Pixels>,
     active: Option<bool>,
 }
 
@@ -710,12 +708,7 @@ impl OutlinePanel {
 
         workspace.update_in(&mut cx, |workspace, window, cx| {
             let panel = Self::new(workspace, serialized_panel.as_ref(), window, cx);
-            if let Some(serialized_panel) = serialized_panel {
-                panel.update(cx, |panel, cx| {
-                    panel.width = serialized_panel.width.map(|px| px.round());
-                    cx.notify();
-                });
-            }
+            panel.update(cx, |_, cx| cx.notify());
             panel
         })
     }
@@ -862,12 +855,8 @@ impl OutlinePanel {
                                     .read(cx)
                                     .buffer_for_id(*buffer_id, cx)?;
                                 let buffer = buffer.read(cx);
-                                let doc_symbols = language_settings(
-                                    buffer.language().map(|l| l.name()),
-                                    buffer.file(),
-                                    cx,
-                                )
-                                .document_symbols;
+                                let doc_symbols =
+                                    LanguageSettings::for_buffer(buffer, cx).document_symbols;
                                 Some((*buffer_id, doc_symbols))
                             })
                             .collect();
@@ -911,7 +900,6 @@ impl OutlinePanel {
                 unfolded_dirs: HashMap::default(),
                 selected_entry: SelectedEntry::None,
                 context_menu: None,
-                width: None,
                 active_item: None,
                 pending_serialization: Task::ready(None),
                 new_entries_for_fs_update: HashSet::default(),
@@ -958,14 +946,13 @@ impl OutlinePanel {
         else {
             return;
         };
-        let width = self.width;
-        let active = Some(self.active);
+        let active = self.active.then_some(true);
         let kvp = KeyValueStore::global(cx);
         self.pending_serialization = cx.background_spawn(
             async move {
                 kvp.write_kvp(
                     serialization_key,
-                    serde_json::to_string(&SerializedOutlinePanel { width, active })?,
+                    serde_json::to_string(&SerializedOutlinePanel { active })?,
                 )
                 .await?;
                 anyhow::Ok(())
@@ -5000,17 +4987,8 @@ impl Panel for OutlinePanel {
         });
     }
 
-    fn size(&self, _: &Window, cx: &App) -> Pixels {
-        self.width
-            .unwrap_or_else(|| OutlinePanelSettings::get_global(cx).default_width)
-    }
-
-    fn set_size(&mut self, size: Option<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
-        self.width = size;
-        cx.notify();
-        cx.defer_in(window, |this, _, cx| {
-            this.serialize(cx);
-        });
+    fn default_size(&self, _: &Window, cx: &App) -> Pixels {
+        OutlinePanelSettings::get_global(cx).default_width
     }
 
     fn icon(&self, _: &Window, cx: &App) -> Option<IconName> {

@@ -2,12 +2,12 @@ use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
-use gpui::{App, AsyncApp, Task};
+use gpui::{App, AsyncApp, Entity, Task};
 use http_client::github::latest_github_release;
 pub use language::*;
 use language::{
     LanguageName, LanguageToolchainStore, LspAdapterDelegate, LspInstaller,
-    language_settings::language_settings,
+    language_settings::LanguageSettings,
 };
 use lsp::{LanguageServerBinary, LanguageServerName};
 
@@ -211,7 +211,7 @@ impl LspAdapter for GoLspAdapter {
         cx: &mut AsyncApp,
     ) -> Result<Option<serde_json::Value>> {
         let semantic_tokens_enabled = cx.update(|cx| {
-            language_settings(Some(LanguageName::new("Go")), None, cx)
+            LanguageSettings::resolve(None, Some(&LanguageName::new("Go")), cx)
                 .semantic_tokens
                 .enabled()
         });
@@ -593,7 +593,7 @@ impl ContextProvider for GoContextProvider {
         )))
     }
 
-    fn associated_tasks(&self, _: Option<Arc<dyn File>>, _: &App) -> Task<Option<TaskTemplates>> {
+    fn associated_tasks(&self, _: Option<Entity<Buffer>>, _: &App) -> Task<Option<TaskTemplates>> {
         let package_cwd = if GO_PACKAGE_TASK_VARIABLE.template_value() == "." {
             None
         } else {

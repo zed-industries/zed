@@ -27,9 +27,9 @@ use client::{Client, UserStore, zed_urls};
 use cloud_api_types::Plan;
 
 use gpui::{
-    Action, AnyElement, App, Context, Corner, Element, Empty, Entity, Focusable,
-    InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
-    StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window, actions, div,
+    Action, AnyElement, App, Context, Corner, Element, Entity, Focusable, InteractiveElement,
+    IntoElement, MouseButton, ParentElement, Render, StatefulInteractiveElement, Styled,
+    Subscription, WeakEntity, Window, actions, div,
 };
 use onboarding_banner::OnboardingBanner;
 use project::{Project, git_store::GitStoreEvent, trusted_worktrees::TrustedWorktrees};
@@ -161,6 +161,8 @@ pub struct TitleBar {
 
 impl Render for TitleBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_multi_workspace(window, cx);
+
         let title_bar_settings = *TitleBarSettings::get_global(cx);
         let button_layout = title_bar_settings.button_layout;
 
@@ -258,7 +260,6 @@ impl Render for TitleBar {
                     user.is_none() && TitleBarSettings::get_global(cx).show_sign_in,
                     |this| this.child(self.render_sign_in_button(cx)),
                 )
-                .child(self.render_organization_menu_button(cx))
                 .when(TitleBarSettings::get_global(cx).show_user_menu, |this| {
                     this.child(self.render_user_menu_button(cx))
                 })
@@ -443,6 +444,46 @@ impl TitleBar {
         this.observe_diagnostics(cx);
 
         this
+    }
+
+    /// Used to update the title bar state in case the workspace has
+    /// been moved to a new window through the threads sidebar.
+    fn sync_multi_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let current = window
+            .root::<MultiWorkspace>()
+            .flatten()
+            .map(|mw| mw.entity_id());
+
+        let tracked = self
+            .multi_workspace
+            .as_ref()
+            .and_then(|weak| weak.upgrade())
+            .map(|mw| mw.entity_id());
+
+        if current == tracked {
+            return;
+        }
+
+        let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() else {
+            self.multi_workspace = None;
+            return;
+        };
+
+        let is_open = multi_workspace.read(cx).sidebar_open();
+        self.platform_titlebar.update(cx, |titlebar, cx| {
+            titlebar.set_workspace_sidebar_open(is_open, cx);
+        });
+
+        let platform_titlebar = self.platform_titlebar.clone();
+        let subscription = cx.observe(&multi_workspace, move |_this, mw, cx| {
+            let is_open = mw.read(cx).sidebar_open();
+            platform_titlebar.update(cx, |titlebar, cx| {
+                titlebar.set_workspace_sidebar_open(is_open, cx);
+            });
+        });
+
+        self.multi_workspace = Some(multi_workspace.downgrade());
+        self._subscriptions.push(subscription);
     }
 
     fn worktree_count(&self, cx: &App) -> usize {
@@ -1090,110 +1131,80 @@ impl TitleBar {
             })
     }
 
-    pub fn render_organization_menu_button(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let Some(organization) = self.user_store.read(cx).current_organization() else {
-            return Empty.into_any_element();
-        };
-
-        PopoverMenu::new("organization-menu")
-            .anchor(Corner::TopRight)
-            .menu({
-                let user_store = self.user_store.clone();
-                move |window, cx| {
-                    ContextMenu::build(window, cx, |mut menu, _window, cx| {
-                        menu = menu.header("Organizations").separator();
-
-                        let current_organization = user_store.read(cx).current_organization();
-
-                        for organization in user_store.read(cx).organizations() {
-                            let organization = organization.clone();
-                            let plan = user_store.read(cx).plan_for_organization(&organization.id);
-
-                            let is_current =
-                                current_organization
-                                    .as_ref()
-                                    .is_some_and(|current_organization| {
-                                        current_organization.id == organization.id
-                                    });
-
-                            menu = menu.custom_entry(
-                                {
-                                    let organization = organization.clone();
-                                    move |_window, _cx| {
-                                        h_flex()
-                                            .w_full()
-                                            .gap_1()
-                                            .child(
-                                                div()
-                                                    .flex_none()
-                                                    .when(!is_current, |parent| parent.invisible())
-                                                    .child(Icon::new(IconName::Check)),
-                                            )
-                                            .child(
-                                                h_flex()
-                                                    .w_full()
-                                                    .gap_3()
-                                                    .justify_between()
-                                                    .child(Label::new(&organization.name))
-                                                    .child(PlanChip::new(
-                                                        plan.unwrap_or(Plan::ZedFree),
-                                                    )),
-                                            )
-                                            .into_any_element()
-                                    }
-                                },
-                                {
-                                    let user_store = user_store.clone();
-                                    let organization = organization.clone();
-                                    move |_window, cx| {
-                                        user_store.update(cx, |user_store, cx| {
-                                            user_store
-                                                .set_current_organization(organization.clone(), cx);
-                                        });
-                                    }
-                                },
-                            );
-                        }
-
-                        menu
-                    })
-                    .into()
-                }
-            })
-            .trigger_with_tooltip(
-                Button::new("organization-menu", &organization.name)
-                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                    .label_size(LabelSize::Small),
-                Tooltip::text("Toggle Organization Menu"),
-            )
-            .anchor(gpui::Corner::TopRight)
-            .into_any_element()
-    }
-
     pub fn render_user_menu_button(&mut self, cx: &mut Context<Self>) -> impl Element {
-        let show_update_badge = self.update_version.read(cx).show_update_in_menu_bar();
+        let show_update_button = self.update_version.read(cx).show_update_in_menu_bar();
 
-        let user_store = self.user_store.read(cx);
-        let user = user_store.current_user();
+        let user_store = self.user_store.clone();
+        let user_store_read = user_store.read(cx);
+        let user = user_store_read.current_user();
 
         let user_avatar = user.as_ref().map(|u| u.avatar_uri.clone());
         let user_login = user.as_ref().map(|u| u.github_login.clone());
 
         let is_signed_in = user.is_some();
 
-        let has_subscription_period = user_store.subscription_period().is_some();
-        let plan = user_store.plan().filter(|_| {
+        let has_subscription_period = user_store_read.subscription_period().is_some();
+        let plan = user_store_read.plan().filter(|_| {
             // Since the user might be on the legacy free plan we filter based on whether we have a subscription period.
             has_subscription_period
         });
 
-        PopoverMenu::new("user-menu")
-            .anchor(Corner::TopRight)
-            .menu(move |window, cx| {
-                ContextMenu::build(window, cx, |menu, _, _cx| {
-                    let user_login = user_login.clone();
+        let has_organization = user_store_read.current_organization().is_some();
 
+        let current_organization = user_store_read.current_organization();
+        let business_organization = current_organization
+            .as_ref()
+            .filter(|organization| !organization.is_personal);
+        let organizations: Vec<_> = user_store_read
+            .organizations()
+            .iter()
+            .map(|org| {
+                let plan = user_store_read.plan_for_organization(&org.id);
+                (org.clone(), plan)
+            })
+            .collect();
+
+        let show_user_picture = TitleBarSettings::get_global(cx).show_user_picture;
+
+        let trigger = if is_signed_in && show_user_picture {
+            let avatar = user_avatar.map(|avatar| Avatar::new(avatar)).map(|avatar| {
+                if show_update_button {
+                    avatar.indicator(
+                        div()
+                            .absolute()
+                            .bottom_0()
+                            .right_0()
+                            .child(Indicator::dot().color(Color::Accent)),
+                    )
+                } else {
+                    avatar
+                }
+            });
+
+            ButtonLike::new("user-menu").child(
+                h_flex()
+                    .when_some(business_organization, |this, organization| {
+                        this.gap_2()
+                            .child(Label::new(&organization.name).size(LabelSize::Small))
+                    })
+                    .children(avatar),
+            )
+        } else {
+            ButtonLike::new("user-menu")
+                .child(Icon::new(IconName::ChevronDown).size(IconSize::Small))
+        };
+
+        PopoverMenu::new("user-menu")
+            .trigger(trigger)
+            .menu(move |window, cx| {
+                let user_login = user_login.clone();
+                let current_organization = current_organization.clone();
+                let organizations = organizations.clone();
+                let user_store = user_store.clone();
+
+                ContextMenu::build(window, cx, |menu, _, _cx| {
                     menu.when(is_signed_in, |this| {
+                        let user_login = user_login.clone();
                         this.custom_entry(
                             move |_window, _cx| {
                                 let user_login = user_login.clone().unwrap_or_default();
@@ -1211,7 +1222,7 @@ impl TitleBar {
                         )
                         .separator()
                     })
-                    .when(show_update_badge, |this| {
+                    .when(show_update_button, |this| {
                         this.custom_entry(
                             move |_window, _cx| {
                                 h_flex()
@@ -1231,6 +1242,58 @@ impl TitleBar {
                             },
                         )
                         .separator()
+                    })
+                    .when(has_organization, |this| {
+                        let mut this = this.header("Organization");
+
+                        for (organization, plan) in &organizations {
+                            let organization = organization.clone();
+                            let plan = *plan;
+
+                            let is_current =
+                                current_organization
+                                    .as_ref()
+                                    .is_some_and(|current_organization| {
+                                        current_organization.id == organization.id
+                                    });
+
+                            this = this.custom_entry(
+                                {
+                                    let organization = organization.clone();
+                                    move |_window, _cx| {
+                                        h_flex()
+                                            .w_full()
+                                            .gap_4()
+                                            .justify_between()
+                                            .child(
+                                                h_flex()
+                                                    .gap_1()
+                                                    .child(Label::new(&organization.name))
+                                                    .when(is_current, |this| {
+                                                        this.child(
+                                                            Icon::new(IconName::Check)
+                                                                .color(Color::Accent),
+                                                        )
+                                                    }),
+                                            )
+                                            .child(PlanChip::new(plan.unwrap_or(Plan::ZedFree)))
+                                            .into_any_element()
+                                    }
+                                },
+                                {
+                                    let user_store = user_store.clone();
+                                    let organization = organization.clone();
+                                    move |_window, cx| {
+                                        user_store.update(cx, |user_store, cx| {
+                                            user_store
+                                                .set_current_organization(organization.clone(), cx);
+                                        });
+                                    }
+                                },
+                            );
+                        }
+
+                        this.separator()
                     })
                     .action("Settings", zed_actions::OpenSettings.boxed_clone())
                     .action("Keymap", Box::new(zed_actions::OpenKeymap))
@@ -1253,37 +1316,6 @@ impl TitleBar {
                 })
                 .into()
             })
-            .map(|this| {
-                if is_signed_in && TitleBarSettings::get_global(cx).show_user_picture {
-                    let avatar =
-                        user_avatar
-                            .clone()
-                            .map(|avatar| Avatar::new(avatar))
-                            .map(|avatar| {
-                                if show_update_badge {
-                                    avatar.indicator(
-                                        div()
-                                            .absolute()
-                                            .bottom_0()
-                                            .right_0()
-                                            .child(Indicator::dot().color(Color::Accent)),
-                                    )
-                                } else {
-                                    avatar
-                                }
-                            });
-                    this.trigger_with_tooltip(
-                        ButtonLike::new("user-menu").children(avatar),
-                        Tooltip::text("Toggle User Menu"),
-                    )
-                } else {
-                    this.trigger_with_tooltip(
-                        IconButton::new("user-menu", IconName::ChevronDown)
-                            .icon_size(IconSize::Small),
-                        Tooltip::text("Toggle User Menu"),
-                    )
-                }
-            })
-            .anchor(gpui::Corner::TopRight)
+            .anchor(Corner::TopRight)
     }
 }

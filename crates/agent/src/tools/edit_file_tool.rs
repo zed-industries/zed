@@ -8,14 +8,13 @@ use crate::{
 use acp_thread::Diff;
 use agent_client_protocol::{self as acp, ToolCallLocation, ToolCallUpdateFields};
 use anyhow::{Context as _, Result};
-use cloud_llm_client::CompletionIntent;
 use collections::HashSet;
 use futures::{FutureExt as _, StreamExt as _};
 use gpui::{App, AppContext, AsyncApp, Entity, Task, WeakEntity};
 use indoc::formatdoc;
 use language::language_settings::{self, FormatOnSave};
 use language::{LanguageRegistry, ToPoint};
-use language_model::LanguageModelToolResultContent;
+use language_model::{CompletionIntent, LanguageModelToolResultContent};
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use project::{Project, ProjectPath};
 use schemars::JsonSchema;
@@ -419,17 +418,6 @@ impl AgentTool for EditFileTool {
                         EditAgentOutputEvent::AmbiguousEditRange(ranges) => ambiguous_ranges = ranges,
                         EditAgentOutputEvent::ResolvingEditRange(range) => {
                             diff.update(cx, |card, cx| card.reveal_range(range.clone(), cx));
-                            // if !emitted_location {
-                            //     let line = buffer.update(cx, |buffer, _cx| {
-                            //         range.start.to_point(&buffer.snapshot()).row
-                            //     }).ok();
-                            //     if let Some(abs_path) = abs_path.clone() {
-                            //         event_stream.update_fields(ToolCallUpdateFields {
-                            //             locations: Some(vec![ToolCallLocation { path: abs_path, line }]),
-                            //             ..Default::default()
-                            //         });
-                            //     }
-                            // }
                         }
                     }
                 }
@@ -437,11 +425,7 @@ impl AgentTool for EditFileTool {
                 output.await?;
 
                 let format_on_save_enabled = buffer.read_with(cx, |buffer, cx| {
-                    let settings = language_settings::language_settings(
-                        buffer.language().map(|l| l.name()),
-                        buffer.file(),
-                        cx,
-                    );
+                    let settings = language_settings::LanguageSettings::for_buffer(buffer, cx);
                     settings.format_on_save != FormatOnSave::Off
                 });
 

@@ -4,23 +4,17 @@ use cpal::{
     DeviceDescription, DeviceId, default_host,
     traits::{DeviceTrait, HostTrait},
 };
-use gpui::{App, AsyncApp, BackgroundExecutor, BorrowAppContext, Global};
+use gpui::{App, AsyncApp, BorrowAppContext, Global};
 
 pub(super) use cpal::Sample;
-pub(super) use rodio::source::LimitSettings;
 
-use rodio::{
-    Decoder, DeviceSinkBuilder, MixerDeviceSink, Source,
-    mixer::Mixer,
-    source::{AutomaticGainControlSettings, Buffered},
-};
+use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Source, mixer::Mixer, source::Buffered};
 use settings::Settings;
-use std::{io::Cursor, path::PathBuf, sync::atomic::Ordering, time::Duration};
+use std::io::Cursor;
 use util::ResultExt;
 
 mod echo_canceller;
 use echo_canceller::EchoCanceller;
-mod replays;
 mod rodio_ext;
 pub use crate::audio_settings::AudioSettings;
 pub use rodio_ext::RodioExt;
@@ -59,7 +53,6 @@ pub struct Audio {
     output: Option<(MixerDeviceSink, Mixer)>,
     pub echo_canceller: EchoCanceller,
     source_cache: HashMap<Sound, Buffered<Decoder<Cursor<Vec<u8>>>>>,
-    replays: replays::Replays,
 }
 
 impl Global for Audio {}
@@ -82,84 +75,6 @@ impl Audio {
             .as_ref()
             .map(|(_, mixer)| mixer)
             .expect("we only get here if opening the outputstream succeeded"))
-    }
-
-    pub fn save_replays(
-        &self,
-        executor: BackgroundExecutor,
-    ) -> gpui::Task<anyhow::Result<(PathBuf, Duration)>> {
-        self.replays.replays_to_tar(executor)
-    }
-
-    pub fn open_microphone(mut voip_parts: VoipParts) -> anyhow::Result<impl Source> {
-        let stream = open_input_stream(voip_parts.input_audio_device)?;
-        let stream = stream
-            .possibly_disconnected_channels_to_mono()
-            .constant_params(CHANNEL_COUNT, SAMPLE_RATE)
-            .process_buffer::<BUFFER_SIZE, _>(move |buffer| {
-                let mut int_buffer: [i16; _] = buffer.map(|s| s.to_sample());
-                if voip_parts
-                    .echo_canceller
-                    .process_stream(&mut int_buffer)
-                    .log_err()
-                    .is_some()
-                {
-                    for (sample, processed) in buffer.iter_mut().zip(&int_buffer) {
-                        *sample = (*processed).to_sample();
-                    }
-                }
-            })
-            .limit(LimitSettings::live_performance())
-            .automatic_gain_control(AutomaticGainControlSettings {
-                target_level: 0.90,
-                attack_time: Duration::from_secs(1),
-                release_time: Duration::from_secs(0),
-                absolute_max_gain: 5.0,
-            })
-            .periodic_access(Duration::from_millis(100), move |agc_source| {
-                agc_source
-                    .set_enabled(LIVE_SETTINGS.auto_microphone_volume.load(Ordering::Relaxed));
-                let _ = LIVE_SETTINGS.denoise; // TODO(audio: re-introduce de-noising
-            });
-
-        let (replay, stream) = stream.replayable(crate::REPLAY_DURATION)?;
-        voip_parts
-            .replays
-            .add_voip_stream("local microphone".to_string(), replay);
-
-        Ok(stream)
-    }
-
-    pub fn play_voip_stream(
-        source: impl rodio::Source + Send + 'static,
-        speaker_name: String,
-        is_staff: bool,
-        cx: &mut App,
-    ) -> anyhow::Result<()> {
-        let (replay_source, source) = source
-            .automatic_gain_control(AutomaticGainControlSettings {
-                target_level: 0.90,
-                attack_time: Duration::from_secs(1),
-                release_time: Duration::from_secs(0),
-                absolute_max_gain: 5.0,
-            })
-            .periodic_access(Duration::from_millis(100), move |agc_source| {
-                agc_source.set_enabled(LIVE_SETTINGS.auto_speaker_volume.load(Ordering::Relaxed));
-            })
-            .replayable(crate::REPLAY_DURATION)
-            .expect("REPLAY_DURATION is longer than 100ms");
-        let output_audio_device = AudioSettings::get_global(cx).output_audio_device.clone();
-
-        cx.update_default_global(|this: &mut Self, _cx| {
-            let output_mixer = this
-                .ensure_output_exists(output_audio_device)
-                .context("Could not get output mixer")?;
-            output_mixer.add(source);
-            if is_staff {
-                this.replays.add_voip_stream(speaker_name, replay_source);
-            }
-            Ok(())
-        })
     }
 
     pub fn play_sound(sound: Sound, cx: &mut App) {
@@ -200,29 +115,6 @@ impl Audio {
         self.source_cache.insert(sound, source.clone());
 
         Ok(source)
-    }
-}
-
-pub struct VoipParts {
-    echo_canceller: EchoCanceller,
-    replays: replays::Replays,
-    input_audio_device: Option<DeviceId>,
-}
-
-impl VoipParts {
-    pub fn new(cx: &AsyncApp) -> anyhow::Result<Self> {
-        let (apm, replays) = cx.read_default_global::<Audio, _>(|audio, _| {
-            (audio.echo_canceller.clone(), audio.replays.clone())
-        });
-        let input_audio_device =
-            AudioSettings::try_read_global(cx, |settings| settings.input_audio_device.clone())
-                .flatten();
-
-        Ok(Self {
-            echo_canceller: apm,
-            replays,
-            input_audio_device,
-        })
     }
 }
 

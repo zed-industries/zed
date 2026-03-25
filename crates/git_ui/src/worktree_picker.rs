@@ -18,7 +18,7 @@ use remote::{RemoteConnectionOptions, remote_client::ConnectionIdentifier};
 use remote_connection::{RemoteConnectionModal, connect};
 use settings::Settings;
 use std::{path::PathBuf, sync::Arc};
-use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, prelude::*};
+use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use util::ResultExt;
 use workspace::{ModalView, MultiWorkspace, Workspace, notifications::DetachAndPromptErr};
 
@@ -769,38 +769,83 @@ impl PickerDelegate for WorktreeListDelegate {
             )
         };
 
+        let focus_handle = self.focus_handle.clone();
+
+        let delete_button = |entry_ix: usize| {
+            IconButton::new(("delete-worktree", entry_ix), IconName::Trash)
+                .icon_size(IconSize::Small)
+                .tooltip(move |_, cx| {
+                    Tooltip::for_action_in("Delete Worktree", &DeleteWorktree, &focus_handle, cx)
+                })
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.delegate.delete_at(entry_ix, window, cx);
+                }))
+        };
+
+        let entry_icon = if entry.is_new {
+            IconName::Plus
+        } else {
+            IconName::GitWorktree
+        };
+
         Some(
             ListItem::new(format!("worktree-menu-{ix}"))
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
                 .child(
-                    v_flex()
+                    h_flex()
                         .w_full()
+                        .gap_2p5()
                         .child(
-                            h_flex()
-                                .gap_2()
-                                .justify_between()
-                                .overflow_x_hidden()
-                                .child(branch_name)
-                                .when(!entry.is_new, |this| {
-                                    this.child(
-                                        Label::new(sha)
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted)
-                                            .buffer_font(cx)
-                                            .into_element(),
-                                    )
-                                }),
-                        )
-                        .child(
-                            Label::new(sublabel)
-                                .size(LabelSize::Small)
+                            Icon::new(entry_icon)
                                 .color(Color::Muted)
-                                .truncate()
-                                .into_any_element(),
-                        ),
-                ),
+                                .size(IconSize::Small),
+                        )
+                        .child(v_flex().w_full().child(branch_name).map(|this| {
+                            if entry.is_new {
+                                this.child(
+                                    Label::new(sublabel)
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted)
+                                        .truncate(),
+                                )
+                            } else {
+                                this.child(
+                                    h_flex()
+                                        .w_full()
+                                        .min_w_0()
+                                        .gap_1p5()
+                                        .child(
+                                            Label::new(sha)
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                        )
+                                        .child(
+                                            Label::new("•")
+                                                .alpha(0.5)
+                                                .color(Color::Muted)
+                                                .size(LabelSize::Small),
+                                        )
+                                        .child(
+                                            Label::new(sublabel)
+                                                .truncate()
+                                                .color(Color::Muted)
+                                                .size(LabelSize::Small)
+                                                .flex_1(),
+                                        )
+                                        .into_any_element(),
+                                )
+                            }
+                        })),
+                )
+                .when(!entry.is_new, |this| {
+                    if selected {
+                        this.end_slot(delete_button(ix))
+                    } else {
+                        this.end_hover_slot(delete_button(ix))
+                    }
+                }),
         )
     }
 

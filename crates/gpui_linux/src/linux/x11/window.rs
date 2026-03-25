@@ -277,6 +277,7 @@ pub struct X11WindowState {
     hidden: bool,
     active: bool,
     hovered: bool,
+    pub(crate) force_render_after_recovery: bool,
     fullscreen: bool,
     client_side_decorations_supported: bool,
     decorations: WindowDecorations,
@@ -750,6 +751,7 @@ impl X11WindowState {
                 input_handler: None,
                 active: false,
                 hovered: false,
+                force_render_after_recovery: false,
                 fullscreen: false,
                 maximized_vertical: false,
                 maximized_horizontal: false,
@@ -1637,6 +1639,7 @@ impl PlatformWindow for X11Window {
 
             // The current scene references atlas textures that were cleared during recovery.
             // Skip this frame and let the next frame rebuild the scene with fresh textures.
+            inner.force_render_after_recovery = true;
             return;
         }
 

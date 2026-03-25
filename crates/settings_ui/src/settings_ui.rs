@@ -1516,7 +1516,7 @@ impl SettingsWindow {
         })
         .detach();
 
-        cx.on_window_closed(|cx| {
+        cx.on_window_closed(|cx, _window_id| {
             if let Some(existing_window) = cx
                 .windows()
                 .into_iter()

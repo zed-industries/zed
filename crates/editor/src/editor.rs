@@ -136,8 +136,8 @@ use language::{
     OutlineItem, Point, Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
     WordsQuery,
     language_settings::{
-        self, LanguageSettings, LspInsertMode, RewrapBehavior, WordsCompletionMode,
-        all_language_settings, language_settings,
+        self, AllLanguageSettings, LanguageSettings, LspInsertMode, RewrapBehavior,
+        WordsCompletionMode, all_language_settings,
     },
     point_from_lsp, point_to_lsp, text_diff_with_options,
 };
@@ -596,7 +596,8 @@ impl Default for EditorStyle {
 }
 
 pub fn make_inlay_hints_style(cx: &App) -> HighlightStyle {
-    let show_background = language_settings::language_settings(None, None, cx)
+    let show_background = AllLanguageSettings::get_global(cx)
+        .defaults
         .inlay_hints
         .show_background;
 
@@ -5977,14 +5978,7 @@ impl Editor {
             .read(cx)
             .text_anchor_for_position(position, cx)?;
 
-        let settings = language_settings::language_settings(
-            buffer
-                .read(cx)
-                .language_at(buffer_position)
-                .map(|l| l.name()),
-            buffer.read(cx).file(),
-            cx,
-        );
+        let settings = LanguageSettings::for_buffer_at(&buffer.read(cx), buffer_position, cx);
         if !settings.use_on_type_format {
             return None;
         }
@@ -6098,8 +6092,7 @@ impl Editor {
         let language = buffer_snapshot
             .language_at(buffer_position.text_anchor)
             .map(|language| language.name());
-
-        let language_settings = language_settings(language.clone(), buffer_snapshot.file(), cx);
+        let language_settings = multibuffer_snapshot.language_settings_at(buffer_position, cx);
         let completion_settings = language_settings.completions.clone();
 
         let show_completions_on_input = self
@@ -6967,8 +6960,7 @@ impl Editor {
             let resolved_tasks = resolved_tasks.as_ref()?;
             let buffer = buffer.read(cx);
             let language = buffer.language()?;
-            let file = buffer.file();
-            let debug_adapter = language_settings(language.name().into(), file, cx)
+            let debug_adapter = LanguageSettings::for_buffer(&buffer, cx)
                 .debuggers
                 .first()
                 .map(SharedString::from)
@@ -8066,11 +8058,7 @@ impl Editor {
             return EditPredictionSettings::Disabled;
         }
 
-        let buffer = buffer.read(cx);
-
-        let file = buffer.file();
-
-        if !language_settings(buffer.language().map(|l| l.name()), file, cx).show_edit_predictions {
+        if !LanguageSettings::for_buffer(&buffer.read(cx), cx).show_edit_predictions {
             return EditPredictionSettings::Disabled;
         };
 
@@ -8085,6 +8073,7 @@ impl Editor {
                 .as_ref()
                 .is_some_and(|provider| provider.provider.show_predictions_in_menu());
 
+        let file = buffer.read(cx).file();
         let preview_requires_modifier =
             all_language_settings(file, cx).edit_predictions_mode() == EditPredictionsMode::Subtle;
 
@@ -8427,7 +8416,7 @@ impl Editor {
             provider.discard(reason, cx);
         }
 
-        self.take_active_edit_prediction(cx)
+        self.take_active_edit_prediction(reason == EditPredictionDiscardReason::Ignored, cx)
     }
 
     fn report_edit_prediction_event(&self, id: Option<SharedString>, accepted: bool, cx: &App) {
@@ -8495,14 +8484,22 @@ impl Editor {
         self.active_edit_prediction.is_some()
     }
 
-    fn take_active_edit_prediction(&mut self, cx: &mut Context<Self>) -> bool {
+    fn take_active_edit_prediction(
+        &mut self,
+        preserve_stale_in_menu: bool,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let Some(active_edit_prediction) = self.active_edit_prediction.take() else {
+            if !preserve_stale_in_menu {
+                self.stale_edit_prediction_in_menu = None;
+            }
             return false;
         };
 
         self.splice_inlays(&active_edit_prediction.inlay_ids, Default::default(), cx);
         self.clear_highlights(HighlightKey::EditPredictionHighlight, cx);
-        self.stale_edit_prediction_in_menu = Some(active_edit_prediction);
+        self.stale_edit_prediction_in_menu =
+            preserve_stale_in_menu.then_some(active_edit_prediction);
         true
     }
 
@@ -8715,7 +8712,7 @@ impl Editor {
             return None;
         }
 
-        self.take_active_edit_prediction(cx);
+        self.take_active_edit_prediction(true, cx);
         let Some(provider) = self.edit_prediction_provider() else {
             self.edit_prediction_settings = EditPredictionSettings::Disabled;
             return None;
@@ -8834,6 +8831,7 @@ impl Editor {
             let target = first_edit_start;
             EditPrediction::MoveWithin { target, snapshot }
         } else {
+            let show_completions_in_menu = self.has_visible_completions_menu();
             let show_completions_in_buffer = !self.edit_prediction_visible_in_cursor_popover(true)
                 && !self.edit_predictions_hidden_for_vim_mode;
 
@@ -8847,16 +8845,26 @@ impl Editor {
                 EditDisplayMode::DiffPopover
             };
 
-            if show_completions_in_buffer {
-                if let Some(provider) = &self.edit_prediction_provider {
-                    let suggestion_display_type = match display_mode {
-                        EditDisplayMode::DiffPopover => SuggestionDisplayType::DiffPopover,
-                        EditDisplayMode::Inline | EditDisplayMode::TabAccept => {
-                            SuggestionDisplayType::GhostText
-                        }
-                    };
-                    provider.provider.did_show(suggestion_display_type, cx);
+            let report_shown = match display_mode {
+                EditDisplayMode::DiffPopover | EditDisplayMode::Inline => {
+                    show_completions_in_buffer || show_completions_in_menu
                 }
+                EditDisplayMode::TabAccept => {
+                    show_completions_in_menu || self.edit_prediction_preview_is_active()
+                }
+            };
+
+            if report_shown && let Some(provider) = &self.edit_prediction_provider {
+                let suggestion_display_type = match display_mode {
+                    EditDisplayMode::DiffPopover => SuggestionDisplayType::DiffPopover,
+                    EditDisplayMode::Inline | EditDisplayMode::TabAccept => {
+                        SuggestionDisplayType::GhostText
+                    }
+                };
+                provider.provider.did_show(suggestion_display_type, cx);
+            }
+
+            if show_completions_in_buffer {
                 if edits
                     .iter()
                     .all(|(range, _)| range.to_offset(&multibuffer).is_empty())
@@ -15545,7 +15553,8 @@ impl Editor {
                 }
             }
 
-            nav_history.push(Some(data), cx);
+            let cursor_row = data.cursor_position.row;
+            nav_history.push(Some(data), Some(cursor_row), cx);
             cx.emit(EditorEvent::PushedToNavHistory {
                 anchor: cursor_anchor,
                 is_deactivate,
@@ -24464,9 +24473,8 @@ impl Editor {
             |mut acc, buffer| {
                 let buffer = buffer.read(cx);
                 let language = buffer.language().map(|language| language.name());
-                if let hash_map::Entry::Vacant(v) = acc.entry(language.clone()) {
-                    let file = buffer.file();
-                    v.insert(language_settings(language, file, cx).into_owned());
+                if let hash_map::Entry::Vacant(v) = acc.entry(language) {
+                    v.insert(LanguageSettings::for_buffer(&buffer, cx).into_owned());
                 }
                 acc
             },
@@ -25205,7 +25213,7 @@ impl Editor {
         {
             self.hide_context_menu(window, cx);
         }
-        self.take_active_edit_prediction(cx);
+        self.take_active_edit_prediction(true, cx);
         cx.emit(EditorEvent::Blurred);
         cx.notify();
     }
@@ -25968,10 +25976,9 @@ fn process_completion_for_edit(
                 CompletionIntent::CompleteWithInsert => false,
                 CompletionIntent::CompleteWithReplace => true,
                 CompletionIntent::Complete | CompletionIntent::Compose => {
-                    let insert_mode =
-                        language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
-                            .completions
-                            .lsp_insert_mode;
+                    let insert_mode = LanguageSettings::for_buffer(&buffer, cx)
+                        .completions
+                        .lsp_insert_mode;
                     match insert_mode {
                         LspInsertMode::Insert => false,
                         LspInsertMode::Replace => true,
