@@ -53,7 +53,21 @@ struct CGRect {
     size: CGSize,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct UIEdgeInsets {
+    top: f64,
+    left: f64,
+    bottom: f64,
+    right: f64,
+}
+
 // objc::Encode implementations allow these types to appear in add_method signatures.
+unsafe impl objc::Encode for UIEdgeInsets {
+    fn encode() -> objc::Encoding {
+        unsafe { objc::Encoding::from_str("{UIEdgeInsets=dddd}") }
+    }
+}
 unsafe impl objc::Encode for CGPoint {
     fn encode() -> objc::Encoding {
         unsafe { objc::Encoding::from_str("{CGPoint=dd}") }
@@ -99,6 +113,10 @@ struct IosWindowState {
     /// when transitioning to a newly-focused input element. Prevents keyboard
     /// from appearing on app launch (auto-focus) or during scroll gestures.
     show_keyboard_after_tap: bool,
+    /// Origin of the safe area in the view's coordinate space (the offset
+    /// applied to the Metal layer to avoid system chrome). Input coordinates
+    /// from UIKit must be shifted by this amount to map into GPUI space.
+    safe_area_origin: CGPoint,
     renderer: MetalRenderer,
     callbacks: IosWindowCallbacks,
 }
@@ -116,8 +134,24 @@ impl IosWindowState {
         let scale: f32 = msg_send![view, contentScaleFactor];
         let scale = if scale > 0.0 { scale } else { 2.0 };
 
-        let logical_width = view_bounds.size.width as f32;
-        let logical_height = view_bounds.size.height as f32;
+        // Read UIKit safe area insets (status bar, home indicator, etc.)
+        // and inset the Metal layer so GPUI content stays within the safe area.
+        let insets: UIEdgeInsets = msg_send![view, safeAreaInsets];
+        let safe_origin = CGPoint {
+            x: view_bounds.origin.x + insets.left,
+            y: view_bounds.origin.y + insets.top,
+        };
+        self.safe_area_origin = safe_origin;
+        let safe_frame = CGRect {
+            origin: safe_origin,
+            size: CGSize {
+                width: view_bounds.size.width - insets.left - insets.right,
+                height: view_bounds.size.height - insets.top - insets.bottom,
+            },
+        };
+
+        let logical_width = safe_frame.size.width as f32;
+        let logical_height = safe_frame.size.height as f32;
         if logical_width <= 0.0 || logical_height <= 0.0 {
             return None;
         }
@@ -126,7 +160,7 @@ impl IosWindowState {
         let device_height = (logical_height * scale).round() as i32;
 
         let layer_ptr = self.renderer.layer_ptr();
-        let _: () = msg_send![layer_ptr, setFrame: view_bounds];
+        let _: () = msg_send![layer_ptr, setFrame: safe_frame];
         let _: () = msg_send![layer_ptr, setContentsScale: scale as f64];
         self.renderer.update_drawable_size(gpui::size(
             DevicePixels(device_width),
@@ -142,6 +176,15 @@ impl IosWindowState {
         self.scale_factor = scale;
 
         if old_size != new_size { Some((new_size, scale)) } else { None }
+    }
+
+    /// Convert a UIKit view-space point to GPUI content-space by subtracting
+    /// the safe area origin (where the Metal layer starts).
+    fn point_to_gpui(&self, location: CGPoint) -> Point<Pixels> {
+        Point {
+            x: gpui::px((location.x - self.safe_area_origin.x) as f32),
+            y: gpui::px((location.y - self.safe_area_origin.y) as f32),
+        }
     }
 }
 
@@ -195,6 +238,7 @@ impl IosWindow {
             ui_view,
             keyboard_shown: false,
             show_keyboard_after_tap: false,
+            safe_area_origin: CGPoint::default(),
             renderer,
             callbacks: IosWindowCallbacks::default(),
         }));
@@ -1590,10 +1634,7 @@ fn handle_touches(this: &Object, touches: *mut Object, kind: TouchKind) {
         let view = this as *const Object as *mut Object;
         let location: CGPoint = msg_send![touch, locationInView: view];
         let tap_count: usize = msg_send![touch, tapCount];
-        let position = Point {
-            x: gpui::px(location.x as f32),
-            y: gpui::px(location.y as f32),
-        };
+        let position = state_rc.borrow().point_to_gpui(location);
         (position, tap_count.max(1))
     };
 
@@ -1740,10 +1781,7 @@ extern "C" fn handle_pan_gesture(this: &Object, _sel: Sel, recognizer: *mut Obje
         let _: () = msg_send![recognizer, setTranslation: zero inView: view];
 
         let location: CGPoint = msg_send![recognizer, locationInView: view];
-        let position = Point {
-            x: gpui::px(location.x as f32),
-            y: gpui::px(location.y as f32),
-        };
+        let position = state_rc.borrow().point_to_gpui(location);
 
         let modifiers = state_rc.borrow().current_modifiers;
         let event = PlatformInput::ScrollWheel(ScrollWheelEvent {
@@ -1772,14 +1810,14 @@ extern "C" fn handle_scroll_wheel(this: &Object, _sel: Sel, ui_event: *mut Objec
             return;
         }
 
-        // Fall back to view center since the simulator scroll wheel event
-        // doesn't carry touch location.
-        let view = this as *const Object as *mut Object;
-        let bounds: CGRect = msg_send![view, bounds];
+        // Fall back to the center of the GPUI content area since the simulator
+        // scroll wheel event doesn't carry touch location.
+        let state = state_rc.borrow();
         let position = Point {
-            x: gpui::px((bounds.size.width / 2.0) as f32),
-            y: gpui::px((bounds.size.height / 2.0) as f32),
+            x: state.bounds.size.width / 2.0,
+            y: state.bounds.size.height / 2.0,
         };
+        drop(state);
 
         let modifiers = state_rc.borrow().current_modifiers;
         let event = PlatformInput::ScrollWheel(ScrollWheelEvent {
