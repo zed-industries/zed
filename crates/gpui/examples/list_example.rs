@@ -1,20 +1,5 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
-//! Reproduction for https://github.com/zed-industries/zed/issues/51198
-//!
-//! A bottom-aligned list with a scrollbar. The bug: when the list is pinned
-//! to the bottom (the default for `ListAlignment::Bottom`),
-//! `scroll_px_offset_for_scrollbar()` returns the full content height instead
-//! of `content_height - viewport_height`, so the unclamped fraction exceeds
-//! 1.0 and the thumb renders off the visible track.
-//!
-//! This example deliberately does NOT clamp the thumb position so the bug is
-//! visible: on a buggy build the thumb will be pushed below the track. The
-//! diagnostic line at the top shows the raw fraction — it should be 1.0 when
-//! pinned to the bottom, but reads >1.0 on the unfixed code.
-//!
-//! Run with: cargo run -p gpui --example bottom_list_scrollbar
-
 use gpui::{
     App, Bounds, Context, ListAlignment, ListState, Render, Window, WindowBounds, WindowOptions,
     div, list, prelude::*, px, rgb, size,
@@ -58,7 +43,6 @@ impl Render for BottomListDemo {
         };
 
         let track_space = viewport_height - thumb_height;
-        // Intentionally unclamped so the bug is visible.
         let thumb_top = track_space * raw_fraction;
 
         let bug_detected = raw_fraction > 1.0;
