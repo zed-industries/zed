@@ -1,9 +1,8 @@
-use collections::{BTreeMap, BTreeSet};
+use collections::BTreeMap;
 use gpui_util::post_inc;
 use std::{
     cell::{Cell, RefCell},
     fmt::Debug,
-    mem,
     rc::Rc,
 };
 
@@ -19,12 +18,12 @@ impl<EmitterKey, Callback> Clone for SubscriberSet<EmitterKey, Callback> {
 
 struct SubscriberSetState<EmitterKey, Callback> {
     subscribers: BTreeMap<EmitterKey, Option<BTreeMap<usize, Subscriber<Callback>>>>,
-    dropped_subscribers: BTreeSet<(EmitterKey, usize)>,
     next_subscriber_id: usize,
 }
 
 struct Subscriber<Callback> {
     active: Rc<Cell<bool>>,
+    dropped: Rc<Cell<bool>>,
     callback: Callback,
 }
 
@@ -36,7 +35,6 @@ where
     pub fn new() -> Self {
         Self(Rc::new(RefCell::new(SubscriberSetState {
             subscribers: Default::default(),
-            dropped_subscribers: Default::default(),
             next_subscriber_id: 0,
         })))
     }
@@ -51,6 +49,7 @@ where
         callback: Callback,
     ) -> (Subscription, impl FnOnce() + use<EmitterKey, Callback>) {
         let active = Rc::new(Cell::new(false));
+        let dropped = Rc::new(Cell::new(false));
         let mut lock = self.0.borrow_mut();
         let subscriber_id = post_inc(&mut lock.next_subscriber_id);
         lock.subscribers
@@ -61,6 +60,7 @@ where
                 subscriber_id,
                 Subscriber {
                     active: active.clone(),
+                    dropped: dropped.clone(),
                     callback,
                 },
             );
@@ -68,23 +68,19 @@ where
 
         let subscription = Subscription {
             unsubscribe: Some(Box::new(move || {
+                dropped.set(true);
+
                 let mut lock = this.borrow_mut();
                 let Some(subscribers) = lock.subscribers.get_mut(&emitter_key) else {
-                    // remove was called with this emitter_key
                     return;
                 };
 
                 if let Some(subscribers) = subscribers {
-                    if subscribers.remove(&subscriber_id).is_some() {
-                        if subscribers.is_empty() {
-                            lock.subscribers.remove(&emitter_key);
-                        }
-                        return;
+                    subscribers.remove(&subscriber_id);
+                    if subscribers.is_empty() {
+                        lock.subscribers.remove(&emitter_key);
                     }
                 }
-
-                lock.dropped_subscribers
-                    .insert((emitter_key, subscriber_id));
             })),
         };
         (subscription, move || active.set(true))
@@ -125,37 +121,21 @@ where
             return;
         };
 
-        debug_assert!(
-            self.0.borrow().dropped_subscribers.is_empty(),
-            "dropped_subscribers should be empty at the start of retain"
-        );
-
-        subscribers.retain(|id, subscriber| {
-            if self
-                .0
-                .borrow_mut()
-                .dropped_subscribers
-                .remove(&(emitter.clone(), *id))
-            {
+        subscribers.retain(|_, subscriber| {
+            if !subscriber.active.get() {
+                return true;
+            }
+            if subscriber.dropped.get() {
                 return false;
             }
-            if subscriber.active.get() {
-                f(&mut subscriber.callback)
-            } else {
-                true
-            }
+            let keep = f(&mut subscriber.callback);
+            keep && !subscriber.dropped.get()
         });
         let mut lock = self.0.borrow_mut();
 
         // Add any new subscribers that were added while invoking the callback.
         if let Some(Some(new_subscribers)) = lock.subscribers.remove(emitter) {
             subscribers.extend(new_subscribers);
-        }
-
-        // Remove any dropped subscriptions that were dropped while invoking the callback.
-        for (dropped_emitter, dropped_subscription_id) in mem::take(&mut lock.dropped_subscribers) {
-            debug_assert_eq!(*emitter, dropped_emitter);
-            subscribers.remove(&dropped_subscription_id);
         }
 
         if !subscribers.is_empty() {
