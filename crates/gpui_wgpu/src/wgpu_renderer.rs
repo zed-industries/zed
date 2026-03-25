@@ -71,6 +71,13 @@ struct PathRasterizationVertex {
 pub struct WgpuSurfaceConfig {
     pub size: Size<DevicePixels>,
     pub transparent: bool,
+    /// Preferred presentation mode. When `Some`, the renderer will use this
+    /// mode if supported by the surface, falling back to `Fifo`.
+    /// When `None`, defaults to `Fifo` (VSync).
+    ///
+    /// Mobile platforms may prefer `Mailbox` (triple-buffering) to avoid
+    /// blocking in `get_current_texture()` during lifecycle transitions.
+    pub preferred_present_mode: Option<wgpu::PresentMode>,
 }
 
 struct WgpuPipelines {
@@ -138,6 +145,7 @@ pub struct WgpuRenderer {
     last_error: Arc<Mutex<Option<String>>>,
     failed_frame_count: u32,
     device_lost: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    surface_configured: bool,
 }
 
 impl WgpuRenderer {
@@ -321,23 +329,10 @@ impl WgpuRenderer {
             format: surface_format,
             width: clamped_width.max(1),
             height: clamped_height.max(1),
-            // Prefer Mailbox (triple-buffering) to avoid blocking in
-            // get_current_texture() during mobile lifecycle transitions
-            // (e.g. Android rotation, background/foreground).  Fifo blocks
-            // on VSync and can deadlock if the compositor is frozen.
-            present_mode: if surface_caps
-                .present_modes
-                .contains(&wgpu::PresentMode::Mailbox)
-            {
-                wgpu::PresentMode::Mailbox
-            } else if surface_caps
-                .present_modes
-                .contains(&wgpu::PresentMode::AutoNoVsync)
-            {
-                wgpu::PresentMode::AutoNoVsync
-            } else {
-                wgpu::PresentMode::Fifo
-            },
+            present_mode: config
+                .preferred_present_mode
+                .filter(|mode| surface_caps.present_modes.contains(mode))
+                .unwrap_or(wgpu::PresentMode::Fifo),
             desired_maximum_frame_latency: 2,
             alpha_mode,
             view_formats: vec![],
@@ -484,6 +479,7 @@ impl WgpuRenderer {
             last_error,
             failed_frame_count: 0,
             device_lost: context.device_lost_flag(),
+            surface_configured: true,
         })
     }
 
@@ -1655,10 +1651,12 @@ impl WgpuRenderer {
     pub fn unconfigure_surface(&mut self) {
         self.surface_configured = false;
         // Drop intermediate textures since they reference the old surface size.
-        self.path_intermediate_texture = None;
-        self.path_intermediate_view = None;
-        self.path_msaa_texture = None;
-        self.path_msaa_view = None;
+        if let Some(res) = self.resources.as_mut() {
+            res.path_intermediate_texture = None;
+            res.path_intermediate_view = None;
+            res.path_msaa_texture = None;
+            res.path_msaa_view = None;
+        }
     }
 
     /// Replace the wgpu surface with a new one (e.g. after Android destroys
@@ -1670,7 +1668,7 @@ impl WgpuRenderer {
     /// different instance will cause a "Device does not exist" panic because
     /// the wgpu device is bound to its originating instance.
     #[cfg(not(target_family = "wasm"))]
-    pub fn replace_surface<W: HasWindowHandle + HasDisplayHandle>(
+    pub fn replace_surface<W: HasWindowHandle>(
         &mut self,
         window: &W,
         config: WgpuSurfaceConfig,
@@ -1679,20 +1677,8 @@ impl WgpuRenderer {
         let window_handle = window
             .window_handle()
             .map_err(|e| anyhow::anyhow!("Failed to get window handle: {e}"))?;
-        let display_handle = window
-            .display_handle()
-            .map_err(|e| anyhow::anyhow!("Failed to get display handle: {e}"))?;
 
-        let target = wgpu::SurfaceTargetUnsafe::RawHandle {
-            raw_display_handle: display_handle.as_raw(),
-            raw_window_handle: window_handle.as_raw(),
-        };
-
-        let surface = unsafe {
-            instance
-                .create_surface_unsafe(target)
-                .map_err(|e| anyhow::anyhow!("Failed to create surface: {e}"))?
-        };
+        let surface = create_surface(instance, window_handle.as_raw())?;
 
         let width = (config.size.width.0 as u32).max(1);
         let height = (config.size.height.0 as u32).max(1);
@@ -1706,16 +1692,26 @@ impl WgpuRenderer {
         self.surface_config.width = width;
         self.surface_config.height = height;
         self.surface_config.alpha_mode = alpha_mode;
-        surface.configure(&self.device, &self.surface_config);
+        if let Some(mode) = config.preferred_present_mode {
+            self.surface_config.present_mode = mode;
+        }
 
-        self.surface = surface;
+        {
+            let res = self
+                .resources
+                .as_mut()
+                .expect("GPU resources not available");
+            surface.configure(&res.device, &self.surface_config);
+            res.surface = surface;
+
+            // Invalidate intermediate textures — they'll be recreated lazily.
+            res.path_intermediate_texture = None;
+            res.path_intermediate_view = None;
+            res.path_msaa_texture = None;
+            res.path_msaa_view = None;
+        }
+
         self.surface_configured = true;
-
-        // Invalidate intermediate textures — they'll be recreated lazily.
-        self.path_intermediate_texture = None;
-        self.path_intermediate_view = None;
-        self.path_msaa_texture = None;
-        self.path_msaa_view = None;
 
         Ok(())
     }
@@ -1782,6 +1778,7 @@ impl WgpuRenderer {
                 height: gpui::DevicePixels(self.surface_config.height as i32),
             },
             transparent: self.surface_config.alpha_mode != wgpu::CompositeAlphaMode::Opaque,
+            preferred_present_mode: Some(self.surface_config.present_mode),
         };
         let gpu_context = Rc::clone(gpu_context);
         let ctx_ref = gpu_context.borrow();
