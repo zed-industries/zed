@@ -486,10 +486,12 @@ func (d *testDriver) advanceToNextRound() {
 	log.Printf("##################################################")
 
 	// Wait for stale events from the previous round to drain before starting.
-	// This also gives time for the new agent to be installed (e.g., Claude Code
-	// auto-installs via npm on first use, which can take 10-30s).
-	log.Printf("[test-server] Waiting 5s for previous round events to drain...")
-	time.Sleep(5 * time.Second)
+	// Phase 11 sends a message via SendChatMessage whose completion may arrive
+	// after the round advances. We need enough time for all trailing events to
+	// be processed and filtered. This also gives time for the new agent to be
+	// installed (e.g., Claude Code auto-installs via npm on first use).
+	log.Printf("[test-server] Waiting 10s for previous round events to drain...")
+	time.Sleep(10 * time.Second)
 
 	d.runPhase1()
 }
