@@ -3,8 +3,8 @@ use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, Focusable, Render, Task, WeakEntity, Window,
 };
 use picker::{Picker, PickerDelegate};
-use settings::{ActiveSettingsProfileName, SettingsStore};
-use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
+use settings::{ActiveSettingsProfileName, ProfileBase, SettingsStore};
+use ui::{HighlightedLabel, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use workspace::{ModalView, Workspace};
 
 pub fn init(cx: &mut App) {
@@ -255,20 +255,48 @@ impl PickerDelegate for SettingsProfileSelectorDelegate {
         ix: usize,
         selected: bool,
         _: &mut Window,
-        _: &mut Context<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let mat = &self.matches.get(ix)?;
         let profile_name = &self.profile_names.get(mat.candidate_id)?;
+
+        let base_badge = profile_name.as_ref().and_then(|name| {
+            let store = cx.global::<SettingsStore>();
+            let user_settings = store.raw_user_settings()?;
+            let profile = user_settings.profiles.get(name)?;
+            let base = profile.base;
+            let tooltip = match base {
+                ProfileBase::User => "Applies on top of your settings",
+                ProfileBase::Default => "Applies on top of Zed's defaults",
+            };
+            Some(
+                div()
+                    .id(SharedString::from(format!("base-badge-{ix}")))
+                    .ml_auto()
+                    .child(
+                        Label::new(base.to_string())
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .tooltip(Tooltip::text(tooltip)),
+            )
+        });
 
         Some(
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
-                .child(HighlightedLabel::new(
-                    display_name(profile_name),
-                    mat.positions.clone(),
-                )),
+                .child(
+                    h_flex()
+                        .w_full()
+                        .gap_2()
+                        .child(HighlightedLabel::new(
+                            display_name(profile_name),
+                            mat.positions.clone(),
+                        ))
+                        .children(base_badge),
+                ),
         )
     }
 }
