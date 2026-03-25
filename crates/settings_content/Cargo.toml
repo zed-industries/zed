@@ -28,9 +28,3 @@ settings_json.workspace = true
 settings_macros.workspace = true
 strum.workspace = true
 util.workspace = true
-
-# Uncomment other workspace dependencies as needed
-# assistant.workspace = true
-# client.workspace = true
-# project.workspace = true
-# settings.workspace = true
