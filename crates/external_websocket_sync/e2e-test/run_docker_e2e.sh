@@ -86,13 +86,16 @@ mkdir -p "$SCREENSHOTS_DIR"
 E2E_AGENTS="${E2E_AGENTS:-zed-agent}"
 echo "=== Running E2E test (agents: $E2E_AGENTS) ==="
 
-# Mount local claude-agent-acp if available (for testing local changes)
+# Mount local claude-agent-acp if available (for testing local changes).
+# Disabled by default: let Zed auto-install the latest from npm via npx,
+# which ensures we test against the same version users get.
+# To test local changes, uncomment the block below.
 CLAUDE_ACP_MOUNT=""
-CLAUDE_ACP_DIR="$ZED_DIR/../claude-agent-acp"
-if [ -d "$CLAUDE_ACP_DIR/dist" ] && echo "$E2E_AGENTS" | grep -q "claude"; then
-    CLAUDE_ACP_MOUNT="-v $(cd "$CLAUDE_ACP_DIR" && pwd):/opt/claude-agent-acp"
-    echo "[setup] Mounting local claude-agent-acp from $CLAUDE_ACP_DIR"
-fi
+# CLAUDE_ACP_DIR="$ZED_DIR/../claude-agent-acp"
+# if [ -d "$CLAUDE_ACP_DIR/dist" ] && echo "$E2E_AGENTS" | grep -q "claude"; then
+#     CLAUDE_ACP_MOUNT="-v $(cd "$CLAUDE_ACP_DIR" && pwd):/opt/claude-agent-acp"
+#     echo "[setup] Mounting local claude-agent-acp from $CLAUDE_ACP_DIR"
+# fi
 
 ANTHROPIC_BASE_URL_ARG=""
 if [ -n "${ANTHROPIC_BASE_URL:-}" ]; then

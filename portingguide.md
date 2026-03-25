@@ -43,28 +43,36 @@ The entire crate is Helix-specific. It provides:
 
 ### E2E Test (`e2e-test/`)
 
-Seven-phase test that validates the full protocol. Runs in Docker against a real LLM (Anthropic API). Two Dockerfiles:
+Ten-phase test that validates the full protocol for both `zed-agent` and `claude` (Claude Code) agents. Runs in Docker against a real LLM (Anthropic API). The Go test server uses the **same production Helix handler code** (`NewTestServer` + `ExternalAgentSyncHandler`) with an in-memory store.
+
+Two Dockerfiles:
 - `Dockerfile.runtime` — for local dev runs (`run_docker_e2e.sh`)
 - `Dockerfile.ci` — for CI (takes pre-built Zed binary + Helix Go source as build context)
+
+**Important:** The test creates a seed session in the store before Zed connects (matching `HELIX_SESSION_ID`). This mirrors production where sessions always exist before the agent connects. Without it, `handleUserCreatedThread` fails with "session not found". See `CLAUDE.md` in the e2e-test directory for binary freshness requirements.
 
 Phases:
 1. **Phase 1**: New thread creation via `chat_message`
 2. **Phase 2**: Follow-up message to existing thread
 3. **Phase 3**: New thread creation (second thread)
 4. **Phase 4**: Follow-up to non-visible thread (Thread A while Thread B is displayed)
-5. **Phase 5**: `message_completed` emitted after `Stopped` for all turn sources
-6. **Phase 6**: Mid-stream interrupt (second `send()` displaces active turn, both emit `Stopped`)
-7. **Phase 7**: MCP tool call events appear with correct `entry_type`/`tool_name`/`tool_status`
+5. **Phase 5**: Simulate user input (Zed → Helix sync direction)
+6. **Phase 6**: Query UI state (active_view, thread_id, entry_count, MCP servers, model)
+7. **Phase 7**: Open thread + follow-up chat
+8. **Phase 8**: Mid-stream interrupt (second `send()` displaces active turn, both emit `Stopped`)
+9. **Phase 9**: Rapid 3-turn cancel (chat_message, then simulate_user_input + chat_message back-to-back)
+10. **Phase 10**: User-created thread (inject `user_created_thread`, verify session + work session)
 
-Each phase also queries UI state via `query_ui_state` to verify the agent panel state.
+A `slow-mcp-server` test helper (in `e2e-test/slow-mcp-server/`) simulates an MCP server with delayed tool responses, used to test the `wait_for_tools_ready` path (Phase 1 waits ~30s for MCP tools to load).
 
-A `slow-mcp-server` test helper (in `e2e-test/slow-mcp-server/`) simulates an MCP server with delayed tool responses, used by phases 6 and 7 to test the `wait_for_tools_ready` path.
+Claude Code (`claude-agent-acp`) is auto-installed from npm by Zed at runtime — the test does NOT bundle a local copy. The version is logged at test start for debugging.
 
 ```bash
-# Run E2E test (local)
+# Run E2E test (local) — ALWAYS copy latest binary first!
 cd crates/external_websocket_sync/e2e-test
-cp ../../zed-build/zed zed-binary
-./run_docker_e2e.sh  # builds Go test server + Docker image + runs test
+cp ~/pm/helix/zed-build/zed zed-binary
+./run_docker_e2e.sh                          # zed-agent only
+E2E_AGENTS="zed-agent,claude" ./run_docker_e2e.sh  # both agents
 # Screenshots saved to ./screenshots/
 ```
 
@@ -134,6 +142,7 @@ These files contain Helix-specific changes that must be preserved during rebases
 ### `crates/acp_thread/src/acp_thread.rs`
 - **`content_only()` method on `AssistantMessage`**: Returns content without the `## Assistant\n\n` heading. Used by thread_service.rs for WebSocket sync to avoid sending the heading to Helix.
 - **`AcpThreadEvent::Stopped` is a tuple variant**: As of the 2026-03-22 upstream merge, `Stopped` takes a `StopReason` argument: `Stopped(acp::StopReason)`. Pattern matches must use `Stopped(_)` and emission must pass a reason, e.g. `cx.emit(AcpThreadEvent::Stopped(acp::StopReason::Cancelled))`.
+- **`cancel()` drops send_task instead of awaiting**: See Critical Fix #8 below.
 
 ### `crates/acp_thread/src/connection.rs`
 - **`wait_for_tools_ready()` on `AgentConnection` trait**: New method added to `AgentConnection`. Default impl returns `Task::ready(())`. `HeadlessConnection` relies on the default. `NativeAgentConnection` implementation in `context_server_registry.rs` waits for all pending MCP tool loads. **When upstream adds methods to `AgentConnection`, `HeadlessConnection` must be updated** — it won't compile otherwise.
@@ -290,6 +299,35 @@ fn load_session(self: Rc<Self>, session: AgentSessionInfo, ..., cx: &mut App)
 
 **Symptom:** After container restart, Zed works fine locally but all Helix messages are silently swallowed — no responses appear in the Helix session.
 
+### 8. Cancel Must Drop send_task, Not Await It
+
+**File:** `crates/acp_thread/src/acp_thread.rs` — `AcpThread::cancel()`
+
+**Bug:** `cancel()` called `cx.background_spawn(turn.send_task)` to wait for the old turn's prompt future to complete before starting the next turn. This required the ACP agent to properly respond to `CancelNotification`. Claude Code's `claude-agent-acp` has multiple bugs where cancel doesn't cause the prompt to return (see [#442](https://github.com/zed-industries/claude-agent-acp/issues/442), [#423](https://github.com/zed-industries/claude-agent-acp/pull/423)), causing `cancel()` to block indefinitely and the next turn to never start.
+
+**Fix:** `drop(turn.send_task)` instead of awaiting it. Dropping the GPUI Task cancels the prompt future, which drops the oneshot `tx`. The `rx.await` in `run_turn` then returns `Err`, hitting the existing "tx dropped" handler that emits `Stopped(Cancelled)`. The `connection.cancel()` notification is still sent as a courtesy, but we don't wait for acknowledgement.
+
+```rust
+pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<()> {
+    let Some(turn) = self.running_turn.take() else {
+        return Task::ready(());
+    };
+    self.connection.cancel(&self.session_id, cx);
+    Self::flush_streaming_text(&mut self.streaming_text_buffer, cx);
+    self.mark_pending_tools_as_canceled();
+
+    // Drop instead of: cx.background_spawn(turn.send_task)
+    drop(turn.send_task);
+    Task::ready(())
+}
+```
+
+**History:** Fixed in `6e0e6db32b`. The previous approach (`cx.background_spawn`) worked for NativeAgent (which responds to cancel immediately) but deadlocked with Claude Code.
+
+**Symptom:** Phase 8 (mid-stream interrupt) times out for Claude Code agent. User pressing stop/interrupt in Zed while Claude Code is streaming causes the thread to hang permanently.
+
+**Note:** Even if the claude-agent-acp cancel bugs (#442, #423) are fully fixed upstream, the drop approach should be kept as a defensive measure. Any ACP agent that doesn't properly respond to `CancelNotification` would cause the same deadlock. The drop approach makes Zed resilient to buggy agent implementations without changing protocol semantics (the cancel notification is still sent).
+
 ## Environment Variables
 
 | Variable | Purpose | Default |
@@ -358,7 +396,8 @@ When rebasing/merging against upstream Zed:
 28. **Check `SyncEvent::MessageAdded`** — has `entry_type`, `tool_name`, `tool_status` fields
 29. **Check `SyncEvent::UiStateResponse`** — has `mcp_servers` and `active_model` fields
 30. **Check `NativeAgent` multi-project**: `agent.projects.values().next()` to get `ProjectState`; no more flat `agent.project` or `agent.context_server_registry()` fields/methods
-31. **Run `cargo check --package zed --features external_websocket_sync`** — must compile
+31. **Check `acp_thread.rs` `cancel()`** — must `drop(turn.send_task)` not `cx.background_spawn(turn.send_task)` (Critical Fix #8)
+32. **Run `cargo check --package zed --features external_websocket_sync`** — must compile
 32. **Run `cargo test -p external_websocket_sync`** — unit tests
 33. **Run E2E test** after merge to verify all phases pass
 
@@ -422,3 +461,5 @@ Helix-specific commits on main (oldest first):
 | `bfe84a2134` | Send structured tool_name and tool_status in message_added events |
 | `e38aad1a18` | Clear persistent subscription on unregister to fix E2E timeout |
 | `8b033a4451` | **Test: add Stopped emission and mid-stream interrupt E2E tests (Critical Fix #6)** |
+| `85be6df7b6` | **Fix: E2E seed session, user_created_thread tracking, interaction count** |
+| `6e0e6db32b` | **Fix: drop cancel task to prevent deadlock with Claude Code (Critical Fix #8)** |
