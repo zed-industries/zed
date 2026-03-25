@@ -94,6 +94,7 @@ impl AgentSettings {
 
 #[derive(Clone, Debug, Default)]
 pub struct SpeechToTextSettings {
+    pub enabled: bool,
     pub whisper_cpp_executable_path: Option<PathBuf>,
     pub whisper_cpp_model_path: Option<PathBuf>,
     pub trigger_mode: SpeechToTextTriggerMode,
@@ -451,6 +452,11 @@ impl Settings for AgentSettings {
             tool_permissions: compile_tool_permissions(agent.tool_permissions),
             new_thread_location: agent.new_thread_location.unwrap_or_default(),
             speech_to_text: SpeechToTextSettings {
+                enabled: agent
+                    .speech_to_text
+                    .as_ref()
+                    .and_then(|speech_to_text| speech_to_text.enabled)
+                    .unwrap_or(false),
                 whisper_cpp_executable_path: agent
                     .speech_to_text
                     .as_ref()

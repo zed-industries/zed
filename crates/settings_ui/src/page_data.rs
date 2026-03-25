@@ -22,6 +22,12 @@ const DEFAULT_STRING: String = String::new();
 /// A default empty string reference. Useful in `pick` functions for cases either in dynamic item fields, or when dealing with `settings::Maybe`
 /// to avoid the "NO DEFAULT" case.
 const DEFAULT_EMPTY_STRING: Option<&String> = Some(&DEFAULT_STRING);
+const DEFAULT_FALSE: bool = false;
+const DEFAULT_FALSE_BOOL: Option<&bool> = Some(&DEFAULT_FALSE);
+const DEFAULT_SPEECH_TO_TEXT_TRIGGER_MODE: settings::SpeechToTextTriggerMode =
+    settings::SpeechToTextTriggerMode::Toggle;
+const DEFAULT_SPEECH_TO_TEXT_TRIGGER_MODE_VALUE: Option<&settings::SpeechToTextTriggerMode> =
+    Some(&DEFAULT_SPEECH_TO_TEXT_TRIGGER_MODE);
 
 const DEFAULT_AUDIO_OUTPUT: AudioOutputDeviceName = AudioOutputDeviceName(None);
 const DEFAULT_EMPTY_AUDIO_OUTPUT: Option<&AudioOutputDeviceName> = Some(&DEFAULT_AUDIO_OUTPUT);
@@ -5606,7 +5612,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn agent_panel_section() -> [SettingsPageItem; 5] {
+    fn agent_panel_section() -> [SettingsPageItem; 7] {
         [
             SettingsPageItem::SectionHeader("Agent Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5645,6 +5651,52 @@ fn panels_page() -> SettingsPage {
                     },
                     write: |settings_content, value| {
                         settings_content.agent.get_or_insert_default().default_width = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Enable Voice Input",
+                description: "Whether to show dictation controls in the agent composer.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.speech_to_text.enabled"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()
+                            .and_then(|agent| agent.speech_to_text.as_ref())
+                            .and_then(|speech_to_text| speech_to_text.enabled.as_ref())
+                            .or(DEFAULT_FALSE_BOOL)
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .set_speech_to_text_enabled(value.unwrap_or(false));
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Voice Input Trigger Mode",
+                description: "Whether the dictation button records until clicked again or only while held down.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.speech_to_text.trigger_mode"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()
+                            .and_then(|agent| agent.speech_to_text.as_ref())
+                            .and_then(|speech_to_text| speech_to_text.trigger_mode.as_ref())
+                            .or(DEFAULT_SPEECH_TO_TEXT_TRIGGER_MODE_VALUE)
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .set_speech_to_text_trigger_mode(value.unwrap_or_default());
                     },
                 }),
                 metadata: None,

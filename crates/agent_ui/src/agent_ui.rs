@@ -667,6 +667,7 @@ mod tests {
             tool_permissions: Default::default(),
             show_turn_stats: false,
             new_thread_location: Default::default(),
+            speech_to_text: Default::default(),
         };
 
         cx.update(|cx| {

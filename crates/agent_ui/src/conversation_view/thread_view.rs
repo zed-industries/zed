@@ -3216,7 +3216,7 @@ impl ThreadView {
                             .gap_1()
                             .items_center()
                             .children(self.render_token_usage(cx))
-                            .child(self.render_microphone_control(window, cx))
+                            .children(self.render_microphone_control(window, cx))
                             .children(self.profile_selector.clone())
                             .map(|this| {
                                 // Either config_options_view OR (mode_selector + model_selector)
@@ -8324,6 +8324,10 @@ impl ThreadView {
     }
 
     fn start_voice_recording(&mut self, cx: &mut Context<Self>) -> anyhow::Result<()> {
+        if !AgentSettings::get_global(cx).speech_to_text.enabled {
+            anyhow::bail!("Voice input is disabled in agent settings.");
+        }
+
         self.resolve_whisper_cpp_configuration(cx)?;
         audio::ensure_devices_initialized(cx);
         let available_devices = cx.default_global::<AvailableAudioDevices>().0.clone();
@@ -8719,7 +8723,11 @@ impl ThreadView {
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> Option<AnyElement> {
+        if !AgentSettings::get_global(cx).speech_to_text.enabled {
+            return None;
+        }
+
         audio::ensure_devices_initialized(cx);
         let available_devices = cx.default_global::<AvailableAudioDevices>().0.clone();
         let mut microphone_options = vec![MicrophoneOption {
@@ -8923,16 +8931,19 @@ impl ThreadView {
         })
         .render(window, cx);
 
-        div()
-            .relative()
-            .child(
-                h_flex()
-                    .items_center()
-                    .gap_px()
-                    .child(voice_recording_button)
-                    .child(microphone_menu),
-            )
-            .when_some(indicator, |this, indicator| this.child(indicator))
+        Some(
+            div()
+                .relative()
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap_px()
+                        .child(voice_recording_button)
+                        .child(microphone_menu),
+                )
+                .when_some(indicator, |this, indicator| this.child(indicator))
+                .into_any_element(),
+        )
     }
 }
 

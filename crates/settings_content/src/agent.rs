@@ -180,6 +180,14 @@ impl AgentSettingsContent {
         self.new_thread_location = Some(value);
     }
 
+    pub fn set_speech_to_text_enabled(&mut self, enabled: bool) {
+        self.speech_to_text.get_or_insert_default().enabled = Some(enabled);
+    }
+
+    pub fn set_speech_to_text_trigger_mode(&mut self, trigger_mode: SpeechToTextTriggerMode) {
+        self.speech_to_text.get_or_insert_default().trigger_mode = Some(trigger_mode);
+    }
+
     pub fn add_favorite_model(&mut self, model: LanguageModelSelection) {
         if !self.favorite_models.contains(&model) {
             self.favorite_models.push(model);
@@ -233,11 +241,17 @@ impl AgentSettingsContent {
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
 pub struct SpeechToTextContent {
+    /// Whether voice input controls should be shown in the agent panel.
+    ///
+    /// Default: false
+    pub enabled: Option<bool>,
     /// Path to the whisper.cpp executable to run for transcription.
     pub whisper_cpp_executable_path: Option<PathBuf>,
     /// Path to the whisper.cpp model file to use for transcription.
     pub whisper_cpp_model_path: Option<PathBuf>,
     /// Whether the microphone button toggles recording or records only while held.
+    ///
+    /// Default: "toggle"
     pub trigger_mode: Option<SpeechToTextTriggerMode>,
 }
 
