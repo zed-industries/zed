@@ -1246,12 +1246,24 @@ impl ConnectionLanding {
                     .gap_4()
                     .child(Vector::square(VectorName::ZedLogo, rems_from_px(45.)))
                     .child(
-                        v_flex().child(Headline::new("Welcome to Zed")).child(
-                            Label::new("The editor for what's next")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted)
-                                .italic(),
-                        ),
+                        v_flex()
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .items_center()
+                                    .child(Headline::new("Welcome to Zed"))
+                                    .child(
+                                        Icon::new(IconName::Sparkle)
+                                            .size(IconSize::Medium)
+                                            .color(Color::Accent),
+                                    ),
+                            )
+                            .child(
+                                Label::new("The editor for what's next")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted)
+                                    .italic(),
+                            ),
                     ),
             )
             .child(Label::new("Connect to a remote host to start editing").color(Color::Muted))
@@ -1265,7 +1277,7 @@ impl ConnectionLanding {
         let editing = self.editing_hosts;
         let has_hosts = !self.saved_hosts.is_empty();
 
-        let mut list = v_flex().w_96().gap_2().child(
+        let mut list = v_flex().w(rems_from_px(540.)).gap_2().child(
             h_flex()
                 .justify_between()
                 .items_center()
@@ -1686,7 +1698,7 @@ impl ConnectionLanding {
 
         v_flex()
             .id("add-host-form")
-            .w_96()
+            .w(rems_from_px(540.))
             .gap_4()
             .child(
                 Label::new(form_title)
