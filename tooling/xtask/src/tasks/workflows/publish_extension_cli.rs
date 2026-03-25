@@ -42,7 +42,7 @@ fn publish_job() -> NamedJob {
     named::job(
         Job::default()
             .with_repository_owner_guard()
-            .runs_on(runners::LINUX_SMALL)
+            .runs_on(runners::LINUX_DEFAULT)
             .add_step(steps::checkout_repo())
             .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(steps::setup_linux())

@@ -234,6 +234,14 @@ impl Workspace {
         self.suppressed_notifications.insert(id.clone());
     }
 
+    pub fn is_notification_suppressed(&self, notification_id: NotificationId) -> bool {
+        self.suppressed_notifications.contains(&notification_id)
+    }
+
+    pub fn unsuppress(&mut self, notification_id: NotificationId) {
+        self.suppressed_notifications.remove(&notification_id);
+    }
+
     pub fn show_initial_notifications(&mut self, cx: &mut Context<Self>) {
         // Allow absence of the global so that tests don't need to initialize it.
         let app_notifications = GLOBAL_APP_NOTIFICATIONS
@@ -917,11 +925,11 @@ pub mod simple_message_notification {
                                 }));
 
                             if let Some(icon) = self.primary_icon {
-                                button = button
-                                    .icon(icon)
-                                    .icon_color(self.primary_icon_color.unwrap_or(Color::Muted))
-                                    .icon_position(IconPosition::Start)
-                                    .icon_size(IconSize::Small);
+                                button = button.start_icon(
+                                    Icon::new(icon)
+                                        .size(IconSize::Small)
+                                        .color(self.primary_icon_color.unwrap_or(Color::Muted)),
+                                );
                             }
 
                             button
@@ -937,11 +945,11 @@ pub mod simple_message_notification {
                                 }));
 
                             if let Some(icon) = self.secondary_icon {
-                                button = button
-                                    .icon(icon)
-                                    .icon_position(IconPosition::Start)
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(self.secondary_icon_color.unwrap_or(Color::Muted));
+                                button = button.start_icon(
+                                    Icon::new(icon)
+                                        .size(IconSize::Small)
+                                        .color(self.secondary_icon_color.unwrap_or(Color::Muted)),
+                                );
                             }
 
                             button
@@ -955,9 +963,11 @@ pub mod simple_message_notification {
                                         let url = url.clone();
                                         Button::new(message.clone(), message.clone())
                                             .label_size(LabelSize::Small)
-                                            .icon(IconName::ArrowUpRight)
-                                            .icon_size(IconSize::Indicator)
-                                            .icon_color(Color::Muted)
+                                            .end_icon(
+                                                Icon::new(IconName::ArrowUpRight)
+                                                    .size(IconSize::Indicator)
+                                                    .color(Color::Muted),
+                                            )
                                             .on_click(cx.listener(move |_, _, _, cx| {
                                                 cx.open_url(&url);
                                             }))

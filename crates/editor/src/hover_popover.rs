@@ -8,10 +8,10 @@ use crate::{
 };
 use anyhow::Context as _;
 use gpui::{
-    AnyElement, App, AsyncApp, AsyncWindowContext, Bounds, Context, Entity, Focusable as _,
-    FontWeight, Hsla, InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels,
-    ScrollHandle, Size, StatefulInteractiveElement, StyleRefinement, Styled, Subscription, Task,
-    TextStyleRefinement, WeakEntity, Window, canvas, div, px,
+    AnyElement, App, AsyncWindowContext, Bounds, Context, Entity, Focusable as _, FontWeight, Hsla,
+    InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, ScrollHandle, Size,
+    StatefulInteractiveElement, StyleRefinement, Styled, Subscription, Task, TextStyleRefinement,
+    Window, canvas, div, px,
 };
 use itertools::Itertools;
 use language::{DiagnosticEntry, Language, LanguageRegistry};
@@ -73,18 +73,13 @@ pub fn hover_at(
             }
 
             // If we are moving closer, or if no timer is running at all, start/restart the 300ms timer.
-            let delay = 300u64;
-            let task = cx.spawn(move |this: WeakEntity<Editor>, cx: &mut AsyncApp| {
-                let mut cx = cx.clone();
-                async move {
-                    cx.background_executor()
-                        .timer(Duration::from_millis(delay))
-                        .await;
-                    this.update(&mut cx, |editor, cx| {
-                        hide_hover(editor, cx);
-                    })
-                    .ok();
-                }
+            let delay = Duration::from_millis(300u64);
+            let task = cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(delay).await;
+                this.update(cx, |editor, cx| {
+                    hide_hover(editor, cx);
+                })
+                .ok();
             });
             editor.hover_state.hiding_delay_task = Some(task);
         }

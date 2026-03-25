@@ -799,6 +799,11 @@ impl Database {
                             remote_upstream_url: db_repository.remote_upstream_url.clone(),
                             remote_origin_url: db_repository.remote_origin_url.clone(),
                             original_repo_abs_path: Some(db_repository.abs_path),
+                            linked_worktrees: db_repository
+                                .linked_worktrees
+                                .as_deref()
+                                .and_then(|s| serde_json::from_str(s).ok())
+                                .unwrap_or_default(),
                         });
                     }
                 }

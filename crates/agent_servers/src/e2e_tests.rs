@@ -14,6 +14,7 @@ use std::{
     time::Duration,
 };
 use util::path;
+use util::path_list::PathList;
 
 pub async fn test_basic<T, F>(server: F, cx: &mut TestAppContext)
 where
@@ -207,8 +208,10 @@ pub async fn test_tool_call_with_permission<T, F>(
     thread.update(cx, |thread, cx| {
         thread.authorize_tool_call(
             tool_call_id,
-            allow_option_id,
-            acp::PermissionOptionKind::AllowOnce,
+            acp_thread::SelectedPermissionOutcome::new(
+                allow_option_id,
+                acp::PermissionOptionKind::AllowOnce,
+            ),
             cx,
         );
 
@@ -433,11 +436,16 @@ pub async fn new_test_thread(
     let store = project.read_with(cx, |project, _| project.agent_server_store().clone());
     let delegate = AgentServerDelegate::new(store, None);
 
-    let connection = cx.update(|cx| server.connect(delegate, cx)).await.unwrap();
-
-    cx.update(|cx| connection.new_session(project.clone(), current_dir.as_ref(), cx))
+    let connection = cx
+        .update(|cx| server.connect(delegate, project.clone(), cx))
         .await
-        .unwrap()
+        .unwrap();
+
+    cx.update(|cx| {
+        connection.new_session(project.clone(), PathList::new(&[current_dir.as_ref()]), cx)
+    })
+    .await
+    .unwrap()
 }
 
 pub async fn run_until_first_tool_call(

@@ -10,13 +10,13 @@ use file_icons::FileIcons;
 use gpui::PinchEvent;
 use gpui::{
     AnyElement, App, Bounds, Context, DispatchPhase, Element, ElementId, Entity, EventEmitter,
-    FocusHandle, Focusable, GlobalElementId, InspectorElementId, InteractiveElement, IntoElement,
-    LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels,
-    Point, Render, ScrollDelta, ScrollWheelEvent, Style, Styled, Task, WeakEntity, Window, actions,
-    checkerboard, div, img, point, px, size,
+    FocusHandle, Focusable, Font, GlobalElementId, InspectorElementId, InteractiveElement,
+    IntoElement, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    ParentElement, Pixels, Point, Render, ScrollDelta, ScrollWheelEvent, Style, Styled, Task,
+    WeakEntity, Window, actions, checkerboard, div, img, point, px, size,
 };
 use language::File as _;
-use persistence::IMAGE_VIEWER;
+use persistence::ImageViewerDb;
 use project::{ImageItem, Project, ProjectPath, image_store::ImageItemEvent};
 use settings::Settings;
 use theme::ThemeSettings;
@@ -26,7 +26,7 @@ use workspace::{
     ItemId, ItemSettings, Pane, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
     WorkspaceId, delete_unloaded_items,
     invalid_item_view::InvalidItemView,
-    item::{BreadcrumbText, Item, ItemHandle, ProjectItem, SerializableItem, TabContentParams},
+    item::{HighlightedText, Item, ItemHandle, ProjectItem, SerializableItem, TabContentParams},
 };
 
 pub use crate::image_info::*;
@@ -530,15 +530,17 @@ impl Item for ImageView {
         }
     }
 
-    fn breadcrumbs(&self, cx: &App) -> Option<Vec<BreadcrumbText>> {
+    fn breadcrumbs(&self, cx: &App) -> Option<(Vec<HighlightedText>, Option<Font>)> {
         let text = breadcrumbs_text_for_image(self.project.read(cx), self.image_item.read(cx), cx);
-        let settings = ThemeSettings::get_global(cx);
+        let font = ThemeSettings::get_global(cx).buffer_font.clone();
 
-        Some(vec![BreadcrumbText {
-            text,
-            highlights: None,
-            font: Some(settings.buffer_font.clone()),
-        }])
+        Some((
+            vec![HighlightedText {
+                text: text.into(),
+                highlights: vec![],
+            }],
+            Some(font),
+        ))
     }
 
     fn can_split(&self) -> bool {
@@ -598,8 +600,9 @@ impl SerializableItem for ImageView {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<anyhow::Result<Entity<Self>>> {
+        let db = ImageViewerDb::global(cx);
         window.spawn(cx, async move |cx| {
-            let image_path = IMAGE_VIEWER
+            let image_path = db
                 .get_image_path(item_id, workspace_id)?
                 .context("No image path found")?;
 
@@ -632,13 +635,8 @@ impl SerializableItem for ImageView {
         _window: &mut Window,
         cx: &mut App,
     ) -> Task<anyhow::Result<()>> {
-        delete_unloaded_items(
-            alive_items,
-            workspace_id,
-            "image_viewers",
-            &IMAGE_VIEWER,
-            cx,
-        )
+        let db = ImageViewerDb::global(cx);
+        delete_unloaded_items(alive_items, workspace_id, "image_viewers", &db, cx)
     }
 
     fn serialize(
@@ -652,12 +650,11 @@ impl SerializableItem for ImageView {
         let workspace_id = workspace.database_id()?;
         let image_path = self.image_item.read(cx).abs_path(cx)?;
 
+        let db = ImageViewerDb::global(cx);
         Some(cx.background_spawn({
             async move {
                 log::debug!("Saving image at path {image_path:?}");
-                IMAGE_VIEWER
-                    .save_image_path(item_id, workspace_id, image_path)
-                    .await
+                db.save_image_path(item_id, workspace_id, image_path).await
             }
         }))
     }
@@ -908,7 +905,7 @@ mod persistence {
         )];
     }
 
-    db::static_connection!(IMAGE_VIEWER, ImageViewerDb, [WorkspaceDb]);
+    db::static_connection!(ImageViewerDb, [WorkspaceDb]);
 
     impl ImageViewerDb {
         query! {

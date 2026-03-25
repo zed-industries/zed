@@ -11,7 +11,7 @@ pub struct HighlightId(pub u32);
 const DEFAULT_SYNTAX_HIGHLIGHT_ID: HighlightId = HighlightId(u32::MAX);
 
 impl HighlightMap {
-    pub(crate) fn new(capture_names: &[&str], theme: &SyntaxTheme) -> Self {
+    pub fn new(capture_names: &[&str], theme: &SyntaxTheme) -> Self {
         // For each capture name in the highlight query, find the longest
         // key in the theme's syntax styles that matches all of the
         // dot-separated components of the capture name.
@@ -20,23 +20,8 @@ impl HighlightMap {
                 .iter()
                 .map(|capture_name| {
                     theme
-                        .highlights
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(i, (key, _))| {
-                            let mut len = 0;
-                            let capture_parts = capture_name.split('.');
-                            for key_part in key.split('.') {
-                                if capture_parts.clone().any(|part| part == key_part) {
-                                    len += 1;
-                                } else {
-                                    return None;
-                                }
-                            }
-                            Some((i, len))
-                        })
-                        .max_by_key(|(_, len)| *len)
-                        .map_or(DEFAULT_SYNTAX_HIGHLIGHT_ID, |(i, _)| HighlightId(i as u32))
+                        .highlight_id(capture_name)
+                        .map_or(DEFAULT_SYNTAX_HIGHLIGHT_ID, HighlightId)
                 })
                 .collect(),
         )
@@ -59,11 +44,11 @@ impl HighlightId {
     }
 
     pub fn style(&self, theme: &SyntaxTheme) -> Option<HighlightStyle> {
-        theme.highlights.get(self.0 as usize).map(|entry| entry.1)
+        theme.get(self.0 as usize).cloned()
     }
 
     pub fn name<'a>(&self, theme: &'a SyntaxTheme) -> Option<&'a str> {
-        theme.highlights.get(self.0 as usize).map(|e| e.0.as_str())
+        theme.get_capture_name(self.0 as usize)
     }
 }
 
@@ -86,8 +71,8 @@ mod tests {
 
     #[test]
     fn test_highlight_map() {
-        let theme = SyntaxTheme {
-            highlights: [
+        let theme = SyntaxTheme::new(
+            [
                 ("function", rgba(0x100000ff)),
                 ("function.method", rgba(0x200000ff)),
                 ("function.async", rgba(0x300000ff)),
@@ -96,9 +81,8 @@ mod tests {
                 ("variable", rgba(0x600000ff)),
             ]
             .iter()
-            .map(|(name, color)| (name.to_string(), (*color).into()))
-            .collect(),
-        };
+            .map(|(name, color)| (name.to_string(), (*color).into())),
+        );
 
         let capture_names = &[
             "function.special",
