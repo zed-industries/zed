@@ -420,6 +420,7 @@ impl TerminalBuilder {
             event_loop_task: Task::ready(Ok(())),
             background_executor: background_executor.clone(),
             path_style,
+            cwd_history: Vec::new(),
             #[cfg(any(test, feature = "test-support"))]
             input_log: Vec::new(),
         };
@@ -653,6 +654,10 @@ impl TerminalBuilder {
                 event_loop_task: Task::ready(Ok(())),
                 background_executor,
                 path_style,
+                cwd_history: working_directory
+                    .as_ref()
+                    .map(|cwd| vec![(i32::MIN, cwd.clone())])
+                    .unwrap_or_default(),
                 #[cfg(any(test, feature = "test-support"))]
                 input_log: Vec::new(),
             };
@@ -879,6 +884,7 @@ pub struct Terminal {
     event_loop_task: Task<Result<(), anyhow::Error>>,
     background_executor: BackgroundExecutor,
     path_style: PathStyle,
+    cwd_history: Vec<(i32, PathBuf)>,
     #[cfg(any(test, feature = "test-support"))]
     input_log: Vec<Vec<u8>>,
 }
@@ -1200,7 +1206,8 @@ impl Terminal {
                     self.path_style,
                 ) {
                     Some(hyperlink) => {
-                        self.process_hyperlink(hyperlink, *open, cx);
+                        let history_size = term.history_size() as i32;
+                        self.process_hyperlink(hyperlink, *open, history_size, cx);
                     }
                     None => {
                         self.last_content.last_hovered_word = None;
@@ -1209,7 +1216,10 @@ impl Terminal {
                 }
             }
             InternalEvent::ProcessHyperlink(hyperlink, open) => {
-                self.process_hyperlink(hyperlink.clone(), *open, cx);
+                // history_size must be read here since process_hyperlink cannot lock term
+                // (sync() already holds the lock when dispatching events)
+                let history_size = term.history_size() as i32;
+                self.process_hyperlink(hyperlink.clone(), *open, history_size, cx);
             }
         }
     }
@@ -1218,10 +1228,13 @@ impl Terminal {
         &mut self,
         hyperlink: (String, bool, Match),
         open: bool,
+        history_size: i32,
         cx: &mut Context<Self>,
     ) {
         let (maybe_url_or_path, is_url, url_match) = hyperlink;
         let prev_hovered_word = self.last_content.last_hovered_word.take();
+        let match_line = url_match.start().line;
+        let terminal_dir = self.cwd_at_line(match_line, history_size);
 
         let target = if is_url {
             if let Some(path) = maybe_url_or_path.strip_prefix("file://") {
@@ -1231,7 +1244,7 @@ impl Terminal {
 
                 MaybeNavigationTarget::PathLike(PathLikeTarget {
                     maybe_path: decoded_path,
-                    terminal_dir: self.working_directory(),
+                    terminal_dir,
                 })
             } else {
                 MaybeNavigationTarget::Url(maybe_url_or_path.clone())
@@ -1239,7 +1252,7 @@ impl Terminal {
         } else {
             MaybeNavigationTarget::PathLike(PathLikeTarget {
                 maybe_path: maybe_url_or_path.clone(),
-                terminal_dir: self.working_directory(),
+                terminal_dir,
             })
         };
 
@@ -2126,6 +2139,26 @@ impl Terminal {
                 .map(|process| process.cwd.clone()),
             TerminalType::DisplayOnly => None,
         }
+    }
+
+    pub(crate) fn record_cwd_change(&mut self, new_cwd: PathBuf) {
+        let term = self.term.lock_unfair();
+        let pos = term.history_size() as i32 + term.grid().cursor.point.line.0;
+        drop(term);
+        self.cwd_history.push((pos, new_cwd));
+    }
+
+    fn cwd_at_line(&self, line: Line, history_size: i32) -> Option<PathBuf> {
+        if self.cwd_history.is_empty() {
+            return self.working_directory();
+        }
+        let click_pos = history_size + line.0;
+        self.cwd_history
+            .iter()
+            .rev()
+            .find(|(pos, _)| *pos <= click_pos)
+            .map(|(_, cwd)| cwd.clone())
+            .or_else(|| self.working_directory())
     }
 
     pub fn title(&self, truncate: bool) -> String {
