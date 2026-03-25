@@ -1211,10 +1211,11 @@ impl SettingsStore {
             merged.merge_from_option(self.global_settings.as_deref());
             if let Some(user_settings) = self.user_settings.as_ref() {
                 let active_profile = user_settings.for_profile(cx);
-                let uses_default_base =
-                    active_profile.is_some_and(|p| p.base == ProfileBase::Default);
+                let include_user_settings = active_profile
+                    .map(|p| p.base == ProfileBase::User)
+                    .unwrap_or(true);
 
-                if !uses_default_base {
+                if include_user_settings {
                     merged.merge_from(&user_settings.content);
                     merged.merge_from_option(user_settings.for_release_channel());
                     merged.merge_from_option(user_settings.for_os());
