@@ -17,7 +17,7 @@ use project::{
         ContextServerStatus, ContextServerStore, ServerStatusChangedEvent,
         registry::ContextServerDescriptorRegistry,
     },
-    project_settings::{ContextServerSettings, ProjectSettings},
+    project_settings::{ContextServerSettings, OAuthClientSettings, ProjectSettings},
     worktree_store::WorktreeStore,
 };
 use serde::Deserialize;
@@ -43,7 +43,9 @@ enum ConfigurationTarget {
         id: ContextServerId,
         url: String,
         headers: HashMap<String, String>,
+        oauth: Option<OAuthClientSettings>,
     },
+
     Extension {
         id: ContextServerId,
         repository_url: Option<SharedString>,
@@ -121,15 +123,17 @@ impl ConfigurationSource {
                 id,
                 url,
                 headers: auth,
+                oauth,
             } => ConfigurationSource::Existing {
                 editor: create_editor(
-                    context_server_http_input(Some((id, url, auth))),
+                    context_server_http_input(Some((id, url, auth, oauth))),
                     jsonc_language,
                     window,
                     cx,
                 ),
                 is_http: true,
             },
+
             ConfigurationTarget::Extension {
                 id,
                 repository_url,
@@ -168,7 +172,7 @@ impl ConfigurationSource {
             ConfigurationSource::New { editor, is_http }
             | ConfigurationSource::Existing { editor, is_http } => {
                 if *is_http {
-                    parse_http_input(&editor.read(cx).text(cx)).map(|(id, url, auth)| {
+                    parse_http_input(&editor.read(cx).text(cx)).map(|(id, url, auth, oauth)| {
                         (
                             id,
                             ContextServerSettings::Http {
@@ -176,6 +180,7 @@ impl ConfigurationSource {
                                 url,
                                 headers: auth,
                                 timeout: None,
+                                oauth,
                             },
                         )
                     })
@@ -256,11 +261,16 @@ fn context_server_input(existing: Option<(ContextServerId, ContextServerCommand)
 }
 
 fn context_server_http_input(
-    existing: Option<(ContextServerId, String, HashMap<String, String>)>,
+    existing: Option<(
+        ContextServerId,
+        String,
+        HashMap<String, String>,
+        Option<OAuthClientSettings>,
+    )>,
 ) -> String {
-    let (name, url, headers) = match existing {
-        Some((id, url, headers)) => {
-            let header = if headers.is_empty() {
+    let (name, url, headers, oauth) = match existing {
+        Some((id, url, headers, oauth)) => {
+            let headers = if headers.is_empty() {
                 r#"// "Authorization": "Bearer <token>"#.to_string()
             } else {
                 let json = serde_json::to_string_pretty(&headers).unwrap();
@@ -274,14 +284,47 @@ fn context_server_http_input(
                     .map(|line| format!("  {}", line))
                     .collect::<String>()
             };
-            (id.0.to_string(), url, header)
+            (id.0.to_string(), url, headers, oauth)
         }
         None => (
             "some-remote-server".to_string(),
             "https://example.com/mcp".to_string(),
             r#"// "Authorization": "Bearer <token>"#.to_string(),
+            None,
         ),
     };
+
+    let oauth = oauth.map_or_else(
+        || {
+            r#"
+    /// Uncomment to use a pre-registered OAuth client. You can include the client secret here as well, otherwise it will be prompted interactively and saved in the system keychain.
+    // "oauth": {
+    //   "client_id": "your-client-id",
+    // },"#
+                .to_string()
+        },
+
+        |oauth| {
+            let mut lines = vec![
+                String::from("\n    \"oauth\": {"),
+
+                format!("      \"client_id\": {},", serde_json::to_string(&oauth.client_id).unwrap()),
+            ];
+            if let Some(client_secret) = oauth.client_secret {
+                lines.push(format!(
+                    "      \"client_secret\": {}",
+                    serde_json::to_string(&client_secret).unwrap()
+                ));
+            } else {
+                lines.push(String::from(
+                    "      /// Optional client secret for confidential clients\n      // \"client_secret\": \"your-client-secret\"",
+                ));
+            }
+            lines.push(String::from("    },"));
+
+            lines.join("\n")
+        },
+    );
 
     format!(
         r#"{{
@@ -290,8 +333,9 @@ fn context_server_http_input(
   /// The name of your remote MCP server
   "{name}": {{
     /// The URL of the remote MCP server
-    "url": "{url}",
+    "url": "{url}",{oauth}
     "headers": {{
+
      /// Any headers to send along
      {headers}
     }}
@@ -300,12 +344,21 @@ fn context_server_http_input(
     )
 }
 
-fn parse_http_input(text: &str) -> Result<(ContextServerId, String, HashMap<String, String>)> {
+fn parse_http_input(
+    text: &str,
+) -> Result<(
+    ContextServerId,
+    String,
+    HashMap<String, String>,
+    Option<OAuthClientSettings>,
+)> {
     #[derive(Deserialize)]
     struct Temp {
         url: String,
         #[serde(default)]
         headers: HashMap<String, String>,
+        #[serde(default)]
+        oauth: Option<OAuthClientSettings>,
     }
     let value: HashMap<String, Temp> = serde_json_lenient::from_str(text)?;
     if value.len() != 1 {
@@ -314,7 +367,12 @@ fn parse_http_input(text: &str) -> Result<(ContextServerId, String, HashMap<Stri
 
     let (key, value) = value.into_iter().next().unwrap();
 
-    Ok((ContextServerId(key.into()), value.url, value.headers))
+    Ok((
+        ContextServerId(key.into()),
+        value.url,
+        value.headers,
+        value.oauth,
+    ))
 }
 
 fn resolve_context_server_extension(
@@ -350,6 +408,7 @@ enum State {
     Idle,
     Waiting,
     AuthRequired { server_id: ContextServerId },
+    ClientSecretRequired { server_id: ContextServerId },
     Authenticating { _server_id: ContextServerId },
     Error(SharedString),
 }
@@ -361,10 +420,44 @@ pub struct ConfigureContextServerModal {
     state: State,
     original_server_id: Option<ContextServerId>,
     scroll_handle: ScrollHandle,
+    secret_editor: Entity<Editor>,
     _auth_subscription: Option<Subscription>,
 }
 
 impl ConfigureContextServerModal {
+    fn initial_state(
+        context_server_store: &Entity<ContextServerStore>,
+        target: &ConfigurationTarget,
+        cx: &App,
+    ) -> State {
+        let Some(server_id) = (match target {
+            ConfigurationTarget::Existing { id, .. }
+            | ConfigurationTarget::ExistingHttp { id, .. }
+            | ConfigurationTarget::Extension { id, .. } => Some(id),
+            ConfigurationTarget::New => None,
+        }) else {
+            return State::Idle;
+        };
+
+        match context_server_store.read(cx).status_for_server(server_id) {
+            Some(ContextServerStatus::AuthRequired) => State::AuthRequired {
+                server_id: server_id.clone(),
+            },
+            Some(ContextServerStatus::ClientSecretRequired) => State::ClientSecretRequired {
+                server_id: server_id.clone(),
+            },
+            Some(ContextServerStatus::Authenticating) => State::Authenticating {
+                _server_id: server_id.clone(),
+            },
+            Some(ContextServerStatus::Error(error)) => State::Error(error.into()),
+
+            Some(ContextServerStatus::Starting)
+            | Some(ContextServerStatus::Running)
+            | Some(ContextServerStatus::Stopped)
+            | None => State::Idle,
+        }
+    }
+
     pub fn register(
         workspace: &mut Workspace,
         language_registry: Arc<LanguageRegistry>,
@@ -426,12 +519,14 @@ impl ConfigureContextServerModal {
                     url,
                     headers,
                     timeout: _,
-                    ..
+                    oauth,
                 } => Some(ConfigurationTarget::ExistingHttp {
                     id: server_id,
                     url,
                     headers,
+                    oauth,
                 }),
+
                 ContextServerSettings::Extension { .. } => {
                     match workspace
                         .update(cx, |workspace, cx| {
@@ -468,9 +563,10 @@ impl ConfigureContextServerModal {
                 let workspace_handle = cx.weak_entity();
                 let context_server_store = workspace.project().read(cx).context_server_store();
                 workspace.toggle_modal(window, cx, |window, cx| Self {
-                    context_server_store,
+                    context_server_store: context_server_store.clone(),
                     workspace: workspace_handle,
-                    state: State::Idle,
+                    state: Self::initial_state(&context_server_store, &target, cx),
+
                     original_server_id: match &target {
                         ConfigurationTarget::Existing { id, .. } => Some(id.clone()),
                         ConfigurationTarget::ExistingHttp { id, .. } => Some(id.clone()),
@@ -485,6 +581,16 @@ impl ConfigureContextServerModal {
                         cx,
                     ),
                     scroll_handle: ScrollHandle::new(),
+                    secret_editor: cx.new(|cx| {
+                        let mut editor = Editor::single_line(window, cx);
+                        editor.set_placeholder_text(
+                            "Enter client secret (leave empty for public clients)",
+                            window,
+                            cx,
+                        );
+                        editor.set_masked(true, cx);
+                        editor
+                    }),
                     _auth_subscription: None,
                 })
             })
@@ -499,7 +605,10 @@ impl ConfigureContextServerModal {
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut Context<Self>) {
         if matches!(
             self.state,
-            State::Waiting | State::AuthRequired { .. } | State::Authenticating { .. }
+            State::Waiting
+                | State::AuthRequired { .. }
+                | State::ClientSecretRequired { .. }
+                | State::Authenticating { .. }
         ) {
             return;
         }
@@ -540,6 +649,10 @@ impl ConfigureContextServerModal {
                     }
                     Ok(ContextServerStatus::AuthRequired) => {
                         this.state = State::AuthRequired { server_id: id };
+                        cx.notify();
+                    }
+                    Ok(ContextServerStatus::ClientSecretRequired) => {
+                        this.state = State::ClientSecretRequired { server_id: id };
                         cx.notify();
                     }
                     Err(err) => {
@@ -606,6 +719,65 @@ impl ConfigureContextServerModal {
                     ContextServerStatus::AuthRequired => {
                         this._auth_subscription = None;
                         this.state = State::AuthRequired {
+                            server_id: event.server_id.clone(),
+                        };
+                        cx.notify();
+                    }
+                    ContextServerStatus::ClientSecretRequired => {
+                        this._auth_subscription = None;
+                        this.state = State::ClientSecretRequired {
+                            server_id: event.server_id.clone(),
+                        };
+                        cx.notify();
+                    }
+                    ContextServerStatus::Error(error) => {
+                        this._auth_subscription = None;
+                        this.set_error(error.clone(), cx);
+                    }
+                    ContextServerStatus::Authenticating
+                    | ContextServerStatus::Starting
+                    | ContextServerStatus::Stopped => {}
+                }
+            },
+        ));
+
+        cx.notify();
+    }
+
+    fn submit_client_secret(&mut self, server_id: ContextServerId, cx: &mut Context<Self>) {
+        let secret = self.secret_editor.read(cx).text(cx);
+
+        self.context_server_store.update(cx, |store, cx| {
+            store.submit_client_secret(&server_id, secret, cx).log_err();
+        });
+
+        self.state = State::Authenticating {
+            _server_id: server_id.clone(),
+        };
+
+        self._auth_subscription = Some(cx.subscribe(
+            &self.context_server_store,
+            move |this, _, event: &ServerStatusChangedEvent, cx| {
+                if event.server_id != server_id {
+                    return;
+                }
+                match &event.status {
+                    ContextServerStatus::Running => {
+                        this._auth_subscription = None;
+                        this.state = State::Idle;
+                        this.show_configured_context_server_toast(event.server_id.clone(), cx);
+                        cx.emit(DismissEvent);
+                    }
+                    ContextServerStatus::AuthRequired => {
+                        this._auth_subscription = None;
+                        this.state = State::AuthRequired {
+                            server_id: event.server_id.clone(),
+                        };
+                        cx.notify();
+                    }
+                    ContextServerStatus::ClientSecretRequired => {
+                        this._auth_subscription = None;
+                        this.state = State::ClientSecretRequired {
                             server_id: event.server_id.clone(),
                         };
                         cx.notify();
@@ -816,7 +988,10 @@ impl ConfigureContextServerModal {
         let focus_handle = self.focus_handle(cx);
         let is_busy = matches!(
             self.state,
-            State::Waiting | State::AuthRequired { .. } | State::Authenticating { .. }
+            State::Waiting
+                | State::AuthRequired { .. }
+                | State::ClientSecretRequired { .. }
+                | State::Authenticating { .. }
         );
 
         ModalFooter::new()
@@ -944,6 +1119,69 @@ impl ConfigureContextServerModal {
             )
     }
 
+    fn render_client_secret_required(
+        &self,
+        server_id: &ContextServerId,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let settings = ThemeSettings::get_global(cx);
+        let text_style = TextStyle {
+            color: cx.theme().colors().text,
+            font_family: settings.buffer_font.family.clone(),
+            font_fallbacks: settings.buffer_font.fallbacks.clone(),
+            font_size: settings.buffer_font_size(cx).into(),
+            font_weight: settings.buffer_font.weight,
+            line_height: relative(settings.buffer_line_height.value()),
+            ..Default::default()
+        };
+
+        v_flex()
+            .w_full()
+            .gap_2()
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .child(
+                        Icon::new(IconName::Info)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Label::new(
+                            "Enter your OAuth client secret, or leave empty for public clients",
+                        )
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap_2()
+                    .child(div().flex_1().child(EditorElement::new(
+                        &self.secret_editor,
+                        EditorStyle {
+                            background: cx.theme().colors().editor_background,
+                            local_player: cx.theme().players().local(),
+                            text: text_style,
+                            syntax: cx.theme().syntax().clone(),
+                            ..Default::default()
+                        },
+                    )))
+                    .child(
+                        Button::new("submit-client-secret", "Submit")
+                            .style(ButtonStyle::Outlined)
+                            .label_size(LabelSize::Small)
+                            .on_click({
+                                let server_id = server_id.clone();
+                                cx.listener(move |this, _event, _window, cx| {
+                                    this.submit_client_secret(server_id.clone(), cx);
+                                })
+                            }),
+                    ),
+            )
+    }
+
     fn render_modal_error(error: SharedString) -> Div {
         h_flex()
             .h_8()
@@ -1003,6 +1241,11 @@ impl Render for ConfigureContextServerModal {
                                             State::AuthRequired { server_id } => {
                                                 self.render_auth_required(&server_id.clone(), cx)
                                             }
+                                            State::ClientSecretRequired { server_id } => self
+                                                .render_client_secret_required(
+                                                    &server_id.clone(),
+                                                    cx,
+                                                ),
                                             State::Authenticating { .. } => {
                                                 self.render_loading("Authenticating…")
                                             }
@@ -1040,7 +1283,9 @@ fn wait_for_context_server(
         }
 
         match status {
-            ContextServerStatus::Running | ContextServerStatus::AuthRequired => {
+            ContextServerStatus::Running
+            | ContextServerStatus::AuthRequired
+            | ContextServerStatus::ClientSecretRequired => {
                 if let Some(tx) = tx.lock().take() {
                     let _ = tx.send(Ok(status.clone()));
                 }
@@ -1102,5 +1347,54 @@ pub(crate) fn default_markdown_style(window: &Window, cx: &App) -> MarkdownStyle
             ..Default::default()
         },
         ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_http_input_reads_oauth_settings() {
+        let (id, url, headers, oauth) = parse_http_input(
+            r#"{
+  "figma": {
+    "url": "https://mcp.figma.com/mcp",
+    "oauth": {
+      "client_id": "client-id",
+      "client_secret": "client-secret"
+    },
+    "headers": {
+      "X-Test": "test"
+    }
+  }
+}"#,
+        )
+        .unwrap();
+
+        assert_eq!(id, ContextServerId("figma".into()));
+        assert_eq!(url, "https://mcp.figma.com/mcp");
+        assert_eq!(headers.get("X-Test"), Some(&String::from("test")));
+        let oauth = oauth.expect("oauth should be present");
+        assert_eq!(oauth.client_id, "client-id");
+        assert_eq!(oauth.client_secret.as_deref(), Some("client-secret"));
+    }
+
+    #[test]
+    fn context_server_http_input_preserves_existing_oauth_settings() {
+        let text = context_server_http_input(Some((
+            ContextServerId("figma".into()),
+            String::from("https://mcp.figma.com/mcp"),
+            HashMap::default(),
+            Some(OAuthClientSettings {
+                client_id: String::from("client-id"),
+                client_secret: Some(String::from("client-secret")),
+            }),
+        )));
+
+        let (_, _, _, oauth) = parse_http_input(&text).unwrap();
+        let oauth = oauth.expect("oauth should be present");
+        assert_eq!(oauth.client_id, "client-id");
+        assert_eq!(oauth.client_secret.as_deref(), Some("client-secret"));
     }
 }

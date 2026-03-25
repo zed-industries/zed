@@ -388,6 +388,10 @@ pub enum ContextServerSettingsContent {
         headers: HashMap<String, String>,
         /// Timeout for tool calls in seconds. Defaults to global context_server_timeout if not specified.
         timeout: Option<u64>,
+        /// Pre-registered OAuth client credentials for authorization servers that
+        /// require out-of-band client registration.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        oauth: Option<OAuthClientSettings>,
     },
     Extension {
         /// Whether the context server is enabled.
@@ -427,6 +431,21 @@ impl ContextServerSettingsContent {
             } => *remote_enabled = enabled,
         }
     }
+}
+
+/// Pre-registered OAuth client credentials for MCP servers that don't support
+/// Dynamic Client Registration.
+#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, MergeFrom, Debug)]
+pub struct OAuthClientSettings {
+    /// The OAuth client ID obtained from out-of-band registration with the
+    /// authorization server.
+    pub client_id: String,
+    /// The OAuth client secret, if this is a confidential client. For security,
+    /// prefer providing this interactively — Zed will prompt and store it in
+    /// the system keychain. Only use this setting when keychain storage is not
+    /// an option.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_secret: Option<String>,
 }
 
 #[with_fallible_options]
