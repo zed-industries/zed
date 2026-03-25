@@ -687,20 +687,46 @@ impl CollabPanel {
             .retain(|id| channel_store.channel_for_id(*id).is_some());
 
         if !self.favorite_channels.is_empty() {
-            self.entries
-                .push(ListEntry::Header(Section::FavoriteChannels));
+            let favorite_channels: Vec<_> = self
+                .favorite_channels
+                .iter()
+                .filter_map(|id| channel_store.channel_for_id(*id))
+                .collect();
 
-            let query_lower = query.to_lowercase();
-            for &channel_id in &self.favorite_channels {
-                if let Some(channel) = channel_store.channel_for_id(channel_id) {
-                    if !query.is_empty() && !channel.name.to_lowercase().contains(&query_lower) {
+            self.match_candidates.clear();
+            self.match_candidates.extend(
+                favorite_channels
+                    .iter()
+                    .enumerate()
+                    .map(|(ix, channel)| StringMatchCandidate::new(ix, &channel.name)),
+            );
+
+            let matches = fg_executor.block_on(match_strings(
+                &self.match_candidates,
+                &query,
+                true,
+                true,
+                usize::MAX,
+                &Default::default(),
+                executor.clone(),
+            ));
+
+            if !matches.is_empty() || query.is_empty() {
+                self.entries
+                    .push(ListEntry::Header(Section::FavoriteChannels));
+
+                let matches_by_candidate: HashMap<usize, &StringMatch> =
+                    matches.iter().map(|mat| (mat.candidate_id, mat)).collect();
+
+                for (ix, channel) in favorite_channels.iter().enumerate() {
+                    if !query.is_empty() && !matches_by_candidate.contains_key(&ix) {
                         continue;
                     }
                     self.entries.push(ListEntry::Channel {
-                        channel: channel.clone(),
+                        channel: (*channel).clone(),
                         depth: 0,
                         has_children: false,
-                        string_match: None,
+                        string_match: matches_by_candidate.get(&ix).cloned().cloned(),
                     });
                 }
             }
