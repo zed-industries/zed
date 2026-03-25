@@ -4794,6 +4794,113 @@ let c = 3;"#
             .unwrap();
     }
 
+    #[gpui::test]
+    async fn test_hints_shown_on_editor_open_without_manual_refresh(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx, &|settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                show_background: Some(false),
+                toggle_on_modifiers_press: None,
+            })
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/a"),
+            json!({
+                "main.rs": "fn main() { let x = 1; } // padding to keep hints from being trimmed",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_lang());
+        let file_path = path!("/a/main.rs");
+        let mut fake_servers = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                initializer: Some(Box::new(move |server| {
+                    server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                        move |_params, _| async move {
+                            Ok(Some(vec![lsp::InlayHint {
+                                position: lsp::Position::new(0, 14),
+                                label: lsp::InlayHintLabel::String("i32".to_string()),
+                                kind: Some(lsp::InlayHintKind::TYPE),
+                                text_edits: None,
+                                tooltip: None,
+                                padding_left: Some(true),
+                                padding_right: None,
+                                data: None,
+                            }]))
+                        },
+                    );
+                })),
+                ..FakeLspAdapter::default()
+            },
+        );
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(file_path, cx)
+            })
+            .await
+            .unwrap();
+
+        // Create the editor the same way production code does (via Editor::for_buffer),
+        // without any manual refresh_inlay_hints call afterwards.
+        let editor =
+            cx.add_window(|window, cx| Editor::for_buffer(buffer, Some(project), window, cx));
+
+        // Set up a viewport so the editor considers the buffer visible.
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.set_visible_line_count(50.0, window, cx);
+                editor.set_visible_column_count(120.0);
+            })
+            .unwrap();
+
+        cx.executor().run_until_parked();
+        let _fake_server = fake_servers.next().await.unwrap();
+
+        // Wait for the LanguageServerBufferRegistered event and hints fetch.
+        cx.executor().run_until_parked();
+
+        editor
+            .update(cx, |editor, _window, cx| {
+                let cached = cached_hint_labels(editor, cx);
+                let visible = visible_hint_labels(editor, cx);
+                assert!(
+                    !cached.is_empty(),
+                    "Inlay hints should be cached after editor open without manual refresh, \
+                     but got empty cache"
+                );
+                assert!(
+                    !visible.is_empty(),
+                    "Inlay hints should be visible after editor open without manual refresh, \
+                     but got empty visible hints"
+                );
+                assert_eq!(
+                    cached,
+                    vec![" i32".to_string()],
+                    "Should show the type hint from the LSP"
+                );
+            })
+            .unwrap();
+    }
+
     pub(crate) fn init_test(cx: &mut TestAppContext, f: &dyn Fn(&mut AllLanguageSettingsContent)) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
