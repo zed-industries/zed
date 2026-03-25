@@ -109,6 +109,15 @@ if [ ! -f "$MOCK_SERVER" ]; then
 fi
 
 echo "[setup] Zed binary: $ZED_BINARY"
+echo "[setup]   md5: $(md5sum "$ZED_BINARY" 2>/dev/null | cut -c1-32)"
+echo "[setup]   size: $(stat -c '%s' "$ZED_BINARY" 2>/dev/null) bytes"
+echo "[setup]   mtime: $(stat -c '%y' "$ZED_BINARY" 2>/dev/null | cut -d. -f1)"
+echo "[setup]   ThreadLoadError in source (expected 1): $(strings "$ZED_BINARY" | grep -c 'ThreadLoadError' 2>/dev/null || echo unknown)"
+echo "[setup]   'creating new thread as fallback' present: $(strings "$ZED_BINARY" | grep -c 'creating new thread as fallback' 2>/dev/null || echo unknown)"
+echo "[setup] Mock server: $MOCK_SERVER"
+echo "[setup]   md5: $(md5sum "$MOCK_SERVER" 2>/dev/null | cut -c1-32)"
+
+echo "[setup] Zed binary: $ZED_BINARY"
 echo "[setup] Mock server: $MOCK_SERVER"
 echo "[setup] Timeout: ${TEST_TIMEOUT}s"
 echo ""
