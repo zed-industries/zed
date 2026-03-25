@@ -3326,19 +3326,30 @@ impl ThreadView {
 
             let percentage = format!("{}%", (progress_ratio * 100.0).round() as u32);
 
-            let (user_rules_count, project_rules_count) = self
-                .as_native_thread(cx)
-                .map(|thread| {
-                    let project_context = thread.read(cx).project_context().read(cx);
-                    let user_rules = project_context.user_rules.len();
-                    let project_rules = project_context
-                        .worktrees
-                        .iter()
-                        .filter(|wt| wt.rules_file.is_some())
-                        .count();
-                    (user_rules, project_rules)
-                })
-                .unwrap_or((0, 0));
+            let (user_rules_count, first_user_rules_id, project_rules_count, project_entry_ids) =
+                self.as_native_thread(cx)
+                    .map(|thread| {
+                        let project_context = thread.read(cx).project_context().read(cx);
+                        let user_rules_count = project_context.user_rules.len();
+                        let first_user_rules_id =
+                            project_context.user_rules.first().map(|r| r.uuid.0);
+                        let project_entry_ids = project_context
+                            .worktrees
+                            .iter()
+                            .filter_map(|wt| wt.rules_file.as_ref())
+                            .map(|rf| ProjectEntryId::from_usize(rf.project_entry_id))
+                            .collect::<Vec<_>>();
+                        let project_rules_count = project_entry_ids.len();
+                        (
+                            user_rules_count,
+                            first_user_rules_id,
+                            project_rules_count,
+                            project_entry_ids,
+                        )
+                    })
+                    .unwrap_or_default();
+
+            let workspace = self.workspace.clone();
 
             Some(
                 h_flex()
@@ -3355,53 +3366,25 @@ impl ThreadView {
                         .stroke_width(px(2.))
                         .progress_color(progress_color),
                     )
-                    .tooltip(Tooltip::element({
-                        move |_, cx| {
-                            v_flex()
-                                .min_w_40()
-                                .child(
-                                    Label::new("Context")
-                                        .color(Color::Muted)
-                                        .size(LabelSize::Small),
-                                )
-                                .child(
-                                    h_flex()
-                                        .gap_0p5()
-                                        .child(Label::new(percentage.clone()))
-                                        .child(Label::new("•").color(separator_color).mx_1())
-                                        .child(Label::new(used.clone()))
-                                        .child(Label::new("/").color(separator_color))
-                                        .child(Label::new(max.clone()).color(Color::Muted)),
-                                )
-                                .when(user_rules_count > 0 || project_rules_count > 0, |this| {
-                                    this.child(
-                                        v_flex()
-                                            .mt_1p5()
-                                            .pt_1p5()
-                                            .border_t_1()
-                                            .border_color(cx.theme().colors().border_variant)
-                                            .child(
-                                                Label::new("Rules")
-                                                    .color(Color::Muted)
-                                                    .size(LabelSize::Small),
-                                            )
-                                            .when(user_rules_count > 0, |this| {
-                                                this.child(Label::new(format!(
-                                                    "{} user rules",
-                                                    user_rules_count
-                                                )))
-                                            })
-                                            .when(project_rules_count > 0, |this| {
-                                                this.child(Label::new(format!(
-                                                    "{} project rules",
-                                                    project_rules_count
-                                                )))
-                                            }),
-                                    )
-                                })
-                                .into_any_element()
-                        }
-                    }))
+                    .hoverable_tooltip(move |_window, cx| {
+                        let percentage = percentage.clone();
+                        let used = used.clone();
+                        let max = max.clone();
+                        let project_entry_ids = project_entry_ids.clone();
+                        let workspace = workspace.clone();
+                        cx.new(move |_cx| TokenUsageTooltip {
+                            percentage,
+                            used,
+                            max,
+                            separator_color,
+                            user_rules_count,
+                            first_user_rules_id,
+                            project_rules_count,
+                            project_entry_ids,
+                            workspace,
+                        })
+                        .into()
+                    })
                     .into_any_element(),
             )
         }
@@ -3950,6 +3933,134 @@ impl ThreadView {
     }
 }
 
+struct TokenUsageTooltip {
+    percentage: String,
+    used: String,
+    max: String,
+    separator_color: Color,
+    user_rules_count: usize,
+    first_user_rules_id: Option<uuid::Uuid>,
+    project_rules_count: usize,
+    project_entry_ids: Vec<ProjectEntryId>,
+    workspace: WeakEntity<Workspace>,
+}
+
+impl Render for TokenUsageTooltip {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let separator_color = self.separator_color;
+        let percentage = self.percentage.clone();
+        let used = self.used.clone();
+        let max = self.max.clone();
+        let user_rules_count = self.user_rules_count;
+        let first_user_rules_id = self.first_user_rules_id;
+        let project_rules_count = self.project_rules_count;
+        let project_entry_ids = self.project_entry_ids.clone();
+        let workspace = self.workspace.clone();
+
+        ui::tooltip_container(cx, move |container, cx| {
+            container
+                .min_w_40()
+                .child(
+                    Label::new("Context")
+                        .color(Color::Muted)
+                        .size(LabelSize::Small),
+                )
+                .child(
+                    h_flex()
+                        .gap_0p5()
+                        .child(Label::new(percentage.clone()))
+                        .child(Label::new("•").color(separator_color).mx_1())
+                        .child(Label::new(used.clone()))
+                        .child(Label::new("/").color(separator_color))
+                        .child(Label::new(max.clone()).color(Color::Muted)),
+                )
+                .when(
+                    user_rules_count > 0 || project_rules_count > 0,
+                    move |this| {
+                        this.child(
+                            v_flex()
+                                .mt_1p5()
+                                .pt_1p5()
+                                .pb_0p5()
+                                .gap_0p5()
+                                .border_t_1()
+                                .border_color(cx.theme().colors().border_variant)
+                                .child(
+                                    Label::new("Rules")
+                                        .color(Color::Muted)
+                                        .size(LabelSize::Small),
+                                )
+                                .child(
+                                    v_flex()
+                                        .mx_neg_1()
+                                        .when(user_rules_count > 0, move |this| {
+                                            this.child(
+                                                Button::new(
+                                                    "open-user-rules",
+                                                    format!("{} user rules", user_rules_count),
+                                                )
+                                                .end_icon(
+                                                    Icon::new(IconName::ArrowUpRight)
+                                                        .color(Color::Muted)
+                                                        .size(IconSize::XSmall),
+                                                )
+                                                .on_click(move |_, window, cx| {
+                                                    window.dispatch_action(
+                                                        Box::new(OpenRulesLibrary {
+                                                            prompt_to_select: first_user_rules_id,
+                                                        }),
+                                                        cx,
+                                                    );
+                                                }),
+                                            )
+                                        })
+                                        .when(project_rules_count > 0, move |this| {
+                                            let workspace = workspace.clone();
+                                            let project_entry_ids = project_entry_ids.clone();
+                                            this.child(
+                                                Button::new(
+                                                    "open-project-rules",
+                                                    format!(
+                                                        "{} project rules",
+                                                        project_rules_count
+                                                    ),
+                                                )
+                                                .end_icon(
+                                                    Icon::new(IconName::ArrowUpRight)
+                                                        .color(Color::Muted)
+                                                        .size(IconSize::XSmall),
+                                                )
+                                                .on_click(move |_, window, cx| {
+                                                    let _ =
+                                                        workspace.update(cx, |workspace, cx| {
+                                                            let project =
+                                                                workspace.project().read(cx);
+                                                            let paths = project_entry_ids
+                                                                .iter()
+                                                                .flat_map(|id| {
+                                                                    project.path_for_entry(*id, cx)
+                                                                })
+                                                                .collect::<Vec<_>>();
+                                                            for path in paths {
+                                                                workspace
+                                                                    .open_path(
+                                                                        path, None, true, window,
+                                                                        cx,
+                                                                    )
+                                                                    .detach_and_log_err(cx);
+                                                            }
+                                                        });
+                                                }),
+                                            )
+                                        }),
+                                ),
+                        )
+                    },
+                )
+        })
+    }
+}
+
 impl ThreadView {
     pub(crate) fn render_entries(&mut self, cx: &mut Context<Self>) -> List {
         list(
@@ -4005,12 +4116,6 @@ impl ThreadView {
                 let editor_focus = editor.focus_handle(cx).is_focused(window);
                 let focus_border = cx.theme().colors().border_focused;
 
-                let rules_item = if entry_ix == 0 {
-                    self.render_rules_item(cx)
-                } else {
-                    None
-                };
-
                 let has_checkpoint_button = message
                     .checkpoint
                     .as_ref()
@@ -4029,10 +4134,6 @@ impl ThreadView {
                     .map(|this| {
                         if is_first_indented {
                             this.pt_0p5()
-                        } else if entry_ix == 0 && !has_checkpoint_button && rules_item.is_none()  {
-                            this.pt(rems_from_px(18.))
-                        } else if rules_item.is_some() {
-                            this.pt_3()
                         } else {
                             this.pt_2()
                         }
@@ -7470,113 +7571,6 @@ impl ThreadView {
         } else {
             None
         }
-    }
-
-    fn render_rules_item(&self, cx: &Context<Self>) -> Option<AnyElement> {
-        let project_context = self
-            .as_native_thread(cx)?
-            .read(cx)
-            .project_context()
-            .read(cx);
-
-        let user_rules_text = if project_context.user_rules.is_empty() {
-            None
-        } else if project_context.user_rules.len() == 1 {
-            let user_rules = &project_context.user_rules[0];
-
-            match user_rules.title.as_ref() {
-                Some(title) => Some(format!("Using \"{title}\" user rule")),
-                None => Some("Using user rule".into()),
-            }
-        } else {
-            Some(format!(
-                "Using {} user rules",
-                project_context.user_rules.len()
-            ))
-        };
-
-        let first_user_rules_id = project_context
-            .user_rules
-            .first()
-            .map(|user_rules| user_rules.uuid.0);
-
-        let rules_files = project_context
-            .worktrees
-            .iter()
-            .filter_map(|worktree| worktree.rules_file.as_ref())
-            .collect::<Vec<_>>();
-
-        let rules_file_text = match rules_files.as_slice() {
-            &[] => None,
-            &[rules_file] => Some(format!(
-                "Using project {:?} file",
-                rules_file.path_in_worktree
-            )),
-            rules_files => Some(format!("Using {} project rules files", rules_files.len())),
-        };
-
-        if user_rules_text.is_none() && rules_file_text.is_none() {
-            return None;
-        }
-
-        let has_both = user_rules_text.is_some() && rules_file_text.is_some();
-
-        Some(
-            h_flex()
-                .px_2p5()
-                .child(
-                    Icon::new(IconName::Attach)
-                        .size(IconSize::XSmall)
-                        .color(Color::Disabled),
-                )
-                .when_some(user_rules_text, |parent, user_rules_text| {
-                    parent.child(
-                        h_flex()
-                            .id("user-rules")
-                            .ml_1()
-                            .mr_1p5()
-                            .child(
-                                Label::new(user_rules_text)
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Muted)
-                                    .truncate(),
-                            )
-                            .hover(|s| s.bg(cx.theme().colors().element_hover))
-                            .tooltip(Tooltip::text("View User Rules"))
-                            .on_click(move |_event, window, cx| {
-                                window.dispatch_action(
-                                    Box::new(OpenRulesLibrary {
-                                        prompt_to_select: first_user_rules_id,
-                                    }),
-                                    cx,
-                                )
-                            }),
-                    )
-                })
-                .when(has_both, |this| {
-                    this.child(
-                        Label::new("•")
-                            .size(LabelSize::XSmall)
-                            .color(Color::Disabled),
-                    )
-                })
-                .when_some(rules_file_text, |parent, rules_file_text| {
-                    parent.child(
-                        h_flex()
-                            .id("project-rules")
-                            .ml_1p5()
-                            .child(
-                                Label::new(rules_file_text)
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Muted),
-                            )
-                            .hover(|s| s.bg(cx.theme().colors().element_hover))
-                            .tooltip(Tooltip::text("View Project Rules"))
-                            .on_click(cx.listener(Self::handle_open_rules)),
-                    )
-                })
-                .into_any(),
-        )
     }
 
     fn tool_card_header_bg(&self, cx: &Context<Self>) -> Hsla {
