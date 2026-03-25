@@ -48,6 +48,8 @@ const TAILWIND_PRETTIER_PLUGIN_PACKAGE_NAME: &str = "prettier-plugin-tailwindcss
 
 #[cfg(any(test, feature = "test-support"))]
 pub const FORMAT_SUFFIX: &str = "\nformatted by test prettier";
+#[cfg(any(test, feature = "test-support"))]
+pub const RANGE_FORMAT_SUFFIX: &str = "\nrange formatted by test prettier";
 
 impl Prettier {
     pub const CONFIG_FILE_NAMES: &'static [&'static str] = &[
@@ -504,8 +506,6 @@ impl Prettier {
                     {
                         Some("rust") => anyhow::bail!("prettier does not support Rust"),
                         Some(_other) => {
-                            let mut formatted_text = buffer.text() + FORMAT_SUFFIX;
-
                             let buffer_language =
                                 buffer.language().map(|language| language.as_ref());
                             let language_settings = LanguageSettings::for_buffer(buffer, cx);
@@ -516,9 +516,29 @@ impl Prettier {
                                 prettier_settings,
                             )?;
 
-                            if let Some(parser) = parser {
-                                formatted_text = format!("{formatted_text}\n{parser}");
-                            }
+                            let mut formatted_text = if let Some(range) = &range_utf16 {
+                                let text = buffer.text();
+                                let start_byte = buffer.offset_utf16_to_offset(range.start);
+                                let insert_at = text[start_byte..]
+                                    .find('\n')
+                                    .map(|pos| start_byte + pos)
+                                    .unwrap_or(text.len());
+                                let mut suffix = RANGE_FORMAT_SUFFIX.to_string();
+                                if let Some(parser) = &parser {
+                                    suffix = format!("{suffix}\n{parser}");
+                                }
+                                let mut result = String::new();
+                                result.push_str(&text[..insert_at]);
+                                result.push_str(&suffix);
+                                result.push_str(&text[insert_at..]);
+                                result
+                            } else {
+                                let mut text = buffer.text() + FORMAT_SUFFIX;
+                                if let Some(parser) = &parser {
+                                    text = format!("{text}\n{parser}");
+                                }
+                                text
+                            };
 
                             Ok(buffer.diff(formatted_text, cx))
                         }
