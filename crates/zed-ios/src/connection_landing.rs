@@ -14,40 +14,77 @@ use remote::SshConnectionOptions;
 use serde::{Deserialize, Serialize};
 use theme::ActiveTheme;
 use ui::{
-    ButtonCommon, ButtonStyle, Clickable, Color, FixedWidth, Headline, Icon, IconButton, IconName,
-    IconSize, Indicator, Label, LabelCommon, LabelSize, Vector, VectorName, h_flex, rems_from_px,
-    v_flex,
+    ButtonCommon, ButtonLike, ButtonStyle, Clickable, Color, ContextMenu, FixedWidth, Headline,
+    Icon, IconButton, IconName, IconSize, Indicator, Label, LabelCommon, LabelSize, PopoverMenu,
+    Vector, VectorName, h_flex, rems_from_px, v_flex,
 };
 use util::ResultExt;
 use workspace::StatusItemView;
 
 // ─── Active connections registry ─────────────────────────────────────────────
 
-/// A live SSH connection with its workspace, kept alive across view swaps.
-struct ActiveConnection {
+/// A single workspace entry within a host connection.
+struct WorkspaceEntry {
     workspace: Entity<workspace::Workspace>,
     project: Entity<project::Project>,
+    path: String,
+}
+
+/// An active SSH connection to a host, potentially with multiple open workspaces
+/// (project paths). The `remote_connection` is shared across all workspaces on
+/// this host.
+struct HostConnection {
+    remote_connection: Arc<dyn remote::RemoteConnection>,
+    workspaces: Vec<WorkspaceEntry>,
     host: String,
     username: String,
     port: u16,
 }
 
-/// Global registry of active SSH connections. Holding `Entity<Workspace>`
-/// keeps the workspace (and its project/SSH session) alive even when the
-/// window root is swapped back to the landing screen.
-struct ActiveConnections(Vec<ActiveConnection>);
+/// Global registry of active SSH connections. Holding entity handles keeps
+/// workspaces (and their projects/SSH sessions) alive even when the window
+/// root is swapped back to the landing screen.
+struct ActiveConnections(Vec<HostConnection>);
 
 impl Global for ActiveConnections {}
 
 impl ActiveConnections {
-    fn find_by_host(&self, host: &str, username: &str, port: u16) -> Option<&ActiveConnection> {
+    fn find_by_host(&self, host: &str, username: &str, port: u16) -> Option<&HostConnection> {
         self.0
             .iter()
             .find(|c| c.host == host && c.username == username && c.port == port)
     }
 
+    fn find_by_host_mut(
+        &mut self,
+        host: &str,
+        username: &str,
+        port: u16,
+    ) -> Option<&mut HostConnection> {
+        self.0
+            .iter_mut()
+            .find(|c| c.host == host && c.username == username && c.port == port)
+    }
+
+    fn find_workspace_by_path(
+        &self,
+        host: &str,
+        username: &str,
+        port: u16,
+        path: &str,
+    ) -> Option<&WorkspaceEntry> {
+        self.find_by_host(host, username, port)
+            .and_then(|hc| hc.workspaces.iter().find(|w| w.path == path))
+    }
+
     fn remove_by_project(&mut self, project_id: gpui::EntityId) {
-        self.0.retain(|c| c.project.entity_id() != project_id);
+        for host_conn in &mut self.0 {
+            host_conn
+                .workspaces
+                .retain(|w| w.project.entity_id() != project_id);
+        }
+        // Remove host connections with no remaining workspaces.
+        self.0.retain(|hc| !hc.workspaces.is_empty());
     }
 }
 
@@ -60,18 +97,30 @@ pub fn init_active_connections(cx: &mut App) {
     cx.set_global(ActiveConnections(Vec::new()));
 }
 
-// ─── Home button status bar item ─────────────────────────────────────────────
+// ─── Workspace switcher status bar item ──────────────────────────────────────
 
-/// Status bar item that shows a home button to return to the landing screen.
-pub struct HomeStatusItem;
+/// Status bar item that shows the current project path, a back arrow to return
+/// to the landing screen, and a popover menu to switch between open workspaces
+/// on the same host.
+pub struct WorkspaceSwitcher {
+    current_path: SharedString,
+    host_label: SharedString,
+}
 
-impl HomeStatusItem {
-    pub fn new() -> Self {
-        Self
+impl WorkspaceSwitcher {
+    pub fn new(path: &str, host: &str, username: &str) -> Self {
+        let short_path = path
+            .strip_prefix("~/")
+            .or_else(|| path.strip_prefix('/'))
+            .unwrap_or(path);
+        Self {
+            current_path: SharedString::from(short_path.to_string()),
+            host_label: SharedString::from(format!("{username}@{host}")),
+        }
     }
 }
 
-impl StatusItemView for HomeStatusItem {
+impl StatusItemView for WorkspaceSwitcher {
     fn set_active_pane_item(
         &mut self,
         _active_pane_item: Option<&dyn workspace::ItemHandle>,
@@ -81,58 +130,145 @@ impl StatusItemView for HomeStatusItem {
     }
 }
 
-impl Render for HomeStatusItem {
+impl Render for WorkspaceSwitcher {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        IconButton::new("return-to-landing", IconName::ArrowLeft)
-            .icon_size(IconSize::Small)
-            .style(ButtonStyle::Subtle)
-            .on_click(|_event, window, cx| {
-                return_to_landing(window, cx);
-            })
+        let current_path = self.current_path.clone();
+        let host_label = self.host_label.clone();
+
+        h_flex()
+            .gap_1()
+            .items_center()
+            .child(
+                IconButton::new("return-to-landing", IconName::ArrowLeft)
+                    .icon_size(IconSize::Small)
+                    .style(ButtonStyle::Subtle)
+                    .on_click(|_event, window, cx| {
+                        return_to_landing(window, cx);
+                    }),
+            )
+            .child(
+                PopoverMenu::new("workspace-switcher-menu")
+                    .trigger(
+                        ButtonLike::new("workspace-switcher-trigger").child(
+                            h_flex()
+                                .gap_1p5()
+                                .items_center()
+                                .child(
+                                    Icon::new(IconName::Folder)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
+                                .child(
+                                    Label::new(current_path)
+                                        .size(LabelSize::Small)
+                                        .color(Color::Default),
+                                ),
+                        ),
+                    )
+                    .anchor(gpui::Corner::BottomLeft)
+                    .menu({
+                        let host_label = host_label.clone();
+                        move |window, cx| {
+                            // Collect workspace info before borrowing cx mutably.
+                            let entries: Vec<(SharedString, Entity<workspace::Workspace>, Vec<Entity<workspace::Workspace>>)> = cx
+                                .try_global::<ActiveConnections>()
+                                .map(|active_conns| {
+                                    active_conns
+                                        .0
+                                        .iter()
+                                        .flat_map(|hc| {
+                                            let all: Vec<_> = hc.workspaces.iter().map(|w| w.workspace.clone()).collect();
+                                            hc.workspaces.iter().map(move |entry| {
+                                                (
+                                                    SharedString::from(entry.path.clone()),
+                                                    entry.workspace.clone(),
+                                                    all.clone(),
+                                                )
+                                            })
+                                        })
+                                        .collect()
+                                })
+                                .unwrap_or_default();
+
+                            if entries.is_empty() {
+                                return None;
+                            }
+
+                            let menu =
+                                ContextMenu::build(window, cx, |mut menu, _window, _cx| {
+                                    menu = menu.header(host_label.clone());
+                                    for (path_label, workspace, all_workspaces) in entries {
+                                        menu = menu.custom_entry(
+                                            {
+                                                let path_label = path_label.clone();
+                                                move |_window, _cx| {
+                                                    h_flex()
+                                                        .gap_2()
+                                                        .child(
+                                                            Icon::new(IconName::Folder)
+                                                                .size(IconSize::Small)
+                                                                .color(Color::Muted),
+                                                        )
+                                                        .child(
+                                                            Label::new(path_label.clone())
+                                                                .size(LabelSize::Small),
+                                                        )
+                                                        .into_any_element()
+                                                }
+                                            },
+                                            {
+                                                let workspace = workspace.clone();
+                                                move |window, cx| {
+                                                    show_multi_workspace(
+                                                        window,
+                                                        cx,
+                                                        &all_workspaces,
+                                                        &workspace,
+                                                    );
+                                                }
+                                            },
+                                        );
+                                    }
+                                    menu
+                                });
+                            Some(menu)
+                        }
+                    }),
+            )
     }
 }
 
-/// Navigate back to the landing screen without closing the SSH connection.
-/// Stores the current workspace in ActiveConnections so it can be resumed.
+/// Navigate back to the landing screen without closing any SSH connections.
+/// Workspaces are already stored in ActiveConnections from `do_connect`.
 fn return_to_landing(window: &mut Window, cx: &mut App) {
-    // Store current workspace in active connections before swapping.
-    if let Some(Some(multi)) = window.root::<workspace::MultiWorkspace>() {
-        let workspace = multi.read(cx).workspace().clone();
-        let ws = workspace.read(cx);
-        let project = ws.project().clone();
-
-        let already_stored = cx
-            .global::<ActiveConnections>()
-            .0
-            .iter()
-            .any(|c| c.project.entity_id() == project.entity_id());
-
-        if !already_stored {
-            let (host, username, port) =
-                if let Some(remote::RemoteConnectionOptions::Ssh(opts)) =
-                    project.read(cx).remote_connection_options(cx)
-                {
-                    (
-                        opts.host.to_string(),
-                        opts.username.unwrap_or_default(),
-                        opts.port.unwrap_or(22),
-                    )
-                } else {
-                    (String::new(), String::new(), 22)
-                };
-
-            active_connections_mut(cx).0.push(ActiveConnection {
-                workspace: workspace.clone(),
-                project,
-                host,
-                username,
-                port,
-            });
-        }
-    }
-
     let landing = window.replace_root(cx, |window, cx| ConnectionLanding::new(window, cx));
     landing.focus_handle(cx).focus(window, cx);
+}
+
+/// Create a fresh MultiWorkspace containing all the given workspaces,
+/// activate the target one, and set it as the window root.
+fn show_multi_workspace(
+    window: &mut Window,
+    cx: &mut App,
+    all_workspaces: &[Entity<workspace::Workspace>],
+    active: &Entity<workspace::Workspace>,
+) {
+    let first = all_workspaces[0].clone();
+    let active = active.clone();
+    window.replace_root(cx, |window, cx| {
+        let mut multi = workspace::MultiWorkspace::new(first, window, cx);
+        let mut active_idx = 0;
+        for (i, ws) in all_workspaces.iter().enumerate().skip(1) {
+            multi.add_workspace(ws.clone(), cx);
+            if *ws == active {
+                active_idx = i;
+            }
+        }
+        if active_idx > 0 {
+            multi.activate_index(active_idx, window, cx);
+        }
+        multi
+    });
 }
 
 /// On-disk representation of a saved SSH host.
@@ -207,7 +343,11 @@ fn save_host_entries(entries: &[SavedHostEntry]) {
 enum ConnectionStatus {
     Disconnected,
     Connecting,
+    /// This exact host+path has an active workspace.
     Connected,
+    /// The host has an active SSH connection, but this path isn't open yet.
+    /// Tapping will reuse the existing connection (instant).
+    HostConnected,
     Error(SharedString),
 }
 
@@ -267,6 +407,7 @@ impl SavedHost {
             ConnectionStatus::Disconnected => Color::Muted,
             ConnectionStatus::Connecting => Color::Warning,
             ConnectionStatus::Connected => Color::Success,
+            ConnectionStatus::HostConnected => Color::Success,
             ConnectionStatus::Error(_) => Color::Error,
         }
     }
@@ -276,6 +417,7 @@ impl SavedHost {
             ConnectionStatus::Disconnected => "Disconnected".into(),
             ConnectionStatus::Connecting => "Connecting\u{2026}".into(),
             ConnectionStatus::Connected => "Connected".into(),
+            ConnectionStatus::HostConnected => "Host connected".into(),
             ConnectionStatus::Error(message) => message.clone(),
         }
     }
@@ -285,6 +427,9 @@ enum LandingMode {
     Default,
     AddHost,
     EditHost(usize),
+    /// Adding a new project path to an existing host. Connection details are
+    /// pre-filled from an existing entry via `switch_to_add_project`.
+    AddProjectToHost,
 }
 
 /// Landing screen shown on iPad launch. Lists saved SSH hosts and provides
@@ -350,14 +495,20 @@ impl ConnectionLanding {
             .map(SavedHost::from_entry)
             .collect();
 
-        // Restore "Connected" status for hosts with active connections.
+        // Restore connection status for hosts with active connections.
         if let Some(active) = cx.try_global::<ActiveConnections>() {
             for host in &mut saved_hosts {
+                let path = host.project_path.as_deref().unwrap_or("");
                 if active
-                    .find_by_host(&host.host, &host.username, host.port)
+                    .find_workspace_by_path(&host.host, &host.username, host.port, path)
                     .is_some()
                 {
                     host.status = ConnectionStatus::Connected;
+                } else if active
+                    .find_by_host(&host.host, &host.username, host.port)
+                    .is_some()
+                {
+                    host.status = ConnectionStatus::HostConnected;
                 }
             }
         }
@@ -463,6 +614,38 @@ impl ConnectionLanding {
         cx.notify();
     }
 
+    fn switch_to_add_project(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(host) = self.saved_hosts.get(index) else {
+            return;
+        };
+        self.name_editor.update(cx, |editor, cx| {
+            editor.set_text("", window, cx);
+        });
+        self.host_editor.update(cx, |editor, cx| {
+            editor.set_text(host.host.to_string(), window, cx);
+        });
+        self.username_editor.update(cx, |editor, cx| {
+            editor.set_text(host.username.to_string(), window, cx);
+        });
+        let port_text = if host.port == 22 {
+            String::new()
+        } else {
+            host.port.to_string()
+        };
+        self.port_editor.update(cx, |editor, cx| {
+            editor.set_text(port_text, window, cx);
+        });
+        self.password_editor.update(cx, |editor, cx| {
+            editor.set_text(host.password.clone().unwrap_or_default(), window, cx);
+        });
+        self.project_path_editor.update(cx, |editor, cx| {
+            editor.set_text("", window, cx);
+        });
+        self.mode = LandingMode::AddProjectToHost;
+        self.project_path_editor.focus_handle(cx).focus(window, cx);
+        cx.notify();
+    }
+
     fn cancel_add_host(
         &mut self,
         _event: &ClickEvent,
@@ -539,18 +722,83 @@ impl ConnectionLanding {
             return;
         };
 
-        // If there's already an active connection for this host, resume it.
+        let path = host.project_path.clone().unwrap_or_default();
+
+        // Case 1: Exact host+path already open → activate that workspace.
         if let Some(active) = cx
             .try_global::<ActiveConnections>()
             .and_then(|ac| ac.find_by_host(&host.host, &host.username, host.port))
         {
-            let workspace = active.workspace.clone();
-            window.replace_root(cx, |window, cx| {
-                workspace::MultiWorkspace::new(workspace, window, cx)
+            let target_workspace = active.workspaces.iter().find(|w| w.path == path);
+            if let Some(entry) = target_workspace {
+                let target = entry.workspace.clone();
+                let all_workspaces: Vec<_> =
+                    active.workspaces.iter().map(|w| w.workspace.clone()).collect();
+                show_multi_workspace(window, cx, &all_workspaces, &target);
+                return;
+            }
+
+            // Case 2: Host connected but new path → create workspace on shared connection.
+            let remote_connection = active.remote_connection.clone();
+            host.status = ConnectionStatus::Connecting;
+            cx.notify();
+
+            let app_state = match crate::ios::app_state() {
+                Some(state) => state,
+                None => {
+                    log::error!("[zed-ios] app_state not available for SSH connection");
+                    if let Some(host) = self.saved_hosts.get_mut(index) {
+                        host.status = ConnectionStatus::Error("App not initialized".into());
+                        cx.notify();
+                    }
+                    return;
+                }
+            };
+
+            let landing_window = window.window_handle();
+            let delegate = Arc::new(IosRemoteClientDelegate {
+                window: landing_window,
             });
+            let host_str = host.host.to_string();
+            let username_str = host.username.to_string();
+            let port_val = host.port;
+
+            cx.spawn(async move |this, cx| {
+                let result = Self::add_workspace_for_path(
+                    landing_window,
+                    remote_connection,
+                    path.clone(),
+                    host_str.clone(),
+                    username_str.clone(),
+                    port_val,
+                    delegate,
+                    app_state,
+                    cx,
+                )
+                .await;
+
+                if let Err(error) = result {
+                    let error_message = format!("{error:#}");
+                    log::error!("[zed-ios] workspace creation failed: {error_message}");
+                    let updated = this
+                        .update(cx, |this, cx| {
+                            if let Some(host) = this.saved_hosts.get_mut(index) {
+                                host.status =
+                                    ConnectionStatus::Error(SharedString::from(error_message.clone()));
+                                cx.notify();
+                            }
+                        })
+                        .is_ok();
+                    if !updated {
+                        cx.update(|cx| Self::navigate_to_landing(landing_window, cx));
+                    }
+                }
+            })
+            .detach();
             return;
         }
 
+        // Case 3: Host not connected → full connect flow.
         host.status = ConnectionStatus::Connecting;
         cx.notify();
 
@@ -561,7 +809,6 @@ impl ConnectionLanding {
             password: host.password.clone(),
             ..Default::default()
         };
-        let project_path = host.project_path.clone();
 
         let app_state = match crate::ios::app_state() {
             Some(state) => state,
@@ -580,15 +827,11 @@ impl ConnectionLanding {
             window: landing_window,
         });
 
-        // Detach instead of storing in _connect_task: replace_root
-        // inside do_connect drops the ConnectionLanding entity (and its
-        // fields), which would cancel a stored Task mid-flight.
         cx.spawn(async move |this, cx| {
             let result = Self::do_connect(
                 landing_window,
                 connection_options,
-                project_path,
-                index,
+                path,
                 delegate.clone(),
                 app_state,
                 cx,
@@ -599,9 +842,6 @@ impl ConnectionLanding {
                 let error_message = format!("{error:#}");
                 log::error!("[zed-ios] SSH connection failed: {error_message}");
 
-                // Try updating the original ConnectionLanding (pre-replace_root
-                // errors). If it's been dropped, navigate back to a fresh landing
-                // screen with the error.
                 let updated = this
                     .update(cx, |this, cx| {
                         if let Some(host) = this.saved_hosts.get_mut(index) {
@@ -620,36 +860,26 @@ impl ConnectionLanding {
         .detach();
     }
 
-    async fn do_connect(
+    /// Create a RemoteClient + Project + Workspace for a given path on an
+    /// existing SSH connection. Returns the workspace and project entities.
+    async fn create_workspace_for_path(
         landing_window: AnyWindowHandle,
-        connection_options: SshConnectionOptions,
-        project_path: Option<String>,
-        _host_index: usize,
+        remote_connection: Arc<dyn remote::RemoteConnection>,
+        path: &str,
+        host: &str,
+        username: &str,
         delegate: Arc<dyn remote::RemoteClientDelegate>,
         app_state: Arc<workspace::AppState>,
         cx: &mut AsyncApp,
-    ) -> anyhow::Result<()> {
-        use remote::RusshRemoteConnection;
-
-        let path = project_path.as_deref().ok_or_else(|| {
-            anyhow::anyhow!("No project path specified. Edit the host to add one.")
-        })?;
-
-        // 1. Establish SSH connection (landing screen stays visible).
-        let connection =
-            RusshRemoteConnection::new(connection_options.clone(), delegate.clone(), cx).await?;
-
-        let remote_connection: Arc<dyn remote::RemoteConnection> = Arc::new(connection);
-
+    ) -> anyhow::Result<(Entity<workspace::Workspace>, Entity<project::Project>)> {
         let (cancel_tx, cancel_rx) = futures::channel::oneshot::channel::<()>();
         std::mem::forget(cancel_tx);
 
-        // 2. Create RemoteClient session.
-        log::info!("[zed-ios] creating remote client session");
+        log::info!("[zed-ios] creating remote client session for path: {path}");
         let session = match cx
             .update(|cx| {
                 remote::RemoteClient::new(
-                    remote::ConnectionIdentifier::Setup(1),
+                    remote::ConnectionIdentifier::setup(),
                     remote_connection,
                     cancel_rx,
                     delegate.clone(),
@@ -662,7 +892,6 @@ impl ConnectionLanding {
             None => anyhow::bail!("SSH connection was cancelled"),
         };
 
-        // 3. Create remote Project.
         log::info!("[zed-ios] creating remote project");
         let project = cx.update(|cx| {
             project::Project::remote(
@@ -677,10 +906,8 @@ impl ConnectionLanding {
             )
         });
 
-        // 4. Resolve the project path into a worktree to confirm it exists
-        //    before showing the workspace.
         log::info!("[zed-ios] resolving project path: {path}");
-        let project_path_result = cx
+        let (_worktree, project_path) = cx
             .update(|cx| {
                 workspace::Workspace::project_path_for_path(
                     project.clone(),
@@ -689,61 +916,25 @@ impl ConnectionLanding {
                     cx,
                 )
             })
-            .await;
+            .await
+            .map_err(|error| anyhow::anyhow!("Could not open '{path}': {error:#}"))?;
 
-        let (_worktree, project_path) = match project_path_result {
-            Ok(result) => result,
-            Err(error) => {
-                log::error!("[zed-ios] project path resolution failed: {error:#}");
-                anyhow::bail!("Could not open '{path}': {error:#}");
-            }
-        };
-
-        // 5. Create the workspace with a home button in the status bar,
-        //    wrap it in MultiWorkspace, register as an active connection,
-        //    and replace_root.
-        log::info!("[zed-ios] replacing root with remote workspace");
-        let app_state_for_workspace = app_state.clone();
-        let project_for_workspace = project.clone();
-        let host_str = connection_options.host.to_string();
-        let username_str = connection_options.username.clone().unwrap_or_default();
-        let port_val = connection_options.port.unwrap_or(22);
         let workspace_entity = landing_window.update(cx, |_, window, cx| {
             let workspace = cx.new(|cx| {
-                workspace::Workspace::new(
-                    None,
-                    project_for_workspace,
-                    app_state_for_workspace,
-                    window,
-                    cx,
-                )
+                workspace::Workspace::new(None, project.clone(), app_state.clone(), window, cx)
             });
 
-            // Add home button to the left side of the status bar.
-            let home_button = cx.new(|_cx| HomeStatusItem::new());
-            workspace.update(cx, |workspace, cx| {
-                workspace.status_bar().update(cx, |status_bar, cx| {
-                    status_bar.add_left_item(home_button, window, cx);
+            let switcher = cx.new(|_cx| WorkspaceSwitcher::new(path, host, username));
+            workspace.update(cx, |ws, cx| {
+                ws.status_bar().update(cx, |status_bar, cx| {
+                    status_bar.add_left_item(switcher, window, cx);
                 });
             });
 
-            // Store in active connections so it survives navigation.
-            active_connections_mut(cx).0.push(ActiveConnection {
-                workspace: workspace.clone(),
-                project: project.clone(),
-                host: host_str,
-                username: username_str,
-                port: port_val,
-            });
-
-            window.replace_root(cx, |window, cx| {
-                workspace::MultiWorkspace::new(workspace.clone(), window, cx)
-            });
             workspace
         })?;
-        log::info!("[zed-ios] remote workspace is now the root");
 
-        // 6. Open the resolved project path if it points to a file.
+        // Open the resolved project path if it points to a file.
         if !project_path.path.is_empty() {
             log::info!("[zed-ios] opening project path: {:?}", project_path);
             let open_result = landing_window.update(cx, |_, window, cx| {
@@ -755,32 +946,162 @@ impl ConnectionLanding {
                 Ok(_) => log::info!("[zed-ios] opened file successfully"),
                 Err(error) => log::error!("[zed-ios] failed to open file: {error:#}"),
             }
-        } else {
-            log::info!("[zed-ios] project path is a directory, no file to open");
         }
 
-        // 7. Subscribe to project::Event::Closed to clean up the active
-        //    connection and navigate back to the landing screen if the
-        //    remote connection drops.
-        landing_window
-            .update(cx, |_, _window, cx| {
-                cx.subscribe(&project, {
+        Ok((workspace_entity, project))
+    }
+
+    /// Subscribe to project close events so we can clean up the active
+    /// connection entry. If sibling workspaces remain on the same host,
+    /// switch to one of them. Otherwise navigate home.
+    fn subscribe_project_closed(
+        landing_window: AnyWindowHandle,
+        project: &Entity<project::Project>,
+        cx: &mut App,
+    ) {
+        cx.subscribe(project, {
+            let landing_window = landing_window;
+            move |project_entity, event: &project::Event, cx| {
+                if matches!(event, project::Event::Closed) {
+                    log::info!("[zed-ios] project closed, cleaning up");
+                    let project_id = project_entity.entity_id();
                     let landing_window = landing_window;
-                    move |project_entity, event: &project::Event, cx| {
-                        if matches!(event, project::Event::Closed) {
-                            log::info!("[zed-ios] project closed, returning to landing screen");
-                            let project_id = project_entity.entity_id();
-                            let landing_window = landing_window;
-                            cx.defer(move |cx| {
-                                active_connections_mut(cx).remove_by_project(project_id);
-                                Self::navigate_to_landing(landing_window, cx);
-                            });
+                    cx.defer(move |cx| {
+                        let active = active_connections_mut(cx);
+                        active.remove_by_project(project_id);
+
+                        // Find the host that still has workspaces (sibling).
+                        // Collect remaining workspaces to switch to if any exist.
+                        let remaining: Option<Vec<Entity<workspace::Workspace>>> = active
+                            .0
+                            .iter()
+                            .find(|hc| !hc.workspaces.is_empty())
+                            .map(|hc| hc.workspaces.iter().map(|w| w.workspace.clone()).collect());
+
+                        if let Some(workspaces) = remaining {
+                            let target = workspaces[0].clone();
+                            landing_window
+                                .update(cx, |_, window, cx| {
+                                    show_multi_workspace(window, cx, &workspaces, &target);
+                                })
+                                .log_err();
+                        } else {
+                            Self::navigate_to_landing(landing_window, cx);
                         }
-                    }
-                })
-                .detach();
-            })
-            .log_err();
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Case 2: Add a new workspace (path) to an already-connected host.
+    async fn add_workspace_for_path(
+        landing_window: AnyWindowHandle,
+        remote_connection: Arc<dyn remote::RemoteConnection>,
+        path: String,
+        host: String,
+        username: String,
+        port: u16,
+        delegate: Arc<dyn remote::RemoteClientDelegate>,
+        app_state: Arc<workspace::AppState>,
+        cx: &mut AsyncApp,
+    ) -> anyhow::Result<()> {
+        if path.is_empty() {
+            anyhow::bail!("No project path specified. Edit the host to add one.");
+        }
+
+        let (workspace_entity, project) = Self::create_workspace_for_path(
+            landing_window,
+            remote_connection,
+            &path,
+            &host,
+            &username,
+            delegate,
+            app_state,
+            cx,
+        )
+        .await?;
+
+        landing_window.update(cx, |_, window, cx| {
+            // Add workspace entry to the existing host connection.
+            let active_conns = active_connections_mut(cx);
+            if let Some(host_conn) = active_conns.find_by_host_mut(&host, &username, port) {
+                host_conn.workspaces.push(WorkspaceEntry {
+                    workspace: workspace_entity.clone(),
+                    project: project.clone(),
+                    path,
+                });
+
+                let all_workspaces: Vec<_> =
+                    host_conn.workspaces.iter().map(|w| w.workspace.clone()).collect();
+                show_multi_workspace(window, cx, &all_workspaces, &workspace_entity);
+            }
+
+            Self::subscribe_project_closed(landing_window, &project, cx);
+        })?;
+
+        log::info!("[zed-ios] added workspace to existing host connection");
+        Ok(())
+    }
+
+    /// Case 3: Full connect flow — establish SSH, create first workspace,
+    /// create MultiWorkspace, register host connection, and replace_root.
+    async fn do_connect(
+        landing_window: AnyWindowHandle,
+        connection_options: SshConnectionOptions,
+        path: String,
+        delegate: Arc<dyn remote::RemoteClientDelegate>,
+        app_state: Arc<workspace::AppState>,
+        cx: &mut AsyncApp,
+    ) -> anyhow::Result<()> {
+        if path.is_empty() {
+            anyhow::bail!("No project path specified. Edit the host to add one.");
+        }
+
+        // 1. Establish SSH connection.
+        let connection =
+            remote::RusshRemoteConnection::new(connection_options.clone(), delegate.clone(), cx)
+                .await?;
+        let remote_connection: Arc<dyn remote::RemoteConnection> = Arc::new(connection);
+
+        // 2. Create workspace for the path.
+        let host_str = connection_options.host.to_string();
+        let username_str = connection_options.username.clone().unwrap_or_default();
+        let port_val = connection_options.port.unwrap_or(22);
+
+        let (workspace_entity, project) = Self::create_workspace_for_path(
+            landing_window,
+            remote_connection.clone(),
+            &path,
+            &host_str,
+            &username_str,
+            delegate,
+            app_state,
+            cx,
+        )
+        .await?;
+
+        // 3. Create MultiWorkspace, register in ActiveConnections, replace_root.
+        landing_window.update(cx, |_, window, cx| {
+            window.replace_root(cx, |window, cx| {
+                workspace::MultiWorkspace::new(workspace_entity.clone(), window, cx)
+            });
+
+            active_connections_mut(cx).0.push(HostConnection {
+                remote_connection,
+                workspaces: vec![WorkspaceEntry {
+                    workspace: workspace_entity,
+                    project: project.clone(),
+                    path,
+                }],
+                host: host_str,
+                username: username_str,
+                port: port_val,
+            });
+
+            Self::subscribe_project_closed(landing_window, &project, cx);
+        })?;
 
         log::info!("[zed-ios] remote project opened successfully");
         Ok(())
@@ -936,110 +1257,6 @@ impl ConnectionLanding {
             .child(Label::new("Connect to a remote host to start editing").color(Color::Muted))
     }
 
-    fn render_host_entry(
-        &self,
-        index: usize,
-        host: &SavedHost,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let colors = cx.theme().colors();
-        let display_name = host.display_name();
-        let address_line = host.address_line();
-        let project_path = host.project_path.clone().map(SharedString::from);
-        let status_color = host.status_color();
-        let status_label = host.status_label();
-        let is_editing = self.editing_hosts;
-        let is_connectable = !is_editing
-            && matches!(
-                host.status,
-                ConnectionStatus::Disconnected
-                    | ConnectionStatus::Connected
-                    | ConnectionStatus::Error(_)
-            );
-
-        let hover_bg = colors.ghost_element_hover;
-        let focus_border = colors.border_focused;
-
-        div()
-            .id(SharedString::from(format!("host-{index}")))
-            .tab_index(index as isize)
-            .w_full()
-            .px_4()
-            .py_3()
-            .flex()
-            .items_center()
-            .justify_between()
-            .cursor_pointer()
-            .rounded_md()
-            .border_2()
-            .border_color(gpui::transparent_black())
-            .hover(move |style| style.bg(hover_bg))
-            .focus(move |style| style.border_color(focus_border))
-            .when(is_connectable, |this| {
-                this.on_click(cx.listener(move |this, _event, window, cx| {
-                    this.connect_host(index, window, cx);
-                }))
-            })
-            .when(is_editing, |this| {
-                this.on_click(cx.listener(move |this, _event, window, cx| {
-                    this.switch_to_edit_host(index, window, cx);
-                }))
-            })
-            .child(
-                h_flex()
-                    .gap_3()
-                    .items_center()
-                    .child(
-                        div().flex_shrink_0().child(
-                            Icon::new(IconName::Server)
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
-                        ),
-                    )
-                    .child(
-                        v_flex()
-                            .child(Label::new(display_name).color(Color::Default))
-                            .child(
-                                Label::new(address_line)
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            )
-                            .when_some(project_path, |this, path| {
-                                this.child(
-                                    Label::new(path).size(LabelSize::XSmall).color(Color::Muted),
-                                )
-                            }),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .gap_2()
-                    .items_center()
-                    .child(Indicator::dot().color(status_color))
-                    .child(
-                        Label::new(status_label)
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    )
-                    .when(self.editing_hosts, |this| {
-                        this.child(
-                            IconButton::new(
-                                SharedString::from(format!("remove-host-{index}")),
-                                IconName::Trash,
-                            )
-                            .size(ui::ButtonSize::Compact)
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .style(ButtonStyle::Transparent)
-                            .on_click(cx.listener(
-                                move |this, _event, window, cx| {
-                                    this.remove_host(index, window, cx);
-                                },
-                            )),
-                        )
-                    }),
-            )
-    }
 
     fn render_hosts_list(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors();
@@ -1080,41 +1297,218 @@ impl ConnectionLanding {
                     .child(Label::new("No saved hosts yet").color(Color::Muted)),
             );
         } else {
-            let border = colors.border;
-            let surface_bg = colors.surface_background;
-
-            let mut entries = div()
-                .tab_group()
-                .rounded_lg()
-                .border_1()
-                .border_color(border)
-                .bg(surface_bg)
-                .overflow_hidden();
-
-            for index in 0..self.saved_hosts.len() {
-                if index > 0 {
-                    entries = entries.child(div().mx_4().h_px().bg(border));
+            // Group entries by (host, username, port) to show projects under each host.
+            let mut groups: Vec<(String, String, u16, Vec<usize>)> = Vec::new();
+            for (index, host) in self.saved_hosts.iter().enumerate() {
+                if let Some(group) = groups.iter_mut().find(|(h, u, p, _)| {
+                    h == host.host.as_ref() && u == host.username.as_ref() && *p == host.port
+                }) {
+                    group.3.push(index);
+                } else {
+                    groups.push((
+                        host.host.to_string(),
+                        host.username.to_string(),
+                        host.port,
+                        vec![index],
+                    ));
                 }
-                entries =
-                    entries.child(self.render_host_entry(index, &self.saved_hosts[index], cx));
             }
 
-            list = list.child(entries);
+            let border = colors.border;
+            let surface_bg = colors.surface_background;
+            let mut first_group = true;
+
+            for (_host, _username, _port, indices) in &groups {
+                let first_idx = indices[0];
+                let host = &self.saved_hosts[first_idx];
+                let display_name = host.display_name();
+                let address_line = host.address_line();
+
+                // Check if any entry in this group is connected.
+                let group_connected = indices
+                    .iter()
+                    .any(|&i| matches!(self.saved_hosts[i].status, ConnectionStatus::Connected));
+
+                if !first_group {
+                    list = list.child(div().h_2());
+                }
+                first_group = false;
+
+                let mut group_container = div()
+                    .tab_group()
+                    .rounded_lg()
+                    .border_1()
+                    .border_color(border)
+                    .bg(surface_bg)
+                    .overflow_hidden();
+
+                // Host header row.
+                let add_project_index = first_idx;
+                group_container = group_container.child(
+                    h_flex()
+                        .px_4()
+                        .py_2()
+                        .gap_3()
+                        .items_center()
+                        .child(
+                            Icon::new(IconName::Server)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .child(
+                            v_flex()
+                                .child(Label::new(display_name).color(Color::Default))
+                                .child(
+                                    Label::new(address_line)
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                ),
+                        )
+                        .child(div().flex_grow())
+                        .when(group_connected, |this| {
+                            this.child(Indicator::dot().color(Color::Success))
+                        })
+                        .when(editing, |this| {
+                            this.child(
+                                IconButton::new(
+                                    SharedString::from(format!("add-project-{first_idx}")),
+                                    IconName::Plus,
+                                )
+                                .size(ui::ButtonSize::Compact)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Muted)
+                                .style(ButtonStyle::Transparent)
+                                .on_click(cx.listener(
+                                    move |this, _event, window, cx| {
+                                        this.switch_to_add_project(add_project_index, window, cx);
+                                    },
+                                )),
+                            )
+                        }),
+                );
+
+                // Project path sub-entries.
+                for (sub_idx, &index) in indices.iter().enumerate() {
+                    group_container = group_container.child(div().mx_4().h_px().bg(border));
+                    group_container = group_container
+                        .child(self.render_project_entry(index, sub_idx, cx));
+                }
+
+                list = list.child(group_container);
+            }
         }
 
-        list.child(
-            ui::Button::new("add-host-btn", "Add Remote Host")
-                .tab_index(host_count as isize)
-                .start_icon(Icon::new(IconName::Plus))
-                .full_width()
-                .style(ButtonStyle::Filled)
-                .on_click(cx.listener(Self::switch_to_add_host)),
-        )
+        let show_add_host = self.saved_hosts.is_empty() || self.editing_hosts;
+        list.when(show_add_host, |this| {
+            this.child(
+                ui::Button::new("add-host-btn", "Add Remote Host")
+                    .tab_index(host_count as isize)
+                    .start_icon(Icon::new(IconName::Plus))
+                    .full_width()
+                    .style(ButtonStyle::Filled)
+                    .on_click(cx.listener(Self::switch_to_add_host)),
+            )
+        })
+    }
+
+    fn render_project_entry(
+        &self,
+        index: usize,
+        sub_index: usize,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let host = &self.saved_hosts[index];
+        let colors = cx.theme().colors();
+        let path_label = host
+            .project_path
+            .as_deref()
+            .unwrap_or("(no project path)");
+        let path_label = SharedString::from(path_label.to_string());
+        let status_color = host.status_color();
+        let status_label = host.status_label();
+        let is_editing = self.editing_hosts;
+        let is_connectable = !is_editing
+            && matches!(
+                host.status,
+                ConnectionStatus::Disconnected
+                    | ConnectionStatus::Connected
+                    | ConnectionStatus::HostConnected
+                    | ConnectionStatus::Error(_)
+            );
+
+        let hover_bg = colors.ghost_element_hover;
+        let focus_border = colors.border_focused;
+
+        div()
+            .id(SharedString::from(format!("project-{index}-{sub_index}")))
+            .tab_index(index as isize)
+            .w_full()
+            .pl_11()
+            .pr_4()
+            .py_2()
+            .flex()
+            .items_center()
+            .justify_between()
+            .cursor_pointer()
+            .border_2()
+            .border_color(gpui::transparent_black())
+            .hover(move |style| style.bg(hover_bg))
+            .focus(move |style| style.border_color(focus_border))
+            .when(is_connectable, |this| {
+                this.on_click(cx.listener(move |this, _event, window, cx| {
+                    this.connect_host(index, window, cx);
+                }))
+            })
+            .when(is_editing, |this| {
+                this.on_click(cx.listener(move |this, _event, window, cx| {
+                    this.switch_to_edit_host(index, window, cx);
+                }))
+            })
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        Icon::new(IconName::Folder)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(Label::new(path_label).size(LabelSize::Small).color(Color::Default)),
+            )
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(Indicator::dot().color(status_color))
+                    .child(
+                        Label::new(status_label)
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .when(self.editing_hosts, |this| {
+                        this.child(
+                            IconButton::new(
+                                SharedString::from(format!("remove-host-{index}")),
+                                IconName::Trash,
+                            )
+                            .size(ui::ButtonSize::Compact)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .style(ButtonStyle::Transparent)
+                            .on_click(cx.listener(
+                                move |this, _event, window, cx| {
+                                    this.remove_host(index, window, cx);
+                                },
+                            )),
+                        )
+                    }),
+            )
     }
 
     fn render_add_host_form(
         &self,
         editing_index: Option<usize>,
+        project_only: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let colors = cx.theme().colors();
@@ -1146,19 +1540,149 @@ impl ConnectionLanding {
         let project_path_focus = self
             .project_path_editor
             .focus_handle(cx)
-            .tab_index(5)
+            .tab_index(if project_only { 0 } else { 5 })
             .tab_stop(true);
 
-        let form_title = if editing_index.is_some() {
-            "EDIT CONNECTION"
+        let (form_title, confirm_label) = if project_only {
+            ("ADD PROJECT", "Add Project")
+        } else if editing_index.is_some() {
+            ("EDIT CONNECTION", "Save")
         } else {
-            "NEW CONNECTION"
+            ("NEW CONNECTION", "Add Host")
         };
-        let confirm_label = if editing_index.is_some() {
-            "Save"
-        } else {
-            "Add Host"
-        };
+
+        let border = colors.border;
+        let editor_bg = colors.editor_background;
+
+        let mut form_fields = div()
+            .tab_group()
+            .rounded_lg()
+            .border_1()
+            .border_color(colors.border)
+            .bg(colors.surface_background)
+            .p_4()
+            .flex()
+            .flex_col()
+            .gap_3();
+
+        if !project_only {
+            form_fields = form_fields
+                .child(
+                    v_flex()
+                        .gap_1()
+                        .child(Label::new("Name").size(LabelSize::Small).color(Color::Muted))
+                        .child(
+                            div()
+                                .id("name-field")
+                                .track_focus(&name_focus)
+                                .rounded_md()
+                                .border_1()
+                                .border_color(border)
+                                .bg(editor_bg)
+                                .px_2()
+                                .py_1()
+                                .child(self.name_editor.clone()),
+                        ),
+                )
+                .child(
+                    v_flex()
+                        .gap_1()
+                        .child(Label::new("Host").size(LabelSize::Small).color(Color::Muted))
+                        .child(
+                            div()
+                                .id("host-field")
+                                .track_focus(&host_focus)
+                                .rounded_md()
+                                .border_1()
+                                .border_color(border)
+                                .bg(editor_bg)
+                                .px_2()
+                                .py_1()
+                                .child(self.host_editor.clone()),
+                        ),
+                )
+                .child(
+                    v_flex()
+                        .gap_1()
+                        .child(
+                            Label::new("Username")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .child(
+                            div()
+                                .id("username-field")
+                                .track_focus(&username_focus)
+                                .rounded_md()
+                                .border_1()
+                                .border_color(border)
+                                .bg(editor_bg)
+                                .px_2()
+                                .py_1()
+                                .child(self.username_editor.clone()),
+                        ),
+                )
+                .child(
+                    v_flex()
+                        .gap_1()
+                        .child(Label::new("Port").size(LabelSize::Small).color(Color::Muted))
+                        .child(
+                            div()
+                                .id("port-field")
+                                .track_focus(&port_focus)
+                                .rounded_md()
+                                .border_1()
+                                .border_color(border)
+                                .bg(editor_bg)
+                                .px_2()
+                                .py_1()
+                                .child(self.port_editor.clone()),
+                        ),
+                )
+                .child(
+                    v_flex()
+                        .gap_1()
+                        .child(
+                            Label::new("Password")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .child(
+                            div()
+                                .id("password-field")
+                                .track_focus(&password_focus)
+                                .rounded_md()
+                                .border_1()
+                                .border_color(border)
+                                .bg(editor_bg)
+                                .px_2()
+                                .py_1()
+                                .child(self.password_editor.clone()),
+                        ),
+                );
+        }
+
+        form_fields = form_fields.child(
+            v_flex()
+                .gap_1()
+                .child(
+                    Label::new("Project Path")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+                .child(
+                    div()
+                        .id("project-path-field")
+                        .track_focus(&project_path_focus)
+                        .rounded_md()
+                        .border_1()
+                        .border_color(border)
+                        .bg(editor_bg)
+                        .px_2()
+                        .py_1()
+                        .child(self.project_path_editor.clone()),
+                ),
+        );
 
         v_flex()
             .id("add-host-form")
@@ -1169,145 +1693,7 @@ impl ConnectionLanding {
                     .size(LabelSize::XSmall)
                     .color(Color::Muted),
             )
-            .child(
-                div()
-                    .tab_group()
-                    .rounded_lg()
-                    .border_1()
-                    .border_color(colors.border)
-                    .bg(colors.surface_background)
-                    .p_4()
-                    .flex()
-                    .flex_col()
-                    .gap_3()
-                    // Name field (optional)
-                    .child(
-                        v_flex()
-                            .gap_1()
-                            .child(
-                                Label::new("Name")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            )
-                            .child(
-                                div()
-                                    .id("name-field")
-                                    .track_focus(&name_focus)
-                                    .rounded_md()
-                                    .border_1()
-                                    .border_color(colors.border)
-                                    .bg(colors.editor_background)
-                                    .px_2()
-                                    .py_1()
-                                    .child(self.name_editor.clone()),
-                            ),
-                    )
-                    .child(
-                        v_flex()
-                            .gap_1()
-                            .child(
-                                Label::new("Host")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            )
-                            .child(
-                                div()
-                                    .id("host-field")
-                                    .track_focus(&host_focus)
-                                    .rounded_md()
-                                    .border_1()
-                                    .border_color(colors.border)
-                                    .bg(colors.editor_background)
-                                    .px_2()
-                                    .py_1()
-                                    .child(self.host_editor.clone()),
-                            ),
-                    )
-                    .child(
-                        v_flex()
-                            .gap_1()
-                            .child(
-                                Label::new("Username")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            )
-                            .child(
-                                div()
-                                    .id("username-field")
-                                    .track_focus(&username_focus)
-                                    .rounded_md()
-                                    .border_1()
-                                    .border_color(colors.border)
-                                    .bg(colors.editor_background)
-                                    .px_2()
-                                    .py_1()
-                                    .child(self.username_editor.clone()),
-                            ),
-                    )
-                    .child(
-                        v_flex()
-                            .gap_1()
-                            .child(
-                                Label::new("Port")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            )
-                            .child(
-                                div()
-                                    .id("port-field")
-                                    .track_focus(&port_focus)
-                                    .rounded_md()
-                                    .border_1()
-                                    .border_color(colors.border)
-                                    .bg(colors.editor_background)
-                                    .px_2()
-                                    .py_1()
-                                    .child(self.port_editor.clone()),
-                            ),
-                    )
-                    .child(
-                        v_flex()
-                            .gap_1()
-                            .child(
-                                Label::new("Password")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            )
-                            .child(
-                                div()
-                                    .id("password-field")
-                                    .track_focus(&password_focus)
-                                    .rounded_md()
-                                    .border_1()
-                                    .border_color(colors.border)
-                                    .bg(colors.editor_background)
-                                    .px_2()
-                                    .py_1()
-                                    .child(self.password_editor.clone()),
-                            ),
-                    )
-                    .child(
-                        v_flex()
-                            .gap_1()
-                            .child(
-                                Label::new("Project Path")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            )
-                            .child(
-                                div()
-                                    .id("project-path-field")
-                                    .track_focus(&project_path_focus)
-                                    .rounded_md()
-                                    .border_1()
-                                    .border_color(colors.border)
-                                    .bg(colors.editor_background)
-                                    .px_2()
-                                    .py_1()
-                                    .child(self.project_path_editor.clone()),
-                            ),
-                    ),
-            )
+            .child(form_fields)
             .child(
                 h_flex()
                     .gap_2()
@@ -1358,10 +1744,13 @@ impl Render for ConnectionLanding {
                 content = content.child(self.render_hosts_list(cx));
             }
             LandingMode::AddHost => {
-                content = content.child(self.render_add_host_form(None, cx));
+                content = content.child(self.render_add_host_form(None, false, cx));
             }
             LandingMode::EditHost(index) => {
-                content = content.child(self.render_add_host_form(Some(*index), cx));
+                content = content.child(self.render_add_host_form(Some(*index), false, cx));
+            }
+            LandingMode::AddProjectToHost => {
+                content = content.child(self.render_add_host_form(None, true, cx));
             }
         }
 
