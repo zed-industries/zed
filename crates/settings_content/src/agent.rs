@@ -237,6 +237,31 @@ pub struct SpeechToTextContent {
     pub whisper_cpp_executable_path: Option<PathBuf>,
     /// Path to the whisper.cpp model file to use for transcription.
     pub whisper_cpp_model_path: Option<PathBuf>,
+    /// Whether the microphone button toggles recording or records only while held.
+    pub trigger_mode: Option<SpeechToTextTriggerMode>,
+}
+
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SpeechToTextTriggerMode {
+    /// Click once to start recording and click again to stop.
+    #[default]
+    Toggle,
+    /// Record only while the microphone button is held down.
+    Hold,
 }
 
 #[with_fallible_options]

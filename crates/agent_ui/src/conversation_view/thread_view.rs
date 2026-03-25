@@ -3,6 +3,7 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 
 use acp_thread::ContentBlock;
+use agent_settings::SpeechToTextTriggerMode;
 use audio::{AudioDeviceInfo, AudioSettings, AvailableAudioDevices};
 use chrono::Local;
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
@@ -12,7 +13,7 @@ use picker::{Picker, PickerDelegate, popover_menu::PickerPopoverMenu};
 
 use crate::StartThreadIn;
 use crate::message_editor::SharedSessionCapabilities;
-use gpui::{Corner, DismissEvent, List};
+use gpui::{Corner, DismissEvent, List, MouseButton, MouseDownEvent, MouseUpEvent};
 use heapless::Vec as ArrayVec;
 use language_model::{LanguageModelEffortLevel, Speed};
 use settings::update_settings_file;
@@ -8297,6 +8298,31 @@ impl ThreadView {
         }
     }
 
+    fn start_voice_recording_from_press(&mut self, cx: &mut Context<Self>) {
+        if !matches!(self.voice_recording_state, VoiceRecordingState::Idle) {
+            return;
+        }
+
+        if let Err(error) = self.start_voice_recording(cx) {
+            self.voice_recording_state = VoiceRecordingState::Idle;
+            self.show_voice_recording_error(
+                format!("Failed to start voice recording: {error:#}"),
+                cx,
+            );
+            cx.notify();
+        }
+    }
+
+    fn stop_voice_recording_from_release(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let VoiceRecordingState::Recording { capture_input } =
+            std::mem::replace(&mut self.voice_recording_state, VoiceRecordingState::Idle)
+        else {
+            return;
+        };
+
+        self.finish_voice_recording(capture_input, window, cx);
+    }
+
     fn start_voice_recording(&mut self, cx: &mut Context<Self>) -> anyhow::Result<()> {
         self.resolve_whisper_cpp_configuration(cx)?;
         audio::ensure_devices_initialized(cx);
@@ -8504,12 +8530,7 @@ impl ThreadView {
             );
         }
 
-        let transcript = Self::extract_whisper_transcript(&output.stdout)?;
-        if transcript.is_empty() {
-            anyhow::bail!("whisper.cpp returned an empty transcript");
-        }
-
-        Ok(transcript)
+        Self::extract_whisper_transcript(&output.stdout)
     }
 
     fn extract_whisper_transcript(stdout: &[u8]) -> anyhow::Result<String> {
@@ -8545,7 +8566,7 @@ impl ThreadView {
         cx: &mut Context<Self>,
     ) {
         let transcript = transcript.trim();
-        if transcript.is_empty() {
+        if transcript.is_empty() || transcript == "[BLANK_AUDIO]" {
             return;
         }
 
@@ -8717,6 +8738,7 @@ impl ThreadView {
         let microphone_picker = self.ensure_microphone_picker(window, microphone_options, cx);
 
         let focus_handle = self.message_editor.focus_handle(cx);
+        let trigger_mode = AgentSettings::get_global(cx).speech_to_text.trigger_mode;
         let is_recording = self.voice_recording_state.is_recording();
         let is_saving = self.voice_recording_state.is_saving();
         let is_transcribing = self.voice_recording_state.is_transcribing();
@@ -8829,21 +8851,50 @@ impl ThreadView {
             } else if is_transcribing {
                 Tooltip::text("Transcribing recording")(window, cx)
             } else {
-                Tooltip::for_action_in(
-                    if is_recording {
-                        "Stop Voice Input"
-                    } else {
-                        "Start Voice Input"
-                    },
-                    &ToggleVoiceRecording,
-                    &focus_handle,
-                    cx,
-                )
+                let label = match trigger_mode {
+                    SpeechToTextTriggerMode::Toggle => {
+                        if is_recording {
+                            "Stop Voice Input"
+                        } else {
+                            "Start Voice Input"
+                        }
+                    }
+                    SpeechToTextTriggerMode::Hold => "Hold to Record Voice Input",
+                };
+
+                Tooltip::for_action_in(label, &ToggleVoiceRecording, &focus_handle, cx)
             }
-        })
-        .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-            this.flip_voice_recording(window, cx);
-        }));
+        });
+        let voice_recording_button = match trigger_mode {
+            SpeechToTextTriggerMode::Toggle => voice_recording_button
+                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                    this.flip_voice_recording(window, cx);
+                }))
+                .into_any_element(),
+            SpeechToTextTriggerMode::Hold => div()
+                .child(voice_recording_button)
+                .when(!microphone_control_disabled, |this| {
+                    this.on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _: &MouseDownEvent, _window, cx| {
+                            this.start_voice_recording_from_press(cx);
+                        }),
+                    )
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(|this, _: &MouseUpEvent, window, cx| {
+                            this.stop_voice_recording_from_release(window, cx);
+                        }),
+                    )
+                    .on_mouse_up_out(
+                        MouseButton::Left,
+                        cx.listener(|this, _: &MouseUpEvent, window, cx| {
+                            this.stop_voice_recording_from_release(window, cx);
+                        }),
+                    )
+                })
+                .into_any_element(),
+        };
 
         let microphone_menu = PickerPopoverMenu::new(
             microphone_picker,

@@ -17,6 +17,7 @@ use settings::{
 use std::path::PathBuf;
 
 pub use crate::agent_profile::*;
+pub use settings::settings_content::SpeechToTextTriggerMode;
 
 pub const SUMMARIZE_THREAD_PROMPT: &str = include_str!("prompts/summarize_thread_prompt.txt");
 pub const SUMMARIZE_THREAD_DETAILED_PROMPT: &str =
@@ -95,6 +96,7 @@ impl AgentSettings {
 pub struct SpeechToTextSettings {
     pub whisper_cpp_executable_path: Option<PathBuf>,
     pub whisper_cpp_model_path: Option<PathBuf>,
+    pub trigger_mode: SpeechToTextTriggerMode,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize, JsonSchema)]
@@ -457,6 +459,11 @@ impl Settings for AgentSettings {
                     .speech_to_text
                     .as_ref()
                     .and_then(|speech_to_text| speech_to_text.whisper_cpp_model_path.clone()),
+                trigger_mode: agent
+                    .speech_to_text
+                    .as_ref()
+                    .and_then(|speech_to_text| speech_to_text.trigger_mode)
+                    .unwrap_or_default(),
             },
         }
     }
