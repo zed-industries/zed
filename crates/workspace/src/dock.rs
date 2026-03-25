@@ -837,16 +837,6 @@ impl Dock {
     pub fn resize_active_panel(
         &mut self,
         size: Option<Pixels>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let ratio = size.and_then(|size| self.flexible_size_ratio_for_pixels(size, window, cx));
-        self.resize_active_panel_with_ratio(size, ratio, window, cx);
-    }
-
-    pub fn resize_active_panel_with_ratio(
-        &mut self,
-        size: Option<Pixels>,
         ratio: Option<f32>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -878,16 +868,6 @@ impl Dock {
     }
 
     pub fn resize_all_panels(
-        &mut self,
-        size: Option<Pixels>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let ratio = size.and_then(|size| self.flexible_size_ratio_for_pixels(size, window, cx));
-        self.resize_all_panels_with_ratio(size, ratio, window, cx);
-    }
-
-    pub fn resize_all_panels_with_ratio(
         &mut self,
         size: Option<Pixels>,
         ratio: Option<f32>,
@@ -975,18 +955,6 @@ impl Dock {
             .unwrap_or_else(|| entry.panel.default_size(window, cx))
     }
 
-    fn flexible_size_ratio_for_pixels(
-        &self,
-        size: Pixels,
-        window: &Window,
-        cx: &App,
-    ) -> Option<f32> {
-        let workspace = self.workspace.upgrade()?;
-        workspace
-            .read(cx)
-            .flexible_dock_ratio_for_size(self.position, size, window, cx)
-    }
-
     pub(crate) fn load_persisted_size_state(
         workspace: &Workspace,
         panel_key: &'static str,
@@ -1017,7 +985,7 @@ pub(crate) fn resolve_panel_size(
     if position.axis() == Axis::Horizontal && panel.supports_flexible_size(window, cx) {
         let ratio = size_state
             .flexible_size_ratio
-            .or_else(|| workspace.default_flexible_dock_ratio(position, cx));
+            .or_else(|| workspace.default_flexible_dock_ratio(position));
 
         if let Some(ratio) = ratio {
             return workspace
@@ -1059,7 +1027,7 @@ impl Render for Dock {
                         MouseButton::Left,
                         cx.listener(|dock, e: &MouseUpEvent, window, cx| {
                             if e.click_count == 2 {
-                                dock.resize_active_panel(None, window, cx);
+                                dock.resize_active_panel(None, None, window, cx);
                                 dock.workspace
                                     .update(cx, |workspace, cx| {
                                         workspace.serialize_workspace(window, cx);

@@ -377,7 +377,10 @@ fn convert_token(
     for rule in matching {
         empty = false;
 
-        let style = rule.style.iter().find_map(|style| theme.get_opt(style));
+        let style = rule
+            .style
+            .iter()
+            .find_map(|style| theme.style_for_name(style));
 
         macro_rules! overwrite {
             (

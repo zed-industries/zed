@@ -2261,18 +2261,9 @@ impl Workspace {
         Some((workspace_width - opposite_width).max(RESIZE_HANDLE_SIZE))
     }
 
-    pub fn default_flexible_dock_ratio(&self, position: DockPosition, cx: &App) -> Option<f32> {
+    pub fn default_flexible_dock_ratio(&self, position: DockPosition) -> Option<f32> {
         if position.axis() != Axis::Horizontal {
             return None;
-        }
-
-        if self
-            .center
-            .panes()
-            .iter()
-            .all(|pane| pane.read(cx).items_len() == 0)
-        {
-            return Some(1.0);
         }
 
         let pane = self.last_active_center_pane.clone()?.upgrade()?;
@@ -7378,9 +7369,9 @@ impl Workspace {
                 .resize_all_panels_in_dock
                 .contains(&DockPosition::Left)
             {
-                left_dock.resize_all_panels_with_ratio(Some(size), ratio, window, cx);
+                left_dock.resize_all_panels(Some(size), ratio, window, cx);
             } else {
-                left_dock.resize_active_panel_with_ratio(Some(size), ratio, window, cx);
+                left_dock.resize_active_panel(Some(size), ratio, window, cx);
             }
         });
     }
@@ -7402,9 +7393,9 @@ impl Workspace {
                 .resize_all_panels_in_dock
                 .contains(&DockPosition::Right)
             {
-                right_dock.resize_all_panels_with_ratio(Some(size), ratio, window, cx);
+                right_dock.resize_all_panels(Some(size), ratio, window, cx);
             } else {
-                right_dock.resize_active_panel_with_ratio(Some(size), ratio, window, cx);
+                right_dock.resize_active_panel(Some(size), ratio, window, cx);
             }
         });
     }
@@ -7416,9 +7407,9 @@ impl Workspace {
                 .resize_all_panels_in_dock
                 .contains(&DockPosition::Bottom)
             {
-                bottom_dock.resize_all_panels(Some(size), window, cx);
+                bottom_dock.resize_all_panels(Some(size), None, window, cx);
             } else {
-                bottom_dock.resize_active_panel(Some(size), window, cx);
+                bottom_dock.resize_active_panel(Some(size), None, window, cx);
             }
         });
     }
@@ -12268,15 +12259,6 @@ mod tests {
             let panel = cx.new(|cx| TestPanel::new_flexible(DockPosition::Right, 100, cx));
             workspace.add_panel(panel, window, cx);
             workspace.toggle_dock(DockPosition::Right, window, cx);
-
-            let dock = workspace.right_dock().read(cx);
-            let workspace_width = workspace.bounds.size.width;
-            let expanded_width = dock
-                .active_panel()
-                .map(|panel| workspace.resolved_dock_panel_size(&dock, panel.as_ref(), window, cx))
-                .expect("flexible dock should fill the center when there are no tabs");
-
-            assert_eq!(expanded_width, workspace_width);
         });
 
         let (panel, resized_width, ratio_basis_width) =
@@ -14540,6 +14522,74 @@ mod tests {
                 "Dock should stay open when its zoomed panel (without pane()) still has focus"
             );
             assert!(panel.is_zoomed(window, cx));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_panels_stay_open_after_position_change_and_settings_update(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        // Add two panels to the left dock and open it.
+        let (panel_a, panel_b) = workspace.update_in(cx, |workspace, window, cx| {
+            let panel_a = cx.new(|cx| TestPanel::new(DockPosition::Left, 100, cx));
+            let panel_b = cx.new(|cx| TestPanel::new(DockPosition::Left, 101, cx));
+            workspace.add_panel(panel_a.clone(), window, cx);
+            workspace.add_panel(panel_b.clone(), window, cx);
+            workspace.left_dock().update(cx, |dock, cx| {
+                dock.set_open(true, window, cx);
+                dock.activate_panel(0, window, cx);
+            });
+            (panel_a, panel_b)
+        });
+
+        workspace.update_in(cx, |workspace, _, cx| {
+            assert!(workspace.left_dock().read(cx).is_open());
+        });
+
+        // Simulate a feature flag changing default dock positions: both panels
+        // move from Left to Right.
+        workspace.update_in(cx, |_workspace, _window, cx| {
+            panel_a.update(cx, |p, _cx| p.position = DockPosition::Right);
+            panel_b.update(cx, |p, _cx| p.position = DockPosition::Right);
+            cx.update_global::<SettingsStore, _>(|_, _| {});
+        });
+
+        // Both panels should now be in the right dock.
+        workspace.update_in(cx, |workspace, _, cx| {
+            let right_dock = workspace.right_dock().read(cx);
+            assert_eq!(right_dock.panels_len(), 2);
+        });
+
+        // Open the right dock and activate panel_b (simulating the user
+        // opening the panel after it moved).
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.right_dock().update(cx, |dock, cx| {
+                dock.set_open(true, window, cx);
+                dock.activate_panel(1, window, cx);
+            });
+        });
+
+        // Now trigger another SettingsStore change
+        workspace.update_in(cx, |_workspace, _window, cx| {
+            cx.update_global::<SettingsStore, _>(|_, _| {});
+        });
+
+        workspace.update_in(cx, |workspace, _, cx| {
+            assert!(
+                workspace.right_dock().read(cx).is_open(),
+                "Right dock should still be open after a settings change"
+            );
+            assert_eq!(
+                workspace.right_dock().read(cx).panels_len(),
+                2,
+                "Both panels should still be in the right dock"
+            );
         });
     }
 }

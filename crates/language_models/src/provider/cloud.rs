@@ -769,7 +769,6 @@ impl LanguageModel for CloudLanguageModel {
     > {
         let thread_id = request.thread_id.clone();
         let prompt_id = request.prompt_id.clone();
-        let intent = request.intent;
         let app_version = Some(cx.update(|cx| AppVersion::global(cx)));
         let user_store = self.user_store.clone();
         let organization_id = cx.update(|cx| {
@@ -822,7 +821,6 @@ impl LanguageModel for CloudLanguageModel {
                         CompletionBody {
                             thread_id,
                             prompt_id,
-                            intent,
                             provider: cloud_llm_client::LanguageModelProvider::Anthropic,
                             model: request.model.clone(),
                             provider_request: serde_json::to_value(&request)
@@ -881,7 +879,6 @@ impl LanguageModel for CloudLanguageModel {
                         CompletionBody {
                             thread_id,
                             prompt_id,
-                            intent,
                             provider: cloud_llm_client::LanguageModelProvider::OpenAi,
                             model: request.model.clone(),
                             provider_request: serde_json::to_value(&request)
@@ -923,7 +920,6 @@ impl LanguageModel for CloudLanguageModel {
                         CompletionBody {
                             thread_id,
                             prompt_id,
-                            intent,
                             provider: cloud_llm_client::LanguageModelProvider::XAi,
                             model: request.model.clone(),
                             provider_request: serde_json::to_value(&request)
@@ -958,7 +954,6 @@ impl LanguageModel for CloudLanguageModel {
                         CompletionBody {
                             thread_id,
                             prompt_id,
-                            intent,
                             provider: cloud_llm_client::LanguageModelProvider::Google,
                             model: request.model.model_id.clone(),
                             provider_request: serde_json::to_value(&request)

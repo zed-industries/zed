@@ -782,6 +782,8 @@
     "sort_mode": "directories_first",
     // Whether to show error and warning count badges next to file names in the project panel.
     "diagnostic_badges": false,
+    // Whether to show the git status indicator next to file names in the project panel.
+    "git_status_indicator": false,
     // Whether to enable drag-and-drop operations in the project panel.
     "drag_and_drop": true,
     // Whether to hide the root entry when only one folder is open in the window;
@@ -1583,13 +1585,6 @@
       "model": "codestral-latest",
       "max_tokens": 150,
     },
-    "sweep": {
-      // When enabled, Sweep will not store edit prediction inputs or outputs.
-      // When disabled, Sweep may collect data including buffer contents,
-      // diagnostics, file paths, repository names, and generated predictions
-      // to improve the service.
-      "privacy_mode": false,
-    },
     "ollama": {
       "api_url": "http://localhost:11434",
       "model": "qwen2.5-coder:7b-base",
@@ -2027,6 +2022,9 @@
       "remove_trailing_whitespace_on_save": false,
       "ensure_final_newline_on_save": false,
     },
+    "EEx": {
+      "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "..."],
+    },
     "Elixir": {
       "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "..."],
     },
@@ -2053,7 +2051,7 @@
         "allowed": true,
       },
     },
-    "HEEX": {
+    "HEEx": {
       "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "..."],
     },
     "HTML": {
