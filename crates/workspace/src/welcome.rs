@@ -1,6 +1,7 @@
 use crate::{
-    NewFile, Open, PathList, SerializedWorkspaceLocation, WORKSPACE_DB, Workspace, WorkspaceId,
+    NewFile, Open, PathList, SerializedWorkspaceLocation, Workspace, WorkspaceId,
     item::{Item, ItemEvent},
+    persistence::WorkspaceDb,
 };
 use chrono::{DateTime, Utc};
 use git::Clone as GitClone;
@@ -271,9 +272,10 @@ impl WelcomePage {
             let fs = workspace
                 .upgrade()
                 .map(|ws| ws.read(cx).app_state().fs.clone());
+            let db = WorkspaceDb::global(cx);
             cx.spawn_in(window, async move |this: WeakEntity<Self>, cx| {
                 let Some(fs) = fs else { return };
-                let workspaces = WORKSPACE_DB
+                let workspaces = db
                     .recent_workspaces_on_disk(fs.as_ref())
                     .await
                     .log_err()
@@ -518,7 +520,7 @@ impl crate::SerializableItem for WelcomePage {
             alive_items,
             workspace_id,
             "welcome_pages",
-            &persistence::WELCOME_PAGES,
+            &persistence::WelcomePagesDb::global(cx),
             cx,
         )
     }
@@ -531,7 +533,7 @@ impl crate::SerializableItem for WelcomePage {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<gpui::Result<Entity<Self>>> {
-        if persistence::WELCOME_PAGES
+        if persistence::WelcomePagesDb::global(cx)
             .get_welcome_page(item_id, workspace_id)
             .ok()
             .is_some_and(|is_open| is_open)
@@ -553,11 +555,10 @@ impl crate::SerializableItem for WelcomePage {
         cx: &mut Context<Self>,
     ) -> Option<Task<gpui::Result<()>>> {
         let workspace_id = workspace.database_id()?;
-        Some(cx.background_spawn(async move {
-            persistence::WELCOME_PAGES
-                .save_welcome_page(item_id, workspace_id, true)
-                .await
-        }))
+        let db = persistence::WelcomePagesDb::global(cx);
+        Some(cx.background_spawn(
+            async move { db.save_welcome_page(item_id, workspace_id, true).await },
+        ))
     }
 
     fn should_serialize(&self, event: &Self::Event) -> bool {
@@ -591,7 +592,7 @@ mod persistence {
         )]);
     }
 
-    db::static_connection!(WELCOME_PAGES, WelcomePagesDb, [WorkspaceDb]);
+    db::static_connection!(WelcomePagesDb, [WorkspaceDb]);
 
     impl WelcomePagesDb {
         query! {

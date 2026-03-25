@@ -26,6 +26,7 @@ mod split_dataset;
 mod synthesize;
 mod truncate_expected_patch;
 mod word_diff;
+use anyhow::Context as _;
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use collections::{HashMap, HashSet};
 use edit_prediction::EditPredictionStore;
@@ -294,6 +295,9 @@ struct PredictArgs {
     /// Only use cached responses, don't queue new requests for batching
     #[clap(long)]
     cache_only: bool,
+    /// Wait for all batches to complete before exiting (only applies to batched providers like teacher)
+    #[clap(long)]
+    wait: bool,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -762,7 +766,7 @@ async fn load_examples(
             "skipping Snowflake inputs because --limit is already satisfied by example files"
         );
     } else {
-        let max_rows_per_timestamp = remaining_limit_for_snowflake.unwrap_or(5000);
+        let max_rows_per_timestamp = remaining_limit_for_snowflake;
 
         if !rejected_after_timestamps.is_empty() {
             rejected_after_timestamps.sort();
@@ -1339,18 +1343,45 @@ fn main() {
 
                 Progress::global().finalize();
 
+                let is_markdown = args.markdown;
+                let write_path = in_place_temp_path.as_ref().or(output.as_ref());
                 match &command {
                     Command::Predict(args) | Command::Score(args) => {
                         predict::sync_batches(args.provider.as_ref()).await?;
+                        if args.wait {
+                            predict::wait_for_batches(args.provider.as_ref()).await?;
+                            let mut examples =
+                                std::mem::take(&mut *finished_examples.lock().unwrap());
+                            predict::reprocess_after_batch_wait(&mut examples, args).await?;
+                            rewrite_output(&examples, write_path, is_markdown)?;
+                            *finished_examples.lock().unwrap() = examples;
+                        }
                     }
                     Command::Eval(args) => {
                         predict::sync_batches(args.predict.provider.as_ref()).await?;
+                        if args.predict.wait {
+                            predict::wait_for_batches(args.predict.provider.as_ref()).await?;
+                            let mut examples =
+                                std::mem::take(&mut *finished_examples.lock().unwrap());
+                            predict::reprocess_after_batch_wait(&mut examples, &args.predict)
+                                .await?;
+                            rewrite_output(&examples, write_path, is_markdown)?;
+                            *finished_examples.lock().unwrap() = examples;
+                        }
                     }
                     Command::Qa(args) => {
                         qa::sync_batches(args).await?;
                     }
                     Command::Repair(args) => {
                         repair::sync_batches(args).await?;
+                        if args.wait {
+                            repair::wait_for_batches(args).await?;
+                            let mut examples =
+                                std::mem::take(&mut *finished_examples.lock().unwrap());
+                            repair::reprocess_after_batch_wait(&mut examples, args).await?;
+                            rewrite_output(&examples, write_path, is_markdown)?;
+                            *finished_examples.lock().unwrap() = examples;
+                        }
                     }
                     _ => (),
                 }
@@ -1389,6 +1420,41 @@ fn main() {
         })
         .detach();
     });
+}
+
+fn rewrite_output(
+    examples: &[Example],
+    output_path: Option<&PathBuf>,
+    markdown: bool,
+) -> anyhow::Result<()> {
+    if markdown {
+        let dir = output_path.context("--markdown requires -o")?;
+        for example in examples {
+            let filename = format!("{}.md", example.spec.filename());
+            let path = dir.join(&filename);
+            let markdown = example.spec.to_markdown();
+            std::fs::write(&path, &markdown).context("Failed to write markdown file")?;
+        }
+    } else if let Some(path) = output_path {
+        let file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(path)
+            .context("Failed to open output file for rewriting")?;
+        let mut writer = BufWriter::new(file);
+        for example in examples {
+            let line = serde_json::to_string(example)?;
+            writeln!(writer, "{}", line)?;
+        }
+        writer.flush()?;
+    } else {
+        for example in examples {
+            let line = serde_json::to_string(example)?;
+            println!("{}", line);
+        }
+    }
+    Ok(())
 }
 
 async fn handle_error(

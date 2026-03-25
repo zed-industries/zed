@@ -310,3 +310,9 @@ pub(crate) mod m_2026_03_16 {
 
     pub(crate) use settings::SETTINGS_PATTERNS;
 }
+
+pub(crate) mod m_2026_03_23 {
+    mod keymap;
+
+    pub(crate) use keymap::KEYMAP_PATTERNS;
+}

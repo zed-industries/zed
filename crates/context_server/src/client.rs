@@ -35,7 +35,7 @@ pub const METHOD_NOT_FOUND: i32 = -32601;
 pub const INVALID_PARAMS: i32 = -32602;
 pub const INTERNAL_ERROR: i32 = -32603;
 
-type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>)>;
+type ResponseHandler = Box<dyn Send + FnOnce(String)>;
 type NotificationHandler = Box<dyn Send + FnMut(Value, AsyncApp)>;
 type RequestHandler = Box<dyn Send + FnMut(RequestId, &RawValue, AsyncApp)>;
 
@@ -62,6 +62,14 @@ pub(crate) struct Client {
     #[allow(dead_code)]
     transport: Arc<dyn Transport>,
     request_timeout: Option<Duration>,
+    /// Single-slot side channel for the last transport-level error. When the
+    /// output task encounters a send failure it stashes the error here and
+    /// exits; the next request to observe cancellation `.take()`s it so it can
+    /// propagate a typed error (e.g. `TransportError::AuthRequired`) instead
+    /// of a generic "cancelled". This works because `initialize` is the sole
+    /// in-flight request at startup, but would need rethinking if concurrent
+    /// requests are ever issued during that phase.
+    last_transport_error: Arc<Mutex<Option<anyhow::Error>>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -223,13 +231,16 @@ impl Client {
             input.or(err)
         });
 
+        let last_transport_error: Arc<Mutex<Option<anyhow::Error>>> = Arc::new(Mutex::new(None));
         let output_task = cx.background_spawn({
             let transport = transport.clone();
+            let last_transport_error = last_transport_error.clone();
             Self::handle_output(
                 transport,
                 outbound_rx,
                 output_done_tx,
                 response_handlers.clone(),
+                last_transport_error,
             )
             .log_err()
         });
@@ -246,6 +257,7 @@ impl Client {
             output_done_rx: Mutex::new(Some(output_done_rx)),
             transport,
             request_timeout,
+            last_transport_error,
         })
     }
 
@@ -279,7 +291,7 @@ impl Client {
                 if let Some(handlers) = response_handlers.lock().as_mut()
                     && let Some(handler) = handlers.remove(&response.id)
                 {
-                    handler(Ok(message.to_string()));
+                    handler(message.to_string());
                 }
             } else if let Ok(notification) = serde_json::from_str::<AnyNotification>(&message) {
                 subscription_set.lock().notify(
@@ -315,6 +327,7 @@ impl Client {
         outbound_rx: channel::Receiver<String>,
         output_done_tx: barrier::Sender,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
+        last_transport_error: Arc<Mutex<Option<anyhow::Error>>>,
     ) -> anyhow::Result<()> {
         let _clear_response_handlers = util::defer({
             let response_handlers = response_handlers.clone();
@@ -324,7 +337,11 @@ impl Client {
         });
         while let Ok(message) = outbound_rx.recv().await {
             log::trace!("outgoing message: {}", message);
-            transport.send(message).await?;
+            if let Err(err) = transport.send(message).await {
+                log::debug!("transport send failed: {:#}", err);
+                *last_transport_error.lock() = Some(err);
+                return Ok(());
+            }
         }
         drop(output_done_tx);
         Ok(())
@@ -408,7 +425,7 @@ impl Client {
             response = rx.fuse() => {
                 let elapsed = started.elapsed();
                 log::trace!("took {elapsed:?} to receive response to {method:?} id {id}");
-                match response? {
+                match response {
                     Ok(response) => {
                         let parsed: AnyResponse = serde_json::from_str(&response)?;
                         if let Some(error) = parsed.error {
@@ -419,7 +436,12 @@ impl Client {
                             anyhow::bail!("Invalid response: no result or error");
                         }
                     }
-                    Err(_) => anyhow::bail!("cancelled")
+                    Err(_canceled) => {
+                        if let Some(err) = self.last_transport_error.lock().take() {
+                            return Err(err);
+                        }
+                        anyhow::bail!("cancelled")
+                    }
                 }
             }
             _ = cancel_fut => {

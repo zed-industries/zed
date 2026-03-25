@@ -1234,15 +1234,18 @@ impl Buffer {
                 let fragment_end = old_fragments.end().0.full_offset();
                 let mut intersection = fragment.clone();
                 let intersection_end = cmp::min(range.end, fragment_end);
-                if fragment.was_visible(version, &self.undo_map) {
+                if version.observed(fragment.timestamp) {
                     intersection.len = (intersection_end.0 - fragment_start.0) as u32;
                     intersection.insertion_offset +=
                         (fragment_start - old_fragments.start().0.full_offset()) as u32;
                     intersection.id =
                         Locator::between(&new_fragments.summary().max_id, &intersection.id);
-                    intersection.deletions.push(timestamp);
-                    intersection.visible = false;
-                    insertion_slices.push(InsertionSlice::from_fragment(timestamp, &intersection));
+                    if fragment.was_visible(version, &self.undo_map) {
+                        intersection.deletions.push(timestamp);
+                        intersection.visible = false;
+                        insertion_slices
+                            .push(InsertionSlice::from_fragment(timestamp, &intersection));
+                    }
                 }
                 if intersection.len > 0 {
                     if fragment.visible && !intersection.visible {
@@ -2252,6 +2255,37 @@ impl BufferSnapshot {
             Point::new(row + 1, 0).to_previous_offset(self)
         };
         (row_end_offset - row_start_offset) as u32
+    }
+
+    /// A function to convert character offsets from e.g. user's `go.mod:22:33` input into byte-offset Point columns.
+    pub fn point_from_external_input(&self, row: u32, characters: u32) -> Point {
+        const MAX_BYTES_IN_UTF_8: u32 = 4;
+
+        let row = row.min(self.max_point().row);
+        let start = Point::new(row, 0);
+        let end = self.clip_point(
+            Point::new(
+                row,
+                characters
+                    .saturating_mul(MAX_BYTES_IN_UTF_8)
+                    .saturating_add(1),
+            ),
+            Bias::Right,
+        );
+        let range = start..end;
+        let mut point = range.start;
+        let mut remaining_columns = characters;
+
+        for chunk in self.text_for_range(range) {
+            for character in chunk.chars() {
+                if remaining_columns == 0 {
+                    return point;
+                }
+                remaining_columns -= 1;
+                point.column += character.len_utf8() as u32;
+            }
+        }
+        point
     }
 
     pub fn line_indents_in_row_range(

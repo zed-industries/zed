@@ -169,7 +169,7 @@ pub struct ThreadTimingsDelta {
 #[doc(hidden)]
 pub struct ProfilingCollector {
     startup_time: Instant,
-    cursors: HashMap<u64, u64>,
+    cursors: HashMap<ThreadId, u64>,
 }
 
 impl ProfilingCollector {
@@ -195,7 +195,7 @@ impl ProfilingCollector {
             thread.thread_id.hash(&mut hasher);
             let hashed_id = hasher.finish();
 
-            let prev_cursor = self.cursors.get(&hashed_id).copied().unwrap_or(0);
+            let prev_cursor = self.cursors.get(&thread.thread_id).copied().unwrap_or(0);
             let buffer_len = thread.timings.len() as u64;
             let buffer_start = thread.total_pushed.saturating_sub(buffer_len);
 
@@ -205,7 +205,7 @@ impl ProfilingCollector {
                 thread.timings.as_slice()
             } else {
                 let skip = (prev_cursor - buffer_start) as usize;
-                &thread.timings[skip..]
+                &thread.timings[skip.min(thread.timings.len())..]
             };
 
             // Don't emit the last entry if it's still in-progress (end: None).
@@ -215,12 +215,12 @@ impl ProfilingCollector {
             }
 
             let cursor_advance = if incomplete_at_end {
-                thread.total_pushed - 1
+                thread.total_pushed.saturating_sub(1)
             } else {
                 thread.total_pushed
             };
 
-            self.cursors.insert(hashed_id, cursor_advance);
+            self.cursors.insert(thread.thread_id, cursor_advance);
 
             if slice.is_empty() {
                 continue;

@@ -219,6 +219,7 @@ impl VsCodeSettings {
             vim_mode: None,
             workspace: self.workspace_settings_content(),
             which_key: None,
+            modeline_lines: None,
         }
     }
 
@@ -807,6 +808,7 @@ impl VsCodeSettings {
             sticky_scroll: None,
             auto_open: None,
             diagnostic_badges: None,
+            git_status_indicator: None,
         };
 
         if let (Some(false), Some(false)) = (
@@ -877,6 +879,7 @@ impl VsCodeSettings {
             scrollbar: None,
             scroll_multiplier: None,
             toolbar: None,
+            show_count_badge: None,
         })
     }
 

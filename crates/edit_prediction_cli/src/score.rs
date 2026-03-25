@@ -78,6 +78,8 @@ pub async fn run_scoring(
         has_isolated_whitespace_changes: false,
         inserted_tokens: 0,
         deleted_tokens: 0,
+        cumulative_logprob: None,
+        avg_logprob: None,
     };
 
     let cursor_path = example.spec.cursor_path.as_ref();
@@ -189,6 +191,8 @@ pub async fn run_scoring(
             has_isolated_whitespace_changes,
             inserted_tokens: token_changes.inserted_tokens,
             deleted_tokens: token_changes.deleted_tokens,
+            cumulative_logprob: prediction.cumulative_logprob,
+            avg_logprob: prediction.avg_logprob,
         });
     }
 
