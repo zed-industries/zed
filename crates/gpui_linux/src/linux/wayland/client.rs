@@ -867,14 +867,9 @@ impl LinuxClient for WaylandClient {
         };
         if state.mouse_focused_window.is_some() || state.keyboard_focused_window.is_some() {
             state.clipboard.set_primary(item);
-            let serial = {
-                let serial = state.serial_tracker.get(SerialKind::KeyPress);
-                if serial == 0 {
-                    state.serial_tracker.get(SerialKind::MousePress)
-                } else {
-                    serial
-                }
-            };
+            let serial = state
+                .serial_tracker
+                .latest_of(&[SerialKind::KeyPress, SerialKind::MousePress]);
             let data_source = primary_selection_manager.create_source(&state.globals.qh, ());
             for mime_type in TEXT_MIME_TYPES {
                 data_source.offer(mime_type.to_string());
@@ -894,14 +889,9 @@ impl LinuxClient for WaylandClient {
         };
         if state.mouse_focused_window.is_some() || state.keyboard_focused_window.is_some() {
             state.clipboard.set(item);
-            let serial = {
-                let serial = state.serial_tracker.get(SerialKind::KeyPress);
-                if serial == 0 {
-                    state.serial_tracker.get(SerialKind::MousePress)
-                } else {
-                    serial
-                }
-            };
+            let serial = state
+                .serial_tracker
+                .latest_of(&[SerialKind::KeyPress, SerialKind::MousePress]);
             let data_source = data_device_manager.create_data_source(&state.globals.qh, ());
             for mime_type in TEXT_MIME_TYPES {
                 data_source.offer(mime_type.to_string());
