@@ -320,6 +320,22 @@ func (d *testDriver) syncEventCallback(sessionID string, syncMsg *types.SyncMess
 // --- Command helpers ---
 
 func (d *testDriver) sendChatMessage(message, requestID, agentName string, acpThreadID ...string) {
+	// For follow-up messages to an existing thread, use the production
+	// SendChatMessage path which creates an interaction and sends the
+	// command via the same code path as sendMessageToSpecTaskAgent.
+	if len(acpThreadID) > 0 && acpThreadID[0] != "" {
+		threadID := acpThreadID[0]
+		mappings := d.srv.ContextMappings()
+		if sessionID, ok := mappings[threadID]; ok {
+			if err := d.srv.SendChatMessage(sessionID, message, requestID); err != nil {
+				log.Printf("[test-server] WARNING: SendChatMessage failed for session %s: %v (falling back to QueueCommand)", sessionID, err)
+			} else {
+				return
+			}
+		}
+	}
+
+	// New thread (no acpThreadID or not in contextMappings yet) — send directly.
 	data := map[string]interface{}{
 		"message":    message,
 		"request_id": requestID,
@@ -1124,21 +1140,24 @@ func (d *testDriver) validateStore() bool {
 		}
 	}
 
-	// Expect at least 5 completed interactions per round:
+	// Expect at least 6 completed interactions per round:
 	//   - Phase 1: thread_created → new session + interaction
+	//   - Phase 2: sendChatMessageToExternalAgent creates interaction for follow-up
 	//   - Phase 3: thread_created → new session + interaction
+	//   - Phase 4: sendChatMessageToExternalAgent creates interaction for follow-up
 	//   - Phase 5: message_added(role=user) → on-the-fly interaction
+	//   - Phase 7: sendChatMessageToExternalAgent creates interaction for follow-up
 	//   - Phase 8: thread_created → new session + interaction
 	//   - Phase 9: on-the-fly interaction (from user interrupt)
-	// Follow-up phases (2, 4, 7) update existing interactions rather than creating new ones.
-	// This matches production behavior where Helix tracks one interaction per turn.
-	expectedCompleted := 5 * len(d.agentRounds)
+	// Note: phases 2, 4, 7 only create interactions when the Go server's
+	// sendChatMessageToExternalAgent creates one per chat_message (PR #2017).
+	expectedCompleted := 6 * len(d.agentRounds)
 	if completedInteractions < expectedCompleted {
 		errors = append(errors, fmt.Sprintf("Expected at least %d completed interactions, got %d", expectedCompleted, completedInteractions))
 	}
 
-	// Expect at least 5 interactions WITH content per round (same reasoning as above).
-	expectedWithContent := 5 * len(d.agentRounds)
+	// Expect at least 6 interactions WITH content per round.
+	expectedWithContent := 6 * len(d.agentRounds)
 	if completedWithContent < expectedWithContent {
 		errors = append(errors, fmt.Sprintf("Expected at least %d completed interactions with content, got %d (accumulation may be broken)",
 			expectedWithContent, completedWithContent))
