@@ -16,6 +16,7 @@
 //	Phase 8: Mid-stream interrupt (send follow-up while previous response is streaming)
 //	Phase 9: Rapid 3-turn cancel (chat_message, then simulate_user_input interrupt, then chat_message)
 //	Phase 10: User-created thread (inject user_created_thread, verify work session, send chat on new thread)
+//	Phase 11: Spectask routing (set SpecTaskID on threads, verify FindConnectedSessionForSpecTask picks most recent)
 //
 // Exit codes: 0 = all tests passed, 1 = test failure
 package main
@@ -73,6 +74,12 @@ type roundState struct {
 	phase10NewThreadID       string // synthetic thread ID injected via ProcessSyncEvent
 	phase10WorkSessionFound  bool   // whether the work session was created
 	phase10ChatCompleted     bool   // whether chat on the new thread completed
+
+	// Phase 11: spectask routing (verifies findConnectedSessionForSpecTask
+	// picks the most recently active session)
+	phase11RoutedSessionID string // which session the routing picked
+	phase11ExpectedThreadID string // which thread we expect the message to land on
+	phase11Completed        bool   // whether the routed message completed
 }
 
 func newRoundState(agentName string) *roundState {
@@ -432,6 +439,12 @@ func (d *testDriver) advanceAfterCompletion(completedPhase int) {
 		d.phase = 9
 		d.mu.Unlock()
 		d.runPhase9()
+	case 11:
+		d.mu.Lock()
+		d.round.phase11Completed = true
+		d.mu.Unlock()
+		log.Printf("[%s] Phase 11: ✅ Routed message completed", d.round.agentName)
+		d.advanceToNextRound()
 	}
 }
 
@@ -712,8 +725,99 @@ func (d *testDriver) runPhase10() {
 		log.Printf("[%s] Phase 10: ❌ No session found in store with ZedThreadID=%s", agent, truncate(newThreadID, 12))
 	}
 
-	// Advance — no chat test needed for synthetic thread
-	go d.advanceToNextRound()
+	// Chain to Phase 11
+	go func() {
+		d.mu.Lock()
+		d.phase = 11
+		d.mu.Unlock()
+		d.runPhase11()
+	}()
+}
+
+func (d *testDriver) runPhase11() {
+	agent := d.round.agentName
+	log.Printf("\n==================================================")
+	log.Printf("  [%s] PHASE 11: Spectask routing (most recently active session)", agent)
+	log.Printf("==================================================")
+	log.Println("  Sets SpecTaskID on Thread A and B sessions, then uses")
+	log.Println("  FindConnectedSessionForSpecTask to verify routing picks")
+	log.Println("  the most recently active thread, sends a message, and")
+	log.Println("  verifies the response arrives on the correct session.")
+
+	ctx := context.Background()
+	specTaskID := fmt.Sprintf("spectask-e2e-%s-%d", agent, time.Now().UnixNano())
+
+	// We need at least 2 threads (Thread A from phase 1, Thread B from phase 3)
+	d.mu.Lock()
+	if len(d.round.threadIDs) < 2 {
+		d.mu.Unlock()
+		log.Printf("[%s] Phase 11: SKIP — need at least 2 threads, got %d", agent, len(d.round.threadIDs))
+		go d.advanceToNextRound()
+		return
+	}
+	threadA := d.round.threadIDs[0]
+	threadB := d.round.threadIDs[1]
+	d.mu.Unlock()
+
+	mappings := d.srv.ContextMappings()
+	sessionA := mappings[threadA]
+	sessionB := mappings[threadB]
+
+	if sessionA == "" || sessionB == "" {
+		log.Printf("[%s] Phase 11: ERROR — missing session mappings (A=%s, B=%s)", agent, sessionA, sessionB)
+		go d.advanceToNextRound()
+		return
+	}
+
+	// Set SpecTaskID on both sessions
+	for _, sid := range []string{sessionA, sessionB} {
+		ses, err := d.store.GetSession(ctx, sid)
+		if err != nil {
+			log.Printf("[%s] Phase 11: ERROR getting session %s: %v", agent, sid, err)
+			go d.advanceToNextRound()
+			return
+		}
+		ses.Metadata.SpecTaskID = specTaskID
+		if _, err := d.store.UpdateSession(ctx, *ses); err != nil {
+			log.Printf("[%s] Phase 11: ERROR updating session %s: %v", agent, sid, err)
+			go d.advanceToNextRound()
+			return
+		}
+	}
+
+	// Thread B should be more recently active (Phase 7 completed on it).
+	// Verify routing picks Thread B's session.
+	specTask := &types.SpecTask{ID: specTaskID}
+	routedSessionID, err := d.srv.FindConnectedSessionForSpecTask(ctx, specTask)
+	if err != nil {
+		log.Printf("[%s] Phase 11: ERROR FindConnectedSessionForSpecTask failed: %v", agent, err)
+		go d.advanceToNextRound()
+		return
+	}
+
+	d.mu.Lock()
+	d.round.phase11RoutedSessionID = routedSessionID
+	d.round.phase11ExpectedThreadID = threadB
+	d.mu.Unlock()
+
+	if routedSessionID == sessionB {
+		log.Printf("[%s] Phase 11: ✅ Routing picked Thread B's session %s (most recently active)", agent, truncate(sessionB, 12))
+	} else if routedSessionID == sessionA {
+		log.Printf("[%s] Phase 11: ⚠️ Routing picked Thread A's session %s (expected Thread B)", agent, truncate(sessionA, 12))
+	} else {
+		log.Printf("[%s] Phase 11: ⚠️ Routing picked unexpected session %s", agent, truncate(routedSessionID, 12))
+	}
+
+	// Send a message via the routed session and wait for completion
+	reqID := d.round.reqID("phase11")
+	if err := d.srv.SendChatMessage(routedSessionID, "What is 7 + 7? Reply with just the number.", reqID); err != nil {
+		log.Printf("[%s] Phase 11: ERROR SendChatMessage failed: %v", agent, err)
+		go d.advanceToNextRound()
+		return
+	}
+
+	log.Printf("[%s] Phase 11: Sent message to routed session %s, waiting for completion...", agent, truncate(routedSessionID, 12))
+	// Completion will be detected by syncEventCallback when message_completed arrives
 }
 
 // --- Per-round validation ---
@@ -916,6 +1020,26 @@ func (d *testDriver) validateRound() roundResult {
 			errors = append(errors, "Phase 10: Work session/session not created in store for user-created thread")
 		} else {
 			log.Printf("[%s] Phase 10: ✅ Session created in store for user-created thread", agent)
+		}
+	}
+
+	// Phase 11: spectask routing
+	if d.round.phase11RoutedSessionID == "" {
+		errors = append(errors, "Phase 11: Routing did not run (phase 11 may not have executed)")
+	} else {
+		mappings := d.srv.ContextMappings()
+		expectedSessionID := mappings[d.round.phase11ExpectedThreadID]
+		if d.round.phase11RoutedSessionID == expectedSessionID {
+			log.Printf("[%s] Phase 11: ✅ Routing picked most recently active session (%s)",
+				agent, truncate(d.round.phase11RoutedSessionID, 12))
+		} else {
+			errors = append(errors, fmt.Sprintf("Phase 11: Routing picked session %s, expected %s (Thread B)",
+				truncate(d.round.phase11RoutedSessionID, 12), truncate(expectedSessionID, 12)))
+		}
+		if !d.round.phase11Completed {
+			errors = append(errors, "Phase 11: Routed message did not complete")
+		} else {
+			log.Printf("[%s] Phase 11: ✅ Routed message completed on correct session", agent)
 		}
 	}
 
@@ -1140,24 +1264,23 @@ func (d *testDriver) validateStore() bool {
 		}
 	}
 
-	// Expect at least 6 completed interactions per round:
-	//   - Phase 1: thread_created → new session + interaction
-	//   - Phase 2: sendChatMessageToExternalAgent creates interaction for follow-up
-	//   - Phase 3: thread_created → new session + interaction
-	//   - Phase 4: sendChatMessageToExternalAgent creates interaction for follow-up
-	//   - Phase 5: message_added(role=user) → on-the-fly interaction
-	//   - Phase 7: sendChatMessageToExternalAgent creates interaction for follow-up
-	//   - Phase 8: thread_created → new session + interaction
-	//   - Phase 9: on-the-fly interaction (from user interrupt)
-	// Note: phases 2, 4, 7 only create interactions when the Go server's
-	// sendChatMessageToExternalAgent creates one per chat_message (PR #2017).
-	expectedCompleted := 6 * len(d.agentRounds)
+	// Expect at least 7 completed interactions per round:
+	//   - Phase 1:  thread_created → new session + interaction
+	//   - Phase 2:  sendChatMessageToExternalAgent creates interaction for follow-up
+	//   - Phase 3:  thread_created → new session + interaction
+	//   - Phase 4:  sendChatMessageToExternalAgent creates interaction for follow-up
+	//   - Phase 5:  message_added(role=user) → on-the-fly interaction
+	//   - Phase 7:  sendChatMessageToExternalAgent creates interaction for follow-up
+	//   - Phase 8:  thread_created → new session + interaction
+	//   - Phase 9:  on-the-fly interaction (from user interrupt)
+	//   - Phase 11: sendChatMessageToExternalAgent via spectask routing
+	expectedCompleted := 7 * len(d.agentRounds)
 	if completedInteractions < expectedCompleted {
 		errors = append(errors, fmt.Sprintf("Expected at least %d completed interactions, got %d", expectedCompleted, completedInteractions))
 	}
 
-	// Expect at least 6 interactions WITH content per round.
-	expectedWithContent := 6 * len(d.agentRounds)
+	// Expect at least 7 interactions WITH content per round.
+	expectedWithContent := 7 * len(d.agentRounds)
 	if completedWithContent < expectedWithContent {
 		errors = append(errors, fmt.Sprintf("Expected at least %d completed interactions with content, got %d (accumulation may be broken)",
 			expectedWithContent, completedWithContent))
