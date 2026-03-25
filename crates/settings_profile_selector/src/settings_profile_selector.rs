@@ -596,28 +596,35 @@ mod tests {
         });
         let (workspace, cx) = init_test(user_settings_json, cx).await;
 
-        // Both profiles should apply on top of user settings (buffer_font_size: 10).
-        for profile_name in ["explicit_user", "implicit_user"] {
-            cx.dispatch_action(settings_profile_selector::Toggle);
-            let picker = active_settings_profile_picker(&workspace, cx);
+        // Select "explicit_user" (index 1) — profile applies on top of user settings.
+        cx.dispatch_action(settings_profile_selector::Toggle);
+        let picker = active_settings_profile_picker(&workspace, cx);
+        cx.dispatch_action(SelectNext);
 
-            // Navigate to the profile
-            loop {
-                cx.dispatch_action(SelectNext);
-                let found = picker.read_with(cx, |picker, _| {
-                    picker.delegate.selected_profile_name.as_deref() == Some(profile_name)
-                });
-                if found {
-                    break;
-                }
-            }
+        picker.read_with(cx, |picker, cx| {
+            assert_eq!(
+                picker.delegate.selected_profile_name.as_deref(),
+                Some("explicit_user")
+            );
+            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(20.0));
+        });
 
-            picker.read_with(cx, |_, cx| {
-                assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(20.0));
-            });
+        cx.dispatch_action(Confirm);
 
-            cx.dispatch_action(Confirm);
-        }
+        // Select "implicit_user" (index 2) — no base specified, same behavior.
+        cx.dispatch_action(settings_profile_selector::Toggle);
+        let picker = active_settings_profile_picker(&workspace, cx);
+        cx.dispatch_action(SelectNext);
+
+        picker.read_with(cx, |picker, cx| {
+            assert_eq!(
+                picker.delegate.selected_profile_name.as_deref(),
+                Some("implicit_user")
+            );
+            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(20.0));
+        });
+
+        cx.dispatch_action(Confirm);
     }
 
     #[gpui::test]
