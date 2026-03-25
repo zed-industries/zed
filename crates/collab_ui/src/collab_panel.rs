@@ -258,7 +258,6 @@ pub struct CollabPanel {
     collapsed_channels: Vec<ChannelId>,
     favorite_channels: Vec<ChannelId>,
     filter_active_channels: bool,
-    filter_favorite_channels: bool,
     workspace: WeakEntity<Workspace>,
 }
 
@@ -394,7 +393,6 @@ impl CollabPanel {
                 collapsed_channels: Vec::default(),
                 favorite_channels: Vec::default(),
                 filter_active_channels: false,
-                filter_favorite_channels: false,
                 workspace: workspace.weak_handle(),
                 client: workspace.app_state().client.clone(),
             };
@@ -467,13 +465,13 @@ impl CollabPanel {
                 panel.update(cx, |panel, cx| {
                     panel.collapsed_channels = serialized_panel
                         .collapsed_channels
-                        .unwrap_or_else(Vec::new)
+                        .unwrap_or_default()
                         .iter()
                         .map(|cid| ChannelId(*cid))
                         .collect();
                     panel.favorite_channels = serialized_panel
                         .favorite_channels
-                        .unwrap_or_else(Vec::new)
+                        .unwrap_or_default()
                         .iter()
                         .map(|cid| ChannelId(*cid))
                         .collect();
@@ -685,34 +683,25 @@ impl CollabPanel {
 
         let mut request_entries = Vec::new();
 
+        self.favorite_channels
+            .retain(|id| channel_store.channel_for_id(*id).is_some());
+
         if !self.favorite_channels.is_empty() {
-            let has_any_valid_favorite = self
-                .favorite_channels
-                .iter()
-                .any(|id| channel_store.channel_for_id(*id).is_some());
+            self.entries
+                .push(ListEntry::Header(Section::FavoriteChannels));
 
-            if has_any_valid_favorite {
-                self.entries
-                    .push(ListEntry::Header(Section::FavoriteChannels));
-
-                if !self.collapsed_sections.contains(&Section::FavoriteChannels) {
-                    for &channel_id in &self.favorite_channels {
-                        if let Some(channel) = channel_store.channel_for_id(channel_id) {
-                            if !query.is_empty() {
-                                let name_lower = channel.name.to_lowercase();
-                                let query_lower = query.to_lowercase();
-                                if !name_lower.contains(&query_lower) {
-                                    continue;
-                                }
-                            }
-                            self.entries.push(ListEntry::Channel {
-                                channel: channel.clone(),
-                                depth: 0,
-                                has_children: false,
-                                string_match: None,
-                            });
-                        }
+            let query_lower = query.to_lowercase();
+            for &channel_id in &self.favorite_channels {
+                if let Some(channel) = channel_store.channel_for_id(channel_id) {
+                    if !query.is_empty() && !channel.name.to_lowercase().contains(&query_lower) {
+                        continue;
                     }
+                    self.entries.push(ListEntry::Channel {
+                        channel: channel.clone(),
+                        depth: 0,
+                        has_children: false,
+                        string_match: None,
+                    });
                 }
             }
         }
@@ -769,16 +758,6 @@ impl CollabPanel {
                     .flat_map(|channel| channel.parent_path.iter().copied().chain(Some(channel.id)))
                     .collect();
                 channels.retain(|channel| active_channel_ids_or_ancestors.contains(&channel.id));
-            }
-
-            if self.filter_favorite_channels {
-                let favorite_ids_or_ancestors: HashSet<_> = self
-                    .favorite_channels
-                    .iter()
-                    .filter_map(|id| channel_store.channel_for_id(*id))
-                    .flat_map(|channel| channel.parent_path.iter().copied().chain(Some(channel.id)))
-                    .collect();
-                channels.retain(|channel| favorite_ids_or_ancestors.contains(&channel.id));
             }
 
             if let Some(state) = &self.channel_editing_state
