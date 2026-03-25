@@ -663,15 +663,18 @@ impl NativeAgent {
             return;
         };
 
-        if let Some(title) = thread.read(cx).title() {
-            let acp_thread = session.acp_thread.downgrade();
-            cx.spawn(async move |_, cx| {
+        let thread = thread.downgrade();
+        let acp_thread = session.acp_thread.downgrade();
+        cx.spawn(async move |_, cx| {
+            let title = thread.read_with(cx, |thread, _| thread.title())?;
+            if let Some(title) = title {
                 let task =
                     acp_thread.update(cx, |acp_thread, cx| acp_thread.set_title(title, cx))?;
-                task.await
-            })
-            .detach_and_log_err(cx);
-        }
+                task.await?;
+            }
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     fn handle_thread_token_usage_updated(
