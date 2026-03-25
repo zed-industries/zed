@@ -172,7 +172,8 @@ impl ThreadFeedbackState {
 enum VoiceRecordingState {
     Idle,
     Recording { capture_input: CaptureInput },
-    Saving,
+    SavingAudio,
+    Transcribing,
 }
 
 impl Default for VoiceRecordingState {
@@ -187,12 +188,24 @@ impl VoiceRecordingState {
     }
 
     fn is_saving(&self) -> bool {
-        matches!(self, Self::Saving)
+        matches!(self, Self::SavingAudio)
+    }
+
+    fn is_transcribing(&self) -> bool {
+        matches!(self, Self::Transcribing)
+    }
+
+    fn is_processing(&self) -> bool {
+        matches!(self, Self::SavingAudio | Self::Transcribing)
     }
 }
 
-struct VoiceRecordingSavedToast;
 struct VoiceRecordingErrorToast;
+
+struct WhisperCppConfiguration {
+    executable_path: PathBuf,
+    model_path: PathBuf,
+}
 
 #[derive(Clone)]
 struct MicrophoneOption {
@@ -8278,13 +8291,14 @@ impl ThreadView {
             VoiceRecordingState::Recording { capture_input } => {
                 self.finish_voice_recording(capture_input, window, cx);
             }
-            VoiceRecordingState::Saving => {
-                self.voice_recording_state = VoiceRecordingState::Saving;
+            VoiceRecordingState::SavingAudio | VoiceRecordingState::Transcribing => {
+                self.voice_recording_state = VoiceRecordingState::Transcribing;
             }
         }
     }
 
     fn start_voice_recording(&mut self, cx: &mut Context<Self>) -> anyhow::Result<()> {
+        self.resolve_whisper_cpp_configuration(cx)?;
         audio::ensure_devices_initialized(cx);
         let available_devices = cx.default_global::<AvailableAudioDevices>().0.clone();
         let selected_microphone =
@@ -8304,7 +8318,17 @@ impl ThreadView {
         cx: &mut Context<Self>,
     ) {
         let save_path = Self::next_voice_recording_path();
-        self.voice_recording_state = VoiceRecordingState::Saving;
+        let whisper_configuration = match self.resolve_whisper_cpp_configuration(cx) {
+            Ok(configuration) => configuration,
+            Err(error) => {
+                self.voice_recording_state = VoiceRecordingState::Idle;
+                self.show_voice_recording_error(error.to_string(), cx);
+                cx.notify();
+                return;
+            }
+        };
+
+        self.voice_recording_state = VoiceRecordingState::SavingAudio;
         cx.notify();
 
         cx.spawn_in(window, async move |this, cx| {
@@ -8312,15 +8336,46 @@ impl ThreadView {
                 .background_spawn(async move { capture_input.finish_to_path(save_path) })
                 .await;
 
-            this.update_in(cx, |this, _window, cx| {
+            let saved_path = match save_result {
+                Ok(saved_path) => {
+                    this.update_in(cx, |this, _window, cx| {
+                        this.voice_recording_state = VoiceRecordingState::Transcribing;
+                        cx.notify();
+                    })?;
+                    saved_path
+                }
+                Err(error) => {
+                    this.update_in(cx, |this, _window, cx| {
+                        this.voice_recording_state = VoiceRecordingState::Idle;
+                        this.show_voice_recording_error(
+                            format!("Failed to save voice recording: {error:#}"),
+                            cx,
+                        );
+                        cx.notify();
+                    })?;
+                    return anyhow::Ok(());
+                }
+            };
+
+            let transcribe_result = cx
+                .background_spawn(async move {
+                    Self::transcribe_voice_recording(saved_path, whisper_configuration)
+                })
+                .await;
+
+            this.update_in(cx, |this, window, cx| {
                 this.voice_recording_state = VoiceRecordingState::Idle;
 
-                match save_result {
-                    Ok(saved_path) => this.show_voice_recording_saved(&saved_path, cx),
-                    Err(error) => this.show_voice_recording_error(
-                        format!("Failed to save voice recording: {error:#}"),
-                        cx,
-                    ),
+                match transcribe_result {
+                    Ok(transcript) => {
+                        this.insert_voice_transcript(&transcript, window, cx);
+                    }
+                    Err(error) => {
+                        this.show_voice_recording_error(
+                            format!("Failed to transcribe voice recording: {error:#}"),
+                            cx,
+                        );
+                    }
                 }
 
                 cx.notify();
@@ -8333,29 +8388,9 @@ impl ThreadView {
 
     fn next_voice_recording_path() -> PathBuf {
         let timestamp = Local::now().format("%Y-%m-%dT%H-%M-%S-%3f");
-        util::paths::home_dir()
-            .join("Projects")
-            .join("random")
-            .join("recordings")
+        paths::temp_dir()
+            .join("agent_voice")
             .join(format!("agent-voice-{timestamp}.wav"))
-    }
-
-    fn show_voice_recording_saved(&self, saved_path: &std::path::Path, cx: &mut Context<Self>) {
-        let Some(workspace) = self.workspace.upgrade() else {
-            return;
-        };
-
-        let compact_path = saved_path.compact();
-        workspace.update(cx, |workspace, cx| {
-            workspace.show_toast(
-                Toast::new(
-                    NotificationId::unique::<VoiceRecordingSavedToast>(),
-                    format!("Saved voice recording to {}", compact_path.display()),
-                )
-                .autohide(),
-                cx,
-            );
-        });
     }
 
     fn show_voice_recording_error(&self, message: String, cx: &mut Context<Self>) {
@@ -8375,12 +8410,176 @@ impl ThreadView {
         });
     }
 
+    fn resolve_whisper_cpp_configuration(
+        &self,
+        cx: &App,
+    ) -> anyhow::Result<WhisperCppConfiguration> {
+        let settings = AgentSettings::get_global(cx);
+        let executable_path = settings
+            .speech_to_text
+            .whisper_cpp_executable_path
+            .clone()
+            .or_else(|| which::which("whisper-cli").ok())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Voice input requires a whisper.cpp executable path or whisper-cli on PATH."
+                )
+            })?;
+        let model_path = settings
+            .speech_to_text
+            .whisper_cpp_model_path
+            .clone()
+            .ok_or_else(|| {
+                anyhow::anyhow!("Voice input requires a configured whisper.cpp model path.")
+            })?;
+
+        if !executable_path.is_file() {
+            anyhow::bail!(
+                "whisper.cpp executable not found at {}",
+                executable_path.compact().display()
+            );
+        }
+
+        if !model_path.is_file() {
+            anyhow::bail!(
+                "whisper.cpp model not found at {}",
+                model_path.compact().display()
+            );
+        }
+
+        Ok(WhisperCppConfiguration {
+            executable_path,
+            model_path,
+        })
+    }
+
+    fn transcribe_voice_recording(
+        audio_path: PathBuf,
+        whisper_configuration: WhisperCppConfiguration,
+    ) -> anyhow::Result<String> {
+        let mut command = util::command::new_std_command(&whisper_configuration.executable_path);
+        command
+            .arg("-m")
+            .arg(&whisper_configuration.model_path)
+            .arg("-f")
+            .arg(&audio_path);
+
+        let output = match command.output() {
+            Ok(output) => output,
+            Err(error) => {
+                if let Err(remove_error) = std::fs::remove_file(&audio_path) {
+                    log::warn!(
+                        "failed to remove temporary voice recording {}: {remove_error:#}",
+                        audio_path.display()
+                    );
+                }
+
+                return Err(anyhow::anyhow!(
+                    "failed to run whisper.cpp at {}: {}",
+                    whisper_configuration.executable_path.compact().display(),
+                    error
+                ));
+            }
+        };
+
+        if let Err(error) = std::fs::remove_file(&audio_path) {
+            log::warn!(
+                "failed to remove temporary voice recording {}: {error:#}",
+                audio_path.display()
+            );
+        }
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let details = if !stderr.is_empty() { stderr } else { stdout };
+            anyhow::bail!(
+                "whisper.cpp exited with status {}{}",
+                output.status,
+                if details.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {details}")
+                }
+            );
+        }
+
+        let transcript = Self::extract_whisper_transcript(&output.stdout)?;
+        if transcript.is_empty() {
+            anyhow::bail!("whisper.cpp returned an empty transcript");
+        }
+
+        Ok(transcript)
+    }
+
+    fn extract_whisper_transcript(stdout: &[u8]) -> anyhow::Result<String> {
+        let stdout = String::from_utf8(stdout.to_vec())
+            .map_err(|error| anyhow::anyhow!("whisper.cpp returned invalid UTF-8: {error}"))?;
+        let transcript = stdout
+            .lines()
+            .filter_map(|line| {
+                let line = line.trim();
+                if line.is_empty() {
+                    return None;
+                }
+
+                if let Some((_, remainder)) = line.split_once(']')
+                    && line.starts_with('[')
+                {
+                    let remainder = remainder.trim();
+                    return (!remainder.is_empty()).then_some(remainder.to_string());
+                }
+
+                None
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        Ok(transcript.trim().to_string())
+    }
+
+    fn insert_voice_transcript(
+        &mut self,
+        transcript: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let transcript = transcript.trim();
+        if transcript.is_empty() {
+            return;
+        }
+
+        let needs_leading_space = self
+            .message_editor
+            .read(cx)
+            .text(cx)
+            .chars()
+            .last()
+            .is_some_and(|character| !character.is_whitespace());
+        let text = if needs_leading_space {
+            format!(" {transcript}")
+        } else {
+            transcript.to_string()
+        };
+
+        self.message_editor.update(cx, |message_editor, cx| {
+            message_editor.insert_text(&text, window, cx);
+        });
+        self.message_editor.focus_handle(cx).focus(window, cx);
+    }
+
     fn toggle_microphone_menu(
         &mut self,
         _: &ToggleMicrophoneMenu,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.voice_recording_state.is_processing()
+            || self.resolve_whisper_cpp_configuration(cx).is_err()
+        {
+            return;
+        }
+
         let menu_handle = self.microphone_menu_handle.clone();
         window.defer(cx, move |window, cx| {
             menu_handle.toggle(window, cx);
@@ -8520,6 +8719,15 @@ impl ThreadView {
         let focus_handle = self.message_editor.focus_handle(cx);
         let is_recording = self.voice_recording_state.is_recording();
         let is_saving = self.voice_recording_state.is_saving();
+        let is_transcribing = self.voice_recording_state.is_transcribing();
+        let is_processing = self.voice_recording_state.is_processing();
+        let whisper_configuration_error = self
+            .resolve_whisper_cpp_configuration(cx)
+            .err()
+            .map(|error| error.to_string());
+        let button_whisper_configuration_error = whisper_configuration_error.clone();
+        let menu_whisper_configuration_error = whisper_configuration_error.clone();
+        let microphone_control_disabled = is_processing || whisper_configuration_error.is_some();
         let microphone_menu_open = self.microphone_menu_handle.is_deployed();
         let microphone_name =
             resolve_selected_microphone(self.selected_microphone_id.as_deref(), &available_devices)
@@ -8565,7 +8773,7 @@ impl ThreadView {
                     )
                     .into_any_element(),
             ),
-            VoiceRecordingState::Saving => Some(
+            VoiceRecordingState::SavingAudio => Some(
                 h_flex()
                     .justify_center()
                     .items_center()
@@ -8579,6 +8787,18 @@ impl ThreadView {
                             .size(IconSize::XSmall)
                             .color(Color::Accent),
                     )
+                    .child(loading_contents_spinner(IconSize::XSmall))
+                    .into_any_element(),
+            ),
+            VoiceRecordingState::Transcribing => Some(
+                h_flex()
+                    .justify_center()
+                    .items_center()
+                    .w_full()
+                    .gap_0p5()
+                    .absolute()
+                    .top(px(-8.0))
+                    .left(px(0.0))
                     .child(loading_contents_spinner(IconSize::XSmall))
                     .into_any_element(),
             ),
@@ -8598,12 +8818,16 @@ impl ThreadView {
         } else {
             Color::Muted
         })
-        .disabled(is_saving)
+        .disabled(microphone_control_disabled)
         .toggle_state(is_recording)
         .selected_style(ButtonStyle::Tinted(TintColor::Accent))
         .tooltip(move |window, cx| {
-            if is_saving {
+            if let Some(error) = button_whisper_configuration_error.clone() {
+                Tooltip::text(error)(window, cx)
+            } else if is_saving {
                 Tooltip::text("Saving recording")(window, cx)
+            } else if is_transcribing {
+                Tooltip::text("Transcribing recording")(window, cx)
             } else {
                 Tooltip::for_action_in(
                     if is_recording {
@@ -8626,9 +8850,17 @@ impl ThreadView {
             IconButton::new("select-microphone", chevron_icon)
                 .icon_size(IconSize::XSmall)
                 .icon_color(Color::Muted)
-                .disabled(is_saving),
-            move |_window, cx| {
-                Tooltip::with_meta("Select Microphone", None, microphone_name.clone(), cx)
+                .disabled(microphone_control_disabled),
+            move |window, cx| {
+                if let Some(error) = menu_whisper_configuration_error.clone() {
+                    Tooltip::text(error)(window, cx)
+                } else if is_saving {
+                    Tooltip::text("Saving recording")(window, cx)
+                } else if is_transcribing {
+                    Tooltip::text("Transcribing recording")(window, cx)
+                } else {
+                    Tooltip::with_meta("Select Microphone", None, microphone_name.clone(), cx)
+                }
             },
             Corner::BottomLeft,
             cx,

@@ -150,6 +150,8 @@ pub struct AgentSettingsContent {
     /// `always_confirm`) match against the tool's text input (command, path,
     /// URL, etc.).
     pub tool_permissions: Option<ToolPermissionsContent>,
+    /// Local speech-to-text settings for voice input in the agent panel.
+    pub speech_to_text: Option<SpeechToTextContent>,
 }
 
 impl AgentSettingsContent {
@@ -226,6 +228,15 @@ impl AgentSettingsContent {
             });
         }
     }
+}
+
+#[with_fallible_options]
+#[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
+pub struct SpeechToTextContent {
+    /// Path to the whisper.cpp executable to run for transcription.
+    pub whisper_cpp_executable_path: Option<PathBuf>,
+    /// Path to the whisper.cpp model file to use for transcription.
+    pub whisper_cpp_model_path: Option<PathBuf>,
 }
 
 #[with_fallible_options]

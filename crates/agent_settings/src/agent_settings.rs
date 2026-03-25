@@ -14,6 +14,7 @@ use settings::{
     DefaultAgentView, DockPosition, LanguageModelParameters, LanguageModelSelection,
     NewThreadLocation, NotifyWhenAgentWaiting, RegisterSetting, Settings, ToolPermissionMode,
 };
+use std::path::PathBuf;
 
 pub use crate::agent_profile::*;
 
@@ -52,6 +53,7 @@ pub struct AgentSettings {
     pub show_turn_stats: bool,
     pub tool_permissions: ToolPermissions,
     pub new_thread_location: NewThreadLocation,
+    pub speech_to_text: SpeechToTextSettings,
 }
 
 impl AgentSettings {
@@ -87,6 +89,12 @@ impl AgentSettings {
             .map(|sel| ModelId::new(format!("{}/{}", sel.provider.0, sel.model)))
             .collect()
     }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct SpeechToTextSettings {
+    pub whisper_cpp_executable_path: Option<PathBuf>,
+    pub whisper_cpp_model_path: Option<PathBuf>,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize, JsonSchema)]
@@ -440,6 +448,16 @@ impl Settings for AgentSettings {
             show_turn_stats: agent.show_turn_stats.unwrap(),
             tool_permissions: compile_tool_permissions(agent.tool_permissions),
             new_thread_location: agent.new_thread_location.unwrap_or_default(),
+            speech_to_text: SpeechToTextSettings {
+                whisper_cpp_executable_path: agent
+                    .speech_to_text
+                    .as_ref()
+                    .and_then(|speech_to_text| speech_to_text.whisper_cpp_executable_path.clone()),
+                whisper_cpp_model_path: agent
+                    .speech_to_text
+                    .as_ref()
+                    .and_then(|speech_to_text| speech_to_text.whisper_cpp_model_path.clone()),
+            },
         }
     }
 }
