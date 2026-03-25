@@ -1255,7 +1255,7 @@ impl ConnectionLanding {
                                     .child(
                                         Icon::new(IconName::Tablet)
                                             .size(IconSize::Medium)
-                                            .color(Color::Accent),
+                                            .color(Color::Muted),
                                     ),
                             )
                             .child(
