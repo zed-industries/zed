@@ -14420,4 +14420,72 @@ mod tests {
             assert!(panel.is_zoomed(window, cx));
         });
     }
+
+    #[gpui::test]
+    async fn test_panels_stay_open_after_position_change_and_settings_update(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        // Add two panels to the left dock and open it.
+        let (panel_a, panel_b) = workspace.update_in(cx, |workspace, window, cx| {
+            let panel_a = cx.new(|cx| TestPanel::new(DockPosition::Left, 100, cx));
+            let panel_b = cx.new(|cx| TestPanel::new(DockPosition::Left, 101, cx));
+            workspace.add_panel(panel_a.clone(), window, cx);
+            workspace.add_panel(panel_b.clone(), window, cx);
+            workspace.left_dock().update(cx, |dock, cx| {
+                dock.set_open(true, window, cx);
+                dock.activate_panel(0, window, cx);
+            });
+            (panel_a, panel_b)
+        });
+
+        workspace.update_in(cx, |workspace, _, cx| {
+            assert!(workspace.left_dock().read(cx).is_open());
+        });
+
+        // Simulate a feature flag changing default dock positions: both panels
+        // move from Left to Right.
+        workspace.update_in(cx, |_workspace, _window, cx| {
+            panel_a.update(cx, |p, _cx| p.position = DockPosition::Right);
+            panel_b.update(cx, |p, _cx| p.position = DockPosition::Right);
+            cx.update_global::<SettingsStore, _>(|_, _| {});
+        });
+
+        // Both panels should now be in the right dock.
+        workspace.update_in(cx, |workspace, _, cx| {
+            let right_dock = workspace.right_dock().read(cx);
+            assert_eq!(right_dock.panels_len(), 2);
+        });
+
+        // Open the right dock and activate panel_b (simulating the user
+        // opening the panel after it moved).
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.right_dock().update(cx, |dock, cx| {
+                dock.set_open(true, window, cx);
+                dock.activate_panel(1, window, cx);
+            });
+        });
+
+        // Now trigger another SettingsStore change
+        workspace.update_in(cx, |_workspace, _window, cx| {
+            cx.update_global::<SettingsStore, _>(|_, _| {});
+        });
+
+        workspace.update_in(cx, |workspace, _, cx| {
+            assert!(
+                workspace.right_dock().read(cx).is_open(),
+                "Right dock should still be open after a settings change"
+            );
+            assert_eq!(
+                workspace.right_dock().read(cx).panels_len(),
+                2,
+                "Both panels should still be in the right dock"
+            );
+        });
+    }
 }

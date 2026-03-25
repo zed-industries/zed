@@ -75,16 +75,14 @@ where
                 };
 
                 if let Some(subscribers) = subscribers {
-                    subscribers.remove(&subscriber_id);
-                    if subscribers.is_empty() {
-                        lock.subscribers.remove(&emitter_key);
+                    if subscribers.remove(&subscriber_id).is_some() {
+                        if subscribers.is_empty() {
+                            lock.subscribers.remove(&emitter_key);
+                        }
+                        return;
                     }
-                    return;
                 }
 
-                // We didn't manage to remove the subscription, which means it was dropped
-                // while invoking the callback. Mark it as dropped so that we can remove it
-                // later.
                 lock.dropped_subscribers
                     .insert((emitter_key, subscriber_id));
             })),
@@ -127,7 +125,20 @@ where
             return;
         };
 
-        subscribers.retain(|_, subscriber| {
+        debug_assert!(
+            self.0.borrow().dropped_subscribers.is_empty(),
+            "dropped_subscribers should be empty at the start of retain"
+        );
+
+        subscribers.retain(|id, subscriber| {
+            if self
+                .0
+                .borrow_mut()
+                .dropped_subscribers
+                .remove(&(emitter.clone(), *id))
+            {
+                return false;
+            }
             if subscriber.active.get() {
                 f(&mut subscriber.callback)
             } else {
@@ -205,5 +216,156 @@ impl Drop for Subscription {
 impl std::fmt::Debug for Subscription {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Subscription").finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Global, TestApp};
+
+    #[test]
+    fn test_unsubscribe_during_callback_with_insert() {
+        struct TestGlobal;
+        impl Global for TestGlobal {}
+
+        let mut app = TestApp::new();
+        app.set_global(TestGlobal);
+
+        let observer_a_count = Rc::new(Cell::new(0usize));
+        let observer_b_count = Rc::new(Cell::new(0usize));
+
+        let sub_a: Rc<RefCell<Option<Subscription>>> = Default::default();
+        let sub_b: Rc<RefCell<Option<Subscription>>> = Default::default();
+
+        // Observer A fires first (lower subscriber_id). It drops itself and
+        // inserts a new observer for the same global.
+        *sub_a.borrow_mut() = Some(app.update({
+            let count = observer_a_count.clone();
+            let sub_a = sub_a.clone();
+            move |cx| {
+                cx.observe_global::<TestGlobal>(move |cx| {
+                    count.set(count.get() + 1);
+                    sub_a.borrow_mut().take();
+                    cx.observe_global::<TestGlobal>(|_| {}).detach();
+                })
+            }
+        }));
+
+        // Observer B fires second. It just drops itself.
+        *sub_b.borrow_mut() = Some(app.update({
+            let count = observer_b_count.clone();
+            let sub_b = sub_b.clone();
+            move |cx| {
+                cx.observe_global::<TestGlobal>(move |_cx| {
+                    count.set(count.get() + 1);
+                    sub_b.borrow_mut().take();
+                })
+            }
+        }));
+
+        // Both fire once.
+        app.update(|cx| cx.set_global(TestGlobal));
+        assert_eq!(observer_a_count.get(), 1);
+        assert_eq!(observer_b_count.get(), 1);
+
+        // Neither should fire again — both dropped their subscriptions.
+        app.update(|cx| cx.set_global(TestGlobal));
+        assert_eq!(observer_a_count.get(), 1);
+        assert_eq!(observer_b_count.get(), 1, "orphaned subscriber fired again");
+    }
+
+    #[test]
+    fn test_callback_dropped_by_earlier_callback_does_not_fire() {
+        struct TestGlobal;
+        impl Global for TestGlobal {}
+
+        let mut app = TestApp::new();
+        app.set_global(TestGlobal);
+
+        let observer_b_count = Rc::new(Cell::new(0usize));
+        let sub_b: Rc<RefCell<Option<Subscription>>> = Default::default();
+
+        // Observer A fires first and drops B's subscription.
+        app.update({
+            let sub_b = sub_b.clone();
+            move |cx| {
+                cx.observe_global::<TestGlobal>(move |_cx| {
+                    sub_b.borrow_mut().take();
+                })
+                .detach();
+            }
+        });
+
+        // Observer B fires second — but A already dropped it.
+        *sub_b.borrow_mut() = Some(app.update({
+            let count = observer_b_count.clone();
+            move |cx| {
+                cx.observe_global::<TestGlobal>(move |_cx| {
+                    count.set(count.get() + 1);
+                })
+            }
+        }));
+
+        app.update(|cx| cx.set_global(TestGlobal));
+        assert_eq!(
+            observer_b_count.get(),
+            0,
+            "B should not fire — A dropped its subscription"
+        );
+    }
+
+    #[test]
+    fn test_self_drop_during_callback() {
+        struct TestGlobal;
+        impl Global for TestGlobal {}
+
+        let mut app = TestApp::new();
+        app.set_global(TestGlobal);
+
+        let count = Rc::new(Cell::new(0usize));
+        let sub: Rc<RefCell<Option<Subscription>>> = Default::default();
+
+        *sub.borrow_mut() = Some(app.update({
+            let count = count.clone();
+            let sub = sub.clone();
+            move |cx| {
+                cx.observe_global::<TestGlobal>(move |_cx| {
+                    count.set(count.get() + 1);
+                    sub.borrow_mut().take();
+                })
+            }
+        }));
+
+        app.update(|cx| cx.set_global(TestGlobal));
+        assert_eq!(count.get(), 1);
+
+        app.update(|cx| cx.set_global(TestGlobal));
+        assert_eq!(count.get(), 1, "should not fire after self-drop");
+    }
+
+    #[test]
+    fn test_subscription_drop() {
+        struct TestGlobal;
+        impl Global for TestGlobal {}
+
+        let mut app = TestApp::new();
+        app.set_global(TestGlobal);
+
+        let count = Rc::new(Cell::new(0usize));
+
+        let subscription = app.update({
+            let count = count.clone();
+            move |cx| {
+                cx.observe_global::<TestGlobal>(move |_cx| {
+                    count.set(count.get() + 1);
+                })
+            }
+        });
+
+        drop(subscription);
+
+        app.update(|cx| cx.set_global(TestGlobal));
+        assert_eq!(count.get(), 0, "should not fire after drop");
     }
 }
