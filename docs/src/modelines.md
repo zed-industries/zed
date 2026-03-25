@@ -26,15 +26,15 @@ Example:
 
 ### Supported Emacs Variables
 
-| Variable                   | Description                    | Zed Setting                                                                  |
-| -------------------------- | ------------------------------ | ---------------------------------------------------------------------------- |
-| `mode`                     | Major mode/language            | Language detection                                                           |
-| `tab-width`                | Tab display width              | [`tab_size`](./reference/all-settings.md#tab-size)                           |
-| `fill-column`              | Line wrap column               | [`preferred_line_length`](./reference/all-settings.md#preferred-line-length) |
-| `indent-tabs-mode`         | `nil` for spaces, `t` for tabs | [`hard_tabs`](./reference/all-settings.md#hard-tabs)                         |
-| `electric-indent-mode`     | Auto-indentation               | [`auto_indent`](./reference/all-settings.md#auto-indent)                     |
-| `require-final-newline`    | Ensure final newline           | [`ensure_final_newline_on_save`](./reference/all-settings.md#ensure-final-newline-on-save)   |
-| `show-trailing-whitespace` | Show trailing whitespace       | [`show_whitespaces`](./reference/all-settings.md#show-whitespaces)           |
+| Variable                   | Description                    | Zed Setting                                                                                |
+| -------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------ |
+| `mode`                     | Major mode/language            | Language detection                                                                         |
+| `tab-width`                | Tab display width              | [`tab_size`](./reference/all-settings.md#tab-size)                                         |
+| `fill-column`              | Line wrap column               | [`preferred_line_length`](./reference/all-settings.md#preferred-line-length)               |
+| `indent-tabs-mode`         | `nil` for spaces, `t` for tabs | [`hard_tabs`](./reference/all-settings.md#hard-tabs)                                       |
+| `electric-indent-mode`     | Auto-indentation               | [`auto_indent`](./reference/all-settings.md#auto-indent)                                   |
+| `require-final-newline`    | Ensure final newline           | [`ensure_final_newline_on_save`](./reference/all-settings.md#ensure-final-newline-on-save) |
+| `show-trailing-whitespace` | Show trailing whitespace       | [`show_whitespaces`](./reference/all-settings.md#show-whitespaces)                         |
 
 ## Vim
 
@@ -48,17 +48,17 @@ Example:
 
 ### Supported Vim Options
 
-| Option         | Aliases | Description                       | Zed Setting                                                                  |
-| -------------- | ------- | --------------------------------- | ---------------------------------------------------------------------------- |
-| `filetype`     | `ft`    | File type/language                | Language detection                                                           |
-| `tabstop`      | `ts`    | Number of spaces a tab counts for | [`tab_size`](./reference/all-settings.md#tab-size)                           |
-| `textwidth`    | `tw`    | Maximum line width                | [`preferred_line_length`](./reference/all-settings.md#preferred-line-length) |
-| `expandtab`    | `et`    | Use spaces instead of tabs        | [`hard_tabs`](./reference/all-settings.md#hard-tabs)                         |
-| `noexpandtab`  | `noet`  | Use tabs instead of spaces        | [`hard_tabs`](./reference/all-settings.md#hard-tabs)                         |
-| `autoindent`   | `ai`    | Enable auto-indentation           | [`auto_indent`](./reference/all-settings.md#auto-indent)                     |
-| `noautoindent` | `noai`  | Disable auto-indentation          | [`auto_indent`](./reference/all-settings.md#auto-indent)                     |
-| `endofline`    | `eol`   | Ensure final newline              | [`ensure_final_newline_on_save`](./reference/all-settings.md#ensure-final-newline-on-save)   |
-| `noendofline`  | `noeol` | Disable final newline             | [`ensure_final_newline_on_save`](./reference/all-settings.md#ensure-final-newline-on-save)   |
+| Option         | Aliases | Description                       | Zed Setting                                                                                |
+| -------------- | ------- | --------------------------------- | ------------------------------------------------------------------------------------------ |
+| `filetype`     | `ft`    | File type/language                | Language detection                                                                         |
+| `tabstop`      | `ts`    | Number of spaces a tab counts for | [`tab_size`](./reference/all-settings.md#tab-size)                                         |
+| `textwidth`    | `tw`    | Maximum line width                | [`preferred_line_length`](./reference/all-settings.md#preferred-line-length)               |
+| `expandtab`    | `et`    | Use spaces instead of tabs        | [`hard_tabs`](./reference/all-settings.md#hard-tabs)                                       |
+| `noexpandtab`  | `noet`  | Use tabs instead of spaces        | [`hard_tabs`](./reference/all-settings.md#hard-tabs)                                       |
+| `autoindent`   | `ai`    | Enable auto-indentation           | [`auto_indent`](./reference/all-settings.md#auto-indent)                                   |
+| `noautoindent` | `noai`  | Disable auto-indentation          | [`auto_indent`](./reference/all-settings.md#auto-indent)                                   |
+| `endofline`    | `eol`   | Ensure final newline              | [`ensure_final_newline_on_save`](./reference/all-settings.md#ensure-final-newline-on-save) |
+| `noendofline`  | `noeol` | Disable final newline             | [`ensure_final_newline_on_save`](./reference/all-settings.md#ensure-final-newline-on-save) |
 
 ## Notes
 
