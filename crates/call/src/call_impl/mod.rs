@@ -39,8 +39,10 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
         cx.subscribe_in(
             &cx.entity(),
             window,
-            move |_, multi_workspace, event: &MultiWorkspaceEvent, _, cx| {
-                if !matches!(event, MultiWorkspaceEvent::ActiveWorkspaceChanged) {
+            move |_, multi_workspace, event: &MultiWorkspaceEvent, window, cx| {
+                if !matches!(event, MultiWorkspaceEvent::ActiveWorkspaceChanged)
+                    && window.is_window_active()
+                {
                     return;
                 }
 
