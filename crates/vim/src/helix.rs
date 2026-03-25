@@ -725,21 +725,14 @@ impl Vim {
                     let byte_range = range.start.to_offset(&display_map, Bias::Left)
                         ..range.end.to_offset(&display_map, Bias::Left);
 
-                    let char_count = display_map
-                        .buffer_snapshot()
-                        .text_for_range(byte_range.clone())
-                        .map(|chunk| chunk.chars().count())
-                        .sum::<usize>();
+                    let snapshot = display_map.buffer_snapshot();
+                    let grapheme_count = snapshot.grapheme_count_for_range(&byte_range);
+                    let anchor = snapshot.anchor_before(byte_range.start);
 
-                    selection_info.push((
-                        display_map.buffer_snapshot().anchor_before(byte_range.start),
-                        char_count,
-                        was_empty,
-                        was_reversed,
-                    ));
+                    selection_info.push((anchor, grapheme_count, was_empty, was_reversed));
 
                     if !byte_range.is_empty() {
-                        let replacement_text = text.repeat(char_count);
+                        let replacement_text = text.repeat(grapheme_count);
                         edits.push((byte_range, replacement_text));
                     }
                 }
@@ -750,12 +743,12 @@ impl Vim {
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
                 let ranges: Vec<_> = selection_info
                     .into_iter()
-                    .map(|(start_anchor, char_count, was_empty, was_reversed)| {
+                    .map(|(start_anchor, grapheme_count, was_empty, was_reversed)| {
                         let start_point = start_anchor.to_point(&snapshot);
                         if was_empty {
                             start_point..start_point
                         } else {
-                            let replacement_len = text.len() * char_count;
+                            let replacement_len = text.len() * grapheme_count;
                             let end_offset = start_anchor.to_offset(&snapshot) + replacement_len;
                             let end_point = snapshot.offset_to_point(end_offset);
                             if was_reversed {
@@ -2372,13 +2365,20 @@ mod test {
     }
 
     #[gpui::test]
-    async fn test_helix_replace_multibyte(cx: &mut gpui::TestAppContext) {
+    async fn test_helix_replace_uses_graphemes(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.enable_helix();
 
-        // "Hällö" is 5 chars but 7 bytes; replace should produce 5 '1's, not 7
         cx.set_state("«Hällöˇ» Wörld", Mode::HelixNormal);
         cx.simulate_keystrokes("r 1");
         cx.assert_state("«11111ˇ» Wörld", Mode::HelixNormal);
+
+        cx.set_state("«e\u{301}ˇ»", Mode::HelixNormal);
+        cx.simulate_keystrokes("r 1");
+        cx.assert_state("«1ˇ»", Mode::HelixNormal);
+
+        cx.set_state("«🙂ˇ»", Mode::HelixNormal);
+        cx.simulate_keystrokes("r 1");
+        cx.assert_state("«1ˇ»", Mode::HelixNormal);
     }
 }
