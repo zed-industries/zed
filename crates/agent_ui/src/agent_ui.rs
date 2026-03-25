@@ -179,6 +179,10 @@ actions!(
         ToggleThinkingEffortMenu,
         /// Toggles fast mode for models that support it.
         ToggleFastMode,
+        /// Toggles the voice input recording UI state for the active thread.
+        ToggleVoiceRecording,
+        /// Toggles the microphone selection menu for the active thread.
+        ToggleMicrophoneMenu,
     ]
 );
 
