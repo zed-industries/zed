@@ -1211,9 +1211,8 @@ impl SettingsStore {
             merged.merge_from_option(self.global_settings.as_deref());
             if let Some(user_settings) = self.user_settings.as_ref() {
                 let active_profile = user_settings.for_profile(cx);
-                let uses_default_base = active_profile
-                    .and_then(|p| p.base)
-                    .is_some_and(|b| b == ProfileBase::Default);
+                let uses_default_base =
+                    active_profile.is_some_and(|p| p.base == ProfileBase::Default);
 
                 if !uses_default_base {
                     merged.merge_from(&user_settings.content);

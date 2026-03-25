@@ -285,9 +285,11 @@ pub struct SettingsProfile {
     ///
     /// - `user`: Apply on top of user's settings (default)
     /// - `default`: Apply on top of Zed's default settings, ignoring user customizations
-    pub base: Option<ProfileBase>,
+    #[serde(default)]
+    pub base: ProfileBase,
 
     /// The settings overrides for this profile.
+    #[serde(default)]
     pub settings: Box<SettingsContent>,
 }
 
