@@ -39,19 +39,14 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
         cx.subscribe_in(
             &cx.entity(),
             window,
-            move |_, multi_workspace, event: &MultiWorkspaceEvent, window, cx| {
+            move |multi_workspace, _, event: &MultiWorkspaceEvent, window, cx| {
                 if !matches!(event, MultiWorkspaceEvent::ActiveWorkspaceChanged)
                     && window.is_window_active()
                 {
                     return;
                 }
 
-                let project = multi_workspace
-                    .read(cx)
-                    .workspace()
-                    .read(cx)
-                    .project()
-                    .clone();
+                let project = multi_workspace.workspace().read(cx).project().clone();
                 if let Ok(task) = active_call_handle.update(cx, |active_call, cx| {
                     active_call.set_location(Some(&project), cx)
                 }) {
