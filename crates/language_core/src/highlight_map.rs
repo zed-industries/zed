@@ -9,8 +9,9 @@ pub struct HighlightId(pub u32);
 const DEFAULT_SYNTAX_HIGHLIGHT_ID: HighlightId = HighlightId(u32::MAX);
 
 impl HighlightMap {
-    pub fn from_ids(highlight_ids: Arc<[HighlightId]>) -> Self {
-        Self(highlight_ids)
+    #[inline]
+    pub fn from_ids(highlight_ids: impl IntoIterator<Item = HighlightId>) -> Self {
+        Self(highlight_ids.into_iter().collect())
     }
 
     pub fn get(&self, capture_id: u32) -> HighlightId {

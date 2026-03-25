@@ -16,9 +16,7 @@ use crate::{
     unified_diff_with_offsets,
 };
 pub use crate::{
-    Grammar, Language, LanguageRegistry,
-    diagnostic_set::DiagnosticSet,
-    highlight_map::{HighlightId, HighlightMap},
+    Grammar, HighlightId, HighlightMap, Language, LanguageRegistry, diagnostic_set::DiagnosticSet,
     proto,
 };
 

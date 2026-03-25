@@ -9,8 +9,8 @@
 mod buffer;
 mod diagnostic;
 mod diagnostic_set;
-mod highlight_map;
 mod language_registry;
+
 pub mod language_settings;
 mod manifest;
 pub mod modeline;
@@ -32,9 +32,10 @@ use futures::Future;
 use futures::future::LocalBoxFuture;
 use futures::lock::OwnedMutexGuard;
 use gpui::{App, AsyncApp, Entity};
-pub use highlight_map::{HighlightMap, build_highlight_map};
-
 use http_client::HttpClient;
+
+pub use language_core::highlight_map::{HighlightId, HighlightMap};
+
 pub use language_core::{
     BlockCommentConfig, BracketPair, BracketPairConfig, BracketPairContent, BracketsConfig,
     BracketsPatternConfig, CodeLabel, CodeLabelBuilder, DebugVariablesConfig, DebuggerTextObject,
@@ -1079,6 +1080,15 @@ impl Language {
     }
 }
 
+#[inline]
+pub fn build_highlight_map(capture_names: &[&str], theme: &SyntaxTheme) -> HighlightMap {
+    HighlightMap::from_ids(capture_names.iter().map(|capture_name| {
+        theme
+            .highlight_id(capture_name)
+            .map_or(HighlightId::default(), HighlightId)
+    }))
+}
+
 impl LanguageScope {
     pub fn path_suffixes(&self) -> &[String] {
         self.language.path_suffixes()
@@ -1618,10 +1628,38 @@ pub fn markdown_lang() -> Arc<Language> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, rgba};
     use pretty_assertions::assert_matches;
 
+    #[test]
+    fn test_highlight_map() {
+        let theme = SyntaxTheme::new(
+            [
+                ("function", rgba(0x100000ff)),
+                ("function.method", rgba(0x200000ff)),
+                ("function.async", rgba(0x300000ff)),
+                ("variable.builtin.self.rust", rgba(0x400000ff)),
+                ("variable.builtin", rgba(0x500000ff)),
+                ("variable", rgba(0x600000ff)),
+            ]
+            .iter()
+            .map(|(name, color)| (name.to_string(), (*color).into())),
+        );
+
+        let capture_names = &[
+            "function.special",
+            "function.async.rust",
+            "variable.builtin.self",
+        ];
+
+        let map = build_highlight_map(capture_names, &theme);
+        assert_eq!(theme.get_capture_name(map.get(0)), Some("function"));
+        assert_eq!(theme.get_capture_name(map.get(1)), Some("function.async"));
+        assert_eq!(theme.get_capture_name(map.get(2)), Some("variable.builtin"));
+    }
+
     #[gpui::test(iterations = 10)]
+
     async fn test_language_loading(cx: &mut TestAppContext) {
         let languages = LanguageRegistry::test(cx.executor());
         let languages = Arc::new(languages);
