@@ -500,10 +500,6 @@ impl ListState {
     pub fn scroll_px_offset_for_scrollbar(&self) -> Point<Pixels> {
         let state = &self.0.borrow();
 
-        // Bottom-aligned lists use `None` as a sentinel meaning "pinned to the
-        // end." `logical_scroll_top()` resolves that to `item_ix = items.count`,
-        // which makes the cursor overshoot to the full content height. Return
-        // the max offset directly for this case.
         if state.logical_scroll_top.is_none() && state.alignment == ListAlignment::Bottom {
             return Point::new(px(0.), -state.max_scroll_offset());
         }
