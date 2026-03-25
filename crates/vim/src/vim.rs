@@ -53,7 +53,6 @@ use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
 use ui::{IntoElement, SharedString, px};
-use unicode_segmentation::UnicodeSegmentation;
 use vim_mode_setting::HelixModeSetting;
 use vim_mode_setting::VimModeSetting;
 use workspace::{self, Pane, Workspace};
