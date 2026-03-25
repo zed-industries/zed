@@ -372,6 +372,7 @@ dependencies = [
  "language_model",
  "language_models",
  "languages",
+ "livekit_client",
  "log",
  "lsp",
  "markdown",

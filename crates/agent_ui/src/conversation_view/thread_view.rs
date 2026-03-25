@@ -1,18 +1,25 @@
 use crate::{DEFAULT_THREAD_TITLE, SelectPermissionGranularity};
 use std::cell::RefCell;
+use std::path::PathBuf;
 
 use acp_thread::ContentBlock;
 use audio::{AudioDeviceInfo, AudioSettings, AvailableAudioDevices};
+use chrono::Local;
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
+use livekit_client::CaptureInput;
+use picker::{Picker, PickerDelegate, popover_menu::PickerPopoverMenu};
 
 use crate::StartThreadIn;
 use crate::message_editor::SharedSessionCapabilities;
-use gpui::{Corner, List};
+use gpui::{Corner, DismissEvent, List};
 use heapless::Vec as ArrayVec;
 use language_model::{LanguageModelEffortLevel, Speed};
 use settings::update_settings_file;
-use ui::{ButtonLike, IconPosition, SplitButton, SplitButtonStyle, Tab};
+use ui::{
+    ButtonLike, HighlightedLabel, IconPosition, ListItem, SplitButton, SplitButtonStyle, Tab,
+};
+use util::paths::PathExt;
 use workspace::SERIALIZATION_THROTTLE_TIME;
 
 use super::*;
@@ -162,6 +169,204 @@ impl ThreadFeedbackState {
     }
 }
 
+enum VoiceRecordingState {
+    Idle,
+    Recording { capture_input: CaptureInput },
+    Saving,
+}
+
+impl Default for VoiceRecordingState {
+    fn default() -> Self {
+        Self::Idle
+    }
+}
+
+impl VoiceRecordingState {
+    fn is_recording(&self) -> bool {
+        matches!(self, Self::Recording { .. })
+    }
+
+    fn is_saving(&self) -> bool {
+        matches!(self, Self::Saving)
+    }
+}
+
+struct VoiceRecordingSavedToast;
+struct VoiceRecordingErrorToast;
+
+#[derive(Clone)]
+struct MicrophoneOption {
+    device_id: Option<String>,
+    name: SharedString,
+}
+
+struct MicrophonePickerDelegate {
+    thread_view: WeakEntity<ThreadView>,
+    options: Vec<MicrophoneOption>,
+    filtered_options: Vec<MicrophoneOption>,
+    selected_microphone_id: Option<String>,
+    selected_index: usize,
+    query: String,
+}
+
+impl MicrophonePickerDelegate {
+    fn new(
+        thread_view: WeakEntity<ThreadView>,
+        options: Vec<MicrophoneOption>,
+        selected_microphone_id: Option<String>,
+    ) -> Self {
+        let mut this = Self {
+            thread_view,
+            options: Vec::new(),
+            filtered_options: Vec::new(),
+            selected_microphone_id: None,
+            selected_index: 0,
+            query: String::new(),
+        };
+        this.refresh_options(options, selected_microphone_id);
+        this
+    }
+
+    fn refresh_options(
+        &mut self,
+        options: Vec<MicrophoneOption>,
+        selected_microphone_id: Option<String>,
+    ) {
+        self.options = options;
+        self.selected_microphone_id = selected_microphone_id;
+        self.filtered_options = self.options_for_query(&self.query);
+        self.selected_index = self
+            .index_of_selected()
+            .unwrap_or_else(|| self.first_selectable_index().unwrap_or(0));
+    }
+
+    fn options_for_query(&self, query: &str) -> Vec<MicrophoneOption> {
+        let normalized_query = query.trim().to_ascii_lowercase();
+        if normalized_query.is_empty() {
+            return self.options.clone();
+        }
+
+        self.options
+            .iter()
+            .filter(|option| option.name.to_ascii_lowercase().contains(&normalized_query))
+            .cloned()
+            .collect()
+    }
+
+    fn first_selectable_index(&self) -> Option<usize> {
+        (!self.filtered_options.is_empty()).then_some(0)
+    }
+
+    fn index_of_selected(&self) -> Option<usize> {
+        self.filtered_options
+            .iter()
+            .position(|option| option.device_id == self.selected_microphone_id)
+    }
+}
+
+impl PickerDelegate for MicrophonePickerDelegate {
+    type ListItem = AnyElement;
+
+    fn match_count(&self) -> usize {
+        self.filtered_options.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Picker<Self>>) {
+        self.selected_index = ix.min(self.filtered_options.len().saturating_sub(1));
+        cx.notify();
+    }
+
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+        "Select microphone…".into()
+    }
+
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        Some("No microphones match your search.".into())
+    }
+
+    fn update_matches(
+        &mut self,
+        query: String,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Task<()> {
+        self.query = query;
+        self.filtered_options = self.options_for_query(&self.query);
+        self.selected_index = self
+            .index_of_selected()
+            .unwrap_or_else(|| self.first_selectable_index().unwrap_or(0));
+        cx.notify();
+        Task::ready(())
+    }
+
+    fn confirm(&mut self, _: bool, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        let Some(option) = self.filtered_options.get(self.selected_index).cloned() else {
+            return;
+        };
+
+        self.thread_view
+            .update(cx, |thread_view, cx| {
+                thread_view.selected_microphone_id = option.device_id.clone();
+                cx.notify();
+            })
+            .ok();
+
+        self.selected_microphone_id = option.device_id;
+        cx.emit(DismissEvent);
+    }
+
+    fn dismissed(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        cx.defer_in(window, |picker, window, cx| {
+            picker.set_query("", window, cx);
+        });
+    }
+
+    fn render_match(
+        &self,
+        ix: usize,
+        selected: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        let option = self.filtered_options.get(ix)?;
+        let is_active = option.device_id == self.selected_microphone_id;
+        let query = self.query.trim().to_ascii_lowercase();
+        let highlight_positions = if query.is_empty() {
+            Vec::new()
+        } else {
+            option
+                .name
+                .to_ascii_lowercase()
+                .find(&query)
+                .map(|start| (start..start + query.len()).collect())
+                .unwrap_or_default()
+        };
+
+        Some(
+            ListItem::new(("microphone-picker-item", ix))
+                .inset(true)
+                .spacing(ui::ListItemSpacing::Sparse)
+                .toggle_state(selected)
+                .child(HighlightedLabel::new(
+                    option.name.clone(),
+                    highlight_positions,
+                ))
+                .when(is_active, |this| {
+                    this.end_slot(
+                        div()
+                            .pr_2()
+                            .child(Icon::new(IconName::Check).color(Color::Accent)),
+                    )
+                })
+                .into_any_element(),
+        )
+    }
+}
+
 pub enum AcpThreadViewEvent {
     FirstSendRequested { content: Vec<acp::ContentBlock> },
 }
@@ -296,7 +501,7 @@ pub struct ThreadView {
     pub _subscriptions: Vec<Subscription>,
     pub message_editor: Entity<MessageEditor>,
     pub add_context_menu_handle: PopoverMenuHandle<ContextMenu>,
-    pub microphone_menu_handle: PopoverMenuHandle<ContextMenu>,
+    microphone_menu_handle: PopoverMenuHandle<Picker<MicrophonePickerDelegate>>,
     pub thinking_effort_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub project: WeakEntity<Project>,
     pub recent_history_entries: Vec<AgentSessionInfo>,
@@ -304,7 +509,8 @@ pub struct ThreadView {
     pub show_external_source_prompt_warning: bool,
     pub show_codex_windows_warning: bool,
     pub selected_microphone_id: Option<String>,
-    pub is_voice_recording: bool,
+    microphone_picker: Option<Entity<Picker<MicrophonePickerDelegate>>>,
+    voice_recording_state: VoiceRecordingState,
     pub history: Option<Entity<ThreadHistory>>,
     pub _history_subscription: Option<Subscription>,
 }
@@ -552,7 +758,8 @@ impl ThreadView {
             _history_subscription: history_subscription,
             show_codex_windows_warning,
             selected_microphone_id: preferred_microphone,
-            is_voice_recording: false,
+            microphone_picker: None,
+            voice_recording_state: VoiceRecordingState::Idle,
         };
         let list_state_for_scroll = this.list_state.clone();
         let thread_view = cx.entity().downgrade();
@@ -2993,8 +3200,9 @@ impl ThreadView {
                     .child(
                         h_flex()
                             .gap_1()
+                            .items_center()
                             .children(self.render_token_usage(cx))
-                            .child(self.render_microphone_control(cx))
+                            .child(self.render_microphone_control(window, cx))
                             .children(self.profile_selector.clone())
                             .map(|this| {
                                 // Either config_options_view OR (mode_selector + model_selector)
@@ -8048,15 +8256,123 @@ impl ThreadView {
     fn toggle_voice_recording(
         &mut self,
         _: &ToggleVoiceRecording,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.flip_voice_recording(cx);
+        self.flip_voice_recording(window, cx);
     }
 
-    fn flip_voice_recording(&mut self, cx: &mut Context<Self>) {
-        self.is_voice_recording = !self.is_voice_recording;
+    fn flip_voice_recording(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match std::mem::replace(&mut self.voice_recording_state, VoiceRecordingState::Idle) {
+            VoiceRecordingState::Idle => match self.start_voice_recording(cx) {
+                Ok(()) => {}
+                Err(error) => {
+                    self.voice_recording_state = VoiceRecordingState::Idle;
+                    self.show_voice_recording_error(
+                        format!("Failed to start voice recording: {error:#}"),
+                        cx,
+                    );
+                    cx.notify();
+                }
+            },
+            VoiceRecordingState::Recording { capture_input } => {
+                self.finish_voice_recording(capture_input, window, cx);
+            }
+            VoiceRecordingState::Saving => {
+                self.voice_recording_state = VoiceRecordingState::Saving;
+            }
+        }
+    }
+
+    fn start_voice_recording(&mut self, cx: &mut Context<Self>) -> anyhow::Result<()> {
+        audio::ensure_devices_initialized(cx);
+        let available_devices = cx.default_global::<AvailableAudioDevices>().0.clone();
+        let selected_microphone =
+            resolve_selected_microphone(self.selected_microphone_id.as_deref(), &available_devices);
+
+        let capture_input =
+            CaptureInput::start(selected_microphone.map(|device| device.id.clone()))?;
+        self.voice_recording_state = VoiceRecordingState::Recording { capture_input };
         cx.notify();
+        Ok(())
+    }
+
+    fn finish_voice_recording(
+        &mut self,
+        capture_input: CaptureInput,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let save_path = Self::next_voice_recording_path();
+        self.voice_recording_state = VoiceRecordingState::Saving;
+        cx.notify();
+
+        cx.spawn_in(window, async move |this, cx| {
+            let save_result = cx
+                .background_spawn(async move { capture_input.finish_to_path(save_path) })
+                .await;
+
+            this.update_in(cx, |this, _window, cx| {
+                this.voice_recording_state = VoiceRecordingState::Idle;
+
+                match save_result {
+                    Ok(saved_path) => this.show_voice_recording_saved(&saved_path, cx),
+                    Err(error) => this.show_voice_recording_error(
+                        format!("Failed to save voice recording: {error:#}"),
+                        cx,
+                    ),
+                }
+
+                cx.notify();
+            })?;
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn next_voice_recording_path() -> PathBuf {
+        let timestamp = Local::now().format("%Y-%m-%dT%H-%M-%S-%3f");
+        util::paths::home_dir()
+            .join("Projects")
+            .join("random")
+            .join("recordings")
+            .join(format!("agent-voice-{timestamp}.wav"))
+    }
+
+    fn show_voice_recording_saved(&self, saved_path: &std::path::Path, cx: &mut Context<Self>) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        let compact_path = saved_path.compact();
+        workspace.update(cx, |workspace, cx| {
+            workspace.show_toast(
+                Toast::new(
+                    NotificationId::unique::<VoiceRecordingSavedToast>(),
+                    format!("Saved voice recording to {}", compact_path.display()),
+                )
+                .autohide(),
+                cx,
+            );
+        });
+    }
+
+    fn show_voice_recording_error(&self, message: String, cx: &mut Context<Self>) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        workspace.update(cx, |workspace, cx| {
+            workspace.show_toast(
+                Toast::new(
+                    NotificationId::unique::<VoiceRecordingErrorToast>(),
+                    message,
+                )
+                .autohide(),
+                cx,
+            );
+        });
     }
 
     fn toggle_microphone_menu(
@@ -8147,80 +8463,63 @@ impl ThreadView {
         });
     }
 
-    fn build_microphone_menu(
-        &self,
+    fn ensure_microphone_picker(
+        &mut self,
         window: &mut Window,
+        options: Vec<MicrophoneOption>,
         cx: &mut Context<Self>,
-    ) -> Entity<ContextMenu> {
-        audio::ensure_devices_initialized(cx);
-        let devices = cx.default_global::<AvailableAudioDevices>().0.clone();
-        let selected_microphone_id = self.selected_microphone_id.clone();
-        let weak_self = cx.weak_entity();
-
-        ContextMenu::build(window, cx, move |mut menu, _window, _cx| {
-            menu = menu.header("Select Microphone");
-
-            let is_system_default = selected_microphone_id.is_none();
-            menu = menu.toggleable_entry(
-                "System Default",
-                is_system_default,
-                IconPosition::Start,
-                None,
-                {
-                    let weak_self = weak_self.clone();
-                    move |_window, cx| {
-                        weak_self
-                            .update(cx, |this, cx| {
-                                this.selected_microphone_id = None;
-                                cx.notify();
-                            })
-                            .ok();
-                    }
-                },
+    ) -> Entity<Picker<MicrophonePickerDelegate>> {
+        if self.microphone_picker.is_none() {
+            let delegate = MicrophonePickerDelegate::new(
+                cx.weak_entity(),
+                options.clone(),
+                self.selected_microphone_id.clone(),
             );
+            let picker = cx.new(|cx| {
+                Picker::list(delegate, window, cx)
+                    .show_scrollbar(true)
+                    .width(rems(18.))
+                    .max_height(Some(rems(16.).into()))
+            });
+            self.microphone_picker = Some(picker);
+        }
 
-            let input_devices = devices
-                .iter()
-                .filter(|device| device.desc.supports_input())
-                .cloned()
-                .collect::<Vec<_>>();
-
-            if input_devices.is_empty() {
-                menu = menu.entry("No input devices available", None, |_window, _cx| {});
-                return menu;
-            }
-
-            for device in input_devices {
-                let is_selected = selected_microphone_id
-                    .as_ref()
-                    .is_some_and(|selected_id| selected_id == &device.id.to_string());
-                let label = device.desc.name().to_string();
-
-                menu = menu.toggleable_entry(label, is_selected, IconPosition::Start, None, {
-                    let weak_self = weak_self.clone();
-                    let device = device.clone();
-                    move |_window, cx| {
-                        weak_self
-                            .update(cx, |this, cx| {
-                                this.selected_microphone_id = Some(device.id.to_string());
-                                cx.notify();
-                            })
-                            .ok();
-                    }
-                });
-            }
-
-            menu
-        })
+        let picker = self.microphone_picker.as_ref().unwrap().clone();
+        let selected_microphone_id = self.selected_microphone_id.clone();
+        picker.update(cx, |picker, cx| {
+            picker
+                .delegate
+                .refresh_options(options, selected_microphone_id);
+            cx.notify();
+        });
+        picker
     }
 
-    fn render_microphone_control(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_microphone_control(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         audio::ensure_devices_initialized(cx);
         let available_devices = cx.default_global::<AvailableAudioDevices>().0.clone();
+        let mut microphone_options = vec![MicrophoneOption {
+            device_id: None,
+            name: "System Default".into(),
+        }];
+        microphone_options.extend(
+            available_devices
+                .iter()
+                .filter(|device| device.desc.supports_input())
+                .map(|device| MicrophoneOption {
+                    device_id: Some(device.id.to_string()),
+                    name: SharedString::from(device.desc.name().to_string()),
+                }),
+        );
+        let microphone_picker = self.ensure_microphone_picker(window, microphone_options, cx);
 
         let focus_handle = self.message_editor.focus_handle(cx);
-        let weak_self = cx.weak_entity();
-        let is_recording = self.is_voice_recording;
+        let is_recording = self.voice_recording_state.is_recording();
+        let is_saving = self.voice_recording_state.is_saving();
         let microphone_menu_open = self.microphone_menu_handle.is_deployed();
         let microphone_name =
             resolve_selected_microphone(self.selected_microphone_id.as_deref(), &available_devices)
@@ -8238,24 +8537,52 @@ impl ThreadView {
             IconName::ChevronDown
         };
 
-        let indicator = div()
-            .h(px(2.0))
-            .w_full()
-            .rounded_full()
-            .bg(cx.theme().colors().text_accent)
-            .with_animation(
-                "voice-recording-indicator",
-                Animation::new(Duration::from_secs(1))
-                    .repeat()
-                    .with_easing(pulsating_between(0.25, 1.0)),
-                move |indicator, delta| {
-                    if is_recording {
-                        indicator.opacity(delta)
-                    } else {
-                        indicator.opacity(0.0)
-                    }
-                },
-            );
+        let indicator = match &self.voice_recording_state {
+            VoiceRecordingState::Idle => None,
+            VoiceRecordingState::Recording { .. } => Some(
+                h_flex()
+                    .justify_center()
+                    .items_center()
+                    .w_full()
+                    .gap_0p5()
+                    .absolute()
+                    .top(px(-8.0))
+                    .left(px(0.0))
+                    .child(
+                        div()
+                            .child(
+                                Icon::new(IconName::Circle)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Accent),
+                            )
+                            .with_animation(
+                                "voice-recording-indicator",
+                                Animation::new(Duration::from_secs(1))
+                                    .repeat()
+                                    .with_easing(pulsating_between(0.25, 1.0)),
+                                |indicator, delta| indicator.opacity(delta),
+                            ),
+                    )
+                    .into_any_element(),
+            ),
+            VoiceRecordingState::Saving => Some(
+                h_flex()
+                    .justify_center()
+                    .items_center()
+                    .w_full()
+                    .gap_0p5()
+                    .absolute()
+                    .top(px(-8.0))
+                    .left(px(0.0))
+                    .child(
+                        Icon::new(IconName::Circle)
+                            .size(IconSize::XSmall)
+                            .color(Color::Accent),
+                    )
+                    .child(loading_contents_spinner(IconSize::XSmall))
+                    .into_any_element(),
+            ),
+        };
 
         let voice_recording_button = IconButton::new(
             "toggle-voice-recording",
@@ -8271,51 +8598,58 @@ impl ThreadView {
         } else {
             Color::Muted
         })
+        .disabled(is_saving)
         .toggle_state(is_recording)
         .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-        .tooltip(move |_window, cx| {
-            Tooltip::for_action_in(
-                if is_recording {
-                    "Stop Voice Input"
-                } else {
-                    "Start Voice Input"
-                },
-                &ToggleVoiceRecording,
-                &focus_handle,
-                cx,
-            )
+        .tooltip(move |window, cx| {
+            if is_saving {
+                Tooltip::text("Saving recording")(window, cx)
+            } else {
+                Tooltip::for_action_in(
+                    if is_recording {
+                        "Stop Voice Input"
+                    } else {
+                        "Start Voice Input"
+                    },
+                    &ToggleVoiceRecording,
+                    &focus_handle,
+                    cx,
+                )
+            }
         })
-        .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
-            this.flip_voice_recording(cx);
+        .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+            this.flip_voice_recording(window, cx);
         }));
 
-        let microphone_menu = PopoverMenu::new("microphone-input-menu")
-            .trigger_with_tooltip(
-                IconButton::new("select-microphone", chevron_icon)
-                    .icon_size(IconSize::XSmall)
-                    .icon_color(Color::Muted),
-                move |_window, cx| {
-                    Tooltip::with_meta("Select Microphone", None, microphone_name.clone(), cx)
-                },
-            )
-            .anchor(Corner::BottomLeft)
-            .with_handle(self.microphone_menu_handle.clone())
-            .offset(gpui::Point {
-                x: px(0.0),
-                y: px(-2.0),
-            })
-            .menu(move |window, cx| {
-                weak_self
-                    .update(cx, |this, cx| this.build_microphone_menu(window, cx))
-                    .ok()
-            });
-
-        v_flex().gap_0p5().child(indicator).child(
-            h_flex()
-                .gap_px()
-                .child(voice_recording_button)
-                .child(microphone_menu),
+        let microphone_menu = PickerPopoverMenu::new(
+            microphone_picker,
+            IconButton::new("select-microphone", chevron_icon)
+                .icon_size(IconSize::XSmall)
+                .icon_color(Color::Muted)
+                .disabled(is_saving),
+            move |_window, cx| {
+                Tooltip::with_meta("Select Microphone", None, microphone_name.clone(), cx)
+            },
+            Corner::BottomLeft,
+            cx,
         )
+        .with_handle(self.microphone_menu_handle.clone())
+        .offset(gpui::Point {
+            x: px(0.0),
+            y: px(-2.0),
+        })
+        .render(window, cx);
+
+        div()
+            .relative()
+            .child(
+                h_flex()
+                    .items_center()
+                    .gap_px()
+                    .child(voice_recording_button)
+                    .child(microphone_menu),
+            )
+            .when_some(indicator, |this, indicator| this.child(indicator))
     }
 }
 

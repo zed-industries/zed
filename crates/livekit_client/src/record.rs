@@ -42,9 +42,18 @@ impl CaptureInput {
     }
 
     pub fn finish(self) -> Result<PathBuf> {
-        let name = self.name;
         let mut path = env::current_dir().context("Could not get current dir")?;
-        path.push(&format!("test_recording_{name}.wav"));
+        path.push(format!("test_recording_{}.wav", self.name.as_str()));
+        self.finish_to_path(path)
+    }
+
+    pub fn finish_to_path(self, path: impl Into<PathBuf>) -> Result<PathBuf> {
+        let path = path.into();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!("failed to create recording directory {}", parent.display())
+            })?;
+        }
         log::info!("Test recording written to: {}", path.display());
         write_out(self.samples, self.config, &path)?;
         Ok(path)

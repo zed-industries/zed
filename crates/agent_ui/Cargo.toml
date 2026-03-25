@@ -70,6 +70,7 @@ jsonschema.workspace = true
 language.workspace = true
 language_model.workspace = true
 language_models.workspace = true
+livekit_client.workspace = true
 log.workspace = true
 lsp.workspace = true
 markdown.workspace = true
