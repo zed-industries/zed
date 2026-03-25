@@ -111,6 +111,11 @@ type testDriver struct {
 
 	// Collected round results for final summary
 	roundResults []roundResult
+
+	// Monotonic counter to detect stale advanceToNextRound calls.
+	// Incremented on every round transition. Goroutines capture the value
+	// before sleeping and check it hasn't changed when they wake up.
+	roundGeneration int
 }
 
 type roundResult struct {
@@ -428,10 +433,22 @@ func (d *testDriver) advanceAfterCompletion(completedPhase int) {
 	d.mu.Lock()
 	agentName := d.round.agentName
 	actualPhase := d.phase
+	gen := d.roundGeneration
 	d.mu.Unlock()
-	log.Printf("[%s] advanceAfterCompletion(%d) called (current phase=%d), sleeping 2s...",
-		agentName, completedPhase, actualPhase)
+	log.Printf("[%s] advanceAfterCompletion(%d) called (current phase=%d gen=%d), sleeping 2s...",
+		agentName, completedPhase, actualPhase, gen)
 	time.Sleep(2 * time.Second) // let Zed settle
+
+	// If the round changed while we slept, this completion is stale — bail out.
+	d.mu.Lock()
+	if d.roundGeneration != gen {
+		curAgent := d.round.agentName
+		d.mu.Unlock()
+		log.Printf("[%s] advanceAfterCompletion(%d) STALE: gen changed %d→%d (now in %s round), ignoring",
+			agentName, completedPhase, gen, d.roundGeneration, curAgent)
+		return
+	}
+	d.mu.Unlock()
 
 	switch completedPhase {
 	case 1:
@@ -523,6 +540,7 @@ func (d *testDriver) advanceToNextRound() {
 	nextAgent := d.agentRounds[d.currentRoundIdx]
 	d.round = newRoundState(nextAgent)
 	d.phase = 1
+	d.roundGeneration++
 	d.mu.Unlock()
 
 	log.Printf("\n##################################################")
