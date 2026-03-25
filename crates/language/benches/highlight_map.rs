@@ -1,5 +1,17 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
-use language::HighlightMap;
+use gpui::rgba;
+use language::build_highlight_map;
+use theme::SyntaxTheme;
+
+fn syntax_theme(highlight_names: &[&str]) -> SyntaxTheme {
+    SyntaxTheme::new(highlight_names.iter().enumerate().map(|(i, name)| {
+        let r = ((i * 37) % 256) as u8;
+        let g = ((i * 53) % 256) as u8;
+        let b = ((i * 71) % 256) as u8;
+        let color = rgba(u32::from_be_bytes([r, g, b, 0xff]));
+        (name.to_string(), color.into())
+    }))
+}
 
 static SMALL_THEME_KEYS: &[&str] = &[
     "comment", "function", "keyword", "string", "type", "variable",
@@ -103,8 +115,8 @@ static LARGE_CAPTURE_NAMES: &[&str] = &[
     "variable.parameter",
 ];
 
-fn bench_highlight_map_new(c: &mut Criterion) {
-    let mut group = c.benchmark_group("HighlightMap::new");
+fn bench_build_highlight_map(c: &mut Criterion) {
+    let mut group = c.benchmark_group("build_highlight_map");
 
     for (capture_label, capture_names) in [
         ("small_captures", SMALL_CAPTURE_NAMES as &[&str]),
@@ -114,11 +126,12 @@ fn bench_highlight_map_new(c: &mut Criterion) {
             ("small_theme", SMALL_THEME_KEYS as &[&str]),
             ("large_theme", LARGE_THEME_KEYS as &[&str]),
         ] {
+            let theme = syntax_theme(theme_keys);
             group.bench_with_input(
                 BenchmarkId::new(capture_label, theme_label),
-                &(capture_names, theme_keys),
-                |b, (capture_names, theme_keys)| {
-                    b.iter(|| HighlightMap::new(black_box(capture_names), black_box(theme_keys)));
+                &(capture_names, &theme),
+                |b, (capture_names, theme)| {
+                    b.iter(|| build_highlight_map(black_box(capture_names), black_box(theme)));
                 },
             );
         }
@@ -127,5 +140,5 @@ fn bench_highlight_map_new(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_highlight_map_new);
+criterion_group!(benches, bench_build_highlight_map);
 criterion_main!(benches);

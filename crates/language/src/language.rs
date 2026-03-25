@@ -32,7 +32,8 @@ use futures::Future;
 use futures::future::LocalBoxFuture;
 use futures::lock::OwnedMutexGuard;
 use gpui::{App, AsyncApp, Entity};
-pub use highlight_map::HighlightMap;
+pub use highlight_map::{HighlightMap, build_highlight_map};
+
 use http_client::HttpClient;
 pub use language_core::{
     BlockCommentConfig, BracketPair, BracketPairConfig, BracketPairContent, BracketsConfig,
@@ -1049,14 +1050,8 @@ impl Language {
         if let Some(grammar) = self.grammar.as_ref()
             && let Some(highlights_config) = &grammar.highlights_config
         {
-            let mut highlight_names = Vec::new();
-            let mut highlight_index = 0;
-            while let Some(highlight_name) = theme.get_capture_name(highlight_index) {
-                highlight_names.push(highlight_name);
-                highlight_index += 1;
-            }
             *grammar.highlight_map.lock() =
-                HighlightMap::new(highlights_config.query.capture_names(), &highlight_names);
+                build_highlight_map(highlights_config.query.capture_names(), theme);
         }
     }
 
