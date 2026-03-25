@@ -285,6 +285,7 @@ pub struct ThreadView {
     pub hovered_recent_history_item: Option<usize>,
     pub show_external_source_prompt_warning: bool,
     pub show_codex_windows_warning: bool,
+    pub generating_indicator_in_list: bool,
     pub history: Option<Entity<ThreadHistory>>,
     pub _history_subscription: Option<Subscription>,
 }
@@ -525,19 +526,38 @@ impl ThreadView {
             history,
             _history_subscription: history_subscription,
             show_codex_windows_warning,
+            generating_indicator_in_list: false,
         };
+
+        this.sync_generating_indicator(cx);
         let list_state_for_scroll = this.list_state.clone();
         let thread_view = cx.entity().downgrade();
+
         this.list_state
-            .set_scroll_handler(move |_event, _window, cx| {
+            .set_scroll_handler(move |event, _window, cx| {
                 let list_state = list_state_for_scroll.clone();
                 let thread_view = thread_view.clone();
+                let is_following_tail = event.is_following_tail;
                 // N.B. We must defer because the scroll handler is called while the
                 // ListState's RefCell is mutably borrowed. Reading logical_scroll_top()
                 // directly would panic from a double borrow.
                 cx.defer(move |cx| {
                     let scroll_top = list_state.logical_scroll_top();
                     let _ = thread_view.update(cx, |this, cx| {
+                        if !is_following_tail {
+                            let is_at_bottom = {
+                                let current_offset =
+                                    list_state.scroll_px_offset_for_scrollbar().y.abs();
+                                let max_offset = list_state.max_offset_for_scrollbar().y;
+                                current_offset >= max_offset - px(1.0)
+                            };
+                            let is_generating =
+                                matches!(this.thread.read(cx).status(), ThreadStatus::Generating);
+
+                            if is_at_bottom && is_generating {
+                                list_state.set_follow_tail(true);
+                            }
+                        }
                         if let Some(thread) = this.as_native_thread(cx) {
                             thread.update(cx, |thread, _cx| {
                                 thread.set_ui_scroll_position(Some(scroll_top));
@@ -1043,7 +1063,11 @@ impl ThreadView {
             this.update_in(cx, |this, _window, cx| {
                 this.set_editor_is_expanded(false, cx);
             })?;
-            let _ = this.update(cx, |this, cx| this.scroll_to_bottom(cx));
+
+            let _ = this.update(cx, |this, cx| {
+                this.list_state.set_follow_tail(true);
+                cx.notify();
+            });
 
             let _stop_turn = defer({
                 let this = this.clone();
@@ -1097,6 +1121,12 @@ impl ThreadView {
 
                 thread.send(contents, cx)
             })?;
+
+            let _ = this.update(cx, |this, cx| {
+                this.sync_generating_indicator(cx);
+                cx.notify();
+            });
+
             let res = send.await;
             let turn_time_ms = turn_start_time.elapsed().as_millis();
             drop(_stop_turn);
@@ -1236,13 +1266,12 @@ impl ThreadView {
         );
     }
 
-    // generation
-
     pub fn cancel_generation(&mut self, cx: &mut Context<Self>) {
         self.thread_retry_status.take();
         self.thread_error.take();
         self.user_interrupted_generation = true;
         self._cancel_task = Some(self.thread.update(cx, |thread, cx| thread.cancel(cx)));
+        self.sync_generating_indicator(cx);
     }
 
     pub fn retry_generation(&mut self, cx: &mut Context<Self>) {
@@ -1254,6 +1283,7 @@ impl ThreadView {
         }
 
         let task = thread.update(cx, |thread, cx| thread.retry(cx));
+        self.sync_generating_indicator(cx);
         cx.spawn(async move |this, cx| {
             let result = task.await;
 
@@ -1582,10 +1612,9 @@ impl ThreadView {
                 }
             })
         };
+        self.message_editor.focus_handle(cx).focus(window, cx);
         cx.notify();
     }
-
-    // tool permissions
 
     pub fn authorize_tool_call(
         &mut self,
@@ -1638,6 +1667,17 @@ impl ThreadView {
         }
         cx.notify();
         Some(())
+    }
+
+    fn is_waiting_for_confirmation(entry: &AgentThreadEntry) -> bool {
+        if let AgentThreadEntry::ToolCall(tool_call) = entry {
+            matches!(
+                tool_call.status,
+                ToolCallStatus::WaitingForConfirmation { .. }
+            )
+        } else {
+            false
+        }
     }
 
     fn handle_authorize_tool_call(
@@ -3916,10 +3956,16 @@ impl ThreadView {
             self.list_state.clone(),
             cx.processor(|this, index: usize, window, cx| {
                 let entries = this.thread.read(cx).entries();
-                let Some(entry) = entries.get(index) else {
-                    return Empty.into_any();
-                };
-                this.render_entry(index, entries.len(), entry, window, cx)
+                if let Some(entry) = entries.get(index) {
+                    this.render_entry(index, entries.len(), entry, window, cx)
+                } else if this.generating_indicator_in_list {
+                    let confirmation = entries
+                        .last()
+                        .is_some_and(|entry| Self::is_waiting_for_confirmation(entry));
+                    this.render_generating(confirmation, cx).into_any_element()
+                } else {
+                    Empty.into_any()
+                }
             }),
         )
         .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
@@ -3995,7 +4041,6 @@ impl ThreadView {
                     .px_2()
                     .gap_1p5()
                     .w_full()
-                    .children(rules_item)
                     .when(is_editable && has_checkpoint_button, |this| {
                         this.children(message.id.clone().map(|message_id| {
                             h_flex()
@@ -4250,6 +4295,8 @@ impl ThreadView {
             primary
         };
 
+        let thread = self.thread.clone();
+
         let primary = if is_indented {
             let line_top = if is_first_indented {
                 rems_from_px(-12.0)
@@ -4277,28 +4324,16 @@ impl ThreadView {
             primary
         };
 
-        let needs_confirmation = if let AgentThreadEntry::ToolCall(tool_call) = entry {
-            matches!(
-                tool_call.status,
-                ToolCallStatus::WaitingForConfirmation { .. }
-            )
-        } else {
-            false
-        };
+        let needs_confirmation = Self::is_waiting_for_confirmation(entry);
 
-        let thread = self.thread.clone();
         let comments_editor = self.thread_feedback.comments_editor.clone();
 
         let primary = if entry_ix + 1 == total_entries {
             v_flex()
                 .w_full()
                 .child(primary)
-                .map(|this| {
-                    if needs_confirmation {
-                        this.child(self.render_generating(true, cx))
-                    } else {
-                        this.child(self.render_thread_controls(&thread, cx))
-                    }
+                .when(!needs_confirmation, |this| {
+                    this.child(self.render_thread_controls(&thread, cx))
                 })
                 .when_some(comments_editor, |this, editor| {
                     this.child(Self::render_feedback_feedback_editor(editor, cx))
@@ -4382,7 +4417,7 @@ impl ThreadView {
     ) -> impl IntoElement {
         let is_generating = matches!(thread.read(cx).status(), ThreadStatus::Generating);
         if is_generating {
-            return self.render_generating(false, cx).into_any_element();
+            return Empty.into_any_element();
         }
 
         let open_as_markdown = IconButton::new("open-as-markdown", IconName::FileMarkdown)
@@ -4582,13 +4617,12 @@ impl ThreadView {
             });
             cx.notify();
         } else {
-            self.scroll_to_bottom(cx);
+            self.scroll_to_end(cx);
         }
     }
 
-    pub fn scroll_to_bottom(&mut self, cx: &mut Context<Self>) {
-        let entry_count = self.thread.read(cx).entries().len();
-        self.list_state.reset(entry_count);
+    pub fn scroll_to_end(&mut self, cx: &mut Context<Self>) {
+        self.list_state.scroll_to_end();
         cx.notify();
     }
 
@@ -4667,6 +4701,21 @@ impl ThreadView {
             })?;
             anyhow::Ok(())
         })
+    }
+
+    /// Ensures the list item count includes (or excludes) an extra item for the generating indicator
+    pub(crate) fn sync_generating_indicator(&mut self, cx: &App) {
+        let is_generating = matches!(self.thread.read(cx).status(), ThreadStatus::Generating);
+
+        if is_generating && !self.generating_indicator_in_list {
+            let entries_count = self.thread.read(cx).entries().len();
+            self.list_state.splice(entries_count..entries_count, 1);
+            self.generating_indicator_in_list = true;
+        } else if !is_generating && self.generating_indicator_in_list {
+            let entries_count = self.thread.read(cx).entries().len();
+            self.list_state.splice(entries_count..entries_count + 1, 0);
+            self.generating_indicator_in_list = false;
+        }
     }
 
     fn render_generating(&self, confirmation: bool, cx: &App) -> impl IntoElement {
@@ -4952,7 +5001,7 @@ impl ThreadView {
                             let entity = entity.clone();
                             move |_, cx| {
                                 entity.update(cx, |this, cx| {
-                                    this.scroll_to_bottom(cx);
+                                    this.scroll_to_end(cx);
                                 });
                             }
                         })
