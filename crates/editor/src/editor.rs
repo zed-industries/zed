@@ -134,7 +134,7 @@ use language::{
     DiagnosticEntryRef, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText, IndentKind,
     IndentSize, Language, LanguageName, LanguageRegistry, LanguageScope, LocalFile, OffsetRangeExt,
     OutlineItem, Point, Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
-    WordsQuery, highlight_name, highlight_style,
+    WordsQuery,
     language_settings::{
         self, AllLanguageSettings, LanguageSettings, LspInsertMode, RewrapBehavior,
         WordsCompletionMode, all_language_settings,
@@ -19160,7 +19160,7 @@ impl Editor {
                                 move |cx: &mut BlockContext| {
                                     let mut text_style = cx.editor_style.text.clone();
                                     if let Some(highlight_style) = old_highlight_id
-                                        .and_then(|h| highlight_style(h, &cx.editor_style.syntax))
+                                        .and_then(|h| cx.editor_style.syntax.get(h).cloned())
                                     {
                                         text_style = text_style.highlight(highlight_style);
                                     }
@@ -25039,7 +25039,8 @@ impl Editor {
         for chunk in chunks {
             let highlight = chunk
                 .syntax_highlight_id
-                .and_then(|id| highlight_name(id, &style.syntax));
+                .and_then(|id| style.syntax.get_capture_name(id));
+
             let mut chunk_lines = chunk.text.split('\n').peekable();
             while let Some(text) = chunk_lines.next() {
                 let mut merged_with_last_token = false;
@@ -28863,7 +28864,7 @@ pub fn styled_runs_for_code_label<'a>(
                     background_color: Some(local_player.selection),
                     ..Default::default()
                 }
-            } else if let Some(style) = highlight_style(*highlight_id, syntax_theme) {
+            } else if let Some(style) = syntax_theme.get(*highlight_id).cloned() {
                 style
             } else {
                 return Default::default();

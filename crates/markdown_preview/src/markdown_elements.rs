@@ -2,7 +2,8 @@ use gpui::{
     DefiniteLength, FontStyle, FontWeight, HighlightStyle, SharedString, StrikethroughStyle,
     UnderlineStyle, px,
 };
-use language::{HighlightId, highlight_style};
+use language::HighlightId;
+
 use std::{fmt::Display, ops::Range, path::PathBuf};
 use urlencoding;
 
@@ -242,7 +243,7 @@ impl MarkdownHighlight {
                 Some(highlight)
             }
 
-            MarkdownHighlight::Code(id) => highlight_style(*id, theme),
+            MarkdownHighlight::Code(id) => theme.get(*id).cloned(),
         }
     }
 }

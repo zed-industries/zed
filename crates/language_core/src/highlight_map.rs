@@ -47,3 +47,9 @@ impl Default for HighlightId {
         DEFAULT_SYNTAX_HIGHLIGHT_ID
     }
 }
+
+impl From<HighlightId> for usize {
+    fn from(value: HighlightId) -> Self {
+        value.0 as usize
+    }
+}

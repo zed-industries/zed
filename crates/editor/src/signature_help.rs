@@ -5,7 +5,8 @@ use gpui::{
     App, Context, Entity, HighlightStyle, MouseButton, ScrollHandle, Size, StyledText, Task,
     TextStyle, Window, combine_highlights,
 };
-use language::{BufferSnapshot, highlight_style};
+use language::BufferSnapshot;
+
 use markdown::{Markdown, MarkdownElement};
 use multi_buffer::{Anchor, MultiBufferOffset, ToOffset};
 use settings::Settings;
@@ -238,7 +239,7 @@ impl Editor {
                                     .flat_map(|(range, highlight_id)| {
                                         Some((
                                             range,
-                                            highlight_style(highlight_id, cx.theme().syntax())?,
+                                            cx.theme().syntax().get(highlight_id)?.clone(),
                                         ))
                                     });
                                 signature.highlights =

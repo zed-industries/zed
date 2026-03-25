@@ -15,7 +15,7 @@ use gpui::{
     Keystroke, Modifiers, ParentElement, Render, RenderImage, Resource, SharedString, Styled,
     StyledText, Task, TextStyle, WeakEntity, Window, div, img, pulsating_between, rems,
 };
-use language::highlight_style;
+
 use settings::Settings;
 use std::{
     ops::{Mul, Range},
@@ -751,7 +751,9 @@ fn render_markdown_code_block(
         StyledText::new(parsed.contents.clone()).with_default_highlights(
             &cx.buffer_text_style,
             highlights.iter().filter_map(|(range, highlight_id)| {
-                highlight_style(*highlight_id, cx.syntax_theme.as_ref())
+                cx.syntax_theme
+                    .get(*highlight_id)
+                    .cloned()
                     .map(|style| (range.clone(), style))
             }),
         )

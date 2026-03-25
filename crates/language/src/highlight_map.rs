@@ -1,6 +1,5 @@
 pub use language_core::highlight_map::{HighlightId, HighlightMap};
 
-use gpui::HighlightStyle;
 use theme::SyntaxTheme;
 
 pub fn build_highlight_map(capture_names: &[&str], theme: &SyntaxTheme) -> HighlightMap {
@@ -10,22 +9,15 @@ pub fn build_highlight_map(capture_names: &[&str], theme: &SyntaxTheme) -> Highl
             .map(|capture_name| {
                 theme
                     .highlight_id(capture_name)
-                    .map_or_else(HighlightId::default, HighlightId)
+                    .map_or(HighlightId::default(), HighlightId)
             })
             .collect::<Vec<_>>(),
     )
 }
 
-pub fn highlight_style(id: HighlightId, theme: &SyntaxTheme) -> Option<HighlightStyle> {
-    theme.get(id.index() as usize).cloned()
-}
-
-pub fn highlight_name(id: HighlightId, theme: &SyntaxTheme) -> Option<&str> {
-    theme.get_capture_name(id.index() as usize)
-}
-
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use gpui::rgba;
 
@@ -51,8 +43,8 @@ mod tests {
         ];
 
         let map = build_highlight_map(capture_names, &theme);
-        assert_eq!(highlight_name(map.get(0), &theme), Some("function"));
-        assert_eq!(highlight_name(map.get(1), &theme), Some("function.async"));
-        assert_eq!(highlight_name(map.get(2), &theme), Some("variable.builtin"));
+        assert_eq!(theme.get_capture_name(map.get(0)), Some("function"));
+        assert_eq!(theme.get_capture_name(map.get(1)), Some("function.async"));
+        assert_eq!(theme.get_capture_name(map.get(2)), Some("variable.builtin"));
     }
 }

@@ -24,7 +24,8 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::language_settings::LanguageSettings;
-use language::{Anchor, BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem, highlight_style};
+use language::{Anchor, BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
+
 use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use std::{
     cmp,
@@ -236,7 +237,8 @@ impl SearchState {
                         }
                         let style = chunk
                             .syntax_highlight_id
-                            .and_then(|highlight| highlight_style(highlight, &theme));
+                            .and_then(|highlight| theme.get(highlight).cloned());
+
                         if let Some(style) = style {
                             let start = context_text.len();
                             let end = start + chunk.text.len();

@@ -18,9 +18,10 @@ use crate::{
 pub use crate::{
     Grammar, Language, LanguageRegistry,
     diagnostic_set::DiagnosticSet,
-    highlight_map::{HighlightId, HighlightMap, highlight_name, highlight_style},
+    highlight_map::{HighlightId, HighlightMap},
     proto,
 };
+
 use anyhow::{Context as _, Result};
 use clock::Lamport;
 pub use clock::ReplicaId;
@@ -696,7 +697,7 @@ impl HighlightedTextBuilder {
 
             if let Some(highlight_style) = chunk
                 .syntax_highlight_id
-                .and_then(|id| highlight_style(id, syntax_theme))
+                .and_then(|id| syntax_theme.get(id).cloned())
             {
                 let highlight_style = override_style.map_or(highlight_style, |override_style| {
                     highlight_style.highlight(override_style)
@@ -4498,7 +4499,8 @@ impl BufferSnapshot {
                 let style = chunk
                     .syntax_highlight_id
                     .zip(theme)
-                    .and_then(|(highlight, theme)| highlight_style(highlight, theme));
+                    .and_then(|(highlight, theme)| theme.get(highlight).cloned());
+
                 if let Some(style) = style {
                     let start = text.len();
                     let end = start + chunk.text.len();
