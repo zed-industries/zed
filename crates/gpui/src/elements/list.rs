@@ -414,6 +414,7 @@ impl ListState {
         });
     }
 
+    /// Set whether the list should automatically follow the tail (auto-scroll to the end).
     pub fn set_follow_tail(&self, follow: bool) {
         self.0.borrow_mut().follow_tail = follow;
         if follow {
@@ -421,6 +422,7 @@ impl ListState {
         }
     }
 
+    /// Returns whether the list is currently in follow-tail mode (auto-scrolling to the end).
     pub fn is_following_tail(&self) -> bool {
         self.0.borrow().follow_tail
     }
