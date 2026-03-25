@@ -1853,6 +1853,12 @@ impl WorkspaceDb {
                 continue;
             }
 
+            // Empty workspaces (no folder paths) are identified by workspace_id, not paths.
+            // They must not be deleted here; they are restored separately via session_workspaces.
+            if paths.is_empty() {
+                continue;
+            }
+
             // Delete the workspace if any of the paths are WSL paths. If a
             // local workspace points to WSL, attempting to read its metadata
             // will wait for the WSL VM and file server to boot up. This can
@@ -5065,5 +5071,52 @@ mod tests {
                 "fallback should have found workspace_b, not the excluded workspace_a"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_empty_workspace_not_deleted_by_recent_workspaces_on_disk(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let db = WorkspaceDb::open_test_db(
+            "test_empty_workspace_not_deleted_by_recent_workspaces_on_disk",
+        )
+        .await;
+
+        // Simulate an empty workspace with unsaved buffers saved with restore_unsaved_buffers=true.
+        // These are saved with paths="" and a session_id.
+        let empty_workspace_id = db.next_id().await.unwrap();
+        let workspace = SerializedWorkspace {
+            id: empty_workspace_id,
+            paths: PathList::new::<String>(&[]),
+            location: SerializedWorkspaceLocation::Local,
+            center_group: Default::default(),
+            window_bounds: None,
+            display: None,
+            docks: Default::default(),
+            breakpoints: Default::default(),
+            centered_layout: false,
+            session_id: Some("test-session".to_string()),
+            window_id: Some(1),
+            user_toolchains: Default::default(),
+        };
+        db.save_workspace(workspace).await;
+
+        // Verify it was saved
+        assert!(db.workspace_for_id(empty_workspace_id).is_some());
+
+        // recent_workspaces_on_disk must not delete this empty workspace
+        let _ = db.recent_workspaces_on_disk(fs.as_ref()).await.unwrap();
+
+        // The workspace should still exist after recent_workspaces_on_disk runs
+        assert!(
+            db.workspace_for_id(empty_workspace_id).is_some(),
+            "empty workspace was incorrectly deleted by recent_workspaces_on_disk"
+        );
+
+        // And session_workspaces should still find it
+        let session_ws = db.session_workspaces("test-session".to_string()).unwrap();
+        assert_eq!(session_ws.len(), 1);
+        assert_eq!(session_ws[0].0, empty_workspace_id);
     }
 }
