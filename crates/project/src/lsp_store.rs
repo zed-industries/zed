@@ -4515,6 +4515,10 @@ impl LspStore {
         if self.parse_modeline(&buffer, cx) {
             self.detect_language_for_buffer(&buffer, cx);
         }
+
+        let buffer_id = buffer.read(cx).remote_id();
+        let task = self.pull_diagnostics_for_buffer(buffer, cx);
+        self.buffer_reload_tasks.insert(buffer_id, task);
     }
 
     pub(crate) fn register_buffer_with_language_servers(
@@ -8022,12 +8026,6 @@ impl LspStore {
         }
 
         None
-    }
-
-    fn on_buffer_reloaded(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        let buffer_id = buffer.read(cx).remote_id();
-        let task = self.pull_diagnostics_for_buffer(buffer, cx);
-        self.buffer_reload_tasks.insert(buffer_id, task);
     }
 
     async fn refresh_workspace_configurations(lsp_store: &WeakEntity<Self>, cx: &mut AsyncApp) {
