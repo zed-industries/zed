@@ -2110,6 +2110,12 @@ impl Window {
         self.scale_factor
     }
 
+    /// Safe area insets from the platform (e.g. iOS status bar, home indicator).
+    /// Returns zero insets on desktop platforms.
+    pub fn safe_area_insets(&self) -> Edges<Pixels> {
+        self.platform_window.safe_area_insets()
+    }
+
     /// The size of an em for the base font of the application. Adjusting this value allows the
     /// UI to scale, just like zooming a web page.
     pub fn rem_size(&self) -> Pixels {

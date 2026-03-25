@@ -1045,10 +1045,14 @@ impl Render for MultiWorkspace {
         let workspace_key_context = workspace.update(cx, |workspace, cx| workspace.key_context(cx));
         let root = workspace.update(cx, |workspace, cx| workspace.actions(h_flex(), window, cx));
 
+        let safe_top = window.safe_area_insets().top;
+        let bg_color = cx.theme().colors().title_bar_background;
         client_side_decorations(
             root.key_context(workspace_key_context)
                 .relative()
                 .size_full()
+                .pt(safe_top)
+                .bg(bg_color)
                 .font(ui_font)
                 .text_color(text_color)
                 .on_action(cx.listener(Self::close_window))

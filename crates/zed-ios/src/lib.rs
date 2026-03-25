@@ -415,7 +415,8 @@ mod ios {
                 APP_STATE.with(|cell| *cell.borrow_mut() = Some(app_state));
                 log::info!("[zed-ios] Zed initialized successfully");
 
-                // Show the connection landing screen.
+                // Initialize connection tracking and show the landing screen.
+                crate::connection_landing::init_active_connections(cx);
                 if let Err(err) = crate::connection_landing::ConnectionLanding::open(cx) {
                     log::error!("[zed-ios] Failed to open connection landing: {err:?}");
                 }

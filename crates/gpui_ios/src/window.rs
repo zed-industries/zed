@@ -113,10 +113,9 @@ struct IosWindowState {
     /// when transitioning to a newly-focused input element. Prevents keyboard
     /// from appearing on app launch (auto-focus) or during scroll gestures.
     show_keyboard_after_tap: bool,
-    /// Origin of the safe area in the view's coordinate space (the offset
-    /// applied to the Metal layer to avoid system chrome). Input coordinates
-    /// from UIKit must be shifted by this amount to map into GPUI space.
-    safe_area_origin: CGPoint,
+    /// UIKit safe area insets (status bar, home indicator, etc.). Exposed
+    /// via `PlatformWindow::safe_area_insets()` so views can apply padding.
+    safe_area_insets: gpui::Edges<Pixels>,
     renderer: MetalRenderer,
     callbacks: IosWindowCallbacks,
 }
@@ -134,24 +133,18 @@ impl IosWindowState {
         let scale: f32 = msg_send![view, contentScaleFactor];
         let scale = if scale > 0.0 { scale } else { 2.0 };
 
-        // Read UIKit safe area insets (status bar, home indicator, etc.)
-        // and inset the Metal layer so GPUI content stays within the safe area.
+        // Store safe area insets so views can apply them as layout padding.
+        // The Metal layer stays full-screen for edge-to-edge background rendering.
         let insets: UIEdgeInsets = msg_send![view, safeAreaInsets];
-        let safe_origin = CGPoint {
-            x: view_bounds.origin.x + insets.left,
-            y: view_bounds.origin.y + insets.top,
-        };
-        self.safe_area_origin = safe_origin;
-        let safe_frame = CGRect {
-            origin: safe_origin,
-            size: CGSize {
-                width: view_bounds.size.width - insets.left - insets.right,
-                height: view_bounds.size.height - insets.top - insets.bottom,
-            },
+        self.safe_area_insets = gpui::Edges {
+            top: gpui::px(insets.top as f32),
+            right: gpui::px(insets.right as f32),
+            bottom: gpui::px(insets.bottom as f32),
+            left: gpui::px(insets.left as f32),
         };
 
-        let logical_width = safe_frame.size.width as f32;
-        let logical_height = safe_frame.size.height as f32;
+        let logical_width = view_bounds.size.width as f32;
+        let logical_height = view_bounds.size.height as f32;
         if logical_width <= 0.0 || logical_height <= 0.0 {
             return None;
         }
@@ -160,7 +153,7 @@ impl IosWindowState {
         let device_height = (logical_height * scale).round() as i32;
 
         let layer_ptr = self.renderer.layer_ptr();
-        let _: () = msg_send![layer_ptr, setFrame: safe_frame];
+        let _: () = msg_send![layer_ptr, setFrame: view_bounds];
         let _: () = msg_send![layer_ptr, setContentsScale: scale as f64];
         self.renderer.update_drawable_size(gpui::size(
             DevicePixels(device_width),
@@ -176,15 +169,6 @@ impl IosWindowState {
         self.scale_factor = scale;
 
         if old_size != new_size { Some((new_size, scale)) } else { None }
-    }
-
-    /// Convert a UIKit view-space point to GPUI content-space by subtracting
-    /// the safe area origin (where the Metal layer starts).
-    fn point_to_gpui(&self, location: CGPoint) -> Point<Pixels> {
-        Point {
-            x: gpui::px((location.x - self.safe_area_origin.x) as f32),
-            y: gpui::px((location.y - self.safe_area_origin.y) as f32),
-        }
     }
 }
 
@@ -238,7 +222,7 @@ impl IosWindow {
             ui_view,
             keyboard_shown: false,
             show_keyboard_after_tap: false,
-            safe_area_origin: CGPoint::default(),
+            safe_area_insets: gpui::Edges::default(),
             renderer,
             callbacks: IosWindowCallbacks::default(),
         }));
@@ -417,6 +401,10 @@ impl PlatformWindow for IosWindow {
 
     fn scale_factor(&self) -> f32 {
         self.state.borrow().scale_factor
+    }
+
+    fn safe_area_insets(&self) -> gpui::Edges<Pixels> {
+        self.state.borrow().safe_area_insets.clone()
     }
 
     fn appearance(&self) -> WindowAppearance {
@@ -715,16 +703,7 @@ thread_local! {
 }
 
 extern "C" fn display_link_fired(_data: *mut c_void) {
-    static TICK_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let tick = TICK_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    // Log every 60 ticks (~1 second at 60fps) to confirm the display link is alive.
-    if tick % 60 == 0 {
-        log::info!("[display_link] tick #{tick}");
-    }
     FRAME_CALLBACK.with(|slot| {
-        if slot.borrow().is_none() && tick % 60 == 0 {
-            log::warn!("[display_link] no frame callback registered at tick #{tick}");
-        }
         if let Some(callback) = slot.borrow_mut().as_mut() {
             callback(RequestFrameOptions::default());
         }
@@ -1336,12 +1315,6 @@ fn handle_presses(this: &Object, presses: *mut Object, is_down: bool) -> bool {
             }
 
             if let Some(keystroke) = keystroke_from_ui_key(key, modifiers) {
-                log::info!(
-                    "key {}: {:?} (key_char={:?})",
-                    if is_down { "down" } else { "up" },
-                    keystroke.key,
-                    keystroke.key_char,
-                );
                 if is_down {
                     let result = dispatch_input_event(
                         &state_rc,
@@ -1564,7 +1537,6 @@ unsafe fn new_text_position(offset: usize) -> *mut Object {
 extern "C" fn uit_insert_text(this: &Object, _sel: Sel, text: *mut Object) {
     let Some(state_rc) = state_from_view(this) else { return };
     let text_str = ns_string_to_string(text);
-    log::info!("UITextInput insertText: {:?}", text_str);
     state_rc
         .borrow_mut()
         .input_handler
@@ -1577,15 +1549,11 @@ extern "C" fn uit_delete_backward(this: &Object, _sel: Sel) {
     // pressesBegan: has already dispatched the KeyDown to GPUI's action
     // system for hardware keyboard; here we perform the actual text deletion.
     let Some(state_rc) = state_from_view(this) else { return };
-    log::info!("UITextInput deleteBackward: entered");
-    let has_handler = state_rc.borrow().input_handler.is_some();
-    log::info!("UITextInput deleteBackward: has_handler={has_handler}");
     let selected = state_rc
         .borrow_mut()
         .input_handler
         .as_mut()
         .and_then(|h| h.selected_text_range(false));
-    log::info!("UITextInput deleteBackward: selected={selected:?}");
     if let Some(sel) = selected {
         let delete_range = if sel.range.start < sel.range.end {
             Some(sel.range)
@@ -1594,14 +1562,12 @@ extern "C" fn uit_delete_backward(this: &Object, _sel: Sel) {
         } else {
             None
         };
-        log::info!("UITextInput deleteBackward: delete_range={delete_range:?}");
         if let Some(range) = delete_range {
             state_rc
                 .borrow_mut()
                 .input_handler
                 .as_mut()
                 .map(|h| h.replace_text_in_range(Some(range), ""));
-            log::info!("UITextInput deleteBackward: replace_text_in_range called");
         }
     }
 }
@@ -1634,7 +1600,10 @@ fn handle_touches(this: &Object, touches: *mut Object, kind: TouchKind) {
         let view = this as *const Object as *mut Object;
         let location: CGPoint = msg_send![touch, locationInView: view];
         let tap_count: usize = msg_send![touch, tapCount];
-        let position = state_rc.borrow().point_to_gpui(location);
+        let position = Point {
+            x: gpui::px(location.x as f32),
+            y: gpui::px(location.y as f32),
+        };
         (position, tap_count.max(1))
     };
 
@@ -1781,7 +1750,10 @@ extern "C" fn handle_pan_gesture(this: &Object, _sel: Sel, recognizer: *mut Obje
         let _: () = msg_send![recognizer, setTranslation: zero inView: view];
 
         let location: CGPoint = msg_send![recognizer, locationInView: view];
-        let position = state_rc.borrow().point_to_gpui(location);
+        let position = Point {
+            x: gpui::px(location.x as f32),
+            y: gpui::px(location.y as f32),
+        };
 
         let modifiers = state_rc.borrow().current_modifiers;
         let event = PlatformInput::ScrollWheel(ScrollWheelEvent {
@@ -1810,14 +1782,14 @@ extern "C" fn handle_scroll_wheel(this: &Object, _sel: Sel, ui_event: *mut Objec
             return;
         }
 
-        // Fall back to the center of the GPUI content area since the simulator
-        // scroll wheel event doesn't carry touch location.
-        let state = state_rc.borrow();
+        // Fall back to view center since the simulator scroll wheel event
+        // doesn't carry touch location.
+        let view = this as *const Object as *mut Object;
+        let bounds: CGRect = msg_send![view, bounds];
         let position = Point {
-            x: state.bounds.size.width / 2.0,
-            y: state.bounds.size.height / 2.0,
+            x: gpui::px((bounds.size.width / 2.0) as f32),
+            y: gpui::px((bounds.size.height / 2.0) as f32),
         };
-        drop(state);
 
         let modifiers = state_rc.borrow().current_modifiers;
         let event = PlatformInput::ScrollWheel(ScrollWheelEvent {

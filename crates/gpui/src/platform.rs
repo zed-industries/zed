@@ -30,7 +30,7 @@ pub(crate) type PlatformScreenCaptureFrame = core_video::image_buffer::CVImageBu
 
 use crate::{
     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
-    DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
+    DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Edges, Font, FontId, FontMetrics, FontRun,
     ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput,
     Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene,
     ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task,
@@ -674,6 +674,13 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn show_window_menu(&self, _position: Point<Pixels>) {}
     fn start_window_move(&self) {}
     fn start_window_resize(&self, _edge: ResizeEdge) {}
+
+    /// Safe area insets from the platform (e.g. iOS status bar, home indicator).
+    /// Views should apply these as padding so interactive content avoids system chrome.
+    /// Returns zero insets by default (desktop platforms).
+    fn safe_area_insets(&self) -> Edges<Pixels> {
+        Edges::default()
+    }
     fn window_decorations(&self) -> Decorations {
         Decorations::Server
     }

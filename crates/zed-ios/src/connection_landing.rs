@@ -8,7 +8,7 @@ use editor::{
 };
 use gpui::{
     AnyWindowHandle, App, AppContext as _, AsyncApp, ClickEvent, Context, Entity, Focusable as _,
-    IntoElement, Render, SharedString, Task, Window, WindowOptions, div, prelude::*,
+    Global, IntoElement, Render, SharedString, Task, Window, WindowOptions, div, prelude::*,
 };
 use remote::SshConnectionOptions;
 use serde::{Deserialize, Serialize};
@@ -19,41 +19,120 @@ use ui::{
     v_flex,
 };
 use util::ResultExt;
+use workspace::StatusItemView;
 
-/// Minimal titlebar for the iPad workspace with a back button and path label.
-struct IosTitleBar {
-    path: SharedString,
+// ─── Active connections registry ─────────────────────────────────────────────
+
+/// A live SSH connection with its workspace, kept alive across view swaps.
+struct ActiveConnection {
+    workspace: Entity<workspace::Workspace>,
+    project: Entity<project::Project>,
+    host: String,
+    username: String,
+    port: u16,
 }
 
-impl Render for IosTitleBar {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let colors = cx.theme().colors();
-        h_flex()
-            .w_full()
-            .h(rems_from_px(36.0))
-            .px(rems_from_px(8.0))
-            .items_center()
-            .gap(rems_from_px(8.0))
-            .bg(colors.title_bar_background)
-            .border_b_1()
-            .border_color(colors.border)
-            .child(
-                IconButton::new("disconnect", IconName::ArrowLeft)
-                    .icon_size(IconSize::Small)
-                    .style(ButtonStyle::Subtle)
-                    .on_click(|_event, window, cx| {
-                        window.dispatch_action(
-                            Box::new(workspace::CloseWindow),
-                            cx,
-                        );
-                    }),
-            )
-            .child(
-                Label::new(self.path.clone())
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-            )
+/// Global registry of active SSH connections. Holding `Entity<Workspace>`
+/// keeps the workspace (and its project/SSH session) alive even when the
+/// window root is swapped back to the landing screen.
+struct ActiveConnections(Vec<ActiveConnection>);
+
+impl Global for ActiveConnections {}
+
+impl ActiveConnections {
+    fn find_by_host(&self, host: &str, username: &str, port: u16) -> Option<&ActiveConnection> {
+        self.0
+            .iter()
+            .find(|c| c.host == host && c.username == username && c.port == port)
     }
+
+    fn remove_by_project(&mut self, project_id: gpui::EntityId) {
+        self.0.retain(|c| c.project.entity_id() != project_id);
+    }
+}
+
+fn active_connections_mut(cx: &mut App) -> &mut ActiveConnections {
+    cx.global_mut::<ActiveConnections>()
+}
+
+/// Initialize the active connections registry. Call once during app setup.
+pub fn init_active_connections(cx: &mut App) {
+    cx.set_global(ActiveConnections(Vec::new()));
+}
+
+// ─── Home button status bar item ─────────────────────────────────────────────
+
+/// Status bar item that shows a home button to return to the landing screen.
+pub struct HomeStatusItem;
+
+impl HomeStatusItem {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl StatusItemView for HomeStatusItem {
+    fn set_active_pane_item(
+        &mut self,
+        _active_pane_item: Option<&dyn workspace::ItemHandle>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+    }
+}
+
+impl Render for HomeStatusItem {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        IconButton::new("return-to-landing", IconName::ArrowLeft)
+            .icon_size(IconSize::Small)
+            .style(ButtonStyle::Subtle)
+            .on_click(|_event, window, cx| {
+                return_to_landing(window, cx);
+            })
+    }
+}
+
+/// Navigate back to the landing screen without closing the SSH connection.
+/// Stores the current workspace in ActiveConnections so it can be resumed.
+fn return_to_landing(window: &mut Window, cx: &mut App) {
+    // Store current workspace in active connections before swapping.
+    if let Some(Some(multi)) = window.root::<workspace::MultiWorkspace>() {
+        let workspace = multi.read(cx).workspace().clone();
+        let ws = workspace.read(cx);
+        let project = ws.project().clone();
+
+        let already_stored = cx
+            .global::<ActiveConnections>()
+            .0
+            .iter()
+            .any(|c| c.project.entity_id() == project.entity_id());
+
+        if !already_stored {
+            let (host, username, port) =
+                if let Some(remote::RemoteConnectionOptions::Ssh(opts)) =
+                    project.read(cx).remote_connection_options(cx)
+                {
+                    (
+                        opts.host.to_string(),
+                        opts.username.unwrap_or_default(),
+                        opts.port.unwrap_or(22),
+                    )
+                } else {
+                    (String::new(), String::new(), 22)
+                };
+
+            active_connections_mut(cx).0.push(ActiveConnection {
+                workspace: workspace.clone(),
+                project,
+                host,
+                username,
+                port,
+            });
+        }
+    }
+
+    let landing = window.replace_root(cx, |window, cx| ConnectionLanding::new(window, cx));
+    landing.focus_handle(cx).focus(window, cx);
 }
 
 /// On-disk representation of a saved SSH host.
@@ -128,7 +207,7 @@ fn save_host_entries(entries: &[SavedHostEntry]) {
 enum ConnectionStatus {
     Disconnected,
     Connecting,
-    Connected { project_count: usize },
+    Connected,
     Error(SharedString),
 }
 
@@ -187,7 +266,7 @@ impl SavedHost {
         match &self.status {
             ConnectionStatus::Disconnected => Color::Muted,
             ConnectionStatus::Connecting => Color::Warning,
-            ConnectionStatus::Connected { .. } => Color::Success,
+            ConnectionStatus::Connected => Color::Success,
             ConnectionStatus::Error(_) => Color::Error,
         }
     }
@@ -196,14 +275,7 @@ impl SavedHost {
         match &self.status {
             ConnectionStatus::Disconnected => "Disconnected".into(),
             ConnectionStatus::Connecting => "Connecting\u{2026}".into(),
-            ConnectionStatus::Connected { project_count } => {
-                let suffix = if *project_count == 1 {
-                    "project"
-                } else {
-                    "projects"
-                };
-                SharedString::from(format!("{project_count} {suffix}"))
-            }
+            ConnectionStatus::Connected => "Connected".into(),
             ConnectionStatus::Error(message) => message.clone(),
         }
     }
@@ -273,10 +345,22 @@ impl ConnectionLanding {
             editor
         });
 
-        let saved_hosts = load_saved_host_entries()
+        let mut saved_hosts: Vec<SavedHost> = load_saved_host_entries()
             .into_iter()
             .map(SavedHost::from_entry)
             .collect();
+
+        // Restore "Connected" status for hosts with active connections.
+        if let Some(active) = cx.try_global::<ActiveConnections>() {
+            for host in &mut saved_hosts {
+                if active
+                    .find_by_host(&host.host, &host.username, host.port)
+                    .is_some()
+                {
+                    host.status = ConnectionStatus::Connected;
+                }
+            }
+        }
 
         Self {
             focus_handle: cx.focus_handle(),
@@ -454,6 +538,19 @@ impl ConnectionLanding {
         let Some(host) = self.saved_hosts.get_mut(index) else {
             return;
         };
+
+        // If there's already an active connection for this host, resume it.
+        if let Some(active) = cx
+            .try_global::<ActiveConnections>()
+            .and_then(|ac| ac.find_by_host(&host.host, &host.username, host.port))
+        {
+            let workspace = active.workspace.clone();
+            window.replace_root(cx, |window, cx| {
+                workspace::MultiWorkspace::new(workspace, window, cx)
+            });
+            return;
+        }
+
         host.status = ConnectionStatus::Connecting;
         cx.notify();
 
@@ -602,11 +699,15 @@ impl ConnectionLanding {
             }
         };
 
-        // 5. Create the workspace, wrap it in MultiWorkspace, set an iOS
-        //    titlebar with a disconnect button, and replace_root.
+        // 5. Create the workspace with a home button in the status bar,
+        //    wrap it in MultiWorkspace, register as an active connection,
+        //    and replace_root.
         log::info!("[zed-ios] replacing root with remote workspace");
         let app_state_for_workspace = app_state.clone();
         let project_for_workspace = project.clone();
+        let host_str = connection_options.host.to_string();
+        let username_str = connection_options.username.clone().unwrap_or_default();
+        let port_val = connection_options.port.unwrap_or(22);
         let workspace_entity = landing_window.update(cx, |_, window, cx| {
             let workspace = cx.new(|cx| {
                 workspace::Workspace::new(
@@ -617,12 +718,24 @@ impl ConnectionLanding {
                     cx,
                 )
             });
-            let titlebar = cx.new(|_cx| IosTitleBar {
-                path: SharedString::from(path.to_owned()),
-            });
+
+            // Add home button to the left side of the status bar.
+            let home_button = cx.new(|_cx| HomeStatusItem::new());
             workspace.update(cx, |workspace, cx| {
-                workspace.set_titlebar_item(titlebar.into(), window, cx);
+                workspace.status_bar().update(cx, |status_bar, cx| {
+                    status_bar.add_left_item(home_button, window, cx);
+                });
             });
+
+            // Store in active connections so it survives navigation.
+            active_connections_mut(cx).0.push(ActiveConnection {
+                workspace: workspace.clone(),
+                project: project.clone(),
+                host: host_str,
+                username: username_str,
+                port: port_val,
+            });
+
             window.replace_root(cx, |window, cx| {
                 workspace::MultiWorkspace::new(workspace.clone(), window, cx)
             });
@@ -646,19 +759,20 @@ impl ConnectionLanding {
             log::info!("[zed-ios] project path is a directory, no file to open");
         }
 
-        // 7. Subscribe to project::Event::Closed to navigate back to the
-        //    landing screen if the remote connection drops.  The navigation
-        //    is deferred so the replace_root (which drops the workspace and
-        //    project) runs outside the emit/update stack.
+        // 7. Subscribe to project::Event::Closed to clean up the active
+        //    connection and navigate back to the landing screen if the
+        //    remote connection drops.
         landing_window
             .update(cx, |_, _window, cx| {
                 cx.subscribe(&project, {
                     let landing_window = landing_window;
-                    move |_, event: &project::Event, cx| {
+                    move |project_entity, event: &project::Event, cx| {
                         if matches!(event, project::Event::Closed) {
                             log::info!("[zed-ios] project closed, returning to landing screen");
+                            let project_id = project_entity.entity_id();
                             let landing_window = landing_window;
                             cx.defer(move |cx| {
+                                active_connections_mut(cx).remove_by_project(project_id);
                                 Self::navigate_to_landing(landing_window, cx);
                             });
                         }
@@ -838,7 +952,9 @@ impl ConnectionLanding {
         let is_connectable = !is_editing
             && matches!(
                 host.status,
-                ConnectionStatus::Disconnected | ConnectionStatus::Error(_)
+                ConnectionStatus::Disconnected
+                    | ConnectionStatus::Connected
+                    | ConnectionStatus::Error(_)
             );
 
         let hover_bg = colors.ghost_element_hover;
@@ -1213,8 +1329,9 @@ impl ConnectionLanding {
 }
 
 impl Render for ConnectionLanding {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors();
+        let insets = window.safe_area_insets();
 
         let mut content = div()
             .id("connection-landing")
@@ -1227,6 +1344,8 @@ impl Render for ConnectionLanding {
             })
             .size_full()
             .bg(colors.background)
+            .pt(insets.top)
+            .pb(insets.bottom)
             .flex()
             .flex_col()
             .items_center()
