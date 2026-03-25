@@ -237,11 +237,28 @@ func (d *testDriver) syncEventCallback(sessionID string, syncMsg *types.SyncMess
 		requestID, _ := syncMsg.Data["request_id"].(string)
 		agentName := d.round.agentName
 
-		// Ignore completions from previous rounds (stale events arriving late).
-		// Our request IDs are namespaced: "req-phase1-zed-agent", "req-phase1-claude", etc.
+		// Ignore completions from previous rounds. Two checks:
+		// 1. Request ID must contain the current agent name
+		// 2. Thread ID must belong to the current round
 		if !strings.Contains(requestID, agentName) {
 			d.mu.Unlock()
-			log.Printf("[%s] Ignoring stale completion from previous round: req=%s thread=%s",
+			log.Printf("[%s] Ignoring stale completion (wrong agent): req=%s thread=%s",
+				agentName, requestID, truncate(acpThreadID, 12))
+			return
+		}
+		isCurrentRoundThread := false
+		for _, tid := range d.round.threadIDs {
+			if tid == acpThreadID {
+				isCurrentRoundThread = true
+				break
+			}
+		}
+		if acpThreadID == d.round.phase8ThreadID || acpThreadID == d.round.phase9ThreadID {
+			isCurrentRoundThread = true
+		}
+		if !isCurrentRoundThread && acpThreadID != "" && len(d.round.threadIDs) > 0 {
+			d.mu.Unlock()
+			log.Printf("[%s] Ignoring stale completion (wrong thread): req=%s thread=%s",
 				agentName, requestID, truncate(acpThreadID, 12))
 			return
 		}
