@@ -3320,7 +3320,7 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_data_collection_disabled_by_default(cx: &mut TestAppContext) {
     let (ep_store, _channels) = init_test_with_fake_client(cx);
-    KEY_VALUE_STORE
+    cx.update(|cx| KeyValueStore::global(cx))
         .delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
         .await
         .ok();
@@ -3333,12 +3333,11 @@ async fn test_data_collection_disabled_by_default(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_data_collection_enabled_via_legacy_kv_store(cx: &mut TestAppContext) {
     let (ep_store, _channels) = init_test_with_fake_client(cx);
-    KEY_VALUE_STORE
-        .delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
+    let kvp = cx.update(|cx| KeyValueStore::global(cx));
+    kvp.delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
         .await
         .ok();
-    KEY_VALUE_STORE
-        .write_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into(), "true".into())
+    kvp.write_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into(), "true".into())
         .await
         .unwrap();
 
@@ -3346,7 +3345,7 @@ async fn test_data_collection_enabled_via_legacy_kv_store(cx: &mut TestAppContex
         assert!(ep_store.read(cx).is_data_collection_enabled(cx));
     });
 
-    KEY_VALUE_STORE
+    cx.update(|cx| KeyValueStore::global(cx))
         .delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
         .await
         .unwrap();
@@ -3355,7 +3354,7 @@ async fn test_data_collection_enabled_via_legacy_kv_store(cx: &mut TestAppContex
 #[gpui::test]
 async fn test_data_collection_setting_overrides_kv_store(cx: &mut TestAppContext) {
     let (ep_store, _channels) = init_test_with_fake_client(cx);
-    KEY_VALUE_STORE
+    cx.update(|cx| KeyValueStore::global(cx))
         .write_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into(), "true".into())
         .await
         .unwrap();
@@ -3376,7 +3375,7 @@ async fn test_data_collection_setting_overrides_kv_store(cx: &mut TestAppContext
         assert!(!ep_store.read(cx).is_data_collection_enabled(cx));
     });
 
-    KEY_VALUE_STORE
+    cx.update(|cx| KeyValueStore::global(cx))
         .delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
         .await
         .unwrap();
@@ -3385,7 +3384,7 @@ async fn test_data_collection_setting_overrides_kv_store(cx: &mut TestAppContext
 #[gpui::test]
 async fn test_data_collection_enabled_via_setting(cx: &mut TestAppContext) {
     let (ep_store, _channels) = init_test_with_fake_client(cx);
-    KEY_VALUE_STORE
+    cx.update(|cx| KeyValueStore::global(cx))
         .delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
         .await
         .ok();
@@ -3409,7 +3408,7 @@ async fn test_data_collection_enabled_via_setting(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_data_collection_always_enabled_for_staff(cx: &mut TestAppContext) {
     let (ep_store, _channels) = init_test_with_fake_client(cx);
-    KEY_VALUE_STORE
+    cx.update(|cx| KeyValueStore::global(cx))
         .delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
         .await
         .ok();
@@ -3427,12 +3426,11 @@ async fn test_data_collection_always_enabled_for_staff(cx: &mut TestAppContext) 
 #[gpui::test]
 async fn test_toggle_data_collection_from_kv_enabled_state(cx: &mut TestAppContext) {
     let (ep_store, _channels) = init_test_with_fake_client(cx);
-    KEY_VALUE_STORE
-        .delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
+    let kvp = cx.update(|cx| KeyValueStore::global(cx));
+    kvp.delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
         .await
         .ok();
-    KEY_VALUE_STORE
-        .write_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into(), "true".into())
+    kvp.write_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into(), "true".into())
         .await
         .unwrap();
 
@@ -3465,7 +3463,7 @@ async fn test_toggle_data_collection_from_kv_enabled_state(cx: &mut TestAppConte
         );
     });
 
-    KEY_VALUE_STORE
+    cx.update(|cx| KeyValueStore::global(cx))
         .delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
         .await
         .unwrap();
@@ -3474,16 +3472,15 @@ async fn test_toggle_data_collection_from_kv_enabled_state(cx: &mut TestAppConte
 #[gpui::test]
 async fn test_upsell_shown_by_default(cx: &mut TestAppContext) {
     init_test(cx);
-    KEY_VALUE_STORE
-        .delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
+    let kvp = cx.update(|cx| KeyValueStore::global(cx));
+    kvp.delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
         .await
         .ok();
-    KEY_VALUE_STORE
-        .delete_kvp("dismissed-edit-predict-upsell".into())
+    kvp.delete_kvp("dismissed-edit-predict-upsell".into())
         .await
         .ok();
 
-    assert!(should_show_upsell_modal());
+    cx.update(|cx| assert!(should_show_upsell_modal(cx)));
 }
 
 #[gpui::test]
@@ -3493,18 +3490,20 @@ async fn test_upsell_dismissed_when_data_collection_choice_in_kv_store(cx: &mut 
     // Any value for the data collection key means the old upsell was already
     // shown, regardless of whether data collection was accepted or declined.
     for value in &["true", "false"] {
-        KEY_VALUE_STORE
+        cx.update(|cx| KeyValueStore::global(cx))
             .write_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into(), value.to_string())
             .await
             .unwrap();
 
-        assert!(
-            !should_show_upsell_modal(),
-            "upsell should be suppressed when data collection choice is '{value}'"
-        );
+        cx.update(|cx| {
+            assert!(
+                !should_show_upsell_modal(cx),
+                "upsell should be suppressed when data collection choice is '{value}'"
+            );
+        });
     }
 
-    KEY_VALUE_STORE
+    cx.update(|cx| KeyValueStore::global(cx))
         .delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
         .await
         .unwrap();
@@ -3513,19 +3512,41 @@ async fn test_upsell_dismissed_when_data_collection_choice_in_kv_store(cx: &mut 
 #[gpui::test]
 async fn test_upsell_dismissed_when_dismissed_key_set(cx: &mut TestAppContext) {
     init_test(cx);
-    KEY_VALUE_STORE
-        .delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
+    let kvp = cx.update(|cx| KeyValueStore::global(cx));
+    kvp.delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
         .await
         .ok();
-    KEY_VALUE_STORE
-        .write_kvp("dismissed-edit-predict-upsell".into(), "1".into())
+    kvp.write_kvp("dismissed-edit-predict-upsell".into(), "1".into())
         .await
         .unwrap();
 
-    assert!(!should_show_upsell_modal());
+    cx.update(|cx| assert!(!should_show_upsell_modal(cx)));
 
-    KEY_VALUE_STORE
-        .delete_kvp("dismissed-edit-predict-upsell".into())
+    kvp.delete_kvp("dismissed-edit-predict-upsell".into())
+        .await
+        .unwrap();
+}
+
+#[gpui::test]
+async fn test_upsell_dismissed_via_dismissable_api(cx: &mut TestAppContext) {
+    init_test(cx);
+    let kvp = cx.update(|cx| KeyValueStore::global(cx));
+    kvp.delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
+        .await
+        .ok();
+    kvp.delete_kvp("dismissed-edit-predict-upsell".into())
+        .await
+        .ok();
+
+    cx.update(|cx| {
+        assert!(should_show_upsell_modal(cx));
+        ZedPredictUpsell::set_dismissed(true, cx);
+    });
+    cx.run_until_parked();
+
+    cx.update(|cx| assert!(!should_show_upsell_modal(cx)));
+
+    kvp.delete_kvp("dismissed-edit-predict-upsell".into())
         .await
         .unwrap();
 }

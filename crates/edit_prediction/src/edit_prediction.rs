@@ -11,9 +11,7 @@ use cloud_llm_client::{
 };
 use collections::{HashMap, HashSet};
 use copilot::{Copilot, Reinstall, SignIn, SignOut};
-use db::kvp::Dismissable;
-#[cfg(not(any(test, feature = "test-support")))]
-use db::kvp::GlobalKeyValueStore;
+use db::kvp::{Dismissable, KeyValueStore};
 use edit_prediction_context::{RelatedExcerptStore, RelatedExcerptStoreEvent, RelatedFile};
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use futures::{
@@ -107,15 +105,6 @@ const EDIT_HISTORY_DIFF_SIZE_LIMIT: usize = 2048 * 3; // ~2048 tokens or ~50% of
 const COLLABORATOR_EDIT_LOCALITY_CONTEXT_TOKENS: usize = 512;
 const LAST_CHANGE_GROUPING_TIME: Duration = Duration::from_secs(1);
 const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_choice";
-#[cfg(not(any(test, feature = "test-support")))]
-static KEY_VALUE_STORE: std::sync::LazyLock<&'static GlobalKeyValueStore> =
-    std::sync::LazyLock::new(GlobalKeyValueStore::global);
-
-#[cfg(any(test, feature = "test-support"))]
-static KEY_VALUE_STORE: std::sync::LazyLock<db::kvp::KeyValueStore> =
-    std::sync::LazyLock::new(|| {
-        db::smol::block_on(db::kvp::KeyValueStore::open_test_db("edit_prediction_kv"))
-    });
 const REJECT_REQUEST_DEBOUNCE: Duration = Duration::from_secs(15);
 const EDIT_PREDICTION_SETTLED_EVENT: &str = "Edit Prediction Settled";
 const EDIT_PREDICTION_SETTLED_TTL: Duration = Duration::from_secs(60 * 5);
@@ -2668,7 +2657,7 @@ impl EditPredictionStore {
 
         // Fall back to the legacy KV entry for users who have not yet set
         // the new setting explicitly via the toggle or settings.json.
-        KEY_VALUE_STORE
+        KeyValueStore::global(cx)
             .read_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE)
             .log_err()
             .flatten()
@@ -2868,12 +2857,13 @@ pub struct ZedUpdateRequiredError {
 
 struct ZedPredictUpsell;
 
-fn is_upsell_dismissed() -> bool {
+fn is_upsell_dismissed(cx: &App) -> bool {
     // To make this backwards compatible with older versions of Zed, we
     // check if the user has seen the previous Edit Prediction Onboarding
     // before, by checking the data collection choice which was written to
     // the database once the user clicked on "Accept and Enable"
-    if KEY_VALUE_STORE
+    let kvp = KeyValueStore::global(cx);
+    if kvp
         .read_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE)
         .log_err()
         .is_some_and(|s| s.is_some())
@@ -2881,8 +2871,7 @@ fn is_upsell_dismissed() -> bool {
         return true;
     }
 
-    KEY_VALUE_STORE
-        .read_kvp(ZedPredictUpsell::KEY)
+    kvp.read_kvp(ZedPredictUpsell::KEY)
         .log_err()
         .is_some_and(|s| s.is_some())
 }
@@ -2890,13 +2879,13 @@ fn is_upsell_dismissed() -> bool {
 impl Dismissable for ZedPredictUpsell {
     const KEY: &'static str = "dismissed-edit-predict-upsell";
 
-    fn dismissed(_cx: &App) -> bool {
-        is_upsell_dismissed()
+    fn dismissed(cx: &App) -> bool {
+        is_upsell_dismissed(cx)
     }
 }
 
-pub fn should_show_upsell_modal() -> bool {
-    !is_upsell_dismissed()
+pub fn should_show_upsell_modal(cx: &App) -> bool {
+    !is_upsell_dismissed(cx)
 }
 
 pub fn init(cx: &mut App) {
