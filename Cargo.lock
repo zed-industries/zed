@@ -7671,7 +7671,6 @@ dependencies = [
  "unicode-segmentation",
  "url",
  "usvg",
- "util",
  "util_macros",
  "uuid",
  "waker-fn",

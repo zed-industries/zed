@@ -79,7 +79,6 @@ resvg = { version = "0.45.0", default-features = false, features = [
     "memmap-fonts",
     "raster-images"
 ] }
-util.workspace = true
 usvg = { version = "0.45.0", default-features = false }
 util_macros.workspace = true
 schemars.workspace = true

@@ -9,8 +9,6 @@ use std::{
     hash::Hash,
     sync::{Arc, LazyLock},
 };
-use util::is_emoji_character;
-
 /// Emoji font families for each platform
 /// Hardcoded for simplicity
 #[cfg(target_os = "macos")]
@@ -26,6 +24,13 @@ const EMOJI_FONT_FAMILIES: &[&str] = &[
     "Twitter Color Emoji",
     "JoyPixels",
 ];
+
+fn is_emoji_presentation(c: char) -> bool {
+    static EMOJI_PRESENTATION_REGEX: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new("\\p{Emoji_Presentation}").unwrap());
+    let mut buf = [0u8; 4];
+    EMOJI_PRESENTATION_REGEX.is_match(c.encode_utf8(&mut buf))
+}
 
 /// When rendering SVGs, we render them at twice the size to get a higher-quality result.
 pub const SMOOTH_SVG_SCALE_FACTOR: f32 = 2.;
@@ -72,25 +77,21 @@ impl SvgRenderer {
         let default_fallback_selection = usvg::FontResolver::default_fallback_selector();
         let fallback_selection = Box::new(
             move |ch: char, fonts: &[usvg::fontdb::ID], db: &mut Arc<usvg::fontdb::Database>| {
-                // Check if this is an emoji character
-                if is_emoji_character(ch) {
-                    // Build a list of emoji font families to query
-                    let families: SmallVec<[usvg::fontdb::Family; 8]> = EMOJI_FONT_FAMILIES
-                        .iter()
-                        .map(|&name| usvg::fontdb::Family::Name(name))
-                        .collect();
+                if is_emoji_presentation(ch) {
+                    for family_name in EMOJI_FONT_FAMILIES {
+                        let query = usvg::fontdb::Query {
+                            families: &[usvg::fontdb::Family::Name(family_name)],
+                            weight: usvg::fontdb::Weight(400),
+                            stretch: usvg::fontdb::Stretch::Normal,
+                            style: usvg::fontdb::Style::Normal,
+                        };
 
-                    let query = usvg::fontdb::Query {
-                        families: &families,
-                        weight: usvg::fontdb::Weight(400),
-                        stretch: usvg::fontdb::Stretch::Normal,
-                        style: usvg::fontdb::Style::Normal,
-                    };
-
-                    // Query returns the first matching font from the prioritized list
-                    if let Some(id) = db.query(&query) {
-                        if !fonts.contains(&id) {
-                            return Some(id);
+                        if let Some(id) = db.query(&query) {
+                            if !fonts.contains(&id) {
+                                // Note: fontdb does not provide a has_char(id, ch) method.
+                                // which would be better check to return early
+                                return Some(id);
+                            }
                         }
                     }
                 }
@@ -193,5 +194,36 @@ impl SvgRenderer {
         resvg::render(&tree, transform, &mut pixmap.as_mut());
 
         Ok(pixmap)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_emoji_presentation() {
+        let cases = [
+            ('a', false),
+            ('Z', false),
+            ('1', false),
+            ('漢', false),
+            ('中', false),
+            ('カ', false),
+            ("©", false),
+            ("♥", false),
+            ("1", false),
+            ("😀", true),
+            ("✅", true),
+            ("🇺🇸", true),
+        ];
+        for (s, expected) in cases {
+            assert_eq!(
+                is_emoji_presentation(s.chars().next().unwrap()),
+                expected,
+                "for char {:?}",
+                s
+            );
+        }
     }
 }
