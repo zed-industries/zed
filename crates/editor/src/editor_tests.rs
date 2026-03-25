@@ -20443,9 +20443,10 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
         },
     );
 
-    let buffer = project
+    let _window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let _buffer = project
         .update(cx, |project, cx| {
-            project.open_local_buffer(path!("/file.ts"), cx)
+            project.open_local_buffer_with_lsp(path!("/a/main.rs"), cx)
         })
         .await
         .unwrap();

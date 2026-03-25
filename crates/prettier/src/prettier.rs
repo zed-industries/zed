@@ -516,7 +516,7 @@ impl Prettier {
                                 prettier_settings,
                             )?;
 
-                            let mut formatted_text = if let Some(range) = &range_utf16 {
+                            let formatted_text = if let Some(range) = &range_utf16 {
                                 let text = buffer.text();
                                 let start_byte = buffer.offset_utf16_to_offset(range.start);
                                 let insert_at = text[start_byte..]
