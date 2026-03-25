@@ -2318,12 +2318,17 @@ impl AcpThread {
         // Drop the send_task instead of awaiting it. This cancels the prompt
         // future immediately, which drops the oneshot `tx`. The `rx.await` in
         // run_turn then returns Err, hitting the existing "tx dropped" handler
-        // that emits Stopped(Cancelled) (see run_turn line ~2224).
+        // that emits Stopped(Cancelled) (see the `let Ok(response) = response`
+        // branch in run_turn).
         //
         // We still call connection.cancel() above as a courtesy notification
-        // to the agent, but we don't wait for the agent to acknowledge it.
-        // The previous approach (cx.background_spawn(turn.send_task)) would
-        // deadlock if the agent never responded to CancelNotification.
+        // to the agent. But we don't wait for the agent to acknowledge it —
+        // ACP agents that don't properly handle CancelNotification (see
+        // claude-agent-acp#442, #423) would block the next turn indefinitely.
+        //
+        // The previous approach was:
+        //   cx.background_spawn(turn.send_task)
+        // which awaited the prompt future to completion before proceeding.
         drop(turn.send_task);
         Task::ready(())
     }

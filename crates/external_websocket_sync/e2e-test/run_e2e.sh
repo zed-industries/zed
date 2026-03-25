@@ -161,9 +161,13 @@ if echo "$E2E_AGENTS" | grep -q "claude"; then
     CLAUDE_PATH_JSON=""
     if [ -f "/opt/claude-agent-acp/dist/index.js" ]; then
         CLAUDE_PATH_JSON="\"path\": \"node\", \"args\": [\"/opt/claude-agent-acp/dist/index.js\"],"
-        echo "[setup] Using LOCAL claude-agent-acp from /opt/claude-agent-acp"
+        LOCAL_VERSION=$(node -e "console.log(require('/opt/claude-agent-acp/package.json').version)" 2>/dev/null || echo "unknown")
+        echo "[setup] Using LOCAL claude-agent-acp v$LOCAL_VERSION from /opt/claude-agent-acp"
     else
-        echo "[setup] Using npm-installed claude-agent-acp (auto-install)"
+        # Log which version npx will install so we can correlate failures
+        # with claude-agent-acp upgrades. This is a quick check, not an install.
+        CLAUDE_ACP_VERSION=$(npm view @anthropic-ai/claude-agent-acp version 2>/dev/null || echo "unknown")
+        echo "[setup] Using npm-installed claude-agent-acp (auto-install, latest=$CLAUDE_ACP_VERSION)"
     fi
     AGENT_SERVERS_JSON=$(cat << AGENTEOF
   "agent_servers": {
