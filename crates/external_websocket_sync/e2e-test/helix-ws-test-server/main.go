@@ -236,13 +236,20 @@ func (d *testDriver) syncEventCallback(sessionID string, syncMsg *types.SyncMess
 		acpThreadID, _ := syncMsg.Data["acp_thread_id"].(string)
 		requestID, _ := syncMsg.Data["request_id"].(string)
 		agentName := d.round.agentName
+		currentPhaseForLog := d.phase
+		numThreads := len(d.round.threadIDs)
+		p11Done := d.round.phase11Completed
+
+		// Log every message_completed for diagnostics
+		log.Printf("[%s] ← message_completed: req=%s thread=%s phase=%d threads=%d p11done=%v",
+			agentName, requestID, truncate(acpThreadID, 12), currentPhaseForLog, numThreads, p11Done)
 
 		// Ignore completions from previous rounds. Two checks:
 		// 1. Request ID must contain the current agent name
 		// 2. Thread ID must belong to the current round
 		if !strings.Contains(requestID, agentName) {
 			d.mu.Unlock()
-			log.Printf("[%s] Ignoring stale completion (wrong agent): req=%s thread=%s",
+			log.Printf("[%s] FILTERED completion (wrong agent): req=%s thread=%s",
 				agentName, requestID, truncate(acpThreadID, 12))
 			return
 		}
@@ -258,8 +265,8 @@ func (d *testDriver) syncEventCallback(sessionID string, syncMsg *types.SyncMess
 		}
 		if !isCurrentRoundThread && acpThreadID != "" {
 			d.mu.Unlock()
-			log.Printf("[%s] Ignoring stale completion (wrong thread): req=%s thread=%s",
-				agentName, requestID, truncate(acpThreadID, 12))
+			log.Printf("[%s] FILTERED completion (wrong thread): req=%s thread=%s known=%v",
+				agentName, requestID, truncate(acpThreadID, 12), d.round.threadIDs)
 			return
 		}
 
@@ -418,6 +425,12 @@ func (d *testDriver) sendQueryUiState(queryID string) {
 // --- Phase execution ---
 
 func (d *testDriver) advanceAfterCompletion(completedPhase int) {
+	d.mu.Lock()
+	agentName := d.round.agentName
+	actualPhase := d.phase
+	d.mu.Unlock()
+	log.Printf("[%s] advanceAfterCompletion(%d) called (current phase=%d), sleeping 2s...",
+		agentName, completedPhase, actualPhase)
 	time.Sleep(2 * time.Second) // let Zed settle
 
 	switch completedPhase {
@@ -459,12 +472,15 @@ func (d *testDriver) advanceAfterCompletion(completedPhase int) {
 	case 11:
 		d.mu.Lock()
 		if d.round.phase11Completed {
+			agentName := d.round.agentName
 			d.mu.Unlock()
-			return // Already advanced — ignore duplicate completion
+			log.Printf("[%s] Phase 11: DUPLICATE completion ignored (already advanced)", agentName)
+			return
 		}
 		d.round.phase11Completed = true
+		agentName := d.round.agentName
 		d.mu.Unlock()
-		log.Printf("[%s] Phase 11: ✅ Routed message completed", d.round.agentName)
+		log.Printf("[%s] Phase 11: ✅ Routed message completed", agentName)
 		d.advanceToNextRound()
 	}
 }
@@ -481,7 +497,13 @@ func (d *testDriver) advanceAfterUiState() {
 func (d *testDriver) advanceToNextRound() {
 	d.mu.Lock()
 	agentName := d.round.agentName
+	roundIdx := d.currentRoundIdx
+	phase := d.phase
+	eventCount := len(d.round.events)
 	d.mu.Unlock()
+
+	log.Printf("[%s] advanceToNextRound() called: round=%d phase=%d events=%d",
+		agentName, roundIdx+1, phase, eventCount)
 
 	// Validate current round
 	result := d.validateRound()
@@ -492,6 +514,7 @@ func (d *testDriver) advanceToNextRound() {
 	if d.currentRoundIdx >= len(d.agentRounds) {
 		// All rounds complete
 		d.mu.Unlock()
+		log.Printf("[%s] All rounds complete, closing done channel", agentName)
 		close(d.done)
 		return
 	}
@@ -1159,6 +1182,21 @@ func (d *testDriver) validateRound() roundResult {
 	}
 	log.Printf("[%s] Total threads: %d, Total completions: %d",
 		agent, len(d.round.threadIDs), totalCompletions)
+
+	// Dump all sync events when a round fails for CI diagnostics
+	if !passed {
+		log.Printf("\n--------------------------------------------------")
+		log.Printf("  [%s] SYNC EVENT DUMP (round failed — %d events)", agent, len(d.round.events))
+		log.Printf("--------------------------------------------------")
+		for idx, ev := range d.round.events {
+			data, _ := json.Marshal(ev.Data)
+			dataStr := string(data)
+			if len(dataStr) > 200 {
+				dataStr = dataStr[:200] + "..."
+			}
+			log.Printf("[%s] event %3d: type=%-25s data=%s", agent, idx, ev.EventType, dataStr)
+		}
+	}
 
 	return roundResult{agentName: agent, passed: passed, errors: errors}
 }
