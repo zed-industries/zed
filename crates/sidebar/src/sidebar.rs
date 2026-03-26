@@ -2538,7 +2538,7 @@ impl Sidebar {
             .entries
             .iter()
             .filter_map(|entry| match entry {
-                ListEntry::Thread(thread) if thread.is_live => {
+                ListEntry::Thread(thread) => {
                     let workspace = match &thread.workspace {
                         ThreadEntryWorkspace::Open(workspace) => workspace.clone(),
                         ThreadEntryWorkspace::Closed(_) => return None,
