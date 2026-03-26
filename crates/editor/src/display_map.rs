@@ -101,6 +101,7 @@ use language::{
     Point, Subscription as BufferSubscription,
     language_settings::{AllLanguageSettings, LanguageSettings},
 };
+
 use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, MultiBuffer, MultiBufferOffset, MultiBufferOffsetUtf16,
     MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot, RowInfo, ToOffset, ToPoint,
@@ -1905,7 +1906,7 @@ impl DisplaySnapshot {
         .flat_map(|chunk| {
             let syntax_highlight_style = chunk
                 .syntax_highlight_id
-                .and_then(|id| id.style(&editor_style.syntax));
+                .and_then(|id| editor_style.syntax.get(id).cloned());
 
             let chunk_highlight = chunk.highlight_style.map(|chunk_highlight| {
                 HighlightStyle {
@@ -1999,7 +2000,8 @@ impl DisplaySnapshot {
 
             let syntax_style = chunk
                 .syntax_highlight_id
-                .and_then(|id| id.style(syntax_theme));
+                .and_then(|id| syntax_theme.get(id).cloned());
+
             let overlay_style = chunk.highlight_style;
 
             let combined = match (syntax_style, overlay_style) {
@@ -4015,7 +4017,8 @@ pub mod tests {
         for chunk in snapshot.chunks(rows, true, HighlightStyles::default()) {
             let syntax_color = chunk
                 .syntax_highlight_id
-                .and_then(|id| id.style(theme)?.color);
+                .and_then(|id| theme.get(id)?.color);
+
             let highlight_color = chunk.highlight_style.and_then(|style| style.color);
             if let Some((last_chunk, last_syntax_color, last_highlight_color)) = chunks.last_mut()
                 && syntax_color == *last_syntax_color

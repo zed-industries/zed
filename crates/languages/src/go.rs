@@ -31,10 +31,8 @@ use std::{
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
 use util::{ResultExt, fs::remove_matching, maybe, merge_json_value_into};
 
-use crate::LanguageDir;
-
 pub(crate) fn semantic_token_rules() -> SemanticTokenRules {
-    let content = LanguageDir::get("go/semantic_token_rules.json")
+    let content = grammars::get_file("go/semantic_token_rules.json")
         .expect("missing go/semantic_token_rules.json");
     let json = std::str::from_utf8(&content.data).expect("invalid utf-8 in semantic_token_rules");
     settings::parse_json_with_comments::<SemanticTokenRules>(json)

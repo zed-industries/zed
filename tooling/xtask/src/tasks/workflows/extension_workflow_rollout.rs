@@ -9,9 +9,10 @@ use crate::tasks::workflows::steps::CheckoutStep;
 use crate::tasks::workflows::steps::cache_rust_dependencies_namespace;
 use crate::tasks::workflows::vars::JobOutput;
 use crate::tasks::workflows::{
-    extension_bump::{RepositoryTarget, generate_token},
     runners,
-    steps::{self, DEFAULT_REPOSITORY_OWNER_GUARD, NamedJob, named},
+    steps::{
+        self, DEFAULT_REPOSITORY_OWNER_GUARD, NamedJob, RepositoryTarget, generate_token, named,
+    },
     vars::{self, StepOutput, WorkflowInput},
 };
 
@@ -268,25 +269,29 @@ fn rollout_workflows_to_extension(
         "#,
         };
 
-        named::uses("peter-evans", "create-pull-request", "v7")
-            .add_with(("path", "extension"))
-            .add_with(("title", title.clone()))
-            .add_with(("body", body))
-            .add_with(("commit-message", title))
-            .add_with(("branch", "update-workflows"))
-            .add_with((
-                "committer",
-                "zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>",
-            ))
-            .add_with((
-                "author",
-                "zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>",
-            ))
-            .add_with(("base", "main"))
-            .add_with(("delete-branch", true))
-            .add_with(("token", token.to_string()))
-            .add_with(("sign-commits", true))
-            .id("create-pr")
+        named::uses(
+            "peter-evans",
+            "create-pull-request",
+            "98357b18bf14b5342f975ff684046ec3b2a07725",
+        )
+        .add_with(("path", "extension"))
+        .add_with(("title", title.clone()))
+        .add_with(("body", body))
+        .add_with(("commit-message", title))
+        .add_with(("branch", "update-workflows"))
+        .add_with((
+            "committer",
+            "zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>",
+        ))
+        .add_with((
+            "author",
+            "zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>",
+        ))
+        .add_with(("base", "main"))
+        .add_with(("delete-branch", true))
+        .add_with(("token", token.to_string()))
+        .add_with(("sign-commits", true))
+        .id("create-pr")
     }
 
     fn enable_auto_merge(token: &StepOutput) -> Step<gh_workflow::Run> {
@@ -303,17 +308,15 @@ fn rollout_workflows_to_extension(
         ))
     }
 
-    let (authenticate, token) = generate_token(
-        vars::ZED_ZIPPY_APP_ID,
-        vars::ZED_ZIPPY_APP_PRIVATE_KEY,
-        Some(
+    let (authenticate, token) =
+        generate_token(vars::ZED_ZIPPY_APP_ID, vars::ZED_ZIPPY_APP_PRIVATE_KEY).for_repository(
             RepositoryTarget::new("zed-extensions", &["${{ matrix.repo }}"]).permissions([
                 ("permission-pull-requests".to_owned(), Level::Write),
                 ("permission-contents".to_owned(), Level::Write),
                 ("permission-workflows".to_owned(), Level::Write),
             ]),
-        ),
-    );
+        );
+
     let (calculate_short_sha, short_sha) = get_short_sha();
 
     let job = Job::default()
@@ -368,14 +371,11 @@ fn create_rollout_tag(rollout_job: &NamedJob, filter_repos_input: &WorkflowInput
         "#})
     }
 
-    let (authenticate, token) = generate_token(
-        vars::ZED_ZIPPY_APP_ID,
-        vars::ZED_ZIPPY_APP_PRIVATE_KEY,
-        Some(
+    let (authenticate, token) =
+        generate_token(vars::ZED_ZIPPY_APP_ID, vars::ZED_ZIPPY_APP_PRIVATE_KEY).for_repository(
             RepositoryTarget::current()
                 .permissions([("permission-contents".to_owned(), Level::Write)]),
-        ),
-    );
+        );
 
     let job = Job::default()
         .needs([rollout_job.name.clone()])

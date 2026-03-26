@@ -5,6 +5,10 @@ use crate::{
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, HashMap, HashSet, hash_map};
+pub use language_core::{
+    BinaryStatus, LanguageName, LanguageQueries, LanguageServerStatusUpdate,
+    QUERY_FILENAME_PREFIXES, ServerHealth,
+};
 use settings::{AllLanguageSettingsContent, LanguageSettingsContent};
 
 use futures::{
@@ -12,15 +16,13 @@ use futures::{
     channel::{mpsc, oneshot},
 };
 use globset::GlobSet;
-use gpui::{App, BackgroundExecutor, SharedString};
+use gpui::{App, BackgroundExecutor};
 use lsp::LanguageServerId;
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+
 use smallvec::SmallVec;
 use std::{
-    borrow::{Borrow, Cow},
     cell::LazyCell,
     ffi::OsStr,
     ops::Not,
@@ -32,91 +34,6 @@ use text::{Point, Rope};
 use theme::Theme;
 use unicase::UniCase;
 use util::{ResultExt, maybe, post_inc};
-
-#[derive(
-    Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
-)]
-pub struct LanguageName(pub SharedString);
-
-impl LanguageName {
-    pub fn new(s: &str) -> Self {
-        Self(SharedString::new(s))
-    }
-
-    pub fn new_static(s: &'static str) -> Self {
-        Self(SharedString::new_static(s))
-    }
-
-    pub fn from_proto(s: String) -> Self {
-        Self(SharedString::from(s))
-    }
-
-    pub fn to_proto(&self) -> String {
-        self.0.to_string()
-    }
-
-    pub fn lsp_id(&self) -> String {
-        match self.0.as_ref() {
-            "Plain Text" => "plaintext".to_string(),
-            language_name => language_name.to_lowercase(),
-        }
-    }
-}
-
-impl From<LanguageName> for SharedString {
-    fn from(value: LanguageName) -> Self {
-        value.0
-    }
-}
-
-impl From<SharedString> for LanguageName {
-    fn from(value: SharedString) -> Self {
-        LanguageName(value)
-    }
-}
-
-impl AsRef<str> for LanguageName {
-    fn as_ref(&self) -> &str {
-        self.0.as_ref()
-    }
-}
-
-impl Borrow<str> for LanguageName {
-    fn borrow(&self) -> &str {
-        self.0.as_ref()
-    }
-}
-
-impl PartialEq<str> for LanguageName {
-    fn eq(&self, other: &str) -> bool {
-        self.0.as_ref() == other
-    }
-}
-
-impl PartialEq<&str> for LanguageName {
-    fn eq(&self, other: &&str) -> bool {
-        self.0.as_ref() == *other
-    }
-}
-
-impl std::fmt::Display for LanguageName {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl From<&'static str> for LanguageName {
-    fn from(str: &'static str) -> Self {
-        Self(SharedString::new_static(str))
-    }
-}
-
-impl From<LanguageName> for String {
-    fn from(value: LanguageName) -> Self {
-        let value: &str = &value.0;
-        Self::from(value)
-    }
-}
 
 pub struct LanguageRegistry {
     state: RwLock<LanguageRegistryState>,
@@ -151,31 +68,6 @@ pub struct FakeLanguageServerEntry {
     pub initializer: Option<Box<dyn 'static + Send + Sync + Fn(&mut lsp::FakeLanguageServer)>>,
     pub tx: futures::channel::mpsc::UnboundedSender<lsp::FakeLanguageServer>,
     pub _server: Option<lsp::FakeLanguageServer>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum LanguageServerStatusUpdate {
-    Binary(BinaryStatus),
-    Health(ServerHealth, Option<SharedString>),
-}
-
-#[derive(Debug, PartialEq, Eq, Deserialize, Serialize, Clone, Copy)]
-#[serde(rename_all = "camelCase")]
-pub enum ServerHealth {
-    Ok,
-    Warning,
-    Error,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum BinaryStatus {
-    None,
-    CheckingForUpdate,
-    Downloading,
-    Starting,
-    Stopping,
-    Stopped,
-    Failed { error: String },
 }
 
 #[derive(Clone)]
@@ -230,39 +122,6 @@ impl std::fmt::Display for LanguageNotFound {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "language not found")
     }
-}
-
-pub const QUERY_FILENAME_PREFIXES: &[(
-    &str,
-    fn(&mut LanguageQueries) -> &mut Option<Cow<'static, str>>,
-)] = &[
-    ("highlights", |q| &mut q.highlights),
-    ("brackets", |q| &mut q.brackets),
-    ("outline", |q| &mut q.outline),
-    ("indents", |q| &mut q.indents),
-    ("injections", |q| &mut q.injections),
-    ("overrides", |q| &mut q.overrides),
-    ("redactions", |q| &mut q.redactions),
-    ("runnables", |q| &mut q.runnables),
-    ("debugger", |q| &mut q.debugger),
-    ("textobjects", |q| &mut q.text_objects),
-    ("imports", |q| &mut q.imports),
-];
-
-/// Tree-sitter language queries for a given language.
-#[derive(Debug, Default)]
-pub struct LanguageQueries {
-    pub highlights: Option<Cow<'static, str>>,
-    pub brackets: Option<Cow<'static, str>>,
-    pub indents: Option<Cow<'static, str>>,
-    pub outline: Option<Cow<'static, str>>,
-    pub injections: Option<Cow<'static, str>>,
-    pub overrides: Option<Cow<'static, str>>,
-    pub redactions: Option<Cow<'static, str>>,
-    pub runnables: Option<Cow<'static, str>>,
-    pub text_objects: Option<Cow<'static, str>>,
-    pub debugger: Option<Cow<'static, str>>,
-    pub imports: Option<Cow<'static, str>>,
 }
 
 #[derive(Clone, Default)]
@@ -1261,7 +1120,7 @@ impl LanguageRegistryState {
             LanguageSettingsContent {
                 tab_size: language.config.tab_size,
                 hard_tabs: language.config.hard_tabs,
-                soft_wrap: language.config.soft_wrap,
+                soft_wrap: language.config.soft_wrap.map(crate::to_settings_soft_wrap),
                 auto_indent_on_paste: language.config.auto_indent_on_paste,
                 ..Default::default()
             },

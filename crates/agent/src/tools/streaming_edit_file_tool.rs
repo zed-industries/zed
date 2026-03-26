@@ -111,12 +111,13 @@ pub enum StreamingEditFileMode {
 }
 
 /// A single edit operation that replaces old text with new text
+/// Properly escape all text fields as valid JSON strings.
+/// Remember to escape special characters like newlines (`\n`) and quotes (`"`) in JSON strings.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Edit {
     /// The exact text to find in the file. This will be matched using fuzzy matching
     /// to handle minor differences in whitespace or formatting.
     ///
-    /// Always include complete lines. Do not start or end mid-line.
     /// Be minimal with replacements:
     /// - For unique lines, include only those lines
     /// - For non-unique lines, include enough context to identify them
@@ -3914,6 +3915,58 @@ mod tests {
             panic!("expected success");
         };
         assert_eq!(new_text, "new_content");
+    }
+
+    #[gpui::test]
+    async fn test_streaming_edit_partial_last_line(cx: &mut TestAppContext) {
+        let file_content = indoc::indoc! {r#"
+            fn on_query_change(&mut self, cx: &mut Context<Self>) {
+                self.filter(cx);
+            }
+
+
+
+            fn render_search(&self, cx: &mut Context<Self>) -> Div {
+                div()
+            }
+        "#}
+        .to_string();
+
+        let (tool, _project, _action_log, _fs, _thread) =
+            setup_test(cx, json!({"file.rs": file_content})).await;
+
+        // The model sends old_text with a PARTIAL last line.
+        let old_text = "}\n\n\n\nfn render_search";
+        let new_text = "}\n\nfn render_search";
+
+        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
+        let (event_stream, _receiver) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
+
+        sender.send_final(json!({
+            "display_description": "Remove extra blank lines",
+            "path": "root/file.rs",
+            "mode": "edit",
+            "edits": [{"old_text": old_text, "new_text": new_text}]
+        }));
+
+        let result = task.await;
+        let StreamingEditFileToolOutput::Success {
+            new_text: final_text,
+            ..
+        } = result.unwrap()
+        else {
+            panic!("expected success");
+        };
+
+        // The edit should reduce 3 blank lines to 1 blank line before
+        // fn render_search, without duplicating the function signature.
+        let expected = file_content.replace("}\n\n\n\nfn render_search", "}\n\nfn render_search");
+        pretty_assertions::assert_eq!(
+            final_text,
+            expected,
+            "Edit should only remove blank lines before render_search"
+        );
     }
 
     #[gpui::test]

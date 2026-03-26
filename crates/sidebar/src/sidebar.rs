@@ -1,6 +1,7 @@
 use acp_thread::ThreadStatus;
 use action_log::DiffStats;
 use agent_client_protocol::{self as acp};
+use agent_settings::AgentSettings;
 use agent_ui::thread_metadata_store::{SidebarThreadMetadataStore, ThreadMetadata};
 use agent_ui::threads_archive_view::{
     ThreadsArchiveView, ThreadsArchiveViewEvent, format_history_entry_timestamp,
@@ -12,8 +13,8 @@ use chrono::Utc;
 use editor::Editor;
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagViewExt as _};
 use gpui::{
-    Action as _, AnyElement, App, Context, Entity, FocusHandle, Focusable, ListState, Pixels,
-    Render, SharedString, WeakEntity, Window, WindowHandle, list, prelude::*, px,
+    Action as _, AnyElement, App, Context, Entity, FocusHandle, Focusable, KeyContext, ListState,
+    Pixels, Render, SharedString, WeakEntity, Window, WindowHandle, list, prelude::*, px,
 };
 use menu::{
     Cancel, Confirm, SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious,
@@ -37,7 +38,8 @@ use util::ResultExt as _;
 use util::path_list::PathList;
 use workspace::{
     AddFolderToProject, FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent, Open,
-    Sidebar as WorkspaceSidebar, ToggleWorkspaceSidebar, Workspace, WorkspaceId,
+    Sidebar as WorkspaceSidebar, SidebarSide, ToggleWorkspaceSidebar, Workspace, WorkspaceId,
+    sidebar_side_context_menu,
 };
 
 use zed_actions::OpenRecent;
@@ -190,21 +192,17 @@ fn fuzzy_match_positions(query: &str, candidate: &str) -> Option<Vec<usize>> {
 fn root_repository_snapshots(
     workspace: &Entity<Workspace>,
     cx: &App,
-) -> Vec<project::git_store::RepositorySnapshot> {
+) -> impl Iterator<Item = project::git_store::RepositorySnapshot> {
     let path_list = workspace_path_list(workspace, cx);
     let project = workspace.read(cx).project().read(cx);
-    project
-        .repositories(cx)
-        .values()
-        .filter_map(|repo| {
-            let snapshot = repo.read(cx).snapshot();
-            let is_root = path_list
-                .paths()
-                .iter()
-                .any(|p| p.as_path() == snapshot.work_directory_abs_path.as_ref());
-            is_root.then_some(snapshot)
-        })
-        .collect()
+    project.repositories(cx).values().filter_map(move |repo| {
+        let snapshot = repo.read(cx).snapshot();
+        let is_root = path_list
+            .paths()
+            .iter()
+            .any(|p| p.as_path() == snapshot.work_directory_abs_path.as_ref());
+        is_root.then_some(snapshot)
+    })
 }
 
 fn workspace_path_list(workspace: &Entity<Workspace>, cx: &App) -> PathList {
@@ -544,59 +542,6 @@ impl Sidebar {
         result
     }
 
-    fn all_thread_infos_for_workspace(
-        workspace: &Entity<Workspace>,
-        cx: &App,
-    ) -> Vec<ActiveThreadInfo> {
-        let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) else {
-            return Vec::new();
-        };
-        let agent_panel_ref = agent_panel.read(cx);
-
-        agent_panel_ref
-            .parent_threads(cx)
-            .into_iter()
-            .map(|thread_view| {
-                let thread_view_ref = thread_view.read(cx);
-                let thread = thread_view_ref.thread.read(cx);
-
-                let icon = thread_view_ref.agent_icon;
-                let icon_from_external_svg = thread_view_ref.agent_icon_from_external_svg.clone();
-                let title = thread
-                    .title()
-                    .unwrap_or_else(|| DEFAULT_THREAD_TITLE.into());
-                let is_native = thread_view_ref.as_native_thread(cx).is_some();
-                let is_title_generating = is_native && thread.has_provisional_title();
-                let session_id = thread.session_id().clone();
-                let is_background = agent_panel_ref.is_background_thread(&session_id);
-
-                let status = if thread.is_waiting_for_confirmation() {
-                    AgentThreadStatus::WaitingForConfirmation
-                } else if thread.had_error() {
-                    AgentThreadStatus::Error
-                } else {
-                    match thread.status() {
-                        ThreadStatus::Generating => AgentThreadStatus::Running,
-                        ThreadStatus::Idle => AgentThreadStatus::Completed,
-                    }
-                };
-
-                let diff_stats = thread.action_log().read(cx).diff_stats(cx);
-
-                ActiveThreadInfo {
-                    session_id,
-                    title,
-                    status,
-                    icon,
-                    icon_from_external_svg,
-                    is_background,
-                    is_title_generating,
-                    diff_stats,
-                }
-            })
-            .collect()
-    }
-
     /// When modifying this thread, aim for a single forward pass over workspaces
     /// and threads plus an O(T log T) sort. Avoid adding extra scans over the data.
     fn rebuild_contents(&mut self, cx: &App) {
@@ -686,7 +631,7 @@ impl Sidebar {
 
         for (i, workspace) in workspaces.iter().enumerate() {
             for snapshot in root_repository_snapshots(workspace, cx) {
-                if snapshot.work_directory_abs_path == snapshot.original_repo_abs_path {
+                if snapshot.is_main_worktree() {
                     main_repo_workspace
                         .entry(snapshot.work_directory_abs_path.clone())
                         .or_insert(i);
@@ -773,7 +718,7 @@ impl Sidebar {
                         .is_some_and(|(main_idx, _)| *main_idx == ws_index)
             });
 
-            let mut live_infos = Self::all_thread_infos_for_workspace(workspace, cx);
+            let mut live_infos: Vec<_> = all_thread_infos_for_workspace(workspace, cx).collect();
 
             let mut threads: Vec<ThreadEntry> = Vec::new();
             let mut has_running_threads = false;
@@ -831,7 +776,7 @@ impl Sidebar {
                     let mut linked_worktree_queries: Vec<(PathList, SharedString, Arc<Path>)> =
                         Vec::new();
                     for snapshot in root_repository_snapshots(workspace, cx) {
-                        if snapshot.work_directory_abs_path != snapshot.original_repo_abs_path {
+                        if snapshot.is_linked_worktree() {
                             continue;
                         }
 
@@ -852,17 +797,16 @@ impl Sidebar {
                     for (worktree_path_list, worktree_name, worktree_path) in
                         &linked_worktree_queries
                     {
-                        let target_workspace =
-                            match absorbed_workspace_by_path.get(worktree_path.as_ref()) {
-                                Some(&idx) => {
-                                    live_infos.extend(Self::all_thread_infos_for_workspace(
-                                        &workspaces[idx],
-                                        cx,
-                                    ));
-                                    ThreadEntryWorkspace::Open(workspaces[idx].clone())
-                                }
-                                None => ThreadEntryWorkspace::Closed(worktree_path_list.clone()),
-                            };
+                        let target_workspace = match absorbed_workspace_by_path
+                            .get(worktree_path.as_ref())
+                        {
+                            Some(&idx) => {
+                                live_infos
+                                    .extend(all_thread_infos_for_workspace(&workspaces[idx], cx));
+                                ThreadEntryWorkspace::Open(workspaces[idx].clone())
+                            }
+                            None => ThreadEntryWorkspace::Closed(worktree_path_list.clone()),
+                        };
 
                         let worktree_rows: Vec<_> = thread_store
                             .read(cx)
@@ -1721,7 +1665,7 @@ impl Sidebar {
         let mut known_worktree_paths: HashSet<std::path::PathBuf> = HashSet::new();
         for workspace in &workspaces {
             for snapshot in root_repository_snapshots(workspace, cx) {
-                if snapshot.work_directory_abs_path != snapshot.original_repo_abs_path {
+                if snapshot.is_linked_worktree() {
                     continue;
                 }
                 for git_worktree in snapshot.linked_worktrees() {
@@ -1740,12 +1684,10 @@ impl Sidebar {
             if path_list.paths().len() != 1 {
                 continue;
             }
-            let should_prune = root_repository_snapshots(workspace, cx)
-                .iter()
-                .any(|snapshot| {
-                    snapshot.work_directory_abs_path != snapshot.original_repo_abs_path
-                        && !known_worktree_paths.contains(snapshot.work_directory_abs_path.as_ref())
-                });
+            let should_prune = root_repository_snapshots(workspace, cx).any(|snapshot| {
+                snapshot.is_linked_worktree()
+                    && !known_worktree_paths.contains(snapshot.work_directory_abs_path.as_ref())
+            });
             if should_prune {
                 to_remove.push(workspace.clone());
             }
@@ -1790,6 +1732,21 @@ impl Sidebar {
             self.collapsed_groups.insert(path_list.clone());
         }
         self.update_entries(cx);
+    }
+
+    fn dispatch_context(&self, window: &Window, cx: &Context<Self>) -> KeyContext {
+        let mut dispatch_context = KeyContext::new_with_defaults();
+        dispatch_context.add("ThreadsSidebar");
+        dispatch_context.add("menu");
+
+        let identifier = if self.filter_editor.focus_handle(cx).is_focused(window) {
+            "searching"
+        } else {
+            "not_searching"
+        };
+
+        dispatch_context.add(identifier);
+        dispatch_context
     }
 
     fn focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2919,7 +2876,9 @@ impl Sidebar {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let has_query = self.has_filter_query(cx);
-        let traffic_lights = cfg!(target_os = "macos") && !window.is_fullscreen();
+        let sidebar_on_left = self.side(cx) == SidebarSide::Left;
+        let traffic_lights =
+            cfg!(target_os = "macos") && !window.is_fullscreen() && sidebar_on_left;
         let header_height = platform_title_bar_height(window);
 
         h_flex()
@@ -2973,37 +2932,91 @@ impl Sidebar {
     }
 
     fn render_sidebar_toggle_button(&self, _cx: &mut Context<Self>) -> impl IntoElement {
-        IconButton::new("sidebar-close-toggle", IconName::ThreadsSidebarLeftOpen)
-            .icon_size(IconSize::Small)
-            .tooltip(Tooltip::element(move |_window, cx| {
-                v_flex()
-                    .gap_1()
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .justify_between()
-                            .child(Label::new("Toggle Sidebar"))
-                            .child(KeyBinding::for_action(&ToggleWorkspaceSidebar, cx)),
-                    )
-                    .child(
-                        h_flex()
-                            .pt_1()
-                            .gap_2()
-                            .border_t_1()
-                            .border_color(cx.theme().colors().border_variant)
-                            .justify_between()
-                            .child(Label::new("Focus Sidebar"))
-                            .child(KeyBinding::for_action(&FocusWorkspaceSidebar, cx)),
-                    )
-                    .into_any_element()
-            }))
-            .on_click(|_, window, cx| {
-                if let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() {
-                    multi_workspace.update(cx, |multi_workspace, cx| {
-                        multi_workspace.close_sidebar(window, cx);
-                    });
-                }
+        let on_right = AgentSettings::get_global(_cx).sidebar_side() == SidebarSide::Right;
+
+        sidebar_side_context_menu("sidebar-toggle-menu", _cx)
+            .anchor(if on_right {
+                gpui::Corner::BottomRight
+            } else {
+                gpui::Corner::BottomLeft
             })
+            .attach(if on_right {
+                gpui::Corner::TopRight
+            } else {
+                gpui::Corner::TopLeft
+            })
+            .trigger(move |_is_active, _window, _cx| {
+                let icon = if on_right {
+                    IconName::ThreadsSidebarRightOpen
+                } else {
+                    IconName::ThreadsSidebarLeftOpen
+                };
+                IconButton::new("sidebar-close-toggle", icon)
+                    .icon_size(IconSize::Small)
+                    .tooltip(Tooltip::element(move |_window, cx| {
+                        v_flex()
+                            .gap_1()
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .justify_between()
+                                    .child(Label::new("Toggle Sidebar"))
+                                    .child(KeyBinding::for_action(&ToggleWorkspaceSidebar, cx)),
+                            )
+                            .child(
+                                h_flex()
+                                    .pt_1()
+                                    .gap_2()
+                                    .border_t_1()
+                                    .border_color(cx.theme().colors().border_variant)
+                                    .justify_between()
+                                    .child(Label::new("Focus Sidebar"))
+                                    .child(KeyBinding::for_action(&FocusWorkspaceSidebar, cx)),
+                            )
+                            .into_any_element()
+                    }))
+                    .on_click(|_, window, cx| {
+                        if let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() {
+                            multi_workspace.update(cx, |multi_workspace, cx| {
+                                multi_workspace.close_sidebar(window, cx);
+                            });
+                        }
+                    })
+            })
+    }
+
+    fn render_sidebar_bottom_bar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let on_right = self.side(cx) == SidebarSide::Right;
+        let is_archive = matches!(self.view, SidebarView::Archive(..));
+        let action_buttons = h_flex()
+            .gap_1()
+            .child(
+                IconButton::new("archive", IconName::Archive)
+                    .icon_size(IconSize::Small)
+                    .toggle_state(is_archive)
+                    .tooltip(move |_, cx| {
+                        Tooltip::for_action("Toggle Archived Threads", &ToggleArchive, cx)
+                    })
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.toggle_archive(&ToggleArchive, window, cx);
+                    })),
+            )
+            .child(self.render_recent_projects_button(cx));
+        let border_color = cx.theme().colors().border;
+        let toggle_button = self.render_sidebar_toggle_button(cx);
+
+        let bar = h_flex()
+            .p_1()
+            .gap_1()
+            .justify_between()
+            .border_t_1()
+            .border_color(border_color);
+
+        if on_right {
+            bar.child(action_buttons).child(toggle_button)
+        } else {
+            bar.child(toggle_button).child(action_buttons)
+        }
     }
 }
 
@@ -3099,6 +3112,10 @@ impl WorkspaceSidebar for Sidebar {
         matches!(self.view, SidebarView::ThreadList)
     }
 
+    fn side(&self, cx: &App) -> SidebarSide {
+        AgentSettings::get_global(cx).sidebar_side()
+    }
+
     fn prepare_for_focus(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.selection = None;
         cx.notify();
@@ -3127,7 +3144,7 @@ impl Render for Sidebar {
 
         v_flex()
             .id("workspace-sidebar")
-            .key_context("ThreadsSidebar")
+            .key_context(self.dispatch_context(window, cx))
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))
@@ -3153,7 +3170,8 @@ impl Render for Sidebar {
             .h_full()
             .w(self.width)
             .bg(bg)
-            .border_r_1()
+            .when(self.side(cx) == SidebarSide::Left, |el| el.border_r_1())
+            .when(self.side(cx) == SidebarSide::Right, |el| el.border_l_1())
             .border_color(color.border)
             .map(|this| match &self.view {
                 SidebarView::ThreadList => this
@@ -3185,36 +3203,78 @@ impl Render for Sidebar {
                     }),
                 SidebarView::Archive(archive_view) => this.child(archive_view.clone()),
             })
-            .child(
-                h_flex()
-                    .p_1()
-                    .gap_1()
-                    .justify_between()
-                    .border_t_1()
-                    .border_color(cx.theme().colors().border)
-                    .child(self.render_sidebar_toggle_button(cx))
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .child(
-                                IconButton::new("archive", IconName::Archive)
-                                    .icon_size(IconSize::Small)
-                                    .toggle_state(matches!(self.view, SidebarView::Archive(..)))
-                                    .tooltip(move |_, cx| {
-                                        Tooltip::for_action(
-                                            "Toggle Archived Threads",
-                                            &ToggleArchive,
-                                            cx,
-                                        )
-                                    })
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.toggle_archive(&ToggleArchive, window, cx);
-                                    })),
-                            )
-                            .child(self.render_recent_projects_button(cx)),
-                    ),
-            )
+            .child(self.render_sidebar_bottom_bar(cx))
     }
+}
+
+fn all_thread_infos_for_workspace(
+    workspace: &Entity<Workspace>,
+    cx: &App,
+) -> impl Iterator<Item = ActiveThreadInfo> {
+    enum ThreadInfoIterator<T: Iterator<Item = ActiveThreadInfo>> {
+        Empty,
+        Threads(T),
+    }
+
+    impl<T: Iterator<Item = ActiveThreadInfo>> Iterator for ThreadInfoIterator<T> {
+        type Item = ActiveThreadInfo;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            match self {
+                ThreadInfoIterator::Empty => None,
+                ThreadInfoIterator::Threads(threads) => threads.next(),
+            }
+        }
+    }
+
+    let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) else {
+        return ThreadInfoIterator::Empty;
+    };
+    let agent_panel = agent_panel.read(cx);
+
+    let threads = agent_panel
+        .parent_threads(cx)
+        .into_iter()
+        .map(|thread_view| {
+            let thread_view_ref = thread_view.read(cx);
+            let thread = thread_view_ref.thread.read(cx);
+
+            let icon = thread_view_ref.agent_icon;
+            let icon_from_external_svg = thread_view_ref.agent_icon_from_external_svg.clone();
+            let title = thread
+                .title()
+                .unwrap_or_else(|| DEFAULT_THREAD_TITLE.into());
+            let is_native = thread_view_ref.as_native_thread(cx).is_some();
+            let is_title_generating = is_native && thread.has_provisional_title();
+            let session_id = thread.session_id().clone();
+            let is_background = agent_panel.is_background_thread(&session_id);
+
+            let status = if thread.is_waiting_for_confirmation() {
+                AgentThreadStatus::WaitingForConfirmation
+            } else if thread.had_error() {
+                AgentThreadStatus::Error
+            } else {
+                match thread.status() {
+                    ThreadStatus::Generating => AgentThreadStatus::Running,
+                    ThreadStatus::Idle => AgentThreadStatus::Completed,
+                }
+            };
+
+            let diff_stats = thread.action_log().read(cx).diff_stats(cx);
+
+            ActiveThreadInfo {
+                session_id,
+                title,
+                status,
+                icon,
+                icon_from_external_svg,
+                is_background,
+                is_title_generating,
+                diff_stats,
+            }
+        });
+
+    ThreadInfoIterator::Threads(threads)
 }
 
 #[cfg(test)]

@@ -243,6 +243,10 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
         MigrationType::Json(migrations::m_2026_02_03::migrate_experimental_sweep_mercury),
         MigrationType::Json(migrations::m_2026_02_04::migrate_tool_permission_defaults),
         MigrationType::Json(migrations::m_2026_02_25::migrate_builtin_agent_servers_to_registry),
+        MigrationType::TreeSitter(
+            migrations::m_2026_03_16::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2026_03_16,
+        ),
     ];
     run_migrations(text, migrations)
 }
@@ -376,6 +380,10 @@ define_query!(
 define_query!(
     SETTINGS_QUERY_2025_12_15,
     migrations::m_2025_12_15::SETTINGS_PATTERNS
+);
+define_query!(
+    SETTINGS_QUERY_2026_03_16,
+    migrations::m_2026_03_16::SETTINGS_PATTERNS
 );
 define_query!(
     KEYMAP_QUERY_2026_03_23,

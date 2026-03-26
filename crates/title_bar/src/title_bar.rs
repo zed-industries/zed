@@ -81,7 +81,8 @@ pub fn init(cx: &mut App) {
         let Some(window) = window else {
             return;
         };
-        let item = cx.new(|cx| TitleBar::new("title-bar", workspace, window, cx));
+        let multi_workspace = workspace.multi_workspace().cloned();
+        let item = cx.new(|cx| TitleBar::new("title-bar", workspace, multi_workspace, window, cx));
         workspace.set_titlebar_item(item.into(), window, cx);
 
         workspace.register_action(|workspace, _: &SimulateUpdateAvailable, _window, cx| {
@@ -161,7 +162,18 @@ pub struct TitleBar {
 
 impl Render for TitleBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.sync_multi_workspace(window, cx);
+        if self.multi_workspace.is_none() {
+            if let Some(mw) = self
+                .workspace
+                .upgrade()
+                .and_then(|ws| ws.read(cx).multi_workspace().cloned())
+            {
+                self.multi_workspace = Some(mw.clone());
+                self.platform_titlebar.update(cx, |titlebar, _cx| {
+                    titlebar.set_multi_workspace(mw);
+                });
+            }
+        }
 
         let title_bar_settings = *TitleBarSettings::get_global(cx);
         let button_layout = title_bar_settings.button_layout;
@@ -308,6 +320,7 @@ impl TitleBar {
     pub fn new(
         id: impl Into<ElementId>,
         workspace: &Workspace,
+        multi_workspace: Option<WeakEntity<MultiWorkspace>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -385,52 +398,19 @@ impl TitleBar {
         });
 
         let update_version = cx.new(|cx| UpdateVersion::new(cx));
-        let platform_titlebar = cx.new(|cx| PlatformTitleBar::new(id, cx));
-
-        // Set up observer to sync sidebar state from MultiWorkspace to PlatformTitleBar.
-        {
-            let platform_titlebar = platform_titlebar.clone();
-            let window_handle = window.window_handle();
-            cx.spawn(async move |this: WeakEntity<TitleBar>, cx| {
-                let Some(multi_workspace_handle) = window_handle.downcast::<MultiWorkspace>()
-                else {
-                    return;
-                };
-
-                let _ = cx.update(|cx| {
-                    let Ok(multi_workspace) = multi_workspace_handle.entity(cx) else {
-                        return;
-                    };
-
-                    let is_open = multi_workspace.read(cx).sidebar_open();
-                    platform_titlebar.update(cx, |titlebar, cx| {
-                        titlebar.set_workspace_sidebar_open(is_open, cx);
-                    });
-
-                    let platform_titlebar = platform_titlebar.clone();
-                    let subscription = cx.observe(&multi_workspace, move |mw, cx| {
-                        let is_open = mw.read(cx).sidebar_open();
-                        platform_titlebar.update(cx, |titlebar, cx| {
-                            titlebar.set_workspace_sidebar_open(is_open, cx);
-                        });
-                    });
-
-                    if let Some(this) = this.upgrade() {
-                        this.update(cx, |this, _| {
-                            this._subscriptions.push(subscription);
-                            this.multi_workspace = Some(multi_workspace.downgrade());
-                        });
-                    }
-                });
-            })
-            .detach();
-        }
+        let platform_titlebar = cx.new(|cx| {
+            let mut titlebar = PlatformTitleBar::new(id, cx);
+            if let Some(mw) = multi_workspace.clone() {
+                titlebar = titlebar.with_multi_workspace(mw);
+            }
+            titlebar
+        });
 
         let mut this = Self {
             platform_titlebar,
             application_menu,
             workspace: workspace.weak_handle(),
-            multi_workspace: None,
+            multi_workspace,
             project,
             user_store,
             client,
@@ -444,46 +424,6 @@ impl TitleBar {
         this.observe_diagnostics(cx);
 
         this
-    }
-
-    /// Used to update the title bar state in case the workspace has
-    /// been moved to a new window through the threads sidebar.
-    fn sync_multi_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let current = window
-            .root::<MultiWorkspace>()
-            .flatten()
-            .map(|mw| mw.entity_id());
-
-        let tracked = self
-            .multi_workspace
-            .as_ref()
-            .and_then(|weak| weak.upgrade())
-            .map(|mw| mw.entity_id());
-
-        if current == tracked {
-            return;
-        }
-
-        let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() else {
-            self.multi_workspace = None;
-            return;
-        };
-
-        let is_open = multi_workspace.read(cx).sidebar_open();
-        self.platform_titlebar.update(cx, |titlebar, cx| {
-            titlebar.set_workspace_sidebar_open(is_open, cx);
-        });
-
-        let platform_titlebar = self.platform_titlebar.clone();
-        let subscription = cx.observe(&multi_workspace, move |_this, mw, cx| {
-            let is_open = mw.read(cx).sidebar_open();
-            platform_titlebar.update(cx, |titlebar, cx| {
-                titlebar.set_workspace_sidebar_open(is_open, cx);
-            });
-        });
-
-        self.multi_workspace = Some(multi_workspace.downgrade());
-        self._subscriptions.push(subscription);
     }
 
     fn worktree_count(&self, cx: &App) -> usize {
@@ -777,7 +717,13 @@ impl TitleBar {
             "Open Recent Project".to_string()
         };
 
-        let is_sidebar_open = self.platform_titlebar.read(cx).is_workspace_sidebar_open();
+        let is_sidebar_open = self
+            .multi_workspace
+            .as_ref()
+            .and_then(|mw| mw.upgrade())
+            .map(|mw| mw.read(cx).sidebar_open())
+            .unwrap_or(false)
+            && PlatformTitleBar::is_multi_workspace_enabled(cx);
 
         let is_threads_list_view_active = self
             .multi_workspace

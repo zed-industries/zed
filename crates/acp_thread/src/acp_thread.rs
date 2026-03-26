@@ -2072,6 +2072,11 @@ impl AcpThread {
         cx.notify();
     }
 
+    pub fn clear_plan(&mut self, cx: &mut Context<Self>) {
+        self.plan.entries.clear();
+        cx.notify();
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn send_raw(
         &mut self,
@@ -3177,9 +3182,27 @@ mod tests {
             );
         });
 
-        // Wait for the printf command to execute and produce output
-        // Use real time since parking is enabled
-        cx.executor().timer(Duration::from_millis(500)).await;
+        // Poll until the printf command produces output, rather than using a
+        // fixed sleep which is flaky on loaded machines.
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let has_output = thread.read_with(cx, |thread, cx| {
+                let term = thread
+                    .terminals
+                    .get(&terminal_id)
+                    .expect("terminal not found");
+                let content = term.read(cx).inner().read(cx).get_content();
+                content.contains("output_before_kill")
+            });
+            if has_output {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "Timed out waiting for printf output to appear in terminal",
+            );
+            cx.executor().timer(Duration::from_millis(50)).await;
+        }
 
         // Get the acp_thread Terminal and kill it
         let wait_for_exit = thread.update(cx, |thread, cx| {

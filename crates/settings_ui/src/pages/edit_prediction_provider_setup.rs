@@ -3,7 +3,6 @@ use edit_prediction::{
     ApiKeyState,
     mercury::{MERCURY_CREDENTIALS_URL, mercury_api_token},
     open_ai_compatible::{open_ai_compatible_api_token, open_ai_compatible_api_url},
-    sweep_ai::{SWEEP_CREDENTIALS_URL, sweep_api_token},
 };
 use edit_prediction_ui::{get_available_providers, set_completion_provider};
 use gpui::{Entity, ScrollHandle, prelude::*};
@@ -40,30 +39,6 @@ pub(crate) fn render_edit_prediction_setup_page(
                 mercury_api_token(cx),
                 |_cx| MERCURY_CREDENTIALS_URL,
                 None,
-                window,
-                cx,
-            )
-            .into_any_element(),
-        ),
-        Some(
-            render_api_key_provider(
-                IconName::SweepAi,
-                "Sweep",
-                ApiKeyDocs::Link {
-                    dashboard_url: "https://app.sweep.dev/".into(),
-                },
-                sweep_api_token(cx),
-                |_cx| SWEEP_CREDENTIALS_URL,
-                Some(
-                    settings_window
-                        .render_sub_page_items_section(
-                            sweep_settings().iter().enumerate(),
-                            true,
-                            window,
-                            cx,
-                        )
-                        .into_any_element(),
-                ),
                 window,
                 cx,
             )
@@ -343,39 +318,6 @@ fn render_api_key_provider(
                 .child(additional_fields),
         )
     })
-}
-
-fn sweep_settings() -> Box<[SettingsPageItem]> {
-    Box::new([SettingsPageItem::SettingItem(SettingItem {
-        title: "Privacy Mode",
-        description: "When enabled, Sweep will not store edit prediction inputs or outputs. When disabled, Sweep may collect data including buffer contents, diagnostics, file paths, and generated predictions to improve the service.",
-        field: Box::new(SettingField {
-            pick: |settings| {
-                settings
-                    .project
-                    .all_languages
-                    .edit_predictions
-                    .as_ref()?
-                    .sweep
-                    .as_ref()?
-                    .privacy_mode
-                    .as_ref()
-            },
-            write: |settings, value| {
-                settings
-                    .project
-                    .all_languages
-                    .edit_predictions
-                    .get_or_insert_default()
-                    .sweep
-                    .get_or_insert_default()
-                    .privacy_mode = value;
-            },
-            json_path: Some("edit_predictions.sweep.privacy_mode"),
-        }),
-        metadata: None,
-        files: USER,
-    })])
 }
 
 fn render_ollama_provider(
