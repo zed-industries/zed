@@ -683,11 +683,13 @@ impl CollabPanel {
 
         let mut request_entries = Vec::new();
 
-        let previous_len = self.favorite_channels.len();
-        self.favorite_channels
-            .retain(|id| self.channel_store.read(cx).channel_for_id(*id).is_some());
-        if self.favorite_channels.len() != previous_len {
-            self.serialize(cx);
+        if self.channel_store.read(cx).channel_count() > 0 {
+            let previous_len = self.favorite_channels.len();
+            self.favorite_channels
+                .retain(|id| self.channel_store.read(cx).channel_for_id(*id).is_some());
+            if self.favorite_channels.len() != previous_len {
+                self.serialize(cx);
+            }
         }
 
         let channel_store = self.channel_store.read(cx);
