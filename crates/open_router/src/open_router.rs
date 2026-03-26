@@ -415,15 +415,13 @@ pub async fn stream_completion(
     request: Request,
 ) -> Result<BoxStream<'static, Result<ResponseStreamEvent, OpenRouterError>>, OpenRouterError> {
     let uri = format!("{api_url}/chat/completions");
-    let request_builder = HttpRequest::builder()
+    let request = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key))
         .header("HTTP-Referer", "https://zed.dev")
-        .header("X-Title", "Zed Editor");
-
-    let request = request_builder
+        .header("X-Title", "Zed Editor")
         .body(AsyncBody::from(
             serde_json::to_string(&request).map_err(OpenRouterError::SerializeRequest)?,
         ))
@@ -508,15 +506,13 @@ pub async fn list_models(
     api_key: &str,
 ) -> Result<Vec<Model>, OpenRouterError> {
     let uri = format!("{api_url}/models/user");
-    let request_builder = HttpRequest::builder()
+    let request = HttpRequest::builder()
         .method(Method::GET)
         .uri(uri)
         .header("Accept", "application/json")
         .header("Authorization", format!("Bearer {}", api_key))
         .header("HTTP-Referer", "https://zed.dev")
-        .header("X-Title", "Zed Editor");
-
-    let request = request_builder
+        .header("X-Title", "Zed Editor")
         .body(AsyncBody::default())
         .map_err(OpenRouterError::BuildRequestBody)?;
     let mut response = client
