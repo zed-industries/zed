@@ -358,17 +358,15 @@ pub async fn complete(
     request: ChatCompletionRequest,
 ) -> Result<ChatResponse> {
     let uri = format!("{api_url}/chat/completions");
-    let mut request_builder = HttpRequest::builder()
+    let serialized_request = serde_json::to_string(&request)?;
+    let request = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
-        .header("Content-Type", "application/json");
-
-    if let Some(api_key) = api_key {
-        request_builder = request_builder.header("Authorization", format!("Bearer {}", api_key));
-    }
-
-    let serialized_request = serde_json::to_string(&request)?;
-    let request = request_builder.body(AsyncBody::from(serialized_request))?;
+        .header("Content-Type", "application/json")
+        .when_some(api_key, |builder, api_key| {
+            builder.header("Authorization", format!("Bearer {}", api_key))
+        })
+        .body(AsyncBody::from(serialized_request))?;
 
     let mut response = client.send(request).await?;
     if response.status().is_success() {
@@ -395,16 +393,15 @@ pub async fn stream_chat_completion(
     request: ChatCompletionRequest,
 ) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>> {
     let uri = format!("{api_url}/chat/completions");
-    let mut request_builder = http::Request::builder()
+    let request = http::Request::builder()
         .method(Method::POST)
         .uri(uri)
-        .header("Content-Type", "application/json");
+        .header("Content-Type", "application/json")
+        .when_some(api_key, |builder, api_key| {
+            builder.header("Authorization", format!("Bearer {}", api_key))
+        })
+        .body(AsyncBody::from(serde_json::to_string(&request)?))?;
 
-    if let Some(api_key) = api_key {
-        request_builder = request_builder.header("Authorization", format!("Bearer {}", api_key));
-    }
-
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());
