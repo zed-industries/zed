@@ -1,5 +1,6 @@
 use anyhow::{Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
+use http_client::StatusCode;
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, http};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -489,7 +490,7 @@ pub async fn stream_completion(
             })
             .boxed())
     } else {
-        let code = ApiErrorCode::from_status(response.status().as_u16());
+        let code = ApiErrorCode::from(response.status());
 
         let mut body = String::new();
         response
@@ -603,7 +604,7 @@ pub async fn list_models(
 
         Ok(models)
     } else {
-        let code = ApiErrorCode::from_status(response.status().as_u16());
+        let code = ApiErrorCode::from(response.status());
 
         let mut body = String::new();
         response
@@ -687,8 +688,8 @@ pub struct ApiError {
     pub message: String,
 }
 
-/// An OpenROuter API error code.
-/// <https://openrouter.ai/docs/api-reference/errors#error-codes>
+/// An OpenRouter API error code.
+/// <https://openrouter.ai/docs/api/reference/errors-and-debugging#error-codes>
 #[derive(Debug, PartialEq, Eq, Clone, Copy, EnumString, Serialize, Deserialize)]
 #[strum(serialize_all = "snake_case")]
 pub enum ApiErrorCode {
@@ -726,18 +727,18 @@ impl std::fmt::Display for ApiErrorCode {
     }
 }
 
-impl ApiErrorCode {
-    pub fn from_status(status: u16) -> Self {
-        match status {
-            400 => ApiErrorCode::InvalidRequestError,
-            401 => ApiErrorCode::AuthenticationError,
-            402 => ApiErrorCode::PaymentRequiredError,
-            403 => ApiErrorCode::PermissionError,
-            408 => ApiErrorCode::RequestTimedOut,
-            429 => ApiErrorCode::RateLimitError,
-            502 => ApiErrorCode::ApiError,
-            503 => ApiErrorCode::OverloadedError,
-            _ => ApiErrorCode::ApiError,
+impl From<StatusCode> for ApiErrorCode {
+    fn from(value: StatusCode) -> Self {
+        match value {
+            StatusCode::BAD_REQUEST => Self::InvalidRequestError,
+            StatusCode::UNAUTHORIZED => Self::AuthenticationError,
+            StatusCode::PAYMENT_REQUIRED => Self::PaymentRequiredError,
+            StatusCode::FORBIDDEN => Self::PermissionError,
+            StatusCode::REQUEST_TIMEOUT => Self::RequestTimedOut,
+            StatusCode::TOO_MANY_REQUESTS => Self::RateLimitError,
+            StatusCode::BAD_GATEWAY => Self::ApiError,
+            StatusCode::SERVICE_UNAVAILABLE => Self::OverloadedError,
+            _ => Self::ApiError,
         }
     }
 }
