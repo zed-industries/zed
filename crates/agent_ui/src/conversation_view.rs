@@ -237,6 +237,20 @@ impl Conversation {
         ))
     }
 
+    pub fn subagents_awaiting_permission(&self, cx: &App) -> Vec<(acp::SessionId, usize)> {
+        self.permission_requests
+            .iter()
+            .filter_map(|(session_id, tool_call_ids)| {
+                let thread = self.threads.get(session_id)?;
+                if thread.read(cx).parent_session_id().is_some() && !tool_call_ids.is_empty() {
+                    Some((session_id.clone(), tool_call_ids.len()))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
     pub fn authorize_pending_tool_call(
         &mut self,
         session_id: &acp::SessionId,

@@ -2112,7 +2112,14 @@ impl ThreadView {
         let plan = thread.plan();
         let queue_is_empty = !self.has_queued_messages();
 
-        if changed_buffers.is_empty() && plan.is_empty() && queue_is_empty {
+        let subagents_awaiting_permission = self.render_subagents_awaiting_permission(cx);
+        let has_subagents_awaiting = subagents_awaiting_permission.is_some();
+
+        if changed_buffers.is_empty()
+            && plan.is_empty()
+            && queue_is_empty
+            && !has_subagents_awaiting
+        {
             return None;
         }
 
@@ -2140,6 +2147,14 @@ impl ThreadView {
                 blur_radius: px(2.),
                 spread_radius: px(0.),
             }])
+            .when_some(subagents_awaiting_permission, |this, element| {
+                this.child(element)
+            })
+            .when(
+                has_subagents_awaiting
+                    && (!plan.is_empty() || !changed_buffers.is_empty() || !queue_is_empty),
+                |this| this.child(Divider::horizontal().color(DividerColor::Border)),
+            )
             .when(!plan.is_empty(), |this| {
                 this.child(self.render_plan_summary(plan, window, cx))
                     .when(plan_expanded, |parent| {
@@ -2397,6 +2412,119 @@ impl ThreadView {
                         }
                     }),
             )
+    }
+
+    fn render_subagents_awaiting_permission(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let awaiting = self.conversation.read(cx).subagents_awaiting_permission(cx);
+
+        if awaiting.is_empty() {
+            return None;
+        }
+
+        let thread = self.thread.read(cx);
+        let entries = thread.entries();
+        let mut subagent_items: Vec<(SharedString, usize)> = Vec::new();
+
+        for (session_id, _) in &awaiting {
+            for (entry_ix, entry) in entries.iter().enumerate() {
+                if let AgentThreadEntry::ToolCall(tool_call) = entry {
+                    if let Some(info) = &tool_call.subagent_session_info {
+                        if &info.session_id == session_id {
+                            let subagent_summary: SharedString = {
+                                let summary_text = tool_call.label.read(cx).source().to_string();
+                                if !summary_text.is_empty() {
+                                    summary_text.into()
+                                } else {
+                                    "Subagent".into()
+                                }
+                            };
+                            subagent_items.push((subagent_summary, entry_ix));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if subagent_items.is_empty() {
+            return None;
+        }
+
+        let item_count = subagent_items.len();
+
+        Some(
+            v_flex()
+                .child(
+                    h_flex()
+                        .py_1()
+                        .px_2()
+                        .w_full()
+                        .gap_1()
+                        .border_b_1()
+                        .border_color(cx.theme().colors().border)
+                        .child(
+                            Label::new("Subagents Awaiting Permission:")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .child(Label::new(item_count.to_string()).size(LabelSize::Small)),
+                )
+                .child(
+                    v_flex().children(subagent_items.into_iter().enumerate().map(
+                        |(ix, (label, entry_ix))| {
+                            let is_last = ix == item_count - 1;
+                            let group = format!("group-{}", entry_ix);
+
+                            h_flex()
+                                .cursor_pointer()
+                                .id(format!("subagent-permission-{}", entry_ix))
+                                .group(&group)
+                                .p_1()
+                                .pl_2()
+                                .min_w_0()
+                                .w_full()
+                                .gap_1()
+                                .justify_between()
+                                .bg(cx.theme().colors().editor_background)
+                                .hover(|s| s.bg(cx.theme().colors().element_hover))
+                                .when(!is_last, |this| {
+                                    this.border_b_1().border_color(cx.theme().colors().border)
+                                })
+                                .child(
+                                    h_flex()
+                                        .gap_1p5()
+                                        .child(
+                                            Icon::new(IconName::Circle)
+                                                .size(IconSize::XSmall)
+                                                .color(Color::Warning),
+                                        )
+                                        .child(
+                                            Label::new(label)
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted)
+                                                .truncate(),
+                                        ),
+                                )
+                                .child(
+                                    div().visible_on_hover(&group).child(
+                                        Label::new("Scroll to Subagent")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted)
+                                            .truncate(),
+                                    ),
+                                )
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.list_state.scroll_to(ListOffset {
+                                        item_ix: entry_ix,
+                                        offset_in_item: px(0.0),
+                                    });
+                                    cx.notify();
+                                }))
+                        },
+                    )),
+                )
+                .into_any(),
+        )
     }
 
     fn render_message_queue_summary(
