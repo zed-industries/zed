@@ -21476,6 +21476,7 @@ dependencies = [
 name = "workspace"
 version = "0.1.0"
 dependencies = [
+ "agent_settings",
  "any_vec",
  "anyhow",
  "async-recursion",

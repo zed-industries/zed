@@ -29,7 +29,7 @@ pub use dock::Panel;
 pub use multi_workspace::{
     CloseWorkspaceSidebar, DraggedSidebar, FocusWorkspaceSidebar, MultiWorkspace,
     MultiWorkspaceEvent, NextWorkspace, PreviousWorkspace, Sidebar, SidebarHandle,
-    SidebarRenderState, SidebarSide, ToggleWorkspaceSidebar,
+    SidebarRenderState, SidebarSide, ToggleWorkspaceSidebar, sidebar_dock_context_menu,
 };
 pub use path_list::{PathList, SerializedPathList};
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};
@@ -2351,6 +2351,17 @@ impl Workspace {
 
     pub fn multi_workspace(&self) -> Option<&WeakEntity<MultiWorkspace>> {
         self.multi_workspace.as_ref()
+    }
+
+    pub fn set_multi_workspace(
+        &mut self,
+        multi_workspace: WeakEntity<MultiWorkspace>,
+        cx: &mut App,
+    ) {
+        self.status_bar.update(cx, |status_bar, cx| {
+            status_bar.set_multi_workspace(multi_workspace.clone(), cx);
+        });
+        self.multi_workspace = Some(multi_workspace);
     }
 
     pub fn app_state(&self) -> &Arc<AppState> {

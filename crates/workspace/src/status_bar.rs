@@ -1,6 +1,9 @@
-use crate::{ItemHandle, MultiWorkspace, Pane, SidebarSide, ToggleWorkspaceSidebar};
+use crate::{
+    ItemHandle, MultiWorkspace, Pane, SidebarSide, ToggleWorkspaceSidebar,
+    sidebar_dock_context_menu,
+};
 use gpui::{
-    AnyView, App, Context, Decorations, Entity, IntoElement, ParentElement, Render, Styled,
+    AnyView, App, Context, Corner, Decorations, Entity, IntoElement, ParentElement, Render, Styled,
     Subscription, WeakEntity, Window,
 };
 use std::any::TypeId;
@@ -146,35 +149,52 @@ impl StatusBar {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let on_right = sidebar.side == SidebarSide::Right;
-        let button = IconButton::new(
-            "toggle-workspace-sidebar",
-            if on_right {
-                IconName::ThreadsSidebarRightClosed
+        let has_notifications = sidebar.has_notifications;
+        let indicator_border = cx.theme().colors().status_bar_background;
+
+        let toggle = sidebar_dock_context_menu("sidebar-status-toggle-menu", cx)
+            .anchor(if on_right {
+                Corner::BottomRight
             } else {
-                IconName::ThreadsSidebarLeftClosed
-            },
-        )
-        .icon_size(IconSize::Small)
-        .when(sidebar.has_notifications, |this| {
-            this.indicator(Indicator::dot().color(Color::Accent))
-                .indicator_border_color(Some(cx.theme().colors().status_bar_background))
-        })
-        .tooltip(move |_, cx| {
-            Tooltip::for_action("Open Threads Sidebar", &ToggleWorkspaceSidebar, cx)
-        })
-        .on_click(move |_, window, cx| {
-            if let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() {
-                multi_workspace.update(cx, |multi_workspace, cx| {
-                    multi_workspace.toggle_sidebar(window, cx);
-                });
-            }
-        });
+                Corner::BottomLeft
+            })
+            .attach(if on_right {
+                Corner::TopRight
+            } else {
+                Corner::TopLeft
+            })
+            .trigger(move |_is_active, _window, _cx| {
+                IconButton::new(
+                    "toggle-workspace-sidebar",
+                    if on_right {
+                        IconName::ThreadsSidebarRightClosed
+                    } else {
+                        IconName::ThreadsSidebarLeftClosed
+                    },
+                )
+                .icon_size(IconSize::Small)
+                .when(has_notifications, |this| {
+                    this.indicator(Indicator::dot().color(Color::Accent))
+                        .indicator_border_color(Some(indicator_border))
+                })
+                .tooltip(move |_, cx| {
+                    Tooltip::for_action("Open Threads Sidebar", &ToggleWorkspaceSidebar, cx)
+                })
+                .on_click(move |_, window, cx| {
+                    if let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() {
+                        multi_workspace.update(cx, |multi_workspace, cx| {
+                            multi_workspace.toggle_sidebar(window, cx);
+                        });
+                    }
+                })
+            });
+
         h_flex()
             .gap_0p5()
             .when(on_right, |this| {
                 this.child(Divider::vertical().color(ui::DividerColor::Border))
             })
-            .child(button)
+            .child(toggle)
             .when(!on_right, |this| {
                 this.child(Divider::vertical().color(ui::DividerColor::Border))
             })
@@ -199,6 +219,15 @@ impl StatusBar {
         };
         this.update_active_pane_item(window, cx);
         this
+    }
+
+    pub fn set_multi_workspace(
+        &mut self,
+        multi_workspace: WeakEntity<MultiWorkspace>,
+        cx: &mut Context<Self>,
+    ) {
+        self.multi_workspace = Some(multi_workspace);
+        cx.notify();
     }
 
     pub fn add_left_item<T>(&mut self, item: Entity<T>, window: &mut Window, cx: &mut Context<Self>)

@@ -57,6 +57,10 @@ impl PlatformTitleBar {
         self
     }
 
+    pub fn set_multi_workspace(&mut self, multi_workspace: WeakEntity<MultiWorkspace>) {
+        self.multi_workspace = Some(multi_workspace);
+    }
+
     pub fn title_bar_color(&self, window: &mut Window, cx: &mut Context<Self>) -> Hsla {
         if cfg!(any(target_os = "linux", target_os = "freebsd")) {
             if window.is_window_active() && !self.should_move {

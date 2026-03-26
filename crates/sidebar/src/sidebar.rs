@@ -23,7 +23,7 @@ use project::{AgentId, Event as ProjectEvent, linked_worktree_short_name};
 use recent_projects::sidebar_recent_projects::SidebarRecentProjects;
 use ui::utils::platform_title_bar_height;
 
-use settings::{Settings as _, SidebarDockPosition, update_settings_file};
+use settings::Settings as _;
 use std::collections::{HashMap, HashSet};
 use std::mem;
 use std::path::Path;
@@ -33,13 +33,13 @@ use theme::ActiveTheme;
 use ui::{
     AgentThreadStatus, CommonAnimationExt, ContextMenu, Divider, HighlightedLabel, KeyBinding,
     PopoverMenu, PopoverMenuHandle, Tab, ThreadItem, TintColor, Tooltip, WithScrollbar, prelude::*,
-    right_click_menu,
 };
 use util::ResultExt as _;
 use util::path_list::PathList;
 use workspace::{
     AddFolderToProject, FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent, Open,
     Sidebar as WorkspaceSidebar, SidebarSide, ToggleWorkspaceSidebar, Workspace, WorkspaceId,
+    sidebar_dock_context_menu,
 };
 
 use zed_actions::OpenRecent;
@@ -2977,40 +2977,9 @@ impl Sidebar {
     }
 
     fn render_sidebar_toggle_button(&self, _cx: &mut Context<Self>) -> impl IntoElement {
-        let agent_settings = AgentSettings::get_global(_cx);
-        let current_position = agent_settings.sidebar_dock;
-        let on_right = agent_settings.sidebar_side() == SidebarSide::Right;
+        let on_right = AgentSettings::get_global(_cx).sidebar_side() == SidebarSide::Right;
 
-        right_click_menu("sidebar-toggle-menu")
-            .menu(move |window, cx| {
-                let fs = <dyn fs::Fs>::global(cx);
-                ContextMenu::build(window, cx, move |mut menu, _, _cx| {
-                    let positions: [(SidebarDockPosition, &str); 3] = [
-                        (SidebarDockPosition::Left, "Left"),
-                        (SidebarDockPosition::Right, "Right"),
-                        (SidebarDockPosition::FollowAgent, "Follow Agent Panel"),
-                    ];
-
-                    for (position, label) in positions {
-                        let fs = fs.clone();
-                        menu = menu.toggleable_entry(
-                            label,
-                            position == current_position,
-                            IconPosition::Start,
-                            None,
-                            move |_window, cx| {
-                                update_settings_file(fs.clone(), cx, move |settings, _cx| {
-                                    settings
-                                        .agent
-                                        .get_or_insert_default()
-                                        .set_sidebar_dock(position);
-                                });
-                            },
-                        );
-                    }
-                    menu
-                })
-            })
+        sidebar_dock_context_menu("sidebar-toggle-menu", _cx)
             .anchor(if on_right {
                 gpui::Corner::BottomRight
             } else {

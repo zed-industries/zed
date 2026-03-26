@@ -17,6 +17,10 @@ use ui::prelude::*;
 use util::ResultExt;
 use zed_actions::agents_sidebar::MoveWorkspaceToNewWindow;
 
+use agent_settings::AgentSettings;
+use settings::SidebarDockPosition;
+use ui::{ContextMenu, right_click_menu};
+
 const SIDEBAR_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
 
 use crate::{
@@ -52,6 +56,41 @@ impl Default for SidebarRenderState {
             side: SidebarSide::default(),
         }
     }
+}
+
+pub fn sidebar_dock_context_menu(
+    id: impl Into<ElementId>,
+    cx: &App,
+) -> ui::RightClickMenu<ContextMenu> {
+    let current_position = AgentSettings::get_global(cx).sidebar_dock;
+    right_click_menu(id).menu(move |window, cx| {
+        let fs = <dyn fs::Fs>::global(cx);
+        ContextMenu::build(window, cx, move |mut menu, _, _cx| {
+            let positions: [(SidebarDockPosition, &str); 3] = [
+                (SidebarDockPosition::Left, "Left"),
+                (SidebarDockPosition::Right, "Right"),
+                (SidebarDockPosition::FollowAgent, "Follow Agent Panel"),
+            ];
+            for (position, label) in positions {
+                let fs = fs.clone();
+                menu = menu.toggleable_entry(
+                    label,
+                    position == current_position,
+                    IconPosition::Start,
+                    None,
+                    move |_window, cx| {
+                        settings::update_settings_file(fs.clone(), cx, move |settings, _cx| {
+                            settings
+                                .agent
+                                .get_or_insert_default()
+                                .set_sidebar_dock(position);
+                        });
+                    },
+                );
+            }
+            menu
+        })
+    })
 }
 
 pub enum MultiWorkspaceEvent {
@@ -184,6 +223,10 @@ impl MultiWorkspace {
                 }
             });
         Self::subscribe_to_workspace(&workspace, cx);
+        let weak_self = cx.weak_entity();
+        workspace.update(cx, |workspace, cx| {
+            workspace.set_multi_workspace(weak_self, cx);
+        });
         Self {
             window_id: window.window_handle().window_id(),
             workspaces: vec![workspace],
@@ -402,6 +445,10 @@ impl MultiWorkspace {
                     workspace.set_sidebar_focus_handle(sidebar_focus_handle);
                 });
             }
+            let weak_self = cx.weak_entity();
+            workspace.update(cx, |workspace, cx| {
+                workspace.set_multi_workspace(weak_self, cx);
+            });
             Self::subscribe_to_workspace(&workspace, cx);
             self.workspaces.push(workspace.clone());
             cx.emit(MultiWorkspaceEvent::WorkspaceAdded(workspace));
