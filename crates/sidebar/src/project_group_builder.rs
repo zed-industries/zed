@@ -166,24 +166,26 @@ impl ProjectGroupBuilder {
             .unwrap_or(path)
     }
 
-    /// Whether the given group should load threads for a linked worktree at
-    /// `worktree_path`. Returns `false` if the worktree already has an open
-    /// workspace in the group (its threads are loaded via the workspace loop)
-    /// or if the worktree's canonical path list doesn't match `group_path_list`.
+    /// Whether the given group should load threads for a linked worktree
+    /// at `worktree_path`. Returns `false` if the worktree already has an
+    /// open workspace in the group (its threads are loaded via the
+    /// workspace loop) or if the worktree's canonical path list doesn't
+    /// match `group_path_list`.
     pub fn group_owns_worktree(
         &self,
         group: &ProjectGroup,
         group_path_list: &PathList,
         worktree_path: &Path,
     ) -> bool {
-        let worktree_arc: Arc<Path> = Arc::from(worktree_path);
-        if group.covered_paths.contains(&worktree_arc) {
+        if group.covered_paths.contains(worktree_path) {
             return false;
         }
         let canonical = self.canonicalize_path_list(&PathList::new(&[worktree_path]));
         canonical == *group_path_list
     }
 
+    /// Canonicalizes every path in a [`PathList`] using the builder's
+    /// directory mappings.
     fn canonicalize_path_list(&self, path_list: &PathList) -> PathList {
         let paths: Vec<_> = path_list
             .paths()
