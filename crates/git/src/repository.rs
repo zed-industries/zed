@@ -1415,10 +1415,7 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let git = git_binary?;
                 let mut process = git
-                    .build_command(&[
-                        "cat-file",
-                        "--batch-check=%(objectname)",
-                    ])
+                    .build_command(&["cat-file", "--batch-check=%(objectname)"])
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped())
@@ -1663,10 +1660,7 @@ impl GitRepository for RealGitRepository {
 
         self.executor
             .spawn(async move {
-                let mut args: Vec<OsString> = vec![
-                    "worktree".into(),
-                    "remove".into(),
-                ];
+                let mut args: Vec<OsString> = vec!["worktree".into(), "remove".into()];
                 if force {
                     args.push("--force".into());
                 }
