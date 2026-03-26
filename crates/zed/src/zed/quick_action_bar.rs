@@ -11,7 +11,7 @@ use editor::actions::{
 use editor::code_context_menus::{CodeContextMenu, ContextMenuOrigin};
 use editor::{Editor, EditorSettings};
 use gpui::{
-    Action, AnchoredPositionMode, ClickEvent, Context, BoxAnchor, ElementId, Entity, EventEmitter,
+    Action, AnchoredPositionMode, BoxAnchor, ClickEvent, Context, ElementId, Entity, EventEmitter,
     FocusHandle, Focusable, InteractiveElement, ParentElement, Render, Styled, Subscription,
     WeakEntity, Window, anchored, deferred, point,
 };

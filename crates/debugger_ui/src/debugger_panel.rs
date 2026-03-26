@@ -17,7 +17,7 @@ use dap::{client::SessionId, debugger_settings::DebuggerSettings};
 use editor::{Editor, MultiBufferOffset, ToPoint};
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{
-    Action, App, AsyncWindowContext, ClipboardItem, Context, BoxAnchor, DismissEvent, Entity,
+    Action, App, AsyncWindowContext, BoxAnchor, ClipboardItem, Context, DismissEvent, Entity,
     EntityId, EventEmitter, FocusHandle, Focusable, MouseButton, MouseDownEvent, Point,
     Subscription, Task, WeakEntity, anchored, deferred,
 };

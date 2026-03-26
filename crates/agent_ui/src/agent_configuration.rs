@@ -16,8 +16,8 @@ use extension::ExtensionManifest;
 use extension_host::ExtensionStore;
 use fs::Fs;
 use gpui::{
-    Action, AnyView, App, AsyncWindowContext, BoxAnchor, Entity, EventEmitter, FocusHandle, Focusable,
-    ScrollHandle, Subscription, Task, WeakEntity,
+    Action, AnyView, App, AsyncWindowContext, BoxAnchor, Entity, EventEmitter, FocusHandle,
+    Focusable, ScrollHandle, Subscription, Task, WeakEntity,
 };
 use itertools::Itertools;
 use language::LanguageRegistry;

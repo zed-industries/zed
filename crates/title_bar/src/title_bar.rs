@@ -24,8 +24,8 @@ use client::{Client, UserStore, zed_urls};
 use cloud_api_types::Plan;
 
 use gpui::{
-    Action, Animation, AnimationExt, AnyElement, App, Context, BoxAnchor, Element, Entity, Focusable,
-    InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
+    Action, Animation, AnimationExt, AnyElement, App, BoxAnchor, Context, Element, Entity,
+    Focusable, InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
     StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window, actions, div,
     pulsating_between,
 };

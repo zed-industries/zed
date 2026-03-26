@@ -18,8 +18,8 @@ use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use futures::{StreamExt, stream::FuturesUnordered};
 use gpui::{
-    Action, AnyElement, App, AsyncWindowContext, ClickEvent, ClipboardItem, Context, BoxAnchor, Div,
-    DragMoveEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent,
+    Action, AnyElement, App, AsyncWindowContext, BoxAnchor, ClickEvent, ClipboardItem, Context,
+    Div, DragMoveEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent,
     Focusable, KeyContext, MouseButton, NavigationDirection, Pixels, Point, PromptLevel, Render,
     ScrollHandle, Subscription, Task, WeakEntity, WeakFocusHandle, Window, actions, anchored,
     deferred, prelude::*,

@@ -264,7 +264,9 @@ impl<M: ManagedView> PopoverMenu<M> {
                 BoxAnchor::TopRight | BoxAnchor::BottomRight | BoxAnchor::RightCenter => {
                     point(offset, px(0.))
                 }
-                BoxAnchor::TopLeft | BoxAnchor::BottomLeft | BoxAnchor::LeftCenter => point(-offset, px(0.)),
+                BoxAnchor::TopLeft | BoxAnchor::BottomLeft | BoxAnchor::LeftCenter => {
+                    point(-offset, px(0.))
+                }
                 BoxAnchor::TopCenter | BoxAnchor::BottomCenter => point(px(0.), px(0.)),
             }
         })

@@ -7,7 +7,7 @@ use client::proto;
 use db::kvp::KeyValueStore;
 
 use gpui::{
-    Action, AnyView, App, Axis, Context, BoxAnchor, Entity, EntityId, EventEmitter, FocusHandle,
+    Action, AnyView, App, Axis, BoxAnchor, Context, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, IntoElement, KeyContext, MouseButton, MouseDownEvent, MouseUpEvent, ParentElement,
     Render, SharedString, StyleRefinement, Styled, Subscription, WeakEntity, Window, deferred, div,
     px,
@@ -1161,7 +1161,9 @@ impl Render for PanelButtons {
 
         let (menu_anchor, menu_attach) = match dock.position {
             DockPosition::Left => (BoxAnchor::BottomLeft, BoxAnchor::TopLeft),
-            DockPosition::Bottom | DockPosition::Right => (BoxAnchor::BottomRight, BoxAnchor::TopRight),
+            DockPosition::Bottom | DockPosition::Right => {
+                (BoxAnchor::BottomRight, BoxAnchor::TopRight)
+            }
         };
 
         let dock_entity = self.dock.clone();

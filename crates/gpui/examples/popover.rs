@@ -1,7 +1,7 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
 use gpui::{
-    App, Context, BoxAnchor, Div, Hsla, Stateful, Window, WindowOptions, anchored, deferred, div,
+    App, BoxAnchor, Context, Div, Hsla, Stateful, Window, WindowOptions, anchored, deferred, div,
     prelude::*, px,
 };
 use gpui_platform::application;

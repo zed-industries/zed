@@ -2,8 +2,8 @@ use collections::VecDeque;
 use edit_prediction::EditPredictionStore;
 use editor::{Editor, EditorEvent, MultiBufferOffset, actions::MoveToEnd, scroll::Autoscroll};
 use gpui::{
-    App, Context, BoxAnchor, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, ParentElement,
-    Render, Styled, Subscription, Task, WeakEntity, Window, actions, div,
+    App, BoxAnchor, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
+    ParentElement, Render, Styled, Subscription, Task, WeakEntity, Window, actions, div,
 };
 use itertools::Itertools as _;
 use language::{LanguageServerId, language_settings::SoftWrap};

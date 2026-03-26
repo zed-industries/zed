@@ -60,7 +60,7 @@ use extension::ExtensionEvents;
 use extension_host::ExtensionStore;
 use fs::Fs;
 use gpui::{
-    Action, Animation, AnimationExt, AnyElement, App, AsyncWindowContext, ClipboardItem, BoxAnchor,
+    Action, Animation, AnimationExt, AnyElement, App, AsyncWindowContext, BoxAnchor, ClipboardItem,
     DismissEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, Focusable,
     KeyContext, Pixels, Subscription, Task, UpdateGlobal, WeakEntity, prelude::*,
     pulsating_between,

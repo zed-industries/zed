@@ -3,7 +3,7 @@ use editor::{
     scroll::Autoscroll,
 };
 use gpui::{
-    Action, App, AppContext as _, Context, BoxAnchor, Div, Entity, EntityId, EventEmitter,
+    Action, App, AppContext as _, BoxAnchor, Context, Div, Entity, EntityId, EventEmitter,
     FocusHandle, Focusable, HighlightStyle, Hsla, InteractiveElement, IntoElement, MouseButton,
     MouseDownEvent, MouseMoveEvent, ParentElement, Render, ScrollStrategy, SharedString, Styled,
     Task, UniformListScrollHandle, WeakEntity, Window, actions, div, rems, uniform_list,

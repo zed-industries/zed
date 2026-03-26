@@ -834,7 +834,11 @@ where
 {
     /// Constructs a `Bounds` from a corner point and size. The specified corner will be placed at
     /// the specified origin.
-    pub fn from_box_anchor_and_size(corner: BoxAnchor, origin: Point<T>, size: Size<T>) -> Bounds<T> {
+    pub fn from_box_anchor_and_size(
+        corner: BoxAnchor,
+        origin: Point<T>,
+        size: Size<T>,
+    ) -> Bounds<T> {
         let origin = match corner {
             BoxAnchor::TopLeft => origin,
             BoxAnchor::TopRight => Point {
@@ -2354,7 +2358,9 @@ where
             BoxAnchor::BottomLeft => self.bottom_left.clone(),
             BoxAnchor::BottomRight => self.bottom_right.clone(),
             BoxAnchor::TopCenter => (self.top_left.clone() + self.top_right.clone()).half(),
-            BoxAnchor::BottomCenter => (self.bottom_left.clone() + self.bottom_right.clone()).half(),
+            BoxAnchor::BottomCenter => {
+                (self.bottom_left.clone() + self.bottom_right.clone()).half()
+            }
             BoxAnchor::LeftCenter => (self.top_left.clone() + self.bottom_left.clone()).half(),
             BoxAnchor::RightCenter => (self.top_right.clone() + self.bottom_right.clone()).half(),
         }

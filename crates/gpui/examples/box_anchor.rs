@@ -7,7 +7,7 @@ use gpui::{
 };
 use gpui_platform::application;
 
-struct CornerDemo {
+struct BoxAnchorDemo {
     hovered_button: Option<usize>,
 }
 
@@ -35,7 +35,7 @@ fn resolved_position(corner: BoxAnchor, button_size: Size<Pixels>) -> Point<Pixe
         }
 }
 
-impl CornerDemo {
+impl BoxAnchorDemo {
     fn buttons() -> Vec<ButtonDemo> {
         vec![
             ButtonDemo {
@@ -78,7 +78,7 @@ impl CornerDemo {
     }
 }
 
-impl Render for CornerDemo {
+impl Render for BoxAnchorDemo {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let buttons = Self::buttons();
         let button_size = size(px(120.0), px(65.0));
@@ -92,7 +92,7 @@ impl Render for CornerDemo {
             .bg(gpui::white())
             .gap_4()
             .p_10()
-            .child("Anchored Popover")
+            .child("Popover with BoxAnchor")
             .child(
                 div()
                     .size_128()
@@ -178,7 +178,7 @@ fn run_example() {
                 ..Default::default()
             },
             |_, cx| {
-                cx.new(|_| CornerDemo {
+                cx.new(|_| BoxAnchorDemo {
                     hovered_button: None,
                 })
             },

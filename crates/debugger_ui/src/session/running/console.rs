@@ -12,8 +12,8 @@ use editor::{
 };
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    Action as _, AppContext, Context, BoxAnchor, Entity, FocusHandle, Focusable, HighlightStyle, Hsla,
-    Render, Subscription, Task, TextStyle, WeakEntity, actions,
+    Action as _, AppContext, BoxAnchor, Context, Entity, FocusHandle, Focusable, HighlightStyle,
+    Hsla, Render, Subscription, Task, TextStyle, WeakEntity, actions,
 };
 use language::{Anchor, Buffer, CharScopeContext, CodeLabel, TextBufferSnapshot, ToOffset};
 use menu::{Confirm, SelectNext, SelectPrevious};
