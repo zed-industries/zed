@@ -7260,32 +7260,37 @@ impl Workspace {
             .flex_none()
             .child(dock.clone())
             .children(leader_border);
+
+        // Apply sizing only when the dock is open. When closed the dock is still
+        // included in the element tree so its focus handle remains mounted — without
+        // this, toggle_panel_focus cannot focus the panel when the dock is closed.
         let dock = dock.read(cx);
-        let panel = dock.visible_panel()?;
-        let size_state = dock.stored_panel_size_state(panel.as_ref());
-        if position.axis() == Axis::Horizontal {
-            if let Some(ratio) = size_state
-                .and_then(|state| state.flexible_size_ratio)
-                .or_else(|| self.default_flexible_dock_ratio(position))
-                && panel.supports_flexible_size(window, cx)
-            {
-                let ratio = ratio.clamp(0.001, 0.999);
-                let grow = ratio / (1.0 - ratio);
-                let style = container.style();
-                style.flex_grow = Some(grow);
-                style.flex_shrink = Some(1.0);
-                style.flex_basis = Some(relative(0.).into());
+        if let Some(panel) = dock.visible_panel() {
+            let size_state = dock.stored_panel_size_state(panel.as_ref());
+            if position.axis() == Axis::Horizontal {
+                if let Some(ratio) = size_state
+                    .and_then(|state| state.flexible_size_ratio)
+                    .or_else(|| self.default_flexible_dock_ratio(position))
+                    && panel.supports_flexible_size(window, cx)
+                {
+                    let ratio = ratio.clamp(0.001, 0.999);
+                    let grow = ratio / (1.0 - ratio);
+                    let style = container.style();
+                    style.flex_grow = Some(grow);
+                    style.flex_shrink = Some(1.0);
+                    style.flex_basis = Some(relative(0.).into());
+                } else {
+                    let size = size_state
+                        .and_then(|state| state.size)
+                        .unwrap_or_else(|| panel.default_size(window, cx));
+                    container = container.w(size);
+                }
             } else {
                 let size = size_state
                     .and_then(|state| state.size)
                     .unwrap_or_else(|| panel.default_size(window, cx));
-                container = container.w(size);
+                container = container.h(size);
             }
-        } else {
-            let size = size_state
-                .and_then(|state| state.size)
-                .unwrap_or_else(|| panel.default_size(window, cx));
-            container = container.h(size);
         }
 
         Some(container)
