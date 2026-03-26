@@ -55,6 +55,14 @@ pub trait Sidebar: Focusable + Render + Sized {
     }
     /// Makes focus reset back to the search editor upon toggling the sidebar from outside
     fn prepare_for_focus(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
+    /// Opens or cycles the thread switcher popup.
+    fn toggle_thread_switcher(
+        &mut self,
+        _select_last: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+    }
 }
 
 pub trait SidebarHandle: 'static + Send + Sync {
@@ -66,6 +74,7 @@ pub trait SidebarHandle: 'static + Send + Sync {
     fn has_notifications(&self, cx: &App) -> bool;
     fn to_any(&self) -> AnyView;
     fn entity_id(&self) -> EntityId;
+    fn toggle_thread_switcher(&self, select_last: bool, window: &mut Window, cx: &mut App);
 
     fn is_threads_list_view_active(&self, cx: &App) -> bool;
 }
@@ -111,6 +120,15 @@ impl<T: Sidebar> SidebarHandle for Entity<T> {
 
     fn entity_id(&self) -> EntityId {
         Entity::entity_id(self)
+    }
+
+    fn toggle_thread_switcher(&self, select_last: bool, window: &mut Window, cx: &mut App) {
+        let entity = self.clone();
+        window.defer(cx, move |window, cx| {
+            entity.update(cx, |this, cx| {
+                this.toggle_thread_switcher(select_last, window, cx);
+            });
+        });
     }
 
     fn is_threads_list_view_active(&self, cx: &App) -> bool {
@@ -857,14 +875,17 @@ impl Render for MultiWorkspace {
                     .on_action(cx.listener(Self::next_workspace))
                     .on_action(cx.listener(Self::previous_workspace))
                     .on_action(cx.listener(Self::move_active_workspace_to_new_window))
-                    .when_some(
-                        self.sidebar.as_ref().map(|s| s.focus_handle(cx)),
-                        |this, sidebar_focus| {
-                            this.on_action(move |action: &ToggleThreadSwitcher, window, cx| {
-                                sidebar_focus.dispatch_action(action, window, cx);
-                            })
+                    .on_action(cx.listener(
+                        |this: &mut Self, action: &ToggleThreadSwitcher, window, cx| {
+                            if let Some(sidebar) = &this.sidebar {
+                                sidebar.toggle_thread_switcher(
+                                    action.select_last,
+                                    window,
+                                    cx,
+                                );
+                            }
                         },
-                    )
+                    ))
                 })
                 .when(
                     self.sidebar_open() && self.multi_workspace_enabled(cx),

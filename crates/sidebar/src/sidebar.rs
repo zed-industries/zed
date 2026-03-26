@@ -2603,15 +2603,24 @@ impl Sidebar {
         }
     }
 
-    fn toggle_thread_switcher(
+    fn on_toggle_thread_switcher(
         &mut self,
         action: &ToggleThreadSwitcher,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.toggle_thread_switcher_impl(action.select_last, window, cx);
+    }
+
+    fn toggle_thread_switcher_impl(
+        &mut self,
+        select_last: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(thread_switcher) = &self.thread_switcher {
             thread_switcher.update(cx, |switcher, cx| {
-                if action.select_last {
+                if select_last {
                     switcher.select_last(cx);
                 } else {
                     switcher.cycle_selection(cx);
@@ -2625,7 +2634,6 @@ impl Sidebar {
             return;
         }
 
-        let select_last = action.select_last;
         let weak_multi_workspace = self.multi_workspace.clone();
 
         let original_agent = self
@@ -3352,6 +3360,15 @@ impl WorkspaceSidebar for Sidebar {
         self.selection = None;
         cx.notify();
     }
+
+    fn toggle_thread_switcher(
+        &mut self,
+        select_last: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_thread_switcher_impl(select_last, window, cx);
+    }
 }
 
 impl Focusable for Sidebar {
@@ -3395,7 +3412,7 @@ impl Render for Sidebar {
             .on_action(cx.listener(Self::new_thread_in_group))
             .on_action(cx.listener(Self::toggle_archive))
             .on_action(cx.listener(Self::focus_sidebar_filter))
-            .on_action(cx.listener(Self::toggle_thread_switcher))
+            .on_action(cx.listener(Self::on_toggle_thread_switcher))
             .on_action(cx.listener(|this, _: &OpenRecent, window, cx| {
                 this.recent_projects_popover_handle.toggle(window, cx);
             }))
