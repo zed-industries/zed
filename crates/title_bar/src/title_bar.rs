@@ -81,7 +81,8 @@ pub fn init(cx: &mut App) {
         let Some(window) = window else {
             return;
         };
-        let item = cx.new(|cx| TitleBar::new("title-bar", workspace, window, cx));
+        let multi_workspace = workspace.multi_workspace().cloned();
+        let item = cx.new(|cx| TitleBar::new("title-bar", workspace, multi_workspace, window, cx));
         workspace.set_titlebar_item(item.into(), window, cx);
 
         workspace.register_action(|workspace, _: &SimulateUpdateAvailable, _window, cx| {
@@ -306,6 +307,7 @@ impl TitleBar {
     pub fn new(
         id: impl Into<ElementId>,
         workspace: &Workspace,
+        multi_workspace: Option<WeakEntity<MultiWorkspace>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -383,14 +385,10 @@ impl TitleBar {
         });
 
         let update_version = cx.new(|cx| UpdateVersion::new(cx));
-        let multi_workspace = window
-            .root::<MultiWorkspace>()
-            .flatten()
-            .map(|mw| mw.downgrade());
         let platform_titlebar = cx.new(|cx| {
             let mut titlebar = PlatformTitleBar::new(id, cx);
-            if let Some(weak) = multi_workspace.clone() {
-                titlebar.set_multi_workspace(weak);
+            if let Some(mw) = multi_workspace.clone() {
+                titlebar = titlebar.with_multi_workspace(mw);
             }
             titlebar
         });

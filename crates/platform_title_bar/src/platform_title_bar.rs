@@ -52,6 +52,11 @@ impl PlatformTitleBar {
         }
     }
 
+    pub fn with_multi_workspace(mut self, multi_workspace: WeakEntity<MultiWorkspace>) -> Self {
+        self.multi_workspace = Some(multi_workspace);
+        self
+    }
+
     pub fn title_bar_color(&self, window: &mut Window, cx: &mut Context<Self>) -> Hsla {
         if cfg!(any(target_os = "linux", target_os = "freebsd")) {
             if window.is_window_active() && !self.should_move {
@@ -91,10 +96,6 @@ impl PlatformTitleBar {
 
     pub fn init(cx: &mut App) {
         SystemWindowTabs::init(cx);
-    }
-
-    pub fn set_multi_workspace(&mut self, multi_workspace: WeakEntity<MultiWorkspace>) {
-        self.multi_workspace = Some(multi_workspace);
     }
 
     fn sidebar_render_state(&self, cx: &App) -> SidebarRenderState {
