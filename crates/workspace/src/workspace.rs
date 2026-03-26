@@ -7258,52 +7258,41 @@ impl Workspace {
             leader_border_for_pane(follower_states, &pane, window, cx)
         });
 
-        // All horizontal dock widths are set here on the wrapper so that both flexible
-        // and fixed-width panels have their widths controlled at the same layer. The
-        // dock's own render always uses w_full() for horizontal panels.
-        //
-        // For flexible panels we use proportional flex-grow so the layout engine computes
-        // the correct width from the live container size each frame, avoiding the
-        // one-frame flicker caused by pixel widths derived from stale `workspace.bounds`.
-        //
-        // With flex_basis = 0, flex_grow = ratio / (1 - ratio), and the center using
-        // flex_grow = 1, the distribution naturally gives:
-        //   dock_width = available_width * ratio
-        // where available_width excludes any fixed-width docks — identical semantics to
-        // the previous approach but computed per-frame by the layout engine.
-        let mut wrapper = div().flex().overflow_hidden();
+        let mut container = div()
+            .flex()
+            .overflow_hidden()
+            .flex_none()
+            .child(dock.clone())
+            .children(leader_border);
+        let dock = dock.read(cx);
+        let panel = dock.visible_panel()?;
+        let size_state = dock.stored_panel_size_state(panel.as_ref());
         if position.axis() == Axis::Horizontal {
-            let dock_ref = dock.read(cx);
-            if let Some(panel) = dock_ref.visible_panel() {
-                if panel.supports_flexible_size(window, cx) {
-                    if let Some(ratio) = dock_ref
-                        .stored_panel_size_state(panel.as_ref())
-                        .and_then(|state| state.flexible_size_ratio)
-                        .or_else(|| self.default_flexible_dock_ratio(position))
-                    {
-                        let ratio = ratio.clamp(0.001, 0.999);
-                        let grow = ratio / (1.0 - ratio);
-                        wrapper.style().flex_grow = Some(grow);
-                        wrapper.style().flex_shrink = Some(1.0);
-                        wrapper.style().flex_basis = Some(relative(0.).into());
-                    } else {
-                        let size = panel.default_size(window, cx);
-                        wrapper = wrapper.flex_none().w(size);
-                    }
-                } else {
-                    let size = dock_ref
-                        .stored_active_panel_size(window, cx)
-                        .unwrap_or_else(|| panel.default_size(window, cx));
-                    wrapper = wrapper.flex_none().w(size);
-                }
+            if let Some(ratio) = size_state
+                .and_then(|state| state.flexible_size_ratio)
+                .or_else(|| self.default_flexible_dock_ratio(position))
+                && panel.supports_flexible_size(window, cx)
+            {
+                let ratio = ratio.clamp(0.001, 0.999);
+                let grow = ratio / (1.0 - ratio);
+                let style = container.style();
+                style.flex_grow = Some(grow);
+                style.flex_shrink = Some(1.0);
+                style.flex_basis = Some(relative(0.).into());
             } else {
-                wrapper = wrapper.flex_none();
+                let size = size_state
+                    .and_then(|state| state.size)
+                    .unwrap_or_else(|| panel.default_size(window, cx));
+                container = container.w(size);
             }
         } else {
-            wrapper = wrapper.flex_none();
+            let size = size_state
+                .and_then(|state| state.size)
+                .unwrap_or_else(|| panel.default_size(window, cx));
+            container = container.h(size);
         }
 
-        Some(wrapper.child(dock.clone()).children(leader_border))
+        Some(container)
     }
 
     pub fn for_window(window: &Window, cx: &App) -> Option<Entity<Workspace>> {

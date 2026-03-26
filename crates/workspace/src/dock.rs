@@ -1004,11 +1004,9 @@ pub(crate) fn resolve_panel_size(
 }
 
 impl Render for Dock {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let dispatch_context = Self::dispatch_context();
         if let Some(entry) = self.visible_entry() {
-            let size = self.resolved_panel_size(entry, window, cx);
-
             let position = self.position;
             let create_resize_handle = || {
                 let handle = div()
@@ -1077,10 +1075,10 @@ impl Render for Dock {
                 .border_color(cx.theme().colors().border)
                 .overflow_hidden()
                 .map(|this| match self.position().axis() {
-                    // Horizontal width is always set on the workspace wrapper in
+                    // Width and height are always set on the workspace wrapper in
                     // render_dock, so fill whatever space the wrapper provides.
                     Axis::Horizontal => this.w_full().h_full().flex_row(),
-                    Axis::Vertical => this.h(size).w_full().flex_col(),
+                    Axis::Vertical => this.h_full().w_full().flex_col(),
                 })
                 .map(|this| match self.position() {
                     DockPosition::Left => this.border_r_1(),
@@ -1091,7 +1089,7 @@ impl Render for Dock {
                     div()
                         .map(|this| match self.position().axis() {
                             Axis::Horizontal => this.w_full().h_full(),
-                            Axis::Vertical => this.min_h(size).w_full(),
+                            Axis::Vertical => this.h_full().w_full(),
                         })
                         .child(
                             entry
