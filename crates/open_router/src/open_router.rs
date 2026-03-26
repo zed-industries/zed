@@ -8,7 +8,7 @@ pub use settings::DataCollection;
 pub use settings::ModelMode;
 pub use settings::OpenRouterAvailableModel as AvailableModel;
 pub use settings::OpenRouterProvider as Provider;
-use std::{convert::TryFrom, io, time::Duration};
+use std::{io, time::Duration};
 use strum::EnumString;
 use thiserror::Error;
 
@@ -39,31 +39,6 @@ pub enum Role {
     Assistant,
     System,
     Tool,
-}
-
-impl TryFrom<String> for Role {
-    type Error = anyhow::Error;
-
-    fn try_from(value: String) -> Result<Self> {
-        match value.as_str() {
-            "user" => Ok(Self::User),
-            "assistant" => Ok(Self::Assistant),
-            "system" => Ok(Self::System),
-            "tool" => Ok(Self::Tool),
-            _ => Err(anyhow!("invalid role '{value}'")),
-        }
-    }
-}
-
-impl From<Role> for String {
-    fn from(val: Role) -> Self {
-        match val {
-            Role::User => "user".to_owned(),
-            Role::Assistant => "assistant".to_owned(),
-            Role::System => "system".to_owned(),
-            Role::Tool => "tool".to_owned(),
-        }
-    }
 }
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
