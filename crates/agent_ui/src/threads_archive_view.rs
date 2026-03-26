@@ -798,7 +798,7 @@ impl ThreadsArchiveView {
     fn render_header(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_query = !self.filter_editor.read(cx).text(cx).is_empty();
         let sidebar_on_left = matches!(
-            AgentSettings::get_global(cx).sidebar_dock_position(),
+            AgentSettings::get_global(cx).sidebar_side(),
             settings::SidebarSide::Left
         );
         let traffic_lights =

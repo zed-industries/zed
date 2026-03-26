@@ -2979,7 +2979,7 @@ impl Sidebar {
     fn render_sidebar_toggle_button(&self, _cx: &mut Context<Self>) -> impl IntoElement {
         let agent_settings = AgentSettings::get_global(_cx);
         let current_position = agent_settings.sidebar_dock;
-        let on_right = agent_settings.sidebar_dock_position() == SidebarSide::Right;
+        let on_right = agent_settings.sidebar_side() == SidebarSide::Right;
 
         right_click_menu("sidebar-toggle-menu")
             .menu(move |window, cx| {
@@ -3189,7 +3189,7 @@ impl WorkspaceSidebar for Sidebar {
     }
 
     fn side(&self, cx: &App) -> SidebarSide {
-        AgentSettings::get_global(cx).sidebar_dock_position()
+        AgentSettings::get_global(cx).sidebar_side()
     }
 
     fn prepare_for_focus(&mut self, _window: &mut Window, cx: &mut Context<Self>) {

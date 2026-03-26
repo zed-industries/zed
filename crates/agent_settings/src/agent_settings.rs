@@ -79,7 +79,7 @@ impl AgentSettings {
         return None;
     }
 
-    pub fn sidebar_dock_position(&self) -> SidebarSide {
+    pub fn sidebar_side(&self) -> SidebarSide {
         match self.sidebar_dock {
             SidebarDockPosition::Left => SidebarSide::Left,
             SidebarDockPosition::Right => SidebarSide::Right,
