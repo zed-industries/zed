@@ -1,7 +1,10 @@
-use crate::{DEFAULT_THREAD_TITLE, SelectPermissionGranularity};
+use crate::{
+    DEFAULT_THREAD_TITLE, SelectPermissionGranularity,
+    agent_configuration::configure_context_server_modal::default_markdown_style,
+};
 use std::cell::RefCell;
 
-use acp_thread::ContentBlock;
+use acp_thread::{ContentBlock, PlanEntry};
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
 
@@ -2608,6 +2611,76 @@ impl ThreadView {
             .into_any_element()
     }
 
+    fn render_completed_plan(
+        &self,
+        entries: &[PlanEntry],
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        v_flex()
+            .px_5()
+            .py_1p5()
+            .w_full()
+            .child(
+                v_flex()
+                    .w_full()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(self.tool_card_border_color(cx))
+                    .child(
+                        h_flex()
+                            .px_2()
+                            .py_1()
+                            .gap_1()
+                            .bg(self.tool_card_header_bg(cx))
+                            .border_b_1()
+                            .border_color(self.tool_card_border_color(cx))
+                            .child(
+                                Label::new("Completed Plan")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new(format!(
+                                    "— {} {}",
+                                    entries.len(),
+                                    if entries.len() == 1 { "step" } else { "steps" }
+                                ))
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                            ),
+                    )
+                    .child(
+                        v_flex().children(entries.iter().enumerate().map(|(index, entry)| {
+                            h_flex()
+                                .py_1()
+                                .px_2()
+                                .gap_1p5()
+                                .when(index < entries.len() - 1, |this| {
+                                    this.border_b_1().border_color(cx.theme().colors().border)
+                                })
+                                .child(
+                                    Icon::new(IconName::TodoComplete)
+                                        .size(IconSize::Small)
+                                        .color(Color::Success),
+                                )
+                                .child(
+                                    div()
+                                        .max_w_full()
+                                        .overflow_x_hidden()
+                                        .text_xs()
+                                        .text_color(cx.theme().colors().text_muted)
+                                        .child(MarkdownElement::new(
+                                            entry.content.clone(),
+                                            default_markdown_style(window, cx),
+                                        )),
+                                )
+                        })),
+                    ),
+            )
+            .into_any()
+    }
+
     fn render_edits_summary(
         &self,
         changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>,
@@ -4202,6 +4275,9 @@ impl ThreadView {
                     cx,
                 )
                 .into_any(),
+            AgentThreadEntry::CompletedPlan(entries) => {
+                self.render_completed_plan(entries, window, cx)
+            }
         };
 
         let is_subagent_output = self.is_subagent()
@@ -5063,7 +5139,9 @@ impl ThreadView {
                         return false;
                     }
                 }
-                AgentThreadEntry::ToolCall(_) | AgentThreadEntry::AssistantMessage(_) => {}
+                AgentThreadEntry::ToolCall(_)
+                | AgentThreadEntry::AssistantMessage(_)
+                | AgentThreadEntry::CompletedPlan(_) => {}
             }
         }
 
