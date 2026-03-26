@@ -735,12 +735,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_partial_last_line_matches_correct_location() {
-        // Regression test: when the last query line is a prefix of a buffer line
-        // (e.g. "fn render_search" vs "fn render_search(&self, cx: ...) -> Div {"),
-        // fuzzy_eq fails because the lengths differ too much. The matcher should
-        // still include the correct buffer line in the match range, rather than
-        // matching generic lines (like "}", empty lines) at a wrong location.
+    fn test_prefix_of_last_line_resolves_to_correct_range() {
         let text = indoc! {r#"
             fn on_query_change(&mut self, cx: &mut Context<Self>) {
                 self.filter(cx);
@@ -760,14 +755,14 @@ mod tests {
         );
         let snapshot = buffer.snapshot();
 
-        // The model sends old_text with a PARTIAL last line.
+        // Query with a partial last line.
         let query = "}\n\n\n\nfn render_search";
 
         let mut matcher = StreamingFuzzyMatcher::new(snapshot.clone());
         matcher.push(query, None);
         let matches = matcher.finish();
 
-        // The match MUST include the line containing "fn render_search".
+        // The match should include the line containing "fn render_search".
         let matched_text = matches
             .first()
             .map(|range| snapshot.text_for_range(range.clone()).collect::<String>());
