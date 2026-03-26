@@ -72,6 +72,18 @@ impl StreamingFuzzyMatcher {
     pub fn finish(&mut self) -> Vec<Range<usize>> {
         // Process any remaining incomplete line
         if !self.incomplete_line.is_empty() {
+            if self.matches.len() == 1 {
+                let range = &mut self.matches[0];
+                if range.end < self.snapshot.len()
+                    && self
+                        .snapshot
+                        .contains_str_at(range.end + 1, &self.incomplete_line)
+                {
+                    range.end += 1 + self.incomplete_line.len();
+                    return self.matches.clone();
+                }
+            }
+
             self.query_lines.push(self.incomplete_line.clone());
             self.incomplete_line.clear();
             self.matches = self.resolve_location_fuzzy();
@@ -121,8 +133,6 @@ impl StreamingFuzzyMatcher {
                     if query_line == buffer_line {
                         self.matrix.get(row, col).cost
                     } else if fuzzy_eq(query_line, buffer_line) {
-                        self.matrix.get(row, col).cost + REPLACEMENT_COST
-                    } else if !query_line.is_empty() && buffer_line.starts_with(query_line) {
                         self.matrix.get(row, col).cost + REPLACEMENT_COST
                     } else {
                         self.matrix
@@ -184,43 +194,10 @@ impl StreamingFuzzyMatcher {
                 let buffer_start_ix = self
                     .snapshot
                     .point_to_offset(Point::new(buffer_row_start, 0));
-
-                let last_buffer_row = buffer_row_end - 1;
-                let mut end_col = self.snapshot.line_len(last_buffer_row);
-
-                // When the last query line matched a buffer line via prefix
-                // (e.g. query "fn render_search" vs buffer
-                // "fn render_search(&self, cx: ...) -> Div {"),
-                // truncate the range to end at the prefix boundary so the
-                // streaming diff doesn't replace the full line with the prefix.
-                let first_direction = self
-                    .matrix
-                    .get(new_query_line_count, buffer_row_end as usize)
-                    .direction;
-                if first_direction == SearchDirection::Diagonal {
-                    let last_query_line = self.query_lines[new_query_line_count - 1].trim();
-                    if !last_query_line.is_empty() {
-                        let row_start = self
-                            .snapshot
-                            .point_to_offset(Point::new(last_buffer_row, 0));
-                        let row_end = self
-                            .snapshot
-                            .point_to_offset(Point::new(last_buffer_row, end_col));
-                        let buffer_line: String =
-                            self.snapshot.text_for_range(row_start..row_end).collect();
-                        let buffer_line_trimmed = buffer_line.trim_start();
-                        if buffer_line_trimmed.starts_with(last_query_line)
-                            && buffer_line_trimmed != last_query_line
-                        {
-                            let leading_ws = buffer_line.len() - buffer_line.trim_start().len();
-                            end_col = (leading_ws + last_query_line.len()) as u32;
-                        }
-                    }
-                }
-
-                let buffer_end_ix = self
-                    .snapshot
-                    .point_to_offset(Point::new(last_buffer_row, end_col));
+                let buffer_end_ix = self.snapshot.point_to_offset(Point::new(
+                    buffer_row_end - 1,
+                    self.snapshot.line_len(buffer_row_end - 1),
+                ));
                 valid_matches.push((buffer_row_start, buffer_start_ix..buffer_end_ix));
             }
         }
