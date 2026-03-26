@@ -177,7 +177,11 @@ pub fn cargo_fmt() -> Step<Run> {
 }
 
 pub fn cargo_install_nextest() -> Step<Use> {
-    named::uses("taiki-e", "install-action", "nextest")
+    named::uses(
+        "taiki-e",
+        "install-action",
+        "921e2c9f7148d7ba14cd819f417db338f63e733c", // nextest
+    )
 }
 
 pub fn setup_cargo_config(platform: Platform) -> Step<Run> {
