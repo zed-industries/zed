@@ -15,11 +15,8 @@ use std::{
 };
 
 use gpui::{App, Entity};
-use project::git_store::RepositorySnapshot;
 use ui::SharedString;
 use workspace::{MultiWorkspace, PathList, Workspace};
-
-use super::workspace_label_from_path_list;
 
 /// Identifies a project group by a set of paths the workspaces in this group
 /// have.
@@ -33,7 +30,18 @@ pub struct ProjectGroupName {
 
 impl ProjectGroupName {
     pub fn display_name(&self) -> SharedString {
-        workspace_label_from_path_list(&self.path_list)
+        let mut names = Vec::with_capacity(self.path_list.paths().len());
+        for abs_path in self.path_list.paths() {
+            if let Some(name) = abs_path.file_name() {
+                names.push(name.to_string_lossy().to_string());
+            }
+        }
+        if names.is_empty() {
+            // TODO: Can we do something better in this case?
+            "Empty Workspace".into()
+        } else {
+            names.join(", ").into()
+        }
     }
 
     pub fn path_list(&self) -> &PathList {
@@ -128,21 +136,18 @@ impl ProjectGroupBuilder {
         }
     }
 
-    fn add_snapshot_mapping(&mut self, snapshot: &RepositorySnapshot) {
-        self.add_mapping(
-            &snapshot.work_directory_abs_path,
-            &snapshot.original_repo_abs_path,
-        );
-
-        for worktree in snapshot.linked_worktrees.iter() {
-            self.add_mapping(&worktree.path, &snapshot.original_repo_abs_path);
-        }
-    }
-
     pub fn add_workspace_mappings(&mut self, workspace: &Workspace, cx: &App) {
         for repo in workspace.project().read(cx).repositories(cx).values() {
             let snapshot = repo.read(cx).snapshot();
-            self.add_snapshot_mapping(&snapshot);
+
+            self.add_mapping(
+                &snapshot.work_directory_abs_path,
+                &snapshot.original_repo_abs_path,
+            );
+
+            for worktree in snapshot.linked_worktrees.iter() {
+                self.add_mapping(&worktree.path, &snapshot.original_repo_abs_path);
+            }
         }
     }
 

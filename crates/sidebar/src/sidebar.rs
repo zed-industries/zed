@@ -229,21 +229,6 @@ fn workspace_path_list(workspace: &Entity<Workspace>, cx: &App) -> PathList {
     PathList::new(&workspace.read(cx).root_paths(cx))
 }
 
-fn workspace_label_from_path_list(path_list: &PathList) -> SharedString {
-    let mut names = Vec::with_capacity(path_list.paths().len());
-    for abs_path in path_list.paths() {
-        if let Some(name) = abs_path.file_name() {
-            names.push(name.to_string_lossy().to_string());
-        }
-    }
-    if names.is_empty() {
-        // TODO: Can we do something better in this case?
-        "Empty Workspace".into()
-    } else {
-        names.join(", ").into()
-    }
-}
-
 /// The sidebar re-derives its entire entry list from scratch on every
 /// change via `update_entries` → `rebuild_contents`. Avoid adding
 /// incremental or inter-event coordination state — if something can
@@ -724,23 +709,23 @@ impl Sidebar {
                             }
                         });
 
-                    let workspace_rows: Vec<_> = thread_store
+                    let workspace_threads: Vec<_> = thread_store
                         .read(cx)
                         .entries_for_path(&ws_path_list)
                         .collect();
-                    for row in workspace_rows {
-                        if !seen_session_ids.insert(row.session_id.clone()) {
+                    for thread in workspace_threads {
+                        if !seen_session_ids.insert(thread.session_id.clone()) {
                             continue;
                         }
-                        let (agent, icon, icon_from_external_svg) = resolve_agent(&row);
+                        let (agent, icon, icon_from_external_svg) = resolve_agent(&thread);
                         threads.push(ThreadEntry {
                             agent,
                             session_info: acp_thread::AgentSessionInfo {
-                                session_id: row.session_id.clone(),
+                                session_id: thread.session_id.clone(),
                                 work_dirs: None,
-                                title: Some(row.title.clone()),
-                                updated_at: Some(row.updated_at),
-                                created_at: row.created_at,
+                                title: Some(thread.title.clone()),
+                                updated_at: Some(thread.updated_at),
+                                created_at: thread.created_at,
                                 meta: None,
                             },
                             icon,
@@ -3164,24 +3149,8 @@ fn all_thread_infos_for_workspace(
     workspace: &Entity<Workspace>,
     cx: &App,
 ) -> impl Iterator<Item = ActiveThreadInfo> {
-    enum ThreadInfoIterator<T: Iterator<Item = ActiveThreadInfo>> {
-        Empty,
-        Threads(T),
-    }
-
-    impl<T: Iterator<Item = ActiveThreadInfo>> Iterator for ThreadInfoIterator<T> {
-        type Item = ActiveThreadInfo;
-
-        fn next(&mut self) -> Option<Self::Item> {
-            match self {
-                ThreadInfoIterator::Empty => None,
-                ThreadInfoIterator::Threads(threads) => threads.next(),
-            }
-        }
-    }
-
     let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) else {
-        return ThreadInfoIterator::Empty;
+        return None.into_iter().flatten();
     };
     let agent_panel = agent_panel.read(cx);
 
@@ -3227,7 +3196,7 @@ fn all_thread_infos_for_workspace(
             }
         });
 
-    ThreadInfoIterator::Threads(threads)
+    Some(threads).into_iter().flatten()
 }
 
 #[cfg(test)]
