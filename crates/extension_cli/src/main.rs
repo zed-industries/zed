@@ -166,12 +166,16 @@ async fn copy_extension_resources(
         let output_themes_dir = output_dir.join("themes");
         fs::create_dir_all(&output_themes_dir)?;
         for theme_path in &manifest.themes {
-            let theme_path = theme_path.as_std_path();
             fs::copy(
                 extension_path.join(theme_path),
                 output_themes_dir.join(theme_path.file_name().context("invalid theme path")?),
             )
-            .with_context(|| format!("failed to copy theme '{}'", theme_path.display()))?;
+            .with_context(|| {
+                format!(
+                    "failed to copy theme '{}'",
+                    theme_path.as_std_path().display()
+                )
+            })?;
         }
     }
 
@@ -179,7 +183,6 @@ async fn copy_extension_resources(
         let output_icon_themes_dir = output_dir.join("icon_themes");
         fs::create_dir_all(&output_icon_themes_dir)?;
         for icon_theme_path in &manifest.icon_themes {
-            let icon_theme_path = icon_theme_path.as_std_path();
             fs::copy(
                 extension_path.join(icon_theme_path),
                 output_icon_themes_dir.join(
@@ -189,7 +192,10 @@ async fn copy_extension_resources(
                 ),
             )
             .with_context(|| {
-                format!("failed to copy icon theme '{}'", icon_theme_path.display())
+                format!(
+                    "failed to copy icon theme '{}'",
+                    icon_theme_path.as_std_path().display()
+                )
             })?;
         }
 
@@ -227,7 +233,6 @@ async fn copy_extension_resources(
         let output_languages_dir = output_dir.join("languages");
         fs::create_dir_all(&output_languages_dir)?;
         for language_path in &manifest.languages {
-            let language_path = language_path.as_std_path();
             copy_recursive(
                 fs.as_ref(),
                 &extension_path.join(language_path),
@@ -240,7 +245,10 @@ async fn copy_extension_resources(
             )
             .await
             .with_context(|| {
-                format!("failed to copy language dir '{}'", language_path.display())
+                format!(
+                    "failed to copy language dir '{}'",
+                    language_path.as_std_path().display()
+                )
             })?;
         }
     }
@@ -248,8 +256,6 @@ async fn copy_extension_resources(
     if !manifest.debug_adapters.is_empty() {
         for (debug_adapter, entry) in &manifest.debug_adapters {
             let schema_path = extension::build_debug_adapter_schema_path(debug_adapter, entry);
-            let schema_path = schema_path.as_std_path();
-
             let parent = schema_path
                 .parent()
                 .with_context(|| format!("invalid empty schema path for {debug_adapter}"))?;
@@ -267,7 +273,7 @@ async fn copy_extension_resources(
             .with_context(|| {
                 format!(
                     "failed to copy debug adapter schema '{}'",
-                    schema_path.display()
+                    schema_path.as_std_path().display(),
                 )
             })?;
         }
@@ -325,7 +331,7 @@ fn test_languages(
     grammars: &HashMap<String, Language>,
 ) -> Result<()> {
     for relative_language_dir in &manifest.languages {
-        let language_dir = extension_path.join(relative_language_dir.as_std_path());
+        let language_dir = extension_path.join(relative_language_dir);
         let config_path = language_dir.join(LanguageConfig::FILE_NAME);
         let config = LanguageConfig::load(&config_path)?;
         let grammar = if let Some(name) = &config.grammar {
@@ -398,7 +404,7 @@ async fn test_themes(
     fs: Arc<dyn Fs>,
 ) -> Result<()> {
     for relative_theme_path in &manifest.themes {
-        let theme_path = extension_path.join(relative_theme_path.as_std_path());
+        let theme_path = extension_path.join(relative_theme_path);
         let theme_family = theme::read_user_theme(&theme_path, fs.clone()).await?;
         log::info!("loaded theme family {}", theme_family.name);
 

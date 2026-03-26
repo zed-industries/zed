@@ -137,7 +137,7 @@ impl HeadlessExtensionStore {
         }
 
         for language_path in &manifest.languages {
-            let language_path = extension_dir.join(language_path.as_std_path());
+            let language_path = extension_dir.join(language_path);
             let config = fs
                 .load(&language_path.join(LanguageConfig::FILE_NAME))
                 .await?;
@@ -200,7 +200,7 @@ impl HeadlessExtensionStore {
                 this.proxy.register_debug_adapter(
                     wasm_extension.clone(),
                     debug_adapter.clone(),
-                    &extension_dir.join(schema_path.as_std_path()),
+                    &extension_dir.join(schema_path),
                 );
             })?;
             log::info!("Loaded debug adapter: {}", debug_adapter);

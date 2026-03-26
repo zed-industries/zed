@@ -386,10 +386,9 @@ impl ExtensionManifest {
             let manifest_content = fs.load(&extension_manifest_path).await.with_context(|| {
                 format!("loading {extension_name} extension.toml, {extension_manifest_path:?}")
             })?;
-            let manifest: ExtensionManifest = toml::from_str(&manifest_content).map_err(|err| {
+            toml::from_str(&manifest_content).map_err(|err| {
                 anyhow!("Invalid extension.toml for extension {extension_name}:\n{err}")
-            })?;
-            Ok(manifest.normalize_paths()?)
+            })
         } else if let extension_manifest_path = extension_manifest_path.with_extension("json")
             && fs.is_file(&extension_manifest_path).await
         {
@@ -397,49 +396,12 @@ impl ExtensionManifest {
                 format!("loading {extension_name} extension.json, {extension_manifest_path:?}")
             })?;
 
-            let manifest = serde_json::from_str::<OldExtensionManifest>(&manifest_content)
+            serde_json::from_str::<OldExtensionManifest>(&manifest_content)
                 .with_context(|| format!("invalid extension.json for extension {extension_name}"))
-                .map(|manifest_json| manifest_from_old_manifest(manifest_json, extension_name))?;
-            Ok(manifest.normalize_paths()?)
+                .map(|manifest_json| manifest_from_old_manifest(manifest_json, extension_name))
         } else {
             anyhow::bail!("No extension manifest found for extension {extension_name}")
         }
-    }
-
-    /// Normalize all extension manifest paths to match POSIX style.
-    pub fn normalize_paths(mut self) -> Result<Self> {
-        let normalize = |path: RelPathBuf| -> Result<RelPathBuf> {
-            Ok(RelPath::new(path.as_std_path(), PathStyle::Windows)?.into_owned())
-        };
-
-        self.languages = self
-            .languages
-            .into_iter()
-            .map(normalize)
-            .collect::<Result<_>>()?;
-
-        self.themes = self
-            .themes
-            .into_iter()
-            .map(normalize)
-            .collect::<Result<_>>()?;
-
-        self.icon_themes = self
-            .icon_themes
-            .into_iter()
-            .map(normalize)
-            .collect::<Result<_>>()?;
-
-        self.debug_adapters = self
-            .debug_adapters
-            .into_iter()
-            .map(|(name, mut entry)| {
-                entry.schema_path = entry.schema_path.map(normalize).transpose()?;
-                Ok((name, entry))
-            })
-            .collect::<Result<_>>()?;
-
-        Ok(self)
     }
 }
 
@@ -488,6 +450,8 @@ fn manifest_from_old_manifest(
 
 #[cfg(test)]
 mod tests {
+    use fs::FakeFs;
+    use gpui::TestAppContext;
     use pretty_assertions::assert_eq;
 
     use crate::ProcessExecCapability;
@@ -520,21 +484,15 @@ mod tests {
         }
     }
 
-    fn rel_path_buf(path: impl AsRef<Path>) -> RelPathBuf {
-        RelPath::new(path.as_ref(), PathStyle::Posix)
-            .expect("test debug adapter schema path should be valid relative path")
-            .into_owned()
-    }
-
     #[test]
     fn test_build_adapter_schema_path_with_schema_path() {
         let adapter_name = Arc::from("my_adapter");
         let entry = DebugAdapterManifestEntry {
-            schema_path: Some(rel_path_buf("foo/bar")),
+            schema_path: Some("foo/bar".into()),
         };
 
         let path = build_debug_adapter_schema_path(&adapter_name, &entry);
-        assert_eq!(path, rel_path_buf("foo/bar"));
+        assert_eq!(path, "foo/bar".into());
     }
 
     #[test]
@@ -543,10 +501,33 @@ mod tests {
         let entry = DebugAdapterManifestEntry { schema_path: None };
 
         let path = build_debug_adapter_schema_path(&adapter_name, &entry);
-        assert_eq!(
-            path,
-            rel_path_buf(Path::new("debug_adapter_schemas").join("my_adapter.json"))
-        );
+        assert_eq!(path, "debug_adapter_schemas/my_adapter.json".into());
+    }
+
+    #[gpui::test]
+    async fn test_load_manifest_with_mixed_windows_separators_in_relative_paths(
+        cx: &mut TestAppContext,
+    ) {
+        let fs = FakeFs::new(cx.executor());
+        let extension_path = Path::new("/extension");
+
+        fs.insert_tree(
+            extension_path,
+            serde_json::json!({
+                "extension.toml": r#"
+id = "test-manifest"
+name = "Test Manifest"
+version = "0.0.1"
+schema_version = 0
+languages = ["languages\\mixed/path"]
+"#,
+            }),
+        )
+        .await;
+
+        let manifest = ExtensionManifest::load(fs, extension_path).await.unwrap();
+
+        assert_eq!(manifest.languages, vec!["languages/mixed/path".into()]);
     }
 
     #[test]

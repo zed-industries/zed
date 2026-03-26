@@ -26,11 +26,7 @@ use std::{
     sync::Arc,
 };
 use theme::ThemeRegistry;
-use util::{
-    paths::PathStyle,
-    rel_path::{RelPath, RelPathBuf},
-    test::TempTree,
-};
+use util::test::TempTree;
 
 #[cfg(test)]
 #[ctor::ctor]
@@ -138,12 +134,6 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     )
     .await;
 
-    let rel_path_buf = |path: &str| -> RelPathBuf {
-        RelPath::new(Path::new(path), PathStyle::Posix)
-            .expect("test paths should be valid relative POSIX paths")
-            .into_owned()
-    };
-
     let mut expected_index = ExtensionIndex {
         extensions: [
             (
@@ -160,10 +150,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         themes: Default::default(),
                         icon_themes: Vec::new(),
                         lib: Default::default(),
-                        languages: vec![
-                            rel_path_buf("languages/erb"),
-                            rel_path_buf("languages/ruby"),
-                        ],
+                        languages: vec!["languages/erb".into(), "languages/ruby".into()],
                         grammars: [
                             ("embedded_template".into(), GrammarManifestEntry::default()),
                             ("ruby".into(), GrammarManifestEntry::default()),
@@ -195,8 +182,8 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         authors: vec![],
                         repository: None,
                         themes: vec![
-                            rel_path_buf("themes/monokai-pro.json"),
-                            rel_path_buf("themes/monokai.json"),
+                            "themes/monokai-pro.json".into(),
+                            "themes/monokai.json".into(),
                         ],
                         icon_themes: Vec::new(),
                         lib: Default::default(),
@@ -378,7 +365,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 description: None,
                 authors: vec![],
                 repository: None,
-                themes: vec![rel_path_buf("themes/gruvbox.json")],
+                themes: vec!["themes/gruvbox.json".into()],
                 icon_themes: Vec::new(),
                 lib: Default::default(),
                 languages: Default::default(),

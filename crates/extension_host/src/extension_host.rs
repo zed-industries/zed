@@ -57,9 +57,11 @@ use std::{
 };
 use task::TaskTemplates;
 use url::Url;
-use util::paths::PathStyle;
-use util::rel_path::RelPath;
-use util::{ResultExt, paths::RemotePathBuf};
+use util::{
+    ResultExt,
+    paths::{PathStyle, RemotePathBuf},
+    rel_path::RelPath,
+};
 use wasm_host::{
     WasmExtension, WasmHost,
     wit::{is_supported_wasm_api_version, wasm_api_version_range},
@@ -1459,7 +1461,7 @@ impl ExtensionStore {
                         let mut path = root_dir.clone();
                         path.push(Path::new(manifest.id.as_ref()));
                         if let Some(schema_path) = &meta.schema_path {
-                            path.push(schema_path.as_rel_path().as_std_path());
+                            path.push(schema_path);
                         } else {
                             path.push("debug_adapter_schemas");
                             path.push(Path::new(debug_adapter.as_ref()).with_extension("json"));
@@ -1627,7 +1629,7 @@ impl ExtensionStore {
                         theme_name.into(),
                         ExtensionIndexThemeEntry {
                             extension: extension_id.clone(),
-                            path: relative_path.as_std_path().to_path_buf().clone(),
+                            path: relative_path.as_std_path().to_path_buf(),
                         },
                     );
                 }
@@ -1659,7 +1661,7 @@ impl ExtensionStore {
                         icon_theme_name.into(),
                         ExtensionIndexIconThemeEntry {
                             extension: extension_id.clone(),
-                            path: relative_path.as_std_path().to_path_buf().clone(),
+                            path: relative_path.as_std_path().to_path_buf(),
                         },
                     );
                 }
@@ -1730,15 +1732,14 @@ impl ExtensionStore {
             }
 
             for language_path in loaded_extension.manifest.languages.iter() {
-                let language_path = language_path.as_std_path().to_path_buf();
                 if fs
-                    .is_file(&src_dir.join(&language_path).join(CONFIG_TOML))
+                    .is_file(&src_dir.join(language_path).join(CONFIG_TOML))
                     .await
                 {
-                    fs.create_dir(&tmp_dir.join(&language_path)).await?;
+                    fs.create_dir(&tmp_dir.join(language_path)).await?;
                     fs.copy_file(
-                        &src_dir.join(&language_path).join(CONFIG_TOML),
-                        &tmp_dir.join(&language_path).join(CONFIG_TOML),
+                        &src_dir.join(language_path).join(CONFIG_TOML),
+                        &tmp_dir.join(language_path).join(CONFIG_TOML),
                         fs::CopyOptions::default(),
                     )
                     .await?
@@ -1746,11 +1747,10 @@ impl ExtensionStore {
             }
 
             for (adapter_name, meta) in loaded_extension.manifest.debug_adapters.iter() {
-                let schema_path = &extension::build_debug_adapter_schema_path(adapter_name, meta);
-                let schema_path = schema_path.as_std_path().to_path_buf();
+                let schema_path = extension::build_debug_adapter_schema_path(adapter_name, meta);
 
                 if fs.is_file(&src_dir.join(&schema_path)).await {
-                    if let Some(parent) = &schema_path.parent() {
+                    if let Some(parent) = schema_path.parent() {
                         fs.create_dir(&tmp_dir.join(parent)).await?
                     }
                     fs.copy_file(
