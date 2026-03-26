@@ -3186,11 +3186,15 @@ impl Panel for AgentPanel {
     }
 
     fn activation_priority(&self) -> u32 {
-        8
+        0
     }
 
     fn enabled(&self, cx: &App) -> bool {
         AgentSettings::get_global(cx).enabled(cx)
+    }
+
+    fn is_agent_panel(&self) -> bool {
+        true
     }
 
     fn is_zoomed(&self, _window: &Window, _cx: &App) -> bool {

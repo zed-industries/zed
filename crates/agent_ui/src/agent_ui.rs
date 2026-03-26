@@ -648,7 +648,6 @@ mod tests {
             default_profile: AgentProfileId::default(),
             default_view: DefaultAgentView::Thread,
             profiles: Default::default(),
-
             notify_when_agent_waiting: NotifyWhenAgentWaiting::default(),
             play_sound_when_agent_done: false,
             single_file_review: false,
@@ -662,6 +661,7 @@ mod tests {
             tool_permissions: Default::default(),
             show_turn_stats: false,
             new_thread_location: Default::default(),
+            sidebar_side: Default::default(),
         };
 
         cx.update(|cx| {

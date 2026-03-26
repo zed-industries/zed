@@ -943,6 +943,8 @@
     "button": true,
     // Where to dock the agent panel. Can be 'left', 'right' or 'bottom'.
     "dock": "right",
+    // Where to position the sidebar. Can be 'left', 'right', or 'follow_agent'.
+    "sidebar_side": "follow_agent",
     // Default width when the agent panel is docked to the left or right.
     "default_width": 640,
     // Default height when the agent panel is docked to the bottom.
@@ -1615,6 +1617,8 @@
   "status_bar": {
     // Whether to show the status bar.
     "experimental.show": true,
+    // Whether to show the name of the active file in the status bar.
+    "show_active_file": false,
     // Whether to show the active language button in the status bar.
     "active_language_button": true,
     // Whether to show the cursor position button in the status bar.

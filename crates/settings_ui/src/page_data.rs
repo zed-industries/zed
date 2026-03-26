@@ -3327,7 +3327,7 @@ fn search_and_files_page() -> SettingsPage {
 }
 
 fn window_and_layout_page() -> SettingsPage {
-    fn status_bar_section() -> [SettingsPageItem; 9] {
+    fn status_bar_section() -> [SettingsPageItem; 10] {
         [
             SettingsPageItem::SectionHeader("Status Bar"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -3467,6 +3467,28 @@ fn window_and_layout_page() -> SettingsPage {
                     pick: |settings_content| settings_content.debugger.as_ref()?.button.as_ref(),
                     write: |settings_content, value| {
                         settings_content.debugger.get_or_insert_default().button = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Active File Name",
+                description: "Show the name of the active file in the status bar.",
+                field: Box::new(SettingField {
+                    json_path: Some("status_bar.show_active_file"),
+                    pick: |settings_content| {
+                        settings_content
+                            .status_bar
+                            .as_ref()?
+                            .show_active_file
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .status_bar
+                            .get_or_insert_default()
+                            .show_active_file = value;
                     },
                 }),
                 metadata: None,

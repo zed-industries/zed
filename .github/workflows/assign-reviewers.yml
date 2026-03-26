@@ -51,7 +51,7 @@ jobs:
     steps:
       - name: Generate app token
         id: app-token
-        uses: actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf  # v2.2.1
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
         with:
           app-id: ${{ vars.COORDINATOR_APP_ID }}
           private-key: ${{ secrets.COORDINATOR_APP_PRIVATE_KEY }}
@@ -60,7 +60,7 @@ jobs:
       # SECURITY: checks out the coordinator repo at ref: main, NOT the PR branch.
       # persist-credentials: false prevents the token from leaking into .git/config.
       - name: Checkout coordinator repo
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           repository: zed-industries/codeowner-coordinator
           ref: main
@@ -69,7 +69,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.11"
 
@@ -95,7 +95,7 @@ jobs:
 
       - name: Upload output
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: assign-reviewers-output
           path: /tmp/assign-reviewers-output.txt

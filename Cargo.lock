@@ -10265,6 +10265,7 @@ checksum = "3e2e65a1a2e43cfcb47a895c4c8b10d1f4a61097f9f254f183aee60cad9c651d"
 name = "markdown"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "assets",
  "base64 0.22.1",
  "collections",
@@ -10273,13 +10274,17 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "gpui_platform",
+ "html5ever 0.27.0",
  "language",
  "languages",
  "linkify",
  "log",
+ "markup5ever_rcdom",
+ "mermaid-rs-renderer",
  "node_runtime",
  "pulldown-cmark 0.13.0",
  "settings",
+ "stacksafe",
  "sum_tree",
  "theme",
  "ui",
@@ -10291,21 +10296,13 @@ name = "markdown_preview"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-recursion",
- "collections",
  "editor",
  "gpui",
- "html5ever 0.27.0",
  "language",
- "linkify",
  "log",
  "markdown",
- "markup5ever_rcdom",
- "mermaid-rs-renderer",
- "pretty_assertions",
- "pulldown-cmark 0.13.0",
  "settings",
- "stacksafe",
+ "tempfile",
  "theme",
  "ui",
  "urlencoding",
@@ -15980,6 +15977,7 @@ dependencies = [
  "action_log",
  "agent",
  "agent-client-protocol",
+ "agent_settings",
  "agent_ui",
  "anyhow",
  "assistant_text_thread",
@@ -21516,6 +21514,7 @@ dependencies = [
 name = "workspace"
 version = "0.1.0"
 dependencies = [
+ "agent_settings",
  "any_vec",
  "anyhow",
  "async-recursion",
