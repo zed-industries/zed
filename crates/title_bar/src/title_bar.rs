@@ -387,45 +387,6 @@ impl TitleBar {
         let update_version = cx.new(|cx| UpdateVersion::new(cx));
         let platform_titlebar = cx.new(|cx| PlatformTitleBar::new(id, cx));
 
-        // Set up observer to sync sidebar state from MultiWorkspace to PlatformTitleBar.
-        {
-            let platform_titlebar = platform_titlebar.clone();
-            let window_handle = window.window_handle();
-            cx.spawn(async move |this: WeakEntity<TitleBar>, cx| {
-                let Some(multi_workspace_handle) = window_handle.downcast::<MultiWorkspace>()
-                else {
-                    return;
-                };
-
-                let _ = cx.update(|cx| {
-                    let Ok(multi_workspace) = multi_workspace_handle.entity(cx) else {
-                        return;
-                    };
-
-                    let is_open = multi_workspace.read(cx).sidebar_open();
-                    platform_titlebar.update(cx, |titlebar, cx| {
-                        titlebar.set_workspace_sidebar_open(is_open, cx);
-                    });
-
-                    let platform_titlebar = platform_titlebar.clone();
-                    let subscription = cx.observe(&multi_workspace, move |mw, cx| {
-                        let is_open = mw.read(cx).sidebar_open();
-                        platform_titlebar.update(cx, |titlebar, cx| {
-                            titlebar.set_workspace_sidebar_open(is_open, cx);
-                        });
-                    });
-
-                    if let Some(this) = this.upgrade() {
-                        this.update(cx, |this, _| {
-                            this._subscriptions.push(subscription);
-                            this.multi_workspace = Some(multi_workspace.downgrade());
-                        });
-                    }
-                });
-            })
-            .detach();
-        }
-
         let mut this = Self {
             platform_titlebar,
             application_menu,
@@ -469,21 +430,11 @@ impl TitleBar {
             return;
         };
 
-        let is_open = multi_workspace.read(cx).sidebar_open();
-        self.platform_titlebar.update(cx, |titlebar, cx| {
-            titlebar.set_workspace_sidebar_open(is_open, cx);
+        let weak = multi_workspace.downgrade();
+        self.platform_titlebar.update(cx, |titlebar, _cx| {
+            titlebar.set_multi_workspace(weak.clone());
         });
-
-        let platform_titlebar = self.platform_titlebar.clone();
-        let subscription = cx.observe(&multi_workspace, move |_this, mw, cx| {
-            let is_open = mw.read(cx).sidebar_open();
-            platform_titlebar.update(cx, |titlebar, cx| {
-                titlebar.set_workspace_sidebar_open(is_open, cx);
-            });
-        });
-
-        self.multi_workspace = Some(multi_workspace.downgrade());
-        self._subscriptions.push(subscription);
+        self.multi_workspace = Some(weak);
     }
 
     fn worktree_count(&self, cx: &App) -> usize {
@@ -777,7 +728,13 @@ impl TitleBar {
             "Open Recent Project".to_string()
         };
 
-        let is_sidebar_open = self.platform_titlebar.read(cx).is_workspace_sidebar_open();
+        let is_sidebar_open = self
+            .multi_workspace
+            .as_ref()
+            .and_then(|mw| mw.upgrade())
+            .map(|mw| mw.read(cx).sidebar_open())
+            .unwrap_or(false)
+            && PlatformTitleBar::is_multi_workspace_enabled(cx);
 
         let is_threads_list_view_active = self
             .multi_workspace

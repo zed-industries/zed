@@ -15939,6 +15939,7 @@ dependencies = [
  "action_log",
  "agent",
  "agent-client-protocol",
+ "agent_settings",
  "agent_ui",
  "anyhow",
  "assistant_text_thread",

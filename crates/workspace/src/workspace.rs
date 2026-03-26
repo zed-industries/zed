@@ -29,7 +29,7 @@ pub use dock::Panel;
 pub use multi_workspace::{
     CloseWorkspaceSidebar, DraggedSidebar, FocusWorkspaceSidebar, MultiWorkspace,
     MultiWorkspaceEvent, NextWorkspace, PreviousWorkspace, Sidebar, SidebarHandle,
-    ToggleWorkspaceSidebar,
+    SidebarRenderState, SidebarSide, ToggleWorkspaceSidebar,
 };
 pub use path_list::{PathList, SerializedPathList};
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};
@@ -2127,6 +2127,13 @@ impl Workspace {
         }
     }
 
+    pub fn agent_panel_position(&self, cx: &App) -> Option<DockPosition> {
+        self.all_docks().into_iter().find_map(|dock| {
+            let dock = dock.read(cx);
+            dock.has_agent_panel(cx).then_some(dock.position())
+        })
+    }
+
     pub fn panel_size_state<T: Panel>(&self, cx: &App) -> Option<dock::PanelSizeState> {
         self.all_docks().into_iter().find_map(|dock| {
             let dock = dock.read(cx);
@@ -2325,20 +2332,6 @@ impl Workspace {
 
     pub fn status_bar(&self) -> &Entity<StatusBar> {
         &self.status_bar
-    }
-
-    pub fn set_workspace_sidebar_open(
-        &self,
-        open: bool,
-        has_notifications: bool,
-        show_toggle: bool,
-        cx: &mut App,
-    ) {
-        self.status_bar.update(cx, |status_bar, cx| {
-            status_bar.set_workspace_sidebar_open(open, cx);
-            status_bar.set_sidebar_has_notifications(has_notifications, cx);
-            status_bar.set_show_sidebar_toggle(show_toggle, cx);
-        });
     }
 
     pub fn set_sidebar_focus_handle(&mut self, handle: Option<FocusHandle>) {
