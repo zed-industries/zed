@@ -4568,14 +4568,14 @@ impl Sidebar {
 
         sidebar_side_context_menu("sidebar-toggle-menu", _cx)
             .anchor(if on_right {
-                gpui::Corner::BottomRight
+                gpui::BoxAnchor::BottomRight
             } else {
-                gpui::Corner::BottomLeft
+                gpui::BoxAnchor::BottomLeft
             })
             .attach(if on_right {
-                gpui::Corner::TopRight
+                gpui::BoxAnchor::TopRight
             } else {
-                gpui::Corner::TopLeft
+                gpui::BoxAnchor::TopLeft
             })
             .trigger(move |_is_active, _window, _cx| {
                 let icon = if on_right {
