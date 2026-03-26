@@ -684,17 +684,16 @@ pub enum ApiErrorCode {
 
 impl std::fmt::Display for ApiErrorCode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = match self {
-            ApiErrorCode::InvalidRequestError => "invalid_request_error",
-            ApiErrorCode::AuthenticationError => "authentication_error",
-            ApiErrorCode::PaymentRequiredError => "payment_required_error",
-            ApiErrorCode::PermissionError => "permission_error",
-            ApiErrorCode::RequestTimedOut => "request_timed_out",
-            ApiErrorCode::RateLimitError => "rate_limit_error",
-            ApiErrorCode::ApiError => "api_error",
-            ApiErrorCode::OverloadedError => "overloaded_error",
-        };
-        write!(f, "{s}")
+        f.write_str(match self {
+            Self::InvalidRequestError => "invalid_request_error",
+            Self::AuthenticationError => "authentication_error",
+            Self::PaymentRequiredError => "payment_required_error",
+            Self::PermissionError => "permission_error",
+            Self::RequestTimedOut => "request_timed_out",
+            Self::RateLimitError => "rate_limit_error",
+            Self::ApiError => "api_error",
+            Self::OverloadedError => "overloaded_error",
+        })
     }
 }
 
