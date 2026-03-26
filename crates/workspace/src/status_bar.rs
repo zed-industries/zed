@@ -1,6 +1,6 @@
 use crate::{
     ItemHandle, MultiWorkspace, Pane, SidebarSide, ToggleWorkspaceSidebar,
-    sidebar_dock_context_menu,
+    sidebar_side_context_menu,
 };
 use gpui::{
     AnyView, App, Context, Corner, Decorations, Entity, IntoElement, ParentElement, Render, Styled,
@@ -142,7 +142,7 @@ impl StatusBar {
         let has_notifications = sidebar.has_notifications;
         let indicator_border = cx.theme().colors().status_bar_background;
 
-        let toggle = sidebar_dock_context_menu("sidebar-status-toggle-menu", cx)
+        let toggle = sidebar_side_context_menu("sidebar-status-toggle-menu", cx)
             .anchor(if on_right {
                 Corner::BottomRight
             } else {

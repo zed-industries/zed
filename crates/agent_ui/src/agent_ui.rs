@@ -661,7 +661,7 @@ mod tests {
             tool_permissions: Default::default(),
             show_turn_stats: false,
             new_thread_location: Default::default(),
-            sidebar_dock: Default::default(),
+            sidebar_side: Default::default(),
         };
 
         cx.update(|cx| {

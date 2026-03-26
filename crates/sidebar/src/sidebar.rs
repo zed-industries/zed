@@ -39,7 +39,7 @@ use util::path_list::PathList;
 use workspace::{
     AddFolderToProject, FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent, Open,
     Sidebar as WorkspaceSidebar, SidebarSide, ToggleWorkspaceSidebar, Workspace, WorkspaceId,
-    sidebar_dock_context_menu,
+    sidebar_side_context_menu,
 };
 
 use zed_actions::OpenRecent;
@@ -2979,7 +2979,7 @@ impl Sidebar {
     fn render_sidebar_toggle_button(&self, _cx: &mut Context<Self>) -> impl IntoElement {
         let on_right = AgentSettings::get_global(_cx).sidebar_side() == SidebarSide::Right;
 
-        sidebar_dock_context_menu("sidebar-toggle-menu", _cx)
+        sidebar_side_context_menu("sidebar-toggle-menu", _cx)
             .anchor(if on_right {
                 gpui::Corner::BottomRight
             } else {

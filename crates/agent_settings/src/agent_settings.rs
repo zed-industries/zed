@@ -27,7 +27,7 @@ pub struct AgentSettings {
     pub enabled: bool,
     pub button: bool,
     pub dock: DockPosition,
-    pub sidebar_dock: SidebarDockPosition,
+    pub sidebar_side: SidebarDockPosition,
     pub default_width: Pixels,
     pub default_height: Pixels,
     pub default_model: Option<LanguageModelSelection>,
@@ -80,7 +80,7 @@ impl AgentSettings {
     }
 
     pub fn sidebar_side(&self) -> SidebarSide {
-        match self.sidebar_dock {
+        match self.sidebar_side {
             SidebarDockPosition::Left => SidebarSide::Left,
             SidebarDockPosition::Right => SidebarSide::Right,
             SidebarDockPosition::FollowAgent => match self.dock {
@@ -420,7 +420,7 @@ impl Settings for AgentSettings {
             enabled: agent.enabled.unwrap(),
             button: agent.button.unwrap(),
             dock: agent.dock.unwrap(),
-            sidebar_dock: agent.sidebar_dock.unwrap(),
+            sidebar_side: agent.sidebar_side.unwrap(),
             default_width: px(agent.default_width.unwrap()),
             default_height: px(agent.default_height.unwrap()),
             default_model: Some(agent.default_model.unwrap()),

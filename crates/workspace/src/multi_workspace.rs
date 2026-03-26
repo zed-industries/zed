@@ -50,11 +50,11 @@ pub struct SidebarRenderState {
     pub side: SidebarSide,
 }
 
-pub fn sidebar_dock_context_menu(
+pub fn sidebar_side_context_menu(
     id: impl Into<ElementId>,
     cx: &App,
 ) -> ui::RightClickMenu<ContextMenu> {
-    let current_position = AgentSettings::get_global(cx).sidebar_dock;
+    let current_position = AgentSettings::get_global(cx).sidebar_side;
     right_click_menu(id).menu(move |window, cx| {
         let fs = <dyn fs::Fs>::global(cx);
         ContextMenu::build(window, cx, move |mut menu, _, _cx| {
@@ -75,7 +75,7 @@ pub fn sidebar_dock_context_menu(
                             settings
                                 .agent
                                 .get_or_insert_default()
-                                .set_sidebar_dock(position);
+                                .set_sidebar_side(position);
                         });
                     },
                 );

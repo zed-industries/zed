@@ -84,7 +84,7 @@ pub struct AgentSettingsContent {
     /// Where to position the sidebar.
     ///
     /// Default: follow_agent
-    pub sidebar_dock: Option<SidebarDockPosition>,
+    pub sidebar_side: Option<SidebarDockPosition>,
     /// Default width in pixels when the agent panel is docked to the left or right.
     ///
     /// Default: 640
@@ -194,8 +194,8 @@ impl AgentSettingsContent {
         self.dock = Some(dock);
     }
 
-    pub fn set_sidebar_dock(&mut self, position: SidebarDockPosition) {
-        self.sidebar_dock = Some(position);
+    pub fn set_sidebar_side(&mut self, position: SidebarDockPosition) {
+        self.sidebar_side = Some(position);
     }
 
     pub fn set_model(&mut self, language_model: LanguageModelSelection) {
