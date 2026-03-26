@@ -856,6 +856,7 @@ impl LanguageModel for CloudLanguageModel {
                     &self.model.id.0,
                     self.model.supports_parallel_tool_calls,
                     true,
+                    false,
                     None,
                     None,
                 );
@@ -902,6 +903,7 @@ impl LanguageModel for CloudLanguageModel {
                     request,
                     &self.model.id.0,
                     self.model.supports_parallel_tool_calls,
+                    false,
                     false,
                     None,
                     None,

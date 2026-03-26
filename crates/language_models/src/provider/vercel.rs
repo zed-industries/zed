@@ -299,6 +299,7 @@ impl LanguageModel for VercelLanguageModel {
             self.model.id(),
             self.model.supports_parallel_tool_calls(),
             self.model.supports_prompt_cache_key(),
+            false,
             self.max_output_tokens(),
             None,
         );

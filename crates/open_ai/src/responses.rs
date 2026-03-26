@@ -29,6 +29,8 @@ pub struct Request {
     pub prompt_cache_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<ReasoningConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_split: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

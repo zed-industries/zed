@@ -2186,6 +2186,26 @@ impl Thread {
             }
             RedactedThinking { data } => self.handle_redacted_thinking_event(data),
             ReasoningDetails(details) => {
+                if let serde_json::Value::Array(arr) = &details {
+                    for item in arr {
+                        let is_reasoning_text = item
+                            .get("type")
+                            .and_then(|v| v.as_str())
+                            .is_some_and(|t| t == "reasoning.text");
+                        if is_reasoning_text {
+                            if let Some(text) = item.get("text").and_then(|v| v.as_str()) {
+                                if !text.is_empty() {
+                                    self.handle_thinking_event(
+                                        text.to_string(),
+                                        None,
+                                        event_stream,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+
                 let last_message = self.pending_message();
                 // Store the last non-empty reasoning_details (overwrites earlier ones)
                 // This ensures we keep the encrypted reasoning with signatures, not the early text reasoning

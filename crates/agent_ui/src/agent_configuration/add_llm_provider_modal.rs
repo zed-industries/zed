@@ -104,6 +104,7 @@ struct ModelCapabilityToggles {
     pub supports_parallel_tool_calls: ToggleState,
     pub supports_prompt_cache_key: ToggleState,
     pub supports_chat_completions: ToggleState,
+    pub supports_reasoning_split: ToggleState,
 }
 
 struct ModelInput {
@@ -157,6 +158,7 @@ impl ModelInput {
             parallel_tool_calls,
             prompt_cache_key,
             chat_completions,
+            reasoning_split,
         } = ModelCapabilities::default();
 
         Self {
@@ -170,6 +172,7 @@ impl ModelInput {
                 supports_parallel_tool_calls: parallel_tool_calls.into(),
                 supports_prompt_cache_key: prompt_cache_key.into(),
                 supports_chat_completions: chat_completions.into(),
+                supports_reasoning_split: reasoning_split.into(),
             },
         }
     }
@@ -208,6 +211,7 @@ impl ModelInput {
                 parallel_tool_calls: self.capabilities.supports_parallel_tool_calls.selected(),
                 prompt_cache_key: self.capabilities.supports_prompt_cache_key.selected(),
                 chat_completions: self.capabilities.supports_chat_completions.selected(),
+                reasoning_split: self.capabilities.supports_reasoning_split.selected(),
             },
         })
     }
@@ -441,6 +445,20 @@ impl AddLlmProviderModal {
                         .on_click(cx.listener(
                             move |this, checked, _window, cx| {
                                 this.input.models[ix].capabilities.supports_chat_completions =
+                                    *checked;
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .child(
+                        Checkbox::new(
+                            ("supports-reasoning-split", ix),
+                            model.capabilities.supports_reasoning_split,
+                        )
+                        .label("Supports reasoning_split")
+                        .on_click(cx.listener(
+                            move |this, checked, _window, cx| {
+                                this.input.models[ix].capabilities.supports_reasoning_split =
                                     *checked;
                                 cx.notify();
                             },

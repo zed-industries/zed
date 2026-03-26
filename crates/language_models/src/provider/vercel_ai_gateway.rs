@@ -442,6 +442,7 @@ impl LanguageModel for VercelAiGatewayLanguageModel {
             &self.model.name,
             self.model.capabilities.parallel_tool_calls,
             self.model.capabilities.prompt_cache_key,
+            self.model.capabilities.reasoning_split,
             self.max_output_tokens(),
             None,
         );
@@ -574,6 +575,7 @@ async fn list_models(
                 parallel_tool_calls,
                 prompt_cache_key,
                 chat_completions: true,
+                reasoning_split: false,
             },
         });
     }

@@ -332,6 +332,8 @@ pub struct Request {
     pub prompt_cache_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<ReasoningEffort>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_split: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -475,6 +477,8 @@ pub struct ResponseMessageDelta {
     pub tool_calls: Option<Vec<ToolCallChunk>>,
     #[serde(default, skip_serializing_if = "is_none_or_empty")]
     pub reasoning_content: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_details: Option<serde_json::Value>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -617,7 +621,7 @@ pub async fn stream_completion(
                         if line == "[DONE]" {
                             None
                         } else {
-                            match serde_json::from_str(line) {
+                            match serde_json::from_str::<ResponseStreamResult>(line) {
                                 Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
                                 Ok(ResponseStreamResult::Err { error }) => {
                                     Some(Err(anyhow!(error.message)))

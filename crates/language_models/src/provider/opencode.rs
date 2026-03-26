@@ -465,6 +465,7 @@ impl LanguageModel for OpenCodeLanguageModel {
                     self.model.id(),
                     false,
                     false,
+                    false,
                     self.model.max_output_tokens(),
                     None,
                 );
@@ -479,6 +480,7 @@ impl LanguageModel for OpenCodeLanguageModel {
                 let response_request = into_open_ai_response(
                     request,
                     self.model.id(),
+                    false,
                     false,
                     false,
                     self.model.max_output_tokens(),

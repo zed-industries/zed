@@ -381,6 +381,7 @@ impl LanguageModel for OpenAiLanguageModel {
                 self.model.id(),
                 self.model.supports_parallel_tool_calls(),
                 self.model.supports_prompt_cache_key(),
+                false,
                 self.max_output_tokens(),
                 self.model.reasoning_effort(),
             );
@@ -396,6 +397,7 @@ impl LanguageModel for OpenAiLanguageModel {
                 self.model.id(),
                 self.model.supports_parallel_tool_calls(),
                 self.model.supports_prompt_cache_key(),
+                false,
                 self.max_output_tokens(),
                 self.model.reasoning_effort(),
             );
@@ -414,6 +416,7 @@ pub fn into_open_ai(
     model_id: &str,
     supports_parallel_tool_calls: bool,
     supports_prompt_cache_key: bool,
+    supports_reasoning_split: bool,
     max_output_tokens: Option<u64>,
     reasoning_effort: Option<ReasoningEffort>,
 ) -> open_ai::Request {
@@ -540,6 +543,11 @@ pub fn into_open_ai(
             LanguageModelToolChoice::None => open_ai::ToolChoice::None,
         }),
         reasoning_effort,
+        reasoning_split: if supports_reasoning_split {
+            Some(true)
+        } else {
+            None
+        },
     }
 }
 
@@ -548,6 +556,7 @@ pub fn into_open_ai_response(
     model_id: &str,
     supports_parallel_tool_calls: bool,
     supports_prompt_cache_key: bool,
+    supports_reasoning_split: bool,
     max_output_tokens: Option<u64>,
     reasoning_effort: Option<ReasoningEffort>,
 ) -> ResponseRequest {
@@ -609,6 +618,11 @@ pub fn into_open_ai_response(
             effort,
             summary: Some(open_ai::responses::ReasoningSummaryMode::Auto),
         }),
+        reasoning_split: if supports_reasoning_split {
+            Some(true)
+        } else {
+            None
+        },
     }
 }
 
@@ -808,6 +822,9 @@ impl OpenAiEventMapper {
                         signature: None,
                     }));
                 }
+            }
+            if let Some(details) = delta.reasoning_details.clone() {
+                events.push(Ok(LanguageModelCompletionEvent::ReasoningDetails(details)));
             }
             if let Some(content) = delta.content.clone() {
                 if !content.is_empty() {
@@ -1649,6 +1666,7 @@ mod tests {
             "custom-model",
             true,
             true,
+            false,
             Some(2048),
             Some(ReasoningEffort::Low),
         );
