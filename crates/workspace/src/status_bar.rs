@@ -1,7 +1,7 @@
 use crate::{ItemHandle, MultiWorkspace, Pane, SidebarSide, ToggleWorkspaceSidebar};
 use gpui::{
     AnyView, App, Context, Decorations, Entity, IntoElement, ParentElement, Render, Styled,
-    Subscription, Window,
+    Subscription, WeakEntity, Window,
 };
 use std::any::TypeId;
 use theme::CLIENT_SIDE_DECORATION_ROUNDING;
@@ -48,10 +48,10 @@ impl Default for SidebarStatus {
 }
 
 impl SidebarStatus {
-    fn query(window: &Window, cx: &App) -> Self {
-        window
-            .root::<MultiWorkspace>()
-            .flatten()
+    fn query(multi_workspace: &Option<WeakEntity<MultiWorkspace>>, cx: &App) -> Self {
+        multi_workspace
+            .as_ref()
+            .and_then(|mw| mw.upgrade())
             .map(|mw| {
                 let mw = mw.read(cx);
                 let enabled = mw.multi_workspace_enabled(cx);
@@ -70,12 +70,13 @@ pub struct StatusBar {
     left_items: Vec<Box<dyn StatusItemViewHandle>>,
     right_items: Vec<Box<dyn StatusItemViewHandle>>,
     active_pane: Entity<Pane>,
+    multi_workspace: Option<WeakEntity<MultiWorkspace>>,
     _observe_active_pane: Subscription,
 }
 
 impl Render for StatusBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let sidebar = SidebarStatus::query(window, cx);
+        let sidebar = SidebarStatus::query(&self.multi_workspace, cx);
 
         h_flex()
             .w_full()
@@ -181,11 +182,17 @@ impl StatusBar {
 }
 
 impl StatusBar {
-    pub fn new(active_pane: &Entity<Pane>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        active_pane: &Entity<Pane>,
+        multi_workspace: Option<WeakEntity<MultiWorkspace>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let mut this = Self {
             left_items: Default::default(),
             right_items: Default::default(),
             active_pane: active_pane.clone(),
+            multi_workspace,
             _observe_active_pane: cx.observe_in(active_pane, window, |this, _, window, cx| {
                 this.update_active_pane_item(window, cx)
             }),

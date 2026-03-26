@@ -161,8 +161,6 @@ pub struct TitleBar {
 
 impl Render for TitleBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.sync_multi_workspace(window, cx);
-
         let title_bar_settings = *TitleBarSettings::get_global(cx);
         let button_layout = title_bar_settings.button_layout;
 
@@ -385,13 +383,23 @@ impl TitleBar {
         });
 
         let update_version = cx.new(|cx| UpdateVersion::new(cx));
-        let platform_titlebar = cx.new(|cx| PlatformTitleBar::new(id, cx));
+        let multi_workspace = window
+            .root::<MultiWorkspace>()
+            .flatten()
+            .map(|mw| mw.downgrade());
+        let platform_titlebar = cx.new(|cx| {
+            let mut titlebar = PlatformTitleBar::new(id, cx);
+            if let Some(weak) = multi_workspace.clone() {
+                titlebar.set_multi_workspace(weak);
+            }
+            titlebar
+        });
 
         let mut this = Self {
             platform_titlebar,
             application_menu,
             workspace: workspace.weak_handle(),
-            multi_workspace: None,
+            multi_workspace,
             project,
             user_store,
             client,
@@ -405,36 +413,6 @@ impl TitleBar {
         this.observe_diagnostics(cx);
 
         this
-    }
-
-    /// Used to update the title bar state in case the workspace has
-    /// been moved to a new window through the threads sidebar.
-    fn sync_multi_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let current = window
-            .root::<MultiWorkspace>()
-            .flatten()
-            .map(|mw| mw.entity_id());
-
-        let tracked = self
-            .multi_workspace
-            .as_ref()
-            .and_then(|weak| weak.upgrade())
-            .map(|mw| mw.entity_id());
-
-        if current == tracked {
-            return;
-        }
-
-        let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() else {
-            self.multi_workspace = None;
-            return;
-        };
-
-        let weak = multi_workspace.downgrade();
-        self.platform_titlebar.update(cx, |titlebar, _cx| {
-            titlebar.set_multi_workspace(weak.clone());
-        });
-        self.multi_workspace = Some(weak);
     }
 
     fn worktree_count(&self, cx: &App) -> usize {
