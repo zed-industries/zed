@@ -642,6 +642,22 @@ impl AgentConfiguration {
             )
         });
 
+        let display_name = if provided_by_extension {
+            resolve_extension_for_context_server(&context_server_id, cx)
+                .map(|(_, manifest)| {
+                    let name = manifest.name.as_str();
+                    let stripped = name
+                        .strip_suffix(" MCP Server")
+                        .or_else(|| name.strip_suffix(" MCP"))
+                        .or_else(|| name.strip_suffix(" Context Server"))
+                        .unwrap_or(name);
+                    SharedString::from(stripped.to_string())
+                })
+                .unwrap_or_else(|| item_id.clone())
+        } else {
+            item_id.clone()
+        };
+
         let error = if let ContextServerStatus::Error(error) = server_status.clone() {
             Some(error)
         } else {
@@ -915,7 +931,7 @@ impl AgentConfiguration {
             None
         };
 
-        AiSettingItem::new(item_id.clone(), item_id, status, source)
+        AiSettingItem::new(item_id, display_name, status, source)
             .action(context_server_configuration_menu)
             .action(
                 Switch::new("context-server-switch", is_running.into()).on_click({

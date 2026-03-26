@@ -1,5 +1,6 @@
-use crate::{CommonAnimationExt, Indicator, Tooltip, prelude::*};
-use gpui::SharedString;
+use crate::{IconDecoration, IconDecorationKind, Tooltip, prelude::*};
+use gpui::{Animation, AnimationExt, SharedString, pulsating_between};
+use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum AiSettingItemStatus {
@@ -22,6 +23,20 @@ impl AiSettingItemStatus {
             Self::AuthRequired => "Authentication required.",
             Self::Authenticating => "Waiting for authorization…",
         }
+    }
+
+    fn indicator_color(&self) -> Option<Color> {
+        match self {
+            Self::Stopped => None,
+            Self::Starting | Self::Authenticating => Some(Color::Muted),
+            Self::Running => Some(Color::Success),
+            Self::Error => Some(Color::Error),
+            Self::AuthRequired => Some(Color::Warning),
+        }
+    }
+
+    fn is_animated(&self) -> bool {
+        matches!(self, Self::Starting | Self::Authenticating)
     }
 }
 
@@ -104,7 +119,7 @@ impl AiSettingItem {
 }
 
 impl RenderOnce for AiSettingItem {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let Self {
             id,
             status,
@@ -116,28 +131,67 @@ impl RenderOnce for AiSettingItem {
             details,
         } = self;
 
-        let status_id = format!("status-{}", id);
         let source_id = format!("source-{}", id);
+        let icon_id = format!("icon-{}", id);
         let status_tooltip = status.tooltip_text();
         let source_tooltip = source.tooltip_text(&label);
 
-        let status_indicator = match status {
-            AiSettingItemStatus::Stopped => Indicator::dot().color(Color::Muted).into_any_element(),
-            AiSettingItemStatus::Running => {
-                Indicator::dot().color(Color::Success).into_any_element()
-            }
-            AiSettingItemStatus::Error => Indicator::dot().color(Color::Error).into_any_element(),
-            AiSettingItemStatus::AuthRequired => {
-                Indicator::dot().color(Color::Warning).into_any_element()
-            }
-            AiSettingItemStatus::Starting | AiSettingItemStatus::Authenticating => {
-                Icon::new(IconName::LoadCircle)
-                    .size(IconSize::XSmall)
-                    .color(Color::Muted)
-                    .with_keyed_rotate_animation(format!("{}-starting", id), 3)
-                    .into_any_element()
-            }
+        let icon_element = icon.unwrap_or_else(|| {
+            let letter = label.chars().next().unwrap_or('?').to_ascii_uppercase();
+
+            h_flex()
+                .size_5()
+                .flex_none()
+                .justify_center()
+                .rounded_sm()
+                .border_1()
+                .border_color(cx.theme().colors().border_variant)
+                .bg(cx.theme().colors().element_active.opacity(0.2))
+                .child(
+                    Label::new(SharedString::from(letter.to_string()))
+                        .size(LabelSize::Small)
+                        .color(Color::Muted)
+                        .buffer_font(cx),
+                )
+                .into_any_element()
+        });
+
+        let icon_child = if status.is_animated() {
+            div()
+                .child(icon_element)
+                .with_animation(
+                    format!("icon-pulse-{}", id),
+                    Animation::new(Duration::from_secs(2))
+                        .repeat()
+                        .with_easing(pulsating_between(0.4, 0.8)),
+                    |element, delta| element.opacity(delta),
+                )
+                .into_any_element()
+        } else {
+            icon_element.into_any_element()
         };
+
+        let icon_container = div()
+            .id(icon_id)
+            .relative()
+            .flex_none()
+            .tooltip(Tooltip::text(status_tooltip))
+            .child(icon_child)
+            .when_some(status.indicator_color(), |this, color| {
+                this.child(
+                    IconDecoration::new(
+                        IconDecorationKind::Dot,
+                        cx.theme().colors().panel_background,
+                        cx,
+                    )
+                    .size(px(12.))
+                    .color(color.color(cx))
+                    .position(gpui::Point {
+                        x: px(-3.),
+                        y: px(-3.),
+                    }),
+                )
+            });
 
         v_flex()
             .id(id)
@@ -146,23 +200,14 @@ impl RenderOnce for AiSettingItem {
                 h_flex()
                     .min_w_0()
                     .w_full()
+                    .gap_1p5()
                     .justify_between()
                     .child(
                         h_flex()
                             .flex_1()
                             .min_w_0()
-                            .gap_1()
-                            .child(
-                                h_flex()
-                                    .id(status_id)
-                                    .h_full()
-                                    .w_3()
-                                    .flex_none()
-                                    .justify_center()
-                                    .child(status_indicator)
-                                    .tooltip(Tooltip::text(status_tooltip)),
-                            )
-                            .children(icon)
+                            .gap_1p5()
+                            .child(icon_container)
                             .child(Label::new(label).flex_shrink_0().truncate())
                             .child(
                                 div()
@@ -238,12 +283,12 @@ impl Component for AiSettingItem {
 
         let examples = vec![
             single_example(
-                "Extension MCP server (running, with tools)",
+                "MCP server with letter avatar (running)",
                 container()
                     .child(
                         AiSettingItem::new(
                             "ext-mcp",
-                            "postgres-mcp",
+                            "Postgres",
                             AiSettingItemStatus::Running,
                             AiSettingItemSource::Extension,
                         )
@@ -262,7 +307,7 @@ impl Component for AiSettingItem {
                     .into_any_element(),
             ),
             single_example(
-                "Custom MCP server (stopped)",
+                "MCP server (stopped)",
                 container()
                     .child(AiSettingItem::new(
                         "custom-mcp",
@@ -273,7 +318,18 @@ impl Component for AiSettingItem {
                     .into_any_element(),
             ),
             single_example(
-                "Extension agent (running)",
+                "MCP server (starting, animated)",
+                container()
+                    .child(AiSettingItem::new(
+                        "starting-mcp",
+                        "Context7",
+                        AiSettingItemStatus::Starting,
+                        AiSettingItemSource::Extension,
+                    ))
+                    .into_any_element(),
+            ),
+            single_example(
+                "Agent with icon (running)",
                 container()
                     .child(
                         AiSettingItem::new(
@@ -301,7 +357,7 @@ impl Component for AiSettingItem {
                     .into_any_element(),
             ),
             single_example(
-                "Registry agent (starting)",
+                "Registry agent (starting, animated)",
                 container()
                     .child(
                         AiSettingItem::new(
@@ -319,19 +375,14 @@ impl Component for AiSettingItem {
                     .into_any_element(),
             ),
             single_example(
-                "With details",
+                "Error with details",
                 container()
                     .child(
                         AiSettingItem::new(
                             "error-mcp",
-                            "failing-server",
+                            "Amplitude",
                             AiSettingItemStatus::Error,
                             AiSettingItemSource::Extension,
-                        )
-                        .action(
-                            IconButton::new("toggle", IconName::Check)
-                                .icon_size(IconSize::Small)
-                                .icon_color(Color::Muted),
                         )
                         .details(
                             details_row(
