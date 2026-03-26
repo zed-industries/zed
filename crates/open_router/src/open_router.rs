@@ -14,20 +14,17 @@ use thiserror::Error;
 pub const OPEN_ROUTER_API_URL: &str = "https://openrouter.ai/api/v1";
 
 fn extract_retry_after(headers: &http::HeaderMap) -> Option<std::time::Duration> {
-    if let Some(reset) = headers.get("X-RateLimit-Reset") {
-        if let Ok(s) = reset.to_str() {
-            if let Ok(epoch_ms) = s.parse::<u64>() {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis() as u64;
-                if epoch_ms > now {
-                    return Some(std::time::Duration::from_millis(epoch_ms - now));
-                }
-            }
-        }
-    }
-    None
+    let epoch_ms = headers
+        .get("X-RateLimit-Reset")
+        .and_then(|header| header.to_str().ok())
+        .and_then(|reset| reset.parse::<u64>().ok())?;
+
+    let retry_at = Duration::from_millis(epoch_ms);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("SystemTime before Unix Epoch");
+
+    Some(retry_at.saturating_sub(now))
 }
 
 fn is_none_or_empty<T: AsRef<[U]>, U>(opt: &Option<T>) -> bool {
@@ -742,5 +739,25 @@ impl ApiErrorCode {
             503 => ApiErrorCode::OverloadedError,
             _ => ApiErrorCode::ApiError,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    use http_client::http::{HeaderMap, HeaderValue};
+
+    use crate::extract_retry_after;
+
+    #[test]
+    fn extract_retry_reset_passed() {
+        let since_epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        let reset_header = HeaderValue::from_str(&format!("{}", since_epoch.as_millis())).unwrap();
+
+        let mut map = HeaderMap::default();
+        map.append("X-RateLimit-Reset", reset_header);
+
+        assert_eq!(extract_retry_after(&map), Some(Duration::ZERO));
     }
 }
