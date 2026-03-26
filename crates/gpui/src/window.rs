@@ -1612,7 +1612,10 @@ impl Window {
             return;
         }
 
-        self.removed = true;
+        #[cfg(not(target_os = "ios"))]
+        {
+            self.removed = true;
+        }
     }
 
     /// Obtain the currently focused [`FocusHandle`]. If no elements are focused, returns `None`.

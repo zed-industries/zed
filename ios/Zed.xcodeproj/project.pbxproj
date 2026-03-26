@@ -306,6 +306,7 @@
 				CODE_SIGN_ENTITLEMENTS = Zed/Entitlements/Zed.Entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				EAGER_LINKING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "Zed/Supporting Files/Info.plist";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -315,6 +316,7 @@
 				);
 				MARKETING_VERSION = 1.0;
 				OTHER_LDFLAGS = (
+					"-ObjC",
 					"-lzed_ios",
 					"-lc++",
 					"-lz",
@@ -329,6 +331,32 @@
 					Foundation,
 					"-framework",
 					Security,
+					"-framework",
+					CoreFoundation,
+					"-framework",
+					AVFoundation,
+					"-framework",
+					CoreAudio,
+					"-framework",
+					CoreVideo,
+					"-framework",
+					CoreGraphics,
+					"-framework",
+					CoreMedia,
+					"-framework",
+					VideoToolbox,
+					"-framework",
+					AudioToolbox,
+					"-framework",
+					Network,
+					"-framework",
+					QuartzCore,
+					"-framework",
+					MetalKit,
+					"-framework",
+					GLKit,
+					"-framework",
+					OpenGLES,
 					"$(inherited)",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = dev.zed.ipad.app;
@@ -349,6 +377,7 @@
 				CODE_SIGN_ENTITLEMENTS = Zed/Entitlements/Zed.Entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				EAGER_LINKING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "Zed/Supporting Files/Info.plist";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -358,6 +387,7 @@
 				);
 				MARKETING_VERSION = 1.0;
 				OTHER_LDFLAGS = (
+					"-ObjC",
 					"-lzed_ios",
 					"-lc++",
 					"-lz",
@@ -372,6 +402,32 @@
 					Foundation,
 					"-framework",
 					Security,
+					"-framework",
+					CoreFoundation,
+					"-framework",
+					AVFoundation,
+					"-framework",
+					CoreAudio,
+					"-framework",
+					CoreVideo,
+					"-framework",
+					CoreGraphics,
+					"-framework",
+					CoreMedia,
+					"-framework",
+					VideoToolbox,
+					"-framework",
+					AudioToolbox,
+					"-framework",
+					Network,
+					"-framework",
+					QuartzCore,
+					"-framework",
+					MetalKit,
+					"-framework",
+					GLKit,
+					"-framework",
+					OpenGLES,
 					"$(inherited)",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = dev.zed.ipad.app;

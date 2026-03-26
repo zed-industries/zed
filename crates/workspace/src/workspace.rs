@@ -1308,6 +1308,7 @@ pub struct Workspace {
     last_active_center_pane: Option<WeakEntity<Pane>>,
     last_active_view_id: Option<proto::ViewId>,
     status_bar: Entity<StatusBar>,
+    status_bar_prefix: Option<AnyView>,
     pub(crate) modal_layer: Entity<ModalLayer>,
     toast_layer: Entity<ToastLayer>,
     titlebar_item: Option<AnyView>,
@@ -1732,6 +1733,7 @@ impl Workspace {
             last_active_center_pane: Some(center_pane.downgrade()),
             last_active_view_id: None,
             status_bar,
+            status_bar_prefix: None,
             modal_layer,
             toast_layer,
             titlebar_item: None,
@@ -2414,6 +2416,11 @@ impl Workspace {
 
     pub fn set_sidebar_focus_handle(&mut self, handle: Option<FocusHandle>) {
         self.sidebar_focus_handle = handle;
+    }
+
+    pub fn set_status_bar_prefix(&mut self, view: AnyView, cx: &mut Context<Self>) {
+        self.status_bar_prefix = Some(view);
+        cx.notify();
     }
 
     pub fn status_bar_visible(&self, cx: &App) -> bool {
@@ -8443,7 +8450,12 @@ impl Render for Workspace {
                                 .children(self.render_notifications(window, cx)),
                         )
                         .when(self.status_bar_visible(cx), |parent| {
-                            parent.child(self.status_bar.clone())
+                            parent.child(
+                                h_flex()
+                                    .w_full()
+                                    .children(self.status_bar_prefix.clone())
+                                    .child(self.status_bar.clone()),
+                            )
                         })
                         .child(self.toast_layer.clone()),
                 )

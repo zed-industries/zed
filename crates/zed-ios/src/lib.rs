@@ -295,6 +295,33 @@ mod ios {
         });
     }
 
+    fn initialize_pane(
+        workspace: &workspace::Workspace,
+        pane: &gpui::Entity<workspace::Pane>,
+        window: &mut Window,
+        cx: &mut gpui::Context<workspace::Workspace>,
+    ) {
+        pane.update(cx, |pane, cx| {
+            pane.toolbar().update(cx, |toolbar, cx| {
+                let breadcrumbs = cx.new(|_| breadcrumbs::Breadcrumbs::new());
+                toolbar.add_item(breadcrumbs, window, cx);
+                let buffer_search_bar = cx.new(|cx| {
+                    search::BufferSearchBar::new(
+                        Some(workspace.project().read(cx).languages().clone()),
+                        window,
+                        cx,
+                    )
+                });
+                toolbar.add_item(buffer_search_bar, window, cx);
+                let diagnostic_controls =
+                    cx.new(|_| diagnostics::ToolbarControls::new());
+                toolbar.add_item(diagnostic_controls, window, cx);
+                let project_search_bar = cx.new(|_| search::project_search::ProjectSearchBar::new());
+                toolbar.add_item(project_search_bar, window, cx);
+            })
+        });
+    }
+
     fn init_zed(cx: &mut App) {
         use fs::{Fs, RealFs};
         use language::LanguageRegistry;
@@ -327,6 +354,10 @@ mod ios {
             gpui::KeyBinding::new("cmd-x", editor::actions::Cut, Some("Editor")),
             gpui::KeyBinding::new("cmd-z", editor::actions::Undo, Some("Editor")),
             gpui::KeyBinding::new("cmd-shift-z", editor::actions::Redo, Some("Editor")),
+            // Navigation and search
+            gpui::KeyBinding::new("cmd-f", search::buffer_search::Deploy { focus: true, replace_enabled: false, selection_search_enabled: false }, Some("Editor")),
+            gpui::KeyBinding::new("cmd-shift-f", workspace::NewSearch, None),
+            gpui::KeyBinding::new("escape", editor::actions::Cancel, Some("Editor")),
         ]);
 
         // HTTP client
@@ -378,7 +409,19 @@ mod ios {
                     session,
                 });
 
+                git::GitHostingProviderRegistry::set_global(
+                    git::GitHostingProviderRegistry::default_global(cx),
+                    cx,
+                );
+                language_model::init_settings(cx);
                 editor::init(cx);
+                go_to_line::init(cx);
+                diagnostics::init(cx);
+                search::init(cx);
+                git_hosting_providers::init(cx);
+                git_ui::init(cx);
+                outline_panel::init(cx);
+                language_selector::init(cx);
                 workspace::init(app_state.clone(), cx);
                 project_panel::init(cx);
                 recent_projects::init(cx);
@@ -392,19 +435,85 @@ mod ios {
                         rx
                     }));
 
-                    // Create and add the project panel to the left dock.
                     let Some(window) = window else { return };
-                    let panels_task = cx.spawn_in(window, async move |workspace_handle, cx| {
-                        let project_panel = project_panel::ProjectPanel::load(
-                            workspace_handle.clone(),
-                            cx.clone(),
+
+                    // Status bar items
+                    let search_button = cx.new(|_| {
+                        search::search_status_button::SearchButton::new()
+                    });
+                    let diagnostic_summary = cx.new(|cx| {
+                        diagnostics::items::DiagnosticIndicator::new(workspace, cx)
+                    });
+                    let activity_indicator =
+                        activity_indicator::ActivityIndicator::new(
+                            workspace,
+                            workspace.project().read(cx).languages().clone(),
+                            window,
+                            cx,
                         );
-                        if let Some(panel) = project_panel.await.log_err() {
-                            workspace_handle
-                                .update_in(&mut cx.clone(), |workspace, window, cx| {
-                                    workspace.add_panel(panel, window, cx);
-                                })
-                                .log_err();
+                    let lsp_menu_handle = ui::PopoverMenuHandle::default();
+                    let lsp_button = cx.new(|cx| {
+                        language_tools::lsp_button::LspButton::new(
+                            workspace,
+                            lsp_menu_handle,
+                            window,
+                            cx,
+                        )
+                    });
+                    let active_buffer_language = cx.new(|_| {
+                        language_selector::ActiveBufferLanguage::new(workspace)
+                    });
+                    let cursor_position = cx.new(|_| {
+                        go_to_line::cursor_position::CursorPosition::new(workspace)
+                    });
+
+                    workspace.status_bar().update(cx, |status_bar, cx| {
+                        status_bar.add_left_item(search_button, window, cx);
+                        status_bar.add_left_item(lsp_button, window, cx);
+                        status_bar.add_left_item(diagnostic_summary, window, cx);
+                        status_bar.add_left_item(activity_indicator, window, cx);
+                        status_bar.add_right_item(active_buffer_language, window, cx);
+                        status_bar.add_right_item(cursor_position, window, cx);
+                    });
+
+                    // Toolbar items for panes
+                    let center_pane = workspace.active_pane().clone();
+                    initialize_pane(workspace, &center_pane, window, cx);
+                    let workspace_handle = cx.entity();
+                    cx.subscribe_in(&workspace_handle, window, {
+                        move |workspace, _, event, window, cx| {
+                            if let workspace::Event::PaneAdded(pane) = event {
+                                initialize_pane(workspace, pane, window, cx);
+                            }
+                        }
+                    })
+                    .detach();
+
+                    // Panels
+                    let panels_task = cx.spawn_in(window, async move |workspace_handle, cx| {
+                        if let Some(panel) = project_panel::ProjectPanel::load(
+                            workspace_handle.clone(), cx.clone(),
+                        ).await.log_err() {
+                            workspace_handle.update_in(
+                                &mut cx.clone(),
+                                |workspace, window, cx| workspace.add_panel(panel, window, cx),
+                            ).log_err();
+                        }
+                        if let Some(panel) = outline_panel::OutlinePanel::load(
+                            workspace_handle.clone(), cx.clone(),
+                        ).await.log_err() {
+                            workspace_handle.update_in(
+                                &mut cx.clone(),
+                                |workspace, window, cx| workspace.add_panel(panel, window, cx),
+                            ).log_err();
+                        }
+                        if let Some(panel) = git_ui::git_panel::GitPanel::load(
+                            workspace_handle.clone(), cx.clone(),
+                        ).await.log_err() {
+                            workspace_handle.update_in(
+                                &mut cx.clone(),
+                                |workspace, window, cx| workspace.add_panel(panel, window, cx),
+                            ).log_err();
                         }
                         anyhow::Ok(())
                     });

@@ -8,18 +8,17 @@ use editor::{
 };
 use gpui::{
     AnyWindowHandle, App, AppContext as _, AsyncApp, ClickEvent, Context, Entity, Focusable as _,
-    Global, IntoElement, Render, SharedString, Task, Window, WindowOptions, div, prelude::*,
+    Global, IntoElement, Render, SharedString, Task, Window, WindowOptions, div, prelude::*, px,
 };
 use remote::SshConnectionOptions;
 use serde::{Deserialize, Serialize};
 use theme::ActiveTheme;
 use ui::{
-    ButtonCommon, ButtonLike, ButtonStyle, Clickable, Color, ContextMenu, FixedWidth, Headline,
-    Icon, IconButton, IconName, IconSize, Label, LabelCommon, LabelSize, PopoverMenu,
-    Vector, VectorName, h_flex, rems_from_px, v_flex,
+    ButtonCommon, ButtonLike, ButtonStyle, Clickable, Color, ContextMenu, Divider, DividerColor,
+    FixedWidth, Headline, Icon, IconButton, IconName, IconSize, Label, LabelCommon, LabelSize,
+    PopoverMenu, Vector, VectorName, h_flex, rems_from_px, v_flex,
 };
 use util::ResultExt;
-use workspace::StatusItemView;
 
 // ─── Active connections registry ─────────────────────────────────────────────
 
@@ -99,7 +98,12 @@ impl ActiveConnections {
         path: &str,
         error: SharedString,
     ) {
-        let key = (host.to_string(), username.to_string(), port, path.to_string());
+        let key = (
+            host.to_string(),
+            username.to_string(),
+            port,
+            path.to_string(),
+        );
         if let Some(entry) = self.project_errors.iter_mut().find(|(k, _)| *k == key) {
             entry.1 = error;
         } else {
@@ -108,7 +112,12 @@ impl ActiveConnections {
     }
 
     fn clear_project_error(&mut self, host: &str, username: &str, port: u16, path: &str) {
-        let key = (host.to_string(), username.to_string(), port, path.to_string());
+        let key = (
+            host.to_string(),
+            username.to_string(),
+            port,
+            path.to_string(),
+        );
         self.project_errors.retain(|(k, _)| *k != key);
     }
 
@@ -119,7 +128,12 @@ impl ActiveConnections {
         port: u16,
         path: &str,
     ) -> Option<&SharedString> {
-        let key = (host.to_string(), username.to_string(), port, path.to_string());
+        let key = (
+            host.to_string(),
+            username.to_string(),
+            port,
+            path.to_string(),
+        );
         self.project_errors
             .iter()
             .find(|(k, _)| *k == key)
@@ -162,16 +176,6 @@ impl WorkspaceSwitcher {
     }
 }
 
-impl StatusItemView for WorkspaceSwitcher {
-    fn set_active_pane_item(
-        &mut self,
-        _active_pane_item: Option<&dyn workspace::ItemHandle>,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) {
-    }
-}
-
 impl Render for WorkspaceSwitcher {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let current_path = self.current_path.clone();
@@ -180,6 +184,8 @@ impl Render for WorkspaceSwitcher {
         h_flex()
             .gap_1()
             .items_center()
+            // Extra left padding to clear the iPad corner resize area
+            .pl(px(24.))
             .child(
                 IconButton::new("return-to-landing", IconName::ArrowLeft)
                     .icon_size(IconSize::Small)
@@ -212,14 +218,22 @@ impl Render for WorkspaceSwitcher {
                         let host_label = host_label.clone();
                         move |window, cx| {
                             // Collect workspace info before borrowing cx mutably.
-                            let entries: Vec<(SharedString, Entity<workspace::Workspace>, Vec<Entity<workspace::Workspace>>)> = cx
+                            let entries: Vec<(
+                                SharedString,
+                                Entity<workspace::Workspace>,
+                                Vec<Entity<workspace::Workspace>>,
+                            )> = cx
                                 .try_global::<ActiveConnections>()
                                 .map(|active_conns| {
                                     active_conns
                                         .hosts
                                         .iter()
                                         .flat_map(|hc| {
-                                            let all: Vec<_> = hc.workspaces.iter().map(|w| w.workspace.clone()).collect();
+                                            let all: Vec<_> = hc
+                                                .workspaces
+                                                .iter()
+                                                .map(|w| w.workspace.clone())
+                                                .collect();
                                             hc.workspaces.iter().map(move |entry| {
                                                 (
                                                     SharedString::from(entry.path.clone()),
@@ -236,47 +250,47 @@ impl Render for WorkspaceSwitcher {
                                 return None;
                             }
 
-                            let menu =
-                                ContextMenu::build(window, cx, |mut menu, _window, _cx| {
-                                    menu = menu.header(host_label.clone());
-                                    for (path_label, workspace, all_workspaces) in entries {
-                                        menu = menu.custom_entry(
-                                            {
-                                                let path_label = path_label.clone();
-                                                move |_window, _cx| {
-                                                    h_flex()
-                                                        .gap_2()
-                                                        .child(
-                                                            Icon::new(IconName::Folder)
-                                                                .size(IconSize::Small)
-                                                                .color(Color::Muted),
-                                                        )
-                                                        .child(
-                                                            Label::new(path_label.clone())
-                                                                .size(LabelSize::Small),
-                                                        )
-                                                        .into_any_element()
-                                                }
-                                            },
-                                            {
-                                                let workspace = workspace.clone();
-                                                move |window, cx| {
-                                                    show_multi_workspace(
-                                                        window,
-                                                        cx,
-                                                        &all_workspaces,
-                                                        &workspace,
-                                                    );
-                                                }
-                                            },
-                                        );
-                                    }
-                                    menu
-                                });
+                            let menu = ContextMenu::build(window, cx, |mut menu, _window, _cx| {
+                                menu = menu.header(host_label.clone());
+                                for (path_label, workspace, all_workspaces) in entries {
+                                    menu = menu.custom_entry(
+                                        {
+                                            let path_label = path_label.clone();
+                                            move |_window, _cx| {
+                                                h_flex()
+                                                    .gap_2()
+                                                    .child(
+                                                        Icon::new(IconName::Folder)
+                                                            .size(IconSize::Small)
+                                                            .color(Color::Muted),
+                                                    )
+                                                    .child(
+                                                        Label::new(path_label.clone())
+                                                            .size(LabelSize::Small),
+                                                    )
+                                                    .into_any_element()
+                                            }
+                                        },
+                                        {
+                                            let workspace = workspace.clone();
+                                            move |window, cx| {
+                                                show_multi_workspace(
+                                                    window,
+                                                    cx,
+                                                    &all_workspaces,
+                                                    &workspace,
+                                                );
+                                            }
+                                        },
+                                    );
+                                }
+                                menu
+                            });
                             Some(menu)
                         }
                     }),
             )
+            .child(Divider::vertical().color(DividerColor::Border))
     }
 }
 
@@ -447,8 +461,6 @@ impl SavedHost {
     fn is_open(&self) -> bool {
         matches!(self.status, ConnectionStatus::Connected)
     }
-
-
 }
 
 enum LandingMode {
@@ -654,7 +666,12 @@ impl ConnectionLanding {
         cx.notify();
     }
 
-    fn switch_to_edit_project(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+    fn switch_to_edit_project(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(host) = self.saved_hosts.get(index) else {
             return;
         };
@@ -816,7 +833,10 @@ impl ConnectionLanding {
 
         // Clear any previous error for this project.
         active_connections_mut(cx).clear_project_error(
-            &error_host, &error_username, error_port, &error_path,
+            &error_host,
+            &error_username,
+            error_port,
+            &error_path,
         );
 
         // Case 1: Exact host+path already open → activate that workspace.
@@ -827,8 +847,11 @@ impl ConnectionLanding {
             let target_workspace = active.workspaces.iter().find(|w| w.path == path);
             if let Some(entry) = target_workspace {
                 let target = entry.workspace.clone();
-                let all_workspaces: Vec<_> =
-                    active.workspaces.iter().map(|w| w.workspace.clone()).collect();
+                let all_workspaces: Vec<_> = active
+                    .workspaces
+                    .iter()
+                    .map(|w| w.workspace.clone())
+                    .collect();
                 show_multi_workspace(window, cx, &all_workspaces, &target);
                 return;
             }
@@ -882,14 +905,19 @@ impl ConnectionLanding {
                         let error_shared = SharedString::from(error_message.clone());
                         cx.update(|cx| {
                             active_connections_mut(cx).set_project_error(
-                                &error_host, &error_username, error_port, &error_path, error_shared,
+                                &error_host,
+                                &error_username,
+                                error_port,
+                                &error_path,
+                                error_shared,
                             );
                         });
                         let updated = this
                             .update(cx, |this, cx| {
                                 if let Some(host) = this.saved_hosts.get_mut(index) {
-                                    host.status =
-                                        ConnectionStatus::Error(SharedString::from(error_message.clone()));
+                                    host.status = ConnectionStatus::Error(SharedString::from(
+                                        error_message.clone(),
+                                    ));
                                     cx.notify();
                                 }
                             })
@@ -951,7 +979,11 @@ impl ConnectionLanding {
                 let error_shared = SharedString::from(error_message.clone());
                 cx.update(|cx| {
                     active_connections_mut(cx).set_project_error(
-                        &error_host, &error_username, error_port, &error_path, error_shared,
+                        &error_host,
+                        &error_username,
+                        error_port,
+                        &error_path,
+                        error_shared,
                     );
                 });
 
@@ -1039,9 +1071,7 @@ impl ConnectionLanding {
 
             let switcher = cx.new(|_cx| WorkspaceSwitcher::new(path, host, username));
             workspace.update(cx, |ws, cx| {
-                ws.status_bar().update(cx, |status_bar, cx| {
-                    status_bar.add_left_item(switcher, window, cx);
-                });
+                ws.set_status_bar_prefix(switcher.into(), cx);
             });
 
             workspace
@@ -1146,8 +1176,11 @@ impl ConnectionLanding {
                     path,
                 });
 
-                let all_workspaces: Vec<_> =
-                    host_conn.workspaces.iter().map(|w| w.workspace.clone()).collect();
+                let all_workspaces: Vec<_> = host_conn
+                    .workspaces
+                    .iter()
+                    .map(|w| w.workspace.clone())
+                    .collect();
                 show_multi_workspace(window, cx, &all_workspaces, &workspace_entity);
             }
 
@@ -1224,9 +1257,8 @@ impl ConnectionLanding {
     fn navigate_to_landing(window: AnyWindowHandle, cx: &mut App) {
         window
             .update(cx, |_, window, cx| {
-                let landing = window.replace_root(cx, |window, cx| {
-                    ConnectionLanding::new(window, cx)
-                });
+                let landing =
+                    window.replace_root(cx, |window, cx| ConnectionLanding::new(window, cx));
                 landing.focus_handle(cx).focus(window, cx);
             })
             .log_err();
@@ -1368,10 +1400,7 @@ impl ConnectionLanding {
                 div()
                     .w(rems_from_px(480.))
                     .px_4()
-                    .child(
-                        Label::new(state.message.clone())
-                            .color(Color::Muted),
-                    ),
+                    .child(Label::new(state.message.clone()).color(Color::Muted)),
             )
             .child(
                 h_flex()
@@ -1435,7 +1464,6 @@ impl ConnectionLanding {
             )
             .child(Label::new("Connect to a remote host to start editing").color(Color::Muted))
     }
-
 
     fn render_hosts_list(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors();
@@ -1521,9 +1549,17 @@ impl ConnectionLanding {
                     .any(|&i| matches!(self.saved_hosts[i].status, ConnectionStatus::Connecting));
 
                 let (group_icon_color, group_status_label, group_status_color) = if has_connecting {
-                    (Color::Warning, "Connecting\u{2026}".to_string(), Color::Default)
+                    (
+                        Color::Warning,
+                        "Connecting\u{2026}".to_string(),
+                        Color::Default,
+                    )
                 } else if host_has_connection {
-                    (Color::Default, format!("Connected ({open_count}/{total_count})"), Color::Default)
+                    (
+                        Color::Default,
+                        format!("Connected ({open_count}/{total_count})"),
+                        Color::Default,
+                    )
                 } else {
                     (Color::Muted, "Disconnected".to_string(), Color::Muted)
                 };
@@ -1554,11 +1590,9 @@ impl ConnectionLanding {
                         .when(editing, |this| {
                             this.cursor_pointer()
                                 .hover(move |style| style.bg(hover_bg))
-                                .on_click(cx.listener(
-                                    move |this, _event, window, cx| {
-                                        this.switch_to_edit_host(edit_host_index, window, cx);
-                                    },
-                                ))
+                                .on_click(cx.listener(move |this, _event, window, cx| {
+                                    this.switch_to_edit_host(edit_host_index, window, cx);
+                                }))
                         })
                         .child(
                             Icon::new(IconName::Server)
@@ -1602,8 +1636,8 @@ impl ConnectionLanding {
                 // Project path sub-entries.
                 for (sub_idx, &index) in indices.iter().enumerate() {
                     group_container = group_container.child(div().mx_4().h_px().bg(border));
-                    group_container = group_container
-                        .child(self.render_project_entry(index, sub_idx, cx));
+                    group_container =
+                        group_container.child(self.render_project_entry(index, sub_idx, cx));
                 }
 
                 list = list.child(group_container);
@@ -1631,10 +1665,7 @@ impl ConnectionLanding {
     ) -> impl IntoElement {
         let host = &self.saved_hosts[index];
         let colors = cx.theme().colors();
-        let path_label = host
-            .project_path
-            .as_deref()
-            .unwrap_or("(no project path)");
+        let path_label = host.project_path.as_deref().unwrap_or("(no project path)");
         let path_label = SharedString::from(path_label.to_string());
         let is_open = host.is_open();
         let is_error = matches!(host.status, ConnectionStatus::Error(_));
@@ -1686,7 +1717,9 @@ impl ConnectionLanding {
             })
             .when(is_error && !is_editing, |this| {
                 this.on_click(cx.listener(move |this, _event, _window, cx| {
-                    if let Some(ConnectionStatus::Error(msg)) = this.saved_hosts.get(index).map(|h| &h.status) {
+                    if let Some(ConnectionStatus::Error(msg)) =
+                        this.saved_hosts.get(index).map(|h| &h.status)
+                    {
                         this.error_detail = Some(ErrorDetailState {
                             host_index: index,
                             message: msg.clone(),
@@ -1705,22 +1738,32 @@ impl ConnectionLanding {
                     .gap_2()
                     .items_center()
                     .child(
-                        Icon::new(if is_open { IconName::FolderOpen } else { IconName::Folder })
-                            .size(IconSize::Small)
-                            .color(if is_error { Color::Error } else if is_open { Color::Accent } else { Color::Muted }),
+                        Icon::new(if is_open {
+                            IconName::FolderOpen
+                        } else {
+                            IconName::Folder
+                        })
+                        .size(IconSize::Small)
+                        .color(if is_error {
+                            Color::Error
+                        } else if is_open {
+                            Color::Accent
+                        } else {
+                            Color::Muted
+                        }),
                     )
-                    .child(Label::new(path_label).size(LabelSize::Small).color(Color::Default)),
+                    .child(
+                        Label::new(path_label)
+                            .size(LabelSize::Small)
+                            .color(Color::Default),
+                    ),
             )
             .child(
                 h_flex()
                     .gap_2()
                     .items_center()
                     .when_some(truncated_error, |this, msg| {
-                        this.child(
-                            Label::new(msg)
-                                .size(LabelSize::XSmall)
-                                .color(Color::Muted),
-                        )
+                        this.child(Label::new(msg).size(LabelSize::XSmall).color(Color::Muted))
                     })
                     .when(is_error && !self.editing_hosts, |this| {
                         this.child(
@@ -1732,9 +1775,11 @@ impl ConnectionLanding {
                             .icon_size(IconSize::Small)
                             .icon_color(Color::Muted)
                             .style(ButtonStyle::Transparent)
-                            .on_click(cx.listener(move |this, _event, window, cx| {
-                                this.connect_host(index, window, cx);
-                            })),
+                            .on_click(cx.listener(
+                                move |this, _event, window, cx| {
+                                    this.connect_host(index, window, cx);
+                                },
+                            )),
                         )
                     })
                     .when(self.editing_hosts, |this| {
@@ -1757,14 +1802,8 @@ impl ConnectionLanding {
             )
     }
 
-    fn render_add_host_form(
-        &self,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let show_host_fields = matches!(
-            self.mode,
-            LandingMode::AddHost | LandingMode::EditHost(_)
-        );
+    fn render_add_host_form(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let show_host_fields = matches!(self.mode, LandingMode::AddHost | LandingMode::EditHost(_));
         let show_project_field = !matches!(self.mode, LandingMode::EditHost(_));
 
         let colors = cx.theme().colors();
@@ -1830,7 +1869,11 @@ impl ConnectionLanding {
                 .child(
                     v_flex()
                         .gap_1()
-                        .child(Label::new("Name").size(LabelSize::Small).color(Color::Muted))
+                        .child(
+                            Label::new("Name")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
                         .child(
                             div()
                                 .id("name-field")
@@ -1847,7 +1890,11 @@ impl ConnectionLanding {
                 .child(
                     v_flex()
                         .gap_1()
-                        .child(Label::new("Host").size(LabelSize::Small).color(Color::Muted))
+                        .child(
+                            Label::new("Host")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
                         .child(
                             div()
                                 .id("host-field")
@@ -1885,7 +1932,11 @@ impl ConnectionLanding {
                 .child(
                     v_flex()
                         .gap_1()
-                        .child(Label::new("Port").size(LabelSize::Small).color(Color::Muted))
+                        .child(
+                            Label::new("Port")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
                         .child(
                             div()
                                 .id("port-field")

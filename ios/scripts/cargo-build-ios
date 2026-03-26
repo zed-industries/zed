@@ -35,6 +35,11 @@ fi
 
 echo "Building zed-ios for $RUST_TARGET ($CONFIGURATION)..."
 
+# All Apple Silicon chips (A11+) support FP16 NEON. Enable it so that crates
+# using half-precision inline assembly (gemm-f16, pulled in via candle/audio)
+# compile without errors on the aarch64-apple-ios target.
+export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+fp16"
+
 cd "$REPO_ROOT"
 cargo build \
     -p zed-ios \

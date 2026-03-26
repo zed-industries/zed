@@ -636,8 +636,10 @@ impl RemoteClient {
 
             let (remote_connection, io_task) = match async {
                 let remote_connection = cx
-                    .update_global(|pool: &mut ConnectionPool, cx| {
-                        pool.connect(connection_options, delegate.clone(), cx)
+                    .update(|cx| {
+                        cx.update_default_global(|pool: &mut ConnectionPool, cx| {
+                            pool.connect(connection_options, delegate.clone(), cx)
+                        })
                     })
                     .await
                     .map_err(|error| error.cloned())?;
