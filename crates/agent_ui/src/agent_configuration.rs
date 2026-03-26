@@ -890,7 +890,7 @@ impl AgentConfiguration {
                             .style(ButtonStyle::Outlined)
                             .label_size(LabelSize::Small)
                             .on_click({
-                                let context_server_store = context_server_store.clone();
+                                let context_server_store = context_server_store;
                                 let context_server_id = context_server_id.clone();
                                 move |_event, _window, cx| {
                                     context_server_store.update(cx, |store, cx| {
@@ -937,7 +937,7 @@ impl AgentConfiguration {
                 Switch::new("context-server-switch", is_running.into()).on_click({
                     let context_server_manager = self.context_server_store.clone();
                     let fs = self.fs.clone();
-                    let context_server_id = context_server_id.clone();
+                    let context_server_id = context_server_id;
 
                     move |state, _window, cx| {
                         let is_enabled = match state {
