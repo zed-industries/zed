@@ -7258,14 +7258,44 @@ impl Workspace {
             leader_border_for_pane(follower_states, &pane, window, cx)
         });
 
-        Some(
-            div()
-                .flex()
-                .flex_none()
-                .overflow_hidden()
-                .child(dock.clone())
-                .children(leader_border),
-        )
+        // For flexible horizontal panels, use proportional flex-grow sizing so that
+        // the layout engine computes the correct width each frame from the live container
+        // size. This avoids the one-frame flicker caused by computing pixel widths from
+        // `workspace.bounds`, which is only updated during prepaint.
+        //
+        // With flex_basis = 0, flex_grow = ratio / (1 - ratio), and the center using
+        // flex_grow = 1, the distribution naturally gives:
+        //   dock_width = available_width * ratio
+        // where available_width excludes any fixed-width docks — identical semantics to
+        // the previous approach but computed per-frame by the layout engine.
+        let flex_grow_value: Option<f32> = if position.axis() == Axis::Horizontal {
+            let dock_ref = dock.read(cx);
+            dock_ref.visible_panel().and_then(|panel| {
+                if panel.supports_flexible_size(window, cx) {
+                    let ratio = dock_ref
+                        .stored_panel_size_state(panel.as_ref())
+                        .and_then(|state| state.flexible_size_ratio)
+                        .or_else(|| self.default_flexible_dock_ratio(position))?;
+                    let ratio = ratio.clamp(0.001, 0.999);
+                    Some(ratio / (1.0 - ratio))
+                } else {
+                    None
+                }
+            })
+        } else {
+            None
+        };
+
+        let mut wrapper = div().flex().overflow_hidden();
+        if let Some(grow) = flex_grow_value {
+            wrapper.style().flex_grow = Some(grow);
+            wrapper.style().flex_shrink = Some(1.0);
+            wrapper.style().flex_basis = Some(relative(0.).into());
+        } else {
+            wrapper = wrapper.flex_none();
+        }
+
+        Some(wrapper.child(dock.clone()).children(leader_border))
     }
 
     pub fn for_window(window: &Window, cx: &App) -> Option<Entity<Workspace>> {
