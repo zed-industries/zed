@@ -765,14 +765,6 @@ mod tests {
         // still include the correct buffer line in the match range, rather than
         // matching generic lines (like "}", empty lines) at a wrong location.
         let text = indoc! {r#"
-            fn first_method(&self) {
-                let x = 1;
-            }
-
-            fn second_method(&self) {
-                let y = 2;
-            }
-
             fn on_query_change(&mut self, cx: &mut Context<Self>) {
                 self.filter(cx);
             }
@@ -780,11 +772,7 @@ mod tests {
 
 
             fn render_search(&self, cx: &mut Context<Self>) -> Div {
-                h_flex().child("search")
-            }
-
-            fn render_agents(&self) {
-                todo!()
+                div()
             }
         "#};
 
@@ -796,18 +784,13 @@ mod tests {
         let snapshot = buffer.snapshot();
 
         // The model sends old_text with a PARTIAL last line.
-        // The full buffer line is "fn render_search(&self, cx: ...) -> Div {"
-        // but the query only has "fn render_search".
-        let query = "    }\n\n\n\n    fn render_search";
+        let query = "}\n\n\n\nfn render_search";
 
         let mut matcher = StreamingFuzzyMatcher::new(snapshot.clone());
         matcher.push(query, None);
         let matches = matcher.finish();
 
         // The match MUST include the line containing "fn render_search".
-        // If the matcher instead matches a different "}" + empty lines block
-        // (e.g. after first_method or second_method), the edit would be applied
-        // at the wrong location, causing duplication.
         let matched_text = matches
             .first()
             .map(|range| snapshot.text_for_range(range.clone()).collect::<String>());
@@ -820,10 +803,10 @@ mod tests {
         );
 
         let matched_text = matched_text.unwrap();
-        assert!(
-            matched_text.contains("fn render_search"),
-            "Match should include the render_search line, but got: {:?}",
+        pretty_assertions::assert_eq!(
             matched_text,
+            "}\n\n\n\nfn render_search",
+            "Match should include the render_search line",
         );
     }
 

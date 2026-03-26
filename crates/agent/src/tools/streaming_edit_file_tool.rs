@@ -3863,7 +3863,7 @@ mod tests {
 
 
             fn render_search(&self, cx: &mut Context<Self>) -> Div {
-                h_flex().child("search")
+                div()
             }
         "#}
         .to_string();
