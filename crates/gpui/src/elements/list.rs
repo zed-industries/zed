@@ -949,7 +949,7 @@ impl StateInner {
         let drag_offset =
             // if dragging the scrollbar, we want to offset the point if the height changed
             content_height - self.scrollbar_drag_start_height.unwrap_or(content_height);
-        let new_scroll_top = (point.y - drag_offset).abs().max(px(0.)).min(scroll_max);
+        let new_scroll_top = (-point.y).max(px(0.)).min(scroll_max);
 
         if self.alignment == ListAlignment::Bottom && new_scroll_top == scroll_max {
             self.logical_scroll_top = None;
