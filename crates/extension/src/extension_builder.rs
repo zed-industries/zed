@@ -297,6 +297,7 @@ impl ExtensionBuilder {
                 .arg("--git-dir")
                 .arg(&git_dir)
                 .args(["remote", "get-url", "origin"])
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
                 .output()
                 .await?;
             let has_remote = remotes_output.status.success()
