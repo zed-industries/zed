@@ -27,7 +27,7 @@ pub struct RelPath(str);
 /// relative and normalized.
 ///
 /// This type is to [`RelPath`] as [`std::path::PathBuf`] is to [`std::path::Path`]
-#[derive(PartialEq, Eq, Clone, Serialize)]
+#[derive(PartialEq, Eq, Clone, Ord, PartialOrd, Serialize)]
 pub struct RelPathBuf(String);
 
 impl RelPath {

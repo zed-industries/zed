@@ -420,14 +420,14 @@ fn manifest_from_old_manifest(
         lib: Default::default(),
         themes: {
             let mut themes = manifest_json.themes.into_values().collect::<Vec<_>>();
-            themes.sort_by(|left, right| left.as_rel_path().cmp(right.as_rel_path()));
+            themes.sort();
             themes.dedup();
             themes
         },
         icon_themes: Vec::new(),
         languages: {
             let mut languages = manifest_json.languages.into_values().collect::<Vec<_>>();
-            languages.sort_by(|left, right| left.as_rel_path().cmp(right.as_rel_path()));
+            languages.sort();
             languages.dedup();
             languages
         },
