@@ -42,7 +42,7 @@ pub enum Role {
 }
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Model {
     pub name: String,
     pub display_name: Option<String>,
@@ -54,8 +54,8 @@ pub struct Model {
     pub provider: Option<Provider>,
 }
 
-impl Model {
-    pub fn default() -> Self {
+impl Default for Model {
+    fn default() -> Self {
         Self::new(
             "openrouter/auto",
             Some("Auto Router"),
@@ -66,7 +66,9 @@ impl Model {
             None,
         )
     }
+}
 
+impl Model {
     pub fn new(
         name: &str,
         display_name: Option<&str>,
