@@ -511,8 +511,8 @@
       "g shift-u": "git::UnstageAndNext", // Zed specific
 
       // Window mode
-      "space w v": "pane::SplitDown",
-      "space w s": "pane::SplitRight",
+      "space w v": "pane::SplitRight",
+      "space w s": "pane::SplitDown",
       "space w h": "workspace::ActivatePaneLeft",
       "space w j": "workspace::ActivatePaneDown",
       "space w k": "workspace::ActivatePaneUp",
@@ -1060,7 +1060,7 @@
     },
   },
   {
-    "context": "Editor && edit_prediction",
+    "context": "Editor && edit_prediction && edit_prediction_mode == eager && !showing_completions",
     "bindings": {
       // This is identical to the binding in the base keymap, but the vim bindings above to
       // "vim::Tab" shadow it, so it needs to be bound again.

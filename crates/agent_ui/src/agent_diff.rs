@@ -44,7 +44,6 @@ pub struct AgentDiffPane {
     thread: Entity<AcpThread>,
     focus_handle: FocusHandle,
     workspace: WeakEntity<Workspace>,
-    title: SharedString,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -113,7 +112,6 @@ impl AgentDiffPane {
                     this.handle_acp_thread_event(event, cx)
                 }),
             ],
-            title: SharedString::default(),
             multibuffer,
             editor,
             thread,
@@ -121,7 +119,6 @@ impl AgentDiffPane {
             workspace,
         };
         this.update_excerpts(window, cx);
-        this.update_title(cx);
         this
     }
 
@@ -231,17 +228,9 @@ impl AgentDiffPane {
         }
     }
 
-    fn update_title(&mut self, cx: &mut Context<Self>) {
-        let new_title = self.thread.read(cx).title();
-        if new_title != self.title {
-            self.title = new_title;
-            cx.emit(EditorEvent::TitleChanged);
-        }
-    }
-
     fn handle_acp_thread_event(&mut self, event: &AcpThreadEvent, cx: &mut Context<Self>) {
         if let AcpThreadEvent::TitleUpdated = event {
-            self.update_title(cx)
+            cx.emit(EditorEvent::TitleChanged);
         }
     }
 
@@ -534,13 +523,17 @@ impl Item for AgentDiffPane {
 
     fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
         let title = self.thread.read(cx).title();
-        Label::new(format!("Review: {}", title))
-            .color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            })
-            .into_any_element()
+        Label::new(if let Some(title) = title {
+            format!("Review: {}", title)
+        } else {
+            "Review".to_string()
+        })
+        .color(if params.selected {
+            Color::Default
+        } else {
+            Color::Muted
+        })
+        .into_any_element()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {

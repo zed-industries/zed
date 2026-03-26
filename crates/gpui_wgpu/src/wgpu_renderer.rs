@@ -1056,12 +1056,14 @@ impl WgpuRenderer {
         let frame = match self.resources().surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+                // Textures must be destroyed before the surface can be reconfigured.
+                drop(frame);
                 let surface_config = self.surface_config.clone();
                 let resources = self.resources_mut();
                 resources
                     .surface
                     .configure(&resources.device, &surface_config);
-                frame
+                return;
             }
             wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
                 let surface_config = self.surface_config.clone();
@@ -1620,7 +1622,9 @@ impl WgpuRenderer {
     }
 
     pub fn destroy(&mut self) {
-        // wgpu resources are automatically cleaned up when dropped
+        // Release surface-bound GPU resources eagerly so the underlying native
+        // window can be destroyed before the renderer itself is dropped.
+        self.resources.take();
     }
 
     /// Returns true if the GPU device was lost and recovery is needed.

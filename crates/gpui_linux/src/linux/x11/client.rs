@@ -62,7 +62,7 @@ use gpui::{
     AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,
     Modifiers, ModifiersChangedEvent, MouseButton, Pixels, PlatformDisplay, PlatformInput,
     PlatformKeyboardLayout, PlatformWindow, Point, RequestFrameOptions, ScrollDelta, Size,
-    TouchPhase, WindowParams, point, px,
+    TouchPhase, WindowButtonLayout, WindowParams, point, px,
 };
 use gpui_wgpu::{CompositorGpuHint, GpuContext};
 
@@ -470,6 +470,15 @@ impl X11Client {
                         client.with_common(|common| common.appearance = appearance);
                         for window in client.0.borrow_mut().windows.values_mut() {
                             window.window.set_appearance(appearance);
+                        }
+                    }
+                    XDPEvent::ButtonLayout(layout_str) => {
+                        let layout = WindowButtonLayout::parse(&layout_str)
+                            .log_err()
+                            .unwrap_or_else(WindowButtonLayout::linux_default);
+                        client.with_common(|common| common.button_layout = layout);
+                        for window in client.0.borrow_mut().windows.values_mut() {
+                            window.window.set_button_layout();
                         }
                     }
                     XDPEvent::CursorTheme(_) | XDPEvent::CursorSize(_) => {
@@ -1874,11 +1883,14 @@ impl X11ClientState {
                         if let Some(window) = state.windows.get_mut(&x_window) {
                             let expose_event_received = window.expose_event_received;
                             window.expose_event_received = false;
+                            let force_render = std::mem::take(
+                                &mut window.window.state.borrow_mut().force_render_after_recovery,
+                            );
                             let window = window.window.clone();
                             drop(state);
                             window.refresh(RequestFrameOptions {
                                 require_presentation: expose_event_received,
-                                force_render: false,
+                                force_render,
                             });
                         }
                         xcb_connection

@@ -493,18 +493,17 @@ impl ListState {
     /// This value remains constant while dragging to prevent the scrollbar from moving away unexpectedly.
     pub fn max_offset_for_scrollbar(&self) -> Point<Pixels> {
         let state = self.0.borrow();
-        let bounds = state.last_layout_bounds.unwrap_or_default();
-
-        let height = state
-            .scrollbar_drag_start_height
-            .unwrap_or_else(|| state.items.summary().height);
-
-        point(Pixels::ZERO, Pixels::ZERO.max(height - bounds.size.height))
+        point(Pixels::ZERO, state.max_scroll_offset())
     }
 
     /// Returns the current scroll offset adjusted for the scrollbar
     pub fn scroll_px_offset_for_scrollbar(&self) -> Point<Pixels> {
         let state = &self.0.borrow();
+
+        if state.logical_scroll_top.is_none() && state.alignment == ListAlignment::Bottom {
+            return Point::new(px(0.), -state.max_scroll_offset());
+        }
+
         let logical_scroll_top = state.logical_scroll_top();
 
         let mut cursor = state.items.cursor::<ListItemSummary>(());
@@ -526,6 +525,14 @@ impl ListState {
 }
 
 impl StateInner {
+    fn max_scroll_offset(&self) -> Pixels {
+        let bounds = self.last_layout_bounds.unwrap_or_default();
+        let height = self
+            .scrollbar_drag_start_height
+            .unwrap_or_else(|| self.items.summary().height);
+        (height - bounds.size.height).max(px(0.))
+    }
+
     fn visible_range(
         items: &SumTree<ListItem>,
         height: Pixels,
@@ -1448,5 +1455,47 @@ mod test {
         let offset = state.logical_scroll_top();
         assert_eq!(offset.item_ix, 2);
         assert_eq!(offset.offset_in_item, px(20.));
+    }
+
+    #[gpui::test]
+    fn test_bottom_aligned_scrollbar_offset_at_end(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        const ITEMS: usize = 10;
+        const ITEM_SIZE: f32 = 50.0;
+
+        let state = ListState::new(
+            ITEMS,
+            crate::ListAlignment::Bottom,
+            px(ITEMS as f32 * ITEM_SIZE),
+        );
+
+        struct TestView(ListState);
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                list(self.0.clone(), |_, _, _| {
+                    div().h(px(ITEM_SIZE)).w_full().into_any()
+                })
+                .w_full()
+                .h_full()
+            }
+        }
+
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, cx| {
+            cx.new(|_| TestView(state.clone())).into_any_element()
+        });
+
+        // Bottom-aligned lists start pinned to the end: logical_scroll_top returns
+        // item_ix == item_count, meaning no explicit scroll position has been set.
+        assert_eq!(state.logical_scroll_top().item_ix, ITEMS);
+
+        let max_offset = state.max_offset_for_scrollbar();
+        let scroll_offset = state.scroll_px_offset_for_scrollbar();
+
+        assert_eq!(
+            -scroll_offset.y, max_offset.y,
+            "scrollbar offset ({}) should equal max offset ({}) when list is pinned to bottom",
+            -scroll_offset.y, max_offset.y,
+        );
     }
 }

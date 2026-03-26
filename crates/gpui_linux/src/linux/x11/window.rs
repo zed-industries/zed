@@ -250,6 +250,7 @@ pub struct Callbacks {
     should_close: Option<Box<dyn FnMut() -> bool>>,
     close: Option<Box<dyn FnOnce()>>,
     appearance_changed: Option<Box<dyn FnMut()>>,
+    button_layout_changed: Option<Box<dyn FnMut()>>,
 }
 
 pub struct X11WindowState {
@@ -276,6 +277,7 @@ pub struct X11WindowState {
     hidden: bool,
     active: bool,
     hovered: bool,
+    pub(crate) force_render_after_recovery: bool,
     fullscreen: bool,
     client_side_decorations_supported: bool,
     decorations: WindowDecorations,
@@ -749,6 +751,7 @@ impl X11WindowState {
                 input_handler: None,
                 active: false,
                 hovered: false,
+                force_render_after_recovery: false,
                 fullscreen: false,
                 maximized_vertical: false,
                 maximized_horizontal: false,
@@ -1256,6 +1259,14 @@ impl X11WindowStatePtr {
             self.callbacks.borrow_mut().appearance_changed = Some(fun);
         }
     }
+
+    pub fn set_button_layout(&self) {
+        let callback = self.callbacks.borrow_mut().button_layout_changed.take();
+        if let Some(mut fun) = callback {
+            fun();
+            self.callbacks.borrow_mut().button_layout_changed = Some(fun);
+        }
+    }
 }
 
 impl PlatformWindow for X11Window {
@@ -1602,6 +1613,10 @@ impl PlatformWindow for X11Window {
         self.0.callbacks.borrow_mut().appearance_changed = Some(callback);
     }
 
+    fn on_button_layout_changed(&self, callback: Box<dyn FnMut()>) {
+        self.0.callbacks.borrow_mut().button_layout_changed = Some(callback);
+    }
+
     fn draw(&self, scene: &Scene) {
         let mut inner = self.0.state.borrow_mut();
 
@@ -1624,6 +1639,7 @@ impl PlatformWindow for X11Window {
 
             // The current scene references atlas textures that were cleared during recovery.
             // Skip this frame and let the next frame rebuild the scene with fresh textures.
+            inner.force_render_after_recovery = true;
             return;
         }
 

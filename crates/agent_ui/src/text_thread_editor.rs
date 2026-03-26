@@ -1,5 +1,6 @@
 use crate::{
     language_model_selector::{LanguageModelSelector, language_model_selector},
+    mention_set::load_external_image_from_path,
     ui::ModelSelectorTooltip,
 };
 use anyhow::Result;
@@ -894,7 +895,7 @@ impl TextThreadEditor {
                         |_, _, _, _| Empty.into_any_element(),
                     )
                     .with_metadata(CreaseMetadata {
-                        icon_path: SharedString::from(IconName::Ai.path()),
+                        icon_path: SharedString::from(IconName::ZedAgent.path()),
                         label: "Thinking Process".into(),
                     }),
                 );
@@ -1900,26 +1901,12 @@ impl TextThreadEditor {
             }
         }
 
+        let default_image_name: SharedString = "Image".into();
         for path in paths {
-            let Ok(content) = std::fs::read(path) else {
+            let Some((image, _)) = load_external_image_from_path(&path, &default_image_name) else {
                 continue;
             };
-            let Ok(format) = image::guess_format(&content) else {
-                continue;
-            };
-            images.push(gpui::Image::from_bytes(
-                match format {
-                    image::ImageFormat::Png => gpui::ImageFormat::Png,
-                    image::ImageFormat::Jpeg => gpui::ImageFormat::Jpeg,
-                    image::ImageFormat::WebP => gpui::ImageFormat::Webp,
-                    image::ImageFormat::Gif => gpui::ImageFormat::Gif,
-                    image::ImageFormat::Bmp => gpui::ImageFormat::Bmp,
-                    image::ImageFormat::Tiff => gpui::ImageFormat::Tiff,
-                    image::ImageFormat::Ico => gpui::ImageFormat::Ico,
-                    _ => continue,
-                },
-                content,
-            ));
+            images.push(image);
         }
 
         // Respect entry priority order — if the first entry is text, the source
@@ -2256,7 +2243,7 @@ impl TextThreadEditor {
         let provider_icon = active_provider
             .as_ref()
             .map(|p| p.icon())
-            .unwrap_or(IconOrSvg::Icon(IconName::Ai));
+            .unwrap_or(IconOrSvg::Icon(IconName::ZedAgent));
 
         let (color, icon) = if self.language_model_selector_menu_handle.is_deployed() {
             (Color::Accent, IconName::ChevronUp)

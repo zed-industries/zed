@@ -23,11 +23,13 @@ use livekit::webrtc::{
 use log::info;
 use parking_lot::Mutex;
 use rodio::Source;
+use rodio::conversions::SampleTypeConverter;
+use rodio::source::{AutomaticGainControlSettings, LimitSettings};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::cell::RefCell;
 use std::sync::Weak;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use std::{borrow::Cow, collections::VecDeque, sync::Arc};
 use util::{ResultExt as _, maybe};
@@ -37,46 +39,12 @@ struct TimestampedFrame {
     captured_at: Instant,
 }
 
-mod source;
-
 pub(crate) struct AudioStack {
     executor: BackgroundExecutor,
     apm: Arc<Mutex<apm::AudioProcessingModule>>,
     mixer: Arc<Mutex<audio_mixer::AudioMixer>>,
     _output_task: RefCell<Weak<Task<()>>>,
     next_ssrc: AtomicI32,
-}
-
-pub(crate) fn play_remote_audio_track(
-    track: &livekit::track::RemoteAudioTrack,
-    speaker: Speaker,
-    cx: &mut gpui::App,
-) -> Result<AudioStream> {
-    info!("speaker: {speaker:?}");
-    let stream =
-        source::LiveKitStream::new(cx.background_executor(), track, speaker.sends_legacy_audio);
-
-    let stop_handle = Arc::new(AtomicBool::new(false));
-    let stop_handle_clone = stop_handle.clone();
-    let stream = stream
-        .stoppable()
-        .periodic_access(Duration::from_millis(50), move |s| {
-            if stop_handle.load(Ordering::Relaxed) {
-                s.stop();
-            }
-        });
-
-    info!("sample_rate: {:?}", stream.sample_rate());
-    info!("channel_count: {:?}", stream.channels());
-    audio::Audio::play_voip_stream(stream, speaker.name, speaker.is_staff, cx)
-        .context("Could not play audio")?;
-
-    let on_drop = util::defer(move || {
-        stop_handle_clone.store(true, Ordering::Relaxed);
-    });
-    Ok(AudioStream::Output {
-        _drop: Box::new(on_drop),
-    })
 }
 
 impl AudioStack {
@@ -168,33 +136,17 @@ impl AudioStack {
         is_staff: bool,
         cx: &AsyncApp,
     ) -> Result<(crate::LocalAudioTrack, AudioStream, Arc<AtomicU64>)> {
-        let legacy_audio_compatible =
-            AudioSettings::try_read_global(cx, |setting| setting.legacy_audio_compatible)
-                .unwrap_or(true);
-
-        let source = if legacy_audio_compatible {
-            NativeAudioSource::new(
-                // n.b. this struct's options are always ignored, noise cancellation is provided by apm.
-                AudioSourceOptions::default(),
-                SAMPLE_RATE.get(), // TODO(audio): this was legacy params,
-                // removed for now for simplicity
-                CHANNEL_COUNT.get().into(),
-                10,
-            )
-        } else {
-            NativeAudioSource::new(
-                // n.b. this struct's options are always ignored, noise cancellation is provided by apm.
-                AudioSourceOptions::default(),
-                SAMPLE_RATE.get(),
-                CHANNEL_COUNT.get().into(),
-                10,
-            )
-        };
+        let source = NativeAudioSource::new(
+            // n.b. this struct's options are always ignored, noise cancellation is provided by apm.
+            AudioSourceOptions::default(),
+            SAMPLE_RATE.get(),
+            CHANNEL_COUNT.get().into(),
+            10,
+        );
 
         let speaker = Speaker {
             name: user_name,
             is_staff,
-            sends_legacy_audio: legacy_audio_compatible,
         };
         log::info!("Microphone speaker: {speaker:?}");
         let track_name = serde_urlencoded::to_string(speaker)
@@ -219,21 +171,7 @@ impl AudioStack {
                 }
             }
         });
-        let rodio_pipeline =
-            AudioSettings::try_read_global(cx, |setting| setting.rodio_audio).unwrap_or_default();
-        let capture_task = if rodio_pipeline {
-            info!("Using experimental.rodio_audio audio pipeline");
-            let voip_parts = audio::VoipParts::new(cx)?;
-            // Audio needs to run real-time and should never be paused. That is
-            // why we are using a normal std::thread and not a background task
-            self.executor
-                .spawn_with_priority(Priority::RealtimeAudio, async move {
-                    // microphone is non send on mac
-                    let microphone = audio::Audio::open_microphone(voip_parts)?;
-                    send_to_livekit(frame_tx, microphone);
-                    Ok(())
-                })
-        } else {
+        let capture_task = {
             let input_audio_device =
                 AudioSettings::try_read_global(cx, |settings| settings.input_audio_device.clone())
                     .flatten();
@@ -380,6 +318,14 @@ impl AudioStack {
                         let ten_ms_buffer_size =
                             (config.channels() as u32 * config.sample_rate() / 100) as usize;
                         let mut buf: Vec<i16> = Vec::with_capacity(ten_ms_buffer_size);
+                        let mut rodio_effects = RodioEffectsAdaptor::new(buf.len())
+                            .automatic_gain_control(AutomaticGainControlSettings {
+                                target_level: 0.50,
+                                attack_time: Duration::from_secs(1),
+                                release_time: Duration::from_secs(0),
+                                absolute_max_gain: 5.0,
+                            })
+                            .limit(LimitSettings::live_performance());
 
                         let stream = device
                             .build_input_stream_raw(
@@ -411,6 +357,21 @@ impl AudioStack {
                                                     sample_rate,
                                                 )
                                                 .to_owned();
+
+                                            if audio::LIVE_SETTINGS
+                                                .auto_microphone_volume
+                                                .load(Ordering::Relaxed)
+                                            {
+                                                rodio_effects
+                                                    .inner_mut()
+                                                    .inner_mut()
+                                                    .fill_buffer_with(&sampled);
+                                                sampled.clear();
+                                                sampled.extend(SampleTypeConverter::<_, i16>::new(
+                                                    rodio_effects.by_ref(),
+                                                ));
+                                            }
+
                                             apm.lock()
                                                 .process_stream(
                                                     &mut sampled,
@@ -419,6 +380,7 @@ impl AudioStack {
                                                 )
                                                 .log_err();
                                             buf.clear();
+
                                             frame_tx
                                                 .try_send(TimestampedFrame {
                                                     frame: AudioFrame {
@@ -453,44 +415,73 @@ impl AudioStack {
     }
 }
 
+/// This allows using of Rodio's effects library within our home brewn audio
+/// pipeline. The alternative would be inlining Rodio's effects which is
+/// problematic from a legal stance. We would then have to make clear that code
+/// is not owned by zed-industries while the code would be surrounded by
+/// zed-industries owned code.
+///
+/// This adaptor does incur a slight performance penalty (copying into a
+/// pre-allocated vec and back) however the impact will be immeasurably low.
+///
+/// There is no latency impact.
+pub struct RodioEffectsAdaptor {
+    input: Vec<rodio::Sample>,
+    pos: usize,
+}
+
+impl RodioEffectsAdaptor {
+    // This implementation incorrect terminology confusing everyone. A normal
+    // audio frame consists of all samples for one moment in time (one for mono,
+    // two for stereo). Here a frame of audio refers to a 10ms buffer of samples.
+    fn new(samples_per_frame: usize) -> Self {
+        Self {
+            input: Vec::with_capacity(samples_per_frame),
+            pos: 0,
+        }
+    }
+
+    fn fill_buffer_with(&mut self, integer_samples: &[i16]) {
+        self.input.clear();
+        self.input.extend(SampleTypeConverter::<_, f32>::new(
+            integer_samples.iter().copied(),
+        ));
+        self.pos = 0;
+    }
+}
+
+impl Iterator for RodioEffectsAdaptor {
+    type Item = rodio::Sample;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let sample = self.input.get(self.pos)?;
+        self.pos += 1;
+        Some(*sample)
+    }
+}
+
+impl rodio::Source for RodioEffectsAdaptor {
+    fn current_span_len(&self) -> Option<usize> {
+        None
+    }
+
+    fn channels(&self) -> rodio::ChannelCount {
+        rodio::nz!(2)
+    }
+
+    fn sample_rate(&self) -> rodio::SampleRate {
+        rodio::nz!(48000)
+    }
+
+    fn total_duration(&self) -> Option<Duration> {
+        None
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Speaker {
     pub name: String,
     pub is_staff: bool,
-    pub sends_legacy_audio: bool,
-}
-
-fn send_to_livekit(mut frame_tx: Sender<TimestampedFrame>, mut microphone: impl Source) {
-    use cpal::Sample;
-    let sample_rate = microphone.sample_rate().get();
-    let num_channels = microphone.channels().get() as u32;
-    let buffer_size = sample_rate / 100 * num_channels;
-
-    loop {
-        let sampled: Vec<_> = microphone
-            .by_ref()
-            .take(buffer_size as usize)
-            .map(|s| s.to_sample())
-            .collect();
-
-        match frame_tx.try_send(TimestampedFrame {
-            frame: AudioFrame {
-                sample_rate,
-                num_channels,
-                samples_per_channel: sampled.len() as u32 / num_channels,
-                data: Cow::Owned(sampled),
-            },
-            captured_at: Instant::now(),
-        }) {
-            Ok(_) => {}
-            Err(err) => {
-                if !err.is_full() {
-                    // must rx has dropped or is not consuming
-                    break;
-                }
-            }
-        }
-    }
 }
 
 use super::LocalVideoTrack;
