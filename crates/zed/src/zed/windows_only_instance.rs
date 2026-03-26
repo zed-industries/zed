@@ -159,7 +159,7 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
             wait: false,
             wsl: args.wsl.clone(),
             open_behavior: Default::default(),
-            env: None,
+            env: Some(std::env::vars().collect()),
             user_data_dir: args.user_data_dir.clone(),
             dev_container: args.dev_container,
             cwd: std::env::current_dir().ok(),
