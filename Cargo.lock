@@ -23333,6 +23333,7 @@ dependencies = [
  "language_model",
  "language_selector",
  "language_tools",
+ "languages",
  "log",
  "menu",
  "node_runtime",

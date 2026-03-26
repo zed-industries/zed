@@ -385,6 +385,12 @@ mod ios {
         let user_store = cx.new(|cx| client::UserStore::new(client.clone(), cx));
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
         let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
+        languages::init(
+            languages.clone(),
+            fs.clone(),
+            node_runtime::NodeRuntime::unavailable(),
+            cx,
+        );
 
         // Menu and actions
         menu::init();

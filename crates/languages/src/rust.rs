@@ -67,6 +67,12 @@ impl RustLspAdapter {
     const ARCH_SERVER_NAME: &str = "pc-windows-msvc";
 }
 
+#[cfg(target_os = "ios")]
+impl RustLspAdapter {
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::Gz;
+    const ARCH_SERVER_NAME: &str = "apple-darwin";
+}
+
 const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("rust-analyzer");
 
 #[cfg(target_os = "linux")]

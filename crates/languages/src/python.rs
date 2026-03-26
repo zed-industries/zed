@@ -266,6 +266,12 @@ impl TyLspAdapter {
     const ARCH_SERVER_NAME: &str = "pc-windows-msvc";
 }
 
+#[cfg(target_os = "ios")]
+impl TyLspAdapter {
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
+    const ARCH_SERVER_NAME: &str = "apple-darwin";
+}
+
 impl TyLspAdapter {
     const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("ty");
 
@@ -2381,6 +2387,12 @@ impl RuffLspAdapter {
 impl RuffLspAdapter {
     const GITHUB_ASSET_KIND: AssetKind = AssetKind::Zip;
     const ARCH_SERVER_NAME: &str = "pc-windows-msvc";
+}
+
+#[cfg(target_os = "ios")]
+impl RuffLspAdapter {
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
+    const ARCH_SERVER_NAME: &str = "apple-darwin";
 }
 
 impl RuffLspAdapter {
