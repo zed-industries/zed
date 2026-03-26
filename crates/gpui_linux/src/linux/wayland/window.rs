@@ -1465,7 +1465,7 @@ impl PlatformWindow for WaylandWindow {
         } else {
             None
         };
-        if let Some(bell) = state.client.globals.system_bell.as_ref() {
+        if let Some(bell) = state.globals.system_bell.as_ref() {
             bell.ring(surface);
         }
     }
