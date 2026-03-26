@@ -315,7 +315,7 @@ impl Grammar {
         let name = &config.name;
         if let Some(query) = queries.highlights {
             self = self
-                .with_highlights_query(dbg!(query.as_ref()))
+                .with_highlights_query(query.as_ref())
                 .context("Error loading highlights query")?;
         }
         if let Some(query) = queries.brackets {
