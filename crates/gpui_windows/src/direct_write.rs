@@ -557,8 +557,16 @@ impl DirectWriteState {
                     f32::INFINITY,
                     f32::INFINITY,
                 )?;
-                let current_text = &text[utf8_offset..(utf8_offset + first_run.len)];
-                utf8_offset += first_run.len;
+                let end = text.floor_char_boundary(utf8_offset + first_run.len);
+                debug_assert_eq!(
+                    end,
+                    utf8_offset + first_run.len,
+                    "FontRun.len {} is not on a char boundary in {:?}",
+                    first_run.len,
+                    text
+                );
+                let current_text = &text[utf8_offset..end];
+                utf8_offset = end;
                 let current_text_utf16_length = current_text.encode_utf16().count() as u32;
                 let text_range = DWRITE_TEXT_RANGE {
                     startPosition: utf16_offset,
@@ -582,8 +590,17 @@ impl DirectWriteState {
             let mut break_ligatures = true;
             for run in &font_runs[1..] {
                 let font_info = &self.fonts[run.font_id.0];
-                let current_text = &text[utf8_offset..(utf8_offset + run.len)];
-                utf8_offset += run.len;
+
+                let end = text.floor_char_boundary(utf8_offset + run.len);
+                debug_assert_eq!(
+                    end,
+                    utf8_offset + run.len,
+                    "FontRun.len {} is not on a char boundary in {:?}",
+                    run.len,
+                    text
+                );
+                let current_text = &text[utf8_offset..end];
+                utf8_offset = end;
                 let current_text_utf16_length = current_text.encode_utf16().count() as u32;
 
                 let collection = &font_info.font_collection;

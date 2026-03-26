@@ -478,8 +478,14 @@ impl MacTextSystemState {
             let mut text = text;
             let mut break_ligature = true;
             for run in font_runs {
+                let split_ix = text.floor_char_boundary(run.len);
+                debug_assert_eq!(
+                    split_ix, run.len,
+                    "FontRun.len {} is not on a char boundary in {:?}",
+                    run.len, text
+                );
                 let text_run;
-                (text_run, text) = text.split_at(run.len);
+                (text_run, text) = text.split_at(split_ix);
 
                 let utf16_start = string.char_len(); // insert at end of string
                 // note: replace_str may silently ignore codepoints it dislikes (e.g., BOM at start of string)
@@ -839,5 +845,56 @@ mod tests {
         let layout = fonts.layout_line(text, px(16.), font_runs);
         assert_eq!(layout.len, 0);
         assert!(layout.runs.is_empty());
+    }
+
+    #[test]
+    fn test_layout_line_multibyte_utf8() {
+        let fonts = MacTextSystem::new();
+        let font_id = fonts.font_id(&font("Helvetica")).unwrap();
+
+        // 'ß' is 2 bytes in UTF-8, 'ü' is 2 bytes, 'ö' is 2 bytes
+        let text = "Grüße";
+        let font_runs = &[FontRun {
+            font_id,
+            len: text.len(),
+        }];
+        let layout = fonts.layout_line(text, px(16.), font_runs);
+        assert_eq!(layout.len, text.len());
+
+        for run in &layout.runs {
+            for glyph in &run.glyphs {
+                assert!(
+                    text.is_char_boundary(glyph.index),
+                    "Glyph index {} is not on a char boundary",
+                    glyph.index,
+                );
+            }
+        }
+
+        // Split multi-byte text across font runs at char boundaries
+        let text = "Rot Grün Blau";
+        let split = "Rot Gr".len(); // 6 bytes, on char boundary before 'ü'
+        let font_runs = &[
+            FontRun {
+                font_id,
+                len: split,
+            },
+            FontRun {
+                font_id,
+                len: text.len() - split,
+            },
+        ];
+        let layout = fonts.layout_line(text, px(16.), font_runs);
+        assert_eq!(layout.len, text.len());
+
+        for run in &layout.runs {
+            for glyph in &run.glyphs {
+                assert!(
+                    text.is_char_boundary(glyph.index),
+                    "Glyph index {} is not on a char boundary",
+                    glyph.index,
+                );
+            }
+        }
     }
 }
