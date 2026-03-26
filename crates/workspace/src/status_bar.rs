@@ -32,22 +32,12 @@ trait StatusItemViewHandle: Send {
     fn item_type(&self) -> TypeId;
 }
 
+#[derive(Default)]
 struct SidebarStatus {
     open: bool,
     side: SidebarSide,
     has_notifications: bool,
     show_toggle: bool,
-}
-
-impl Default for SidebarStatus {
-    fn default() -> Self {
-        Self {
-            open: false,
-            side: SidebarSide::default(),
-            has_notifications: false,
-            show_toggle: false,
-        }
-    }
 }
 
 impl SidebarStatus {
