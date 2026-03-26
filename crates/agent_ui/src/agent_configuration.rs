@@ -937,7 +937,6 @@ impl AgentConfiguration {
                 Switch::new("context-server-switch", is_running.into()).on_click({
                     let context_server_manager = self.context_server_store.clone();
                     let fs = self.fs.clone();
-                    let context_server_id = context_server_id;
 
                     move |state, _window, cx| {
                         let is_enabled = match state {
