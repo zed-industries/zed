@@ -17566,9 +17566,8 @@ dependencies = [
  "anyhow",
  "collections",
  "derive_more",
- "fs",
- "futures 0.3.31",
  "gpui",
+ "gpui_util",
  "log",
  "palette",
  "parking_lot",
@@ -17580,7 +17579,6 @@ dependencies = [
  "settings",
  "strum 0.27.2",
  "thiserror 2.0.17",
- "util",
  "uuid",
 ]
 
@@ -18766,6 +18764,7 @@ dependencies = [
  "documented",
  "gpui",
  "gpui_macros",
+ "gpui_util",
  "icons",
  "itertools 0.14.0",
  "menu",
@@ -18777,7 +18776,6 @@ dependencies = [
  "strum 0.27.2",
  "theme",
  "ui_macros",
- "util",
  "windows 0.61.3",
 ]
 

@@ -77,7 +77,10 @@ use std::{
     sync::atomic::{self, AtomicBool},
 };
 use terminal_view::terminal_panel::{self, TerminalPanel};
-use theme::{ActiveTheme, GlobalTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
+use theme::{
+    ActiveTheme, GlobalTheme, SystemAppearance, ThemeRegistry, ThemeSettings,
+    deserialize_icon_theme,
+};
 use ui::{PopoverMenuHandle, prelude::*};
 use util::markdown::MarkdownString;
 use util::rel_path::RelPath;
@@ -2219,24 +2222,23 @@ pub(crate) fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &mut A
             let reload_tasks = &reload_tasks;
             let fs = fs.clone();
 
-            scope.spawn(async {
+            scope.spawn(async move {
                 match load_target {
                     LoadTarget::Theme(theme_path) => {
-                        if theme_registry
-                            .load_user_theme(&theme_path, fs)
-                            .await
-                            .log_err()
-                            .is_some()
+                        if let Some(bytes) = fs.load_bytes(&theme_path).await.log_err()
+                            && theme_registry.load_user_theme(&bytes).log_err().is_some()
                         {
                             reload_tasks.lock().push(ReloadTarget::Theme);
                         }
                     }
                     LoadTarget::IconTheme((icon_theme_path, icons_root_path)) => {
-                        if theme_registry
-                            .load_icon_theme(&icon_theme_path, &icons_root_path, fs)
-                            .await
-                            .log_err()
-                            .is_some()
+                        if let Some(bytes) = fs.load_bytes(&icon_theme_path).await.log_err()
+                            && let Some(icon_theme_family) =
+                                deserialize_icon_theme(&bytes).log_err()
+                            && theme_registry
+                                .load_icon_theme(icon_theme_family, &icons_root_path)
+                                .log_err()
+                                .is_some()
                         {
                             reload_tasks.lock().push(ReloadTarget::IconTheme);
                         }

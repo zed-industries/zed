@@ -9950,7 +9950,7 @@ impl Editor {
             })
             .when(!is_platform_style_mac, |parent| {
                 parent.child(
-                    Key::new(util::capitalize(keystroke.key()), Some(Color::Default))
+                    Key::new(ui::utils::capitalize(keystroke.key()), Some(Color::Default))
                         .size(Some(IconSize::XSmall.rems().into())),
                 )
             })
@@ -9978,7 +9978,7 @@ impl Editor {
                 )))
                 .into_any()
         } else {
-            Key::new(util::capitalize(keystroke.key()), Some(color))
+            Key::new(ui::utils::capitalize(keystroke.key()), Some(color))
                 .size(Some(IconSize::XSmall.rems().into()))
                 .into_any_element()
         }
