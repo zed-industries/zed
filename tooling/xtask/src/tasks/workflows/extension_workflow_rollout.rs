@@ -50,7 +50,7 @@ pub(crate) fn extension_workflow_rollout() -> Workflow {
 
 fn fetch_extension_repos(filter_repos_input: &WorkflowInput) -> (NamedJob, JobOutput, JobOutput) {
     fn get_repositories(filter_repos_input: &WorkflowInput) -> (Step<Use>, StepOutput) {
-        let step = named::uses("actions", "github-script", "v7")
+        let step = named::uses("actions", "github-script", "f28e40c7f34bde8b3046d885e986cb6290c5673b")
             .id("list-repos")
             .add_with((
                 "script",
