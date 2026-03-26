@@ -453,7 +453,7 @@ pub async fn get_models(
         .uri(uri)
         .header("Accept", "application/json")
         .when_some(api_key, |builder, api_key| {
-            builder.header("authorization", format!("Bearer {}", api_key))
+            builder.header("Authorization", format!("Bearer {}", api_key))
         })
         .body(AsyncBody::default())?;
 
