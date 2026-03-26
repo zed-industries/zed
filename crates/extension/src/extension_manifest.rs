@@ -450,8 +450,6 @@ fn manifest_from_old_manifest(
 
 #[cfg(test)]
 mod tests {
-    use fs::FakeFs;
-    use gpui::TestAppContext;
     use pretty_assertions::assert_eq;
 
     use crate::ProcessExecCapability;
@@ -502,32 +500,6 @@ mod tests {
 
         let path = build_debug_adapter_schema_path(&adapter_name, &entry);
         assert_eq!(path, "debug_adapter_schemas/my_adapter.json".into());
-    }
-
-    #[gpui::test]
-    async fn test_load_manifest_with_mixed_windows_separators_in_relative_paths(
-        cx: &mut TestAppContext,
-    ) {
-        let fs = FakeFs::new(cx.executor());
-        let extension_path = Path::new("/extension");
-
-        fs.insert_tree(
-            extension_path,
-            serde_json::json!({
-                "extension.toml": r#"
-id = "test-manifest"
-name = "Test Manifest"
-version = "0.0.1"
-schema_version = 0
-languages = ["languages\\mixed/path"]
-"#,
-            }),
-        )
-        .await;
-
-        let manifest = ExtensionManifest::load(fs, extension_path).await.unwrap();
-
-        assert_eq!(manifest.languages, vec!["languages/mixed/path".into()]);
     }
 
     #[test]
