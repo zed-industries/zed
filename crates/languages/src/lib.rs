@@ -1,14 +1,12 @@
-use anyhow::Context as _;
 use gpui::{App, SharedString, UpdateGlobal};
 use node_runtime::NodeRuntime;
 use project::Fs;
 use python::PyprojectTomlManifestProvider;
 use rust::CargoManifestProvider;
-use rust_embed::RustEmbed;
 use settings::{SemanticTokenRules, SettingsStore};
 use smol::stream::StreamExt;
-use std::{str, sync::Arc};
-use util::{ResultExt, asset_str};
+use std::sync::Arc;
+use util::ResultExt;
 
 pub use language::*;
 
@@ -35,11 +33,6 @@ mod yaml;
 
 pub(crate) use package_json::{PackageJson, PackageJsonData};
 
-#[derive(RustEmbed)]
-#[folder = "src/"]
-#[exclude = "*.rs"]
-struct LanguageDir;
-
 /// A shared grammar for plain text, exposed for reuse by downstream crates.
 #[cfg(feature = "tree-sitter-gitcommit")]
 pub static LANGUAGE_GIT_COMMIT: std::sync::LazyLock<Arc<Language>> =
@@ -47,7 +40,7 @@ pub static LANGUAGE_GIT_COMMIT: std::sync::LazyLock<Arc<Language>> =
         Arc::new(Language::new(
             LanguageConfig {
                 name: "Git Commit".into(),
-                soft_wrap: Some(language::language_settings::SoftWrap::EditorWidth),
+                soft_wrap: Some(language::SoftWrap::EditorWidth),
                 matcher: LanguageMatcher {
                     path_suffixes: vec!["COMMIT_EDITMSG".to_owned()],
                     first_line_pattern: None,
@@ -62,28 +55,7 @@ pub static LANGUAGE_GIT_COMMIT: std::sync::LazyLock<Arc<Language>> =
 
 pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime, cx: &mut App) {
     #[cfg(feature = "load-grammars")]
-    languages.register_native_grammars([
-        ("bash", tree_sitter_bash::LANGUAGE),
-        ("c", tree_sitter_c::LANGUAGE),
-        ("cpp", tree_sitter_cpp::LANGUAGE),
-        ("css", tree_sitter_css::LANGUAGE),
-        ("diff", tree_sitter_diff::LANGUAGE),
-        ("go", tree_sitter_go::LANGUAGE),
-        ("gomod", tree_sitter_go_mod::LANGUAGE),
-        ("gowork", tree_sitter_gowork::LANGUAGE),
-        ("jsdoc", tree_sitter_jsdoc::LANGUAGE),
-        ("json", tree_sitter_json::LANGUAGE),
-        ("jsonc", tree_sitter_json::LANGUAGE),
-        ("markdown", tree_sitter_md::LANGUAGE),
-        ("markdown-inline", tree_sitter_md::INLINE_LANGUAGE),
-        ("python", tree_sitter_python::LANGUAGE),
-        ("regex", tree_sitter_regex::LANGUAGE),
-        ("rust", tree_sitter_rust::LANGUAGE),
-        ("tsx", tree_sitter_typescript::LANGUAGE_TSX),
-        ("typescript", tree_sitter_typescript::LANGUAGE_TYPESCRIPT),
-        ("yaml", tree_sitter_yaml::LANGUAGE),
-        ("gitcommit", tree_sitter_gitcommit::LANGUAGE),
-    ]);
+    languages.register_native_grammars(grammars::native_grammars());
 
     let c_lsp_adapter = Arc::new(c::CLspAdapter);
     let css_lsp_adapter = Arc::new(css::CssLspAdapter::new(node.clone()));
@@ -99,7 +71,7 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
     let python_lsp_adapter = Arc::new(python::PyrightLspAdapter::new(node.clone()));
     let basedpyright_lsp_adapter = Arc::new(BasedPyrightLspAdapter::new(node.clone()));
     let ruff_lsp_adapter = Arc::new(RuffLspAdapter::new(fs.clone()));
-    let python_toolchain_provider = Arc::new(python::PythonToolchainProvider);
+    let python_toolchain_provider = Arc::new(python::PythonToolchainProvider::new(fs.clone()));
     let rust_context_provider = Arc::new(rust::RustContextProvider);
     let rust_lsp_adapter = Arc::new(rust::RustLspAdapter);
     let tailwind_adapter = Arc::new(tailwind::TailwindLspAdapter::new(node.clone()));
@@ -402,56 +374,17 @@ fn register_language(
 #[cfg(any(test, feature = "test-support"))]
 pub fn language(name: &str, grammar: tree_sitter::Language) -> Arc<Language> {
     Arc::new(
-        Language::new(load_config(name), Some(grammar))
-            .with_queries(load_queries(name))
+        Language::new(grammars::load_config(name), Some(grammar))
+            .with_queries(grammars::load_queries(name))
             .unwrap(),
     )
 }
 
 fn load_config(name: &str) -> LanguageConfig {
-    let config_toml = String::from_utf8(
-        LanguageDir::get(&format!("{}/config.toml", name))
-            .unwrap_or_else(|| panic!("missing config for language {:?}", name))
-            .data
-            .to_vec(),
-    )
-    .unwrap();
-
-    #[allow(unused_mut)]
-    let mut config: LanguageConfig = ::toml::from_str(&config_toml)
-        .with_context(|| format!("failed to load config.toml for language {name:?}"))
-        .unwrap();
-
-    #[cfg(not(any(feature = "load-grammars", test)))]
-    {
-        config = LanguageConfig {
-            name: config.name,
-            matcher: config.matcher,
-            jsx_tag_auto_close: config.jsx_tag_auto_close,
-            ..Default::default()
-        }
-    }
-
-    config
+    let grammars_loaded = cfg!(any(feature = "load-grammars", test));
+    grammars::load_config_for_feature(name, grammars_loaded)
 }
 
 fn load_queries(name: &str) -> LanguageQueries {
-    let mut result = LanguageQueries::default();
-    for path in LanguageDir::iter() {
-        if let Some(remainder) = path.strip_prefix(name).and_then(|p| p.strip_prefix('/')) {
-            if !remainder.ends_with(".scm") {
-                continue;
-            }
-            for (name, query) in QUERY_FILENAME_PREFIXES {
-                if remainder.starts_with(name) {
-                    let contents = asset_str::<LanguageDir>(path.as_ref());
-                    match query(&mut result) {
-                        None => *query(&mut result) = Some(contents),
-                        Some(r) => r.to_mut().push_str(contents.as_ref()),
-                    }
-                }
-            }
-        }
-    }
-    result
+    grammars::load_queries(name)
 }

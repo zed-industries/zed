@@ -29,7 +29,7 @@ pub use dock::Panel;
 pub use multi_workspace::{
     CloseWorkspaceSidebar, DraggedSidebar, FocusWorkspaceSidebar, MultiWorkspace,
     MultiWorkspaceEvent, NextWorkspace, PreviousWorkspace, Sidebar, SidebarHandle,
-    ToggleWorkspaceSidebar,
+    SidebarRenderState, SidebarSide, ToggleWorkspaceSidebar, sidebar_side_context_menu,
 };
 pub use path_list::{PathList, SerializedPathList};
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};
@@ -1342,6 +1342,7 @@ pub struct Workspace {
     removing: bool,
     _panels_task: Option<Task<Result<()>>>,
     sidebar_focus_handle: Option<FocusHandle>,
+    multi_workspace: Option<WeakEntity<MultiWorkspace>>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1626,8 +1627,13 @@ impl Workspace {
         let left_dock_buttons = cx.new(|cx| PanelButtons::new(left_dock.clone(), cx));
         let bottom_dock_buttons = cx.new(|cx| PanelButtons::new(bottom_dock.clone(), cx));
         let right_dock_buttons = cx.new(|cx| PanelButtons::new(right_dock.clone(), cx));
+        let multi_workspace = window
+            .root::<MultiWorkspace>()
+            .flatten()
+            .map(|mw| mw.downgrade());
         let status_bar = cx.new(|cx| {
-            let mut status_bar = StatusBar::new(&center_pane.clone(), window, cx);
+            let mut status_bar =
+                StatusBar::new(&center_pane.clone(), multi_workspace.clone(), window, cx);
             status_bar.add_left_item(left_dock_buttons, window, cx);
             status_bar.add_right_item(right_dock_buttons, window, cx);
             status_bar.add_right_item(bottom_dock_buttons, window, cx);
@@ -1754,6 +1760,7 @@ impl Workspace {
             last_open_dock_positions: Vec::new(),
             removing: false,
             sidebar_focus_handle: None,
+            multi_workspace,
         }
     }
 
@@ -2127,6 +2134,13 @@ impl Workspace {
         }
     }
 
+    pub fn agent_panel_position(&self, cx: &App) -> Option<DockPosition> {
+        self.all_docks().into_iter().find_map(|dock| {
+            let dock = dock.read(cx);
+            dock.has_agent_panel(cx).then_some(dock.position())
+        })
+    }
+
     pub fn panel_size_state<T: Panel>(&self, cx: &App) -> Option<dock::PanelSizeState> {
         self.all_docks().into_iter().find_map(|dock| {
             let dock = dock.read(cx);
@@ -2327,26 +2341,27 @@ impl Workspace {
         &self.status_bar
     }
 
-    pub fn set_workspace_sidebar_open(
-        &self,
-        open: bool,
-        has_notifications: bool,
-        show_toggle: bool,
-        cx: &mut App,
-    ) {
-        self.status_bar.update(cx, |status_bar, cx| {
-            status_bar.set_workspace_sidebar_open(open, cx);
-            status_bar.set_sidebar_has_notifications(has_notifications, cx);
-            status_bar.set_show_sidebar_toggle(show_toggle, cx);
-        });
-    }
-
     pub fn set_sidebar_focus_handle(&mut self, handle: Option<FocusHandle>) {
         self.sidebar_focus_handle = handle;
     }
 
     pub fn status_bar_visible(&self, cx: &App) -> bool {
         StatusBarSettings::get_global(cx).show
+    }
+
+    pub fn multi_workspace(&self) -> Option<&WeakEntity<MultiWorkspace>> {
+        self.multi_workspace.as_ref()
+    }
+
+    pub fn set_multi_workspace(
+        &mut self,
+        multi_workspace: WeakEntity<MultiWorkspace>,
+        cx: &mut App,
+    ) {
+        self.status_bar.update(cx, |status_bar, cx| {
+            status_bar.set_multi_workspace(multi_workspace.clone(), cx);
+        });
+        self.multi_workspace = Some(multi_workspace);
     }
 
     pub fn app_state(&self) -> &Arc<AppState> {

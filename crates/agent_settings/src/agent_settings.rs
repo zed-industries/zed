@@ -12,7 +12,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
     DefaultAgentView, DockPosition, LanguageModelParameters, LanguageModelSelection,
-    NewThreadLocation, NotifyWhenAgentWaiting, RegisterSetting, Settings, ToolPermissionMode,
+    NewThreadLocation, NotifyWhenAgentWaiting, RegisterSetting, Settings, SidebarDockPosition,
+    SidebarSide, ToolPermissionMode,
 };
 
 pub use crate::agent_profile::*;
@@ -26,6 +27,7 @@ pub struct AgentSettings {
     pub enabled: bool,
     pub button: bool,
     pub dock: DockPosition,
+    pub sidebar_side: SidebarDockPosition,
     pub default_width: Pixels,
     pub default_height: Pixels,
     pub default_model: Option<LanguageModelSelection>,
@@ -75,6 +77,17 @@ impl AgentSettings {
             return setting.temperature;
         }
         return None;
+    }
+
+    pub fn sidebar_side(&self) -> SidebarSide {
+        match self.sidebar_side {
+            SidebarDockPosition::Left => SidebarSide::Left,
+            SidebarDockPosition::Right => SidebarSide::Right,
+            SidebarDockPosition::FollowAgent => match self.dock {
+                DockPosition::Right => SidebarSide::Right,
+                _ => SidebarSide::Left,
+            },
+        }
     }
 
     pub fn set_message_editor_max_lines(&self) -> usize {
@@ -407,6 +420,7 @@ impl Settings for AgentSettings {
             enabled: agent.enabled.unwrap(),
             button: agent.button.unwrap(),
             dock: agent.dock.unwrap(),
+            sidebar_side: agent.sidebar_side.unwrap(),
             default_width: px(agent.default_width.unwrap()),
             default_height: px(agent.default_height.unwrap()),
             default_model: Some(agent.default_model.unwrap()),

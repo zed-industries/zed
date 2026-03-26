@@ -40,6 +40,7 @@ globset.workspace = true
 gpui.workspace = true
 http_client.workspace = true
 imara-diff.workspace = true
+language_core.workspace = true
 itertools.workspace = true
 log.workspace = true
 lsp.workspace = true
@@ -48,7 +49,6 @@ postage.workspace = true
 rand = { workspace = true, optional = true }
 regex.workspace = true
 rpc.workspace = true
-schemars.workspace = true
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true

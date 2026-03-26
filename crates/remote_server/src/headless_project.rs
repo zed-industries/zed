@@ -129,7 +129,6 @@ impl HeadlessProject {
                 worktree_store.clone(),
                 environment.clone(),
                 manifest_tree.clone(),
-                fs.clone(),
                 cx,
             )
         });

@@ -87,6 +87,7 @@ members = [
     "crates/git_ui",
     "crates/go_to_line",
     "crates/google_ai",
+    "crates/grammars",
     "crates/gpui",
     "crates/gpui_linux",
     "crates/gpui_macos",
@@ -108,6 +109,7 @@ members = [
     "crates/json_schema_store",
     "crates/keymap_editor",
     "crates/language",
+    "crates/language_core",
     "crates/language_extension",
     "crates/language_model",
     "crates/language_models",
@@ -330,6 +332,7 @@ git_hosting_providers = { path = "crates/git_hosting_providers" }
 git_ui = { path = "crates/git_ui" }
 go_to_line = { path = "crates/go_to_line" }
 google_ai = { path = "crates/google_ai" }
+grammars = { path = "crates/grammars" }
 gpui = { path = "crates/gpui", default-features = false }
 gpui_linux = { path = "crates/gpui_linux", default-features = false }
 gpui_macos = { path = "crates/gpui_macos", default-features = false }
@@ -354,6 +357,7 @@ journal = { path = "crates/journal" }
 json_schema_store = { path = "crates/json_schema_store" }
 keymap_editor = { path = "crates/keymap_editor" }
 language = { path = "crates/language" }
+language_core = { path = "crates/language_core" }
 language_extension = { path = "crates/language_extension" }
 language_model = { path = "crates/language_model" }
 language_models = { path = "crates/language_models" }

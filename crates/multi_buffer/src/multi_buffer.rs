@@ -55,6 +55,7 @@ use text::{
     subscription::{Subscription, Topic},
 };
 use theme::SyntaxTheme;
+use unicode_segmentation::UnicodeSegmentation;
 use util::post_inc;
 use ztracing::instrument;
 
@@ -7242,6 +7243,16 @@ impl MultiBufferSnapshot {
             }
         }
         excerpt_edits
+    }
+
+    /// Returns the number of graphemes in `range`.
+    ///
+    /// This counts user-visible characters like `e\u{301}` as one.
+    pub fn grapheme_count_for_range(&self, range: &Range<MultiBufferOffset>) -> usize {
+        self.text_for_range(range.clone())
+            .collect::<String>()
+            .graphemes(true)
+            .count()
     }
 }
 

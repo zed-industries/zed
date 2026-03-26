@@ -14,7 +14,7 @@ jobs:
     runs-on: namespace-profile-16x32-ubuntu-2204
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::cache_rust_dependencies_namespace
@@ -38,13 +38,13 @@ jobs:
     runs-on: namespace-profile-8x16-ubuntu-2204
     steps:
     - id: generate-token
-      name: extension_bump::generate_token
-      uses: actions/create-github-app-token@v2
+      name: steps::generate_token
+      uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
       with:
         app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
         private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::cache_rust_dependencies_namespace
@@ -63,7 +63,7 @@ jobs:
     - name: publish_extension_cli::update_sha_in_zed::regenerate_workflows
       run: cargo xtask workflows
     - name: publish_extension_cli::create_pull_request_zed
-      uses: peter-evans/create-pull-request@v7
+      uses: peter-evans/create-pull-request@98357b18bf14b5342f975ff684046ec3b2a07725
       with:
         title: 'extension_ci: Bump extension CLI version to `${{ steps.short-sha.outputs.sha_short }}`'
         body: |
@@ -87,8 +87,8 @@ jobs:
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - id: generate-token
-      name: extension_bump::generate_token
-      uses: actions/create-github-app-token@v2
+      name: steps::generate_token
+      uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
       with:
         app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
         private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
@@ -108,7 +108,7 @@ jobs:
         sed -i "s/ZED_EXTENSION_CLI_SHA: [a-f0-9]*/ZED_EXTENSION_CLI_SHA: $GITHUB_SHA/" \
             .github/workflows/ci.yml
     - name: publish_extension_cli::create_pull_request_extensions
-      uses: peter-evans/create-pull-request@v7
+      uses: peter-evans/create-pull-request@98357b18bf14b5342f975ff684046ec3b2a07725
       with:
         title: Bump extension CLI version to `${{ steps.short-sha.outputs.sha_short }}`
         body: |

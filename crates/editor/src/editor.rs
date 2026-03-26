@@ -19160,7 +19160,7 @@ impl Editor {
                                 move |cx: &mut BlockContext| {
                                     let mut text_style = cx.editor_style.text.clone();
                                     if let Some(highlight_style) = old_highlight_id
-                                        .and_then(|h| h.style(&cx.editor_style.syntax))
+                                        .and_then(|h| cx.editor_style.syntax.get(h).cloned())
                                     {
                                         text_style = text_style.highlight(highlight_style);
                                     }
@@ -25039,7 +25039,8 @@ impl Editor {
         for chunk in chunks {
             let highlight = chunk
                 .syntax_highlight_id
-                .and_then(|id| id.name(&style.syntax));
+                .and_then(|id| style.syntax.get_capture_name(id));
+
             let mut chunk_lines = chunk.text.split('\n').peekable();
             while let Some(text) = chunk_lines.next() {
                 let mut merged_with_last_token = false;
@@ -28847,49 +28848,58 @@ pub fn styled_runs_for_code_label<'a>(
         ..Default::default()
     };
 
+    if label.runs.is_empty() {
+        let desc_start = label.filter_range.end;
+        let fade_run =
+            (desc_start < label.text.len()).then(|| (desc_start..label.text.len(), fade_out));
+        return Either::Left(fade_run.into_iter());
+    }
+
     let mut prev_end = label.filter_range.end;
-    label
-        .runs
-        .iter()
-        .enumerate()
-        .flat_map(move |(ix, (range, highlight_id))| {
-            let style = if *highlight_id == language::HighlightId::TABSTOP_INSERT_ID {
-                HighlightStyle {
-                    color: Some(local_player.cursor),
-                    ..Default::default()
-                }
-            } else if *highlight_id == language::HighlightId::TABSTOP_REPLACE_ID {
-                HighlightStyle {
-                    background_color: Some(local_player.selection),
-                    ..Default::default()
-                }
-            } else if let Some(style) = highlight_id.style(syntax_theme) {
-                style
-            } else {
-                return Default::default();
-            };
-            let muted_style = style.highlight(fade_out);
+    Either::Right(
+        label
+            .runs
+            .iter()
+            .enumerate()
+            .flat_map(move |(ix, (range, highlight_id))| {
+                let style = if *highlight_id == language::HighlightId::TABSTOP_INSERT_ID {
+                    HighlightStyle {
+                        color: Some(local_player.cursor),
+                        ..Default::default()
+                    }
+                } else if *highlight_id == language::HighlightId::TABSTOP_REPLACE_ID {
+                    HighlightStyle {
+                        background_color: Some(local_player.selection),
+                        ..Default::default()
+                    }
+                } else if let Some(style) = syntax_theme.get(*highlight_id).cloned() {
+                    style
+                } else {
+                    return Default::default();
+                };
 
-            let mut runs = SmallVec::<[(Range<usize>, HighlightStyle); 3]>::new();
-            if range.start >= label.filter_range.end {
-                if range.start > prev_end {
-                    runs.push((prev_end..range.start, fade_out));
+                let mut runs = SmallVec::<[(Range<usize>, HighlightStyle); 3]>::new();
+                let muted_style = style.highlight(fade_out);
+                if range.start >= label.filter_range.end {
+                    if range.start > prev_end {
+                        runs.push((prev_end..range.start, fade_out));
+                    }
+                    runs.push((range.clone(), muted_style));
+                } else if range.end <= label.filter_range.end {
+                    runs.push((range.clone(), style));
+                } else {
+                    runs.push((range.start..label.filter_range.end, style));
+                    runs.push((label.filter_range.end..range.end, muted_style));
                 }
-                runs.push((range.clone(), muted_style));
-            } else if range.end <= label.filter_range.end {
-                runs.push((range.clone(), style));
-            } else {
-                runs.push((range.start..label.filter_range.end, style));
-                runs.push((label.filter_range.end..range.end, muted_style));
-            }
-            prev_end = cmp::max(prev_end, range.end);
+                prev_end = cmp::max(prev_end, range.end);
 
-            if ix + 1 == label.runs.len() && label.text.len() > prev_end {
-                runs.push((prev_end..label.text.len(), fade_out));
-            }
+                if ix + 1 == label.runs.len() && label.text.len() > prev_end {
+                    runs.push((prev_end..label.text.len(), fade_out));
+                }
 
-            runs
-        })
+                runs
+            }),
+    )
 }
 
 pub(crate) fn split_words(text: &str) -> impl std::iter::Iterator<Item = &str> + '_ {

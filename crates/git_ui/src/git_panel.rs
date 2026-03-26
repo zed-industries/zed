@@ -5818,7 +5818,7 @@ impl Panel for GitPanel {
     }
 
     fn activation_priority(&self) -> u32 {
-        2
+        3
     }
 }
 
