@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::StatusCode;
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, http};
