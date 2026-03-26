@@ -9,9 +9,8 @@ use edit_prediction_types::{
 use gpui::{App, Entity, prelude::*};
 use language::{Buffer, ToPoint as _};
 use project::Project;
-use ui::prelude::*;
 
-use crate::{BufferEditPrediction, EditPredictionModel, EditPredictionStore};
+use crate::{BufferEditPrediction, EditPredictionStore};
 
 pub struct ZedEditPredictionDelegate {
     store: Entity<EditPredictionStore>,
@@ -63,22 +62,7 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
     }
 
     fn icons(&self, cx: &App) -> EditPredictionIconSet {
-        match self.store.read(cx).edit_prediction_model {
-            EditPredictionModel::Sweep => EditPredictionIconSet::new(IconName::SweepAi)
-                .with_disabled(IconName::SweepAiDisabled)
-                .with_up(IconName::SweepAiUp)
-                .with_down(IconName::SweepAiDown)
-                .with_error(IconName::SweepAiError),
-            EditPredictionModel::Mercury => EditPredictionIconSet::new(IconName::Inception),
-            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 => {
-                EditPredictionIconSet::new(IconName::ZedPredict)
-                    .with_disabled(IconName::ZedPredictDisabled)
-                    .with_up(IconName::ZedPredictUp)
-                    .with_down(IconName::ZedPredictDown)
-                    .with_error(IconName::ZedPredictError)
-            }
-            EditPredictionModel::Ollama => EditPredictionIconSet::new(IconName::AiOllama),
-        }
+        self.store.read(cx).icons(cx)
     }
 
     fn data_collection_state(&self, cx: &App) -> DataCollectionState {
@@ -119,14 +103,9 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
         &self,
         _buffer: &Entity<language::Buffer>,
         _cursor_position: language::Anchor,
-        cx: &App,
+        _cx: &App,
     ) -> bool {
-        let store = self.store.read(cx);
-        if store.edit_prediction_model == EditPredictionModel::Sweep {
-            store.has_sweep_api_token(cx)
-        } else {
-            true
-        }
+        true
     }
 
     fn is_refreshing(&self, cx: &App) -> bool {

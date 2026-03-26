@@ -1,3 +1,8 @@
+use csv_preview::{
+    CsvPreviewView, OpenPreview as CsvOpenPreview, OpenPreviewToTheSide as CsvOpenPreviewToTheSide,
+    TabularDataPreviewFeatureFlag,
+};
+use feature_flags::FeatureFlagAppExt as _;
 use gpui::{AnyElement, Modifiers, WeakEntity};
 use markdown_preview::{
     OpenPreview as MarkdownOpenPreview, OpenPreviewToTheSide as MarkdownOpenPreviewToTheSide,
@@ -16,6 +21,7 @@ use super::QuickActionBar;
 enum PreviewType {
     Markdown,
     Svg,
+    Csv,
 }
 
 impl QuickActionBar {
@@ -35,6 +41,10 @@ impl QuickActionBar {
                 } else if SvgPreviewView::resolve_active_item_as_svg_buffer(workspace, cx).is_some()
                 {
                     preview_type = Some(PreviewType::Svg);
+                } else if cx.has_flag::<TabularDataPreviewFeatureFlag>()
+                    && CsvPreviewView::resolve_active_item_as_csv_editor(workspace, cx).is_some()
+                {
+                    preview_type = Some(PreviewType::Csv);
                 }
             });
         }
@@ -56,6 +66,13 @@ impl QuickActionBar {
                     Box::new(SvgOpenPreview) as Box<dyn gpui::Action>,
                     Box::new(SvgOpenPreviewToTheSide) as Box<dyn gpui::Action>,
                     &svg_preview::OpenPreview as &dyn gpui::Action,
+                ),
+                PreviewType::Csv => (
+                    "toggle-csv-preview",
+                    "Preview CSV",
+                    Box::new(CsvOpenPreview) as Box<dyn gpui::Action>,
+                    Box::new(CsvOpenPreviewToTheSide) as Box<dyn gpui::Action>,
+                    &csv_preview::OpenPreview as &dyn gpui::Action,
                 ),
             };
 

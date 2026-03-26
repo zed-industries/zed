@@ -1,3 +1,8 @@
+---
+title: Scala
+description: "Configure Scala language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Scala
 
 Scala language support in Zed is provided by the community-maintained [Scala extension](https://github.com/scalameta/metals-zed).

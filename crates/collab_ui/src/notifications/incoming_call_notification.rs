@@ -42,6 +42,14 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut App) {
                 }
             }
         }
+
+        for window in notification_windows.drain(..) {
+            window
+                .update(cx, |_, window, _| {
+                    window.remove_window();
+                })
+                .log_err();
+        }
     })
     .detach();
 }

@@ -15,6 +15,8 @@
 //! and Tailwind-like styling that you can use to build your own custom elements. Div is
 //! constructed by combining these two systems into an all-in-one element.
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use crate::PinchEvent;
 use crate::{
     AbsoluteLength, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent,
     DispatchPhase, Display, Element, ElementId, Entity, FocusHandle, Global, GlobalElementId,
@@ -26,6 +28,7 @@ use crate::{
     size,
 };
 use collections::HashMap;
+use gpui_util::ResultExt;
 use refineable::Refineable;
 use smallvec::SmallVec;
 use stacksafe::{StackSafe, stacksafe};
@@ -40,7 +43,6 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use util::ResultExt;
 
 use super::ImageCacheProvider;
 
@@ -353,6 +355,43 @@ impl Interactivity {
             }));
     }
 
+    /// Bind the given callback to pinch gesture events during the bubble phase.
+    ///
+    /// Note: This event is only available on macOS and Wayland (Linux).
+    /// On Windows, pinch gestures are simulated as scroll wheel events with Ctrl held.
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub fn on_pinch(&mut self, listener: impl Fn(&PinchEvent, &mut Window, &mut App) + 'static) {
+        self.pinch_listeners
+            .push(Box::new(move |event, phase, hitbox, window, cx| {
+                if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
+                    (listener)(event, window, cx);
+                }
+            }));
+    }
+
+    /// Bind the given callback to pinch gesture events during the capture phase.
+    ///
+    /// Note: This event is only available on macOS and Wayland (Linux).
+    /// On Windows, pinch gestures are simulated as scroll wheel events with Ctrl held.
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub fn capture_pinch(
+        &mut self,
+        listener: impl Fn(&PinchEvent, &mut Window, &mut App) + 'static,
+    ) {
+        self.pinch_listeners
+            .push(Box::new(move |event, phase, _hitbox, window, cx| {
+                if phase == DispatchPhase::Capture {
+                    (listener)(event, window, cx);
+                } else {
+                    cx.propagate();
+                }
+            }));
+    }
+
     /// Bind the given callback to an action dispatch during the capture phase.
     /// The imperative API equivalent to [`InteractiveElement::capture_action`].
     ///
@@ -635,6 +674,16 @@ impl Interactivity {
     pub fn block_mouse_except_scroll(&mut self) {
         self.hitbox_behavior = HitboxBehavior::BlockMouseExceptScroll;
     }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn has_pinch_listeners(&self) -> bool {
+        !self.pinch_listeners.is_empty()
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    fn has_pinch_listeners(&self) -> bool {
+        false
+    }
 }
 
 /// A trait for elements that want to use the standard GPUI event handlers that don't
@@ -905,6 +954,34 @@ pub trait InteractiveElement: Sized {
         self
     }
 
+    /// Bind the given callback to pinch gesture events during the bubble phase.
+    /// The fluent API equivalent to [`Interactivity::on_pinch`].
+    ///
+    /// Note: This event is only available on macOS and Wayland (Linux).
+    /// On Windows, pinch gestures are simulated as scroll wheel events with Ctrl held.
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn on_pinch(mut self, listener: impl Fn(&PinchEvent, &mut Window, &mut App) + 'static) -> Self {
+        self.interactivity().on_pinch(listener);
+        self
+    }
+
+    /// Bind the given callback to pinch gesture events during the capture phase.
+    /// The fluent API equivalent to [`Interactivity::capture_pinch`].
+    ///
+    /// Note: This event is only available on macOS and Wayland (Linux).
+    /// On Windows, pinch gestures are simulated as scroll wheel events with Ctrl held.
+    ///
+    /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn capture_pinch(
+        mut self,
+        listener: impl Fn(&PinchEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.interactivity().capture_pinch(listener);
+        self
+    }
     /// Capture the given action, before normal action dispatch can fire.
     /// The fluent API equivalent to [`Interactivity::capture_action`].
     ///
@@ -1290,6 +1367,10 @@ pub(crate) type MouseMoveListener =
 pub(crate) type ScrollWheelListener =
     Box<dyn Fn(&ScrollWheelEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) type PinchListener =
+    Box<dyn Fn(&PinchEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
+
 pub(crate) type ClickListener = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
 pub(crate) type DragListener =
@@ -1644,6 +1725,8 @@ pub struct Interactivity {
     pub(crate) mouse_pressure_listeners: Vec<MousePressureListener>,
     pub(crate) mouse_move_listeners: Vec<MouseMoveListener>,
     pub(crate) scroll_wheel_listeners: Vec<ScrollWheelListener>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) pinch_listeners: Vec<PinchListener>,
     pub(crate) key_down_listeners: Vec<KeyDownListener>,
     pub(crate) key_up_listeners: Vec<KeyUpListener>,
     pub(crate) modifiers_changed_listeners: Vec<ModifiersChangedListener>,
@@ -1847,6 +1930,7 @@ impl Interactivity {
             || !self.click_listeners.is_empty()
             || !self.aux_click_listeners.is_empty()
             || !self.scroll_wheel_listeners.is_empty()
+            || self.has_pinch_listeners()
             || self.drag_listener.is_some()
             || !self.drop_listeners.is_empty()
             || self.tooltip_builder.is_some()
@@ -1886,18 +1970,18 @@ impl Interactivity {
             // high for the maximum scroll, we round the scroll max to 2 decimal
             // places here.
             let padded_content_size = self.content_size + padding_size;
-            let scroll_max = (padded_content_size - bounds.size)
+            let scroll_max = Point::from(padded_content_size - bounds.size)
                 .map(round_to_two_decimals)
                 .max(&Default::default());
             // Clamp scroll offset in case scroll max is smaller now (e.g., if children
             // were removed or the bounds became larger).
             let mut scroll_offset = scroll_offset.borrow_mut();
 
-            scroll_offset.x = scroll_offset.x.clamp(-scroll_max.width, px(0.));
+            scroll_offset.x = scroll_offset.x.clamp(-scroll_max.x, px(0.));
             if scroll_to_bottom {
-                scroll_offset.y = -scroll_max.height;
+                scroll_offset.y = -scroll_max.y;
             } else {
-                scroll_offset.y = scroll_offset.y.clamp(-scroll_max.height, px(0.));
+                scroll_offset.y = scroll_offset.y.clamp(-scroll_max.y, px(0.));
             }
 
             if let Some(mut scroll_handle_state) = tracked_scroll_handle {
@@ -2213,6 +2297,14 @@ impl Interactivity {
             })
         }
 
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        for listener in self.pinch_listeners.drain(..) {
+            let hitbox = hitbox.clone();
+            window.on_mouse_event(move |event: &PinchEvent, phase, window, cx| {
+                listener(event, phase, &hitbox, window, cx);
+            })
+        }
+
         if self.hover_style.is_some()
             || self.base_style.mouse_cursor.is_some()
             || cx.active_drag.is_some() && !self.drag_over_styles.is_empty()
@@ -2497,7 +2589,8 @@ impl Interactivity {
                     let pending_mouse_down = pending_mouse_down.clone();
                     let source_bounds = hitbox.bounds;
                     move |window: &Window| {
-                        pending_mouse_down.borrow().is_none()
+                        !window.last_input_was_keyboard()
+                            && pending_mouse_down.borrow().is_none()
                             && source_bounds.contains(&window.mouse_position())
                     }
                 });
@@ -2517,18 +2610,24 @@ impl Interactivity {
                 );
             }
 
+            // We unconditionally bind both the mouse up and mouse down active state handlers
+            // Because we might not get a chance to render a frame before the mouse up event arrives.
             let active_state = element_state
                 .clicked_state
                 .get_or_insert_with(Default::default)
                 .clone();
-            if active_state.borrow().is_clicked() {
+
+            {
+                let active_state = active_state.clone();
                 window.on_mouse_event(move |_: &MouseUpEvent, phase, window, _cx| {
-                    if phase == DispatchPhase::Capture {
+                    if phase == DispatchPhase::Capture && active_state.borrow().is_clicked() {
                         *active_state.borrow_mut() = ElementClickedState::default();
                         window.refresh();
                     }
                 });
-            } else {
+            }
+
+            {
                 let active_group_hitbox = self
                     .group_active_style
                     .as_ref()
@@ -3285,7 +3384,7 @@ impl ScrollAnchor {
 struct ScrollHandleState {
     offset: Rc<RefCell<Point<Pixels>>>,
     bounds: Bounds<Pixels>,
-    max_offset: Size<Pixels>,
+    max_offset: Point<Pixels>,
     child_bounds: Vec<Bounds<Pixels>>,
     scroll_to_bottom: bool,
     overflow: Point<Overflow>,
@@ -3329,7 +3428,7 @@ impl ScrollHandle {
     }
 
     /// Get the maximum scroll offset.
-    pub fn max_offset(&self) -> Size<Pixels> {
+    pub fn max_offset(&self) -> Point<Pixels> {
         self.0.borrow().max_offset
     }
 

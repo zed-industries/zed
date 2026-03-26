@@ -2,10 +2,9 @@ mod profile_modal_header;
 
 use std::sync::Arc;
 
-use agent::{AgentTool, ContextServerRegistry, SubagentTool};
+use agent::ContextServerRegistry;
 use agent_settings::{AgentProfile, AgentProfileId, AgentSettings, builtin_profiles};
 use editor::Editor;
-use feature_flags::{FeatureFlagAppExt as _, SubagentsFeatureFlag};
 use fs::Fs;
 use gpui::{DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription, prelude::*};
 use language_model::{LanguageModel, LanguageModelRegistry};
@@ -363,10 +362,7 @@ impl ManageProfilesModal {
                 let supported_by_provider = provider.as_ref().map_or(true, |provider| {
                     agent::tool_supports_provider(name, provider)
                 });
-                let enabled_by_feature_flag =
-                    *name != SubagentTool::NAME || cx.has_flag::<SubagentsFeatureFlag>();
-
-                supported_by_provider && enabled_by_feature_flag
+                supported_by_provider
             })
             .map(Arc::from)
             .collect();
@@ -995,7 +991,7 @@ impl Render for ManageProfilesModal {
                         .pb_1()
                         .child(ProfileModalHeader::new(
                             format!("{profile_name} — Configure Built-in Tools"),
-                            Some(IconName::Cog),
+                            Some(IconName::Settings),
                         ))
                         .child(ListSeparator)
                         .child(tool_picker.clone())
@@ -1018,7 +1014,7 @@ impl Render for ManageProfilesModal {
                         .pb_1()
                         .child(ProfileModalHeader::new(
                             format!("{profile_name} — Configure Default Model"),
-                            Some(IconName::Ai),
+                            Some(IconName::ZedAgent),
                         ))
                         .child(ListSeparator)
                         .child(v_flex().w(rems(34.)).child(model_picker.clone()))

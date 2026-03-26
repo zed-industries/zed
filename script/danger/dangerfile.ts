@@ -12,7 +12,7 @@ prHygiene({
   },
 });
 
-const RELEASE_NOTES_PATTERN = /Release Notes:\r?\n\s+-/gm;
+const RELEASE_NOTES_PATTERN = /Release Notes:(\r?\n)+- /gm;
 const body = danger.github.pr.body;
 
 const hasReleaseNotes = RELEASE_NOTES_PATTERN.test(body);
@@ -57,6 +57,25 @@ if (includesIssueUrl) {
     [
       `This PR includes links to the following GitHub Issues: ${issuesToReport}`,
       "If this PR aims to close an issue, please include a `Closes #ISSUE` line at the top of the PR body.",
+    ].join("\n"),
+  );
+}
+
+const MIGRATION_SCHEMA_FILES = [
+  "crates/collab/migrations/20251208000000_test_schema.sql",
+  "crates/collab/migrations.sqlite/20221109000000_test_schema.sql",
+];
+
+const modifiedSchemaFiles = danger.git.modified_files.filter((file) =>
+  MIGRATION_SCHEMA_FILES.some((schemaFilePath) => file.endsWith(schemaFilePath)),
+);
+
+if (modifiedSchemaFiles.length > 0) {
+  warn(
+    [
+      "This PR modifies database schema files.",
+      "",
+      "If you are making database changes, a migration needs to be added in the Cloud repository.",
     ].join("\n"),
   );
 }

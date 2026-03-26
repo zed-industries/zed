@@ -1,0 +1,109 @@
+# PR Size Check — Compute
+#
+# Calculates PR size and saves the result as an artifact. A companion
+# workflow (pr-size-label.yml) picks up the artifact via workflow_run
+# and applies labels + comments with write permissions.
+#
+# This two-workflow split is required because fork PRs receive a
+# read-only GITHUB_TOKEN. The compute step needs no write access;
+# the label/comment step runs via workflow_run on the base repo with
+# full write permissions.
+#
+# Security note: This workflow only reads PR file data via the JS API
+# and writes a JSON artifact. No untrusted input is interpolated into
+# shell commands.
+
+name: PR Size Check
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  compute-size:
+    if: github.repository_owner == 'zed-industries'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Calculate PR size
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          script: |
+            const fs = require('fs');
+
+            const { data: files } = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              per_page: 300,
+            });
+
+            // Sum additions + deletions, excluding generated/lock files
+            const IGNORED_PATTERNS = [
+              /\.lock$/,
+              /^Cargo\.lock$/,
+              /pnpm-lock\.yaml$/,
+              /\.generated\./,
+              /\/fixtures\//,
+              /\/snapshots\//,
+            ];
+
+            let totalChanges = 0;
+            for (const file of files) {
+              const ignored = IGNORED_PATTERNS.some(p => p.test(file.filename));
+              if (!ignored) {
+                totalChanges += file.additions + file.deletions;
+              }
+            }
+
+            // Assign size bracket
+            const SIZE_BRACKETS = [
+              ['Size S',  0,       100,  '0e8a16'],
+              ['Size M',  100,     400,  'fbca04'],
+              ['Size L',  400,     800,  'e99695'],
+              ['Size XL', 800, Infinity, 'b60205'],
+            ];
+
+            let sizeLabel = 'Size S';
+            let labelColor = '0e8a16';
+            for (const [label, min, max, color] of SIZE_BRACKETS) {
+              if (totalChanges >= min && totalChanges < max) {
+                sizeLabel = label;
+                labelColor = color;
+                break;
+              }
+            }
+
+            // Check if the author wrote content in the "How to Review" section.
+            const rawBody = context.payload.pull_request.body || '';
+            const howToReview = rawBody.match(/## How to Review\s*\n([\s\S]*?)(?=\n## |$)/i);
+            const hasReviewGuidance = howToReview
+              ? howToReview[1].replace(/<!--[\s\S]*?-->/g, '').trim().length > 0
+              : false;
+
+            const result = {
+              pr_number: context.issue.number,
+              total_changes: totalChanges,
+              size_label: sizeLabel,
+              label_color: labelColor,
+              has_review_guidance: hasReviewGuidance,
+            };
+
+            console.log(`PR #${result.pr_number}: ${totalChanges} LOC, ${sizeLabel}`);
+
+            fs.mkdirSync('pr-size', { recursive: true });
+            fs.writeFileSync('pr-size/result.json', JSON.stringify(result));
+
+      - name: Upload size result
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pr-size-result
+          path: pr-size/
+          retention-days: 1
+defaults:
+  run:
+    shell: bash -euxo pipefail {0}

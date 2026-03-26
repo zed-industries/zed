@@ -9,6 +9,63 @@ use crate::ExtendingVec;
 
 use crate::DockPosition;
 
+/// Where new threads should start by default.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum NewThreadLocation {
+    /// Start threads in the current project.
+    #[default]
+    LocalProject,
+    /// Start threads in a new worktree.
+    NewWorktree,
+}
+
+/// Where to position the sidebar.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SidebarDockPosition {
+    /// Always show the sidebar on the left side.
+    Left,
+    /// Always show the sidebar on the right side.
+    Right,
+    /// Show the sidebar on the same side as the agent panel.
+    #[default]
+    FollowAgent,
+}
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum SidebarSide {
+    #[default]
+    Left,
+    Right,
+}
+
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
 pub struct AgentSettingsContent {
@@ -24,6 +81,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: right
     pub dock: Option<DockPosition>,
+    /// Where to position the sidebar.
+    ///
+    /// Default: follow_agent
+    pub sidebar_side: Option<SidebarDockPosition>,
     /// Default width in pixels when the agent panel is docked to the left or right.
     ///
     /// Default: 640
@@ -59,6 +120,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: "thread"
     pub default_view: Option<DefaultAgentView>,
+    /// Where new threads should start by default.
+    ///
+    /// Default: "local_project"
+    pub new_thread_location: Option<NewThreadLocation>,
     /// The available agent profiles.
     pub profiles: Option<IndexMap<Arc<str>, AgentProfileContent>>,
     /// Where to show a popup notification when the agent is waiting for user input.
@@ -115,7 +180,7 @@ pub struct AgentSettingsContent {
     /// require confirmation.
     ///
     /// The global `default` applies when no tool-specific rules match.
-    /// For external agent servers (e.g. Claude Code) that define their own
+    /// For external agent servers (e.g. Claude Agent) that define their own
     /// permission modes, "deny" and "confirm" still take precedence — the
     /// external agent's permission system is only used when Zed would allow
     /// the action. Per-tool regex patterns (`always_allow`, `always_deny`,
@@ -127,6 +192,10 @@ pub struct AgentSettingsContent {
 impl AgentSettingsContent {
     pub fn set_dock(&mut self, dock: DockPosition) {
         self.dock = Some(dock);
+    }
+
+    pub fn set_sidebar_side(&mut self, position: SidebarDockPosition) {
+        self.sidebar_side = Some(position);
     }
 
     pub fn set_model(&mut self, language_model: LanguageModelSelection) {
@@ -144,6 +213,10 @@ impl AgentSettingsContent {
 
     pub fn set_profile(&mut self, profile_id: Arc<str>) {
         self.default_profile = Some(profile_id);
+    }
+
+    pub fn set_new_thread_location(&mut self, value: NewThreadLocation) {
+        self.new_thread_location = Some(value);
     }
 
     pub fn add_favorite_model(&mut self, model: LanguageModelSelection) {
@@ -290,6 +363,7 @@ impl JsonSchema for LanguageModelProviderSetting {
                         "openai",
                         "openrouter",
                         "vercel",
+                        "vercel_ai_gateway",
                         "x_ai",
                         "zed.dev"
                     ]
@@ -316,73 +390,21 @@ impl From<&str> for LanguageModelProviderSetting {
 
 #[with_fallible_options]
 #[derive(Default, PartialEq, Deserialize, Serialize, Clone, JsonSchema, MergeFrom, Debug)]
-pub struct AllAgentServersSettings {
-    pub gemini: Option<BuiltinAgentServerSettings>,
-    pub claude: Option<BuiltinAgentServerSettings>,
-    pub codex: Option<BuiltinAgentServerSettings>,
+#[serde(transparent)]
+pub struct AllAgentServersSettings(pub HashMap<String, CustomAgentServerSettings>);
 
-    /// Custom agent servers configured by the user
-    #[serde(flatten)]
-    pub custom: HashMap<String, CustomAgentServerSettings>,
+impl std::ops::Deref for AllAgentServersSettings {
+    type Target = HashMap<String, CustomAgentServerSettings>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
-#[with_fallible_options]
-#[derive(Default, Deserialize, Serialize, Clone, JsonSchema, MergeFrom, Debug, PartialEq)]
-pub struct BuiltinAgentServerSettings {
-    /// Absolute path to a binary to be used when launching this agent.
-    ///
-    /// This can be used to run a specific binary without automatic downloads or searching `$PATH`.
-    #[serde(rename = "command")]
-    pub path: Option<PathBuf>,
-    /// If a binary is specified in `command`, it will be passed these arguments.
-    pub args: Option<Vec<String>>,
-    /// If a binary is specified in `command`, it will be passed these environment variables.
-    pub env: Option<HashMap<String, String>>,
-    /// Whether to skip searching `$PATH` for an agent server binary when
-    /// launching this agent.
-    ///
-    /// This has no effect if a `command` is specified. Otherwise, when this is
-    /// `false`, Zed will search `$PATH` for an agent server binary and, if one
-    /// is found, use it for threads with this agent. If no agent binary is
-    /// found on `$PATH`, Zed will automatically install and use its own binary.
-    /// When this is `true`, Zed will not search `$PATH`, and will always use
-    /// its own binary.
-    ///
-    /// Default: true
-    pub ignore_system_version: Option<bool>,
-    /// The default mode to use for this agent.
-    ///
-    /// Note: Not only all agents support modes.
-    ///
-    /// Default: None
-    pub default_mode: Option<String>,
-    /// The default model to use for this agent.
-    ///
-    /// This should be the model ID as reported by the agent.
-    ///
-    /// Default: None
-    pub default_model: Option<String>,
-    /// The favorite models for this agent.
-    ///
-    /// These are the model IDs as reported by the agent.
-    ///
-    /// Default: []
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub favorite_models: Vec<String>,
-    /// Default values for session config options.
-    ///
-    /// This is a map from config option ID to value ID.
-    ///
-    /// Default: {}
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub default_config_options: HashMap<String, String>,
-    /// Favorited values for session config options.
-    ///
-    /// This is a map from config option ID to a list of favorited value IDs.
-    ///
-    /// Default: {}
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub favorite_config_option_values: HashMap<String, Vec<String>>,
+impl std::ops::DerefMut for AllAgentServersSettings {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
 
 #[with_fallible_options]
