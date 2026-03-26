@@ -809,7 +809,7 @@ impl ConversationView {
         });
 
         let count = thread.read(cx).entries().len();
-        let list_state = ListState::new(0, gpui::ListAlignment::Bottom, px(2048.0));
+        let list_state = ListState::new(0, gpui::ListAlignment::Top, px(2048.0));
         entry_view_state.update(cx, |view_state, cx| {
             for ix in 0..count {
                 view_state.sync_entry(ix, &thread, window, cx);
@@ -1269,9 +1269,11 @@ impl ConversationView {
             }
             AcpThreadEvent::Stopped(stop_reason) => {
                 if let Some(active) = self.thread_view(&thread_id) {
-                    active.update(cx, |active, _cx| {
+                    active.update(cx, |active, cx| {
                         active.thread_retry_status.take();
                         active.clear_auto_expand_tracking();
+                        active.list_state.set_follow_tail(false);
+                        active.sync_generating_indicator(cx);
                     });
                 }
                 if is_subagent {
@@ -1339,8 +1341,10 @@ impl ConversationView {
             }
             AcpThreadEvent::Error => {
                 if let Some(active) = self.thread_view(&thread_id) {
-                    active.update(cx, |active, _cx| {
+                    active.update(cx, |active, cx| {
                         active.thread_retry_status.take();
+                        active.list_state.set_follow_tail(false);
+                        active.sync_generating_indicator(cx);
                     });
                 }
                 if !is_subagent {

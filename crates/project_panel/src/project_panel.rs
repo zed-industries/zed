@@ -7239,7 +7239,7 @@ impl Panel for ProjectPanel {
     }
 
     fn activation_priority(&self) -> u32 {
-        0
+        1
     }
 }
 

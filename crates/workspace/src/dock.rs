@@ -69,6 +69,9 @@ pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn enabled(&self, _cx: &App) -> bool {
         true
     }
+    fn is_agent_panel(&self) -> bool {
+        false
+    }
 }
 
 pub trait PanelHandle: Send + Sync {
@@ -95,6 +98,7 @@ pub trait PanelHandle: Send + Sync {
     fn to_any(&self) -> AnyView;
     fn activation_priority(&self, cx: &App) -> u32;
     fn enabled(&self, cx: &App) -> bool;
+    fn is_agent_panel(&self, cx: &App) -> bool;
     fn move_to_next_position(&self, window: &mut Window, cx: &mut App) {
         let current_position = self.position(window, cx);
         let next_position = [
@@ -206,6 +210,10 @@ where
 
     fn enabled(&self, cx: &App) -> bool {
         self.read(cx).enabled(cx)
+    }
+
+    fn is_agent_panel(&self, cx: &App) -> bool {
+        self.read(cx).is_agent_panel()
     }
 }
 
@@ -718,6 +726,12 @@ impl Dock {
 
     pub fn panels_len(&self) -> usize {
         self.panel_entries.len()
+    }
+
+    pub fn has_agent_panel(&self, cx: &App) -> bool {
+        self.panel_entries
+            .iter()
+            .any(|entry| entry.panel.is_agent_panel(cx))
     }
 
     pub fn activate_panel(&mut self, panel_ix: usize, window: &mut Window, cx: &mut Context<Self>) {

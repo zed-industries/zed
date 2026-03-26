@@ -1601,7 +1601,7 @@ impl Panel for DebugPanel {
     }
 
     fn activation_priority(&self) -> u32 {
-        9
+        7
     }
 
     fn set_active(&mut self, _: bool, _: &mut Window, _: &mut Context<Self>) {}

@@ -1,6 +1,7 @@
 use acp_thread::ThreadStatus;
 use action_log::DiffStats;
 use agent_client_protocol::{self as acp};
+use agent_settings::AgentSettings;
 use agent_ui::thread_metadata_store::{SidebarThreadMetadataStore, ThreadMetadata};
 use agent_ui::threads_archive_view::{
     ThreadsArchiveView, ThreadsArchiveViewEvent, format_history_entry_timestamp,
@@ -37,7 +38,8 @@ use util::ResultExt as _;
 use util::path_list::PathList;
 use workspace::{
     AddFolderToProject, FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent, Open,
-    Sidebar as WorkspaceSidebar, ToggleWorkspaceSidebar, Workspace, WorkspaceId,
+    Sidebar as WorkspaceSidebar, SidebarSide, ToggleWorkspaceSidebar, Workspace, WorkspaceId,
+    sidebar_side_context_menu,
 };
 
 use zed_actions::OpenRecent;
@@ -2874,7 +2876,9 @@ impl Sidebar {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let has_query = self.has_filter_query(cx);
-        let traffic_lights = cfg!(target_os = "macos") && !window.is_fullscreen();
+        let sidebar_on_left = self.side(cx) == SidebarSide::Left;
+        let traffic_lights =
+            cfg!(target_os = "macos") && !window.is_fullscreen() && sidebar_on_left;
         let header_height = platform_title_bar_height(window);
 
         h_flex()
@@ -2928,37 +2932,91 @@ impl Sidebar {
     }
 
     fn render_sidebar_toggle_button(&self, _cx: &mut Context<Self>) -> impl IntoElement {
-        IconButton::new("sidebar-close-toggle", IconName::ThreadsSidebarLeftOpen)
-            .icon_size(IconSize::Small)
-            .tooltip(Tooltip::element(move |_window, cx| {
-                v_flex()
-                    .gap_1()
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .justify_between()
-                            .child(Label::new("Toggle Sidebar"))
-                            .child(KeyBinding::for_action(&ToggleWorkspaceSidebar, cx)),
-                    )
-                    .child(
-                        h_flex()
-                            .pt_1()
-                            .gap_2()
-                            .border_t_1()
-                            .border_color(cx.theme().colors().border_variant)
-                            .justify_between()
-                            .child(Label::new("Focus Sidebar"))
-                            .child(KeyBinding::for_action(&FocusWorkspaceSidebar, cx)),
-                    )
-                    .into_any_element()
-            }))
-            .on_click(|_, window, cx| {
-                if let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() {
-                    multi_workspace.update(cx, |multi_workspace, cx| {
-                        multi_workspace.close_sidebar(window, cx);
-                    });
-                }
+        let on_right = AgentSettings::get_global(_cx).sidebar_side() == SidebarSide::Right;
+
+        sidebar_side_context_menu("sidebar-toggle-menu", _cx)
+            .anchor(if on_right {
+                gpui::Corner::BottomRight
+            } else {
+                gpui::Corner::BottomLeft
             })
+            .attach(if on_right {
+                gpui::Corner::TopRight
+            } else {
+                gpui::Corner::TopLeft
+            })
+            .trigger(move |_is_active, _window, _cx| {
+                let icon = if on_right {
+                    IconName::ThreadsSidebarRightOpen
+                } else {
+                    IconName::ThreadsSidebarLeftOpen
+                };
+                IconButton::new("sidebar-close-toggle", icon)
+                    .icon_size(IconSize::Small)
+                    .tooltip(Tooltip::element(move |_window, cx| {
+                        v_flex()
+                            .gap_1()
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .justify_between()
+                                    .child(Label::new("Toggle Sidebar"))
+                                    .child(KeyBinding::for_action(&ToggleWorkspaceSidebar, cx)),
+                            )
+                            .child(
+                                h_flex()
+                                    .pt_1()
+                                    .gap_2()
+                                    .border_t_1()
+                                    .border_color(cx.theme().colors().border_variant)
+                                    .justify_between()
+                                    .child(Label::new("Focus Sidebar"))
+                                    .child(KeyBinding::for_action(&FocusWorkspaceSidebar, cx)),
+                            )
+                            .into_any_element()
+                    }))
+                    .on_click(|_, window, cx| {
+                        if let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() {
+                            multi_workspace.update(cx, |multi_workspace, cx| {
+                                multi_workspace.close_sidebar(window, cx);
+                            });
+                        }
+                    })
+            })
+    }
+
+    fn render_sidebar_bottom_bar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let on_right = self.side(cx) == SidebarSide::Right;
+        let is_archive = matches!(self.view, SidebarView::Archive(..));
+        let action_buttons = h_flex()
+            .gap_1()
+            .child(
+                IconButton::new("archive", IconName::Archive)
+                    .icon_size(IconSize::Small)
+                    .toggle_state(is_archive)
+                    .tooltip(move |_, cx| {
+                        Tooltip::for_action("Toggle Archived Threads", &ToggleArchive, cx)
+                    })
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.toggle_archive(&ToggleArchive, window, cx);
+                    })),
+            )
+            .child(self.render_recent_projects_button(cx));
+        let border_color = cx.theme().colors().border;
+        let toggle_button = self.render_sidebar_toggle_button(cx);
+
+        let bar = h_flex()
+            .p_1()
+            .gap_1()
+            .justify_between()
+            .border_t_1()
+            .border_color(border_color);
+
+        if on_right {
+            bar.child(action_buttons).child(toggle_button)
+        } else {
+            bar.child(toggle_button).child(action_buttons)
+        }
     }
 }
 
@@ -3054,6 +3112,10 @@ impl WorkspaceSidebar for Sidebar {
         matches!(self.view, SidebarView::ThreadList)
     }
 
+    fn side(&self, cx: &App) -> SidebarSide {
+        AgentSettings::get_global(cx).sidebar_side()
+    }
+
     fn prepare_for_focus(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.selection = None;
         cx.notify();
@@ -3108,7 +3170,8 @@ impl Render for Sidebar {
             .h_full()
             .w(self.width)
             .bg(bg)
-            .border_r_1()
+            .when(self.side(cx) == SidebarSide::Left, |el| el.border_r_1())
+            .when(self.side(cx) == SidebarSide::Right, |el| el.border_l_1())
             .border_color(color.border)
             .map(|this| match &self.view {
                 SidebarView::ThreadList => this
@@ -3140,35 +3203,7 @@ impl Render for Sidebar {
                     }),
                 SidebarView::Archive(archive_view) => this.child(archive_view.clone()),
             })
-            .child(
-                h_flex()
-                    .p_1()
-                    .gap_1()
-                    .justify_between()
-                    .border_t_1()
-                    .border_color(cx.theme().colors().border)
-                    .child(self.render_sidebar_toggle_button(cx))
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .child(
-                                IconButton::new("archive", IconName::Archive)
-                                    .icon_size(IconSize::Small)
-                                    .toggle_state(matches!(self.view, SidebarView::Archive(..)))
-                                    .tooltip(move |_, cx| {
-                                        Tooltip::for_action(
-                                            "Toggle Archived Threads",
-                                            &ToggleArchive,
-                                            cx,
-                                        )
-                                    })
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.toggle_archive(&ToggleArchive, window, cx);
-                                    })),
-                            )
-                            .child(self.render_recent_projects_button(cx)),
-                    ),
-            )
+            .child(self.render_sidebar_bottom_bar(cx))
     }
 }
 
