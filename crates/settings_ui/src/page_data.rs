@@ -1,3 +1,4 @@
+use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{Action as _, App};
 use itertools::Itertools as _;
 use settings::{
@@ -74,7 +75,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
         terminal_page(),
         version_control_page(),
         collaboration_page(),
-        ai_page(),
+        ai_page(cx),
         network_page(),
     ]
 }
@@ -1293,17 +1294,13 @@ fn keymap_page() -> SettingsPage {
     fn modal_editing_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SectionHeader("Modal Editing"),
-            // todo(settings_ui): Vim/Helix Mode should be apart of one type because it's undefined
-            // behavior to have them both enabled at the same time
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Vim Mode",
                 description: "Enable Vim mode and key bindings.",
                 field: Box::new(SettingField {
                     json_path: Some("vim_mode"),
                     pick: |settings_content| settings_content.vim_mode.as_ref(),
-                    write: |settings_content, value| {
-                        settings_content.vim_mode = value;
-                    },
+                    write: write_vim_mode,
                 }),
                 metadata: None,
                 files: USER,
@@ -1314,9 +1311,7 @@ fn keymap_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("helix_mode"),
                     pick: |settings_content| settings_content.helix_mode.as_ref(),
-                    write: |settings_content, value| {
-                        settings_content.helix_mode = value;
-                    },
+                    write: write_helix_mode,
                 }),
                 metadata: None,
                 files: USER,
@@ -2999,7 +2994,7 @@ fn languages_and_tools_page(cx: &App) -> SettingsPage {
 }
 
 fn search_and_files_page() -> SettingsPage {
-    fn search_section() -> [SettingsPageItem; 10] {
+    fn search_section() -> [SettingsPageItem; 9] {
         [
             SettingsPageItem::SectionHeader("Search"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -3134,29 +3129,6 @@ fn search_and_files_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "Search on Input",
-                description: "Whether to search on input in project search.",
-                field: Box::new(SettingField {
-                    json_path: Some("editor.search.search_on_input"),
-                    pick: |settings_content| {
-                        settings_content
-                            .editor
-                            .search
-                            .as_ref()
-                            .and_then(|search| search.search_on_input.as_ref())
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .editor
-                            .search
-                            .get_or_insert_default()
-                            .search_on_input = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
                 title: "Seed Search Query From Cursor",
                 description: "When to populate a new search's query based on the text under the cursor.",
                 field: Box::new(SettingField {
@@ -3177,7 +3149,7 @@ fn search_and_files_page() -> SettingsPage {
         ]
     }
 
-    fn file_finder_section() -> [SettingsPageItem; 6] {
+    fn file_finder_section() -> [SettingsPageItem; 5] {
         [
             SettingsPageItem::SectionHeader("File Finder"),
             // todo: null by default
@@ -3260,24 +3232,6 @@ fn search_and_files_page() -> SettingsPage {
                             .file_finder
                             .get_or_insert_default()
                             .skip_focus_for_active_in_search = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Git Status",
-                description: "Show the Git status in the file finder.",
-                field: Box::new(SettingField {
-                    json_path: Some("file_finder.git_status"),
-                    pick: |settings_content| {
-                        settings_content.file_finder.as_ref()?.git_status.as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .file_finder
-                            .get_or_insert_default()
-                            .git_status = value;
                     },
                 }),
                 metadata: None,
@@ -3521,7 +3475,7 @@ fn window_and_layout_page() -> SettingsPage {
         ]
     }
 
-    fn title_bar_section() -> [SettingsPageItem; 9] {
+    fn title_bar_section() -> [SettingsPageItem; 10] {
         [
             SettingsPageItem::SectionHeader("Title Bar"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -3687,6 +3641,122 @@ fn window_and_layout_page() -> SettingsPage {
                 }),
                 metadata: None,
                 files: USER,
+            }),
+            SettingsPageItem::DynamicItem(DynamicItem {
+                discriminant: SettingItem {
+                    files: USER,
+                    title: "Button Layout",
+                    description:
+                        "(Linux only) choose how window control buttons are laid out in the titlebar.",
+                    field: Box::new(SettingField {
+                        json_path: Some("title_bar.button_layout$"),
+                        pick: |settings_content| {
+                            Some(
+                                &dynamic_variants::<settings::WindowButtonLayoutContent>()[settings_content
+                                    .title_bar
+                                    .as_ref()?
+                                    .button_layout
+                                    .as_ref()?
+                                    .discriminant()
+                                    as usize],
+                            )
+                        },
+                        write: |settings_content, value| {
+                            let Some(value) = value else {
+                                settings_content
+                                    .title_bar
+                                    .get_or_insert_default()
+                                    .button_layout = None;
+                                return;
+                            };
+
+                            let current_custom_layout = settings_content
+                                .title_bar
+                                .as_ref()
+                                .and_then(|title_bar| title_bar.button_layout.as_ref())
+                                .and_then(|button_layout| match button_layout {
+                                    settings::WindowButtonLayoutContent::Custom(layout) => {
+                                        Some(layout.clone())
+                                    }
+                                    _ => None,
+                                });
+
+                            let button_layout = match value {
+                                settings::WindowButtonLayoutContentDiscriminants::PlatformDefault => {
+                                    settings::WindowButtonLayoutContent::PlatformDefault
+                                }
+                                settings::WindowButtonLayoutContentDiscriminants::Standard => {
+                                    settings::WindowButtonLayoutContent::Standard
+                                }
+                                settings::WindowButtonLayoutContentDiscriminants::Custom => {
+                                    settings::WindowButtonLayoutContent::Custom(
+                                        current_custom_layout.unwrap_or_else(|| {
+                                            "close:minimize,maximize".to_string()
+                                        }),
+                                    )
+                                }
+                            };
+
+                            settings_content
+                                .title_bar
+                                .get_or_insert_default()
+                                .button_layout = Some(button_layout);
+                        },
+                    }),
+                    metadata: None,
+                },
+                pick_discriminant: |settings_content| {
+                    Some(
+                        settings_content
+                            .title_bar
+                            .as_ref()?
+                            .button_layout
+                            .as_ref()?
+                            .discriminant() as usize,
+                    )
+                },
+                fields: dynamic_variants::<settings::WindowButtonLayoutContent>()
+                    .into_iter()
+                    .map(|variant| match variant {
+                        settings::WindowButtonLayoutContentDiscriminants::PlatformDefault => {
+                            vec![]
+                        }
+                        settings::WindowButtonLayoutContentDiscriminants::Standard => vec![],
+                        settings::WindowButtonLayoutContentDiscriminants::Custom => vec![
+                            SettingItem {
+                                files: USER,
+                                title: "Custom Button Layout",
+                                description:
+                                    "GNOME-style layout string such as \"close:minimize,maximize\".",
+                                field: Box::new(SettingField {
+                                    json_path: Some("title_bar.button_layout"),
+                                    pick: |settings_content| match settings_content
+                                        .title_bar
+                                        .as_ref()?
+                                        .button_layout
+                                        .as_ref()?
+                                    {
+                                        settings::WindowButtonLayoutContent::Custom(layout) => {
+                                            Some(layout)
+                                        }
+                                        _ => DEFAULT_EMPTY_STRING,
+                                    },
+                                    write: |settings_content, value| {
+                                        settings_content
+                                            .title_bar
+                                            .get_or_insert_default()
+                                            .button_layout = value
+                                            .map(settings::WindowButtonLayoutContent::Custom);
+                                    },
+                                }),
+                                metadata: Some(Box::new(SettingsFieldMetadata {
+                                    placeholder: Some("close:minimize,maximize"),
+                                    ..Default::default()
+                                })),
+                            },
+                        ],
+                    })
+                    .collect(),
             }),
         ]
     }
@@ -4279,7 +4349,7 @@ fn window_and_layout_page() -> SettingsPage {
 }
 
 fn panels_page() -> SettingsPage {
-    fn project_panel_section() -> [SettingsPageItem; 21] {
+    fn project_panel_section() -> [SettingsPageItem; 24] {
         [
             SettingsPageItem::SectionHeader("Project Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -4558,6 +4628,32 @@ fn panels_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
+                title: "Horizontal Scroll",
+                description: "Whether to allow horizontal scrolling in the project panel. When disabled, the view is always locked to the leftmost position and long file names are clipped.",
+                field: Box::new(SettingField {
+                    json_path: Some("project_panel.scrollbar.horizontal_scroll"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .scrollbar
+                            .as_ref()?
+                            .horizontal_scroll
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .scrollbar
+                            .get_or_insert_default()
+                            .horizontal_scroll = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
                 title: "Show Diagnostics",
                 description: "Which files containing diagnostic errors/warnings to mark in the project panel.",
                 field: Box::new(SettingField {
@@ -4574,6 +4670,50 @@ fn panels_page() -> SettingsPage {
                             .project_panel
                             .get_or_insert_default()
                             .show_diagnostics = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Diagnostic Badges",
+                description: "Show error and warning count badges next to file names in the project panel.",
+                field: Box::new(SettingField {
+                    json_path: Some("project_panel.diagnostic_badges"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .diagnostic_badges
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .diagnostic_badges = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Git Status Indicator",
+                description: "Show a git status indicator next to file names in the project panel.",
+                field: Box::new(SettingField {
+                    json_path: Some("project_panel.git_status_indicator"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .git_status_indicator
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .git_status_indicator = value;
                     },
                 }),
                 metadata: None,
@@ -4653,7 +4793,7 @@ fn panels_page() -> SettingsPage {
                 title: "Hide Root",
                 description: "Whether to hide the root entry when only one folder is open in the window.",
                 field: Box::new(SettingField {
-                    json_path: Some("project_panel.drag_and_drop"),
+                    json_path: Some("project_panel.hide_root"),
                     pick: |settings_content| {
                         settings_content.project_panel.as_ref()?.hide_root.as_ref()
                     },
@@ -4812,7 +4952,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn terminal_panel_section() -> [SettingsPageItem; 2] {
+    fn terminal_panel_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SectionHeader("Terminal Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -4823,6 +4963,28 @@ fn panels_page() -> SettingsPage {
                     pick: |settings_content| settings_content.terminal.as_ref()?.dock.as_ref(),
                     write: |settings_content, value| {
                         settings_content.terminal.get_or_insert_default().dock = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Count Badge",
+                description: "Show a badge on the terminal panel icon with the count of open terminals.",
+                field: Box::new(SettingField {
+                    json_path: Some("terminal.show_count_badge"),
+                    pick: |settings_content| {
+                        settings_content
+                            .terminal
+                            .as_ref()?
+                            .show_count_badge
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .terminal
+                            .get_or_insert_default()
+                            .show_count_badge = value;
                     },
                 }),
                 metadata: None,
@@ -5040,7 +5202,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn git_panel_section() -> [SettingsPageItem; 10] {
+    fn git_panel_section() -> [SettingsPageItem; 14] {
         [
             SettingsPageItem::SectionHeader("Git Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5183,6 +5345,82 @@ fn panels_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
+                title: "File Icons",
+                description: "Show file icons next to the Git status icon.",
+                field: Box::new(SettingField {
+                    json_path: Some("git_panel.file_icons"),
+                    pick: |settings_content| {
+                        settings_content.git_panel.as_ref()?.file_icons.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .git_panel
+                            .get_or_insert_default()
+                            .file_icons = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Folder Icons",
+                description: "Whether to show folder icons or chevrons for directories in the git panel.",
+                field: Box::new(SettingField {
+                    json_path: Some("git_panel.folder_icons"),
+                    pick: |settings_content| {
+                        settings_content.git_panel.as_ref()?.folder_icons.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .git_panel
+                            .get_or_insert_default()
+                            .folder_icons = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Diff Stats",
+                description: "Whether to show the addition/deletion change count next to each file in the Git panel.",
+                field: Box::new(SettingField {
+                    json_path: Some("git_panel.diff_stats"),
+                    pick: |settings_content| {
+                        settings_content.git_panel.as_ref()?.diff_stats.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .git_panel
+                            .get_or_insert_default()
+                            .diff_stats = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Count Badge",
+                description: "Whether to show a badge on the git panel icon with the count of uncommitted changes.",
+                field: Box::new(SettingField {
+                    json_path: Some("git_panel.show_count_badge"),
+                    pick: |settings_content| {
+                        settings_content
+                            .git_panel
+                            .as_ref()?
+                            .show_count_badge
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .git_panel
+                            .get_or_insert_default()
+                            .show_count_badge = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
                 title: "Scroll Bar",
                 description: "How and when the scrollbar should be displayed.",
                 field: Box::new(SettingField {
@@ -5232,7 +5470,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn notification_panel_section() -> [SettingsPageItem; 4] {
+    fn notification_panel_section() -> [SettingsPageItem; 5] {
         [
             SettingsPageItem::SectionHeader("Notification Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5292,6 +5530,28 @@ fn panels_page() -> SettingsPage {
                             .notification_panel
                             .get_or_insert_default()
                             .default_width = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Count Badge",
+                description: "Show a badge on the notification panel icon with the count of unread notifications.",
+                field: Box::new(SettingField {
+                    json_path: Some("notification_panel.show_count_badge"),
+                    pick: |settings_content| {
+                        settings_content
+                            .notification_panel
+                            .as_ref()?
+                            .show_count_badge
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .notification_panel
+                            .get_or_insert_default()
+                            .show_count_badge = value;
                     },
                 }),
                 metadata: None,
@@ -6794,101 +7054,8 @@ fn collaboration_page() -> SettingsPage {
         ]
     }
 
-    fn experimental_section() -> [SettingsPageItem; 9] {
+    fn audio_settings() -> [SettingsPageItem; 3] {
         [
-            SettingsPageItem::SectionHeader("Experimental"),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Rodio Audio",
-                description: "Opt into the new audio system.",
-                field: Box::new(SettingField {
-                    json_path: Some("audio.experimental.rodio_audio"),
-                    pick: |settings_content| settings_content.audio.as_ref()?.rodio_audio.as_ref(),
-                    write: |settings_content, value| {
-                        settings_content.audio.get_or_insert_default().rodio_audio = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Auto Microphone Volume",
-                description: "Automatically adjust microphone volume (requires rodio audio).",
-                field: Box::new(SettingField {
-                    json_path: Some("audio.experimental.auto_microphone_volume"),
-                    pick: |settings_content| {
-                        settings_content
-                            .audio
-                            .as_ref()?
-                            .auto_microphone_volume
-                            .as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .audio
-                            .get_or_insert_default()
-                            .auto_microphone_volume = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Auto Speaker Volume",
-                description: "Automatically adjust volume of other call members (requires rodio audio).",
-                field: Box::new(SettingField {
-                    json_path: Some("audio.experimental.auto_speaker_volume"),
-                    pick: |settings_content| {
-                        settings_content
-                            .audio
-                            .as_ref()?
-                            .auto_speaker_volume
-                            .as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .audio
-                            .get_or_insert_default()
-                            .auto_speaker_volume = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Denoise",
-                description: "Remove background noises (requires rodio audio).",
-                field: Box::new(SettingField {
-                    json_path: Some("audio.experimental.denoise"),
-                    pick: |settings_content| settings_content.audio.as_ref()?.denoise.as_ref(),
-                    write: |settings_content, value| {
-                        settings_content.audio.get_or_insert_default().denoise = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Legacy Audio Compatible",
-                description: "Use audio parameters compatible with previous versions (requires rodio audio).",
-                field: Box::new(SettingField {
-                    json_path: Some("audio.experimental.legacy_audio_compatible"),
-                    pick: |settings_content| {
-                        settings_content
-                            .audio
-                            .as_ref()?
-                            .legacy_audio_compatible
-                            .as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .audio
-                            .get_or_insert_default()
-                            .legacy_audio_compatible = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
             SettingsPageItem::ActionLink(ActionLink {
                 title: "Test Audio".into(),
                 description: Some("Test your microphone and speaker setup".into()),
@@ -6949,11 +7116,11 @@ fn collaboration_page() -> SettingsPage {
 
     SettingsPage {
         title: "Collaboration",
-        items: concat_sections![calls_section(), experimental_section()],
+        items: concat_sections![calls_section(), audio_settings()],
     }
 }
 
-fn ai_page() -> SettingsPage {
+fn ai_page(cx: &App) -> SettingsPage {
     fn general_section() -> [SettingsPageItem; 2] {
         [
             SettingsPageItem::SectionHeader("General"),
@@ -6973,8 +7140,8 @@ fn ai_page() -> SettingsPage {
         ]
     }
 
-    fn agent_configuration_section() -> [SettingsPageItem; 12] {
-        [
+    fn agent_configuration_section(cx: &App) -> Box<[SettingsPageItem]> {
+        let mut items = vec![
             SettingsPageItem::SectionHeader("Agent Configuration"),
             SettingsPageItem::SubPageLink(SubPageLink {
                 title: "Tool Permissions".into(),
@@ -6985,6 +7152,34 @@ fn ai_page() -> SettingsPage {
                 files: USER,
                 render: render_tool_permissions_setup_page,
             }),
+        ];
+
+        if cx.has_flag::<AgentV2FeatureFlag>() {
+            items.push(SettingsPageItem::SettingItem(SettingItem {
+                title: "New Thread Location",
+                description: "Whether to start a new thread in the current local project or in a new Git worktree.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.new_thread_location"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()?
+                            .new_thread_location
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .new_thread_location = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }));
+        }
+
+        items.extend([
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Single File Review",
                 description: "When enabled, agent edits will also be displayed in single-file buffers for review.",
@@ -7189,7 +7384,9 @@ fn ai_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
-        ]
+        ]);
+
+        items.into_boxed_slice()
     }
 
     fn context_servers_section() -> [SettingsPageItem; 2] {
@@ -7274,7 +7471,7 @@ fn ai_page() -> SettingsPage {
         title: "AI",
         items: concat_sections![
             general_section(),
-            agent_configuration_section(),
+            agent_configuration_section(cx),
             context_servers_section(),
             edit_prediction_language_settings_section(),
             edit_prediction_display_sub_section()
@@ -7406,7 +7603,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Auto Indent",
-                description: "Whether indentation should be adjusted based on the context whilst typing.",
+                description: "Controls automatic indentation behavior when typing.",
                 field: Box::new(SettingField {
                     json_path: Some("languages.$(language).auto_indent"),
                     pick: |settings_content| {
@@ -8368,7 +8565,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
         ]
     }
 
-    fn miscellaneous_section() -> [SettingsPageItem; 6] {
+    fn miscellaneous_section() -> [SettingsPageItem; 7] {
         [
             SettingsPageItem::SectionHeader("Miscellaneous"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -8462,6 +8659,19 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.colorize_brackets = value;
                         })
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Vim/Emacs Modeline Support",
+                description: "Number of lines to search for modelines (set to 0 to disable).",
+                field: Box::new(SettingField {
+                    json_path: Some("modeline_lines"),
+                    pick: |settings_content| settings_content.modeline_lines.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.modeline_lines = value;
                     },
                 }),
                 metadata: None,
@@ -9012,4 +9222,68 @@ where
     T::Discriminant: strum::VariantArray,
 {
     <<T as strum::IntoDiscriminant>::Discriminant as strum::VariantArray>::VARIANTS
+}
+
+/// Updates the `vim_mode` setting, disabling `helix_mode` if present and
+/// `vim_mode` is being enabled.
+fn write_vim_mode(settings: &mut SettingsContent, value: Option<bool>) {
+    if value == Some(true) && settings.helix_mode == Some(true) {
+        settings.helix_mode = Some(false);
+    }
+    settings.vim_mode = value;
+}
+
+/// Updates the `helix_mode` setting, disabling `vim_mode` if present and
+/// `helix_mode` is being enabled.
+fn write_helix_mode(settings: &mut SettingsContent, value: Option<bool>) {
+    if value == Some(true) && settings.vim_mode == Some(true) {
+        settings.vim_mode = Some(false);
+    }
+    settings.helix_mode = value;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_write_vim_helix_mode() {
+        // Enabling vim mode while `vim_mode` and `helix_mode` are not yet set
+        // should only update the `vim_mode` setting.
+        let mut settings = SettingsContent::default();
+        write_vim_mode(&mut settings, Some(true));
+        assert_eq!(settings.vim_mode, Some(true));
+        assert_eq!(settings.helix_mode, None);
+
+        // Enabling helix mode while `vim_mode` and `helix_mode` are not yet set
+        // should only update the `helix_mode` setting.
+        let mut settings = SettingsContent::default();
+        write_helix_mode(&mut settings, Some(true));
+        assert_eq!(settings.helix_mode, Some(true));
+        assert_eq!(settings.vim_mode, None);
+
+        // Disabling helix mode should only touch `helix_mode` setting when
+        // `vim_mode` is not set.
+        write_helix_mode(&mut settings, Some(false));
+        assert_eq!(settings.helix_mode, Some(false));
+        assert_eq!(settings.vim_mode, None);
+
+        // Enabling vim mode should update `vim_mode` but leave `helix_mode`
+        // untouched.
+        write_vim_mode(&mut settings, Some(true));
+        assert_eq!(settings.vim_mode, Some(true));
+        assert_eq!(settings.helix_mode, Some(false));
+
+        // Enabling helix mode should update `helix_mode` and disable
+        // `vim_mode`.
+        write_helix_mode(&mut settings, Some(true));
+        assert_eq!(settings.helix_mode, Some(true));
+        assert_eq!(settings.vim_mode, Some(false));
+
+        // Enabling vim mode should update `vim_mode` and disable
+        // `helix_mode`.
+        write_vim_mode(&mut settings, Some(true));
+        assert_eq!(settings.vim_mode, Some(true));
+        assert_eq!(settings.helix_mode, Some(false));
+    }
 }

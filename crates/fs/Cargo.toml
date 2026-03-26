@@ -48,6 +48,7 @@ cocoa = "0.26"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true
+dunce.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 ashpd.workspace = true
@@ -58,4 +59,4 @@ gpui = { workspace = true, features = ["test-support"] }
 git = { workspace = true, features = ["test-support"] }
 
 [features]
-test-support = ["gpui/test-support", "git/test-support"]
+test-support = ["gpui/test-support", "git/test-support", "util/test-support"]

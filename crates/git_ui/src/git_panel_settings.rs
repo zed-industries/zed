@@ -20,11 +20,16 @@ pub struct GitPanelSettings {
     pub dock: DockPosition,
     pub default_width: Pixels,
     pub status_style: StatusStyle,
+    pub file_icons: bool,
+    pub folder_icons: bool,
     pub scrollbar: ScrollbarSettings,
     pub fallback_branch_name: String,
     pub sort_by_path: bool,
     pub collapse_untracked_diff: bool,
     pub tree_view: bool,
+    pub diff_stats: bool,
+    pub show_count_badge: bool,
+    pub starts_open: bool,
 }
 
 impl ScrollbarVisibility for GitPanelSettings {
@@ -51,6 +56,8 @@ impl Settings for GitPanelSettings {
             dock: git_panel.dock.unwrap().into(),
             default_width: px(git_panel.default_width.unwrap()),
             status_style: git_panel.status_style.unwrap(),
+            file_icons: git_panel.file_icons.unwrap(),
+            folder_icons: git_panel.folder_icons.unwrap(),
             scrollbar: ScrollbarSettings {
                 show: git_panel.scrollbar.unwrap().show.map(Into::into),
             },
@@ -58,6 +65,9 @@ impl Settings for GitPanelSettings {
             sort_by_path: git_panel.sort_by_path.unwrap(),
             collapse_untracked_diff: git_panel.collapse_untracked_diff.unwrap(),
             tree_view: git_panel.tree_view.unwrap(),
+            diff_stats: git_panel.diff_stats.unwrap(),
+            show_count_badge: git_panel.show_count_badge.unwrap(),
+            starts_open: git_panel.starts_open.unwrap(),
         }
     }
 }

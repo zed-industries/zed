@@ -114,8 +114,9 @@ impl ApplicationMenu {
                         name,
                         action,
                         checked,
+                        disabled,
                         ..
-                    } => menu.action_checked(name, action, checked),
+                    } => menu.action_checked_with_disabled(name, action, checked, disabled),
                     OwnedMenuItem::Submenu(submenu) => {
                         submenu
                             .items
@@ -126,8 +127,10 @@ impl ApplicationMenu {
                                     name,
                                     action,
                                     checked,
+                                    disabled,
                                     ..
-                                } => menu.action_checked(name, action, checked),
+                                } => menu
+                                    .action_checked_with_disabled(name, action, checked, disabled),
                                 OwnedMenuItem::Submenu(_) => menu,
                                 OwnedMenuItem::SystemMenu(_) => {
                                     // A system menu doesn't make sense in this context, so ignore it

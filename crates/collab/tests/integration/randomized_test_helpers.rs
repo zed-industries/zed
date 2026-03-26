@@ -181,14 +181,21 @@ pub async fn run_randomized_test<T: RandomizedTest>(
 
     for (client, cx) in clients {
         cx.update(|cx| {
+            for window in cx.windows() {
+                window
+                    .update(cx, |_, window, _| window.remove_window())
+                    .ok();
+            }
+        });
+        cx.update(|cx| {
             let settings = cx.remove_global::<SettingsStore>();
             cx.clear_globals();
             cx.set_global(settings);
             theme::init(theme::LoadThemes::JustBase, cx);
             drop(client);
         });
+        executor.run_until_parked();
     }
-    executor.run_until_parked();
 
     if let Some(path) = plan_save_path() {
         eprintln!("saved test plan to path {:?}", path);
@@ -556,6 +563,13 @@ impl<T: RandomizedTest> TestPlan<T> {
 
                 log::info!("{} removed", client.username);
                 plan.lock().user(removed_user_id).online = false;
+                client_cx.update(|cx| {
+                    for window in cx.windows() {
+                        window
+                            .update(cx, |_, window, _| window.remove_window())
+                            .ok();
+                    }
+                });
                 client_cx.update(|cx| {
                     cx.clear_globals();
                     drop(client);

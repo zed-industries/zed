@@ -6,6 +6,7 @@ use gpui::{
     TextStyle, Window, combine_highlights,
 };
 use language::BufferSnapshot;
+
 use markdown::{Markdown, MarkdownElement};
 use multi_buffer::{Anchor, MultiBufferOffset, ToOffset};
 use settings::Settings;
@@ -236,7 +237,7 @@ impl Editor {
                                     .highlight_text(&text, 0..signature.label.len())
                                     .into_iter()
                                     .flat_map(|(range, highlight_id)| {
-                                        Some((range, highlight_id.style(cx.theme().syntax())?))
+                                        Some((range, *cx.theme().syntax().get(highlight_id)?))
                                     });
                                 signature.highlights =
                                     combine_highlights(signature.highlights.clone(), highlights)

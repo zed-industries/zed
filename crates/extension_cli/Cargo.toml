@@ -19,14 +19,16 @@ cloud_api_types.workspace = true
 env_logger.workspace = true
 extension.workspace = true
 fs.workspace = true
-gpui.workspace = true
+gpui_platform.workspace = true
 language.workspace = true
 log.workspace = true
 reqwest_client.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true
+settings_content.workspace = true
 snippet_provider.workspace = true
+task.workspace = true
 theme.workspace = true
 tokio = { workspace = true, features = ["full"] }
 toml.workspace = true

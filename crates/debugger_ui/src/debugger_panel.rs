@@ -35,6 +35,7 @@ use tree_sitter::{Query, StreamingIterator as _};
 use ui::{
     ContextMenu, Divider, PopoverMenu, PopoverMenuHandle, SplitButton, Tab, Tooltip, prelude::*,
 };
+use util::redact::redact_command;
 use util::rel_path::RelPath;
 use util::{ResultExt, debug_panic, maybe};
 use workspace::SplitDirection;
@@ -43,7 +44,7 @@ use workspace::{
     Item, Pane, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
 };
-use zed_actions::ToggleFocus;
+use zed_actions::debug_panel::ToggleFocus;
 
 pub struct DebuggerHistoryFeatureFlag;
 
@@ -54,7 +55,6 @@ impl FeatureFlag for DebuggerHistoryFeatureFlag {
 const DEBUG_PANEL_KEY: &str = "DebugPanel";
 
 pub struct DebugPanel {
-    size: Pixels,
     active_session: Option<Entity<DebugSession>>,
     project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
@@ -92,7 +92,6 @@ impl DebugPanel {
             );
 
             Self {
-                size: px(300.),
                 sessions_with_children: Default::default(),
                 active_session: None,
                 focus_handle,
@@ -275,12 +274,13 @@ impl DebugPanel {
 
             async move |_, cx| {
                 if let Err(error) = task.await {
-                    log::error!("{error:#}");
+                    let redacted_error = redact_command(&format!("{error:#}"));
+                    log::error!("{redacted_error}");
                     session
                         .update(cx, |session, cx| {
                             session
                                 .console_output(cx)
-                                .unbounded_send(format!("error: {:#}", error))
+                                .unbounded_send(format!("error: {:#}", redacted_error))
                                 .ok();
                             session.shutdown(cx)
                         })
@@ -515,7 +515,9 @@ impl DebugPanel {
             }
             session.update(cx, |session, cx| session.shutdown(cx));
             this.update(cx, |this, cx| {
-                this.retain_sessions(|other| entity_id != other.entity_id());
+                this.retain_sessions(&|other: &Entity<DebugSession>| {
+                    entity_id != other.entity_id()
+                });
                 if let Some(active_session_id) = this
                     .active_session
                     .as_ref()
@@ -1329,7 +1331,7 @@ impl DebugPanel {
         None
     }
 
-    fn retain_sessions(&mut self, keep: impl Fn(&Entity<DebugSession>) -> bool) {
+    fn retain_sessions(&mut self, keep: &dyn Fn(&Entity<DebugSession>) -> bool) {
         self.sessions_with_children
             .retain(|session, _| keep(session));
         for children in self.sessions_with_children.values_mut() {
@@ -1457,14 +1459,19 @@ async fn register_session_inner(
         .detach();
     })
     .ok();
-    let serialized_layout = persistence::get_serialized_layout(adapter_name).await;
+    let serialized_layout = this
+        .update(cx, |_, cx| {
+            persistence::get_serialized_layout(&adapter_name, &db::kvp::KeyValueStore::global(cx))
+        })
+        .ok()
+        .flatten();
     let debug_session = this.update_in(cx, |this, window, cx| {
         let parent_session = this
             .sessions_with_children
             .keys()
             .find(|p| Some(p.read(cx).session_id(cx)) == session.read(cx).parent_id(cx))
             .cloned();
-        this.retain_sessions(|session| {
+        this.retain_sessions(&|session: &Entity<DebugSession>| {
             !session
                 .read(cx)
                 .running_state()
@@ -1563,12 +1570,8 @@ impl Panel for DebugPanel {
         });
     }
 
-    fn size(&self, _window: &Window, _: &App) -> Pixels {
-        self.size
-    }
-
-    fn set_size(&mut self, size: Option<Pixels>, _window: &mut Window, _cx: &mut Context<Self>) {
-        self.size = size.unwrap_or(px(300.));
+    fn default_size(&self, _window: &Window, _: &App) -> Pixels {
+        px(300.)
     }
 
     fn remote_id() -> Option<proto::PanelId> {
@@ -1598,7 +1601,7 @@ impl Panel for DebugPanel {
     }
 
     fn activation_priority(&self) -> u32 {
-        9
+        7
     }
 
     fn set_active(&mut self, _: bool, _: &mut Window, _: &mut Context<Self>) {}
@@ -1628,13 +1631,6 @@ impl Render for DebugPanel {
         }
 
         v_flex()
-            .when(!self.is_zoomed, |this| {
-                this.when_else(
-                    self.position(window, cx) == DockPosition::Bottom,
-                    |this| this.max_h(self.size),
-                    |this| this.max_w(self.size),
-                )
-            })
             .size_full()
             .key_context("DebugPanel")
             .child(h_flex().children(self.top_controls_strip(window, cx)))
@@ -1817,20 +1813,22 @@ impl Render for DebugPanel {
                         .gap_2()
                         .child(
                             Button::new("spawn-new-session-empty-state", "New Session")
-                                .icon(IconName::Plus)
-                                .icon_size(IconSize::Small)
-                                .icon_color(Color::Muted)
-                                .icon_position(IconPosition::Start)
+                                .start_icon(
+                                    Icon::new(IconName::Plus)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
                                 .on_click(|_, window, cx| {
                                     window.dispatch_action(crate::Start.boxed_clone(), cx);
                                 }),
                         )
                         .child(
                             Button::new("edit-debug-settings", "Edit debug.json")
-                                .icon(IconName::Code)
-                                .icon_size(IconSize::Small)
-                                .icon_color(Color::Muted)
-                                .icon_position(IconPosition::Start)
+                                .start_icon(
+                                    Icon::new(IconName::Code)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
                                 .on_click(|_, window, cx| {
                                     window.dispatch_action(
                                         zed_actions::OpenProjectDebugTasks.boxed_clone(),
@@ -1840,10 +1838,11 @@ impl Render for DebugPanel {
                         )
                         .child(
                             Button::new("open-debugger-docs", "Debugger Docs")
-                                .icon(IconName::Book)
-                                .icon_size(IconSize::Small)
-                                .icon_color(Color::Muted)
-                                .icon_position(IconPosition::Start)
+                                .start_icon(
+                                    Icon::new(IconName::Book)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
                                 .on_click(|_, _, cx| cx.open_url("https://zed.dev/docs/debugger")),
                         )
                         .child(
@@ -1851,10 +1850,11 @@ impl Render for DebugPanel {
                                 "spawn-new-session-install-extensions",
                                 "Debugger Extensions",
                             )
-                            .icon(IconName::Blocks)
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .icon_position(IconPosition::Start)
+                            .start_icon(
+                                Icon::new(IconName::Blocks)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            )
                             .on_click(|_, window, cx| {
                                 window.dispatch_action(
                                     zed_actions::Extensions {
