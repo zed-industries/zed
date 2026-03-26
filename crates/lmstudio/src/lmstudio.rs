@@ -1,6 +1,6 @@
 use anyhow::{Context as _, Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, http};
+use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Request as HttpRequest, http};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{convert::TryFrom, time::Duration};
@@ -448,16 +448,14 @@ pub async fn get_models(
     _: Option<Duration>,
 ) -> Result<Vec<ModelEntry>> {
     let uri = format!("{api_url}/models");
-    let mut request_builder = HttpRequest::builder()
+    let request = HttpRequest::builder()
         .method(Method::GET)
         .uri(uri)
-        .header("Accept", "application/json");
-
-    if let Some(api_key) = api_key {
-        request_builder = request_builder.header("Authorization", format!("Bearer {}", api_key));
-    }
-
-    let request = request_builder.body(AsyncBody::default())?;
+        .header("Accept", "application/json")
+        .when_some(api_key, |builder, api_key| {
+            builder.header("authorization", format!("Bearer {}", api_key))
+        })
+        .body(AsyncBody::default())?;
 
     let mut response = client.send(request).await?;
 
