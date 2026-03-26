@@ -811,6 +811,7 @@ fn main() {
         let fs = app_state.fs.clone();
         load_user_themes_in_background(fs.clone(), cx);
         watch_themes(fs.clone(), cx);
+        #[cfg(debug_assertions)]
         watch_languages(fs.clone(), app_state.languages.clone(), cx);
 
         let menus = app_menus(cx);
@@ -1821,7 +1822,7 @@ fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>, cx: &m
     use std::time::Duration;
 
     cx.background_spawn(async move {
-        let languages_src = Path::new("crates/languages/src");
+        let languages_src = Path::new("crates/grammars/src");
         let Some(languages_src) = fs.canonicalize(languages_src).await.log_err() else {
             return;
         };
@@ -1850,9 +1851,6 @@ fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>, cx: &m
     })
     .detach();
 }
-
-#[cfg(not(debug_assertions))]
-fn watch_languages(_fs: Arc<dyn fs::Fs>, _languages: Arc<LanguageRegistry>, _cx: &mut App) {}
 
 fn dump_all_gpui_actions() {
     #[derive(Debug, serde::Serialize)]
