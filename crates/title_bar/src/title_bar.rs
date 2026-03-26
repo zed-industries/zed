@@ -24,7 +24,7 @@ use client::{Client, UserStore, zed_urls};
 use cloud_api_types::Plan;
 
 use gpui::{
-    Action, Animation, AnimationExt, AnyElement, App, Context, Corner, Element, Entity, Focusable,
+    Action, Animation, AnimationExt, AnyElement, App, Context, BoxAnchor, Element, Entity, Focusable,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
     StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window, actions, div,
     pulsating_between,
@@ -568,7 +568,7 @@ impl TitleBar {
                         )
                     },
                 )
-                .anchor(gpui::Corner::TopLeft)
+                .anchor(gpui::BoxAnchor::TopLeft)
                 .into_any_element(),
         )
     }
@@ -751,7 +751,7 @@ impl TitleBar {
                     )
                 },
             )
-            .anchor(gpui::Corner::TopLeft)
+            .anchor(gpui::BoxAnchor::TopLeft)
             .into_any_element()
     }
 
@@ -808,7 +808,7 @@ impl TitleBar {
                     )
                 },
             )
-            .anchor(gpui::Corner::TopLeft)
+            .anchor(gpui::BoxAnchor::TopLeft)
     }
 
     fn render_project_branch(
@@ -911,7 +911,7 @@ impl TitleBar {
                         )
                     },
                 )
-                .anchor(gpui::Corner::TopLeft),
+                .anchor(gpui::BoxAnchor::TopLeft),
         )
     }
 
@@ -1220,6 +1220,6 @@ impl TitleBar {
                 })
                 .into()
             })
-            .anchor(Corner::TopRight)
+            .anchor(BoxAnchor::TopRight)
     }
 }

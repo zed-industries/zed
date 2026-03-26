@@ -1665,7 +1665,7 @@ impl KeymapEditor {
                     }
                 }))
             })
-            .anchor(gpui::Corner::TopRight)
+            .anchor(gpui::BoxAnchor::TopRight)
             .offset(gpui::Point {
                 x: px(0.0),
                 y: px(2.0),
@@ -2357,7 +2357,7 @@ impl Render for KeymapEditor {
                 deferred(
                     anchored()
                         .position(*position)
-                        .anchor(gpui::Corner::TopLeft)
+                        .anchor(gpui::BoxAnchor::TopLeft)
                         .child(menu.clone()),
                 )
                 .with_priority(1)

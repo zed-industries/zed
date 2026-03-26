@@ -215,7 +215,7 @@ impl Render for ProfileSelector {
             picker,
             trigger_button,
             tooltip,
-            gpui::Corner::BottomRight,
+            gpui::BoxAnchor::BottomRight,
             cx,
         )
         .with_handle(self.picker_handle.clone())

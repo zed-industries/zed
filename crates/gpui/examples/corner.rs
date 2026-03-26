@@ -1,61 +1,58 @@
-use gpui::{
-    AnchoredPositionMode, App, Application, Axis, Bounds, Context, Corner, Half as _,
-    InteractiveElement, ParentElement, Pixels, Point, Render, SharedString, Size, Window,
-    WindowBounds, WindowOptions, anchored, deferred, div, point, prelude::*, px, rgb, size,
-};
+#![cfg_attr(target_family = "wasm", no_main)]
 
-struct PopoverDemo {
+use gpui::{
+    AnchoredPositionMode, App, Axis, Bounds, BoxAnchor, Context, Half as _, InteractiveElement,
+    ParentElement, Pixels, Point, Render, SharedString, Size, Window, WindowBounds, WindowOptions,
+    anchored, deferred, div, point, prelude::*, px, rgb, size,
+};
+use gpui_platform::application;
+
+struct CornerDemo {
     hovered_button: Option<usize>,
 }
 
 struct ButtonDemo {
     label: SharedString,
-    corner: Option<Corner>,
+    corner: Option<BoxAnchor>,
 }
 
-fn resolved_position(corner: Corner, button_size: Size<Pixels>) -> Point<Pixels> {
+fn resolved_position(corner: BoxAnchor, button_size: Size<Pixels>) -> Point<Pixels> {
     let offset = Point {
         x: px(0.),
         y: -button_size.height,
     };
 
     offset
-        + match corner.other_side_corner_along(Axis::Vertical) {
-            Corner::TopLeft => point(px(0.0), px(0.0)),
-            Corner::TopCenter => point(button_size.width.half(), px(0.0)),
-            Corner::TopRight => point(button_size.width, px(0.0)),
-            Corner::LeftCenter => point(button_size.width, button_size.height.half()),
-            Corner::RightCenter => point(px(0.), button_size.height.half()),
-            Corner::BottomLeft => point(px(0.0), button_size.height),
-            Corner::BottomCenter => point(button_size.width / 2.0, button_size.height),
-            Corner::BottomRight => point(button_size.width, button_size.height),
+        + match corner.other_side_along(Axis::Vertical) {
+            BoxAnchor::TopLeft => point(px(0.0), px(0.0)),
+            BoxAnchor::TopCenter => point(button_size.width.half(), px(0.0)),
+            BoxAnchor::TopRight => point(button_size.width, px(0.0)),
+            BoxAnchor::LeftCenter => point(button_size.width, button_size.height.half()),
+            BoxAnchor::RightCenter => point(px(0.), button_size.height.half()),
+            BoxAnchor::BottomLeft => point(px(0.0), button_size.height),
+            BoxAnchor::BottomCenter => point(button_size.width / 2.0, button_size.height),
+            BoxAnchor::BottomRight => point(button_size.width, button_size.height),
         }
 }
 
-impl PopoverDemo {
-    fn new() -> Self {
-        Self {
-            hovered_button: None,
-        }
-    }
-
+impl CornerDemo {
     fn buttons() -> Vec<ButtonDemo> {
         vec![
             ButtonDemo {
                 label: "TopLeft".into(),
-                corner: Some(Corner::TopLeft),
+                corner: Some(BoxAnchor::TopLeft),
             },
             ButtonDemo {
                 label: "TopCenter".into(),
-                corner: Some(Corner::TopCenter),
+                corner: Some(BoxAnchor::TopCenter),
             },
             ButtonDemo {
                 label: "TopRight".into(),
-                corner: Some(Corner::TopRight),
+                corner: Some(BoxAnchor::TopRight),
             },
             ButtonDemo {
                 label: "LeftCenter".into(),
-                corner: Some(Corner::LeftCenter),
+                corner: Some(BoxAnchor::LeftCenter),
             },
             ButtonDemo {
                 label: "Center".into(),
@@ -63,25 +60,25 @@ impl PopoverDemo {
             },
             ButtonDemo {
                 label: "RightCenter".into(),
-                corner: Some(Corner::RightCenter),
+                corner: Some(BoxAnchor::RightCenter),
             },
             ButtonDemo {
                 label: "BottomLeft".into(),
-                corner: Some(Corner::BottomLeft),
+                corner: Some(BoxAnchor::BottomLeft),
             },
             ButtonDemo {
                 label: "BottomCenter".into(),
-                corner: Some(Corner::BottomCenter),
+                corner: Some(BoxAnchor::BottomCenter),
             },
             ButtonDemo {
                 label: "BottomRight".into(),
-                corner: Some(Corner::BottomRight),
+                corner: Some(BoxAnchor::BottomRight),
             },
         ]
     }
 }
 
-impl Render for PopoverDemo {
+impl Render for CornerDemo {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let buttons = Self::buttons();
         let button_size = size(px(120.0), px(65.0));
@@ -128,10 +125,8 @@ impl Render for PopoverDemo {
                                                 move |this, hovered, _window, cx| {
                                                     if *hovered {
                                                         this.hovered_button = Some(index);
-                                                    } else {
-                                                        if this.hovered_button == Some(index) {
-                                                            this.hovered_button = None;
-                                                        }
+                                                    } else if this.hovered_button == Some(index) {
+                                                        this.hovered_button = None;
                                                     }
                                                     cx.notify();
                                                 },
@@ -171,8 +166,8 @@ impl Render for PopoverDemo {
     }
 }
 
-fn main() {
-    Application::new().run(|cx: &mut App| {
+fn run_example() {
+    application().run(|cx: &mut App| {
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
@@ -182,11 +177,25 @@ fn main() {
                 ))),
                 ..Default::default()
             },
-            |_window, cx| {
-                cx.activate(true);
-                cx.new(|_cx| PopoverDemo::new())
+            |_, cx| {
+                cx.new(|_| CornerDemo {
+                    hovered_button: None,
+                })
             },
         )
         .unwrap();
+        cx.activate(true);
     });
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn main() {
+    run_example();
+}
+
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn start() {
+    gpui_platform::web_init();
+    run_example();
 }

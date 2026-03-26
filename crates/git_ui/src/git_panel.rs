@@ -37,7 +37,7 @@ use git::{
     StashApply, StashPop, TrashUntrackedFiles, UnstageAll,
 };
 use gpui::{
-    Action, AsyncApp, AsyncWindowContext, Bounds, ClickEvent, Corner, DismissEvent, Empty, Entity,
+    Action, AsyncApp, AsyncWindowContext, Bounds, ClickEvent, BoxAnchor, DismissEvent, Empty, Entity,
     EventEmitter, FocusHandle, Focusable, KeyContext, MouseButton, MouseDownEvent, Point,
     PromptLevel, ScrollStrategy, Subscription, Task, TextStyle, UniformListScrollHandle,
     WeakEntity, actions, anchored, deferred, point, size, uniform_list,
@@ -3991,7 +3991,7 @@ impl GitPanel {
                     cx,
                 ))
             })
-            .anchor(Corner::TopRight)
+            .anchor(BoxAnchor::TopRight)
     }
 
     pub(crate) fn render_generate_commit_message_button(
@@ -4163,7 +4163,7 @@ impl GitPanel {
                     }))
                 }
             })
-            .anchor(Corner::TopRight)
+            .anchor(BoxAnchor::TopRight)
     }
 
     pub fn configure_commit_button(&self, cx: &mut Context<Self>) -> (bool, &'static str) {
@@ -5732,7 +5732,7 @@ impl Render for GitPanel {
                 deferred(
                     anchored()
                         .position(*position)
-                        .anchor(Corner::TopLeft)
+                        .anchor(BoxAnchor::TopLeft)
                         .child(menu.clone()),
                 )
                 .with_priority(1)
@@ -6085,7 +6085,7 @@ impl RenderOnce for PanelRepoFooter {
                     }
                 },
             )
-            .anchor(Corner::BottomLeft)
+            .anchor(BoxAnchor::BottomLeft)
             .offset(gpui::Point {
                 x: px(0.0),
                 y: px(-2.0),
@@ -6110,7 +6110,7 @@ impl RenderOnce for PanelRepoFooter {
                 branch_selector_button,
                 Tooltip::for_action_title("Switch Branch", &zed_actions::git::Switch),
             )
-            .anchor(Corner::BottomLeft)
+            .anchor(BoxAnchor::BottomLeft)
             .offset(gpui::Point {
                 x: px(0.0),
                 y: px(-2.0),

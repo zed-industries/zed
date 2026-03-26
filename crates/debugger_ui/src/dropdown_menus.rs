@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use collections::HashMap;
-use gpui::{Corner, Entity, WeakEntity};
+use gpui::{BoxAnchor, Entity, WeakEntity};
 use project::debugger::session::{ThreadId, ThreadStatus};
 use ui::{CommonAnimationExt, ContextMenu, DropdownMenu, DropdownStyle, Indicator, prelude::*};
 use util::{maybe, truncate_and_trailoff};
@@ -211,7 +211,7 @@ impl DebugPanel {
                 this
             }),
         )
-        .attach(Corner::BottomLeft)
+        .attach(BoxAnchor::BottomLeft)
         .style(DropdownStyle::Ghost)
         .handle(self.session_picker_menu_handle.clone());
 
@@ -323,7 +323,7 @@ impl DebugPanel {
                         this
                     }),
                 )
-                .attach(Corner::BottomLeft)
+                .attach(BoxAnchor::BottomLeft)
                 .disabled(session_terminated)
                 .style(DropdownStyle::Ghost)
                 .handle(self.thread_picker_menu_handle.clone()),

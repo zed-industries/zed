@@ -12,7 +12,7 @@ use editor::{
 };
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    Action as _, AppContext, Context, Corner, Entity, FocusHandle, Focusable, HighlightStyle, Hsla,
+    Action as _, AppContext, Context, BoxAnchor, Entity, FocusHandle, Focusable, HighlightStyle, Hsla,
     Render, Subscription, Task, TextStyle, WeakEntity, actions,
 };
 use language::{Anchor, Buffer, CharScopeContext, CodeLabel, TextBufferSnapshot, ToOffset};
@@ -385,7 +385,7 @@ impl Console {
                     })
                 },
             )
-            .anchor(Corner::TopRight)
+            .anchor(BoxAnchor::TopRight)
     }
 
     fn render_console(&self, cx: &Context<Self>) -> impl IntoElement {

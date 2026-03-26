@@ -2013,7 +2013,7 @@ impl Sidebar {
                 .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                 .icon_size(IconSize::Small),
             )
-            .anchor(gpui::Corner::TopRight)
+            .anchor(gpui::BoxAnchor::TopRight)
             .offset(gpui::Point {
                 x: px(0.),
                 y: px(1.),
@@ -4020,7 +4020,7 @@ impl Sidebar {
                 x: px(-2.0),
                 y: px(-2.0),
             })
-            .anchor(gpui::Corner::BottomRight)
+            .anchor(gpui::BoxAnchor::BottomRight)
     }
 
     fn render_view_more(

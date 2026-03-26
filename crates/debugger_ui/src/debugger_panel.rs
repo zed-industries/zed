@@ -17,7 +17,7 @@ use dap::{client::SessionId, debugger_settings::DebuggerSettings};
 use editor::{Editor, MultiBufferOffset, ToPoint};
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{
-    Action, App, AsyncWindowContext, ClipboardItem, Context, Corner, DismissEvent, Entity,
+    Action, App, AsyncWindowContext, ClipboardItem, Context, BoxAnchor, DismissEvent, Entity,
     EntityId, EventEmitter, FocusHandle, Focusable, MouseButton, MouseDownEvent, Point,
     Subscription, Task, WeakEntity, anchored, deferred,
 };
@@ -1432,7 +1432,7 @@ impl DebugPanel {
                     ))
                 }
             })
-            .anchor(Corner::TopRight)
+            .anchor(BoxAnchor::TopRight)
     }
 }
 
@@ -1790,7 +1790,7 @@ impl Render for DebugPanel {
                     deferred(
                         anchored()
                             .position(*position)
-                            .anchor(gpui::Corner::TopLeft)
+                            .anchor(gpui::BoxAnchor::TopLeft)
                             .child(menu.clone()),
                     )
                     .with_priority(1)

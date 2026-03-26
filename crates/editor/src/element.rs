@@ -40,7 +40,7 @@ use file_icons::FileIcons;
 use git::{Oid, blame::BlameEntry, commit::ParsedCommitMessage, status::FileStatus};
 use gpui::{
     Action, Along, AnyElement, App, AppContext, AvailableSpace, Axis as ScrollbarAxis, BorderStyle,
-    Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle,
+    Bounds, ClickEvent, ClipboardItem, ContentMask, Context, BoxAnchor, Corners, CursorStyle,
     DispatchPhase, Edges, Element, ElementInputHandler, Entity, Focusable as _, Font, FontId,
     FontWeight, GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement,
     IsZero, Length, Modifiers, ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent,
@@ -2121,8 +2121,8 @@ impl EditorElement {
             MinimapThumb::Hover => thumb_state.is_some(),
         };
 
-        let minimap_bounds = Bounds::from_corner_and_size(
-            Corner::TopRight,
+        let minimap_bounds = Bounds::from_box_anchor_and_size(
+            BoxAnchor::TopRight,
             top_right_anchor,
             size(minimap_width, editor_bounds.size.height),
         );
@@ -5322,7 +5322,7 @@ impl EditorElement {
                         anchored()
                             .position(position)
                             .child(context_menu)
-                            .anchor(Corner::TopLeft)
+                            .anchor(BoxAnchor::TopLeft)
                             .snap_to_window_with_margin(px(8.)),
                     )
                     .with_priority(1)
@@ -11513,8 +11513,8 @@ impl EditorScrollbars {
         let viewport_size = size(editor_width, editor_bounds.size.height);
 
         let scrollbar_bounds_for = |axis: ScrollbarAxis| match axis {
-            ScrollbarAxis::Horizontal => Bounds::from_corner_and_size(
-                Corner::BottomLeft,
+            ScrollbarAxis::Horizontal => Bounds::from_box_anchor_and_size(
+                BoxAnchor::BottomLeft,
                 editor_bounds.bottom_left(),
                 size(
                     // The horizontal viewport size differs from the space available for the
@@ -11523,8 +11523,8 @@ impl EditorScrollbars {
                     scrollbar_width,
                 ),
             ),
-            ScrollbarAxis::Vertical => Bounds::from_corner_and_size(
-                Corner::TopRight,
+            ScrollbarAxis::Vertical => Bounds::from_box_anchor_and_size(
+                BoxAnchor::TopRight,
                 editor_bounds.top_right(),
                 size(scrollbar_width, viewport_size.height),
             ),

@@ -3693,7 +3693,7 @@ impl Render for CollabPanel {
                 deferred(
                     anchored()
                         .position(*position)
-                        .anchor(gpui::Corner::TopLeft)
+                        .anchor(gpui::BoxAnchor::TopLeft)
                         .child(menu.clone()),
                 )
                 .with_priority(1)

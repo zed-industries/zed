@@ -834,34 +834,34 @@ where
 {
     /// Constructs a `Bounds` from a corner point and size. The specified corner will be placed at
     /// the specified origin.
-    pub fn from_corner_and_size(corner: Corner, origin: Point<T>, size: Size<T>) -> Bounds<T> {
+    pub fn from_box_anchor_and_size(corner: BoxAnchor, origin: Point<T>, size: Size<T>) -> Bounds<T> {
         let origin = match corner {
-            Corner::TopLeft => origin,
-            Corner::TopRight => Point {
+            BoxAnchor::TopLeft => origin,
+            BoxAnchor::TopRight => Point {
                 x: origin.x - size.width.clone(),
                 y: origin.y,
             },
-            Corner::BottomLeft => Point {
+            BoxAnchor::BottomLeft => Point {
                 x: origin.x,
                 y: origin.y - size.height.clone(),
             },
-            Corner::BottomRight => Point {
+            BoxAnchor::BottomRight => Point {
                 x: origin.x - size.width.clone(),
                 y: origin.y - size.height.clone(),
             },
-            Corner::TopCenter => Point {
+            BoxAnchor::TopCenter => Point {
                 x: origin.x - size.width.half(),
                 y: origin.y,
             },
-            Corner::BottomCenter => Point {
+            BoxAnchor::BottomCenter => Point {
                 x: origin.x - size.width.half(),
                 y: origin.y - size.height.clone(),
             },
-            Corner::LeftCenter => Point {
+            BoxAnchor::LeftCenter => Point {
                 x: origin.x,
                 y: origin.y - size.height.half(),
             },
-            Corner::RightCenter => Point {
+            BoxAnchor::RightCenter => Point {
                 x: origin.x - size.width.clone(),
                 y: origin.y - size.height.half(),
             },
@@ -1407,24 +1407,24 @@ where
     /// # Examples
     ///
     /// ```
-    /// use gpui::{Bounds, Corner, Point, Size};
+    /// use gpui::{Bounds, BoxAnchor, Point, Size};
     /// let bounds = Bounds {
     ///     origin: Point { x: 0, y: 0 },
     ///     size: Size { width: 10, height: 20 },
     /// };
-    /// let bottom_left = bounds.corner(Corner::BottomLeft);
+    /// let bottom_left = bounds.corner(BoxAnchor::BottomLeft);
     /// assert_eq!(bottom_left, Point { x: 0, y: 20 });
     /// ```
-    pub fn corner(&self, corner: Corner) -> Point<T> {
+    pub fn corner(&self, corner: BoxAnchor) -> Point<T> {
         match corner {
-            Corner::TopLeft => self.origin.clone(),
-            Corner::TopRight => self.top_right(),
-            Corner::BottomLeft => self.bottom_left(),
-            Corner::BottomRight => self.bottom_right(),
-            Corner::TopCenter => self.top_center(),
-            Corner::BottomCenter => self.bottom_center(),
-            Corner::LeftCenter => self.left_center(),
-            Corner::RightCenter => self.right_center(),
+            BoxAnchor::TopLeft => self.origin.clone(),
+            BoxAnchor::TopRight => self.top_right(),
+            BoxAnchor::BottomLeft => self.bottom_left(),
+            BoxAnchor::BottomRight => self.bottom_right(),
+            BoxAnchor::TopCenter => self.top_center(),
+            BoxAnchor::BottomCenter => self.bottom_center(),
+            BoxAnchor::LeftCenter => self.left_center(),
+            BoxAnchor::RightCenter => self.right_center(),
         }
     }
 }
@@ -2160,9 +2160,9 @@ impl From<Pixels> for Edges<Pixels> {
     }
 }
 
-/// Identifies a corner of a 2d box.
+/// Identifies a reference point on a 2D box, used to anchor positioned elements.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Corner {
+pub enum BoxAnchor {
     /// The top left corner
     TopLeft,
     /// The top right corner
@@ -2181,26 +2181,26 @@ pub enum Corner {
     RightCenter,
 }
 
-impl Corner {
+impl BoxAnchor {
     /// Returns the directly opposite corner.
     ///
     /// # Examples
     ///
     /// ```
-    /// # use gpui::Corner;
-    /// assert_eq!(Corner::TopLeft.opposite_corner(), Corner::BottomRight);
+    /// # use gpui::BoxAnchor;
+    /// assert_eq!(BoxAnchor::TopLeft.opposite(), BoxAnchor::BottomRight);
     /// ```
     #[must_use]
-    pub fn opposite_corner(self) -> Self {
+    pub fn opposite(self) -> Self {
         match self {
-            Corner::TopLeft => Corner::BottomRight,
-            Corner::TopRight => Corner::BottomLeft,
-            Corner::BottomLeft => Corner::TopRight,
-            Corner::BottomRight => Corner::TopLeft,
-            Corner::TopCenter => Corner::BottomCenter,
-            Corner::BottomCenter => Corner::TopCenter,
-            Corner::LeftCenter => Corner::RightCenter,
-            Corner::RightCenter => Corner::LeftCenter,
+            BoxAnchor::TopLeft => BoxAnchor::BottomRight,
+            BoxAnchor::TopRight => BoxAnchor::BottomLeft,
+            BoxAnchor::BottomLeft => BoxAnchor::TopRight,
+            BoxAnchor::BottomRight => BoxAnchor::TopLeft,
+            BoxAnchor::TopCenter => BoxAnchor::BottomCenter,
+            BoxAnchor::BottomCenter => BoxAnchor::TopCenter,
+            BoxAnchor::LeftCenter => BoxAnchor::RightCenter,
+            BoxAnchor::RightCenter => BoxAnchor::LeftCenter,
         }
     }
 
@@ -2209,32 +2209,32 @@ impl Corner {
     /// # Examples
     ///
     /// ```
-    /// # use gpui::{Axis, Corner};
-    /// let result = Corner::TopLeft.other_side_corner_along(Axis::Horizontal);
-    /// assert_eq!(result, Corner::TopRight);
+    /// # use gpui::{Axis, BoxAnchor};
+    /// let result = BoxAnchor::TopLeft.other_side_along(Axis::Horizontal);
+    /// assert_eq!(result, BoxAnchor::TopRight);
     /// ```
     #[must_use]
-    pub fn other_side_corner_along(self, axis: Axis) -> Self {
+    pub fn other_side_along(self, axis: Axis) -> Self {
         match axis {
             Axis::Vertical => match self {
-                Corner::TopLeft => Corner::BottomLeft,
-                Corner::TopRight => Corner::BottomRight,
-                Corner::BottomLeft => Corner::TopLeft,
-                Corner::BottomRight => Corner::TopRight,
-                Corner::TopCenter => Corner::BottomCenter,
-                Corner::BottomCenter => Corner::TopCenter,
-                Corner::LeftCenter => Corner::LeftCenter,
-                Corner::RightCenter => Corner::RightCenter,
+                BoxAnchor::TopLeft => BoxAnchor::BottomLeft,
+                BoxAnchor::TopRight => BoxAnchor::BottomRight,
+                BoxAnchor::BottomLeft => BoxAnchor::TopLeft,
+                BoxAnchor::BottomRight => BoxAnchor::TopRight,
+                BoxAnchor::TopCenter => BoxAnchor::BottomCenter,
+                BoxAnchor::BottomCenter => BoxAnchor::TopCenter,
+                BoxAnchor::LeftCenter => BoxAnchor::LeftCenter,
+                BoxAnchor::RightCenter => BoxAnchor::RightCenter,
             },
             Axis::Horizontal => match self {
-                Corner::TopLeft => Corner::TopRight,
-                Corner::TopRight => Corner::TopLeft,
-                Corner::BottomLeft => Corner::BottomRight,
-                Corner::BottomRight => Corner::BottomLeft,
-                Corner::TopCenter => Corner::TopCenter,
-                Corner::BottomCenter => Corner::BottomCenter,
-                Corner::LeftCenter => Corner::RightCenter,
-                Corner::RightCenter => Corner::LeftCenter,
+                BoxAnchor::TopLeft => BoxAnchor::TopRight,
+                BoxAnchor::TopRight => BoxAnchor::TopLeft,
+                BoxAnchor::BottomLeft => BoxAnchor::BottomRight,
+                BoxAnchor::BottomRight => BoxAnchor::BottomLeft,
+                BoxAnchor::TopCenter => BoxAnchor::TopCenter,
+                BoxAnchor::BottomCenter => BoxAnchor::BottomCenter,
+                BoxAnchor::LeftCenter => BoxAnchor::RightCenter,
+                BoxAnchor::RightCenter => BoxAnchor::LeftCenter,
             },
         }
     }
@@ -2320,43 +2320,43 @@ where
     /// Basic corner positions:
     ///
     /// ```
-    /// # use gpui::{Corner, Corners};
+    /// # use gpui::{BoxAnchor, Corners};
     /// let corners = Corners {
     ///     top_left: 10,
     ///     top_right: 20,
     ///     bottom_left: 30,
     ///     bottom_right: 40
     /// };
-    /// assert_eq!(corners.corner(Corner::TopLeft), 10);
-    /// assert_eq!(corners.corner(Corner::BottomRight), 40);
+    /// assert_eq!(corners.corner(BoxAnchor::TopLeft), 10);
+    /// assert_eq!(corners.corner(BoxAnchor::BottomRight), 40);
     /// ```
     ///
     /// Center positions (calculated as average of adjacent corners):
     ///
     /// ```
-    /// # use gpui::{Corner, Corners};
+    /// # use gpui::{BoxAnchor, Corners};
     /// let corners = Corners {
     ///     top_left: 10,
     ///     top_right: 20,
     ///     bottom_left: 30,
     ///     bottom_right: 40
     /// };
-    /// assert_eq!(corners.corner(Corner::TopCenter), 15);
-    /// assert_eq!(corners.corner(Corner::BottomCenter), 35);
-    /// assert_eq!(corners.corner(Corner::LeftCenter), 20);
-    /// assert_eq!(corners.corner(Corner::RightCenter), 30);
+    /// assert_eq!(corners.corner(BoxAnchor::TopCenter), 15);
+    /// assert_eq!(corners.corner(BoxAnchor::BottomCenter), 35);
+    /// assert_eq!(corners.corner(BoxAnchor::LeftCenter), 20);
+    /// assert_eq!(corners.corner(BoxAnchor::RightCenter), 30);
     /// ```
     #[must_use]
-    pub fn corner(&self, corner: Corner) -> T {
+    pub fn corner(&self, corner: BoxAnchor) -> T {
         match corner {
-            Corner::TopLeft => self.top_left.clone(),
-            Corner::TopRight => self.top_right.clone(),
-            Corner::BottomLeft => self.bottom_left.clone(),
-            Corner::BottomRight => self.bottom_right.clone(),
-            Corner::TopCenter => (self.top_left.clone() + self.top_right.clone()).half(),
-            Corner::BottomCenter => (self.bottom_left.clone() + self.bottom_right.clone()).half(),
-            Corner::LeftCenter => (self.top_left.clone() + self.bottom_left.clone()).half(),
-            Corner::RightCenter => (self.top_right.clone() + self.bottom_right.clone()).half(),
+            BoxAnchor::TopLeft => self.top_left.clone(),
+            BoxAnchor::TopRight => self.top_right.clone(),
+            BoxAnchor::BottomLeft => self.bottom_left.clone(),
+            BoxAnchor::BottomRight => self.bottom_right.clone(),
+            BoxAnchor::TopCenter => (self.top_left.clone() + self.top_right.clone()).half(),
+            BoxAnchor::BottomCenter => (self.bottom_left.clone() + self.bottom_right.clone()).half(),
+            BoxAnchor::LeftCenter => (self.top_left.clone() + self.bottom_left.clone()).half(),
+            BoxAnchor::RightCenter => (self.top_right.clone() + self.bottom_right.clone()).half(),
         }
     }
 }
@@ -2462,7 +2462,7 @@ impl<T: Div<f32, Output = T> + Ord + Clone + Debug + Default + PartialEq> Corner
     ///
     /// # Returns
     ///
-    /// Corner radii values clamped to fit.
+    /// BoxAnchor radii values clamped to fit.
     #[must_use]
     pub fn clamp_radii_for_quad_size(self, size: Size<T>) -> Corners<T> {
         let max = cmp::min(size.width, size.height) / 2.;

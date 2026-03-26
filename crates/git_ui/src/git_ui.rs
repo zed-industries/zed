@@ -442,7 +442,7 @@ fn render_remote_button(
 }
 
 mod remote_button {
-    use gpui::{Action, AnyView, ClickEvent, Corner, FocusHandle};
+    use gpui::{Action, AnyView, ClickEvent, BoxAnchor, FocusHandle};
     use ui::{
         App, ButtonCommon, Clickable, ContextMenu, ElementId, FluentBuilder, Icon, IconName,
         IconSize, IntoElement, Label, LabelCommon, LabelSize, LineHeightStyle, ParentElement,
@@ -630,7 +630,7 @@ mod remote_button {
                         .action("Force Push", git::ForcePush.boxed_clone())
                 }))
             })
-            .anchor(Corner::TopRight)
+            .anchor(BoxAnchor::TopRight)
     }
 
     #[allow(clippy::too_many_arguments)]
