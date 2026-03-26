@@ -12,10 +12,11 @@ use client::{Client, proto};
 use futures::{StreamExt, channel::mpsc};
 use gpui::{
     Action, AnyElement, AnyEntity, AnyView, App, AppContext, Context, Entity, EntityId,
-    EventEmitter, FocusHandle, Focusable, Font, HighlightStyle, Pixels, Point, Render,
-    SharedString, Task, WeakEntity, Window,
+    EventEmitter, FocusHandle, Focusable, Font, Pixels, Point, Render, SharedString, Task,
+    WeakEntity, Window,
 };
 use language::Capability;
+pub use language::HighlightedText;
 use project::{Project, ProjectEntryId, ProjectPath};
 pub use settings::{
     ActivateOnClose, ClosePosition, RegisterSetting, Settings, SettingsLocation, ShowCloseButton,
@@ -25,7 +26,6 @@ use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     cell::RefCell,
-    ops::Range,
     path::Path,
     rc::Rc,
     sync::Arc,
@@ -122,14 +122,6 @@ pub enum ItemEvent {
     UpdateTab,
     UpdateBreadcrumbs,
     Edit,
-}
-
-// TODO: Combine this with existing HighlightedText struct?
-#[derive(Debug)]
-pub struct BreadcrumbText {
-    pub text: String,
-    pub highlights: Option<Vec<(Range<usize>, HighlightStyle)>>,
-    pub font: Option<Font>,
 }
 
 #[derive(Clone, Copy, Default, Debug)]
@@ -329,7 +321,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         ToolbarItemLocation::Hidden
     }
 
-    fn breadcrumbs(&self, _cx: &App) -> Option<Vec<BreadcrumbText>> {
+    fn breadcrumbs(&self, _cx: &App) -> Option<(Vec<HighlightedText>, Option<Font>)> {
         None
     }
 
@@ -548,7 +540,7 @@ pub trait ItemHandle: 'static + Send {
     ) -> gpui::Subscription;
     fn to_searchable_item_handle(&self, cx: &App) -> Option<Box<dyn SearchableItemHandle>>;
     fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation;
-    fn breadcrumbs(&self, cx: &App) -> Option<Vec<BreadcrumbText>>;
+    fn breadcrumbs(&self, cx: &App) -> Option<(Vec<HighlightedText>, Option<Font>)>;
     fn breadcrumb_prefix(&self, window: &mut Window, cx: &mut App) -> Option<gpui::AnyElement>;
     fn show_toolbar(&self, cx: &App) -> bool;
     fn pixel_position_of_cursor(&self, cx: &App) -> Option<Point<Pixels>>;
@@ -954,15 +946,29 @@ impl<T: Item> ItemHandle for Entity<T> {
                         // Only trigger autosave if focus has truly left the item.
                         // If focus is still within the item's hierarchy (e.g., moved to a context menu),
                         // don't trigger autosave to avoid unwanted formatting and cursor jumps.
-                        // Also skip autosave if focus moved to a modal (e.g., command palette),
-                        // since the user is still interacting with the workspace.
                         let focus_handle = item.item_focus_handle(cx);
-                        if !focus_handle.contains_focused(window, cx)
-                            && !workspace.has_active_modal(window, cx)
-                        {
-                            Pane::autosave_item(&item, workspace.project.clone(), window, cx)
-                                .detach_and_log_err(cx);
+                        if focus_handle.contains_focused(window, cx) {
+                            return;
                         }
+
+                        let vim_mode = vim_mode_setting::VimModeSetting::is_enabled(cx);
+                        let helix_mode = vim_mode_setting::HelixModeSetting::is_enabled(cx);
+
+                        if vim_mode || helix_mode {
+                            // We use the command palette for executing commands in Vim and Helix modes (e.g., `:w`), so
+                            // in those cases we don't want to trigger auto-save if the focus has just been transferred
+                            // to the command palette.
+                            //
+                            // This isn't totally perfect, as you could still switch files indirectly via the command
+                            // palette (such as by opening up the tab switcher from it and then switching tabs that
+                            // way).
+                            if workspace.is_active_modal_command_palette(cx) {
+                                return;
+                            }
+                        }
+
+                        Pane::autosave_item(&item, workspace.project.clone(), window, cx)
+                            .detach_and_log_err(cx);
                     }
                 },
             )
@@ -1090,7 +1096,7 @@ impl<T: Item> ItemHandle for Entity<T> {
         self.read(cx).breadcrumb_location(cx)
     }
 
-    fn breadcrumbs(&self, cx: &App) -> Option<Vec<BreadcrumbText>> {
+    fn breadcrumbs(&self, cx: &App) -> Option<(Vec<HighlightedText>, Option<Font>)> {
         self.read(cx).breadcrumbs(cx)
     }
 
@@ -1577,7 +1583,7 @@ pub mod test {
 
         fn push_to_nav_history(&mut self, cx: &mut Context<Self>) {
             if let Some(history) = &mut self.nav_history {
-                history.push(Some(Box::new(self.state.clone())), cx);
+                history.push(Some(Box::new(self.state.clone())), None, cx);
             }
         }
     }

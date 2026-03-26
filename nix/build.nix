@@ -77,7 +77,6 @@ let
     builtins.elem firstComp topLevelIncludes;
 
   craneLib = crane.overrideToolchain rustToolchain;
-  gpu-lib = if withGLES then libglvnd else vulkan-loader;
   commonArgs =
     let
       zedCargoLock = builtins.fromTOML (builtins.readFile ../crates/zed/Cargo.toml);
@@ -179,7 +178,8 @@ let
         libva
         libxkbcommon
         wayland
-        gpu-lib
+        libglvnd
+        vulkan-loader
         xorg.libX11
         xorg.libxcb
         libdrm
@@ -224,7 +224,7 @@ let
         };
         ZED_UPDATE_EXPLANATION = "Zed has been installed using Nix. Auto-updates have thus been disabled.";
         RELEASE_VERSION = version;
-        ZED_COMMIT_SHA = commitSha;
+        ZED_COMMIT_SHA = lib.optionalString (commitSha != null) "${commitSha}";
         LK_CUSTOM_WEBRTC = pkgs.callPackage ./livekit-libwebrtc/package.nix { };
         PROTOC = "${protobuf}/bin/protoc";
 
@@ -236,7 +236,8 @@ let
         # about them that's special is that they're manually dlopened at runtime
         NIX_LDFLAGS = lib.optionalString stdenv'.hostPlatform.isLinux "-rpath ${
           lib.makeLibraryPath [
-            gpu-lib
+            libglvnd
+            vulkan-loader
             wayland
             libva
           ]
@@ -245,7 +246,7 @@ let
         NIX_OUTPATH_USED_AS_RANDOM_SEED = "norebuilds";
       };
 
-      # prevent nix from removing the "unused" wayland/gpu-lib rpaths
+      # prevent nix from removing the "unused" wayland rpaths
       dontPatchELF = stdenv'.hostPlatform.isLinux;
 
       # TODO: try craneLib.cargoNextest separate output

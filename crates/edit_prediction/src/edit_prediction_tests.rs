@@ -1,12 +1,14 @@
 use super::*;
-use crate::{compute_diff_between_snapshots, udiff::apply_diff_to_string};
+use crate::udiff::apply_diff_to_string;
 use client::{UserStore, test::FakeServer};
 use clock::FakeSystemClock;
+use clock::ReplicaId;
 use cloud_api_types::{CreateLlmTokenResponse, LlmToken};
 use cloud_llm_client::{
     EditPredictionRejectReason, EditPredictionRejection, RejectEditPredictionsBody,
     predict_edits_v3::{PredictEditsV3Request, PredictEditsV3Response},
 };
+
 use futures::{
     AsyncReadExt, FutureExt, StreamExt,
     channel::{mpsc, oneshot},
@@ -18,26 +20,28 @@ use gpui::{
 };
 use indoc::indoc;
 use language::{
-    Anchor, Buffer, CursorShape, Diagnostic, DiagnosticEntry, DiagnosticSet, DiagnosticSeverity,
-    Operation, Point, Selection, SelectionGoal,
+    Anchor, Buffer, Capability, CursorShape, Diagnostic, DiagnosticEntry, DiagnosticSet,
+    DiagnosticSeverity, Operation, Point, Selection, SelectionGoal,
 };
+use language_model::RefreshLlmTokenListener;
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_matches};
 use project::{FakeFs, Project};
 use serde_json::json;
 use settings::SettingsStore;
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{ops::Range, path::Path, sync::Arc, time::Duration};
 use util::{
     path,
     test::{TextRangeMarker, marked_text_ranges_by},
 };
 use uuid::Uuid;
+use workspace::{AppState, CollaboratorId, MultiWorkspace};
 use zeta_prompt::ZetaPromptInput;
 
 use crate::{
     BufferEditPrediction, EDIT_PREDICTION_SETTLED_QUIESCENCE, EditPredictionId,
-    EditPredictionStore, REJECT_REQUEST_DEBOUNCE,
+    EditPredictionJumpsFeatureFlag, EditPredictionStore, REJECT_REQUEST_DEBOUNCE,
 };
 
 #[gpui::test]
@@ -173,6 +177,172 @@ async fn test_current_state(cx: &mut TestAppContext) {
             .prediction_at(&buffer2, None, &project, cx)
             .unwrap();
         assert_matches!(prediction, BufferEditPrediction::Local { .. });
+    });
+}
+
+#[gpui::test]
+async fn test_diagnostics_refresh_suppressed_while_following(cx: &mut TestAppContext) {
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
+
+    cx.update(|cx| {
+        cx.update_flags(
+            false,
+            vec![EditPredictionJumpsFeatureFlag::NAME.to_string()],
+        );
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "1.txt": "Hello!\nHow\nBye\n",
+            "2.txt": "Hola!\nComo\nAdios\n"
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let app_state = cx.update(|cx| {
+        let app_state = AppState::test(cx);
+        AppState::set_global(Arc::downgrade(&app_state), cx);
+        app_state
+    });
+
+    let multi_workspace =
+        cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = multi_workspace
+        .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+        .unwrap();
+    cx.update(|cx| {
+        AppState::set_global(Arc::downgrade(workspace.read(cx).app_state()), cx);
+    });
+    let _ = app_state;
+
+    let buffer1 = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/1.txt"), cx).unwrap();
+            project.set_active_path(Some(path.clone()), cx);
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+    let snapshot1 = buffer1.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let position = snapshot1.anchor_before(language::Point::new(1, 3));
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_project(&project, cx);
+        ep_store.register_buffer(&buffer1, &project, cx);
+        ep_store.refresh_prediction_from_buffer(project.clone(), buffer1.clone(), position, cx);
+    });
+
+    let (request, respond_tx) = requests.predict.next().await.unwrap();
+    respond_tx
+        .send(model_response(
+            &request,
+            indoc! {r"
+                --- a/root/1.txt
+                +++ b/root/1.txt
+                @@ ... @@
+                 Hello!
+                -How
+                +How are you?
+                 Bye
+            "},
+        ))
+        .unwrap();
+    cx.run_until_parked();
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.reject_current_prediction(EditPredictionRejectReason::Discarded, &project, cx);
+    });
+
+    let _ = multi_workspace.update(cx, |multi_workspace, window, cx| {
+        multi_workspace.workspace().update(cx, |workspace, cx| {
+            workspace.start_following(CollaboratorId::Agent, window, cx);
+        });
+    });
+    cx.run_until_parked();
+
+    let diagnostic = lsp::Diagnostic {
+        range: lsp::Range::new(lsp::Position::new(1, 1), lsp::Position::new(1, 5)),
+        severity: Some(lsp::DiagnosticSeverity::ERROR),
+        message: "Sentence is incomplete".to_string(),
+        ..Default::default()
+    };
+
+    project.update(cx, |project, cx| {
+        project.lsp_store().update(cx, |lsp_store, cx| {
+            lsp_store
+                .update_diagnostics(
+                    LanguageServerId(0),
+                    lsp::PublishDiagnosticsParams {
+                        uri: lsp::Uri::from_file_path(path!("/root/2.txt")).unwrap(),
+                        diagnostics: vec![diagnostic.clone()],
+                        version: None,
+                    },
+                    None,
+                    language::DiagnosticSourceKind::Pushed,
+                    &[],
+                    cx,
+                )
+                .unwrap();
+        });
+    });
+
+    cx.run_until_parked();
+    assert_no_predict_request_ready(&mut requests.predict);
+
+    let _ = multi_workspace.update(cx, |multi_workspace, window, cx| {
+        multi_workspace.workspace().update(cx, |workspace, cx| {
+            workspace.unfollow(CollaboratorId::Agent, window, cx);
+        });
+    });
+    cx.run_until_parked();
+
+    project.update(cx, |project, cx| {
+        project.lsp_store().update(cx, |lsp_store, cx| {
+            lsp_store
+                .update_diagnostics(
+                    LanguageServerId(0),
+                    lsp::PublishDiagnosticsParams {
+                        uri: lsp::Uri::from_file_path(path!("/root/2.txt")).unwrap(),
+                        diagnostics: vec![diagnostic],
+                        version: None,
+                    },
+                    None,
+                    language::DiagnosticSourceKind::Pushed,
+                    &[],
+                    cx,
+                )
+                .unwrap();
+        });
+    });
+
+    let (request, respond_tx) = requests.predict.next().await.unwrap();
+    respond_tx
+        .send(model_response(
+            &request,
+            indoc! {r#"
+                --- a/root/2.txt
+                +++ b/root/2.txt
+                @@ ... @@
+                 Hola!
+                -Como
+                +Como estas?
+                 Adios
+            "#},
+        ))
+        .unwrap();
+    cx.run_until_parked();
+
+    ep_store.update(cx, |ep_store, cx| {
+        let prediction = ep_store
+            .prediction_at(&buffer1, None, &project, cx)
+            .unwrap();
+        assert_matches!(
+            prediction,
+            BufferEditPrediction::Jump { prediction } if prediction.snapshot.file().unwrap().full_path(cx) == Path::new(path!("root/2.txt"))
+        );
     });
 }
 
@@ -369,6 +539,12 @@ async fn test_edit_history_getter_pause_splits_last_event(cx: &mut TestAppContex
         ep_store.edit_history_for_project(&project, cx)
     });
     assert_eq!(events.len(), 2);
+
+    let first_total_edit_range = buffer.read_with(cx, |buffer, _| {
+        events[0].total_edit_range.to_point(&buffer.snapshot())
+    });
+    assert_eq!(first_total_edit_range, Point::new(1, 0)..Point::new(1, 3));
+
     let zeta_prompt::Event::BufferChange { diff, .. } = events[0].event.as_ref();
     assert_eq!(
         diff.as_str(),
@@ -380,6 +556,11 @@ async fn test_edit_history_getter_pause_splits_last_event(cx: &mut TestAppContex
              Bye
         "}
     );
+
+    let second_total_edit_range = buffer.read_with(cx, |buffer, _| {
+        events[1].total_edit_range.to_point(&buffer.snapshot())
+    });
+    assert_eq!(second_total_edit_range, Point::new(1, 3)..Point::new(1, 13));
 
     let zeta_prompt::Event::BufferChange { diff, .. } = events[1].event.as_ref();
     assert_eq!(
@@ -597,6 +778,315 @@ fn render_events_with_predicted(events: &[StoredEvent]) -> Vec<String> {
         .collect()
 }
 
+fn make_collaborator_replica(
+    buffer: &Entity<Buffer>,
+    cx: &mut TestAppContext,
+) -> (Entity<Buffer>, clock::Global) {
+    let (state, version) =
+        buffer.read_with(cx, |buffer, _cx| (buffer.to_proto(_cx), buffer.version()));
+    let collaborator = cx.new(|_cx| {
+        Buffer::from_proto(ReplicaId::new(1), Capability::ReadWrite, state, None).unwrap()
+    });
+    (collaborator, version)
+}
+
+async fn apply_collaborator_edit(
+    collaborator: &Entity<Buffer>,
+    buffer: &Entity<Buffer>,
+    since_version: &mut clock::Global,
+    edit_range: Range<usize>,
+    new_text: &str,
+    cx: &mut TestAppContext,
+) {
+    collaborator.update(cx, |collaborator, cx| {
+        collaborator.edit([(edit_range, new_text)], None, cx);
+    });
+
+    let serialize_task = collaborator.read_with(cx, |collaborator, cx| {
+        collaborator.serialize_ops(Some(since_version.clone()), cx)
+    });
+    let ops = serialize_task.await;
+    *since_version = collaborator.read_with(cx, |collaborator, _cx| collaborator.version());
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.apply_ops(
+            ops.into_iter()
+                .map(|op| language::proto::deserialize_operation(op).unwrap()),
+            cx,
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_nearby_collaborator_edits_are_kept_in_history(cx: &mut TestAppContext) {
+    let (ep_store, _requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.rs": "line 0\nline 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\nline 13\nline 14\n"
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.rs"), cx).unwrap();
+            project.set_active_path(Some(path.clone()), cx);
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    let cursor = buffer.read_with(cx, |buffer, _cx| buffer.anchor_before(Point::new(1, 0)));
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&buffer, &project, cx);
+        let _ = ep_store.prediction_at(&buffer, Some(cursor), &project, cx);
+    });
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit(vec![(0..6, "LOCAL ZERO")], None, cx);
+    });
+
+    let (collaborator, mut collaborator_version) = make_collaborator_replica(&buffer, cx);
+
+    let (line_one_start, line_one_len) = collaborator.read_with(cx, |buffer, _cx| {
+        (Point::new(1, 0).to_offset(buffer), buffer.line_len(1))
+    });
+
+    apply_collaborator_edit(
+        &collaborator,
+        &buffer,
+        &mut collaborator_version,
+        line_one_start..line_one_start + line_one_len as usize,
+        "REMOTE ONE",
+        cx,
+    )
+    .await;
+
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+
+    assert_eq!(
+        render_events_with_predicted(&events),
+        vec![indoc! {"
+            manual
+            @@ -1,5 +1,5 @@
+            -line 0
+            -line 1
+            +LOCAL ZERO
+            +REMOTE ONE
+             line 2
+             line 3
+             line 4
+        "}]
+    );
+}
+
+#[gpui::test]
+async fn test_distant_collaborator_edits_are_omitted_from_history(cx: &mut TestAppContext) {
+    let (ep_store, _requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.rs": (0..1000)
+                .map(|i| format!("line {i}\n"))
+                .collect::<String>()
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.rs"), cx).unwrap();
+            project.set_active_path(Some(path.clone()), cx);
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    let cursor = buffer.read_with(cx, |buffer, _cx| buffer.anchor_before(Point::new(1, 0)));
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&buffer, &project, cx);
+        let _ = ep_store.prediction_at(&buffer, Some(cursor), &project, cx);
+    });
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit(vec![(0..6, "LOCAL ZERO")], None, cx);
+    });
+
+    let (collaborator, mut collaborator_version) = make_collaborator_replica(&buffer, cx);
+
+    let far_line_start = buffer.read_with(cx, |buffer, _cx| Point::new(900, 0).to_offset(buffer));
+
+    apply_collaborator_edit(
+        &collaborator,
+        &buffer,
+        &mut collaborator_version,
+        far_line_start..far_line_start + 7,
+        "REMOTE FAR",
+        cx,
+    )
+    .await;
+
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+
+    assert_eq!(
+        render_events_with_predicted(&events),
+        vec![indoc! {"
+            manual
+            @@ -1,4 +1,4 @@
+            -line 0
+            +LOCAL ZERO
+             line 1
+             line 2
+             line 3
+        "}]
+    );
+}
+
+#[gpui::test]
+async fn test_irrelevant_collaborator_edits_in_different_files_are_omitted_from_history(
+    cx: &mut TestAppContext,
+) {
+    let (ep_store, _requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.rs": "line 0\nline 1\nline 2\nline 3\n",
+            "bar.rs": "line 0\nline 1\nline 2\nline 3\n"
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let foo_buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.rs"), cx).unwrap();
+            project.set_active_path(Some(path.clone()), cx);
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+    let bar_buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/bar.rs"), cx).unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    let foo_cursor = foo_buffer.read_with(cx, |buffer, _cx| buffer.anchor_before(Point::new(1, 0)));
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&foo_buffer, &project, cx);
+        ep_store.register_buffer(&bar_buffer, &project, cx);
+        let _ = ep_store.prediction_at(&foo_buffer, Some(foo_cursor), &project, cx);
+    });
+
+    let (bar_collaborator, mut bar_version) = make_collaborator_replica(&bar_buffer, cx);
+
+    apply_collaborator_edit(
+        &bar_collaborator,
+        &bar_buffer,
+        &mut bar_version,
+        0..6,
+        "REMOTE BAR",
+        cx,
+    )
+    .await;
+
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+
+    assert!(events.is_empty());
+}
+
+#[gpui::test]
+async fn test_large_edits_are_omitted_from_history(cx: &mut TestAppContext) {
+    let (ep_store, _requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.rs": (0..20)
+                .map(|i| format!("line {i}\n"))
+                .collect::<String>()
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.rs"), cx).unwrap();
+            project.set_active_path(Some(path.clone()), cx);
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    let cursor = buffer.read_with(cx, |buffer, _cx| buffer.anchor_before(Point::new(1, 0)));
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&buffer, &project, cx);
+        let _ = ep_store.prediction_at(&buffer, Some(cursor), &project, cx);
+    });
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit(vec![(0..6, "LOCAL ZERO")], None, cx);
+    });
+
+    let (collaborator, mut collaborator_version) = make_collaborator_replica(&buffer, cx);
+
+    let (line_three_start, line_three_len) = collaborator.read_with(cx, |buffer, _cx| {
+        (Point::new(3, 0).to_offset(buffer), buffer.line_len(3))
+    });
+    let large_edit = "X".repeat(EDIT_HISTORY_DIFF_SIZE_LIMIT + 1);
+
+    apply_collaborator_edit(
+        &collaborator,
+        &buffer,
+        &mut collaborator_version,
+        line_three_start..line_three_start + line_three_len as usize,
+        &large_edit,
+        cx,
+    )
+    .await;
+
+    buffer.update(cx, |buffer, cx| {
+        let line_seven_start = Point::new(7, 0).to_offset(buffer);
+        let line_seven_end = Point::new(7, 6).to_offset(buffer);
+        buffer.edit(
+            vec![(line_seven_start..line_seven_end, "LOCAL SEVEN")],
+            None,
+            cx,
+        );
+    });
+
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+
+    let rendered_events = render_events_with_predicted(&events);
+
+    assert_eq!(rendered_events.len(), 2);
+    assert!(rendered_events[0].contains("+LOCAL ZERO"));
+    assert!(!rendered_events[0].contains(&large_edit));
+    assert!(rendered_events[1].contains("+LOCAL SEVEN"));
+    assert!(!rendered_events[1].contains(&large_edit));
+}
+
 #[gpui::test]
 async fn test_predicted_flag_coalescing(cx: &mut TestAppContext) {
     let (ep_store, _requests) = init_test_with_fake_client(cx);
@@ -679,7 +1169,7 @@ async fn test_predicted_flag_coalescing(cx: &mut TestAppContext) {
             let end = Point::new(2, 6).to_offset(buffer);
             buffer.edit(vec![(offset..end, "LINE TWO")], None, cx);
         });
-        ep_store.report_changes_for_buffer(&buffer, &project, true, cx);
+        ep_store.report_changes_for_buffer(&buffer, &project, true, true, cx);
     });
 
     let events = ep_store.update(cx, |ep_store, cx| {
@@ -721,7 +1211,7 @@ async fn test_predicted_flag_coalescing(cx: &mut TestAppContext) {
             let end = Point::new(3, 6).to_offset(buffer);
             buffer.edit(vec![(offset..end, "LINE THREE")], None, cx);
         });
-        ep_store.report_changes_for_buffer(&buffer, &project, true, cx);
+        ep_store.report_changes_for_buffer(&buffer, &project, true, true, cx);
     });
 
     let events = ep_store.update(cx, |ep_store, cx| {
@@ -908,6 +1398,7 @@ async fn test_empty_prediction(cx: &mut TestAppContext) {
             reason: EditPredictionRejectReason::Empty,
             was_shown: false,
             model_version: None,
+            e2e_latency_ms: Some(0),
         }]
     );
 }
@@ -969,6 +1460,7 @@ async fn test_interpolated_empty(cx: &mut TestAppContext) {
             reason: EditPredictionRejectReason::InterpolatedEmpty,
             was_shown: false,
             model_version: None,
+            e2e_latency_ms: Some(0),
         }]
     );
 }
@@ -1062,6 +1554,7 @@ async fn test_replace_current(cx: &mut TestAppContext) {
             reason: EditPredictionRejectReason::Replaced,
             was_shown: false,
             model_version: None,
+            e2e_latency_ms: Some(0),
         }]
     );
 }
@@ -1157,6 +1650,7 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
             reason: EditPredictionRejectReason::CurrentPreferred,
             was_shown: false,
             model_version: None,
+            e2e_latency_ms: Some(0),
         }]
     );
 }
@@ -1249,6 +1743,7 @@ async fn test_cancel_earlier_pending_requests(cx: &mut TestAppContext) {
             reason: EditPredictionRejectReason::Canceled,
             was_shown: false,
             model_version: None,
+            e2e_latency_ms: None,
         }]
     );
 }
@@ -1380,12 +1875,16 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
                 reason: EditPredictionRejectReason::Canceled,
                 was_shown: false,
                 model_version: None,
+                e2e_latency_ms: None,
             },
             EditPredictionRejection {
                 request_id: first_id,
                 reason: EditPredictionRejectReason::Replaced,
                 was_shown: false,
                 model_version: None,
+                // 2 throttle waits (for 2nd and 3rd requests) elapsed
+                // between this request's start and response.
+                e2e_latency_ms: Some(2 * EditPredictionStore::THROTTLE_TIMEOUT.as_millis()),
             }
         ]
     );
@@ -1548,12 +2047,14 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
             EditPredictionRejectReason::Discarded,
             false,
             None,
+            None,
             cx,
         );
         ep_store.reject_prediction(
             EditPredictionId("test-2".into()),
             EditPredictionRejectReason::Canceled,
             true,
+            None,
             None,
             cx,
         );
@@ -1574,6 +2075,7 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
             reason: EditPredictionRejectReason::Discarded,
             was_shown: false,
             model_version: None,
+            e2e_latency_ms: None
         }
     );
     assert_eq!(
@@ -1583,6 +2085,7 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
             reason: EditPredictionRejectReason::Canceled,
             was_shown: true,
             model_version: None,
+            e2e_latency_ms: None
         }
     );
 
@@ -1593,6 +2096,7 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
                 EditPredictionId(format!("batch-{}", i).into()),
                 EditPredictionRejectReason::Discarded,
                 false,
+                None,
                 None,
                 cx,
             );
@@ -1626,6 +2130,7 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
             EditPredictionRejectReason::Discarded,
             false,
             None,
+            None,
             cx,
         );
     });
@@ -1645,6 +2150,7 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
             EditPredictionId("retry-2".into()),
             EditPredictionRejectReason::Discarded,
             false,
+            None,
             None,
             cx,
         );
@@ -1855,6 +2361,7 @@ fn empty_response() -> PredictEditsV3Response {
 
 fn prompt_from_request(request: &PredictEditsV3Request) -> String {
     zeta_prompt::format_zeta_prompt(&request.input, zeta_prompt::ZetaFormat::default())
+        .expect("default zeta prompt formatting should succeed in edit prediction tests")
 }
 
 fn assert_no_predict_request_ready(
@@ -1978,8 +2485,6 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
             can_collect_data: false,
             repo_url: None,
         },
-        buffer_snapshotted_at: Instant::now(),
-        response_received_at: Instant::now(),
         model_version: None,
     };
 
@@ -2420,74 +2925,6 @@ async fn test_unauthenticated_without_custom_url_blocks_prediction_impl(cx: &mut
 }
 
 #[gpui::test]
-fn test_compute_diff_between_snapshots(cx: &mut TestAppContext) {
-    let buffer = cx.new(|cx| {
-        Buffer::local(
-            indoc! {"
-                zero
-                one
-                two
-                three
-                four
-                five
-                six
-                seven
-                eight
-                nine
-                ten
-                eleven
-                twelve
-                thirteen
-                fourteen
-                fifteen
-                sixteen
-                seventeen
-                eighteen
-                nineteen
-                twenty
-                twenty-one
-                twenty-two
-                twenty-three
-                twenty-four
-            "},
-            cx,
-        )
-    });
-
-    let old_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
-
-    buffer.update(cx, |buffer, cx| {
-        let point = Point::new(12, 0);
-        buffer.edit([(point..point, "SECOND INSERTION\n")], None, cx);
-        let point = Point::new(8, 0);
-        buffer.edit([(point..point, "FIRST INSERTION\n")], None, cx);
-    });
-
-    let new_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
-
-    let (diff, _) = compute_diff_between_snapshots(&old_snapshot, &new_snapshot).unwrap();
-
-    assert_eq!(
-        diff,
-        indoc! {"
-            @@ -6,10 +6,12 @@
-             five
-             six
-             seven
-            +FIRST INSERTION
-             eight
-             nine
-             ten
-             eleven
-            +SECOND INSERTION
-             twelve
-             thirteen
-             fourteen
-            "}
-    );
-}
-
-#[gpui::test]
 async fn test_diagnostic_jump_excludes_collaborator_regions(cx: &mut TestAppContext) {
     fn set_collaborator_cursor(buffer: &Entity<Buffer>, row: u32, cx: &mut TestAppContext) {
         let collab_replica = clock::ReplicaId::new(10);
@@ -2767,6 +3204,7 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
             &snapshot_a,
             editable_region_a.clone(),
             None,
+            Duration::from_secs(0),
             cx,
         );
     });
@@ -2830,6 +3268,7 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
             &snapshot_b2,
             editable_region_b.clone(),
             None,
+            Duration::from_secs(0),
             cx,
         );
     });

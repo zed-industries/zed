@@ -266,6 +266,20 @@ impl ZedAiOnboarding {
             .into_any_element()
     }
 
+    fn render_business_plan_state(&self, _cx: &mut App) -> AnyElement {
+        v_flex()
+            .gap_1()
+            .child(Headline::new("Welcome to Zed Business"))
+            .child(
+                Label::new("Here's what you get:")
+                    .color(Color::Muted)
+                    .mb_2(),
+            )
+            .child(PlanDefinitions.business_plan())
+            .children(self.render_dismiss_button())
+            .into_any_element()
+    }
+
     fn render_student_plan_state(&self, _cx: &mut App) -> AnyElement {
         v_flex()
             .gap_1()
@@ -289,6 +303,7 @@ impl RenderOnce for ZedAiOnboarding {
                 Some(Plan::ZedFree) => self.render_free_plan_state(cx),
                 Some(Plan::ZedProTrial) => self.render_trial_state(cx),
                 Some(Plan::ZedPro) => self.render_pro_plan_state(cx),
+                Some(Plan::ZedBusiness) => self.render_business_plan_state(cx),
                 Some(Plan::ZedStudent) => self.render_student_plan_state(cx),
             }
         } else {
@@ -352,6 +367,14 @@ impl Component for ZedAiOnboarding {
                     single_example(
                         "Pro Plan",
                         onboarding(SignInStatus::SignedIn, Some(Plan::ZedPro), false),
+                    ),
+                    single_example(
+                        "Business Plan",
+                        onboarding(SignInStatus::SignedIn, Some(Plan::ZedBusiness), false),
+                    ),
+                    single_example(
+                        "Student Plan",
+                        onboarding(SignInStatus::SignedIn, Some(Plan::ZedStudent), false),
                     ),
                 ])
                 .into_any_element(),

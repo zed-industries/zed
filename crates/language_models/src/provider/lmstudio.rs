@@ -820,9 +820,7 @@ impl ConfigurationView {
                 .child(
                     Button::new("reset-api-url", "Reset API URL")
                         .label_size(LabelSize::Small)
-                        .icon(IconName::Undo)
-                        .icon_size(IconSize::Small)
-                        .icon_position(IconPosition::Start)
+                        .start_icon(Icon::new(IconName::Undo).size(IconSize::Small))
                         .layer(ElevationIndex::ModalSurface)
                         .on_click(
                             cx.listener(|this, _, _window, cx| this.reset_api_url(_window, cx)),
@@ -918,9 +916,11 @@ impl Render for ConfigurationView {
                                     this.child(
                                         Button::new("lmstudio-site", "LM Studio")
                                             .style(ButtonStyle::Subtle)
-                                            .icon(IconName::ArrowUpRight)
-                                            .icon_size(IconSize::Small)
-                                            .icon_color(Color::Muted)
+                                            .end_icon(
+                                                Icon::new(IconName::ArrowUpRight)
+                                                    .size(IconSize::Small)
+                                                    .color(Color::Muted),
+                                            )
                                             .on_click(move |_, _window, cx| {
                                                 cx.open_url(LMSTUDIO_SITE)
                                             })
@@ -933,9 +933,11 @@ impl Render for ConfigurationView {
                                             "Download LM Studio",
                                         )
                                         .style(ButtonStyle::Subtle)
-                                        .icon(IconName::ArrowUpRight)
-                                        .icon_size(IconSize::Small)
-                                        .icon_color(Color::Muted)
+                                        .end_icon(
+                                            Icon::new(IconName::ArrowUpRight)
+                                                .size(IconSize::Small)
+                                                .color(Color::Muted),
+                                        )
                                         .on_click(move |_, _window, cx| {
                                             cx.open_url(LMSTUDIO_DOWNLOAD_URL)
                                         })
@@ -946,9 +948,11 @@ impl Render for ConfigurationView {
                             .child(
                                 Button::new("view-models", "Model Catalog")
                                     .style(ButtonStyle::Subtle)
-                                    .icon(IconName::ArrowUpRight)
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(Color::Muted)
+                                    .end_icon(
+                                        Icon::new(IconName::ArrowUpRight)
+                                            .size(IconSize::Small)
+                                            .color(Color::Muted),
+                                    )
                                     .on_click(move |_, _window, cx| {
                                         cx.open_url(LMSTUDIO_CATALOG_URL)
                                     }),
@@ -981,9 +985,9 @@ impl Render for ConfigurationView {
                         } else {
                             this.child(
                                 Button::new("retry_lmstudio_models", "Connect")
-                                    .icon_position(IconPosition::Start)
-                                    .icon_size(IconSize::XSmall)
-                                    .icon(IconName::PlayFilled)
+                                    .start_icon(
+                                        Icon::new(IconName::PlayFilled).size(IconSize::XSmall),
+                                    )
                                     .on_click(cx.listener(move |this, _, _window, cx| {
                                         this.retry_connection(_window, cx)
                                     })),

@@ -17,7 +17,12 @@ pub enum LanguageModelToolSchemaFormat {
 
 pub fn root_schema_for<T: JsonSchema>(format: LanguageModelToolSchemaFormat) -> Schema {
     let mut generator = match format {
-        LanguageModelToolSchemaFormat::JsonSchema => SchemaSettings::draft07().into_generator(),
+        LanguageModelToolSchemaFormat::JsonSchema => SchemaSettings::draft07()
+            .with(|settings| {
+                settings.meta_schema = None;
+                settings.inline_subschemas = true;
+            })
+            .into_generator(),
         LanguageModelToolSchemaFormat::JsonSchemaSubset => SchemaSettings::openapi3()
             .with(|settings| {
                 settings.meta_schema = None;

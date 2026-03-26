@@ -30,6 +30,13 @@ impl fmt::Display for PaymentRequiredError {
 pub struct LlmApiToken(Arc<RwLock<Option<String>>>);
 
 impl LlmApiToken {
+    pub fn global(cx: &App) -> Self {
+        RefreshLlmTokenListener::global(cx)
+            .read(cx)
+            .llm_api_token
+            .clone()
+    }
+
     pub async fn acquire(
         &self,
         client: &Arc<Client>,
@@ -56,6 +63,20 @@ impl LlmApiToken {
         Self::fetch(self.0.write().await, client, organization_id).await
     }
 
+    /// Clears the existing token before attempting to fetch a new one.
+    ///
+    /// Used when switching organizations so that a failed refresh doesn't
+    /// leave a token for the wrong organization.
+    pub async fn clear_and_refresh(
+        &self,
+        client: &Arc<Client>,
+        organization_id: Option<OrganizationId>,
+    ) -> Result<String> {
+        let mut lock = self.0.write().await;
+        *lock = None;
+        Self::fetch(lock, client, organization_id).await
+    }
+
     async fn fetch(
         mut lock: RwLockWriteGuard<'_, Option<String>>,
         client: &Arc<Client>,
@@ -75,13 +96,16 @@ impl LlmApiToken {
                 *lock = Some(response.token.0.clone());
                 Ok(response.token.0)
             }
-            Err(err) => match err {
-                ClientApiError::Unauthorized => {
-                    client.request_sign_out();
-                    Err(err).context("Failed to create LLM token")
+            Err(err) => {
+                *lock = None;
+                match err {
+                    ClientApiError::Unauthorized => {
+                        client.request_sign_out();
+                        Err(err).context("Failed to create LLM token")
+                    }
+                    ClientApiError::Other(err) => Err(err),
                 }
-                ClientApiError::Other(err) => Err(err),
-            },
+            }
         }
     }
 }
@@ -98,17 +122,25 @@ impl NeedsLlmTokenRefresh for http_client::Response<http_client::AsyncBody> {
     }
 }
 
+enum TokenRefreshMode {
+    Refresh,
+    ClearAndRefresh,
+}
+
 struct GlobalRefreshLlmTokenListener(Entity<RefreshLlmTokenListener>);
 
 impl Global for GlobalRefreshLlmTokenListener {}
 
-pub struct RefreshLlmTokenEvent;
+pub struct LlmTokenRefreshedEvent;
 
 pub struct RefreshLlmTokenListener {
+    client: Arc<Client>,
+    user_store: Entity<UserStore>,
+    llm_api_token: LlmApiToken,
     _subscription: Subscription,
 }
 
-impl EventEmitter<RefreshLlmTokenEvent> for RefreshLlmTokenListener {}
+impl EventEmitter<LlmTokenRefreshedEvent> for RefreshLlmTokenListener {}
 
 impl RefreshLlmTokenListener {
     pub fn register(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
@@ -122,27 +154,56 @@ impl RefreshLlmTokenListener {
 
     fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
         client.add_message_to_client_handler({
-            let this = cx.entity();
+            let this = cx.weak_entity();
             move |message, cx| {
-                Self::handle_refresh_llm_token(this.clone(), message, cx);
+                if let Some(this) = this.upgrade() {
+                    Self::handle_refresh_llm_token(this, message, cx);
+                }
             }
         });
 
-        let subscription = cx.subscribe(&user_store, |_this, _user_store, event, cx| {
+        let subscription = cx.subscribe(&user_store, |this, _user_store, event, cx| {
             if matches!(event, client::user::Event::OrganizationChanged) {
-                cx.emit(RefreshLlmTokenEvent);
+                this.refresh(TokenRefreshMode::ClearAndRefresh, cx);
             }
         });
 
         Self {
+            client,
+            user_store,
+            llm_api_token: LlmApiToken::default(),
             _subscription: subscription,
         }
+    }
+
+    fn refresh(&self, mode: TokenRefreshMode, cx: &mut Context<Self>) {
+        let client = self.client.clone();
+        let llm_api_token = self.llm_api_token.clone();
+        let organization_id = self
+            .user_store
+            .read(cx)
+            .current_organization()
+            .map(|organization| organization.id.clone());
+        cx.spawn(async move |this, cx| {
+            match mode {
+                TokenRefreshMode::Refresh => {
+                    llm_api_token.refresh(&client, organization_id).await?;
+                }
+                TokenRefreshMode::ClearAndRefresh => {
+                    llm_api_token
+                        .clear_and_refresh(&client, organization_id)
+                        .await?;
+                }
+            }
+            this.update(cx, |_this, cx| cx.emit(LlmTokenRefreshedEvent))
+        })
+        .detach_and_log_err(cx);
     }
 
     fn handle_refresh_llm_token(this: Entity<Self>, message: &MessageToClient, cx: &mut App) {
         match message {
             MessageToClient::UserUpdated => {
-                this.update(cx, |_this, cx| cx.emit(RefreshLlmTokenEvent));
+                this.update(cx, |this, cx| this.refresh(TokenRefreshMode::Refresh, cx));
             }
         }
     }

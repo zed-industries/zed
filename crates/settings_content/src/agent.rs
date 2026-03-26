@@ -9,6 +9,63 @@ use crate::ExtendingVec;
 
 use crate::DockPosition;
 
+/// Where new threads should start by default.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum NewThreadLocation {
+    /// Start threads in the current project.
+    #[default]
+    LocalProject,
+    /// Start threads in a new worktree.
+    NewWorktree,
+}
+
+/// Where to position the sidebar.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SidebarDockPosition {
+    /// Always show the sidebar on the left side.
+    Left,
+    /// Always show the sidebar on the right side.
+    Right,
+    /// Show the sidebar on the same side as the agent panel.
+    #[default]
+    FollowAgent,
+}
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum SidebarSide {
+    #[default]
+    Left,
+    Right,
+}
+
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
 pub struct AgentSettingsContent {
@@ -24,6 +81,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: right
     pub dock: Option<DockPosition>,
+    /// Where to position the sidebar.
+    ///
+    /// Default: follow_agent
+    pub sidebar_side: Option<SidebarDockPosition>,
     /// Default width in pixels when the agent panel is docked to the left or right.
     ///
     /// Default: 640
@@ -59,6 +120,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: "thread"
     pub default_view: Option<DefaultAgentView>,
+    /// Where new threads should start by default.
+    ///
+    /// Default: "local_project"
+    pub new_thread_location: Option<NewThreadLocation>,
     /// The available agent profiles.
     pub profiles: Option<IndexMap<Arc<str>, AgentProfileContent>>,
     /// Where to show a popup notification when the agent is waiting for user input.
@@ -129,6 +194,10 @@ impl AgentSettingsContent {
         self.dock = Some(dock);
     }
 
+    pub fn set_sidebar_side(&mut self, position: SidebarDockPosition) {
+        self.sidebar_side = Some(position);
+    }
+
     pub fn set_model(&mut self, language_model: LanguageModelSelection) {
         self.default_model = Some(language_model)
     }
@@ -144,6 +213,10 @@ impl AgentSettingsContent {
 
     pub fn set_profile(&mut self, profile_id: Arc<str>) {
         self.default_profile = Some(profile_id);
+    }
+
+    pub fn set_new_thread_location(&mut self, value: NewThreadLocation) {
+        self.new_thread_location = Some(value);
     }
 
     pub fn add_favorite_model(&mut self, model: LanguageModelSelection) {

@@ -1494,10 +1494,9 @@ impl GitGraph {
 
                                 this.child(
                                     Button::new("author-email-copy", author_email.clone())
-                                        .icon(icon)
-                                        .icon_size(IconSize::Small)
-                                        .icon_color(icon_color)
-                                        .icon_position(IconPosition::Start)
+                                        .start_icon(
+                                            Icon::new(icon).size(IconSize::Small).color(icon_color),
+                                        )
                                         .label_size(LabelSize::Small)
                                         .truncate(true)
                                         .color(Color::Muted)
@@ -1542,10 +1541,9 @@ impl GitGraph {
                                 };
 
                                 Button::new("sha-button", &full_sha)
-                                    .icon(icon)
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(icon_color)
-                                    .icon_position(IconPosition::Start)
+                                    .start_icon(
+                                        Icon::new(icon).size(IconSize::Small).color(icon_color),
+                                    )
                                     .label_size(LabelSize::Small)
                                     .truncate(true)
                                     .color(Color::Muted)
@@ -1602,10 +1600,9 @@ impl GitGraph {
                                         "view-on-provider",
                                         format!("View on {}", provider_name),
                                     )
-                                    .icon(icon)
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(Color::Muted)
-                                    .icon_position(IconPosition::Start)
+                                    .start_icon(
+                                        Icon::new(icon).size(IconSize::Small).color(Color::Muted),
+                                    )
                                     .label_size(LabelSize::Small)
                                     .truncate(true)
                                     .color(Color::Muted)
@@ -2361,7 +2358,7 @@ impl SerializableItem for GitGraph {
             alive_items,
             workspace_id,
             "git_graphs",
-            &persistence::GIT_GRAPHS,
+            &persistence::GitGraphsDb::global(cx),
             cx,
         )
     }
@@ -2374,7 +2371,8 @@ impl SerializableItem for GitGraph {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<gpui::Result<Entity<Self>>> {
-        if persistence::GIT_GRAPHS
+        let db = persistence::GitGraphsDb::global(cx);
+        if db
             .get_git_graph(item_id, workspace_id)
             .ok()
             .is_some_and(|is_open| is_open)
@@ -2395,11 +2393,12 @@ impl SerializableItem for GitGraph {
         cx: &mut Context<Self>,
     ) -> Option<Task<gpui::Result<()>>> {
         let workspace_id = workspace.database_id()?;
-        Some(cx.background_spawn(async move {
-            persistence::GIT_GRAPHS
-                .save_git_graph(item_id, workspace_id, true)
-                .await
-        }))
+        let db = persistence::GitGraphsDb::global(cx);
+        Some(
+            cx.background_spawn(
+                async move { db.save_git_graph(item_id, workspace_id, true).await },
+            ),
+        )
     }
 
     fn should_serialize(&self, event: &Self::Event) -> bool {
@@ -2433,7 +2432,7 @@ mod persistence {
         )]);
     }
 
-    db::static_connection!(GIT_GRAPHS, GitGraphsDb, [WorkspaceDb]);
+    db::static_connection!(GitGraphsDb, [WorkspaceDb]);
 
     impl GitGraphsDb {
         query! {

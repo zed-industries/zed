@@ -1,6 +1,8 @@
 //! Provides `language`-related settings.
 
-use crate::{File, Language, LanguageName, LanguageServerName};
+use crate::{
+    Buffer, BufferSnapshot, File, Language, LanguageName, LanguageServerName, ModelineSettings,
+};
 use collections::{FxHashMap, HashMap, HashSet};
 use ec4rs::{
     Properties as EditorconfigProperties,
@@ -17,22 +19,10 @@ pub use settings::{
     LanguageSettingsContent, LspInsertMode, RewrapBehavior, ShowWhitespaceSetting, SoftWrap,
     WordsCompletionMode,
 };
-use settings::{RegisterSetting, Settings, SettingsLocation, SettingsStore};
+use settings::{RegisterSetting, Settings, SettingsLocation, SettingsStore, merge_from::MergeFrom};
 use shellexpand;
 use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc};
-
-/// Returns the settings for the specified language from the provided file.
-pub fn language_settings<'a>(
-    language: Option<LanguageName>,
-    file: Option<&'a Arc<dyn File>>,
-    cx: &'a App,
-) -> Cow<'a, LanguageSettings> {
-    let location = file.map(|f| SettingsLocation {
-        worktree_id: f.worktree_id(cx),
-        path: f.path().as_ref(),
-    });
-    AllLanguageSettings::get(location, cx).language(location, language.as_ref(), cx)
-}
+use text::ToOffset;
 
 /// Returns the settings for all languages from the provided file.
 pub fn all_language_settings<'a>(
@@ -284,6 +274,74 @@ impl LanguageSettings {
     /// A token representing the rest of the available language servers.
     const REST_OF_LANGUAGE_SERVERS: &'static str = "...";
 
+    pub fn for_buffer<'a>(buffer: &'a Buffer, cx: &'a App) -> Cow<'a, LanguageSettings> {
+        Self::resolve(Some(buffer), None, cx)
+    }
+
+    pub fn for_buffer_at<'a, D: ToOffset>(
+        buffer: &'a Buffer,
+        position: D,
+        cx: &'a App,
+    ) -> Cow<'a, LanguageSettings> {
+        let language = buffer.language_at(position);
+        Self::resolve(Some(buffer), language.map(|l| l.name()).as_ref(), cx)
+    }
+
+    pub fn for_buffer_snapshot<'a>(
+        buffer: &'a BufferSnapshot,
+        offset: Option<usize>,
+        cx: &'a App,
+    ) -> Cow<'a, LanguageSettings> {
+        let location = buffer.file().map(|f| SettingsLocation {
+            worktree_id: f.worktree_id(cx),
+            path: f.path().as_ref(),
+        });
+
+        let language = if let Some(offset) = offset {
+            buffer.language_at(offset)
+        } else {
+            buffer.language()
+        };
+
+        let mut settings = AllLanguageSettings::get(location, cx).language(
+            location,
+            language.map(|l| l.name()).as_ref(),
+            cx,
+        );
+
+        if let Some(modeline) = buffer.modeline() {
+            merge_with_modeline(settings.to_mut(), modeline);
+        }
+
+        settings
+    }
+
+    pub fn resolve<'a>(
+        buffer: Option<&'a Buffer>,
+        override_language: Option<&LanguageName>,
+        cx: &'a App,
+    ) -> Cow<'a, LanguageSettings> {
+        let Some(buffer) = buffer else {
+            return AllLanguageSettings::get(None, cx).language(None, override_language, cx);
+        };
+        let location = buffer.file().map(|f| SettingsLocation {
+            worktree_id: f.worktree_id(cx),
+            path: f.path().as_ref(),
+        });
+        let all = AllLanguageSettings::get(location, cx);
+        let mut settings = if override_language.is_none() {
+            all.language(location, buffer.language().map(|l| l.name()).as_ref(), cx)
+        } else {
+            all.language(location, override_language, cx)
+        };
+
+        if let Some(modeline) = buffer.modeline() {
+            merge_with_modeline(settings.to_mut(), modeline);
+        }
+
+        settings
+    }
+
     /// Returns the customized list of language servers from the list of
     /// available language servers.
     pub fn customized_language_servers(
@@ -411,8 +469,6 @@ pub struct EditPredictionSettings {
     pub copilot: CopilotSettings,
     /// Settings specific to Codestral.
     pub codestral: CodestralSettings,
-    /// Settings specific to Sweep.
-    pub sweep: SweepSettings,
     /// Settings specific to Ollama.
     pub ollama: Option<OpenAiCompatibleEditPredictionSettings>,
     pub open_ai_compatible_api: Option<OpenAiCompatibleEditPredictionSettings>,
@@ -462,15 +518,6 @@ pub struct CodestralSettings {
     pub max_tokens: Option<u32>,
     /// Custom API URL to use for Codestral.
     pub api_url: Option<String>,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct SweepSettings {
-    /// When enabled, Sweep will not store edit prediction inputs or outputs.
-    /// When disabled, Sweep may collect data including buffer contents,
-    /// diagnostics, file paths, repository names, and generated predictions
-    /// to improve the service.
-    pub privacy_mode: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -530,6 +577,42 @@ impl AllLanguageSettings {
     }
 }
 
+fn merge_with_modeline(settings: &mut LanguageSettings, modeline: &ModelineSettings) {
+    let show_whitespaces = modeline.show_trailing_whitespace.and_then(|v| {
+        if v {
+            Some(ShowWhitespaceSetting::Trailing)
+        } else {
+            None
+        }
+    });
+
+    settings
+        .tab_size
+        .merge_from_option(modeline.tab_size.as_ref());
+    settings
+        .hard_tabs
+        .merge_from_option(modeline.hard_tabs.as_ref());
+    settings
+        .preferred_line_length
+        .merge_from_option(modeline.preferred_line_length.map(u32::from).as_ref());
+    let auto_indent_mode = modeline.auto_indent.map(|enabled| {
+        if enabled {
+            AutoIndentMode::SyntaxAware
+        } else {
+            AutoIndentMode::None
+        }
+    });
+    settings
+        .auto_indent
+        .merge_from_option(auto_indent_mode.as_ref());
+    settings
+        .show_whitespaces
+        .merge_from_option(show_whitespaces.as_ref());
+    settings
+        .ensure_final_newline_on_save
+        .merge_from_option(modeline.ensure_final_newline.as_ref());
+}
+
 fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigProperties) {
     let preferred_line_length = cfg.get::<MaxLineLen>().ok().and_then(|v| match v {
         MaxLineLen::Value(u) => Some(u as u32),
@@ -557,22 +640,18 @@ fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigPr
             TrimTrailingWs::Value(b) => b,
         })
         .ok();
-    fn merge<T>(target: &mut T, value: Option<T>) {
-        if let Some(value) = value {
-            *target = value;
-        }
-    }
-    merge(&mut settings.preferred_line_length, preferred_line_length);
-    merge(&mut settings.tab_size, tab_size);
-    merge(&mut settings.hard_tabs, hard_tabs);
-    merge(
-        &mut settings.remove_trailing_whitespace_on_save,
-        remove_trailing_whitespace_on_save,
-    );
-    merge(
-        &mut settings.ensure_final_newline_on_save,
-        ensure_final_newline_on_save,
-    );
+
+    settings
+        .preferred_line_length
+        .merge_from_option(preferred_line_length.as_ref());
+    settings.tab_size.merge_from_option(tab_size.as_ref());
+    settings.hard_tabs.merge_from_option(hard_tabs.as_ref());
+    settings
+        .remove_trailing_whitespace_on_save
+        .merge_from_option(remove_trailing_whitespace_on_save.as_ref());
+    settings
+        .ensure_final_newline_on_save
+        .merge_from_option(ensure_final_newline_on_save.as_ref());
 }
 
 impl settings::Settings for AllLanguageSettings {
@@ -715,10 +794,6 @@ impl settings::Settings for AllLanguageSettings {
             api_url: codestral.api_url,
         };
 
-        let sweep = edit_predictions.sweep.unwrap();
-        let sweep_settings = SweepSettings {
-            privacy_mode: sweep.privacy_mode.unwrap(),
-        };
         let ollama = edit_predictions.ollama.unwrap();
         let ollama_settings = ollama
             .model
@@ -782,7 +857,6 @@ impl settings::Settings for AllLanguageSettings {
                 mode: edit_predictions_mode,
                 copilot: copilot_settings,
                 codestral: codestral_settings,
-                sweep: sweep_settings,
                 ollama: ollama_settings,
                 open_ai_compatible_api: openai_compatible_settings,
                 enabled_in_text_threads,

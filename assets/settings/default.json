@@ -460,12 +460,10 @@
     "show_sign_in": true,
     // Whether to show the menus in the titlebar.
     "show_menus": false,
+    // The layout of window control buttons in the title bar (Linux only).
+    "button_layout": "platform_default",
   },
   "audio": {
-    // Opt into the new audio system.
-    "experimental.rodio_audio": false,
-    // Requires 'rodio_audio: true'
-    //
     // Automatically increase or decrease you microphone's volume. This affects how
     // loud you sound to others.
     //
@@ -474,33 +472,10 @@
     // audio and has auto speaker volume on this will make you very loud
     // compared to other speakers.
     "experimental.auto_microphone_volume": false,
-    // Requires 'rodio_audio: true'
-    //
-    // Automatically increate or decrease the volume of other call members.
-    // This only affects how things sound for you.
-    "experimental.auto_speaker_volume": true,
-    // Requires 'rodio_audio: true'
-    //
-    // Remove background noises. Works great for typing, cars, dogs, AC. Does
-    // not work well on music.
-    "experimental.denoise": true,
-    // Requires 'rodio_audio: true'
-    //
-    // Use audio parameters compatible with the previous versions of
-    // experimental audio and non-experimental audio. When this is false you
-    // will sound strange to anyone not on the latest experimental audio. In
-    // the future we will migrate by setting this to false
-    //
-    // You need to rejoin a call for this setting to apply
-    "experimental.legacy_audio_compatible": true,
-    // Requires 'rodio_audio: true'
-    //
     // Select specific output audio device.
     // `null` means use system default.
     // Any unrecognized output device will fall back to system default.
     "experimental.output_audio_device": null,
-    // Requires 'rodio_audio: true'
-    //
     // Select specific input audio device.
     // `null` means use system default.
     // Any unrecognized input device will fall back to system default.
@@ -768,6 +743,9 @@
       // 5. Never show the scrollbar:
       //    "never"
       "show": null,
+      // Whether to allow horizontal scrolling in the project panel.
+      // When false, the view is locked to the leftmost position and long file names are clipped.
+      "horizontal_scroll": true,
     },
     // Which files containing diagnostic errors/warnings to mark in the project panel.
     // This setting can take the following three values:
@@ -804,6 +782,8 @@
     "sort_mode": "directories_first",
     // Whether to show error and warning count badges next to file names in the project panel.
     "diagnostic_badges": false,
+    // Whether to show the git status indicator next to file names in the project panel.
+    "git_status_indicator": false,
     // Whether to enable drag-and-drop operations in the project panel.
     "drag_and_drop": true,
     // Whether to hide the root entry when only one folder is open in the window;
@@ -895,6 +875,14 @@
     // Choices: label_color, icon
     // Default: icon
     "status_style": "icon",
+    // Whether to show file icons in the git panel.
+    //
+    // Default: false
+    "file_icons": false,
+    // Whether to show folder icons or chevrons for directories in the git panel.
+    //
+    // Default: true
+    "folder_icons": true,
     // What branch name to use if `init.defaultBranch` is not set
     //
     // Default: main
@@ -911,6 +899,14 @@
     ///
     /// Default: false
     "tree_view": false,
+    // Whether the git panel should open on startup.
+    //
+    // Default: false
+    "starts_open": false,
+    // Whether to show a badge on the git panel icon with the count of uncommitted changes.
+    //
+    // Default: false
+    "show_count_badge": false,
     "scrollbar": {
       // When to show the scrollbar in the git panel.
       //
@@ -935,6 +931,8 @@
     "dock": "right",
     // Default width of the notification panel.
     "default_width": 380,
+    // Whether to show a badge on the notification panel icon with the count of unread notifications.
+    "show_count_badge": false,
   },
   "agent": {
     // Whether the inline assistant should use streaming tools, when available
@@ -945,6 +943,8 @@
     "button": true,
     // Where to dock the agent panel. Can be 'left', 'right' or 'bottom'.
     "dock": "right",
+    // Where to position the sidebar. Can be 'left', 'right', or 'follow_agent'.
+    "sidebar_side": "follow_agent",
     // Default width when the agent panel is docked to the left or right.
     "default_width": 640,
     // Default height when the agent panel is docked to the bottom.
@@ -1052,6 +1052,7 @@
           "spawn_agent": true,
           "terminal": true,
           "thinking": true,
+          "update_plan": true,
           "web_search": true,
         },
       },
@@ -1071,6 +1072,7 @@
           "grep": true,
           "spawn_agent": true,
           "thinking": true,
+          "update_plan": true,
           "web_search": true,
         },
       },
@@ -1080,6 +1082,10 @@
         "tools": {},
       },
     },
+    // Whether to start a new thread in the current local project or in a new Git worktree.
+    //
+    // Default: local_project
+    "new_thread_location": "local_project",
     // Where to show notifications when the agent has either completed
     // its response, or else needs confirmation before it can run a
     // tool action.
@@ -1282,6 +1288,8 @@
     //   * "indexed": Use only the files Zed had indexed
     //   * "smart": Be smart and search for ignored when called from a gitignored worktree
     "include_ignored": "smart",
+    // Whether to include text channels in file finder results.
+    "include_channels": false,
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
@@ -1342,6 +1350,12 @@
   "hard_tabs": false,
   // How many columns a tab should occupy.
   "tab_size": 4,
+  // Number of lines to search for modelines at the beginning and end of files.
+  // Modelines contain editor directives (e.g., vim/emacs settings) that configure
+  // the editor behavior for specific files.
+  //
+  // A value of 0 disables modelines support.
+  "modeline_lines": 5,
   // What debuggers are preferred by default for all languages.
   "debuggers": [],
   // Whether to enable word diff highlighting in the editor.
@@ -1573,13 +1587,6 @@
       "model": "codestral-latest",
       "max_tokens": 150,
     },
-    "sweep": {
-      // When enabled, Sweep will not store edit prediction inputs or outputs.
-      // When disabled, Sweep may collect data including buffer contents,
-      // diagnostics, file paths, repository names, and generated predictions
-      // to improve the service.
-      "privacy_mode": false,
-    },
     "ollama": {
       "api_url": "http://localhost:11434",
       "model": "qwen2.5-coder:7b-base",
@@ -1610,6 +1617,8 @@
   "status_bar": {
     // Whether to show the status bar.
     "experimental.show": true,
+    // Whether to show the name of the active file in the status bar.
+    "show_active_file": false,
     // Whether to show the active language button in the status bar.
     "active_language_button": true,
     // Whether to show the cursor position button in the status bar.
@@ -1850,6 +1859,8 @@
     // Timeout for hover and Cmd-click path hyperlink discovery in milliseconds. Specifying a
     // timeout of `0` will disable path hyperlinking in terminal.
     "path_hyperlink_timeout_ms": 1,
+    // Whether to show a badge on the terminal panel icon with the count of open terminals.
+    "show_count_badge": false,
   },
   "code_actions_on_format": {},
   // Settings related to running tasks.
@@ -2015,6 +2026,9 @@
       "remove_trailing_whitespace_on_save": false,
       "ensure_final_newline_on_save": false,
     },
+    "EEx": {
+      "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "..."],
+    },
     "Elixir": {
       "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "..."],
     },
@@ -2041,7 +2055,7 @@
         "allowed": true,
       },
     },
-    "HEEX": {
+    "HEEx": {
       "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "..."],
     },
     "HTML": {
@@ -2143,7 +2157,7 @@
       },
     },
     "Starlark": {
-      "language_servers": ["starpls", "!buck2-lsp", "..."],
+      "language_servers": ["starpls", "!buck2-lsp", "!tilt", "..."],
     },
     "Svelte": {
       "language_servers": ["svelte-language-server", "..."],
@@ -2214,6 +2228,9 @@
       "api_url": "https://api.openai.com/v1",
     },
     "openai_compatible": {},
+    "opencode": {
+      "api_url": "https://opencode.ai/zen",
+    },
     "open_router": {
       "api_url": "https://openrouter.ai/api/v1",
     },

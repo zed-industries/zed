@@ -1056,10 +1056,11 @@ impl ExtensionsPage {
                     "Install",
                 )
                 .style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                .icon(IconName::Download)
-                .icon_size(IconSize::Small)
-                .icon_color(Color::Muted)
-                .icon_position(IconPosition::Start)
+                .start_icon(
+                    Icon::new(IconName::Download)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
+                )
                 .on_click({
                     let extension_id = extension.id.clone();
                     move |_, _, cx| {
@@ -1078,10 +1079,11 @@ impl ExtensionsPage {
                     "Install",
                 )
                 .style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                .icon(IconName::Download)
-                .icon_size(IconSize::Small)
-                .icon_color(Color::Muted)
-                .icon_position(IconPosition::Start)
+                .start_icon(
+                    Icon::new(IconName::Download)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
+                )
                 .disabled(true),
                 configure: None,
                 upgrade: None,
@@ -1479,10 +1481,11 @@ impl ExtensionsPage {
                 }
             });
         let open_registry_button = Button::new("open_registry", "Learn More")
-            .icon(IconName::ArrowUpRight)
-            .icon_size(IconSize::Small)
-            .icon_position(IconPosition::End)
-            .icon_color(Color::Muted)
+            .end_icon(
+                Icon::new(IconName::ArrowUpRight)
+                    .size(IconSize::Small)
+                    .color(Color::Muted),
+            )
             .on_click({
                 move |_event, _window, cx| {
                     telemetry::event!(
@@ -1520,9 +1523,7 @@ impl ExtensionsPage {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let docs_url_button = Button::new("open_docs", "View Documentation")
-            .icon(IconName::ArrowUpRight)
-            .icon_size(IconSize::Small)
-            .icon_position(IconPosition::End)
+            .end_icon(Icon::new(IconName::ArrowUpRight).size(IconSize::Small))
             .on_click({
                 move |_event, _window, cx| {
                     telemetry::event!(

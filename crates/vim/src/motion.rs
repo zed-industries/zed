@@ -1924,9 +1924,10 @@ fn next_subword_start(
                 let found_subword_start = is_subword_start(left, right, ".$_-");
                 let is_word_start = (left_kind != right_kind)
                     && (!right.is_ascii_punctuation() || is_stopping_punct(right));
+
                 let found = (!right.is_whitespace() && (is_word_start || found_subword_start))
                     || at_newline && crossed_newline
-                    || at_newline && left == '\n'; // Prevents skipping repeated empty lines
+                    || right == '\n' && left == '\n'; // Prevents skipping repeated empty lines
 
                 crossed_newline |= at_newline;
                 found

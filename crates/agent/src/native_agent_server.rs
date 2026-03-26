@@ -6,7 +6,8 @@ use agent_settings::AgentSettings;
 use anyhow::Result;
 use collections::HashSet;
 use fs::Fs;
-use gpui::{App, Entity, SharedString, Task};
+use gpui::{App, Entity, Task};
+use project::{AgentId, Project};
 use prompt_store::PromptStore;
 use settings::{LanguageModelSelection, Settings as _, update_settings_file};
 
@@ -25,8 +26,8 @@ impl NativeAgentServer {
 }
 
 impl AgentServer for NativeAgentServer {
-    fn name(&self) -> SharedString {
-        "Zed Agent".into()
+    fn agent_id(&self) -> AgentId {
+        crate::ZED_AGENT_ID.clone()
     }
 
     fn logo(&self) -> ui::IconName {
@@ -36,6 +37,7 @@ impl AgentServer for NativeAgentServer {
     fn connect(
         &self,
         _delegate: AgentServerDelegate,
+        _project: Entity<Project>,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn acp_thread::AgentConnection>>> {
         log::debug!("NativeAgentServer::connect");

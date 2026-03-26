@@ -7,7 +7,7 @@ use std::{
 use collections::HashMap;
 use gpui::Pixels;
 use itertools::Itertools as _;
-use language::{Bias, Point, Selection, SelectionGoal};
+use language::{Bias, Point, PointUtf16, Selection, SelectionGoal};
 use multi_buffer::{MultiBufferDimension, MultiBufferOffset};
 use util::post_inc;
 
@@ -408,11 +408,11 @@ impl SelectionsCollection {
     }
 
     /// Attempts to build a selection in the provided buffer row using the
-    /// same buffer column range as specified.
+    /// same UTF-16 column range as specified.
     /// Returns `None` if the range is not empty but it starts past the line's
     /// length, meaning that the line isn't long enough to be contained within
     /// part of the provided range.
-    pub fn build_columnar_selection_from_buffer_columns(
+    fn build_columnar_selection_from_utf16_columns(
         &mut self,
         display_map: &DisplaySnapshot,
         buffer_row: u32,
@@ -420,23 +420,22 @@ impl SelectionsCollection {
         reversed: bool,
         text_layout_details: &TextLayoutDetails,
     ) -> Option<Selection<Point>> {
+        let snapshot = display_map.buffer_snapshot();
         let is_empty = positions.start == positions.end;
-        let line_len = display_map
-            .buffer_snapshot()
-            .line_len(multi_buffer::MultiBufferRow(buffer_row));
+        let line_len_utf16 = snapshot.line_len_utf16(multi_buffer::MultiBufferRow(buffer_row));
 
         let (start, end) = if is_empty {
-            let column = std::cmp::min(positions.start, line_len);
-            let point = Point::new(buffer_row, column);
+            let column = std::cmp::min(positions.start, line_len_utf16);
+            let point = snapshot.point_utf16_to_point(PointUtf16::new(buffer_row, column));
             (point, point)
         } else {
-            if positions.start >= line_len {
+            if positions.start >= line_len_utf16 {
                 return None;
             }
 
-            let start = Point::new(buffer_row, positions.start);
-            let end_column = std::cmp::min(positions.end, line_len);
-            let end = Point::new(buffer_row, end_column);
+            let start = snapshot.point_utf16_to_point(PointUtf16::new(buffer_row, positions.start));
+            let end_column = std::cmp::min(positions.end, line_len_utf16);
+            let end = snapshot.point_utf16_to_point(PointUtf16::new(buffer_row, end_column));
             (start, end)
         };
 
@@ -510,7 +509,7 @@ impl SelectionsCollection {
             row = new_row.row();
             let buffer_row = new_row.to_point(display_map).row;
 
-            if let Some(selection) = self.build_columnar_selection_from_buffer_columns(
+            if let Some(selection) = self.build_columnar_selection_from_utf16_columns(
                 display_map,
                 buffer_row,
                 goal_columns,
