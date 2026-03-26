@@ -27849,29 +27849,36 @@ println!("5");
     });
 }
 
-#[gpui::test]
-async fn test_hide_mouse_context_menu_on_modal_opened(cx: &mut TestAppContext) {
-    struct EmptyModalView {
-        focus_handle: gpui::FocusHandle,
+struct EmptyModalView {
+    focus_handle: gpui::FocusHandle,
+}
+
+impl EventEmitter<DismissEvent> for EmptyModalView {}
+
+impl Render for EmptyModalView {
+    fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
+        div()
     }
-    impl EventEmitter<DismissEvent> for EmptyModalView {}
-    impl Render for EmptyModalView {
-        fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
-            div()
-        }
+}
+
+impl Focusable for EmptyModalView {
+    fn focus_handle(&self, _cx: &App) -> gpui::FocusHandle {
+        self.focus_handle.clone()
     }
-    impl Focusable for EmptyModalView {
-        fn focus_handle(&self, _cx: &App) -> gpui::FocusHandle {
-            self.focus_handle.clone()
-        }
-    }
-    impl workspace::ModalView for EmptyModalView {}
-    fn new_empty_modal_view(cx: &App) -> EmptyModalView {
-        EmptyModalView {
+}
+
+impl workspace::ModalView for EmptyModalView {}
+
+impl EmptyModalView {
+    fn new(cx: &App) -> Self {
+        Self {
             focus_handle: cx.focus_handle(),
         }
     }
+}
 
+#[gpui::test]
+async fn test_hide_mouse_context_menu_on_modal_opened(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let fs = FakeFs::new(cx.executor());
@@ -27900,11 +27907,90 @@ async fn test_hide_mouse_context_menu_on_modal_opened(cx: &mut TestAppContext) {
         assert!(editor.mouse_context_menu.is_some());
     });
     workspace.update_in(cx, |workspace, window, cx| {
-        workspace.toggle_modal(window, cx, |_, cx| new_empty_modal_view(cx));
+        workspace.toggle_modal(window, cx, |_, cx| EmptyModalView::new(cx));
     });
 
     cx.read(|cx| {
         assert!(editor.read(cx).mouse_context_menu.is_none());
+    });
+}
+
+#[gpui::test]
+async fn test_hide_pending_blame_popover_when_modal_opens(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".git": {},
+            "file.rs": "one\ntwo\nthree\n",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+        .unwrap();
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/root/file.rs", cx)
+        })
+        .await
+        .unwrap();
+    let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+    let editor = cx.new_window_entity(|window, cx| {
+        let editor = build_editor_with_project(
+            project.clone(),
+            MultiBuffer::build_from_buffer(buffer.clone(), cx),
+            window,
+            cx,
+        );
+        window.focus(&editor.focus_handle(cx), cx);
+        editor
+    });
+
+    editor.update_in(cx, |editor, _, cx| {
+        editor.blame = Some(
+            cx.new(|cx| GitBlame::new(editor.buffer.clone(), project.clone(), false, true, cx)),
+        );
+        editor.show_blame_popover(
+            buffer_id,
+            &::git::blame::BlameEntry {
+                sha: "1b1b1b".parse().unwrap(),
+                range: 0..1,
+                ..Default::default()
+            },
+            gpui::point(gpui::px(0.), gpui::px(0.)),
+            false,
+            cx,
+        );
+
+        assert!(editor.inline_blame_popover_show_task.is_some());
+        assert!(editor.inline_blame_popover.is_none());
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_ranges([MultiBufferOffset(1)..MultiBufferOffset(1)]);
+        });
+    });
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.toggle_modal(window, cx, |_, cx| EmptyModalView::new(cx));
+    });
+
+    let hover_popover_delay = cx.read(|cx| EditorSettings::get_global(cx).hover_popover_delay.0);
+    cx.background_executor
+        .advance_clock(Duration::from_millis(hover_popover_delay + 100));
+    cx.executor().run_until_parked();
+
+    editor.update_in(cx, |editor, _, _| {
+        assert!(editor.inline_blame_popover.is_none());
+        assert!(editor.inline_blame_popover_show_task.is_none());
     });
 }
 
