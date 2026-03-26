@@ -204,6 +204,7 @@ impl MasterProcess {
 
     pub fn new(
         askpass_script_path: &std::ffi::OsStr,
+        askpass_socket_path: &std::ffi::OsStr,
         additional_args: Vec<String>,
         destination: &str,
     ) -> Result<Self> {
@@ -226,6 +227,7 @@ impl MasterProcess {
             .stderr(Stdio::piped())
             .env("SSH_ASKPASS_REQUIRE", "force")
             .env("SSH_ASKPASS", askpass_script_path)
+            .env("ZED_ASKPASS_SOCKET", askpass_socket_path)
             .args(additional_args)
             .arg(destination)
             .args(args);
@@ -693,6 +695,7 @@ impl SshRemoteConnection {
 
             let mut master_process = MasterProcess::new(
                 askpass.script_path().as_ref(),
+                askpass.socket_path().as_ref(),
                 connection_options.additional_args(),
                 &destination,
             )?;
@@ -1269,6 +1272,10 @@ impl SshSocket {
         envs.insert(
             "SSH_ASKPASS".into(),
             _proxy.script_path().as_ref().display().to_string(),
+        );
+        envs.insert(
+            "ZED_ASKPASS_SOCKET".into(),
+            _proxy.socket_path().as_ref().display().to_string(),
         );
 
         Ok(Self {
