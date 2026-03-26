@@ -551,6 +551,7 @@ impl ThreadView {
                                 let max_offset = list_state.max_offset_for_scrollbar().y;
                                 current_offset >= max_offset - px(1.0)
                             };
+
                             let is_generating =
                                 matches!(this.thread.read(cx).status(), ThreadStatus::Generating);
 
@@ -1272,6 +1273,7 @@ impl ThreadView {
         self.user_interrupted_generation = true;
         self._cancel_task = Some(self.thread.update(cx, |thread, cx| thread.cancel(cx)));
         self.sync_generating_indicator(cx);
+        cx.notify();
     }
 
     pub fn retry_generation(&mut self, cx: &mut Context<Self>) {
@@ -1284,6 +1286,7 @@ impl ThreadView {
 
         let task = thread.update(cx, |thread, cx| thread.retry(cx));
         self.sync_generating_indicator(cx);
+        cx.notify();
         cx.spawn(async move |this, cx| {
             let result = task.await;
 
