@@ -263,9 +263,10 @@
       "ctrl-shift-.": "agent::AddSelectionToThread",
       "ctrl-shift-e": "project_panel::ToggleFocus",
       "ctrl-shift-enter": "agent::ContinueThread",
+      "shift-alt-q": "agent::AllowAlways",
       "shift-alt-a": "agent::AllowOnce",
       "ctrl-alt-a": "agent::OpenPermissionDropdown",
-      "shift-alt-z": "agent::RejectOnce",
+      "shift-alt-x": "agent::RejectOnce",
     },
   },
   {
