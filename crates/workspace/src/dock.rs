@@ -1069,9 +1069,6 @@ impl Render for Dock {
                 }
             };
 
-            let is_flexible_horizontal = self.position().axis() == Axis::Horizontal
-                && entry.panel.supports_flexible_size(window, cx);
-
             div()
                 .key_context(dispatch_context)
                 .track_focus(&self.focus_handle(cx))
@@ -1080,16 +1077,9 @@ impl Render for Dock {
                 .border_color(cx.theme().colors().border)
                 .overflow_hidden()
                 .map(|this| match self.position().axis() {
-                    Axis::Horizontal => {
-                        if is_flexible_horizontal {
-                            // For flexible panels, width is controlled by the parent workspace
-                            // flex layout, so we fill the available space rather than setting
-                            // an explicit pixel width derived from stale stored bounds.
-                            this.w_full().h_full().flex_row()
-                        } else {
-                            this.w(size).h_full().flex_row()
-                        }
-                    }
+                    // Horizontal width is always set on the workspace wrapper in
+                    // render_dock, so fill whatever space the wrapper provides.
+                    Axis::Horizontal => this.w_full().h_full().flex_row(),
                     Axis::Vertical => this.h(size).w_full().flex_col(),
                 })
                 .map(|this| match self.position() {
@@ -1100,13 +1090,7 @@ impl Render for Dock {
                 .child(
                     div()
                         .map(|this| match self.position().axis() {
-                            Axis::Horizontal => {
-                                if is_flexible_horizontal {
-                                    this.w_full().h_full()
-                                } else {
-                                    this.min_w(size).h_full()
-                                }
-                            }
+                            Axis::Horizontal => this.w_full().h_full(),
                             Axis::Vertical => this.min_h(size).w_full(),
                         })
                         .child(
