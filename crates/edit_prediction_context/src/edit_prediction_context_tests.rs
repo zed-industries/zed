@@ -160,7 +160,7 @@ async fn test_edit_prediction_context(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_assemble_excerpts(cx: &mut TestAppContext) {
+async fn test_assemble_excerpts(cx: &mut TestAppContext) {
     let table = [
         (
             indoc! {r#"
@@ -289,6 +289,9 @@ fn test_assemble_excerpts(cx: &mut TestAppContext) {
     for (input, expected_output) in table {
         let (input, ranges) = marked_text_ranges(&input, false);
         let buffer = cx.new(|cx| Buffer::local(input, cx).with_language(rust_lang(), cx));
+        buffer
+            .read_with(cx, |buffer, _| buffer.parsing_idle())
+            .await;
         buffer.read_with(cx, |buffer, _cx| {
             let ranges: Vec<(Range<Point>, usize)> = ranges
                 .into_iter()

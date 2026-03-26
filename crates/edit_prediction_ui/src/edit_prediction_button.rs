@@ -325,7 +325,6 @@ impl Render for EditPredictionButton {
             }
             provider @ (EditPredictionProvider::Experimental(_)
             | EditPredictionProvider::Zed
-            | EditPredictionProvider::Sweep
             | EditPredictionProvider::Mercury) => {
                 let enabled = self.editor_enabled.unwrap_or(true);
                 let file = self.file.clone();
@@ -349,16 +348,6 @@ impl Render for EditPredictionButton {
                 let mut missing_token = false;
 
                 match provider {
-                    EditPredictionProvider::Sweep => {
-                        missing_token = edit_prediction::EditPredictionStore::try_global(cx)
-                            .is_some_and(|ep_store| !ep_store.read(cx).has_sweep_api_token(cx));
-                        ep_icon = if enabled { icons.base } else { icons.disabled };
-                        tooltip_meta = if missing_token {
-                            "Missing API key for Sweep"
-                        } else {
-                            "Powered by Sweep"
-                        };
-                    }
                     EditPredictionProvider::Mercury => {
                         ep_icon = if enabled { icons.base } else { icons.disabled };
                         let mercury_has_error =
@@ -548,17 +537,12 @@ impl EditPredictionButton {
             .detach();
 
         edit_prediction::ollama::ensure_authenticated(cx);
-        let sweep_api_token_task = edit_prediction::sweep_ai::load_sweep_api_token(cx);
         let mercury_api_token_task = edit_prediction::mercury::load_mercury_api_token(cx);
         let open_ai_compatible_api_token_task =
             edit_prediction::open_ai_compatible::load_open_ai_compatible_api_token(cx);
 
         cx.spawn(async move |this, cx| {
-            _ = futures::join!(
-                sweep_api_token_task,
-                mercury_api_token_task,
-                open_ai_compatible_api_token_task
-            );
+            _ = futures::join!(mercury_api_token_task, open_ai_compatible_api_token_task);
             this.update(cx, |_, cx| {
                 cx.notify();
             })
@@ -1455,13 +1439,6 @@ pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
         .is_some()
     {
         providers.push(EditPredictionProvider::OpenAiCompatibleApi);
-    }
-
-    if edit_prediction::sweep_ai::sweep_api_token(cx)
-        .read(cx)
-        .has_key()
-    {
-        providers.push(EditPredictionProvider::Sweep);
     }
 
     if edit_prediction::mercury::mercury_api_token(cx)

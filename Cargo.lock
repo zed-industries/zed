@@ -343,7 +343,6 @@ dependencies = [
  "chrono",
  "client",
  "cloud_api_types",
- "cloud_llm_client",
  "collections",
  "command_palette_hooks",
  "component",
@@ -510,21 +509,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc890384c8602f339876ded803c97ad529f3842aba97f6392b3dba0dd171769b"
 dependencies = [
  "equator",
-]
-
-[[package]]
-name = "alloc-no-stdlib"
-version = "2.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc7bb162ec39d46ab1ca8c77bf72e890535becd1751bb45f64c597edb4c8c6b3"
-
-[[package]]
-name = "alloc-stdlib"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94fb8275041c72129eb51b7d0322c29b8387a0386127718b096429201a5d6ece"
-dependencies = [
- "alloc-no-stdlib",
 ]
 
 [[package]]
@@ -864,7 +848,6 @@ dependencies = [
  "chrono",
  "client",
  "clock",
- "cloud_llm_client",
  "collections",
  "context_server",
  "fs",
@@ -2250,27 +2233,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "brotli"
-version = "8.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4bd8b9603c7aa97359dbd97ecf258968c95f3adddd6db2f7e7a5bef101c84560"
-dependencies = [
- "alloc-no-stdlib",
- "alloc-stdlib",
- "brotli-decompressor",
-]
-
-[[package]]
-name = "brotli-decompressor"
-version = "5.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "874bb8112abecc98cbd6d81ea4fa7e94fb9449648c93cc89aa40c81c24d7de03"
-dependencies = [
- "alloc-no-stdlib",
- "alloc-stdlib",
-]
-
-[[package]]
 name = "brush-parser"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2435,6 +2397,15 @@ checksum = "bdb116a6ef3f6c3698828873ad02c3014b3c85cadb88496095628e3ef1e347f8"
 dependencies = [
  "bzip2-sys",
  "libc",
+]
+
+[[package]]
+name = "bzip2"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f3a53fac24f34a81bc9954b5d6cfce0c21e18ec6959f44f56e8e90e4bb7c346c"
+dependencies = [
+ "libbz2-rs-sys",
 ]
 
 [[package]]
@@ -3467,6 +3438,7 @@ version = "0.4.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ef8a506ec4b81c460798f572caead636d57d3d7e940f998160f52bd254bf2d23"
 dependencies = [
+ "bzip2 0.6.1",
  "compression-core",
  "deflate64",
  "flate2",
@@ -5236,7 +5208,6 @@ version = "0.1.0"
 dependencies = [
  "ai_onboarding",
  "anyhow",
- "brotli",
  "buffer_diff",
  "client",
  "clock",
@@ -7367,7 +7338,6 @@ dependencies = [
  "askpass",
  "buffer_diff",
  "call",
- "cloud_llm_client",
  "collections",
  "component",
  "ctor",
@@ -7912,6 +7882,35 @@ dependencies = [
  "windows-numerics 0.2.0",
  "windows-registry 0.5.3",
  "zed-scap",
+]
+
+[[package]]
+name = "grammars"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "language_core",
+ "rust-embed",
+ "toml 0.8.23",
+ "tree-sitter",
+ "tree-sitter-bash",
+ "tree-sitter-c",
+ "tree-sitter-cpp",
+ "tree-sitter-css",
+ "tree-sitter-diff",
+ "tree-sitter-gitcommit",
+ "tree-sitter-go",
+ "tree-sitter-gomod",
+ "tree-sitter-gowork",
+ "tree-sitter-jsdoc",
+ "tree-sitter-json",
+ "tree-sitter-md",
+ "tree-sitter-python",
+ "tree-sitter-regex",
+ "tree-sitter-rust",
+ "tree-sitter-typescript",
+ "tree-sitter-yaml",
+ "util",
 ]
 
 [[package]]
@@ -9361,6 +9360,7 @@ dependencies = [
  "async-trait",
  "clock",
  "collections",
+ "criterion",
  "ctor",
  "diffy",
  "ec4rs",
@@ -9374,6 +9374,7 @@ dependencies = [
  "imara-diff",
  "indoc",
  "itertools 0.14.0",
+ "language_core",
  "log",
  "lsp",
  "parking_lot",
@@ -9382,7 +9383,6 @@ dependencies = [
  "rand 0.9.2",
  "regex",
  "rpc",
- "schemars",
  "semver",
  "serde",
  "serde_json",
@@ -9415,6 +9415,25 @@ dependencies = [
  "watch",
  "zlog",
  "ztracing",
+]
+
+[[package]]
+name = "language_core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "gpui",
+ "log",
+ "lsp",
+ "parking_lot",
+ "regex",
+ "schemars",
+ "serde",
+ "serde_json",
+ "toml 0.8.23",
+ "tree-sitter",
+ "util",
 ]
 
 [[package]]
@@ -9609,9 +9628,11 @@ dependencies = [
  "async-trait",
  "chrono",
  "collections",
+ "fs",
  "futures 0.3.31",
  "globset",
  "gpui",
+ "grammars",
  "http_client",
  "itertools 0.14.0",
  "json_schema_store",
@@ -9631,7 +9652,6 @@ dependencies = [
  "project",
  "regex",
  "rope",
- "rust-embed",
  "semver",
  "serde",
  "serde_json",
@@ -9643,25 +9663,16 @@ dependencies = [
  "task",
  "terminal",
  "theme",
- "toml 0.8.23",
  "tree-sitter",
  "tree-sitter-bash",
  "tree-sitter-c",
  "tree-sitter-cpp",
  "tree-sitter-css",
- "tree-sitter-diff",
  "tree-sitter-gitcommit",
  "tree-sitter-go",
- "tree-sitter-gomod",
- "tree-sitter-gowork",
- "tree-sitter-jsdoc",
- "tree-sitter-json",
- "tree-sitter-md",
  "tree-sitter-python",
- "tree-sitter-regex",
  "tree-sitter-rust",
  "tree-sitter-typescript",
- "tree-sitter-yaml",
  "unindent",
  "url",
  "util",
@@ -9708,6 +9719,12 @@ name = "lebe"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a79a3332a6609480d7d0c9eab957bca6b455b91bb84e66d19f5ff66294b85b8"
+
+[[package]]
+name = "libbz2-rs-sys"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2c4a545a15244c7d945065b5d392b2d2d7f21526fba56ce51467b06ed445e8f7"
 
 [[package]]
 name = "libc"
@@ -10775,6 +10792,7 @@ dependencies = [
  "theme",
  "tracing",
  "tree-sitter",
+ "unicode-segmentation",
  "util",
  "zlog",
  "ztracing",
@@ -13230,6 +13248,7 @@ dependencies = [
  "node_runtime",
  "parking_lot",
  "paths",
+ "percent-encoding",
  "postage",
  "prettier",
  "pretty_assertions",
@@ -21955,7 +21974,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.230.0"
+version = "0.231.0"
 dependencies = [
  "acp_thread",
  "acp_tools",
@@ -22450,7 +22469,7 @@ checksum = "760394e246e4c28189f19d488c058bf16f564016aefac5d32bb1f3b51d5e9261"
 dependencies = [
  "aes",
  "byteorder",
- "bzip2",
+ "bzip2 0.4.4",
  "constant_time_eq",
  "crc32fast",
  "crossbeam-utils",

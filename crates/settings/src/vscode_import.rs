@@ -808,6 +808,7 @@ impl VsCodeSettings {
             sticky_scroll: None,
             auto_open: None,
             diagnostic_badges: None,
+            git_status_indicator: None,
         };
 
         if let (Some(false), Some(false)) = (

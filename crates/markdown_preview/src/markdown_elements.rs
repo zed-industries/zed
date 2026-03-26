@@ -3,6 +3,7 @@ use gpui::{
     UnderlineStyle, px,
 };
 use language::HighlightId;
+
 use std::{fmt::Display, ops::Range, path::PathBuf};
 use urlencoding;
 
@@ -242,7 +243,7 @@ impl MarkdownHighlight {
                 Some(highlight)
             }
 
-            MarkdownHighlight::Code(id) => id.style(theme),
+            MarkdownHighlight::Code(id) => theme.get(*id).cloned(),
         }
     }
 }

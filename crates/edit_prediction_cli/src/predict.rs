@@ -137,7 +137,6 @@ pub async fn run_prediction(
         let model = match provider {
             PredictionProvider::Zeta1 => edit_prediction::EditPredictionModel::Zeta,
             PredictionProvider::Zeta2(_) => edit_prediction::EditPredictionModel::Zeta,
-            PredictionProvider::Sweep => edit_prediction::EditPredictionModel::Sweep,
             PredictionProvider::Mercury => edit_prediction::EditPredictionModel::Mercury,
             PredictionProvider::Teacher(..)
             | PredictionProvider::TeacherMultiRegion(..)

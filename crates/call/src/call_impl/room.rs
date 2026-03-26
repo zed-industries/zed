@@ -1773,7 +1773,15 @@ fn spawn_room_connection(
                 });
                 this.diagnostics = Some(cx.new(|cx| CallDiagnostics::new(weak_room, cx)));
 
-                if !muted_by_user && this.can_use_microphone() {
+                // Always open the microphone track on join, even when
+                // `muted_by_user` is set. Note that the microphone will still
+                // be muted, as it is still gated in `share_microphone` by
+                // `muted_by_user`. For users that have `mute_on_join` enabled,
+                // this moves the Bluetooth profile switch (A2DP -> HFP) (which
+                // can cause 1-2 seconds of audio silence on some Bluetooth
+                // headphones) from first unmute to channel join, where
+                // instability is expected.
+                if this.can_use_microphone() {
                     this.share_microphone(cx)
                 } else {
                     Task::ready(Ok(()))
