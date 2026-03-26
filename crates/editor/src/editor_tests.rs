@@ -9968,7 +9968,6 @@ async fn test_select_all_matches_does_not_scroll(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
-
     let large_body_1 = "\nd".repeat(200);
     let large_body_2 = "\ne".repeat(200);
 
@@ -9981,17 +9980,62 @@ async fn test_select_all_matches_does_not_scroll(cx: &mut TestAppContext) {
         scroll_position
     });
 
-    cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
+    cx.update_editor(|editor, window, cx| editor.select_all_matches(&SelectAllMatches, window, cx))
         .unwrap();
     cx.assert_editor_state(&format!(
         "«ˇa»bc\n«ˇa»bc{large_body_1} «ˇa»bc{large_body_2}\nef«ˇa»bc\n«ˇa»bc"
     ));
-    let scroll_position_after_selection =
-        cx.update_editor(|editor, _, cx| editor.scroll_position(cx));
-    assert_eq!(
-        initial_scroll_position, scroll_position_after_selection,
-        "Scroll position should not change after selecting all matches"
-    );
+    cx.update_editor(|editor, _, cx| {
+        assert_eq!(
+            editor.scroll_position(cx),
+            initial_scroll_position,
+            "Scroll position should not change after selecting all matches"
+        )
+    });
+
+    // Simulate typing while the selections are active, as that is where the
+    // editor would attempt to actually scroll to the newest selection, which
+    // should have been set as the original selection to avoid scrolling to the
+    // last match.
+    cx.simulate_keystroke("x");
+    cx.update_editor(|editor, _, cx| {
+        assert_eq!(
+            editor.scroll_position(cx),
+            initial_scroll_position,
+            "Scroll position should not change after editing all matches"
+        )
+    });
+
+    cx.set_state(&format!(
+        "abc\nabc{large_body_1} «aˇ»bc{large_body_2}\nefabc\nabc"
+    ));
+    let initial_scroll_position = cx.update_editor(|editor, _, cx| {
+        let scroll_position = editor.scroll_position(cx);
+        assert!(scroll_position.y > 0.0, "Initial selection is between two large bodies and should have the editor scrolled to it");
+        scroll_position
+    });
+
+    cx.update_editor(|editor, window, cx| editor.select_all_matches(&SelectAllMatches, window, cx))
+        .unwrap();
+    cx.assert_editor_state(&format!(
+        "«aˇ»bc\n«aˇ»bc{large_body_1} «aˇ»bc{large_body_2}\nef«aˇ»bc\n«aˇ»bc"
+    ));
+    cx.update_editor(|editor, _, cx| {
+        assert_eq!(
+            editor.scroll_position(cx),
+            initial_scroll_position,
+            "Scroll position should not change after selecting all matches"
+        )
+    });
+
+    cx.simulate_keystroke("x");
+    cx.update_editor(|editor, _, cx| {
+        assert_eq!(
+            editor.scroll_position(cx),
+            initial_scroll_position,
+            "Scroll position should not change after editing all matches"
+        )
+    });
 }
 
 #[gpui::test]

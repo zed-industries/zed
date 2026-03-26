@@ -16119,11 +16119,8 @@ impl Editor {
         };
 
         let mut new_selections = Vec::new();
-
         let initial_selection = self.selections.oldest::<MultiBufferOffset>(&display_map);
-        let initial_range = initial_selection.directed_range();
         let reversed = initial_selection.reversed;
-
         let buffer = display_map.buffer_snapshot();
         let query_matches = select_next_state
             .query
@@ -16137,26 +16134,33 @@ impl Editor {
                 MultiBufferOffset(query_match.start())..MultiBufferOffset(query_match.end())
             };
 
-            if select_next_state.wordwise
+            let is_partial_word_match = select_next_state.wordwise
                 && (buffer.is_inside_word(offset_range.start, None)
-                    || buffer.is_inside_word(offset_range.end, None))
-            {
-                continue;
-            }
+                    || buffer.is_inside_word(offset_range.end, None));
 
-            if offset_range != initial_range {
+            let is_initial_selection = MultiBufferOffset(query_match.start())
+                == initial_selection.start
+                && MultiBufferOffset(query_match.end()) == initial_selection.end;
+
+            if !is_partial_word_match && !is_initial_selection {
                 new_selections.push(offset_range);
             }
         }
-        new_selections.push(initial_range);
+
+        // Ensure that the initial range is the last selection, as
+        // `MutableSelectionsCollection::select_ranges` makes the last selection
+        // the newest selection, which the editor then relies on as the primary
+        // cursor for scroll targeting. Without this, the last match would then
+        // be automatically focused when the user started editing the selected
+        // matches.
+        let initial_directed_range = if reversed {
+            initial_selection.end..initial_selection.start
+        } else {
+            initial_selection.start..initial_selection.end
+        };
+        new_selections.push(initial_directed_range);
 
         select_next_state.done = true;
-
-        if new_selections.is_empty() {
-            log::error!("bug: new_selections is empty in select_all_matches");
-            return Ok(());
-        }
-
         self.unfold_ranges(&new_selections, false, false, cx);
         self.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
             selections.select_ranges(new_selections)
