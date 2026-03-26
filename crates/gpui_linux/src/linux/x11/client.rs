@@ -313,6 +313,10 @@ pub(crate) struct X11Client(pub(crate) Rc<RefCell<X11ClientState>>);
 
 impl Drop for X11Client {
     fn drop(&mut self) {
+        if Rc::strong_count(&self.0) > 1 {
+            return;
+        }
+
         #[cfg(feature = "global-menu")]
         {
             let (dbus_menu_server, dbus_menu_thread) = match self.0.try_borrow_mut() {
