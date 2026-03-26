@@ -163,6 +163,7 @@ impl ThreadFeedbackState {
 
 pub enum AcpThreadViewEvent {
     FirstSendRequested { content: Vec<acp::ContentBlock> },
+    MessageSentOrQueued,
 }
 
 impl EventEmitter<AcpThreadViewEvent> for ThreadView {}
@@ -882,6 +883,7 @@ impl ThreadView {
                 });
 
         if intercept_first_send {
+            cx.emit(AcpThreadViewEvent::MessageSentOrQueued);
             let content_task = self.resolve_message_contents(&message_editor, cx);
 
             cx.spawn(async move |this, cx| match content_task.await {
@@ -913,6 +915,7 @@ impl ThreadView {
         let has_queued = self.has_queued_messages();
         if is_editor_empty && self.can_fast_track_queue && has_queued {
             self.can_fast_track_queue = false;
+            cx.emit(AcpThreadViewEvent::MessageSentOrQueued);
             self.send_queued_message_at_index(0, true, window, cx);
             return;
         }
@@ -922,6 +925,7 @@ impl ThreadView {
         }
 
         if is_generating {
+            cx.emit(AcpThreadViewEvent::MessageSentOrQueued);
             self.queue_message(message_editor, window, cx);
             return;
         }
@@ -963,6 +967,7 @@ impl ThreadView {
             }
         }
 
+        cx.emit(AcpThreadViewEvent::MessageSentOrQueued);
         self.send_impl(message_editor, window, cx)
     }
 

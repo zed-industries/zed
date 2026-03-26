@@ -10,7 +10,7 @@ use agent_ui::threads_archive_view::{
 use agent_ui::{
     Agent, AgentPanel, AgentPanelEvent, DEFAULT_THREAD_TITLE, NewThread, RemoveSelectedThread,
 };
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use editor::Editor;
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagViewExt as _};
 use gpui::{
@@ -118,6 +118,8 @@ struct ThreadEntry {
     worktree_full_path: Option<SharedString>,
     worktree_highlight_positions: Vec<usize>,
     diff_stats: DiffStats,
+    last_accessed_at: Option<DateTime<Utc>>,
+    last_message_sent_or_queued: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone)]
@@ -255,11 +257,14 @@ pub struct Sidebar {
     hovered_thread_index: Option<usize>,
     collapsed_groups: HashSet<PathList>,
     expanded_groups: HashMap<PathList, usize>,
-    /// Tracks the order in which the user has accessed threads, most recent
-    /// first. Updated only in response to explicit user actions (clicking a
+    /// Updated only in response to explicit user actions (clicking a
     /// thread, confirming in the thread switcher, etc.) — never from
     /// background data changes. Used to sort the thread switcher popup.
-    thread_access_order: Vec<acp::SessionId>,
+    thread_last_accessed: HashMap<acp::SessionId, DateTime<Utc>>,
+    /// Updated when the user presses a key to send or queue a message.
+    /// Used for sorting threads in the sidebar and as a secondary sort
+    /// key in the thread switcher.
+    thread_last_message_sent: HashMap<acp::SessionId, DateTime<Utc>>,
     thread_switcher: Option<Entity<ThreadSwitcher>>,
     _thread_switcher_subscriptions: Vec<gpui::Subscription>,
     view: SidebarView,
@@ -354,7 +359,8 @@ impl Sidebar {
             hovered_thread_index: None,
             collapsed_groups: HashSet::new(),
             expanded_groups: HashMap::new(),
-            thread_access_order: Vec::new(),
+            thread_last_accessed: HashMap::new(),
+            thread_last_message_sent: HashMap::new(),
             thread_switcher: None,
             _thread_switcher_subscriptions: Vec::new(),
             view: SidebarView::default(),
@@ -458,6 +464,10 @@ impl Sidebar {
                     this.update_entries(cx);
                 }
                 AgentPanelEvent::ThreadFocused | AgentPanelEvent::BackgroundThreadChanged => {
+                    this.update_entries(cx);
+                }
+                AgentPanelEvent::MessageSentOrQueued { session_id } => {
+                    this.record_thread_message_sent(session_id);
                     this.update_entries(cx);
                 }
             },
@@ -801,6 +811,8 @@ impl Sidebar {
                         worktree_full_path: None,
                         worktree_highlight_positions: Vec::new(),
                         diff_stats: DiffStats::default(),
+                        last_accessed_at: None,
+                        last_message_sent_or_queued: None,
                     });
                 }
 
@@ -890,6 +902,8 @@ impl Sidebar {
                                 ),
                                 worktree_highlight_positions: Vec::new(),
                                 diff_stats: DiffStats::default(),
+                                last_accessed_at: None,
+                                last_message_sent_or_queued: None,
                             });
                         }
                     }
@@ -944,9 +958,22 @@ impl Sidebar {
                     }
                 }
 
+                for thread in &mut threads {
+                    let sid = &thread.session_info.session_id;
+                    thread.last_accessed_at = self.thread_last_accessed.get(sid).copied();
+                    thread.last_message_sent_or_queued =
+                        self.thread_last_message_sent.get(sid).copied();
+                }
+
                 threads.sort_by(|a, b| {
-                    let a_time = a.session_info.created_at.or(a.session_info.updated_at);
-                    let b_time = b.session_info.created_at.or(b.session_info.updated_at);
+                    let a_time = a
+                        .last_message_sent_or_queued
+                        .or(a.session_info.created_at)
+                        .or(a.session_info.updated_at);
+                    let b_time = b
+                        .last_message_sent_or_queued
+                        .or(b.session_info.created_at)
+                        .or(b.session_info.updated_at);
                     b_time.cmp(&a_time)
                 });
             } else {
@@ -1094,19 +1121,10 @@ impl Sidebar {
         // the build pass (no extra scan needed).
         notified_threads.retain(|id| current_session_ids.contains(id));
 
-        self.thread_access_order
-            .retain(|id| current_session_ids.contains(id));
-        for entry in &entries {
-            if let ListEntry::Thread(thread) = entry {
-                if !self
-                    .thread_access_order
-                    .contains(&thread.session_info.session_id)
-                {
-                    self.thread_access_order
-                        .push(thread.session_info.session_id.clone());
-                }
-            }
-        }
+        self.thread_last_accessed
+            .retain(|id, _| current_session_ids.contains(id));
+        self.thread_last_message_sent
+            .retain(|id, _| current_session_ids.contains(id));
 
         self.contents = SidebarContents {
             entries,
@@ -2505,8 +2523,13 @@ impl Sidebar {
     }
 
     fn record_thread_access(&mut self, session_id: &acp::SessionId) {
-        self.thread_access_order.retain(|id| id != session_id);
-        self.thread_access_order.insert(0, session_id.clone());
+        self.thread_last_accessed
+            .insert(session_id.clone(), Utc::now());
+    }
+
+    fn record_thread_message_sent(&mut self, session_id: &acp::SessionId) {
+        self.thread_last_message_sent
+            .insert(session_id.clone(), Utc::now());
     }
 
     fn mru_threads_for_switcher(&self, _cx: &App) -> Vec<ThreadSwitcherEntry> {
@@ -2539,12 +2562,32 @@ impl Sidebar {
             })
             .collect();
 
-        let access_order = &self.thread_access_order;
-        entries.sort_by_key(|entry| {
-            access_order
-                .iter()
-                .position(|id| id == &entry.session_id)
-                .unwrap_or(usize::MAX)
+        entries.sort_by(|a, b| {
+            let a_accessed = self.thread_last_accessed.get(&a.session_id);
+            let b_accessed = self.thread_last_accessed.get(&b.session_id);
+
+            match (a_accessed, b_accessed) {
+                (Some(a_time), Some(b_time)) => b_time.cmp(a_time),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => {
+                    let a_sent = self.thread_last_message_sent.get(&a.session_id);
+                    let b_sent = self.thread_last_message_sent.get(&b.session_id);
+
+                    match (a_sent, b_sent) {
+                        (Some(a_time), Some(b_time)) => b_time.cmp(a_time),
+                        (Some(_), None) => std::cmp::Ordering::Less,
+                        (None, Some(_)) => std::cmp::Ordering::Greater,
+                        (None, None) => {
+                            let a_time =
+                                a.session_info.created_at.or(a.session_info.updated_at);
+                            let b_time =
+                                b.session_info.created_at.or(b.session_info.updated_at);
+                            b_time.cmp(&a_time)
+                        }
+                    }
+                }
+            }
         });
 
         entries
@@ -4006,6 +4049,8 @@ mod tests {
                     worktree_full_path: None,
                     worktree_highlight_positions: Vec::new(),
                     diff_stats: DiffStats::default(),
+                    last_accessed_at: None,
+                    last_message_sent_or_queued: None,
                 }),
                 // Active thread with Running status
                 ListEntry::Thread(ThreadEntry {
@@ -4030,6 +4075,8 @@ mod tests {
                     worktree_full_path: None,
                     worktree_highlight_positions: Vec::new(),
                     diff_stats: DiffStats::default(),
+                    last_accessed_at: None,
+                    last_message_sent_or_queued: None,
                 }),
                 // Active thread with Error status
                 ListEntry::Thread(ThreadEntry {
@@ -4054,6 +4101,8 @@ mod tests {
                     worktree_full_path: None,
                     worktree_highlight_positions: Vec::new(),
                     diff_stats: DiffStats::default(),
+                    last_accessed_at: None,
+                    last_message_sent_or_queued: None,
                 }),
                 // Thread with WaitingForConfirmation status, not active
                 ListEntry::Thread(ThreadEntry {
@@ -4078,6 +4127,8 @@ mod tests {
                     worktree_full_path: None,
                     worktree_highlight_positions: Vec::new(),
                     diff_stats: DiffStats::default(),
+                    last_accessed_at: None,
+                    last_message_sent_or_queued: None,
                 }),
                 // Background thread that completed (should show notification)
                 ListEntry::Thread(ThreadEntry {
@@ -4102,6 +4153,8 @@ mod tests {
                     worktree_full_path: None,
                     worktree_highlight_positions: Vec::new(),
                     diff_stats: DiffStats::default(),
+                    last_accessed_at: None,
+                    last_message_sent_or_queued: None,
                 }),
                 // View More entry
                 ListEntry::ViewMore {

@@ -2240,6 +2240,10 @@ impl AgentPanel {
                     AcpThreadViewEvent::FirstSendRequested { content } => {
                         this.handle_first_send_requested(view.clone(), content.clone(), window, cx);
                     }
+                    AcpThreadViewEvent::MessageSentOrQueued => {
+                        let session_id = view.read(cx).thread.read(cx).session_id().clone();
+                        cx.emit(AgentPanelEvent::MessageSentOrQueued { session_id });
+                    }
                 },
             )
         })
@@ -3119,6 +3123,7 @@ pub enum AgentPanelEvent {
     ActiveViewChanged,
     ThreadFocused,
     BackgroundThreadChanged,
+    MessageSentOrQueued { session_id: acp::SessionId },
 }
 
 impl EventEmitter<PanelEvent> for AgentPanel {}
