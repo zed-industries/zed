@@ -53,6 +53,14 @@ This will output a code element like: `<code>Cmd + , | Ctrl + ,</code>`. We then
 
 By using the action name, we can ensure that the keybinding is always up-to-date rather than hardcoding the keybinding.
 
+#### Keymap Overlays
+
+`{#kb:keymap_name scope::Action}` - e.g., `{#kb:jetbrains editor::GoToDefinition}`.
+
+This resolves the keybinding from a keymap overlay (e.g., JetBrains) first, falling back to the default keymap if the overlay doesn't define a binding for that action. This is useful for sections where the documentation expects a special base keymap to be configured.
+
+Supported overlays: `jetbrains`.
+
 ### Actions
 
 `{#action scope::Action}` - e.g., `{#action zed::OpenSettings}`.
