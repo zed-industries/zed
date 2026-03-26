@@ -7,8 +7,7 @@ use gpui::{
     Animation, AnimationExt, AnyView, ClickEvent, Hsla, MouseButton, SharedString,
     pulsating_between,
 };
-use itertools::Itertools as _;
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum AgentThreadStatus {
@@ -45,7 +44,6 @@ pub struct ThreadItem {
     hovered: bool,
     added: Option<usize>,
     removed: Option<usize>,
-    project_paths: Option<Arc<[PathBuf]>>,
     worktrees: Vec<ThreadItemWorktreeInfo>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_hover: Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>,
@@ -73,7 +71,7 @@ impl ThreadItem {
             hovered: false,
             added: None,
             removed: None,
-            project_paths: None,
+
             worktrees: Vec::new(),
             on_click: None,
             on_hover: Box::new(|_, _, _| {}),
@@ -149,11 +147,6 @@ impl ThreadItem {
 
     pub fn removed(mut self, removed: usize) -> Self {
         self.removed = Some(removed);
-        self
-    }
-
-    pub fn project_paths(mut self, paths: Arc<[PathBuf]>) -> Self {
-        self.project_paths = Some(paths);
         self
     }
 
@@ -320,21 +313,6 @@ impl RenderOnce for ThreadItem {
         let added_count = self.added.unwrap_or(0);
         let removed_count = self.removed.unwrap_or(0);
 
-        let project_paths = self.project_paths.as_ref().and_then(|paths| {
-            let paths_str = paths
-                .as_ref()
-                .iter()
-                .filter_map(|p| p.file_name())
-                .filter_map(|name| name.to_str())
-                .join(", ");
-            if paths_str.is_empty() {
-                None
-            } else {
-                Some(paths_str)
-            }
-        });
-
-        let has_project_paths = project_paths.is_some();
         let has_worktree = !self.worktrees.is_empty();
         let has_timestamp = !self.timestamp.is_empty();
         let timestamp = self.timestamp;
@@ -392,14 +370,11 @@ impl RenderOnce for ThreadItem {
                     }),
             )
             .when(has_worktree || has_diff_stats || has_timestamp, |this| {
-                // Collect all full paths for the shared tooltip.
                 let worktree_tooltip: SharedString = self
                     .worktrees
-                    .iter()
-                    .map(|wt| wt.full_path.as_ref())
-                    .collect::<Vec<_>>()
-                    .join("\n")
-                    .into();
+                    .first()
+                    .map(|wt| wt.full_path.clone())
+                    .unwrap_or_default();
                 let worktree_tooltip_title = if self.worktrees.len() > 1 {
                     "Thread Running in Local Git Worktrees"
                 } else {
@@ -452,23 +427,10 @@ impl RenderOnce for ThreadItem {
                         .min_w_0()
                         .gap_1p5()
                         .child(icon_container()) // Icon Spacing
-                        .when_some(project_paths, |this, paths| {
-                            this.child(
-                                Label::new(paths)
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted)
-                                    .into_any_element(),
-                            )
-                        })
-                        .when(has_project_paths && has_worktree, |this| {
+                        .children(worktree_chips)
+                        .when(has_worktree && (has_diff_stats || has_timestamp), |this| {
                             this.child(dot_separator())
                         })
-                        .children(worktree_chips)
-                        .when(
-                            (has_project_paths || has_worktree)
-                                && (has_diff_stats || has_timestamp),
-                            |this| this.child(dot_separator()),
-                        )
                         .when(has_diff_stats, |this| {
                             this.child(
                                 DiffStat::new(diff_stat_id, added_count, removed_count)
