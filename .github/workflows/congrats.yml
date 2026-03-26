@@ -29,6 +29,13 @@ jobs:
             }
 
             const mergedPR = prs.find(pr => pr.merged_at !== null) || prs[0];
+
+            if (mergedPR.user.type === "Bot") {
+              // They are a good bot, but not good enough to be congratulated
+              core.setOutput('should_congratulate', 'false');
+              return;
+            }
+
             const prAuthor = mergedPR.user.login;
 
             try {
