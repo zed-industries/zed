@@ -337,6 +337,8 @@
       "shift-j": "vim::JoinLines",
       "i": "vim::InsertBefore",
       "a": "vim::InsertAfter",
+      "o": "vim::InsertLineBelow",
+      "shift-o": "vim::InsertLineAbove",
       "p": "vim::Paste",
       "u": "vim::Undo",
       "r": "vim::PushReplace",
@@ -1060,7 +1062,7 @@
     },
   },
   {
-    "context": "Editor && edit_prediction && edit_prediction_mode == eager",
+    "context": "Editor && edit_prediction && edit_prediction_mode == eager && !showing_completions",
     "bindings": {
       // This is identical to the binding in the base keymap, but the vim bindings above to
       // "vim::Tab" shadow it, so it needs to be bound again.

@@ -2061,29 +2061,28 @@ fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultiBufferSnapshot) {
     }
 }
 
-#[cfg(any(test, feature = "unit-eval"))]
-#[cfg_attr(not(test), allow(dead_code))]
-pub mod test {
-
-    use std::sync::Arc;
-
+#[cfg(all(test, feature = "unit-eval"))]
+pub mod evals {
+    use crate::InlineAssistant;
     use agent::ThreadStore;
     use client::{Client, UserStore};
     use editor::{Editor, MultiBuffer, MultiBufferOffset};
+    use eval_utils::{EvalOutput, NoProcessor};
     use fs::FakeFs;
     use futures::channel::mpsc;
     use gpui::{AppContext, TestAppContext, UpdateGlobal as _};
     use language::Buffer;
+    use language_model::{LanguageModelRegistry, SelectedModel};
     use project::Project;
     use prompt_store::PromptBuilder;
     use smol::stream::StreamExt as _;
+    use std::str::FromStr;
+    use std::sync::Arc;
     use util::test::marked_text_ranges;
     use workspace::Workspace;
 
-    use crate::InlineAssistant;
-
     #[derive(Debug)]
-    pub enum InlineAssistantOutput {
+    enum InlineAssistantOutput {
         Success {
             completion: Option<String>,
             description: Option<String>,
@@ -2101,7 +2100,7 @@ pub mod test {
         },
     }
 
-    pub fn run_inline_assistant_test<SetupF, TestF>(
+    fn run_inline_assistant_test<SetupF, TestF>(
         base_buffer: String,
         prompt: String,
         setup: SetupF,
@@ -2232,18 +2231,6 @@ pub mod test {
             }
         }
     }
-}
-
-#[cfg(any(test, feature = "unit-eval"))]
-#[cfg_attr(not(test), allow(dead_code))]
-pub mod evals {
-    use std::str::FromStr;
-
-    use eval_utils::{EvalOutput, NoProcessor};
-    use gpui::TestAppContext;
-    use language_model::{LanguageModelRegistry, SelectedModel};
-
-    use crate::inline_assistant::test::{InlineAssistantOutput, run_inline_assistant_test};
 
     #[test]
     #[cfg_attr(not(feature = "unit-eval"), ignore)]

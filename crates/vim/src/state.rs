@@ -18,6 +18,7 @@ use gpui::{
     EntityId, Global, HighlightStyle, StyledText, Subscription, Task, TextStyle, WeakEntity,
 };
 use language::{Buffer, BufferEvent, BufferId, Chunk, Point};
+
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectItem, ProjectPath};
@@ -1402,8 +1403,8 @@ impl MarksMatchInfo {
         let mut offset = 0;
         for chunk in chunks {
             line.push_str(chunk.text);
-            if let Some(highlight_style) = chunk.syntax_highlight_id
-                && let Some(highlight) = highlight_style.style(cx.theme().syntax())
+            if let Some(highlight_id) = chunk.syntax_highlight_id
+                && let Some(highlight) = cx.theme().syntax().get(highlight_id).cloned()
             {
                 highlights.push((offset..offset + chunk.text.len(), highlight))
             }

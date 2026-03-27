@@ -341,6 +341,13 @@
     },
   },
   {
+    "context": "AcpThread > Editor && mode == full",
+    "use_key_equivalents": true,
+    "bindings": {
+      "alt-enter": "editor::OpenExcerpts",
+    },
+  },
+  {
     "context": "AcpThread > Editor && !use_modifier_to_send",
     "use_key_equivalents": true,
     "bindings": {
@@ -693,12 +700,18 @@
       "left": "menu::SelectParent",
       "right": "menu::SelectChild",
       "enter": "menu::Confirm",
-      "space": "menu::Confirm",
       "ctrl-f": "agents_sidebar::FocusSidebarFilter",
       "ctrl-g": "agents_sidebar::ToggleArchive",
       "shift-backspace": "agent::RemoveSelectedThread",
       "ctrl-tab": "agents_sidebar::ToggleThreadSwitcher",
       "ctrl-shift-tab": ["agents_sidebar::ToggleThreadSwitcher", { "select_last": true }],
+    },
+  },
+  {
+    "context": "ThreadsSidebar && not_searching",
+    "use_key_equivalents": true,
+    "bindings": {
+      "space": "menu::Confirm",
     },
   },
   {
@@ -800,7 +813,7 @@
     },
   },
   {
-    "context": "Editor && edit_prediction && edit_prediction_mode == eager",
+    "context": "Editor && edit_prediction && edit_prediction_mode == eager && !showing_completions",
     "bindings": {
       "tab": "editor::AcceptEditPrediction",
     },
@@ -1075,6 +1088,7 @@
       "alt-up": "collab_panel::MoveChannelUp",
       "alt-down": "collab_panel::MoveChannelDown",
       "alt-enter": "collab_panel::OpenSelectedChannelNotes",
+      "shift-enter": "collab_panel::ToggleSelectedChannelFavorite",
     },
   },
   {
@@ -1356,7 +1370,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-,": "zed::OpenSettings",
-    }
+    },
   },
   {
     "context": "SettingsWindow",

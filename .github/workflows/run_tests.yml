@@ -19,7 +19,7 @@ jobs:
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
         fetch-depth: ${{ github.ref == 'refs/heads/main' && 2 || 350 }}
@@ -124,11 +124,11 @@ jobs:
     runs-on: namespace-profile-4x8-ubuntu-2204
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -171,7 +171,7 @@ jobs:
     runs-on: self-32vcpu-windows-2022
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_cargo_config
@@ -204,7 +204,7 @@ jobs:
       CXX: clang++
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_cargo_config
@@ -212,7 +212,7 @@ jobs:
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -239,7 +239,7 @@ jobs:
     runs-on: namespace-profile-mac-large
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_cargo_config
@@ -247,7 +247,7 @@ jobs:
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -270,7 +270,7 @@ jobs:
     runs-on: namespace-profile-mac-large
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_cargo_config
@@ -278,7 +278,7 @@ jobs:
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -303,7 +303,7 @@ jobs:
     runs-on: self-32vcpu-windows-2022
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_cargo_config
@@ -348,7 +348,7 @@ jobs:
       CXX: clang++
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_cargo_config
@@ -356,7 +356,7 @@ jobs:
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -369,7 +369,7 @@ jobs:
       with:
         node-version: '20'
     - name: steps::cargo_install_nextest
-      uses: taiki-e/install-action@nextest
+      uses: taiki-e/install-action@921e2c9f7148d7ba14cd819f417db338f63e733c
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 250
     - name: steps::setup_sccache
@@ -403,7 +403,7 @@ jobs:
     runs-on: namespace-profile-mac-large
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_cargo_config
@@ -411,7 +411,7 @@ jobs:
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -420,7 +420,7 @@ jobs:
       with:
         node-version: '20'
     - name: steps::cargo_install_nextest
-      uses: taiki-e/install-action@nextest
+      uses: taiki-e/install-action@921e2c9f7148d7ba14cd819f417db338f63e733c
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
     - name: steps::setup_sccache
@@ -449,11 +449,11 @@ jobs:
       CXX: clang++
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -493,7 +493,7 @@ jobs:
       CXX: clang++
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_cargo_config
@@ -501,7 +501,7 @@ jobs:
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -534,7 +534,7 @@ jobs:
     runs-on: namespace-profile-8x16-ubuntu-2204
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_cargo_config
@@ -542,7 +542,7 @@ jobs:
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -576,11 +576,11 @@ jobs:
       CXX: clang++
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -611,7 +611,7 @@ jobs:
       CXX: clang++
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_cargo_config
@@ -619,7 +619,7 @@ jobs:
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -657,11 +657,11 @@ jobs:
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -676,7 +676,7 @@ jobs:
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: run_tests::check_scripts::run_shellcheck
@@ -689,7 +689,7 @@ jobs:
       env:
         ACTIONLINT_BIN: ${{ steps.get_actionlint.outputs.executable }}
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -714,7 +714,7 @@ jobs:
       GIT_COMMITTER_EMAIL: ci@zed.dev
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
         fetch-depth: 0

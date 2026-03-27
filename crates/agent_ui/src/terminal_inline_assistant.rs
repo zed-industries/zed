@@ -10,15 +10,14 @@ use agent::ThreadStore;
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
 
-use cloud_llm_client::CompletionIntent;
 use collections::{HashMap, VecDeque};
 use editor::{MultiBuffer, actions::SelectAll};
 use fs::Fs;
 use gpui::{App, Entity, Focusable, Global, Subscription, Task, UpdateGlobal, WeakEntity};
 use language::Buffer;
 use language_model::{
-    ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    Role, report_anthropic_event,
+    CompletionIntent, ConfiguredModel, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, Role, report_anthropic_event,
 };
 use project::Project;
 use prompt_store::{PromptBuilder, PromptStore};

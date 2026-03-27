@@ -71,15 +71,14 @@ use http_client::HttpClient;
 use itertools::Itertools as _;
 use language::{
     Bias, BinaryStatus, Buffer, BufferRow, BufferSnapshot, CachedLspAdapter, Capability, CodeLabel,
-    Diagnostic, DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff, File as _, Language,
-    LanguageName, LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate, LspInstaller,
-    ManifestDelegate, ManifestName, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16,
-    Toolchain, Transaction, Unclipped,
+    CodeLabelExt, Diagnostic, DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff,
+    File as _, Language, LanguageName, LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate,
+    LspInstaller, ManifestDelegate, ManifestName, ModelineSettings, Patch, PointUtf16,
+    TextBufferSnapshot, ToOffset, ToPointUtf16, Toolchain, Transaction, Unclipped,
     language_settings::{
         AllLanguageSettings, FormatOnSave, Formatter, LanguageSettings, all_language_settings,
-        language_settings,
     },
-    point_to_lsp,
+    modeline, point_to_lsp,
     proto::{
         deserialize_anchor, deserialize_anchor_range, deserialize_version, serialize_anchor,
         serialize_anchor_range, serialize_version,
@@ -823,15 +822,7 @@ impl LocalLspStore {
                     let adapter = adapter.clone();
                     if let Some(this) = this.upgrade() {
                         this.update(cx, |this, cx| {
-                            {
-                                let buffer = params
-                                    .uri
-                                    .to_file_path()
-                                    .map(|file_path| this.get_buffer(&file_path, cx))
-                                    .ok()
-                                    .flatten();
-                                adapter.process_diagnostics(&mut params, server_id, buffer);
-                            }
+                            adapter.process_diagnostics(&mut params, server_id);
 
                             this.merge_lsp_diagnostics(
                                 DiagnosticSourceKind::Pushed,
@@ -844,9 +835,9 @@ impl LocalLspStore {
                                     ),
                                     registration_id: None,
                                 }],
-                                |_, diagnostic, cx| match diagnostic.source_kind {
+                                |_, diagnostic, _cx| match diagnostic.source_kind {
                                     DiagnosticSourceKind::Other | DiagnosticSourceKind::Pushed => {
-                                        adapter.retain_old_diagnostic(diagnostic, cx)
+                                        adapter.retain_old_diagnostic(diagnostic)
                                     }
                                     DiagnosticSourceKind::Pulled => true,
                                 },
@@ -1601,9 +1592,7 @@ impl LocalLspStore {
                         .language_servers_for_buffer(buffer, cx)
                         .map(|(adapter, lsp)| (adapter.clone(), lsp.clone()))
                         .collect::<Vec<_>>();
-                    let settings =
-                        language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
-                            .into_owned();
+                    let settings = LanguageSettings::for_buffer(buffer, cx).into_owned();
                     let request_timeout = ProjectSettings::get_global(cx)
                         .global_lsp_settings
                         .get_request_timeout();
@@ -4464,6 +4453,7 @@ impl LspStore {
         })
         .detach();
 
+        self.parse_modeline(buffer, cx);
         self.detect_language_for_buffer(buffer, cx);
         if let Some(local) = self.as_local_mut() {
             local.initialize_buffer(buffer, cx);
@@ -4511,6 +4501,16 @@ impl LspStore {
                 task.await.log_err();
             }
         })
+    }
+
+    fn on_buffer_reloaded(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
+        if self.parse_modeline(&buffer, cx) {
+            self.detect_language_for_buffer(&buffer, cx);
+        }
+
+        let buffer_id = buffer.read(cx).remote_id();
+        let task = self.pull_diagnostics_for_buffer(buffer, cx);
+        self.buffer_reload_tasks.insert(buffer_id, task);
     }
 
     pub(crate) fn register_buffer_with_language_servers(
@@ -4736,6 +4736,56 @@ impl LspStore {
         })
     }
 
+    fn parse_modeline(&mut self, buffer_handle: &Entity<Buffer>, cx: &mut Context<Self>) -> bool {
+        let buffer = buffer_handle.read(cx);
+        let content = buffer.as_rope();
+
+        let modeline_settings = {
+            let settings_store = cx.global::<SettingsStore>();
+            let modeline_lines = settings_store
+                .raw_user_settings()
+                .and_then(|s| s.content.modeline_lines)
+                .or(settings_store.raw_default_settings().modeline_lines)
+                .unwrap_or(5);
+
+            const MAX_MODELINE_BYTES: usize = 1024;
+
+            let first_bytes =
+                content.clip_offset(content.len().min(MAX_MODELINE_BYTES), Bias::Left);
+            let mut first_lines = Vec::new();
+            let mut lines = content.chunks_in_range(0..first_bytes).lines();
+            for _ in 0..modeline_lines {
+                if let Some(line) = lines.next() {
+                    first_lines.push(line.to_string());
+                } else {
+                    break;
+                }
+            }
+            let first_lines_ref: Vec<_> = first_lines.iter().map(|line| line.as_str()).collect();
+
+            let last_start =
+                content.clip_offset(content.len().saturating_sub(MAX_MODELINE_BYTES), Bias::Left);
+            let mut last_lines = Vec::new();
+            let mut lines = content
+                .reversed_chunks_in_range(last_start..content.len())
+                .lines();
+            for _ in 0..modeline_lines {
+                if let Some(line) = lines.next() {
+                    last_lines.push(line.to_string());
+                } else {
+                    break;
+                }
+            }
+            let last_lines_ref: Vec<_> =
+                last_lines.iter().rev().map(|line| line.as_str()).collect();
+            modeline::parse_modeline(&first_lines_ref, &last_lines_ref)
+        };
+
+        log::debug!("Parsed modeline settings: {:?}", modeline_settings);
+
+        buffer_handle.update(cx, |buffer, _cx| buffer.set_modeline(modeline_settings))
+    }
+
     fn detect_language_for_buffer(
         &mut self,
         buffer_handle: &Entity<Buffer>,
@@ -4744,9 +4794,19 @@ impl LspStore {
         // If the buffer has a language, set it and start the language server if we haven't already.
         let buffer = buffer_handle.read(cx);
         let file = buffer.file()?;
-
         let content = buffer.as_rope();
-        let available_language = self.languages.language_for_file(file, Some(content), cx);
+        let modeline_settings = buffer.modeline().map(Arc::as_ref);
+
+        let available_language = if let Some(ModelineSettings {
+            mode: Some(mode_name),
+            ..
+        }) = modeline_settings
+        {
+            self.languages
+                .available_language_for_modeline_name(mode_name)
+        } else {
+            self.languages.language_for_file(file, Some(content), cx)
+        };
         if let Some(available_language) = &available_language {
             if let Some(Ok(Ok(new_language))) = self
                 .languages
@@ -4791,8 +4851,12 @@ impl LspStore {
             }
         });
 
-        let settings =
-            language_settings(Some(new_language.name()), buffer_file.as_ref(), cx).into_owned();
+        let settings = LanguageSettings::resolve(
+            Some(&buffer_entity.read(cx)),
+            Some(&new_language.name()),
+            cx,
+        )
+        .into_owned();
         let buffer_file = File::from_dyn(buffer_file.as_ref());
 
         let worktree_id = if let Some(file) = buffer_file {
@@ -5100,10 +5164,9 @@ impl LspStore {
         let mut language_formatters_to_check = Vec::new();
         for buffer in self.buffer_store.read(cx).buffers() {
             let buffer = buffer.read(cx);
-            let buffer_file = File::from_dyn(buffer.file());
-            let buffer_language = buffer.language();
-            let settings = language_settings(buffer_language.map(|l| l.name()), buffer.file(), cx);
-            if buffer_language.is_some() {
+            let settings = LanguageSettings::for_buffer(buffer, cx);
+            if buffer.language().is_some() {
+                let buffer_file = File::from_dyn(buffer.file());
                 language_formatters_to_check.push((
                     buffer_file.map(|f| f.worktree_id(cx)),
                     settings.into_owned(),
@@ -5553,9 +5616,9 @@ impl LspStore {
             })
             .filter(|_| {
                 maybe!({
-                    let language = buffer.read(cx).language_at(position)?;
+                    buffer.read(cx).language_at(position)?;
                     Some(
-                        language_settings(Some(language.name()), buffer.read(cx).file(), cx)
+                        LanguageSettings::for_buffer_at(&buffer.read(cx), position, cx)
                             .linked_edits,
                     )
                 }) == Some(true)
@@ -5659,12 +5722,7 @@ impl LspStore {
     ) -> Task<Result<Option<Transaction>>> {
         let options = buffer.update(cx, |buffer, cx| {
             lsp_command::lsp_formatting_options(
-                language_settings(
-                    buffer.language_at(position).map(|l| l.name()),
-                    buffer.file(),
-                    cx,
-                )
-                .as_ref(),
+                LanguageSettings::for_buffer_at(buffer, position, cx).as_ref(),
             )
         });
 
@@ -6206,13 +6264,9 @@ impl LspStore {
             let offset = position.to_offset(&snapshot);
             let scope = snapshot.language_scope_at(offset);
             let language = snapshot.language().cloned();
-            let completion_settings = language_settings(
-                language.as_ref().map(|language| language.name()),
-                buffer.read(cx).file(),
-                cx,
-            )
-            .completions
-            .clone();
+            let completion_settings = LanguageSettings::for_buffer(&buffer.read(cx), cx)
+                .completions
+                .clone();
             if !completion_settings.lsp {
                 return Task::ready(Ok(Vec::new()));
             }
@@ -7964,12 +8018,6 @@ impl LspStore {
         }
 
         None
-    }
-
-    fn on_buffer_reloaded(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        let buffer_id = buffer.read(cx).remote_id();
-        let task = self.pull_diagnostics_for_buffer(buffer, cx);
-        self.buffer_reload_tasks.insert(buffer_id, task);
     }
 
     async fn refresh_workspace_configurations(lsp_store: &WeakEntity<Self>, cx: &mut AsyncApp) {
@@ -11148,23 +11196,6 @@ impl LspStore {
             .collect::<Vec<_>>();
 
         cx.background_spawn(futures::future::join_all(tasks).map(|_| ()))
-    }
-
-    fn get_buffer<'a>(&self, abs_path: &Path, cx: &'a App) -> Option<&'a Buffer> {
-        let (worktree, relative_path) =
-            self.worktree_store.read(cx).find_worktree(&abs_path, cx)?;
-
-        let project_path = ProjectPath {
-            worktree_id: worktree.read(cx).id(),
-            path: relative_path,
-        };
-
-        Some(
-            self.buffer_store()
-                .read(cx)
-                .get_by_path(&project_path)?
-                .read(cx),
-        )
     }
 
     #[cfg(any(test, feature = "test-support"))]

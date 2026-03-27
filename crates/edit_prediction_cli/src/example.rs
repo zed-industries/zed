@@ -1,4 +1,5 @@
 use crate::PredictionProvider;
+use crate::metrics::ClassificationMetrics;
 use crate::paths::WORKTREES_DIR;
 use crate::qa::QaResult;
 use anyhow::{Context as _, Result};
@@ -150,6 +151,18 @@ where
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExampleScore {
     pub delta_chr_f: f32,
+    #[serde(default)]
+    pub delta_chr_f_true_positives: usize,
+    #[serde(default)]
+    pub delta_chr_f_false_positives: usize,
+    #[serde(default)]
+    pub delta_chr_f_false_negatives: usize,
+    #[serde(default)]
+    pub delta_chr_f_precision: f64,
+    #[serde(default)]
+    pub delta_chr_f_recall: f64,
+    #[serde(default)]
+    pub delta_chr_f_beta: f64,
     pub braces_disbalance: usize,
     #[serde(default)]
     pub exact_lines_tp: usize,
@@ -174,6 +187,24 @@ pub struct ExampleScore {
     pub cumulative_logprob: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub avg_logprob: Option<f64>,
+}
+
+impl ExampleScore {
+    pub fn delta_chr_f_counts(&self) -> ClassificationMetrics {
+        ClassificationMetrics {
+            true_positives: self.delta_chr_f_true_positives,
+            false_positives: self.delta_chr_f_false_positives,
+            false_negatives: self.delta_chr_f_false_negatives,
+        }
+    }
+
+    pub fn exact_lines_counts(&self) -> ClassificationMetrics {
+        ClassificationMetrics {
+            true_positives: self.exact_lines_tp,
+            false_positives: self.exact_lines_fp,
+            false_negatives: self.exact_lines_fn,
+        }
+    }
 }
 
 impl Example {

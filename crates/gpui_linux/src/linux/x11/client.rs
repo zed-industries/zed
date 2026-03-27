@@ -1883,11 +1883,14 @@ impl X11ClientState {
                         if let Some(window) = state.windows.get_mut(&x_window) {
                             let expose_event_received = window.expose_event_received;
                             window.expose_event_received = false;
+                            let force_render = std::mem::take(
+                                &mut window.window.state.borrow_mut().force_render_after_recovery,
+                            );
                             let window = window.window.clone();
                             drop(state);
                             window.refresh(RequestFrameOptions {
                                 require_presentation: expose_event_received,
-                                force_render: false,
+                                force_render,
                             });
                         }
                         xcb_connection

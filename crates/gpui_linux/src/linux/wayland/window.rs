@@ -116,6 +116,7 @@ pub struct WaylandWindowState {
     handle: AnyWindowHandle,
     active: bool,
     hovered: bool,
+    pub(crate) force_render_after_recovery: bool,
     in_progress_configure: Option<InProgressConfigure>,
     resize_throttle: bool,
     in_progress_window_controls: Option<WindowControls>,
@@ -389,6 +390,7 @@ impl WaylandWindowState {
             handle,
             active: false,
             hovered: false,
+            force_render_after_recovery: false,
             in_progress_window_controls: None,
             window_controls: WindowControls::default(),
             client_inset: None,
@@ -570,11 +572,16 @@ impl WaylandWindowStatePtr {
         let mut state = self.state.borrow_mut();
         state.surface.frame(&state.globals.qh, state.surface.id());
         state.resize_throttle = false;
+        let force_render = state.force_render_after_recovery;
+        state.force_render_after_recovery = false;
         drop(state);
 
         let mut cb = self.callbacks.borrow_mut();
         if let Some(fun) = cb.request_frame.as_mut() {
-            fun(Default::default());
+            fun(RequestFrameOptions {
+                force_render,
+                ..Default::default()
+            });
         }
     }
 
@@ -1372,6 +1379,7 @@ impl PlatformWindow for WaylandWindow {
 
             // The current scene references atlas textures that were cleared during recovery.
             // Skip this frame and let the next frame rebuild the scene with fresh textures.
+            state.force_render_after_recovery = true;
             return;
         }
 
