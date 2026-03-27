@@ -355,6 +355,29 @@ mod ios {
             gpui::KeyBinding::new("cmd-x", editor::actions::Cut, Some("Editor")),
             gpui::KeyBinding::new("cmd-z", editor::actions::Undo, Some("Editor")),
             gpui::KeyBinding::new("cmd-shift-z", editor::actions::Redo, Some("Editor")),
+            gpui::KeyBinding::new("cmd-s", workspace::Save { save_intent: None }, None),
+            // Text manipulation
+            gpui::KeyBinding::new("cmd-/", editor::actions::ToggleComments { advance_downwards: true, ignore_indent: false }, Some("Editor")),
+            gpui::KeyBinding::new("cmd-l", editor::actions::SelectLine, Some("Editor")),
+            gpui::KeyBinding::new("cmd-d", editor::actions::SelectNext { replace_newest: false }, Some("Editor")),
+            gpui::KeyBinding::new("cmd-shift-l", editor::actions::SelectAllMatches, Some("Editor")),
+            gpui::KeyBinding::new("cmd-[", editor::actions::Outdent, Some("Editor")),
+            gpui::KeyBinding::new("cmd-]", editor::actions::Indent, Some("Editor")),
+            gpui::KeyBinding::new("cmd-shift-k", editor::actions::DeleteLine, Some("Editor")),
+            gpui::KeyBinding::new("alt-up", editor::actions::MoveLineUp, Some("Editor")),
+            gpui::KeyBinding::new("alt-down", editor::actions::MoveLineDown, Some("Editor")),
+            gpui::KeyBinding::new("alt-backspace", editor::actions::DeleteToPreviousWordStart { ignore_newlines: false, ignore_brackets: false }, Some("Editor")),
+            gpui::KeyBinding::new("cmd-backspace", editor::actions::DeleteToBeginningOfLine::default(), Some("Editor")),
+            // Code intelligence (LSP via remote)
+            gpui::KeyBinding::new("f12", editor::actions::GoToDefinition, Some("Editor")),
+            gpui::KeyBinding::new("f2", editor::actions::Rename, Some("Editor")),
+            gpui::KeyBinding::new("cmd-.", editor::actions::ToggleCodeActions { deployed_from: None, quick_launch: false }, Some("Editor")),
+            gpui::KeyBinding::new("f8", editor::actions::GoToDiagnostic::default(), Some("Editor")),
+            gpui::KeyBinding::new("shift-f8", editor::actions::GoToPreviousDiagnostic::default(), Some("Editor")),
+            // Code folding
+            gpui::KeyBinding::new("alt-cmd-[", editor::actions::Fold, Some("Editor")),
+            gpui::KeyBinding::new("alt-cmd-]", editor::actions::UnfoldLines, Some("Editor")),
+            gpui::KeyBinding::new("cmd-k cmd-l", editor::actions::ToggleFold, Some("Editor")),
             // Editor cursor movement
             gpui::KeyBinding::new("up", zed_actions::editor::MoveUp, Some("Editor")),
             gpui::KeyBinding::new("down", zed_actions::editor::MoveDown, Some("Editor")),
@@ -373,9 +396,12 @@ mod ios {
             // Navigation and search
             gpui::KeyBinding::new("cmd-f", search::buffer_search::Deploy { focus: true, replace_enabled: false, selection_search_enabled: false }, Some("Editor")),
             gpui::KeyBinding::new("cmd-shift-f", workspace::NewSearch, None),
+            gpui::KeyBinding::new("cmd-p", workspace::ToggleFileFinder { separate_history: false }, None),
             gpui::KeyBinding::new("cmd-shift-p", zed_actions::command_palette::Toggle, None),
             gpui::KeyBinding::new("cmd-k cmd-t", zed_actions::theme_selector::Toggle { themes_filter: None }, None),
             gpui::KeyBinding::new("escape", editor::actions::Cancel, Some("Editor")),
+            gpui::KeyBinding::new("ctrl-g", editor::actions::ToggleGoToLine, None),
+            gpui::KeyBinding::new("enter", editor::actions::ConfirmRename, Some("Editor && renaming")),
             // Menu navigation (pickers, command palette, completions)
             gpui::KeyBinding::new("enter", menu::Confirm, None),
             gpui::KeyBinding::new("escape", menu::Cancel, None),
@@ -456,10 +482,12 @@ mod ios {
                 command_palette::init(cx);
                 editor::init(cx);
                 go_to_line::init(cx);
+                file_finder::init(cx);
                 diagnostics::init(cx);
                 search::init(cx);
                 git_hosting_providers::init(cx);
                 git_ui::init(cx);
+                language_tools::init(cx);
                 outline_panel::init(cx);
                 language_selector::init(cx);
                 theme_selector::init(cx);

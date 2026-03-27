@@ -326,6 +326,18 @@ impl IosWindow {
             let _: () = msg_send![view, addGestureRecognizer: pan];
             let _: () = msg_send![pan, release];
 
+            // Two-finger tap → right click (context menu).
+            let two_finger_tap: *mut Object = msg_send![class!(UITapGestureRecognizer), alloc];
+            let two_finger_tap: *mut Object =
+                msg_send![two_finger_tap, initWithTarget: view action: sel!(handleTwoFingerTap:)];
+            let _: () = msg_send![two_finger_tap, setNumberOfTouchesRequired: 2usize];
+            let _: () = msg_send![two_finger_tap, setNumberOfTapsRequired: 1usize];
+            // The two-finger tap should take priority over the pan gesture —
+            // require the pan to wait until the tap recognizer fails.
+            let _: () = msg_send![pan, requireGestureRecognizerToFail: two_finger_tap];
+            let _: () = msg_send![view, addGestureRecognizer: two_finger_tap];
+            let _: () = msg_send![two_finger_tap, release];
+
             // Separate pan gesture for trackpad/mouse scroll (iPadOS 13.4+,
             // also used by the simulator for trackpad scroll gestures).
             // Trackpad scroll events have zero touches, so this recognizer
@@ -340,6 +352,25 @@ impl IosWindow {
             let _: () = msg_send![trackpad_pan, setAllowedScrollTypesMask: 3usize];
             let _: () = msg_send![view, addGestureRecognizer: trackpad_pan];
             let _: () = msg_send![trackpad_pan, release];
+
+            // Hover gesture recognizer for trackpad/mouse pointer (iPadOS 13.4+).
+            // Emits MouseMoveEvent as the cursor moves so GPUI can update hover
+            // states and trigger tooltips.
+            let hover: *mut Object = msg_send![class!(UIHoverGestureRecognizer), alloc];
+            let hover: *mut Object =
+                msg_send![hover, initWithTarget: view action: sel!(handleHoverGesture:)];
+            let _: () = msg_send![view, addGestureRecognizer: hover];
+            let _: () = msg_send![hover, release];
+
+            // Trackpad secondary click (right-click). UITapGestureRecognizer with
+            // buttonMaskRequired = UIEventButtonMaskSecondary (1 << 1 = 2) fires on
+            // two-finger trackpad click or Control+click.
+            let secondary_tap: *mut Object = msg_send![class!(UITapGestureRecognizer), alloc];
+            let secondary_tap: *mut Object =
+                msg_send![secondary_tap, initWithTarget: view action: sel!(handleSecondaryClick:)];
+            let _: () = msg_send![secondary_tap, setButtonMaskRequired: 2usize];
+            let _: () = msg_send![view, addGestureRecognizer: secondary_tap];
+            let _: () = msg_send![secondary_tap, release];
 
             // Observe UIKeyboardDidHideNotification so our keyboard_shown state
             // stays in sync when the user dismisses the keyboard via UIKit's own
@@ -956,6 +987,22 @@ fn register_metal_view_class() -> &'static Class {
             decl.add_method(
                 sel!(handlePanGesture:),
                 handle_pan_gesture as extern "C" fn(&Object, Sel, *mut Object),
+            );
+
+            // Two-finger tap → right click
+            decl.add_method(
+                sel!(handleTwoFingerTap:),
+                handle_two_finger_tap as extern "C" fn(&Object, Sel, *mut Object),
+            );
+            // Trackpad hover → MouseMove
+            decl.add_method(
+                sel!(handleHoverGesture:),
+                handle_hover_gesture as extern "C" fn(&Object, Sel, *mut Object),
+            );
+            // Trackpad secondary click → right click
+            decl.add_method(
+                sel!(handleSecondaryClick:),
+                handle_secondary_click as extern "C" fn(&Object, Sel, *mut Object),
             );
 
             // Mouse wheel scroll without pointer capture — the simulator
@@ -1631,6 +1678,17 @@ fn handle_touches(this: &Object, touches: *mut Object, event: *mut Object, kind:
             // this is a tap or the beginning of a drag (or a cancelled touch
             // because a second finger landed and the pan gesture took over).
             state_rc.borrow_mut().pending_tap = Some(position);
+
+            // Emit a MouseMove so GPUI updates hover state at this position.
+            // This enables tooltips (which trigger on hover after a delay).
+            dispatch_input_event(
+                &state_rc,
+                PlatformInput::MouseMove(MouseMoveEvent {
+                    position,
+                    pressed_button: None,
+                    modifiers,
+                }),
+            );
         }
         TouchKind::Moved => {
             let pending = state_rc.borrow().pending_tap;
@@ -1732,6 +1790,121 @@ fn handle_touches(this: &Object, touches: *mut Object, event: *mut Object, kind:
                 );
             }
         }
+    }
+}
+
+// ─── Two-finger tap gesture → right click ────────────────────────────────────
+
+extern "C" fn handle_two_finger_tap(this: &Object, _sel: Sel, recognizer: *mut Object) {
+    let Some(state_rc) = state_from_view(this) else { return };
+
+    unsafe {
+        let view = this as *const Object as *mut Object;
+        let location: CGPoint = msg_send![recognizer, locationInView: view];
+        let position = Point {
+            x: gpui::px(location.x as f32),
+            y: gpui::px(location.y as f32),
+        };
+
+        let modifiers = state_rc.borrow().current_modifiers;
+
+        // Emit a MouseMove first so GPUI updates the hit test at this position.
+        dispatch_input_event(
+            &state_rc,
+            PlatformInput::MouseMove(MouseMoveEvent {
+                position,
+                pressed_button: None,
+                modifiers,
+            }),
+        );
+        dispatch_input_event(
+            &state_rc,
+            PlatformInput::MouseDown(MouseDownEvent {
+                button: MouseButton::Right,
+                position,
+                modifiers,
+                click_count: 1,
+                first_mouse: false,
+            }),
+        );
+        dispatch_input_event(
+            &state_rc,
+            PlatformInput::MouseUp(MouseUpEvent {
+                button: MouseButton::Right,
+                position,
+                modifiers,
+                click_count: 1,
+            }),
+        );
+    }
+}
+
+// ─── Trackpad hover gesture → MouseMove ──────────────────────────────────────
+
+extern "C" fn handle_hover_gesture(this: &Object, _sel: Sel, recognizer: *mut Object) {
+    let Some(state_rc) = state_from_view(this) else { return };
+
+    unsafe {
+        let gesture_state: isize = msg_send![recognizer, state];
+        let view = this as *const Object as *mut Object;
+        let location: CGPoint = msg_send![recognizer, locationInView: view];
+        let position = Point {
+            x: gpui::px(location.x as f32),
+            y: gpui::px(location.y as f32),
+        };
+
+        let modifiers = state_rc.borrow().current_modifiers;
+
+        match gesture_state {
+            GESTURE_STATE_BEGAN | GESTURE_STATE_CHANGED => {
+                dispatch_input_event(
+                    &state_rc,
+                    PlatformInput::MouseMove(MouseMoveEvent {
+                        position,
+                        pressed_button: None,
+                        modifiers,
+                    }),
+                );
+            }
+            _ => {}
+        }
+    }
+}
+
+// ─── Trackpad secondary click → right click ──────────────────────────────────
+
+extern "C" fn handle_secondary_click(this: &Object, _sel: Sel, recognizer: *mut Object) {
+    let Some(state_rc) = state_from_view(this) else { return };
+
+    unsafe {
+        let view = this as *const Object as *mut Object;
+        let location: CGPoint = msg_send![recognizer, locationInView: view];
+        let position = Point {
+            x: gpui::px(location.x as f32),
+            y: gpui::px(location.y as f32),
+        };
+
+        let modifiers = state_rc.borrow().current_modifiers;
+
+        dispatch_input_event(
+            &state_rc,
+            PlatformInput::MouseDown(MouseDownEvent {
+                button: MouseButton::Right,
+                position,
+                modifiers,
+                click_count: 1,
+                first_mouse: false,
+            }),
+        );
+        dispatch_input_event(
+            &state_rc,
+            PlatformInput::MouseUp(MouseUpEvent {
+                button: MouseButton::Right,
+                position,
+                modifiers,
+                click_count: 1,
+            }),
+        );
     }
 }
 

@@ -16,7 +16,7 @@ use theme::ActiveTheme;
 use ui::{
     ButtonCommon, ButtonLike, ButtonStyle, Clickable, Color, ContextMenu, Divider, DividerColor,
     FixedWidth, Headline, Icon, IconButton, IconName, IconSize, Label, LabelCommon, LabelSize,
-    PopoverMenu, Vector, VectorName, h_flex, rems_from_px, v_flex,
+    PopoverMenu, Tooltip, Vector, VectorName, h_flex, rems_from_px, v_flex,
 };
 use util::ResultExt;
 
@@ -190,6 +190,7 @@ impl Render for WorkspaceSwitcher {
                 IconButton::new("return-to-landing", IconName::ArrowLeft)
                     .icon_size(IconSize::Small)
                     .style(ButtonStyle::Subtle)
+                    .tooltip(Tooltip::text("Back to connections"))
                     .on_click(|_event, window, cx| {
                         return_to_landing(window, cx);
                     }),
@@ -197,21 +198,23 @@ impl Render for WorkspaceSwitcher {
             .child(
                 PopoverMenu::new("workspace-switcher-menu")
                     .trigger(
-                        ButtonLike::new("workspace-switcher-trigger").child(
-                            h_flex()
-                                .gap_1p5()
-                                .items_center()
-                                .child(
-                                    Icon::new(IconName::Folder)
-                                        .size(IconSize::Small)
-                                        .color(Color::Muted),
-                                )
-                                .child(
-                                    Label::new(current_path)
-                                        .size(LabelSize::Small)
-                                        .color(Color::Default),
-                                ),
-                        ),
+                        ButtonLike::new("workspace-switcher-trigger")
+                            .tooltip(Tooltip::text(host_label.clone()))
+                            .child(
+                                h_flex()
+                                    .gap_1p5()
+                                    .items_center()
+                                    .child(
+                                        Icon::new(IconName::Folder)
+                                            .size(IconSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                    .child(
+                                        Label::new(current_path)
+                                            .size(LabelSize::Small)
+                                            .color(Color::Default),
+                                    ),
+                            ),
                     )
                     .anchor(gpui::Corner::BottomLeft)
                     .menu({
