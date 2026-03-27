@@ -15,7 +15,7 @@ use gpui::{
 };
 use log::LevelFilter;
 use reqwest_client::ReqwestClient;
-use settings::{KeymapFile, Settings};
+use settings::KeymapFile;
 use simplelog::SimpleLogger;
 use strum::IntoEnumIterator;
 use theme_settings::ThemeSettings;

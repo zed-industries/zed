@@ -15839,6 +15839,7 @@ dependencies = [
  "serde_json",
  "settings",
  "theme",
+ "theme_settings",
  "ui",
  "workspace",
  "zed_actions",
@@ -16679,6 +16680,7 @@ dependencies = [
  "story",
  "strum 0.27.2",
  "theme",
+ "theme_settings",
  "title_bar",
  "ui",
 ]
