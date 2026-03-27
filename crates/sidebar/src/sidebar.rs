@@ -2705,7 +2705,11 @@ impl Sidebar {
         // Replay the initial preview that was emitted during construction
         // before subscriptions were wired up.
         let initial_preview = thread_switcher.read(cx).selected_entry().map(|entry| {
-            (entry.agent.clone(), entry.session_info.clone(), entry.workspace.clone())
+            (
+                entry.agent.clone(),
+                entry.session_info.clone(),
+                entry.workspace.clone(),
+            )
         });
 
         self.thread_switcher = Some(thread_switcher);
