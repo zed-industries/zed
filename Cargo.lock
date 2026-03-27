@@ -16022,6 +16022,7 @@ dependencies = [
  "anyhow",
  "assistant_text_thread",
  "chrono",
+ "collections",
  "editor",
  "feature_flags",
  "fs",

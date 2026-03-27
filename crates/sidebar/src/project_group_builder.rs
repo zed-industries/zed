@@ -8,8 +8,8 @@
 //! This module is provides the functions and structures necessary to do this
 //! lookup and mapping.
 
+use collections::{HashMap, HashSet, vecmap::VecMap};
 use std::{
-    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -78,16 +78,14 @@ impl ProjectGroup {
 pub struct ProjectGroupBuilder {
     /// Maps git repositories' work_directory_abs_path to their original_repo_abs_path
     directory_mappings: HashMap<PathBuf, PathBuf>,
-    project_group_names: Vec<ProjectGroupName>,
-    project_groups: Vec<ProjectGroup>,
+    project_groups: VecMap<ProjectGroupName, ProjectGroup>,
 }
 
 impl ProjectGroupBuilder {
     fn new() -> Self {
         Self {
-            directory_mappings: HashMap::new(),
-            project_group_names: Vec::new(),
-            project_groups: Vec::new(),
+            directory_mappings: HashMap::default(),
+            project_groups: VecMap::new(),
         }
     }
 
@@ -113,15 +111,7 @@ impl ProjectGroupBuilder {
     }
 
     fn project_group_entry(&mut self, name: &ProjectGroupName) -> &mut ProjectGroup {
-        match self.project_group_names.iter().position(|n| n == name) {
-            Some(idx) => &mut self.project_groups[idx],
-            None => {
-                let idx = self.project_group_names.len();
-                self.project_group_names.push(name.clone());
-                self.project_groups.push(ProjectGroup::default());
-                &mut self.project_groups[idx]
-            }
-        }
+        self.project_groups.entry(name.clone()).or_insert_default()
     }
 
     fn add_mapping(&mut self, work_directory: &Path, original_repo: &Path) {
@@ -204,9 +194,7 @@ impl ProjectGroupBuilder {
     }
 
     pub fn groups(&self) -> impl Iterator<Item = (&ProjectGroupName, &ProjectGroup)> {
-        self.project_group_names
-            .iter()
-            .zip(self.project_groups.iter())
+        self.project_groups.iter()
     }
 }
 
