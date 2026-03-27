@@ -455,12 +455,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         cx.notify();
     }
 
-    fn can_select(
-        &mut self,
-        ix: usize,
-        _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
-    ) -> bool {
+    fn can_select(&self, ix: usize, _window: &mut Window, _cx: &mut Context<Picker<Self>>) -> bool {
         match self.filtered_entries.get(ix) {
             Some(LanguageModelPickerEntry::Model(_)) => true,
             Some(LanguageModelPickerEntry::Separator(_)) | None => false,
@@ -729,7 +724,7 @@ mod tests {
                     .any(|(fav_provider, fav_name)| *fav_provider == provider && *fav_name == name);
                 ModelInfo {
                     model: Arc::new(TestLanguageModel::new(name, provider)),
-                    icon: IconOrSvg::Icon(IconName::Ai),
+                    icon: IconOrSvg::Icon(IconName::ZedAgent),
                     is_favorite,
                 }
             })

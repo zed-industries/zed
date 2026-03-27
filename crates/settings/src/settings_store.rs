@@ -793,6 +793,17 @@ impl SettingsStore {
         edits
     }
 
+    /// Mutates the default settings in place and recomputes all setting values.
+    pub fn update_default_settings(
+        &mut self,
+        cx: &mut App,
+        update: impl FnOnce(&mut SettingsContent),
+    ) {
+        let default_settings = Rc::make_mut(&mut self.default_settings);
+        update(default_settings);
+        self.recompute_values(None, cx);
+    }
+
     /// Sets the default settings via a JSON string.
     ///
     /// The string should contain a JSON object with a default value for every setting.
@@ -1706,7 +1717,7 @@ mod tests {
             r#"{
                 "languages": {
                     "JSON": {
-                        "auto_indent": true
+                        "auto_indent": "syntax_aware"
                     }
                 }
             }"#
@@ -1716,12 +1727,12 @@ mod tests {
                     .languages_mut()
                     .get_mut("JSON")
                     .unwrap()
-                    .auto_indent = Some(false);
+                    .auto_indent = Some(crate::AutoIndentMode::None);
 
                 settings.languages_mut().insert(
                     "Rust".into(),
                     LanguageSettingsContent {
-                        auto_indent: Some(true),
+                        auto_indent: Some(crate::AutoIndentMode::SyntaxAware),
                         ..Default::default()
                     },
                 );
@@ -1729,10 +1740,10 @@ mod tests {
             r#"{
                 "languages": {
                     "Rust": {
-                        "auto_indent": true
+                        "auto_indent": "syntax_aware"
                     },
                     "JSON": {
-                        "auto_indent": false
+                        "auto_indent": "none"
                     }
                 }
             }"#

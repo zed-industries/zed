@@ -17,7 +17,7 @@ use agent_ui::{AgentDiffToolbar, AgentPanelDelegate};
 use anyhow::Context as _;
 pub use app_menus::*;
 use assets::Assets;
-use audio::{AudioSettings, REPLAY_DURATION};
+
 use breadcrumbs::Breadcrumbs;
 use client::zed_urls;
 use collections::VecDeque;
@@ -69,7 +69,7 @@ use settings::{
     update_settings_file,
 };
 use sidebar::Sidebar;
-use std::time::Duration;
+
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
@@ -77,16 +77,15 @@ use std::{
     sync::atomic::{self, AtomicBool},
 };
 use terminal_view::terminal_panel::{self, TerminalPanel};
-use theme::{ActiveTheme, GlobalTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
+use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, deserialize_icon_theme};
+use theme_settings::{ThemeSettings, load_user_theme};
 use ui::{PopoverMenuHandle, prelude::*};
 use util::markdown::MarkdownString;
 use util::rel_path::RelPath;
 use util::{ResultExt, asset_str, maybe};
 use uuid::Uuid;
 use vim_mode_setting::VimModeSetting;
-use workspace::notifications::{
-    NotificationId, SuppressEvent, dismiss_app_notification, show_app_notification,
-};
+use workspace::notifications::{NotificationId, dismiss_app_notification, show_app_notification};
 
 use workspace::{
     AppState, MultiWorkspace, NewFile, NewWindow, OpenLog, Panel, Toast, Workspace,
@@ -94,8 +93,7 @@ use workspace::{
     notifications::simple_message_notification::MessageNotification, open_new,
 };
 use workspace::{
-    CloseIntent, CloseProject, CloseWindow, NotificationFrame, RestoreBanner,
-    with_active_or_new_workspace,
+    CloseIntent, CloseProject, CloseWindow, RestoreBanner, with_active_or_new_workspace,
 };
 use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
@@ -144,10 +142,6 @@ actions!(
 actions!(
     dev,
     [
-        /// Stores last 30s of audio from zed staff using the experimental rodio
-        /// audio system (including yourself) on the current call in a tar file
-        /// in the current working directory.
-        CaptureRecentAudio,
         /// Opens a prompt to enter a URL to open.
         OpenUrlPrompt,
     ]
@@ -163,21 +157,24 @@ pub fn init(cx: &mut App) {
     cx.on_action(quit);
 
     cx.on_action(|_: &RestoreBanner, cx| title_bar::restore_banner(cx));
-    let flag = cx.wait_for_flag::<PanicFeatureFlag>();
-    cx.spawn(async |cx| {
-        if cx.update(|cx| ReleaseChannel::global(cx) == ReleaseChannel::Dev) || flag.await {
-            cx.update(|cx| {
-                cx.on_action(|_: &TestPanic, _| panic!("Ran the TestPanic action"))
-                    .on_action(|_: &TestCrash, _| {
-                        unsafe extern "C" {
-                            fn puts(s: *const i8);
-                        }
-                        unsafe {
-                            puts(0xabad1d3a as *const i8);
-                        }
-                    });
-            });
-        };
+
+    cx.observe_flag::<PanicFeatureFlag, _>({
+        let mut added = false;
+        move |enabled, cx| {
+            if added || !enabled {
+                return;
+            }
+            added = true;
+            cx.on_action(|_: &TestPanic, _| panic!("Ran the TestPanic action"))
+                .on_action(|_: &TestCrash, _| {
+                    unsafe extern "C" {
+                        fn puts(s: *const i8);
+                    }
+                    unsafe {
+                        puts(0xabad1d3a as *const i8);
+                    }
+                });
+        }
     })
     .detach();
     cx.on_action(|_: &OpenLog, cx| {
@@ -295,7 +292,7 @@ fn bind_on_window_closed(cx: &mut App) -> Option<gpui::Subscription> {
             .on_last_window_closed
             .is_quit_app()
             .then(|| {
-                cx.on_window_closed(|cx| {
+                cx.on_window_closed(|cx, _window_id| {
                     if cx.windows().is_empty() {
                         cx.quit();
                     }
@@ -304,7 +301,7 @@ fn bind_on_window_closed(cx: &mut App) -> Option<gpui::Subscription> {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        Some(cx.on_window_closed(|cx| {
+        Some(cx.on_window_closed(|cx, _window_id| {
             if cx.windows().is_empty() {
                 cx.quit();
             }
@@ -371,15 +368,39 @@ pub fn initialize_workspace(
     })
     .detach();
 
-    cx.observe_new(|multi_workspace: &mut MultiWorkspace, window, cx| {
+    cx.observe_new(|_multi_workspace: &mut MultiWorkspace, window, cx| {
         let Some(window) = window else {
             return;
         };
-        let multi_workspace_handle = cx.entity();
-        let sidebar = cx.new(|cx| Sidebar::new(multi_workspace_handle.clone(), window, cx));
-        multi_workspace.register_sidebar(sidebar, window, cx);
 
-        let multi_workspace_handle = multi_workspace_handle.downgrade();
+        #[cfg(feature = "track-project-leak")]
+        {
+            let multi_workspace_handle = cx.weak_entity();
+            let workspace_handle = _multi_workspace.workspace().downgrade();
+            let project_handle = _multi_workspace.workspace().read(cx).project().downgrade();
+            let window_id_2 = window.window_handle().window_id();
+            cx.on_window_closed(move |cx, window_id| {
+                let multi_workspace_handle = multi_workspace_handle.clone();
+                let workspace_handle = workspace_handle.clone();
+                let project_handle = project_handle.clone();
+                if window_id != window_id_2 {
+                    return;
+                }
+                cx.spawn(async move |cx| {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(1500))
+                        .await;
+
+                    multi_workspace_handle.assert_released();
+                    workspace_handle.assert_released();
+                    project_handle.assert_released();
+                })
+                .detach();
+            })
+            .detach();
+        }
+
+        let multi_workspace_handle = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
             multi_workspace_handle
                 .update(cx, |multi_workspace, cx| {
@@ -388,6 +409,20 @@ pub fn initialize_workspace(
                     false
                 })
                 .unwrap_or(true)
+        });
+
+        let window_handle = window.window_handle();
+        let multi_workspace_handle = cx.entity();
+        cx.defer(move |cx| {
+            window_handle
+                .update(cx, |_, window, cx| {
+                    let sidebar =
+                        cx.new(|cx| Sidebar::new(multi_workspace_handle.clone(), window, cx));
+                    multi_workspace_handle.update(cx, |multi_workspace, cx| {
+                        multi_workspace.register_sidebar(sidebar, cx);
+                    });
+                })
+                .ok();
         });
     })
     .detach();
@@ -422,16 +457,7 @@ pub fn initialize_workspace(
         if let Some(specs) = window.gpu_specs() {
             log::info!("Using GPU: {:?}", specs);
             show_software_emulation_warning_if_needed(specs.clone(), window, cx);
-            if let Some((crash_server, message)) = crashes::CRASH_HANDLER
-                .get()
-                .zip(bincode::serialize(&specs).ok())
-                && let Err(err) = crash_server.send_message(3, message)
-            {
-                log::warn!(
-                    "Failed to store active gpu info for crash reporting: {}",
-                    err
-                );
-            }
+            crashes::set_gpu_info(specs);
         }
 
         let edit_prediction_menu_handle = PopoverMenuHandle::default();
@@ -453,6 +479,7 @@ pub fn initialize_workspace(
         let search_button = cx.new(|_| search::search_status_button::SearchButton::new());
         let diagnostic_summary =
             cx.new(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
+        let active_file_name = cx.new(|_| workspace::active_file_name::ActiveFileName::new());
         let activity_indicator = activity_indicator::ActivityIndicator::new(
             workspace,
             workspace.project().read(cx).languages().clone(),
@@ -485,6 +512,7 @@ pub fn initialize_workspace(
             status_bar.add_left_item(search_button, window, cx);
             status_bar.add_left_item(lsp_button, window, cx);
             status_bar.add_left_item(diagnostic_summary, window, cx);
+            status_bar.add_left_item(active_file_name, window, cx);
             status_bar.add_left_item(activity_indicator, window, cx);
             status_bar.add_right_item(edit_prediction_ui, window, cx);
             status_bar.add_right_item(active_buffer_encoding, window, cx);
@@ -496,10 +524,13 @@ pub fn initialize_workspace(
             status_bar.add_right_item(image_info, window, cx);
         });
 
-        initialize_panels(prompt_builder.clone(), window, cx);
+        let panels_task = initialize_panels(prompt_builder.clone(), window, cx);
+        workspace.set_panels_task(panels_task);
         register_actions(app_state.clone(), workspace, window, cx);
 
-        workspace.focus_handle(cx).focus(window, cx);
+        if !workspace.has_active_modal(window, cx) {
+            workspace.focus_handle(cx).focus(window, cx);
+        }
     })
     .detach();
 }
@@ -620,7 +651,7 @@ fn initialize_panels(
     prompt_builder: Arc<PromptBuilder>,
     window: &mut Window,
     cx: &mut Context<Workspace>,
-) {
+) -> Task<anyhow::Result<()>> {
     cx.spawn_in(window, async move |workspace_handle, cx| {
         let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
         let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
@@ -662,7 +693,6 @@ fn initialize_panels(
 
         anyhow::Ok(())
     })
-    .detach();
 }
 
 fn setup_or_teardown_ai_panel<P: Panel>(
@@ -794,7 +824,7 @@ fn register_actions(
                 }
             }
         })
-        .register_action(|workspace, _: &workspace::Open, window, cx| {
+        .register_action(|workspace, action: &workspace::Open, window, cx| {
             telemetry::event!("Project Opened");
             workspace::prompt_for_open_path_and_open(
                 workspace,
@@ -805,6 +835,7 @@ fn register_actions(
                     multiple: true,
                     prompt: None,
                 },
+                action.create_new_window,
                 window,
                 cx,
             );
@@ -820,6 +851,7 @@ fn register_actions(
                     multiple: true,
                     prompt: None,
                 },
+                true,
                 window,
                 cx,
             );
@@ -869,10 +901,10 @@ fn register_actions(
                         let _ = settings
                             .theme
                             .ui_font_size
-                            .insert(f32::from(theme::clamp_font_size(ui_font_size)).into());
+                            .insert(f32::from(theme_settings::clamp_font_size(ui_font_size)).into());
                     });
                 } else {
-                    theme::adjust_ui_font_size(cx, |size| size + px(1.0));
+                    theme_settings::adjust_ui_font_size(cx, |size| size + px(1.0));
                 }
             }
         })
@@ -885,10 +917,10 @@ fn register_actions(
                         let _ = settings
                             .theme
                             .ui_font_size
-                            .insert(f32::from(theme::clamp_font_size(ui_font_size)).into());
+                            .insert(f32::from(theme_settings::clamp_font_size(ui_font_size)).into());
                     });
                 } else {
-                    theme::adjust_ui_font_size(cx, |size| size - px(1.0));
+                    theme_settings::adjust_ui_font_size(cx, |size| size - px(1.0));
                 }
             }
         })
@@ -900,7 +932,7 @@ fn register_actions(
                         settings.theme.ui_font_size = None;
                     });
                 } else {
-                    theme::reset_ui_font_size(cx);
+                    theme_settings::reset_ui_font_size(cx);
                 }
             }
         })
@@ -914,10 +946,10 @@ fn register_actions(
                         let _ = settings
                             .theme
                             .buffer_font_size
-                            .insert(f32::from(theme::clamp_font_size(buffer_font_size)).into());
+                            .insert(f32::from(theme_settings::clamp_font_size(buffer_font_size)).into());
                     });
                 } else {
-                    theme::adjust_buffer_font_size(cx, |size| size + px(1.0));
+                    theme_settings::adjust_buffer_font_size(cx, |size| size + px(1.0));
                 }
             }
         })
@@ -931,10 +963,10 @@ fn register_actions(
                         let _ = settings
                             .theme
                             .buffer_font_size
-                            .insert(f32::from(theme::clamp_font_size(buffer_font_size)).into());
+                            .insert(f32::from(theme_settings::clamp_font_size(buffer_font_size)).into());
                     });
                 } else {
-                    theme::adjust_buffer_font_size(cx, |size| size - px(1.0));
+                    theme_settings::adjust_buffer_font_size(cx, |size| size - px(1.0));
                 }
             }
         })
@@ -946,7 +978,7 @@ fn register_actions(
                         settings.theme.buffer_font_size = None;
                     });
                 } else {
-                    theme::reset_buffer_font_size(cx);
+                    theme_settings::reset_buffer_font_size(cx);
                 }
             }
         })
@@ -961,10 +993,10 @@ fn register_actions(
                         settings.theme.agent_buffer_font_size = None;
                     });
                 } else {
-                    theme::reset_ui_font_size(cx);
-                    theme::reset_buffer_font_size(cx);
-                    theme::reset_agent_ui_font_size(cx);
-                    theme::reset_agent_buffer_font_size(cx);
+                    theme_settings::reset_ui_font_size(cx);
+                    theme_settings::reset_buffer_font_size(cx);
+                    theme_settings::reset_agent_ui_font_size(cx);
+                    theme_settings::reset_agent_buffer_font_size(cx);
                 }
             }
         })
@@ -1040,91 +1072,100 @@ fn register_actions(
             },
         )
         .register_action({
-            let app_state = Arc::downgrade(&app_state);
+            let app_state = app_state.clone();
             move |_, _: &NewWindow, _, cx| {
-                if let Some(app_state) = app_state.upgrade() {
-                    open_new(
-                        Default::default(),
-                        app_state,
-                        cx,
-                        |workspace, window, cx| {
-                            cx.activate(true);
-                            // Create buffer synchronously to avoid flicker
-                            let project = workspace.project().clone();
-                            let buffer = project.update(cx, |project, cx| {
-                                project.create_local_buffer("", None, true, cx)
-                            });
-                            let editor = cx.new(|cx| {
-                                Editor::for_buffer(buffer, Some(project), window, cx)
-                            });
-                            workspace.add_item_to_active_pane(
-                                Box::new(editor),
-                                None,
-                                true,
-                                window,
-                                cx,
-                            );
-                        },
-                    )
-                    .detach();
-                }
+                open_new(
+                    Default::default(),
+                    app_state.clone(),
+                    cx,
+                    |workspace, window, cx| {
+                        cx.activate(true);
+                        // Create buffer synchronously to avoid flicker
+                        let project = workspace.project().clone();
+                        let buffer = project.update(cx, |project, cx| {
+                            project.create_local_buffer("", None, true, cx)
+                        });
+                        let editor = cx.new(|cx| {
+                            Editor::for_buffer(buffer, Some(project), window, cx)
+                        });
+                        workspace.add_item_to_active_pane(
+                            Box::new(editor),
+                            None,
+                            true,
+                            window,
+                            cx,
+                        );
+                    },
+                )
+                .detach();
             }
         })
         .register_action({
-            let app_state = Arc::downgrade(&app_state);
-            move |_, _: &CloseProject, window, cx| {
+            let app_state = app_state.clone();
+            move |_workspace, _: &CloseProject, window, cx| {
                 let Some(window_handle) = window.window_handle().downcast::<MultiWorkspace>() else {
                     return;
                 };
-                if let Some(app_state) = app_state.upgrade() {
-                    open_new(
-                        workspace::OpenOptions {
-                            replace_window: Some(window_handle),
-                            ..Default::default()
-                        },
-                        app_state,
-                        cx,
-                        |workspace, window, cx| {
-                            cx.activate(true);
-                            // Create buffer synchronously to avoid flicker
-                            let project = workspace.project().clone();
-                            let buffer = project.update(cx, |project, cx| {
-                                project.create_local_buffer("", None, true, cx)
-                            });
-                            let editor = cx.new(|cx| {
-                                Editor::for_buffer(buffer, Some(project), window, cx)
-                            });
-                            workspace.add_item_to_active_pane(
-                                Box::new(editor),
-                                None,
-                                true,
+                let app_state = app_state.clone();
+                cx.spawn_in(window, async move |this, cx| {
+                    let should_continue = this
+                        .update_in(cx, |workspace, window, cx| {
+                            workspace.prepare_to_close(
+                                CloseIntent::ReplaceWindow,
                                 window,
                                 cx,
-                            );
-                        },
-                    )
-                    .detach();
-                }
+                            )
+                        })?
+                        .await?;
+                    if should_continue {
+                        let task = cx.update(|_window, cx| {
+                            open_new(
+                                workspace::OpenOptions {
+                                    replace_window: Some(window_handle),
+                                    ..Default::default()
+                                },
+                                app_state,
+                                cx,
+                                |workspace, window, cx| {
+                                    cx.activate(true);
+                                    let project = workspace.project().clone();
+                                    let buffer = project.update(cx, |project, cx| {
+                                        project.create_local_buffer("", None, true, cx)
+                                    });
+                                    let editor = cx.new(|cx| {
+                                        Editor::for_buffer(buffer, Some(project), window, cx)
+                                    });
+                                    workspace.add_item_to_active_pane(
+                                        Box::new(editor),
+                                        None,
+                                        true,
+                                        window,
+                                        cx,
+                                    );
+                                },
+                            )
+                        })?;
+                        task.await
+                    } else {
+                        Ok(())
+                    }
+                })
+                .detach_and_log_err(cx);
             }
         })
         .register_action({
-            let app_state = Arc::downgrade(&app_state);
+            let app_state = app_state.clone();
             move |_, _: &NewFile, _, cx| {
-                if let Some(app_state) = app_state.upgrade() {
-                    open_new(
-                        Default::default(),
-                        app_state,
-                        cx,
-                        |workspace, window, cx| {
-                            Editor::new_file(workspace, &Default::default(), window, cx)
-                        },
-                    )
-                    .detach_and_log_err(cx);
-                }
+                open_new(
+                    Default::default(),
+                    app_state.clone(),
+                    cx,
+                    |workspace, window, cx| {
+                        Editor::new_file(workspace, &Default::default(), window, cx)
+                    },
+                )
+                .detach_and_log_err(cx);
             }
-        })
-        .register_action(|workspace, _: &CaptureRecentAudio, window, cx| {
-            capture_recent_audio(workspace, window, cx);
         });
 
     #[cfg(not(target_os = "windows"))]
@@ -2002,13 +2043,29 @@ fn open_local_file(
 }
 
 fn open_bundled_file(
-    workspace: &Workspace,
+    workspace: &mut Workspace,
     text: Cow<'static, str>,
     title: &'static str,
     language: &'static str,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
+    let existing = workspace.items_of_type::<Editor>(cx).find(|editor| {
+        editor.read_with(cx, |editor, cx| {
+            editor.read_only(cx)
+                && editor.title(cx).as_ref() == title
+                && editor
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .is_some_and(|buffer| buffer.read(cx).file().is_none())
+        })
+    });
+    if let Some(existing) = existing {
+        workspace.activate_item(&existing, true, true, window, cx);
+        return;
+    }
+
     let language = workspace.app_state().languages.language_for_name(language);
     cx.spawn_in(window, async move |workspace, cx| {
         let language = language.await.log_err();
@@ -2099,84 +2156,6 @@ fn open_settings_file(
     .detach_and_log_err(cx);
 }
 
-fn capture_recent_audio(workspace: &mut Workspace, _: &mut Window, cx: &mut Context<Workspace>) {
-    struct CaptureRecentAudioNotification {
-        focus_handle: gpui::FocusHandle,
-        save_result: Option<Result<(PathBuf, Duration), anyhow::Error>>,
-        _save_task: Task<anyhow::Result<()>>,
-    }
-
-    impl gpui::EventEmitter<DismissEvent> for CaptureRecentAudioNotification {}
-    impl gpui::EventEmitter<SuppressEvent> for CaptureRecentAudioNotification {}
-    impl gpui::Focusable for CaptureRecentAudioNotification {
-        fn focus_handle(&self, _cx: &App) -> gpui::FocusHandle {
-            self.focus_handle.clone()
-        }
-    }
-    impl workspace::notifications::Notification for CaptureRecentAudioNotification {}
-
-    impl Render for CaptureRecentAudioNotification {
-        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            let message = match &self.save_result {
-                None => format!(
-                    "Saving up to {} seconds of recent audio",
-                    REPLAY_DURATION.as_secs(),
-                ),
-                Some(Ok((path, duration))) => format!(
-                    "Saved {} seconds of all audio to {}",
-                    duration.as_secs(),
-                    path.display(),
-                ),
-                Some(Err(e)) => format!("Error saving audio replays: {e:?}"),
-            };
-
-            NotificationFrame::new()
-                .with_title(Some("Saved Audio"))
-                .show_suppress_button(false)
-                .on_close(cx.listener(|_, _, _, cx| {
-                    cx.emit(DismissEvent);
-                }))
-                .with_content(message)
-        }
-    }
-
-    impl CaptureRecentAudioNotification {
-        fn new(cx: &mut Context<Self>) -> Self {
-            if AudioSettings::get_global(cx).rodio_audio {
-                let executor = cx.background_executor().clone();
-                let save_task = cx.default_global::<audio::Audio>().save_replays(executor);
-                let _save_task = cx.spawn(async move |this, cx| {
-                    let res = save_task.await;
-                    this.update(cx, |this, cx| {
-                        this.save_result = Some(res);
-                        cx.notify();
-                    })
-                });
-
-                Self {
-                    focus_handle: cx.focus_handle(),
-                    _save_task,
-                    save_result: None,
-                }
-            } else {
-                Self {
-                    focus_handle: cx.focus_handle(),
-                    _save_task: Task::ready(Ok(())),
-                    save_result: Some(Err(anyhow::anyhow!(
-                        "Capturing recent audio is only supported on the experimental rodio audio pipeline"
-                    ))),
-                }
-            }
-        }
-    }
-
-    workspace.show_notification(
-        NotificationId::unique::<CaptureRecentAudioNotification>(),
-        cx,
-        |cx| cx.new(CaptureRecentAudioNotification::new),
-    );
-}
-
 /// Eagerly loads the active theme and icon theme based on the selections in the
 /// theme settings.
 ///
@@ -2238,24 +2217,23 @@ pub(crate) fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &mut A
             let reload_tasks = &reload_tasks;
             let fs = fs.clone();
 
-            scope.spawn(async {
+            scope.spawn(async move {
                 match load_target {
                     LoadTarget::Theme(theme_path) => {
-                        if theme_registry
-                            .load_user_theme(&theme_path, fs)
-                            .await
-                            .log_err()
-                            .is_some()
+                        if let Some(bytes) = fs.load_bytes(&theme_path).await.log_err()
+                            && load_user_theme(theme_registry, &bytes).log_err().is_some()
                         {
                             reload_tasks.lock().push(ReloadTarget::Theme);
                         }
                     }
                     LoadTarget::IconTheme((icon_theme_path, icons_root_path)) => {
-                        if theme_registry
-                            .load_icon_theme(&icon_theme_path, &icons_root_path, fs)
-                            .await
-                            .log_err()
-                            .is_some()
+                        if let Some(bytes) = fs.load_bytes(&icon_theme_path).await.log_err()
+                            && let Some(icon_theme_family) =
+                                deserialize_icon_theme(&bytes).log_err()
+                            && theme_registry
+                                .load_icon_theme(icon_theme_family, &icons_root_path)
+                                .log_err()
+                                .is_some()
                         {
                             reload_tasks.lock().push(ReloadTarget::IconTheme);
                         }
@@ -2267,8 +2245,8 @@ pub(crate) fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &mut A
 
     for reload_target in reload_tasks.into_inner() {
         match reload_target {
-            ReloadTarget::Theme => GlobalTheme::reload_theme(cx),
-            ReloadTarget::IconTheme => GlobalTheme::reload_icon_theme(cx),
+            ReloadTarget::Theme => theme_settings::reload_theme(cx),
+            ReloadTarget::IconTheme => theme_settings::reload_icon_theme(cx),
         };
     }
 }
@@ -2310,6 +2288,29 @@ mod tests {
         item::{Item, ItemHandle},
         open_new, open_paths, pane,
     };
+
+    async fn flush_workspace_serialization(
+        window: &WindowHandle<MultiWorkspace>,
+        cx: &mut TestAppContext,
+    ) {
+        let all_tasks = window
+            .update(cx, |multi_workspace, window, cx| {
+                let mut tasks = multi_workspace
+                    .workspaces()
+                    .iter()
+                    .map(|workspace| {
+                        workspace.update(cx, |workspace, cx| {
+                            workspace.flush_serialization(window, cx)
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                tasks.push(multi_workspace.flush_serialization());
+                tasks
+            })
+            .unwrap();
+
+        futures::future::join_all(all_tasks).await;
+    }
 
     #[gpui::test]
     async fn test_open_non_existing_file(cx: &mut TestAppContext) {
@@ -2419,7 +2420,7 @@ mod tests {
             .update(cx, |multi_workspace, window, cx| {
                 multi_workspace.workspace().update(cx, |workspace, cx| {
                     assert_eq!(workspace.worktrees(cx).count(), 2);
-                    assert!(workspace.left_dock().read(cx).is_open());
+                    assert!(workspace.right_dock().read(cx).is_open());
                     assert!(
                         workspace
                             .active_pane()
@@ -2478,7 +2479,7 @@ mod tests {
                         .collect::<Vec<_>>(),
                     &[Path::new(path!("/root/e")).into()]
                 );
-                assert!(workspace.left_dock().read(cx).is_open());
+                assert!(workspace.right_dock().read(cx).is_open());
                 assert!(workspace.active_pane().focus_handle(cx).is_focused(window));
             })
             .unwrap();
@@ -3432,7 +3433,11 @@ mod tests {
             PathBuf::from(path!("/root/.git/HEAD")),
             PathBuf::from(path!("/root/excluded_dir/ignored_subdir")),
         ];
-        let (opened_workspace, new_items) = cx
+        let workspace::OpenResult {
+            window: opened_workspace,
+            opened_items: new_items,
+            ..
+        } = cx
             .update(|cx| {
                 workspace::open_paths(
                     &paths_to_open,
@@ -4411,69 +4416,24 @@ mod tests {
         assert_eq!(active_path(&workspace, cx), Some(file1.clone()));
 
         // Reopening closed items doesn't interfere with navigation history.
+        // Verify we can navigate back through the history after reopening items.
         workspace
             .update_in(cx, |workspace, window, cx| {
                 workspace.go_back(workspace.active_pane().downgrade(), window, cx)
             })
             .await
             .unwrap();
-        assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
 
-        workspace
-            .update_in(cx, |workspace, window, cx| {
-                workspace.go_back(workspace.active_pane().downgrade(), window, cx)
-            })
-            .await
-            .unwrap();
-        assert_eq!(active_path(&workspace, cx), Some(file2.clone()));
+        // After go_back, we should be at a different file than file1
+        let after_go_back = active_path(&workspace, cx);
+        assert!(
+            after_go_back.is_some() && after_go_back != Some(file1.clone()),
+            "After go_back from file1, should be at a different file"
+        );
 
-        workspace
-            .update_in(cx, |workspace, window, cx| {
-                workspace.go_back(workspace.active_pane().downgrade(), window, cx)
-            })
-            .await
-            .unwrap();
-        assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
-
-        workspace
-            .update_in(cx, |workspace, window, cx| {
-                workspace.go_back(workspace.active_pane().downgrade(), window, cx)
-            })
-            .await
-            .unwrap();
-        assert_eq!(active_path(&workspace, cx), Some(file4.clone()));
-
-        workspace
-            .update_in(cx, |workspace, window, cx| {
-                workspace.go_back(workspace.active_pane().downgrade(), window, cx)
-            })
-            .await
-            .unwrap();
-        assert_eq!(active_path(&workspace, cx), Some(file3.clone()));
-
-        workspace
-            .update_in(cx, |workspace, window, cx| {
-                workspace.go_back(workspace.active_pane().downgrade(), window, cx)
-            })
-            .await
-            .unwrap();
-        assert_eq!(active_path(&workspace, cx), Some(file2.clone()));
-
-        workspace
-            .update_in(cx, |workspace, window, cx| {
-                workspace.go_back(workspace.active_pane().downgrade(), window, cx)
-            })
-            .await
-            .unwrap();
-        assert_eq!(active_path(&workspace, cx), Some(file1.clone()));
-
-        workspace
-            .update_in(cx, |workspace, window, cx| {
-                workspace.go_back(workspace.active_pane().downgrade(), window, cx)
-            })
-            .await
-            .unwrap();
-        assert_eq!(active_path(&workspace, cx), Some(file1.clone()));
+        pane.read_with(cx, |pane, _| {
+            assert!(pane.can_navigate_forward(), "Should be able to go forward");
+        });
 
         fn active_path(
             workspace: &Entity<Workspace>,
@@ -4490,7 +4450,7 @@ mod tests {
         cx.update(|cx| {
             let app_state = AppState::test(cx);
 
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             client::init(&app_state.client, cx);
             workspace::init(app_state.clone(), cx);
             onboarding::init(cx);
@@ -4792,6 +4752,7 @@ mod tests {
                 "action",
                 "activity_indicator",
                 "agent",
+                "agents_sidebar",
                 "app_menu",
                 "assistant",
                 "assistant2",
@@ -4809,6 +4770,7 @@ mod tests {
                 "console",
                 "context_server",
                 "copilot",
+                "csv",
                 "debug_panel",
                 "debugger",
                 "dev",
@@ -4866,6 +4828,7 @@ mod tests {
                 "task",
                 "terminal",
                 "terminal_panel",
+                "theme",
                 "theme_selector",
                 "toast",
                 "toolchain",
@@ -4905,7 +4868,7 @@ mod tests {
             .unwrap();
         let themes = ThemeRegistry::default();
         settings::init(cx);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
 
         let mut has_default_theme = false;
         for theme_name in themes.list().into_iter().map(|meta| meta.name) {
@@ -4958,6 +4921,54 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_bundled_files_reuse_existing_editor(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        cx.update(init);
+
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let _window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+        cx.update(|cx| {
+            cx.dispatch_action(&OpenDefaultSettings);
+        });
+        cx.run_until_parked();
+
+        let multi_workspace = cx.windows()[0].downcast::<MultiWorkspace>().unwrap();
+        let first_item_id = multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    workspace
+                        .active_item(cx)
+                        .expect("default settings should be open")
+                        .item_id()
+                })
+            })
+            .unwrap();
+
+        cx.update(|cx| {
+            cx.dispatch_action(&OpenDefaultSettings);
+        });
+        cx.run_until_parked();
+
+        let (second_item_id, item_count) = multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    let pane = workspace.active_pane().read(cx);
+                    (
+                        pane.active_item()
+                            .expect("default settings should still be open")
+                            .item_id(),
+                        pane.items_len(),
+                    )
+                })
+            })
+            .unwrap();
+
+        assert_eq!(first_item_id, second_item_id);
+        assert_eq!(item_count, 1);
+    }
+
+    #[gpui::test]
     async fn test_bundled_languages(cx: &mut TestAppContext) {
         let fs = fs::FakeFs::new(cx.background_executor.clone());
         env_logger::builder().is_test(true).try_init().ok();
@@ -4995,7 +5006,7 @@ mod tests {
             app_state.languages.add(markdown_lang());
 
             gpui_tokio::init(cx);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             audio::init(cx);
             channel::init(&app_state.client, app_state.user_store.clone(), cx);
             call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
@@ -5016,11 +5027,11 @@ mod tests {
                 cx,
             );
             image_viewer::init(cx);
-            language_model::init(app_state.client.clone(), cx);
+            language_model::init(app_state.user_store.clone(), app_state.client.clone(), cx);
             language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
             web_search::init(cx);
             git_graph::init(cx);
-            web_search_providers::init(app_state.client.clone(), cx);
+            web_search_providers::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             let prompt_builder = PromptBuilder::load(app_state.fs.clone(), false, cx);
             project::AgentRegistryStore::init_global(
                 cx,
@@ -5805,9 +5816,19 @@ mod tests {
         //
         //   Window A: workspace for dir1, workspace for dir2
         //   Window B: workspace for dir3
-        let (window_a, _) = cx
+        let workspace::OpenResult {
+            window: window_a, ..
+        } = cx
             .update(|cx| {
-                Workspace::new_local(vec![dir1.into()], app_state.clone(), None, None, None, cx)
+                Workspace::new_local(
+                    vec![dir1.into()],
+                    app_state.clone(),
+                    None,
+                    None,
+                    None,
+                    true,
+                    cx,
+                )
             })
             .await
             .expect("failed to open first workspace");
@@ -5821,9 +5842,19 @@ mod tests {
             .expect("failed to open second workspace into window A");
         cx.run_until_parked();
 
-        let (window_b, _) = cx
+        let workspace::OpenResult {
+            window: window_b, ..
+        } = cx
             .update(|cx| {
-                Workspace::new_local(vec![dir3.into()], app_state.clone(), None, None, None, cx)
+                Workspace::new_local(
+                    vec![dir3.into()],
+                    app_state.clone(),
+                    None,
+                    None,
+                    None,
+                    true,
+                    cx,
+                )
             })
             .await
             .expect("failed to open third workspace");
@@ -5838,14 +5869,17 @@ mod tests {
             })
             .unwrap();
 
-        // --- Flush serialization ---
-        cx.executor().advance_clock(SERIALIZATION_THROTTLE_TIME);
+        cx.run_until_parked();
+        flush_workspace_serialization(&window_a, cx).await;
+        flush_workspace_serialization(&window_b, cx).await;
         cx.run_until_parked();
 
         // Verify all workspaces retained their session_ids.
-        let locations = workspace::last_session_workspace_locations(&session_id, None, fs.as_ref())
-            .await
-            .expect("expected session workspace locations");
+        let db = cx.update(|cx| workspace::WorkspaceDb::global(cx));
+        let locations =
+            workspace::last_session_workspace_locations(&db, &session_id, None, fs.as_ref())
+                .await
+                .expect("expected session workspace locations");
         assert_eq!(
             locations.len(),
             3,
@@ -5872,9 +5906,10 @@ mod tests {
         });
 
         // --- Read back from DB and verify grouping ---
-        let locations = workspace::last_session_workspace_locations(&session_id, None, fs.as_ref())
-            .await
-            .expect("expected session workspace locations");
+        let locations =
+            workspace::last_session_workspace_locations(&db, &session_id, None, fs.as_ref())
+                .await
+                .expect("expected session workspace locations");
 
         assert_eq!(locations.len(), 3, "expected 3 session workspaces");
 

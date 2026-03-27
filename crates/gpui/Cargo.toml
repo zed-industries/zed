@@ -24,6 +24,7 @@ test-support = [
     "http_client/test-support",
     "wayland",
     "x11",
+    "proptest",
 ]
 inspector = ["gpui_macros/inspector"]
 leak-detection = ["backtrace"]
@@ -64,18 +65,22 @@ num_cpus = "1.13"
 parking = "2.0.0"
 parking_lot.workspace = true
 postage.workspace = true
+proptest = { workspace = true, optional = true }
 chrono.workspace = true
 profiling.workspace = true
 rand.workspace = true
 raw-window-handle = "0.6"
+regex.workspace = true
 refineable.workspace = true
 scheduler.workspace = true
 resvg = { version = "0.45.0", default-features = false, features = [
     "text",
     "system-fonts",
     "memmap-fonts",
+    "raster-images"
 ] }
 usvg = { version = "0.45.0", default-features = false }
+ttf-parser = "0.25"
 util_macros.workspace = true
 schemars.workspace = true
 seahash = "4.1"
@@ -93,7 +98,6 @@ gpui_util.workspace = true
 waker-fn = "1.2.0"
 lyon = "1.0"
 pin-project = "1.1.10"
-circular-buffer.workspace = true
 spin = "0.10.0"
 pollster.workspace = true
 url.workspace = true
@@ -142,13 +146,13 @@ windows = { version = "0.61", features = ["Win32_Foundation"] }
 backtrace.workspace = true
 collections = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
-gpui_platform.workspace = true
+gpui_platform = { workspace = true, features = ["font-kit"] }
+gpui_util = { workspace = true }
 lyon = { version = "1.0", features = ["extra"] }
-pretty_assertions.workspace = true
+proptest = { workspace = true }
 rand.workspace = true
 scheduler = { workspace = true, features = ["test-support"] }
-unicode-segmentation.workspace = true
-gpui_util = { workspace = true }
+unicode-segmentation = { workspace = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 http_client = { workspace = true, features = ["test-support"] }
@@ -232,6 +236,10 @@ path = "examples/window_shadow.rs"
 [[example]]
 name = "grid_layout"
 path = "examples/grid_layout.rs"
+
+[[example]]
+name = "list_example"
+path = "examples/list_example.rs"
 
 [[example]]
 name = "mouse_pressure"

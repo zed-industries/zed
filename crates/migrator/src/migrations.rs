@@ -275,6 +275,12 @@ pub(crate) mod m_2025_12_15 {
     pub(crate) use settings::SETTINGS_PATTERNS;
 }
 
+pub(crate) mod m_2025_01_27 {
+    mod settings;
+
+    pub(crate) use settings::make_auto_indent_an_enum;
+}
+
 pub(crate) mod m_2026_02_02 {
     mod settings;
 
@@ -297,4 +303,16 @@ pub(crate) mod m_2026_02_25 {
     mod settings;
 
     pub(crate) use settings::migrate_builtin_agent_servers_to_registry;
+}
+
+pub(crate) mod m_2026_03_16 {
+    mod settings;
+
+    pub(crate) use settings::SETTINGS_PATTERNS;
+}
+
+pub(crate) mod m_2026_03_23 {
+    mod keymap;
+
+    pub(crate) use keymap::KEYMAP_PATTERNS;
 }

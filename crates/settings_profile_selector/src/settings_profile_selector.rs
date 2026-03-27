@@ -286,7 +286,7 @@ mod tests {
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::Settings;
-    use theme::{self, ThemeSettings};
+    use theme_settings::ThemeSettings;
     use workspace::{self, AppState, MultiWorkspace};
     use zed_actions::settings_profile_selector;
 
@@ -299,7 +299,7 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             settings::init(cx);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             super::init(cx);
             editor::init(cx);
             state
