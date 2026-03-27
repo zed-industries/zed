@@ -18751,6 +18751,38 @@ async fn test_toggle_block_comment(cx: &mut TestAppContext) {
         "#
         .unindent(),
     );
+
+    // Commenting a </script> closing tag should use HTML block comments,
+    // not JS line comments, even though the tag closes a JS injection.
+    cx.set_state(indoc! {"
+        <script>
+            const x = 1;
+        «</script>ˇ»
+    "});
+
+    cx.update_editor(|e, window, cx| e.toggle_comments(&ToggleComments::default(), window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        <script>
+            const x = 1;
+        <!-- «</script>ˇ» -->
+    "});
+
+    // Uncommenting a <!-- </script> --> should use HTML block comments,
+    // not JS line comments, even though the injection appears unclosed.
+    cx.set_state(indoc! {"
+        <script>
+            const x = 1;
+        <!-- «</script>ˇ» -->
+    "});
+
+    cx.update_editor(|e, window, cx| e.toggle_comments(&ToggleComments::default(), window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        <script>
+            const x = 1;
+        «</script>ˇ»
+    "});
 }
 
 #[gpui::test]

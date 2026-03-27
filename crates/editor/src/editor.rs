@@ -16491,8 +16491,50 @@ impl Editor {
                 let start_column = snapshot
                     .indent_size_for_line(MultiBufferRow(selection.start.row))
                     .len;
+
+                let target_column = {
+                    let start_language = if let Some(language) =
+                        snapshot.language_scope_at(Point::new(selection.start.row, start_column))
+                    {
+                        language
+                    } else {
+                        continue;
+                    };
+
+                    let end_language = if let Some(language) =
+                        snapshot.language_scope_at(Point::new(selection.end.row, selection.end.column))
+                    {
+                        language
+                    } else {
+                        continue;
+                    };
+
+                    let mut tokens = Vec::new();
+                    for language in [&start_language, &end_language] {
+                        tokens.extend(language.line_comment_prefixes().iter().cloned());
+                        if let Some(block) = language.block_comment() {
+                            tokens.push(block.start.clone());
+                        }
+                    }
+                    tokens.sort_by(|a, b| b.len().cmp(&a.len()));
+                    tokens.dedup();
+
+                    let line = snapshot.text_for_range(
+                        Point::new(selection.start.row, start_column)
+                            ..Point::new(selection.start.row, snapshot.line_len(MultiBufferRow(selection.start.row)))
+                    ).collect::<String>();
+                    let mut stripped = line.as_str();
+                    for token in &tokens {
+                        stripped = stripped.trim_start_matches(token.as_ref());
+                        // Trim space after the token
+                        stripped = stripped.trim_start();
+                    }
+
+                    start_column + (line.len() - stripped.len()) as u32
+                };
+
                 let language = if let Some(language) =
-                    snapshot.language_scope_at(Point::new(selection.start.row, start_column))
+                    snapshot.language_scope_at(Point::new(selection.start.row, target_column))
                 {
                     language
                 } else {
