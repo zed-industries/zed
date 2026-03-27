@@ -6099,6 +6099,7 @@ dependencies = [
  "tempfile",
  "theme",
  "theme_extension",
+ "theme_settings",
  "toml 0.8.23",
  "tracing",
  "url",
