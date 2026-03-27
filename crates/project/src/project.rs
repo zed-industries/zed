@@ -1,3 +1,4 @@
+pub mod agent_registry_store;
 pub mod agent_server_store;
 pub mod buffer_store;
 mod color_extractor;
@@ -43,7 +44,10 @@ use crate::{
     project_search::SearchResultsHandle,
     trusted_worktrees::{PathTrust, RemoteHostLocation, TrustedWorktrees},
 };
-pub use agent_server_store::{AgentServerStore, AgentServersUpdated, ExternalAgentServerName};
+pub use agent_registry_store::{AgentRegistryStore, RegistryAgent};
+pub use agent_server_store::{
+    AgentServerStore, AgentServersUpdated, ExternalAgentServerName, ExternalAgentSource,
+};
 pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
@@ -68,7 +72,7 @@ use debugger::{
     dap_store::{DapStore, DapStoreEvent},
     session::Session,
 };
-use encoding_rs;
+
 pub use environment::ProjectEnvironment;
 #[cfg(test)]
 use futures::future::join_all;
@@ -159,6 +163,21 @@ pub use lsp_store::{
 };
 pub use toolchain_store::{ToolchainStore, Toolchains};
 const MAX_PROJECT_SEARCH_HISTORY_SIZE: usize = 500;
+
+#[derive(Clone, Copy, Debug)]
+pub struct LocalProjectFlags {
+    pub init_worktree_trust: bool,
+    pub watch_global_configs: bool,
+}
+
+impl Default for LocalProjectFlags {
+    fn default() -> Self {
+        Self {
+            init_worktree_trust: true,
+            watch_global_configs: true,
+        }
+    }
+}
 
 pub trait ProjectItem: 'static {
     fn try_open(
@@ -333,7 +352,9 @@ pub enum Event {
     },
     RemoteIdChanged(Option<u64>),
     DisconnectedFromHost,
-    DisconnectedFromRemote,
+    DisconnectedFromRemote {
+        server_not_running: bool,
+    },
     Closed,
     DeletedEntry(WorktreeId, ProjectEntryId),
     CollaboratorUpdated {
@@ -1082,7 +1103,7 @@ impl Project {
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         env: Option<HashMap<String, String>>,
-        init_worktree_trust: bool,
+        flags: LocalProjectFlags,
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|cx: &mut Context<Self>| {
@@ -1091,7 +1112,7 @@ impl Project {
                 .detach();
             let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
             let worktree_store = cx.new(|_| WorktreeStore::local(false, fs.clone()));
-            if init_worktree_trust {
+            if flags.init_worktree_trust {
                 trusted_worktrees::track_worktree_trust(
                     worktree_store.clone(),
                     None,
@@ -1179,6 +1200,7 @@ impl Project {
                     fs.clone(),
                     worktree_store.clone(),
                     task_store.clone(),
+                    flags.watch_global_configs,
                     cx,
                 )
             });
@@ -1893,7 +1915,10 @@ impl Project {
                 Arc::new(languages),
                 fs,
                 None,
-                false,
+                LocalProjectFlags {
+                    init_worktree_trust: false,
+                    ..Default::default()
+                },
                 cx,
             )
         });
@@ -1950,7 +1975,10 @@ impl Project {
                 Arc::new(languages),
                 fs,
                 None,
-                init_worktree_trust,
+                LocalProjectFlags {
+                    init_worktree_trust,
+                    ..Default::default()
+                },
                 cx,
             )
         });
@@ -3321,7 +3349,7 @@ impl Project {
         cx: &mut Context<Self>,
     ) {
         match event {
-            remote::RemoteClientEvent::Disconnected => {
+            &remote::RemoteClientEvent::Disconnected { server_not_running } => {
                 self.worktree_store.update(cx, |store, cx| {
                     store.disconnected_from_host(cx);
                 });
@@ -3331,7 +3359,7 @@ impl Project {
                 self.lsp_store.update(cx, |lsp_store, _cx| {
                     lsp_store.disconnected_from_ssh_remote()
                 });
-                cx.emit(Event::DisconnectedFromRemote);
+                cx.emit(Event::DisconnectedFromRemote { server_not_running });
             }
         }
     }
@@ -5589,48 +5617,6 @@ impl Project {
             .map_or(false, |worktree| {
                 worktree.read(cx).entry_for_path(rel_path).is_some()
             })
-    }
-
-    pub fn update_local_settings_file(
-        &self,
-        worktree_id: WorktreeId,
-        rel_path: Arc<RelPath>,
-        cx: &mut App,
-        update: impl 'static + Send + FnOnce(&mut settings::SettingsContent, &App),
-    ) {
-        let Some(worktree) = self.worktree_for_id(worktree_id, cx) else {
-            // todo(settings_ui) error?
-            return;
-        };
-        cx.spawn(async move |cx| {
-            let file = worktree
-                .update(cx, |worktree, cx| worktree.load_file(&rel_path, cx))
-                .await
-                .context("Failed to load settings file")?;
-
-            let has_bom = file.has_bom;
-
-            let new_text = cx.read_global::<SettingsStore, _>(|store, cx| {
-                store.new_text_for_update(file.text, move |settings| update(settings, cx))
-            });
-            worktree
-                .update(cx, |worktree, cx| {
-                    let line_ending = text::LineEnding::detect(&new_text);
-                    worktree.write_file(
-                        rel_path.clone(),
-                        new_text.into(),
-                        line_ending,
-                        encoding_rs::UTF_8,
-                        has_bom,
-                        cx,
-                    )
-                })
-                .await
-                .context("Failed to write settings file")?;
-
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
     }
 }
 

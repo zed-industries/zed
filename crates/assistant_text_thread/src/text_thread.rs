@@ -2269,6 +2269,7 @@ impl TextThread {
             stop: Vec::new(),
             temperature: model.and_then(|model| AgentSettings::temperature_for_model(model, cx)),
             thinking_allowed: true,
+            bypass_rate_limit: false,
         };
         for message in self.messages(cx) {
             if message.status != MessageStatus::Done {

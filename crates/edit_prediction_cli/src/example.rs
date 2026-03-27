@@ -73,7 +73,8 @@ pub struct ExamplePrompt {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExamplePrediction {
-    pub actual_patch: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actual_patch: Option<String>,
     pub actual_output: String,
     pub provider: PredictionProvider,
 }

@@ -89,7 +89,7 @@ impl SearchQuery {
     /// Create a text query
     ///
     /// If `match_full_paths` is true, include/exclude patterns will always be matched against fully qualified project paths beginning with a project root.
-    /// If `match_full_paths` is false, patterns will be matched against full paths only when the project has multiple roots.
+    /// If `match_full_paths` is false, patterns will be matched against worktree-relative paths.
     pub fn text(
         query: impl ToString,
         whole_word: bool,
@@ -290,7 +290,7 @@ impl SearchQuery {
                 message.include_ignored,
                 PathMatcher::new(files_to_include, path_style)?,
                 PathMatcher::new(files_to_exclude, path_style)?,
-                false,
+                message.match_full_paths,
                 None, // search opened only don't need search remote
             )
         }

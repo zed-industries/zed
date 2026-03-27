@@ -679,6 +679,7 @@ impl LanguageModel for BedrockModel {
         };
 
         let deny_tool_calls = request.tool_choice == Some(LanguageModelToolChoice::None);
+        let bypass_rate_limit = request.bypass_rate_limit;
 
         let request = match into_bedrock(
             request,
@@ -693,16 +694,19 @@ impl LanguageModel for BedrockModel {
         };
 
         let request = self.stream_completion(request, cx);
-        let future = self.request_limiter.stream(async move {
-            let response = request.await.map_err(|err| anyhow!(err))?;
-            let events = map_to_language_model_completion_events(response);
+        let future = self.request_limiter.stream_with_bypass(
+            async move {
+                let response = request.await.map_err(|err| anyhow!(err))?;
+                let events = map_to_language_model_completion_events(response);
 
-            if deny_tool_calls {
-                Ok(deny_tool_use_events(events).boxed())
-            } else {
-                Ok(events.boxed())
-            }
-        });
+                if deny_tool_calls {
+                    Ok(deny_tool_use_events(events).boxed())
+                } else {
+                    Ok(events.boxed())
+                }
+            },
+            bypass_rate_limit,
+        );
 
         async move { Ok(future.await?.boxed()) }.boxed()
     }

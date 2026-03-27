@@ -211,7 +211,10 @@ async fn setup_project(
             app_state.languages.clone(),
             app_state.fs.clone(),
             None,
-            false,
+            project::LocalProjectFlags {
+                init_worktree_trust: false,
+                watch_global_configs: false,
+            },
             cx,
         )
     });
@@ -229,10 +232,16 @@ async fn setup_project(
 
     let buffer_store = project.read_with(cx, |project, _| project.buffer_store().clone());
     cx.subscribe(&buffer_store, {
-        let project = project.clone();
+        let project = project.downgrade();
+        let ep_store = ep_store.downgrade();
         move |_, event, cx| match event {
             BufferStoreEvent::BufferAdded(buffer) => {
-                ep_store.update(cx, |store, cx| store.register_buffer(&buffer, &project, cx));
+                let Some(project) = project.upgrade() else {
+                    return;
+                };
+                ep_store
+                    .update(cx, |store, cx| store.register_buffer(&buffer, &project, cx))
+                    .ok();
             }
             _ => {}
         }

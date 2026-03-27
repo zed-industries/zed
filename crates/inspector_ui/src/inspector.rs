@@ -33,7 +33,10 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
         app_state.languages.clone(),
         app_state.fs.clone(),
         None,
-        false,
+        project::LocalProjectFlags {
+            init_worktree_trust: false,
+            ..Default::default()
+        },
         cx,
     );
 

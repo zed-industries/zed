@@ -17,6 +17,7 @@ use crashes::InitCrashHandler;
 use db::kvp::{GLOBAL_KEY_VALUE_STORE, KEY_VALUE_STORE};
 use editor::Editor;
 use extension::ExtensionHostProxy;
+use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use fs::{Fs, RealFs};
 use futures::{StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
@@ -361,17 +362,17 @@ fn main() {
     }
 
     let fs = Arc::new(RealFs::new(git_binary_path, app.background_executor()));
-    let user_settings_file_rx = watch_config_file(
+    let (user_settings_file_rx, user_settings_watcher) = watch_config_file(
         &app.background_executor(),
         fs.clone(),
         paths::settings_file().clone(),
     );
-    let global_settings_file_rx = watch_config_file(
+    let (global_settings_file_rx, global_settings_watcher) = watch_config_file(
         &app.background_executor(),
         fs.clone(),
         paths::global_settings_file().clone(),
     );
-    let user_keymap_file_rx = watch_config_file(
+    let (user_keymap_file_rx, user_keymap_watcher) = watch_config_file(
         &app.background_executor(),
         fs.clone(),
         paths::keymap_file().clone(),
@@ -434,8 +435,14 @@ fn main() {
         }
         settings::init(cx);
         zlog_settings::init(cx);
-        handle_settings_file_changes(user_settings_file_rx, global_settings_file_rx, cx);
-        handle_keymap_file_changes(user_keymap_file_rx, cx);
+        handle_settings_file_changes(
+            user_settings_file_rx,
+            user_settings_watcher,
+            global_settings_file_rx,
+            global_settings_watcher,
+            cx,
+        );
+        handle_keymap_file_changes(user_keymap_file_rx, user_keymap_watcher, cx);
 
         let user_agent = format!(
             "Zed/{} ({}; {})",
@@ -617,6 +624,15 @@ fn main() {
         snippet_provider::init(cx);
         edit_prediction_registry::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         let prompt_builder = PromptBuilder::load(app_state.fs.clone(), stdout_is_a_pty(), cx);
+        if cx.has_flag::<AcpBetaFeatureFlag>() {
+            project::AgentRegistryStore::init_global(cx);
+        }
+        cx.observe_flag::<AcpBetaFeatureFlag, _>(|is_enabled, cx| {
+            if is_enabled {
+                project::AgentRegistryStore::init_global(cx);
+            }
+        })
+        .detach();
         agent_ui::init(
             app_state.fs.clone(),
             app_state.client.clone(),

@@ -862,7 +862,10 @@ impl TestClient {
                 self.app_state.languages.clone(),
                 self.app_state.fs.clone(),
                 None,
-                init_worktree_trust,
+                project::LocalProjectFlags {
+                    init_worktree_trust,
+                    ..Default::default()
+                },
                 cx,
             )
         })

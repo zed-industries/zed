@@ -2679,13 +2679,15 @@ impl RemoteServerProjects {
 }
 
 fn spawn_ssh_config_watch(fs: Arc<dyn Fs>, cx: &Context<RemoteServerProjects>) -> Task<()> {
-    let mut user_ssh_config_watcher =
+    let (mut user_ssh_config_watcher, user_watcher_task) =
         watch_config_file(cx.background_executor(), fs.clone(), user_ssh_config_file());
-    let mut global_ssh_config_watcher = global_ssh_config_file()
+    let (mut global_ssh_config_watcher, global_watcher_task) = global_ssh_config_file()
         .map(|it| watch_config_file(cx.background_executor(), fs, it.to_owned()))
-        .unwrap_or_else(|| futures::channel::mpsc::unbounded().1);
+        .unwrap_or_else(|| (futures::channel::mpsc::unbounded().1, gpui::Task::ready(())));
 
     cx.spawn(async move |remote_server_projects, cx| {
+        let _user_watcher_task = user_watcher_task;
+        let _global_watcher_task = global_watcher_task;
         let mut global_hosts = BTreeSet::default();
         let mut user_hosts = BTreeSet::default();
         let mut running_receivers = 2;

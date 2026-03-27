@@ -2691,6 +2691,7 @@ impl GitPanel {
                     stop: Vec::new(),
                     temperature,
                     thinking_allowed: false,
+                    bypass_rate_limit: false,
                 };
 
                 let stream = model.stream_completion_text(request, cx);

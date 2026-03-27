@@ -981,7 +981,7 @@ impl ExtensionStore {
                         .compile_extension(
                             &extension_source_path,
                             &mut extension_manifest,
-                            CompileExtensionOptions { release: false },
+                            CompileExtensionOptions::dev(),
                             fs,
                         )
                         .await
@@ -1041,12 +1041,7 @@ impl ExtensionStore {
         let compile = cx.background_spawn(async move {
             let mut manifest = ExtensionManifest::load(fs.clone(), &path).await?;
             builder
-                .compile_extension(
-                    &path,
-                    &mut manifest,
-                    CompileExtensionOptions { release: true },
-                    fs,
-                )
+                .compile_extension(&path, &mut manifest, CompileExtensionOptions::dev(), fs)
                 .await
         });
 

@@ -4,8 +4,8 @@ _**Note**: The following only applies to Zed 0.152.0 and later._
 
 Multiple features in Zed are affected by environment variables:
 
-- Tasks
-- Built-in terminal
+- [Tasks](./tasks.md)
+- [Built-in terminal](./terminal.md)
 - Look-up of language servers
 - Language servers
 

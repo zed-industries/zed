@@ -71,7 +71,11 @@ The user is computing a sum based on a list of products. The only numeric field 
 
 # 1. User Edits History
 
+`````
 {{edit_history}}
+`````
+
+# 2. Related excerpts
 
 {{context}}
 

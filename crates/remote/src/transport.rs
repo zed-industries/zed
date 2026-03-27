@@ -159,10 +159,14 @@ fn handle_rpc_messages_over_child_process_stdio(
                 result.context("stderr")
             }
         };
-        let status = remote_proxy_process.status().await?.code().unwrap_or(1);
-        if status != 0 {
-            anyhow::bail!("Remote server exited with status {status}");
-        }
+        let exit_status = remote_proxy_process.status().await?;
+        let status = exit_status.code().unwrap_or_else(|| {
+            #[cfg(unix)]
+            let status = std::os::unix::process::ExitStatusExt::signal(&exit_status).unwrap_or(1);
+            #[cfg(not(unix))]
+            let status = 1;
+            status
+        });
         match result {
             Ok(_) => Ok(status),
             Err(error) => Err(error),
@@ -174,6 +178,7 @@ fn handle_rpc_messages_over_child_process_stdio(
 async fn build_remote_server_from_source(
     platform: &crate::RemotePlatform,
     delegate: &dyn crate::RemoteClientDelegate,
+    binary_exists_on_server: bool,
     cx: &mut AsyncApp,
 ) -> Result<Option<std::path::PathBuf>> {
     use smol::process::{Command, Stdio};
@@ -198,8 +203,13 @@ async fn build_remote_server_from_source(
     let build_remote_server =
         std::env::var("ZED_BUILD_REMOTE_SERVER").unwrap_or("nocompress".into());
 
-    if let "false" | "no" | "off" | "0" = &*build_remote_server {
+    if let "never" = &*build_remote_server {
         return Ok(None);
+    } else if let "false" | "no" | "off" | "0" = &*build_remote_server {
+        if binary_exists_on_server {
+            return Ok(None);
+        }
+        log::warn!("ZED_BUILD_REMOTE_SERVER is disabled, but no server binary exists on the server")
     }
 
     async fn run_cmd(command: &mut Command) -> Result<()> {

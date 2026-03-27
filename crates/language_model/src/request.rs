@@ -92,6 +92,9 @@ const DEFAULT_IMAGE_MAX_BYTES: usize = 5 * 1024 * 1024;
 const MAX_IMAGE_DOWNSCALE_PASSES: usize = 8;
 
 impl LanguageModelImage {
+    // All language model images are encoded as PNGs.
+    pub const FORMAT: ImageFormat = ImageFormat::Png;
+
     pub fn empty() -> Self {
         Self {
             source: "".into(),
@@ -448,6 +451,11 @@ pub struct LanguageModelRequest {
     pub stop: Vec<String>,
     pub temperature: Option<f32>,
     pub thinking_allowed: bool,
+    /// When true, this request bypasses the rate limiter. Used for nested requests
+    /// (like edit agent requests spawned from within a tool call) that are already
+    /// "part of" a rate-limited request to avoid deadlocks.
+    #[serde(default)]
+    pub bypass_rate_limit: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]

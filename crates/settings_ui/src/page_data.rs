@@ -2,11 +2,12 @@ use gpui::{Action as _, App};
 use settings::{LanguageSettingsContent, SettingsContent};
 use std::sync::Arc;
 use strum::IntoDiscriminant as _;
-use ui::{IntoElement, SharedString};
+use ui::IntoElement;
 
 use crate::{
     ActionLink, DynamicItem, PROJECT, SettingField, SettingItem, SettingsFieldMetadata,
-    SettingsPage, SettingsPageItem, SubPageLink, USER, all_language_names, sub_page_stack,
+    SettingsPage, SettingsPageItem, SubPageLink, USER, active_language, all_language_names,
+    pages::render_edit_prediction_setup_page,
 };
 
 const DEFAULT_STRING: String = String::new();
@@ -2913,24 +2914,30 @@ fn languages_and_tools_page(cx: &App) -> SettingsPage {
     fn languages_list_section(cx: &App) -> Box<[SettingsPageItem]> {
         // todo(settings_ui): Refresh on extension (un)/installed
         // Note that `crates/json_schema_store` solves the same problem, there is probably a way to unify the two
-        std::iter::once(SettingsPageItem::SectionHeader(LANGUAGES_SECTION_HEADER))
+        std::iter::once(SettingsPageItem::SectionHeader("Languages"))
             .chain(all_language_names(cx).into_iter().map(|language_name| {
                 let link = format!("languages.{language_name}");
                 SettingsPageItem::SubPageLink(SubPageLink {
                     title: language_name,
+                    r#type: crate::SubPageType::Language,
                     description: None,
                     json_path: Some(link.leak()),
                     in_json: true,
                     files: USER | PROJECT,
-                    render: Arc::new(|this, window, cx| {
+                    render: |this, scroll_handle, window, cx| {
                         let items: Box<[SettingsPageItem]> = concat_sections!(
                             language_settings_data(),
                             non_editor_language_settings_data(),
                             edit_prediction_language_settings_section()
                         );
-                        this.render_sub_page_items(items.iter().enumerate(), None, window, cx)
-                            .into_any_element()
-                    }),
+                        this.render_sub_page_items(
+                            items.iter().enumerate(),
+                            scroll_handle,
+                            window,
+                            cx,
+                        )
+                        .into_any_element()
+                    },
                 })
             }))
             .collect()
@@ -7168,33 +7175,21 @@ fn network_page() -> SettingsPage {
     }
 }
 
-const LANGUAGES_SECTION_HEADER: &'static str = "Languages";
-
-fn current_language() -> Option<SharedString> {
-    sub_page_stack().iter().find_map(|page| {
-        (page.section_header == LANGUAGES_SECTION_HEADER).then(|| page.link.title.clone())
-    })
-}
-
 fn language_settings_field<T>(
     settings_content: &SettingsContent,
-    get: fn(&LanguageSettingsContent) -> Option<&T>,
+    get_language_setting_field: fn(&LanguageSettingsContent) -> Option<&T>,
 ) -> Option<&T> {
     let all_languages = &settings_content.project.all_languages;
-    if let Some(current_language_name) = current_language() {
-        if let Some(current_language) = all_languages
-            .languages
-            .0
-            .get(current_language_name.as_ref())
-        {
-            let value = get(current_language);
-            if value.is_some() {
-                return value;
-            }
-        }
-    }
-    let default_value = get(&all_languages.defaults);
-    return default_value;
+
+    active_language()
+        .and_then(|current_language_name| {
+            all_languages
+                .languages
+                .0
+                .get(current_language_name.as_ref())
+        })
+        .and_then(get_language_setting_field)
+        .or_else(|| get_language_setting_field(&all_languages.defaults))
 }
 
 fn language_settings_field_mut<T>(
@@ -7203,7 +7198,7 @@ fn language_settings_field_mut<T>(
     write: fn(&mut LanguageSettingsContent, Option<T>),
 ) {
     let all_languages = &mut settings_content.project.all_languages;
-    let language_content = if let Some(current_language) = current_language() {
+    let language_content = if let Some(current_language) = active_language() {
         all_languages
             .languages
             .0
@@ -8382,7 +8377,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
         ]
     }
 
-    let is_global = current_language().is_none();
+    let is_global = active_language().is_none();
 
     let lsp_document_colors_item = [SettingsPageItem::SettingItem(SettingItem {
         title: "LSP Document Colors",
@@ -8724,17 +8719,12 @@ fn edit_prediction_language_settings_section() -> [SettingsPageItem; 4] {
         SettingsPageItem::SectionHeader("Edit Predictions"),
         SettingsPageItem::SubPageLink(SubPageLink {
             title: "Configure Providers".into(),
+            r#type: Default::default(),
             json_path: Some("edit_predictions.providers"),
             description: Some("Set up different edit prediction providers in complement to Zed's built-in Zeta model.".into()),
             in_json: false,
             files: USER,
-            render: Arc::new(|_, window, cx| {
-                let settings_window = cx.entity();
-                let page = window.use_state(cx, |_, _| {
-                    crate::pages::EditPredictionSetupPage::new(settings_window)
-                });
-                page.into_any_element()
-            }),
+            render: render_edit_prediction_setup_page
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Edit Predictions",

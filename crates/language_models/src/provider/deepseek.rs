@@ -199,6 +199,7 @@ impl DeepSeekLanguageModel {
     fn stream_completion(
         &self,
         request: deepseek::Request,
+        bypass_rate_limit: bool,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<deepseek::StreamResponse>>>> {
         let http_client = self.http_client.clone();
@@ -208,17 +209,20 @@ impl DeepSeekLanguageModel {
             (state.api_key_state.key(&api_url), api_url)
         });
 
-        let future = self.request_limiter.stream(async move {
-            let Some(api_key) = api_key else {
-                return Err(LanguageModelCompletionError::NoApiKey {
-                    provider: PROVIDER_NAME,
-                });
-            };
-            let request =
-                deepseek::stream_completion(http_client.as_ref(), &api_url, &api_key, request);
-            let response = request.await?;
-            Ok(response)
-        });
+        let future = self.request_limiter.stream_with_bypass(
+            async move {
+                let Some(api_key) = api_key else {
+                    return Err(LanguageModelCompletionError::NoApiKey {
+                        provider: PROVIDER_NAME,
+                    });
+                };
+                let request =
+                    deepseek::stream_completion(http_client.as_ref(), &api_url, &api_key, request);
+                let response = request.await?;
+                Ok(response)
+            },
+            bypass_rate_limit,
+        );
 
         async move { Ok(future.await?.boxed()) }.boxed()
     }
@@ -302,8 +306,9 @@ impl LanguageModel for DeepSeekLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        let bypass_rate_limit = request.bypass_rate_limit;
         let request = into_deepseek(request, &self.model, self.max_output_tokens());
-        let stream = self.stream_completion(request, cx);
+        let stream = self.stream_completion(request, bypass_rate_limit, cx);
 
         async move {
             let mapper = DeepSeekEventMapper::new();
