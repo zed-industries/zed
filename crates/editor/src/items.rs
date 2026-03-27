@@ -1610,11 +1610,11 @@ impl SearchableItem for Editor {
                 let text: String = buffer_snapshot
                     .text_for_range(selection.start..selection.end)
                     .collect();
-                let text = text.trim();
+                let text = text.trim().to_string();
                 if text.is_empty() || text.contains('\n') || text.contains('\r') {
                     String::new()
                 } else {
-                    text.to_string()
+                    text
                 }
             }
             SeedQuerySetting::Selection => String::new(),
@@ -2305,4 +2305,5 @@ mod tests {
             });
         }
     }
+
 }

@@ -3972,7 +3972,7 @@ impl Editor {
         });
     }
 
-    fn select(&mut self, phase: SelectPhase, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn select(&mut self, phase: SelectPhase, window: &mut Window, cx: &mut Context<Self>) {
         self.hide_context_menu(window, cx);
 
         match phase {

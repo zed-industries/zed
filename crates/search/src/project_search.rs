@@ -4471,6 +4471,75 @@ pub mod tests {
     }
 
     #[gpui::test]
+    async fn test_deploy_search_with_triple_click_selection(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(path!("/dir"), json!({"one.rs": "hello world\nsecond line"}))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |this, cx| {
+            this.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+
+        let editor = workspace
+            .update_in(&mut cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, rel_path("one.rs")), None, true, window, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+        cx.run_until_parked();
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            let position = DisplayPoint::new(DisplayRow(0), 0);
+            editor.select(
+                editor::SelectPhase::Begin {
+                    position,
+                    add: false,
+                    click_count: 3,
+                },
+                window,
+                cx,
+            );
+            editor.select(editor::SelectPhase::End, window, cx);
+        });
+
+        let search_bar = window.build_entity(&mut cx, |_, _| ProjectSearchBar::new());
+        let pane = workspace.update_in(&mut cx, |this, _, _| this.panes()[0].clone());
+        pane.update_in(&mut cx, |pane, window, cx| {
+            pane.toolbar()
+                .update(cx, |toolbar, cx| toolbar.add_item(search_bar, window, cx))
+        });
+
+        workspace.update_in(&mut cx, |workspace, window, cx| {
+            ProjectSearchView::deploy_search(
+                workspace,
+                &workspace::DeploySearch::find(),
+                window,
+                cx,
+            )
+        });
+
+        let search_view = pane
+            .read_with(&cx, |pane, _| {
+                pane.active_item()
+                    .and_then(|item| item.downcast::<ProjectSearchView>())
+            })
+            .expect("should open a project search view");
+        search_view.update(&mut cx, |search_view, cx| {
+            assert_eq!(search_view.search_query_text(cx), "hello world");
+        });
+    }
+
+    #[gpui::test]
     async fn test_search_dismisses_modal(cx: &mut TestAppContext) {
         init_test(cx);
 
