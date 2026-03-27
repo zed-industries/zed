@@ -16458,10 +16458,8 @@ impl Editor {
                     .collect();
 
                 let region_start_offset = snapshot.point_to_offset(region_start);
-                let start_byte =
-                    snapshot.point_to_offset(start_point) - region_start_offset;
-                let end_byte =
-                    snapshot.point_to_offset(end_point) - region_start_offset;
+                let start_byte = snapshot.point_to_offset(start_point) - region_start_offset;
+                let end_byte = snapshot.point_to_offset(end_point) - region_start_offset;
 
                 let mut is_commented = false;
                 let mut prefix_range = start_point..start_point;

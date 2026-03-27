@@ -1011,12 +1011,9 @@ impl Vim {
                         s.move_with(&mut |map, selection| {
                             let start_row = selection.start.to_point(map).row;
                             let end_row = selection.end.to_point(map).row;
-                            let end_col =
-                                map.buffer_snapshot().line_len(MultiBufferRow(end_row));
-                            selection.start =
-                                Point::new(start_row, 0).to_display_point(map);
-                            selection.end =
-                                Point::new(end_row, end_col).to_display_point(map);
+                            let end_col = map.buffer_snapshot().line_len(MultiBufferRow(end_row));
+                            selection.start = Point::new(start_row, 0).to_display_point(map);
+                            selection.end = Point::new(end_row, end_col).to_display_point(map);
                         });
                     });
                 }
