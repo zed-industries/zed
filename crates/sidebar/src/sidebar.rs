@@ -2701,6 +2701,13 @@ impl Sidebar {
 
         let focus = thread_switcher.focus_handle(cx);
         let overlay_view = gpui::AnyView::from(thread_switcher.clone());
+
+        // Replay the initial preview that was emitted during construction
+        // before subscriptions were wired up.
+        let initial_preview = thread_switcher.read(cx).selected_entry().map(|entry| {
+            (entry.agent.clone(), entry.session_info.clone(), entry.workspace.clone())
+        });
+
         self.thread_switcher = Some(thread_switcher);
         self._thread_switcher_subscriptions = subscriptions;
         if let Some(mw) = self.multi_workspace.upgrade() {
@@ -2708,6 +2715,25 @@ impl Sidebar {
                 mw.set_sidebar_overlay(Some(overlay_view), cx);
             });
         }
+
+        if let Some((agent, session_info, workspace)) = initial_preview {
+            if let Some(mw) = self.multi_workspace.upgrade() {
+                mw.update(cx, |mw, cx| {
+                    mw.activate(workspace.clone(), cx);
+                });
+            }
+            self.focused_thread = Some(session_info.session_id.clone());
+            self.update_entries(cx);
+            Self::load_agent_thread_in_workspace(
+                &workspace,
+                agent,
+                session_info,
+                false,
+                window,
+                cx,
+            );
+        }
+
         window.focus(&focus, cx);
     }
 
