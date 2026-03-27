@@ -1215,6 +1215,9 @@ impl ConversationView {
                                 .and_then(|entry| entry.focus_handle(cx))],
                         );
                     });
+                    active.update(cx, |active, cx| {
+                        active.sync_editor_mode_for_empty_state(cx);
+                    });
                 }
             }
             AcpThreadEvent::EntryUpdated(index) => {
@@ -1234,6 +1237,9 @@ impl ConversationView {
                     let list_state = active.read(cx).list_state.clone();
                     entry_view_state.update(cx, |view_state, _cx| view_state.remove(range.clone()));
                     list_state.splice(range.clone(), 0);
+                    active.update(cx, |active, cx| {
+                        active.sync_editor_mode_for_empty_state(cx);
+                    });
                 }
             }
             AcpThreadEvent::SubagentSpawned(session_id) => self.load_subagent_session(
