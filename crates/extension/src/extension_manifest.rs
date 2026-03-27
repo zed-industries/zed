@@ -577,6 +577,23 @@ mod tests {
         );
         assert!(manifest.allow_exec("docker", &["ps"]).is_err()); // wrong first arg
     }
+
+    #[test]
+    fn test_deserialize_manifest_with_windows_separators() {
+        let manifest: ExtensionManifest = toml::from_str(
+            r#"
+id = "test-manifest"
+name = "Test Manifest"
+version = "0.0.1"
+schema_version = 0
+languages = ["foo\\bar"]
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(manifest.languages, vec!["foo/bar".into()]);
+    }
+
     #[test]
     fn parse_manifest_with_agent_server_archive_launcher() {
         let toml_src = r#"
