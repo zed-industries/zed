@@ -33,7 +33,8 @@ fn test_entry_or_insert_with() {
 fn test_entry_or_insert_with_not_called_when_occupied() {
     let mut map: VecMap<&str, i32> = VecMap::new();
     map.entry("a").or_insert(1);
-    map.entry("a").or_insert_with(|| panic!("should not be called"));
+    map.entry("a")
+        .or_insert_with(|| panic!("should not be called"));
     assert_eq!(map.iter().collect::<Vec<_>>(), vec![(&"a", &1)]);
 }
 
