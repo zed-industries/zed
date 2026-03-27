@@ -84,7 +84,6 @@ impl ThreadSwitcher {
             cx.emit(DismissEvent);
         })
         .detach();
-        println!("hello");
 
         Self {
             focus_handle,
