@@ -2465,15 +2465,22 @@ impl Sidebar {
     }
 
     fn mru_threads_for_switcher(&self, _cx: &App) -> Vec<ThreadSwitcherEntry> {
+        let mut current_header_workspace: Option<Entity<Workspace>> = None;
         let mut entries: Vec<ThreadSwitcherEntry> = self
             .contents
             .entries
             .iter()
             .filter_map(|entry| match entry {
+                ListEntry::ProjectHeader { workspace, .. } => {
+                    current_header_workspace = Some(workspace.clone());
+                    None
+                }
                 ListEntry::Thread(thread) => {
                     let workspace = match &thread.workspace {
                         ThreadEntryWorkspace::Open(workspace) => workspace.clone(),
-                        ThreadEntryWorkspace::Closed(_) => return None,
+                        ThreadEntryWorkspace::Closed(_) => {
+                            current_header_workspace.as_ref()?.clone()
+                        }
                     };
                     let notified = self
                         .contents
