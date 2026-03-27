@@ -4163,13 +4163,13 @@ impl Render for TokenUsageTooltip {
         ui::tooltip_container(cx, move |container, cx| {
             container
                 .min_w_40()
+                .child(
+                    Label::new("Context")
+                        .color(Color::Muted)
+                        .size(LabelSize::Small),
+                )
                 .when(!show_split, |this| {
                     this.child(
-                        Label::new("Context")
-                            .color(Color::Muted)
-                            .size(LabelSize::Small),
-                    )
-                    .child(
                         h_flex()
                             .gap_0p5()
                             .child(Label::new(percentage.clone()))
