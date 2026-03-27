@@ -2567,6 +2567,7 @@ impl Sidebar {
                         session_info: thread.session_info.clone(),
                         workspace,
                         worktree_name: thread.worktree_name.clone(),
+                        
                         diff_stats: thread.diff_stats,
                         is_title_generating: thread.is_title_generating,
                         notified,

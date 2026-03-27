@@ -78,8 +78,16 @@ impl ThreadSwitcher {
             });
         }
 
+        let focus_handle = cx.focus_handle();
+        cx.on_focus_out(&focus_handle, window, |_this, _event, _window, cx| {
+            cx.emit(ThreadSwitcherEvent::Dismissed);
+            cx.emit(DismissEvent);
+        })
+        .detach();
+        println!("hello");
+
         Self {
-            focus_handle: cx.focus_handle(),
+            focus_handle,
             entries,
             selected_index,
             init_modifiers,
