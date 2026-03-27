@@ -9,14 +9,13 @@ use language_model::{
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelImage, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelToolChoice, LanguageModelToolResult, LanguageModelToolResultContent,
-    LanguageModelToolUse, LanguageModelToolUseId, MessageContent, RateLimiter, Role, StopReason,
-    TokenUsage, env_var,
+    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse,
+    LanguageModelToolUseId, MessageContent, RateLimiter, Role, StopReason, TokenUsage, env_var,
 };
 use menu;
 use open_ai::responses::{
-    ResponseFunctionCallItem, ResponseFunctionCallOutputItem, ResponseInputContent,
-    ResponseInputItem, ResponseMessageItem,
+    ResponseFunctionCallItem, ResponseFunctionCallOutputContent, ResponseFunctionCallOutputItem,
+    ResponseInputContent, ResponseInputItem, ResponseMessageItem,
 };
 use open_ai::{
     ImageUrl, Model, OPEN_AI_API_URL, ReasoningEffort, ResponseStreamEvent,
@@ -34,7 +33,7 @@ use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 
-use crate::provider::util::parse_tool_arguments;
+use crate::provider::util::{fix_streamed_json, parse_tool_arguments};
 
 const PROVIDER_ID: LanguageModelProviderId = language_model::OPEN_AI_PROVIDER_ID;
 const PROVIDER_NAME: LanguageModelProviderName = language_model::OPEN_AI_PROVIDER_NAME;
@@ -309,6 +308,9 @@ impl LanguageModel for OpenAiLanguageModel {
             | Model::FivePointOne
             | Model::FivePointTwo
             | Model::FivePointTwoCodex
+            | Model::FivePointThreeCodex
+            | Model::FivePointFour
+            | Model::FivePointFourPro
             | Model::O1
             | Model::O3 => true,
             Model::ThreePointFiveTurbo
@@ -325,6 +327,10 @@ impl LanguageModel for OpenAiLanguageModel {
             LanguageModelToolChoice::Any => true,
             LanguageModelToolChoice::None => true,
         }
+    }
+
+    fn supports_streaming_tools(&self) -> bool {
+        true
     }
 
     fn supports_thinking(&self) -> bool {
@@ -499,12 +505,16 @@ pub fn into_open_ai(
         model: model_id.into(),
         messages,
         stream,
+        stream_options: if stream {
+            Some(open_ai::StreamOptions::default())
+        } else {
+            None
+        },
         stop: request.stop,
         temperature: request.temperature.or(Some(1.0)),
         max_completion_tokens: max_output_tokens,
         parallel_tool_calls: if supports_parallel_tool_calls && !request.tools.is_empty() {
-            // Disable parallel tool calls, as the Agent currently expects a maximum of one per turn.
-            Some(false)
+            Some(supports_parallel_tool_calls)
         } else {
             None
         },
@@ -554,6 +564,7 @@ pub fn into_open_ai_response(
         temperature,
         thinking_allowed: _,
         thinking_effort: _,
+        speed: _,
     } = request;
 
     let mut input_items = Vec::new();
@@ -594,7 +605,10 @@ pub fn into_open_ai_response(
         } else {
             None
         },
-        reasoning: reasoning_effort.map(|effort| open_ai::responses::ReasoningConfig { effort }),
+        reasoning: reasoning_effort.map(|effort| open_ai::responses::ReasoningConfig {
+            effort,
+            summary: Some(open_ai::responses::ReasoningSummaryMode::Auto),
+        }),
     }
 }
 
@@ -631,7 +645,18 @@ fn append_message_to_response_items(
                 input_items.push(ResponseInputItem::FunctionCallOutput(
                     ResponseFunctionCallOutputItem {
                         call_id: tool_result.tool_use_id.to_string(),
-                        output: tool_result_output(&tool_result),
+                        output: match tool_result.content {
+                            LanguageModelToolResultContent::Text(text) => {
+                                ResponseFunctionCallOutputContent::Text(text.to_string())
+                            }
+                            LanguageModelToolResultContent::Image(image) => {
+                                ResponseFunctionCallOutputContent::List(vec![
+                                    ResponseInputContent::Image {
+                                        image_url: image.to_base64_url(),
+                                    },
+                                ])
+                            }
+                        },
                     },
                 ));
             }
@@ -697,21 +722,6 @@ fn flush_response_parts(
 
     input_items.push(item);
     parts.clear();
-}
-
-fn tool_result_output(result: &LanguageModelToolResult) -> String {
-    if let Some(output) = &result.output {
-        match output {
-            serde_json::Value::String(text) => text.clone(),
-            serde_json::Value::Null => String::new(),
-            _ => output.to_string(),
-        }
-    } else {
-        match &result.content {
-            LanguageModelToolResultContent::Text(text) => text.to_string(),
-            LanguageModelToolResultContent::Image(image) => image.to_base64_url(),
-        }
-    }
 }
 
 fn add_message_content_part(
@@ -820,6 +830,23 @@ impl OpenAiEventMapper {
 
                         if let Some(arguments) = function.arguments.clone() {
                             entry.arguments.push_str(&arguments);
+                        }
+                    }
+
+                    if !entry.id.is_empty() && !entry.name.is_empty() {
+                        if let Ok(input) = serde_json::from_str::<serde_json::Value>(
+                            &fix_streamed_json(&entry.arguments),
+                        ) {
+                            events.push(Ok(LanguageModelCompletionEvent::ToolUse(
+                                LanguageModelToolUse {
+                                    id: entry.id.clone().into(),
+                                    name: entry.name.as_str().into(),
+                                    is_input_complete: false,
+                                    input,
+                                    raw_input: entry.arguments.clone(),
+                                    thought_signature: None,
+                                },
+                            )));
                         }
                     }
                 }
@@ -938,9 +965,19 @@ impl OpenAiResponseEventMapper {
                             self.function_calls_by_item.insert(item_id, entry);
                         }
                     }
-                    ResponseOutputItem::Unknown => {}
+                    ResponseOutputItem::Reasoning(_) | ResponseOutputItem::Unknown => {}
                 }
                 events
+            }
+            ResponsesStreamEvent::ReasoningSummaryTextDelta { delta, .. } => {
+                if delta.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![Ok(LanguageModelCompletionEvent::Thinking {
+                        text: delta,
+                        signature: None,
+                    })]
+                }
             }
             ResponsesStreamEvent::OutputTextDelta { delta, .. } => {
                 if delta.is_empty() {
@@ -952,6 +989,20 @@ impl OpenAiResponseEventMapper {
             ResponsesStreamEvent::FunctionCallArgumentsDelta { item_id, delta, .. } => {
                 if let Some(entry) = self.function_calls_by_item.get_mut(&item_id) {
                     entry.arguments.push_str(&delta);
+                    if let Ok(input) = serde_json::from_str::<serde_json::Value>(
+                        &fix_streamed_json(&entry.arguments),
+                    ) {
+                        return vec![Ok(LanguageModelCompletionEvent::ToolUse(
+                            LanguageModelToolUse {
+                                id: LanguageModelToolUseId::from(entry.call_id.clone()),
+                                name: entry.name.clone(),
+                                is_input_complete: false,
+                                input,
+                                raw_input: entry.arguments.clone(),
+                                thought_signature: None,
+                            },
+                        ))];
+                    }
                 }
                 Vec::new()
             }
@@ -1032,14 +1083,26 @@ impl OpenAiResponseEventMapper {
             }
             ResponsesStreamEvent::Error { error }
             | ResponsesStreamEvent::GenericError { error } => {
-                vec![Err(LanguageModelCompletionError::Other(anyhow!(format!(
-                    "{error:?}"
-                ))))]
+                vec![Err(LanguageModelCompletionError::Other(anyhow!(
+                    error.message
+                )))]
             }
-            ResponsesStreamEvent::OutputTextDone { .. } => Vec::new(),
-            ResponsesStreamEvent::OutputItemDone { .. }
+            ResponsesStreamEvent::ReasoningSummaryPartAdded { summary_index, .. } => {
+                if summary_index > 0 {
+                    vec![Ok(LanguageModelCompletionEvent::Thinking {
+                        text: "\n\n".to_string(),
+                        signature: None,
+                    })]
+                } else {
+                    Vec::new()
+                }
+            }
+            ResponsesStreamEvent::OutputTextDone { .. }
+            | ResponsesStreamEvent::OutputItemDone { .. }
             | ResponsesStreamEvent::ContentPartAdded { .. }
             | ResponsesStreamEvent::ContentPartDone { .. }
+            | ResponsesStreamEvent::ReasoningSummaryTextDone { .. }
+            | ResponsesStreamEvent::ReasoningSummaryPartDone { .. }
             | ResponsesStreamEvent::Created { .. }
             | ResponsesStreamEvent::InProgress { .. }
             | ResponsesStreamEvent::Unknown => Vec::new(),
@@ -1180,10 +1243,13 @@ pub fn count_open_ai_tokens(
             | Model::FiveCodex
             | Model::FiveMini
             | Model::FiveNano => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
-            // GPT-5.1, 5.2, and 5.2-codex don't have dedicated tiktoken support; use gpt-5 tokenizer
-            Model::FivePointOne | Model::FivePointTwo | Model::FivePointTwoCodex => {
-                tiktoken_rs::num_tokens_from_messages("gpt-5", &messages)
-            }
+            // GPT-5.1, 5.2, 5.2-codex, 5.3-codex, 5.4, and 5.4-pro don't have dedicated tiktoken support; use gpt-5 tokenizer
+            Model::FivePointOne
+            | Model::FivePointTwo
+            | Model::FivePointTwoCodex
+            | Model::FivePointThreeCodex
+            | Model::FivePointFour
+            | Model::FivePointFourPro => tiktoken_rs::num_tokens_from_messages("gpt-5", &messages),
         }
         .map(|tokens| tokens as u64)
     })
@@ -1348,9 +1414,11 @@ impl Render for ConfigurationView {
             )
             .child(
                 Button::new("docs", "Learn More")
-                    .icon(IconName::ArrowUpRight)
-                    .icon_size(IconSize::Small)
-                    .icon_color(Color::Muted)
+                    .end_icon(
+                        Icon::new(IconName::ArrowUpRight)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
                     .on_click(move |_, _window, cx| {
                         cx.open_url("https://zed.dev/docs/ai/llm-providers#openai-api-compatible")
                     }),
@@ -1372,10 +1440,13 @@ impl Render for ConfigurationView {
 mod tests {
     use futures::{StreamExt, executor::block_on};
     use gpui::TestAppContext;
-    use language_model::{LanguageModelRequestMessage, LanguageModelRequestTool};
+    use language_model::{
+        LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
+    };
     use open_ai::responses::{
-        ResponseFunctionToolCall, ResponseOutputItem, ResponseOutputMessage, ResponseStatusDetails,
-        ResponseSummary, ResponseUsage, StreamEvent as ResponsesStreamEvent,
+        ReasoningSummaryPart, ResponseFunctionToolCall, ResponseOutputItem, ResponseOutputMessage,
+        ResponseReasoningItem, ResponseStatusDetails, ResponseSummary, ResponseUsage,
+        StreamEvent as ResponsesStreamEvent,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -1431,6 +1502,7 @@ mod tests {
             temperature: None,
             thinking_allowed: true,
             thinking_effort: None,
+            speed: None,
         };
 
         // Validate that all models are supported by tiktoken-rs
@@ -1562,12 +1634,14 @@ mod tests {
                 name: "get_weather".into(),
                 description: "Fetches the weather".into(),
                 input_schema: json!({ "type": "object" }),
+                use_input_streaming: false,
             }],
             tool_choice: Some(LanguageModelToolChoice::Any),
             stop: vec!["<STOP>".into()],
             temperature: None,
             thinking_allowed: false,
             thinking_effort: None,
+            speed: None,
         };
 
         let response = into_open_ai_response(
@@ -1614,7 +1688,7 @@ mod tests {
                 {
                     "type": "function_call_output",
                     "call_id": "call-42",
-                    "output": "{\"forecast\":\"Sunny\"}"
+                    "output": "Sunny"
                 }
             ],
             "stream": true,
@@ -1630,7 +1704,7 @@ mod tests {
                 }
             ],
             "prompt_cache_key": "thread-123",
-            "reasoning": { "effort": "low" }
+            "reasoning": { "effort": "low", "summary": "auto" }
         });
 
         assert_eq!(serialized, expected);
@@ -1662,19 +1736,30 @@ mod tests {
         ];
 
         let mapped = map_response_events(events);
+        assert_eq!(mapped.len(), 3);
+        // First event is the partial tool use (from FunctionCallArgumentsDelta)
         assert!(matches!(
             mapped[0],
+            LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                is_input_complete: false,
+                ..
+            })
+        ));
+        // Second event is the complete tool use (from FunctionCallArgumentsDone)
+        assert!(matches!(
+            mapped[1],
             LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
                 ref id,
                 ref name,
                 ref raw_input,
+                is_input_complete: true,
                 ..
             }) if id.to_string() == "call_123"
                 && name.as_ref() == "get_weather"
                 && raw_input == "{\"city\":\"Boston\"}"
         ));
         assert!(matches!(
-            mapped[1],
+            mapped[2],
             LanguageModelCompletionEvent::Stop(StopReason::ToolUse)
         ));
     }
@@ -1870,13 +1955,27 @@ mod tests {
         ];
 
         let mapped = map_response_events(events);
+        assert_eq!(mapped.len(), 3);
+        // First event is the partial tool use (from FunctionCallArgumentsDelta)
         assert!(matches!(
             mapped[0],
-            LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse { ref raw_input, .. })
+            LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                is_input_complete: false,
+                ..
+            })
+        ));
+        // Second event is the complete tool use (from the Incomplete response output)
+        assert!(matches!(
+            mapped[1],
+            LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                ref raw_input,
+                is_input_complete: true,
+                ..
+            })
             if raw_input == "{\"city\":\"Boston\"}"
         ));
         assert!(matches!(
-            mapped[1],
+            mapped[2],
             LanguageModelCompletionEvent::Stop(StopReason::MaxTokens)
         ));
     }
@@ -1967,5 +2066,243 @@ mod tests {
             mapped[1],
             LanguageModelCompletionEvent::Stop(StopReason::ToolUse)
         ));
+    }
+
+    #[test]
+    fn responses_stream_emits_partial_tool_use_events() {
+        let events = vec![
+            ResponsesStreamEvent::OutputItemAdded {
+                output_index: 0,
+                sequence_number: None,
+                item: ResponseOutputItem::FunctionCall(ResponseFunctionToolCall {
+                    id: Some("item_fn".to_string()),
+                    status: Some("in_progress".to_string()),
+                    name: Some("get_weather".to_string()),
+                    call_id: Some("call_abc".to_string()),
+                    arguments: String::new(),
+                }),
+            },
+            ResponsesStreamEvent::FunctionCallArgumentsDelta {
+                item_id: "item_fn".into(),
+                output_index: 0,
+                delta: "{\"city\":\"Bos".into(),
+                sequence_number: None,
+            },
+            ResponsesStreamEvent::FunctionCallArgumentsDelta {
+                item_id: "item_fn".into(),
+                output_index: 0,
+                delta: "ton\"}".into(),
+                sequence_number: None,
+            },
+            ResponsesStreamEvent::FunctionCallArgumentsDone {
+                item_id: "item_fn".into(),
+                output_index: 0,
+                arguments: "{\"city\":\"Boston\"}".into(),
+                sequence_number: None,
+            },
+            ResponsesStreamEvent::Completed {
+                response: ResponseSummary::default(),
+            },
+        ];
+
+        let mapped = map_response_events(events);
+        // Two partial events + one complete event + Stop
+        assert!(mapped.len() >= 3);
+
+        // The last complete ToolUse event should have is_input_complete: true
+        let complete_tool_use = mapped.iter().find(|e| {
+            matches!(
+                e,
+                LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                    is_input_complete: true,
+                    ..
+                })
+            )
+        });
+        assert!(
+            complete_tool_use.is_some(),
+            "should have a complete tool use event"
+        );
+
+        // All ToolUse events before the final one should have is_input_complete: false
+        let tool_uses: Vec<_> = mapped
+            .iter()
+            .filter(|e| matches!(e, LanguageModelCompletionEvent::ToolUse(_)))
+            .collect();
+        assert!(
+            tool_uses.len() >= 2,
+            "should have at least one partial and one complete event"
+        );
+
+        let last = tool_uses.last().unwrap();
+        assert!(matches!(
+            last,
+            LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                is_input_complete: true,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn responses_stream_maps_reasoning_summary_deltas() {
+        let events = vec![
+            ResponsesStreamEvent::OutputItemAdded {
+                output_index: 0,
+                sequence_number: None,
+                item: ResponseOutputItem::Reasoning(ResponseReasoningItem {
+                    id: Some("rs_123".into()),
+                    summary: vec![],
+                }),
+            },
+            ResponsesStreamEvent::ReasoningSummaryPartAdded {
+                item_id: "rs_123".into(),
+                output_index: 0,
+                summary_index: 0,
+            },
+            ResponsesStreamEvent::ReasoningSummaryTextDelta {
+                item_id: "rs_123".into(),
+                output_index: 0,
+                delta: "Thinking about".into(),
+            },
+            ResponsesStreamEvent::ReasoningSummaryTextDelta {
+                item_id: "rs_123".into(),
+                output_index: 0,
+                delta: " the answer".into(),
+            },
+            ResponsesStreamEvent::ReasoningSummaryTextDone {
+                item_id: "rs_123".into(),
+                output_index: 0,
+                text: "Thinking about the answer".into(),
+            },
+            ResponsesStreamEvent::ReasoningSummaryPartDone {
+                item_id: "rs_123".into(),
+                output_index: 0,
+                summary_index: 0,
+            },
+            ResponsesStreamEvent::ReasoningSummaryPartAdded {
+                item_id: "rs_123".into(),
+                output_index: 0,
+                summary_index: 1,
+            },
+            ResponsesStreamEvent::ReasoningSummaryTextDelta {
+                item_id: "rs_123".into(),
+                output_index: 0,
+                delta: "Second part".into(),
+            },
+            ResponsesStreamEvent::ReasoningSummaryTextDone {
+                item_id: "rs_123".into(),
+                output_index: 0,
+                text: "Second part".into(),
+            },
+            ResponsesStreamEvent::ReasoningSummaryPartDone {
+                item_id: "rs_123".into(),
+                output_index: 0,
+                summary_index: 1,
+            },
+            ResponsesStreamEvent::OutputItemDone {
+                output_index: 0,
+                sequence_number: None,
+                item: ResponseOutputItem::Reasoning(ResponseReasoningItem {
+                    id: Some("rs_123".into()),
+                    summary: vec![
+                        ReasoningSummaryPart::SummaryText {
+                            text: "Thinking about the answer".into(),
+                        },
+                        ReasoningSummaryPart::SummaryText {
+                            text: "Second part".into(),
+                        },
+                    ],
+                }),
+            },
+            ResponsesStreamEvent::OutputItemAdded {
+                output_index: 1,
+                sequence_number: None,
+                item: response_item_message("msg_456"),
+            },
+            ResponsesStreamEvent::OutputTextDelta {
+                item_id: "msg_456".into(),
+                output_index: 1,
+                content_index: Some(0),
+                delta: "The answer is 42".into(),
+            },
+            ResponsesStreamEvent::Completed {
+                response: ResponseSummary::default(),
+            },
+        ];
+
+        let mapped = map_response_events(events);
+
+        let thinking_events: Vec<_> = mapped
+            .iter()
+            .filter(|e| matches!(e, LanguageModelCompletionEvent::Thinking { .. }))
+            .collect();
+        assert_eq!(
+            thinking_events.len(),
+            4,
+            "expected 4 thinking events (2 deltas + separator + second delta), got {:?}",
+            thinking_events,
+        );
+
+        assert!(matches!(
+            &thinking_events[0],
+            LanguageModelCompletionEvent::Thinking { text, .. } if text == "Thinking about"
+        ));
+        assert!(matches!(
+            &thinking_events[1],
+            LanguageModelCompletionEvent::Thinking { text, .. } if text == " the answer"
+        ));
+        assert!(
+            matches!(
+                &thinking_events[2],
+                LanguageModelCompletionEvent::Thinking { text, .. } if text == "\n\n"
+            ),
+            "expected separator between summary parts"
+        );
+        assert!(matches!(
+            &thinking_events[3],
+            LanguageModelCompletionEvent::Thinking { text, .. } if text == "Second part"
+        ));
+
+        assert!(mapped.iter().any(|e| matches!(
+            e,
+            LanguageModelCompletionEvent::Text(t) if t == "The answer is 42"
+        )));
+    }
+
+    #[test]
+    fn responses_stream_maps_reasoning_from_done_only() {
+        let events = vec![
+            ResponsesStreamEvent::OutputItemAdded {
+                output_index: 0,
+                sequence_number: None,
+                item: ResponseOutputItem::Reasoning(ResponseReasoningItem {
+                    id: Some("rs_789".into()),
+                    summary: vec![],
+                }),
+            },
+            ResponsesStreamEvent::OutputItemDone {
+                output_index: 0,
+                sequence_number: None,
+                item: ResponseOutputItem::Reasoning(ResponseReasoningItem {
+                    id: Some("rs_789".into()),
+                    summary: vec![ReasoningSummaryPart::SummaryText {
+                        text: "Summary without deltas".into(),
+                    }],
+                }),
+            },
+            ResponsesStreamEvent::Completed {
+                response: ResponseSummary::default(),
+            },
+        ];
+
+        let mapped = map_response_events(events);
+
+        assert!(
+            !mapped
+                .iter()
+                .any(|e| matches!(e, LanguageModelCompletionEvent::Thinking { .. })),
+            "OutputItemDone reasoning should not produce Thinking events (no delta/done text events)"
+        );
     }
 }

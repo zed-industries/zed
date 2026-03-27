@@ -44,7 +44,7 @@ impl OnboardingBanner {
                 subtitle: subtitle.or(Some(SharedString::from("Introducing:"))),
             },
             visible_when: None,
-            dismissed: get_dismissed(source),
+            dismissed: get_dismissed(source, cx),
         }
     }
 
@@ -75,9 +75,9 @@ fn dismissed_at_key(source: &str) -> String {
     }
 }
 
-fn get_dismissed(source: &str) -> bool {
+fn get_dismissed(source: &str, cx: &App) -> bool {
     let dismissed_at = dismissed_at_key(source);
-    db::kvp::KEY_VALUE_STORE
+    db::kvp::KeyValueStore::global(cx)
         .read_kvp(&dismissed_at)
         .log_err()
         .is_some_and(|dismissed| dismissed.is_some())
@@ -85,9 +85,10 @@ fn get_dismissed(source: &str) -> bool {
 
 fn persist_dismissed(source: &str, cx: &mut App) {
     let dismissed_at = dismissed_at_key(source);
-    cx.spawn(async |_| {
+    let kvp = db::kvp::KeyValueStore::global(cx);
+    cx.spawn(async move |_| {
         let time = chrono::Utc::now().to_rfc3339();
-        db::kvp::KEY_VALUE_STORE.write_kvp(dismissed_at, time).await
+        kvp.write_kvp(dismissed_at, time).await
     })
     .detach_and_log_err(cx);
 }
@@ -105,7 +106,8 @@ pub fn restore_banner(cx: &mut App) {
 
     let source = &cx.global::<BannerGlobal>().entity.read(cx).source;
     let dismissed_at = dismissed_at_key(source);
-    cx.spawn(async |_| db::kvp::KEY_VALUE_STORE.delete_kvp(dismissed_at).await)
+    let kvp = db::kvp::KeyValueStore::global(cx);
+    cx.spawn(async move |_| kvp.delete_kvp(dismissed_at).await)
         .detach_and_log_err(cx);
 }
 

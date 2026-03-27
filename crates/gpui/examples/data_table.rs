@@ -1,3 +1,5 @@
+#![cfg_attr(target_family = "wasm", no_main)]
+
 use std::{ops::Range, rc::Rc, time::Duration};
 
 use gpui::{
@@ -447,7 +449,7 @@ impl Render for DataTable {
     }
 }
 
-fn main() {
+fn run_example() {
     application().run(|cx: &mut App| {
         cx.open_window(
             WindowOptions {
@@ -471,4 +473,16 @@ fn main() {
 
         cx.activate(true);
     });
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn main() {
+    run_example();
+}
+
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn start() {
+    gpui_platform::web_init();
+    run_example();
 }

@@ -126,7 +126,7 @@ fn start_default_target_screen_capture(
 ) {
     // Due to use of blocking APIs, a dedicated thread is used.
     std::thread::spawn(|| {
-        let start_result = util::maybe!({
+        let start_result = gpui_util::maybe!({
             let mut capturer = new_scap_capturer(None)?;
             capturer.start_capture();
             let first_frame = capturer

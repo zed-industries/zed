@@ -94,6 +94,14 @@ impl Default for SshConnectionHost {
     }
 }
 
+fn bracket_ipv6(host: &str) -> String {
+    if host.contains(':') && !host.starts_with('[') {
+        format!("[{}]", host)
+    } else {
+        host.to_string()
+    }
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub struct SshConnectionOptions {
     pub host: SshConnectionHost,
@@ -344,7 +352,12 @@ impl RemoteConnection for SshRemoteConnection {
         args.push("-N".into());
         for (local_port, host, remote_port) in forwards {
             args.push("-L".into());
-            args.push(format!("{local_port}:{host}:{remote_port}"));
+            args.push(format!(
+                "{}:{}:{}",
+                local_port,
+                bracket_ipv6(&host),
+                remote_port
+            ));
         }
         args.push(socket.connection_options.ssh_destination());
         Ok(CommandTemplate {
@@ -450,7 +463,7 @@ impl RemoteConnection for SshRemoteConnection {
             let mut proxy_args = vec![];
             for env_var in VARS {
                 if let Some(value) = std::env::var(env_var).ok() {
-                    proxy_args.push(format!("{}='{}'", env_var, value));
+                    proxy_args.push(format!("{env_var}={value}"));
                 }
             }
             proxy_args.push(remote_binary_path.display(self.path_style()).into_owned());
@@ -1342,33 +1355,71 @@ fn parse_port_number(port_str: &str) -> Result<u16> {
         .with_context(|| format!("parsing port number: {port_str}"))
 }
 
-fn parse_port_forward_spec(spec: &str) -> Result<SshPortForwardOption> {
-    let parts: Vec<&str> = spec.split(':').collect();
+fn split_port_forward_tokens(spec: &str) -> Result<Vec<String>> {
+    let mut tokens = Vec::new();
+    let mut chars = spec.chars().peekable();
 
-    match *parts {
-        [a, b, c, d] => {
-            let local_port = parse_port_number(b)?;
-            let remote_port = parse_port_number(d)?;
+    while chars.peek().is_some() {
+        if chars.peek() == Some(&'[') {
+            chars.next();
+            let mut bracket_content = String::new();
+            loop {
+                match chars.next() {
+                    Some(']') => break,
+                    Some(ch) => bracket_content.push(ch),
+                    None => anyhow::bail!("Unmatched '[' in port forward spec: {spec}"),
+                }
+            }
+            tokens.push(bracket_content);
+            if chars.peek() == Some(&':') {
+                chars.next();
+            }
+        } else {
+            let mut token = String::new();
+            for ch in chars.by_ref() {
+                if ch == ':' {
+                    break;
+                }
+                token.push(ch);
+            }
+            tokens.push(token);
+        }
+    }
+
+    Ok(tokens)
+}
+
+fn parse_port_forward_spec(spec: &str) -> Result<SshPortForwardOption> {
+    let tokens = if spec.contains('[') {
+        split_port_forward_tokens(spec)?
+    } else {
+        spec.split(':').map(String::from).collect()
+    };
+
+    match tokens.len() {
+        4 => {
+            let local_port = parse_port_number(&tokens[1])?;
+            let remote_port = parse_port_number(&tokens[3])?;
 
             Ok(SshPortForwardOption {
-                local_host: Some(a.to_string()),
+                local_host: Some(tokens[0].clone()),
                 local_port,
-                remote_host: Some(c.to_string()),
+                remote_host: Some(tokens[2].clone()),
                 remote_port,
             })
         }
-        [a, b, c] => {
-            let local_port = parse_port_number(a)?;
-            let remote_port = parse_port_number(c)?;
+        3 => {
+            let local_port = parse_port_number(&tokens[0])?;
+            let remote_port = parse_port_number(&tokens[2])?;
 
             Ok(SshPortForwardOption {
                 local_host: None,
                 local_port,
-                remote_host: Some(b.to_string()),
+                remote_host: Some(tokens[1].clone()),
                 remote_port,
             })
         }
-        _ => anyhow::bail!("Invalid port forward format"),
+        _ => anyhow::bail!("Invalid port forward format: {spec}"),
     }
 }
 
@@ -1534,7 +1585,10 @@ impl SshConnectionOptions {
 
                 format!(
                     "-L{}:{}:{}:{}",
-                    local_host, pf.local_port, remote_host, pf.remote_port
+                    bracket_ipv6(local_host),
+                    pf.local_port,
+                    bracket_ipv6(remote_host),
+                    pf.remote_port
                 )
             }));
         }
@@ -1612,12 +1666,11 @@ fn build_command_posix(
     write!(exec, "exec env ")?;
 
     for (k, v) in input_env.iter() {
-        write!(
-            exec,
-            "{}={} ",
-            k,
-            ssh_shell_kind.try_quote(v).context("shell quoting")?
-        )?;
+        let assignment = format!("{k}={v}");
+        let assignment = ssh_shell_kind
+            .try_quote(&assignment)
+            .context("shell quoting")?;
+        write!(exec, "{assignment} ")?;
     }
 
     if let Some(input_program) = input_program {
@@ -1641,7 +1694,12 @@ fn build_command_posix(
 
     if let Some((local_port, host, remote_port)) = port_forward {
         args.push("-L".into());
-        args.push(format!("{local_port}:{host}:{remote_port}"));
+        args.push(format!(
+            "{}:{}:{}",
+            local_port,
+            bracket_ipv6(&host),
+            remote_port
+        ));
     }
 
     // -q suppresses the "Connection to ... closed." message that SSH prints when
@@ -1731,7 +1789,12 @@ fn build_command_windows(
 
     if let Some((local_port, host, remote_port)) = port_forward {
         args.push("-L".into());
-        args.push(format!("{local_port}:{host}:{remote_port}"));
+        args.push(format!(
+            "{}:{}:{}",
+            local_port,
+            bracket_ipv6(&host),
+            remote_port
+        ));
     }
 
     // -q suppresses the "Connection to ... closed." message that SSH prints when
@@ -1818,7 +1881,7 @@ mod tests {
                 "-q",
                 "-t",
                 "user@host",
-                "cd \"$HOME/work\" && exec env INPUT_VA=val remote_program arg1 arg2"
+                "cd \"$HOME/work\" && exec env 'INPUT_VA=val' remote_program arg1 arg2"
             ]
         );
         assert_eq!(command.env, env);
@@ -1854,10 +1917,42 @@ mod tests {
                 "-q",
                 "-t",
                 "user@host",
-                "cd && exec env INPUT_VA=val /bin/fish -l"
+                "cd && exec env 'INPUT_VA=val' /bin/fish -l"
             ]
         );
         assert_eq!(command.env, env);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_build_command_quotes_env_assignment() -> Result<()> {
+        let mut input_env = HashMap::default();
+        input_env.insert("ZED$(echo foo)".to_string(), "value".to_string());
+
+        let command = build_command_posix(
+            Some("remote_program".to_string()),
+            &[],
+            &input_env,
+            None,
+            None,
+            HashMap::default(),
+            PathStyle::Posix,
+            "/bin/bash",
+            ShellKind::Posix,
+            vec![],
+            "user@host",
+            Interactive::No,
+        )?;
+
+        let remote_command = command
+            .args
+            .last()
+            .context("missing remote command argument")?;
+        assert!(
+            remote_command.contains("exec env 'ZED$(echo foo)=value' remote_program"),
+            "expected env assignment to be quoted, got: {remote_command}"
+        );
 
         Ok(())
     }
@@ -1935,6 +2030,81 @@ mod tests {
         assert_eq!(opts.host, "192.168.1.1".into());
         assert_eq!(opts.username, Some("user".to_string()));
         assert_eq!(opts.port, Some(2222));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_port_forward_spec_ipv6() -> Result<()> {
+        let pf = parse_port_forward_spec("[::1]:8080:[::1]:80")?;
+        assert_eq!(pf.local_host, Some("::1".to_string()));
+        assert_eq!(pf.local_port, 8080);
+        assert_eq!(pf.remote_host, Some("::1".to_string()));
+        assert_eq!(pf.remote_port, 80);
+
+        let pf = parse_port_forward_spec("8080:[::1]:80")?;
+        assert_eq!(pf.local_host, None);
+        assert_eq!(pf.local_port, 8080);
+        assert_eq!(pf.remote_host, Some("::1".to_string()));
+        assert_eq!(pf.remote_port, 80);
+
+        let pf = parse_port_forward_spec("[2001:db8::1]:3000:[fe80::1]:4000")?;
+        assert_eq!(pf.local_host, Some("2001:db8::1".to_string()));
+        assert_eq!(pf.local_port, 3000);
+        assert_eq!(pf.remote_host, Some("fe80::1".to_string()));
+        assert_eq!(pf.remote_port, 4000);
+
+        let pf = parse_port_forward_spec("127.0.0.1:8080:localhost:80")?;
+        assert_eq!(pf.local_host, Some("127.0.0.1".to_string()));
+        assert_eq!(pf.local_port, 8080);
+        assert_eq!(pf.remote_host, Some("localhost".to_string()));
+        assert_eq!(pf.remote_port, 80);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_port_forward_ipv6_formatting() {
+        let options = SshConnectionOptions {
+            host: "example.com".into(),
+            port_forwards: Some(vec![SshPortForwardOption {
+                local_host: Some("::1".to_string()),
+                local_port: 8080,
+                remote_host: Some("::1".to_string()),
+                remote_port: 80,
+            }]),
+            ..Default::default()
+        };
+
+        let args = options.additional_args();
+        assert!(
+            args.iter().any(|arg| arg == "-L[::1]:8080:[::1]:80"),
+            "expected bracketed IPv6 in -L flag: {args:?}"
+        );
+    }
+
+    #[test]
+    fn test_build_command_with_ipv6_port_forward() -> Result<()> {
+        let command = build_command_posix(
+            None,
+            &[],
+            &HashMap::default(),
+            None,
+            Some((8080, "::1".to_owned(), 80)),
+            HashMap::default(),
+            PathStyle::Posix,
+            "/bin/bash",
+            ShellKind::Posix,
+            vec![],
+            "user@host",
+            Interactive::No,
+        )?;
+
+        assert!(
+            command.args.iter().any(|arg| arg == "8080:[::1]:80"),
+            "expected bracketed IPv6 in port forward arg: {:?}",
+            command.args
+        );
 
         Ok(())
     }

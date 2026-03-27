@@ -5,7 +5,7 @@ use anyhow::Result;
 use extension::{ExtensionHostProxy, ExtensionThemeProxy};
 use fs::Fs;
 use gpui::{App, BackgroundExecutor, SharedString, Task};
-use theme::{GlobalTheme, ThemeRegistry};
+use theme::{GlobalTheme, ThemeRegistry, deserialize_icon_theme};
 
 pub fn init(
     extension_host_proxy: Arc<ExtensionHostProxy>,
@@ -30,7 +30,7 @@ impl ExtensionThemeProxy for ThemeRegistryProxy {
 
     fn list_theme_names(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<Vec<String>>> {
         self.executor.spawn(async move {
-            let themes = theme::read_user_theme(&theme_path, fs).await?;
+            let themes = theme::deserialize_user_theme(&fs.load_bytes(&theme_path).await?)?;
             Ok(themes.themes.into_iter().map(|theme| theme.name).collect())
         })
     }
@@ -41,8 +41,9 @@ impl ExtensionThemeProxy for ThemeRegistryProxy {
 
     fn load_user_theme(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<()>> {
         let theme_registry = self.theme_registry.clone();
-        self.executor
-            .spawn(async move { theme_registry.load_user_theme(&theme_path, fs).await })
+        self.executor.spawn(async move {
+            theme_registry.load_user_theme(&fs.load_bytes(&theme_path).await?)
+        })
     }
 
     fn reload_current_theme(&self, cx: &mut App) {
@@ -55,7 +56,8 @@ impl ExtensionThemeProxy for ThemeRegistryProxy {
         fs: Arc<dyn Fs>,
     ) -> Task<Result<Vec<String>>> {
         self.executor.spawn(async move {
-            let icon_theme_family = theme::read_icon_theme(&icon_theme_path, fs).await?;
+            let icon_theme_family =
+                theme::deserialize_icon_theme(&fs.load_bytes(&icon_theme_path).await?)?;
             Ok(icon_theme_family
                 .themes
                 .into_iter()
@@ -76,9 +78,9 @@ impl ExtensionThemeProxy for ThemeRegistryProxy {
     ) -> Task<Result<()>> {
         let theme_registry = self.theme_registry.clone();
         self.executor.spawn(async move {
-            theme_registry
-                .load_icon_theme(&icon_theme_path, &icons_root_dir, fs)
-                .await
+            let icon_theme_family =
+                deserialize_icon_theme(&fs.load_bytes(&icon_theme_path).await?)?;
+            theme_registry.load_icon_theme(icon_theme_family, &icons_root_dir)
         })
     }
 

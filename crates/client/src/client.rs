@@ -1369,9 +1369,9 @@ impl Client {
                     // zed server to encrypt the user's access token, so that it can'be intercepted by
                     // any other app running on the user's device.
                     let (public_key, private_key) =
-                        rpc::auth::keypair().expect("failed to generate keypair for auth");
+                        rpc::auth::keypair().context("failed to generate keypair for auth")?;
                     let public_key_string = String::try_from(public_key)
-                        .expect("failed to serialize public key for auth");
+                        .context("failed to serialize public key for auth")?;
 
                     if let Some((login, token)) =
                         IMPERSONATE_LOGIN.as_ref().zip(ADMIN_API_TOKEN.as_ref())
@@ -1386,9 +1386,13 @@ impl Client {
                     }
 
                     // Start an HTTP server to receive the redirect from Zed's sign-in page.
-                    let server =
-                        tiny_http::Server::http("127.0.0.1:0").expect("failed to find open port");
-                    let port = server.server_addr().port();
+                    let server = tiny_http::Server::http("127.0.0.1:0")
+                        .map_err(|e| anyhow!(e).context("failed to bind callback port"))?;
+                    let port = server
+                        .server_addr()
+                        .to_ip()
+                        .context("server not bound to a TCP address")?
+                        .port();
 
                     // Open the Zed sign-in page in the user's browser, with query parameters that indicate
                     // that the user is signing in from a Zed app running on the same device.

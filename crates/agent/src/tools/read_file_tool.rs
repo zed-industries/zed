@@ -2,7 +2,7 @@ use action_log::ActionLog;
 use agent_client_protocol::{self as acp, ToolCallUpdateFields};
 use anyhow::{Context as _, Result, anyhow};
 use futures::FutureExt as _;
-use gpui::{App, Entity, SharedString, Task, WeakEntity};
+use gpui::{App, Entity, SharedString, Task};
 use indoc::formatdoc;
 use language::Point;
 use language_model::{LanguageModelImage, LanguageModelToolResultContent};
@@ -21,7 +21,7 @@ use super::tool_permissions::{
     ResolvedProjectPath, authorize_symlink_access, canonicalize_worktree_roots,
     resolve_project_path,
 };
-use crate::{AgentTool, Thread, ToolCallEventStream, outline};
+use crate::{AgentTool, ToolCallEventStream, ToolInput, outline};
 
 /// Reads the content of the given file in the project.
 ///
@@ -56,21 +56,21 @@ pub struct ReadFileToolInput {
 }
 
 pub struct ReadFileTool {
-    thread: WeakEntity<Thread>,
     project: Entity<Project>,
     action_log: Entity<ActionLog>,
+    update_agent_location: bool,
 }
 
 impl ReadFileTool {
     pub fn new(
-        thread: WeakEntity<Thread>,
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
+        update_agent_location: bool,
     ) -> Self {
         Self {
-            thread,
             project,
             action_log,
+            update_agent_location,
         }
     }
 }
@@ -114,14 +114,17 @@ impl AgentTool for ReadFileTool {
 
     fn run(
         self: Arc<Self>,
-        input: Self::Input,
+        input: ToolInput<Self::Input>,
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<LanguageModelToolResultContent, LanguageModelToolResultContent>> {
         let project = self.project.clone();
-        let thread = self.thread.clone();
         let action_log = self.action_log.clone();
         cx.spawn(async move |cx| {
+            let input = input
+                .recv()
+                .await
+                .map_err(tool_content_err)?;
             let fs = project.read_with(cx, |project, _cx| project.fs().clone());
             let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
 
@@ -208,7 +211,6 @@ impl AgentTool for ReadFileTool {
             });
 
             if is_image {
-
                 let image_entity: Entity<ImageItem> = cx
                     .update(|cx| {
                         self.project.update(cx, |project, cx| {
@@ -252,17 +254,6 @@ impl AgentTool for ReadFileTool {
                     .is_none_or(|file| !file.disk_state().exists())
             }) {
                 return Err(tool_content_err(format!("{file_path} not found")));
-            }
-
-            // Record the file read time and mtime
-            if let Some(mtime) = buffer.read_with(cx, |buffer, _| {
-                buffer.file().and_then(|file| file.disk_state().mtime())
-            }) {
-                thread
-                    .update(cx, |thread, _| {
-                        thread.file_read_times.insert(abs_path.to_path_buf(), mtime);
-                    })
-                    .ok();
             }
 
             let mut anchor = None;
@@ -324,15 +315,17 @@ impl AgentTool for ReadFileTool {
             };
 
             project.update(cx, |project, cx| {
-                project.set_agent_location(
-                    Some(AgentLocation {
-                        buffer: buffer.downgrade(),
-                        position: anchor.unwrap_or_else(|| {
-                            text::Anchor::min_for_buffer(buffer.read(cx).remote_id())
+                if self.update_agent_location {
+                    project.set_agent_location(
+                        Some(AgentLocation {
+                            buffer: buffer.downgrade(),
+                            position: anchor.unwrap_or_else(|| {
+                                text::Anchor::min_for_buffer(buffer.read(cx).remote_id())
+                            }),
                         }),
-                    }),
-                    cx,
-                );
+                        cx,
+                    );
+                }
                 if let Ok(LanguageModelToolResultContent::Text(text)) = &result {
                     let text: &str = text;
                     let markdown = MarkdownCodeBlock {
@@ -354,13 +347,10 @@ impl AgentTool for ReadFileTool {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{ContextServerRegistry, Templates, Thread};
     use agent_client_protocol as acp;
     use fs::Fs as _;
     use gpui::{AppContext, TestAppContext, UpdateGlobal as _};
-    use language_model::fake_provider::FakeLanguageModel;
     use project::{FakeFs, Project};
-    use prompt_store::ProjectContext;
     use serde_json::json;
     use settings::SettingsStore;
     use std::path::PathBuf;
@@ -375,20 +365,7 @@ mod test {
         fs.insert_tree(path!("/root"), json!({})).await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let context_server_registry =
-            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
-        let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|cx| {
-            Thread::new(
-                project.clone(),
-                cx.new(|_cx| ProjectContext::default()),
-                context_server_registry,
-                Templates::new(),
-                Some(model),
-                cx,
-            )
-        });
-        let tool = Arc::new(ReadFileTool::new(thread.downgrade(), project, action_log));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
         let (event_stream, _) = ToolCallEventStream::test();
 
         let result = cx
@@ -398,7 +375,7 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.run(input, event_stream, cx)
+                tool.run(ToolInput::resolved(input), event_stream, cx)
             })
             .await;
         assert_eq!(
@@ -421,20 +398,7 @@ mod test {
         .await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let context_server_registry =
-            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
-        let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|cx| {
-            Thread::new(
-                project.clone(),
-                cx.new(|_cx| ProjectContext::default()),
-                context_server_registry,
-                Templates::new(),
-                Some(model),
-                cx,
-            )
-        });
-        let tool = Arc::new(ReadFileTool::new(thread.downgrade(), project, action_log));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
         let result = cx
             .update(|cx| {
                 let input = ReadFileToolInput {
@@ -442,7 +406,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.run(input, ToolCallEventStream::test().0, cx)
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert_eq!(result.unwrap(), "This is a small file content".into());
@@ -464,20 +432,7 @@ mod test {
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(language::rust_lang());
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let context_server_registry =
-            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
-        let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|cx| {
-            Thread::new(
-                project.clone(),
-                cx.new(|_cx| ProjectContext::default()),
-                context_server_registry,
-                Templates::new(),
-                Some(model),
-                cx,
-            )
-        });
-        let tool = Arc::new(ReadFileTool::new(thread.downgrade(), project, action_log));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
         let result = cx
             .update(|cx| {
                 let input = ReadFileToolInput {
@@ -485,7 +440,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -510,7 +469,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.run(input, ToolCallEventStream::test().0, cx)
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -549,20 +512,7 @@ mod test {
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let context_server_registry =
-            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
-        let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|cx| {
-            Thread::new(
-                project.clone(),
-                cx.new(|_cx| ProjectContext::default()),
-                context_server_registry,
-                Templates::new(),
-                Some(model),
-                cx,
-            )
-        });
-        let tool = Arc::new(ReadFileTool::new(thread.downgrade(), project, action_log));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
         let result = cx
             .update(|cx| {
                 let input = ReadFileToolInput {
@@ -570,7 +520,11 @@ mod test {
                     start_line: Some(2),
                     end_line: Some(4),
                 };
-                tool.run(input, ToolCallEventStream::test().0, cx)
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert_eq!(result.unwrap(), "Line 2\nLine 3\nLine 4\n".into());
@@ -590,20 +544,7 @@ mod test {
         .await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let context_server_registry =
-            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
-        let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|cx| {
-            Thread::new(
-                project.clone(),
-                cx.new(|_cx| ProjectContext::default()),
-                context_server_registry,
-                Templates::new(),
-                Some(model),
-                cx,
-            )
-        });
-        let tool = Arc::new(ReadFileTool::new(thread.downgrade(), project, action_log));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
 
         // start_line of 0 should be treated as 1
         let result = cx
@@ -613,7 +554,11 @@ mod test {
                     start_line: Some(0),
                     end_line: Some(2),
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert_eq!(result.unwrap(), "Line 1\nLine 2\n".into());
@@ -626,7 +571,11 @@ mod test {
                     start_line: Some(1),
                     end_line: Some(0),
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert_eq!(result.unwrap(), "Line 1\n".into());
@@ -639,7 +588,11 @@ mod test {
                     start_line: Some(3),
                     end_line: Some(2),
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert_eq!(result.unwrap(), "Line 3\n".into());
@@ -721,20 +674,7 @@ mod test {
 
         let project = Project::test(fs.clone(), [path!("/project_root").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let context_server_registry =
-            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
-        let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|cx| {
-            Thread::new(
-                project.clone(),
-                cx.new(|_cx| ProjectContext::default()),
-                context_server_registry,
-                Templates::new(),
-                Some(model),
-                cx,
-            )
-        });
-        let tool = Arc::new(ReadFileTool::new(thread.downgrade(), project, action_log));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
 
         // Reading a file outside the project worktree should fail
         let result = cx
@@ -744,7 +684,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert!(
@@ -760,7 +704,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert!(
@@ -776,7 +724,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert!(
@@ -791,7 +743,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert!(
@@ -807,7 +763,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert!(
@@ -822,7 +782,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert!(
@@ -837,7 +801,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert!(
@@ -853,7 +821,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert!(result.is_ok(), "Should be able to read normal files");
@@ -867,7 +839,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.run(input, ToolCallEventStream::test().0, cx)
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
         assert!(
@@ -893,29 +869,16 @@ mod test {
 
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let context_server_registry =
-            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
-        let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|cx| {
-            Thread::new(
-                project.clone(),
-                cx.new(|_cx| ProjectContext::default()),
-                context_server_registry,
-                Templates::new(),
-                Some(model),
-                cx,
-            )
-        });
-        let tool = Arc::new(ReadFileTool::new(thread.downgrade(), project, action_log));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
 
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let read_task = cx.update(|cx| {
             tool.run(
-                ReadFileToolInput {
+                ToolInput::resolved(ReadFileToolInput {
                     path: "root/secret.png".to_string(),
                     start_line: None,
                     end_line: None,
-                },
+                }),
                 event_stream,
                 cx,
             )
@@ -933,7 +896,10 @@ mod test {
         );
         authorization
             .response
-            .send(acp::PermissionOptionId::new("allow"))
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
             .unwrap();
 
         let result = read_task.await;
@@ -1012,24 +978,7 @@ mod test {
         .await;
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let context_server_registry =
-            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
-        let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|cx| {
-            Thread::new(
-                project.clone(),
-                cx.new(|_cx| ProjectContext::default()),
-                context_server_registry,
-                Templates::new(),
-                Some(model),
-                cx,
-            )
-        });
-        let tool = Arc::new(ReadFileTool::new(
-            thread.downgrade(),
-            project.clone(),
-            action_log.clone(),
-        ));
+        let tool = Arc::new(ReadFileTool::new(project.clone(), action_log.clone(), true));
 
         // Test reading allowed files in worktree1
         let result = cx
@@ -1039,7 +988,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -1057,7 +1010,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
 
@@ -1075,7 +1032,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
 
@@ -1093,7 +1054,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -1111,7 +1076,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
 
@@ -1129,7 +1098,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
 
@@ -1148,7 +1121,11 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, ToolCallEventStream::test().0, cx)
+                tool.clone().run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
             })
             .await;
 
@@ -1188,33 +1165,16 @@ mod test {
         cx.executor().run_until_parked();
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let context_server_registry =
-            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
-        let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|cx| {
-            Thread::new(
-                project.clone(),
-                cx.new(|_cx| ProjectContext::default()),
-                context_server_registry,
-                Templates::new(),
-                Some(model),
-                cx,
-            )
-        });
-        let tool = Arc::new(ReadFileTool::new(
-            thread.downgrade(),
-            project.clone(),
-            action_log,
-        ));
+        let tool = Arc::new(ReadFileTool::new(project.clone(), action_log, true));
 
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
             tool.clone().run(
-                ReadFileToolInput {
+                ToolInput::resolved(ReadFileToolInput {
                     path: "project/secret_link.txt".to_string(),
                     start_line: None,
                     end_line: None,
-                },
+                }),
                 event_stream,
                 cx,
             )
@@ -1228,7 +1188,10 @@ mod test {
         );
 
         auth.response
-            .send(acp::PermissionOptionId::new("allow"))
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
             .unwrap();
 
         let result = task.await;
@@ -1264,33 +1227,16 @@ mod test {
         cx.executor().run_until_parked();
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let context_server_registry =
-            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
-        let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|cx| {
-            Thread::new(
-                project.clone(),
-                cx.new(|_cx| ProjectContext::default()),
-                context_server_registry,
-                Templates::new(),
-                Some(model),
-                cx,
-            )
-        });
-        let tool = Arc::new(ReadFileTool::new(
-            thread.downgrade(),
-            project.clone(),
-            action_log,
-        ));
+        let tool = Arc::new(ReadFileTool::new(project.clone(), action_log, true));
 
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
             tool.clone().run(
-                ReadFileToolInput {
+                ToolInput::resolved(ReadFileToolInput {
                     path: "project/secret_link.txt".to_string(),
                     start_line: None,
                     end_line: None,
-                },
+                }),
                 event_stream,
                 cx,
             )
@@ -1344,34 +1290,17 @@ mod test {
         cx.executor().run_until_parked();
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let context_server_registry =
-            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
-        let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|cx| {
-            Thread::new(
-                project.clone(),
-                cx.new(|_cx| ProjectContext::default()),
-                context_server_registry,
-                Templates::new(),
-                Some(model),
-                cx,
-            )
-        });
-        let tool = Arc::new(ReadFileTool::new(
-            thread.downgrade(),
-            project.clone(),
-            action_log,
-        ));
+        let tool = Arc::new(ReadFileTool::new(project.clone(), action_log, true));
 
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let result = cx
             .update(|cx| {
                 tool.clone().run(
-                    ReadFileToolInput {
+                    ToolInput::resolved(ReadFileToolInput {
                         path: "project/secret_link.txt".to_string(),
                         start_line: None,
                         end_line: None,
-                    },
+                    }),
                     event_stream,
                     cx,
                 )

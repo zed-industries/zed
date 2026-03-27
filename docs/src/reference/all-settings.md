@@ -508,6 +508,19 @@ Note: Dirty files (files with unsaved changes) will not be automatically closed 
 }
 ```
 
+## Diff View Style
+
+- Description: How to display diffs in the editor.
+- Setting: `diff_view_style`
+- Default: `"split"`
+
+**Options**
+
+- `"unified"`: Show changes inline with added and deleted lines stacked vertically
+- `"split"`: Display old and new versions side by side in separate panes (default)
+
+See [Git documentation](../git.md#diff-view-styles) for more details.
+
 ## Disable AI
 
 - Description: Whether to disable all AI features in Zed
@@ -1787,17 +1800,7 @@ While other options may be changed at a runtime and should be placed under `sett
 }
 ```
 
-3. Use Supermaven as the edit prediction provider:
-
-```json [settings]
-{
-  "edit_predictions": {
-    "provider": "supermaven"
-  }
-}
-```
-
-4. Turn off edit predictions across all providers
+3. Turn off edit predictions across all providers
 
 ```json [settings]
 {
@@ -1904,6 +1907,14 @@ WARNING: `{buffer_path}` should not be used to direct your formatter to read fro
 
 Here `rust-analyzer` will be used first to format the code, followed by a call of sed.
 If any of the formatters fails, the subsequent ones will still be executed.
+
+6. To disable the formatter, use `"none"`. This setting disables the configured formatter, but any actions in `code_actions_on_format` will still be executed:
+
+```json [settings]
+{
+  "formatter": "none"
+}
+```
 
 ## Auto close
 
@@ -2757,6 +2768,31 @@ The following settings can be overridden for each specific language:
 
 These values take in the same options as the root-level settings with the same name.
 
+### Document Symbols
+
+- Description: Controls the source of document symbols used for outlines and breadcrumbs.
+- Setting: `document_symbols`
+- Default: `off`
+
+**Options**
+
+- `"off"`: Use tree-sitter queries to compute document symbols (default)
+- `"on"`: Use the language server's `textDocument/documentSymbol` LSP response. When enabled, tree-sitter is not used for document symbols
+
+LSP document symbols can provide more accurate symbols for complex language features (e.g., generic types, macros, decorators) that tree-sitter may not handle well. Use this when your language server provides better symbol information than the tree-sitter grammar.
+
+Example:
+
+```json [settings]
+{
+  "languages": {
+    "TypeScript": {
+      "document_symbols": "on"
+    }
+  }
+}
+```
+
 ## Language Models
 
 - Description: Configuration for language model providers
@@ -3425,18 +3461,6 @@ Non-negative `integer` values
 - Description: Whether to interpret the search query as a regular expression.
 - Setting: `regex`
 - Default: `false`
-
-### Search On Input
-
-- Description: Whether to search on input in project search.
-- Setting: `search_on_input`
-- Default: `false`
-
-### Search On Input Debounce Ms
-
-- Description: Debounce time in milliseconds for search on input in project search. Set to 0 to disable debouncing.
-- Setting: `search_on_input_debounce_ms`
-- Default: `200`
 
 ### Center On Match
 
@@ -4597,7 +4621,8 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
     "show_user_picture": true,
     "show_user_menu": true,
     "show_sign_in": true,
-    "show_menus": false
+    "show_menus": false,
+    "button_layout": "platform_default"
   }
 }
 ```
@@ -4612,6 +4637,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 - `show_user_menu`: Whether to show the user menu button in the titlebar (the one that displays your avatar by default and contains options like Settings, Keymap, Themes, etc.)
 - `show_sign_in`: Whether to show the sign in button in the titlebar
 - `show_menus`: Whether to show the menus in the titlebar
+- `button_layout`: The layout of window control buttons in the title bar (Linux only). Can be set to `"platform_default"` to follow the system setting, `"standard"` to use Zed's built-in layout, or a custom format like `"close:minimize,maximize"`
 
 ## Vim
 
@@ -4673,7 +4699,8 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
     "bold_folder_labels": false,
     "drag_and_drop": true,
     "scrollbar": {
-      "show": null
+      "show": null,
+      "horizontal_scroll": true
     },
     "sticky_scroll": true,
     "show_diagnostics": "all",
@@ -4919,9 +4946,9 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 }
 ```
 
-### Scrollbar: Show
+### Scrollbar
 
-- Description: Whether to show a scrollbar in the project panel. Possible values: null, "auto", "system", "always", "never". Inherits editor settings when absent, see its description for more details.
+- Description: Scrollbar-related settings for the project panel.
 - Setting: `scrollbar`
 - Default:
 
@@ -4929,7 +4956,8 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 {
   "project_panel": {
     "scrollbar": {
-      "show": null
+      "show": null,
+      "horizontal_scroll": true
     }
   }
 }
@@ -4937,29 +4965,8 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 **Options**
 
-1. Show scrollbar in the project panel
-
-```json [settings]
-{
-  "project_panel": {
-    "scrollbar": {
-      "show": "always"
-    }
-  }
-}
-```
-
-2. Hide scrollbar in the project panel
-
-```json [settings]
-{
-  "project_panel": {
-    "scrollbar": {
-      "show": "never"
-    }
-  }
-}
-```
+- `show`: Whether to show a scrollbar in the project panel. Possible values: null, "auto", "system", "always", "never". Inherits editor settings when absent, see its description for more details.
+- `horizontal_scroll`: Whether to allow horizontal scrolling in the project panel. When `false`, the view is locked to the leftmost position and long file names are clipped.
 
 ### Sort Mode
 
@@ -5086,7 +5093,8 @@ See the [debugger page](../debugger.md) for more information about debugging sup
     "collapse_untracked_diff": false,
     "scrollbar": {
       "show": null
-    }
+    },
+    "starts_open": false
   }
 }
 ```
@@ -5101,6 +5109,33 @@ See the [debugger page](../debugger.md) for more information about debugging sup
 - `sort_by_path`: Whether to sort entries in the panel by path or by status (the default)
 - `collapse_untracked_diff`: Whether to collapse untracked files in the diff panel
 - `scrollbar`: When to show the scrollbar in the git panel
+- `starts_open`: Whether the git panel should open on startup
+
+## Git Worktree Directory
+
+- Description: Directory where git worktrees are created, relative to the repository working directory.
+- Setting: `git.worktree_directory`
+- Default: `"../worktrees"`
+
+When the resolved directory falls outside the project root, the project's directory name is automatically appended so that sibling repos don't collide. For example, with the default `"../worktrees"` and a project at `~/code/zed`, worktrees are created under `~/code/worktrees/zed/`.
+
+When the resolved directory is inside the project root, no extra component is added (it's already project-scoped).
+
+**Examples**:
+
+- `"../worktrees"` — `~/code/worktrees/<project>/` (default)
+- `".git/zed-worktrees"` — `<project>/.git/zed-worktrees/`
+- `"my-worktrees"` — `<project>/my-worktrees/`
+
+Trailing slashes are ignored.
+
+```json [settings]
+{
+  "git": {
+    "worktree_directory": "../worktrees"
+  }
+}
+```
 
 ## Git Hosting Providers
 

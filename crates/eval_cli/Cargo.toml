@@ -1,0 +1,51 @@
+[package]
+name = "eval_cli"
+version = "0.1.0"
+publish.workspace = true
+edition.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "eval-cli"
+path = "src/main.rs"
+
+[dependencies]
+acp_thread.workspace = true
+agent.workspace = true
+agent-client-protocol.workspace = true
+agent_ui.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+client.workspace = true
+ctrlc = { version = "3.5", features = ["termination"] }
+db.workspace = true
+debug_adapter_extension.workspace = true
+env_logger.workspace = true
+extension.workspace = true
+feature_flags.workspace = true
+fs.workspace = true
+futures.workspace = true
+gpui.workspace = true
+gpui_platform.workspace = true
+gpui_tokio.workspace = true
+language.workspace = true
+language_extension.workspace = true
+language_model.workspace = true
+language_models.workspace = true
+languages = { workspace = true, features = ["load-grammars"] }
+node_runtime.workspace = true
+paths.workspace = true
+project.workspace = true
+prompt_store.workspace = true
+release_channel.workspace = true
+reqwest_client.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+settings.workspace = true
+shellexpand.workspace = true
+terminal_view.workspace = true
+util.workspace = true
+watch.workspace = true

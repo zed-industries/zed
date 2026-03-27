@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use base64::write::EncoderWriter;
-use cloud_llm_client::CompletionIntent;
 use gpui::{
     App, AppContext as _, DevicePixels, Image, ImageFormat, ObjectFit, SharedString, Size, Task,
     point, px, size,
@@ -234,7 +233,9 @@ pub struct LanguageModelToolResult {
     pub tool_use_id: LanguageModelToolUseId,
     pub tool_name: Arc<str>,
     pub is_error: bool,
+    /// The tool output formatted for presenting to the model
     pub content: LanguageModelToolResultContent,
+    /// The raw tool output, if available, often for debugging or extra state for replay
     pub output: Option<serde_json::Value>,
 }
 
@@ -431,6 +432,7 @@ pub struct LanguageModelRequestTool {
     pub name: String,
     pub description: String,
     pub input_schema: serde_json::Value,
+    pub use_input_streaming: bool,
 }
 
 #[derive(Debug, PartialEq, Hash, Clone, Serialize, Deserialize)]
@@ -438,6 +440,21 @@ pub enum LanguageModelToolChoice {
     Auto,
     Any,
     None,
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompletionIntent {
+    UserPrompt,
+    Subagent,
+    ToolResults,
+    ThreadSummarization,
+    ThreadContextSummarization,
+    CreateFile,
+    EditFile,
+    InlineAssist,
+    TerminalInlineAssist,
+    GenerateGitCommitMessage,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -452,6 +469,33 @@ pub struct LanguageModelRequest {
     pub temperature: Option<f32>,
     pub thinking_allowed: bool,
     pub thinking_effort: Option<String>,
+    pub speed: Option<Speed>,
+}
+
+#[derive(Clone, Copy, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Speed {
+    #[default]
+    Standard,
+    Fast,
+}
+
+impl Speed {
+    pub fn toggle(self) -> Self {
+        match self {
+            Speed::Standard => Speed::Fast,
+            Speed::Fast => Speed::Standard,
+        }
+    }
+}
+
+impl From<Speed> for anthropic::Speed {
+    fn from(speed: Speed) -> Self {
+        match speed {
+            Speed::Standard => anthropic::Speed::Standard,
+            Speed::Fast => anthropic::Speed::Fast,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]

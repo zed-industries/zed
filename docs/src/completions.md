@@ -8,7 +8,7 @@ description: Zed's code completions from language servers and edit predictions. 
 Zed supports two sources for completions:
 
 1. "Code Completions" provided by Language Servers (LSPs) automatically installed by Zed or via [Zed Language Extensions](languages.md).
-2. "Edit Predictions" provided by Zed's own Zeta model or by external providers like [GitHub Copilot](#github-copilot) or [Supermaven](#supermaven).
+2. "Edit Predictions" provided by Zed's own Zeta model or by external providers like [GitHub Copilot](#github-copilot).
 
 ## Language Server Code Completions {#code-completions}
 

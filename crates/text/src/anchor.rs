@@ -15,12 +15,12 @@ pub struct Anchor {
     // we store the replica id and sequence number of the timestamp inline
     // to avoid the alignment of our fields from increasing the size of this struct
     // This saves 8 bytes, by allowing replica id, value and bias to occupy the padding
-    timestamp_replica_id: clock::ReplicaId,
-    timestamp_value: clock::Seq,
+    pub(crate) timestamp_replica_id: clock::ReplicaId,
+    pub(crate) timestamp_value: clock::Seq,
 
     /// The byte offset into the text inserted in the operation
     /// at `timestamp`.
-    pub offset: usize,
+    pub offset: u32,
     /// Whether this anchor stays attached to the character *before* or *after*
     /// the offset.
     pub bias: Bias,
@@ -49,7 +49,7 @@ impl Anchor {
     pub const MIN: Self = Self {
         timestamp_replica_id: clock::Lamport::MIN.replica_id,
         timestamp_value: clock::Lamport::MIN.value,
-        offset: usize::MIN,
+        offset: u32::MIN,
         bias: Bias::Left,
         buffer_id: None,
     };
@@ -57,14 +57,14 @@ impl Anchor {
     pub const MAX: Self = Self {
         timestamp_replica_id: clock::Lamport::MAX.replica_id,
         timestamp_value: clock::Lamport::MAX.value,
-        offset: usize::MAX,
+        offset: u32::MAX,
         bias: Bias::Right,
         buffer_id: None,
     };
 
     pub fn new(
         timestamp: clock::Lamport,
-        offset: usize,
+        offset: u32,
         bias: Bias,
         buffer_id: Option<BufferId>,
     ) -> Self {
@@ -81,7 +81,7 @@ impl Anchor {
         Self {
             timestamp_replica_id: clock::Lamport::MIN.replica_id,
             timestamp_value: clock::Lamport::MIN.value,
-            offset: usize::MIN,
+            offset: u32::MIN,
             bias: Bias::Left,
             buffer_id: Some(buffer_id),
         }
@@ -91,7 +91,7 @@ impl Anchor {
         Self {
             timestamp_replica_id: clock::Lamport::MAX.replica_id,
             timestamp_value: clock::Lamport::MAX.value,
-            offset: usize::MAX,
+            offset: u32::MAX,
             bias: Bias::Right,
             buffer_id: Some(buffer_id),
         }
@@ -190,13 +190,13 @@ impl Anchor {
 
     pub fn is_min(&self) -> bool {
         self.timestamp() == clock::Lamport::MIN
-            && self.offset == usize::MIN
+            && self.offset == u32::MIN
             && self.bias == Bias::Left
     }
 
     pub fn is_max(&self) -> bool {
         self.timestamp() == clock::Lamport::MAX
-            && self.offset == usize::MAX
+            && self.offset == u32::MAX
             && self.bias == Bias::Right
     }
 
