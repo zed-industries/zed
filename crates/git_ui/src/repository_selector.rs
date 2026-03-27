@@ -27,12 +27,32 @@ pub fn open(
 pub struct RepositorySelector {
     width: Rems,
     picker: Entity<Picker<RepositorySelectorDelegate>>,
+    for_popover: bool,
 }
 
 impl RepositorySelector {
     pub fn new(
         project_handle: Entity<Project>,
         width: Rems,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::new_internal(project_handle, width, true, window, cx)
+    }
+
+    pub fn for_popover(
+        project_handle: Entity<Project>,
+        width: Rems,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::new_internal(project_handle, width, false, window, cx)
+    }
+
+    fn new_internal(
+        project_handle: Entity<Project>,
+        width: Rems,
+        is_modal: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -72,13 +92,21 @@ impl RepositorySelector {
         };
 
         let picker = cx.new(|cx| {
-            Picker::uniform_list(delegate, window, cx)
+            let mut picker = Picker::uniform_list(delegate, window, cx)
                 .widest_item(widest_item_ix)
                 .max_height(Some(rems(20.).into()))
-                .show_scrollbar(true)
+                .show_scrollbar(true);
+            if !is_modal {
+                picker = picker.modal(false);
+            }
+            picker
         });
 
-        RepositorySelector { picker, width }
+        RepositorySelector {
+            picker,
+            width,
+            for_popover: !is_modal,
+        }
     }
 }
 
@@ -122,11 +150,12 @@ impl Focusable for RepositorySelector {
 }
 
 impl Render for RepositorySelector {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .key_context("GitRepositorySelector")
-            .w(self.width)
-            .child(self.picker.clone())
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut container = div().key_context("GitRepositorySelector").w(self.width);
+        if self.for_popover {
+            container = container.elevation_3(cx);
+        }
+        container.child(self.picker.clone())
     }
 }
 

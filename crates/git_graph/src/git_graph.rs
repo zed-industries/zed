@@ -6,7 +6,10 @@ use git::{
     repository::{CommitDiff, CommitFile, InitialGraphCommitData, LogOrder, LogSource, RepoPath},
     status::{FileStatus, StatusCode, TrackedStatus},
 };
-use git_ui::{commit_tooltip::CommitAvatar, commit_view::CommitView, git_status_icon};
+use git_ui::{
+    commit_tooltip::CommitAvatar, commit_view::CommitView, git_status_icon,
+    repository_selector::RepositorySelector,
+};
 use gpui::{
     AnyElement, App, Bounds, ClickEvent, ClipboardItem, Corner, DefiniteLength, DragMoveEvent,
     ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable, Hsla, PathBuilder, Pixels,
@@ -37,9 +40,9 @@ use theme::AccentColors;
 use theme_settings::ThemeSettings;
 use time::{OffsetDateTime, UtcOffset, format_description::BorrowedFormatItem};
 use ui::{
-    ButtonLike, Chip, CommonAnimationExt as _, ContextMenu, DiffStat, Divider, ScrollableHandle,
-    Table, TableColumnWidths, TableInteractionState, TableResizeBehavior, Tooltip, WithScrollbar,
-    prelude::*,
+    ButtonLike, Chip, CommonAnimationExt as _, ContextMenu, DiffStat, Divider, PopoverMenu,
+    ScrollableHandle, Table, TableColumnWidths, TableInteractionState, TableResizeBehavior,
+    Tooltip, WithScrollbar, prelude::*,
 };
 use workspace::{
     Workspace,
@@ -53,6 +56,7 @@ const LEFT_PADDING: Pixels = px(12.0);
 const LINE_WIDTH: Pixels = px(1.5);
 const RESIZE_HANDLE_WIDTH: f32 = 8.0;
 const COPIED_STATE_DURATION: Duration = Duration::from_secs(2);
+const MIN_VISIBLE_GRAPH_LANES: usize = 3;
 
 struct CopiedState {
     copied_at: Option<Instant>,
@@ -867,7 +871,8 @@ impl GitGraph {
     }
 
     fn graph_content_width(&self) -> Pixels {
-        (LANE_WIDTH * self.graph_data.max_lanes.min(8) as f32) + LEFT_PADDING * 2.0
+        let visible_lanes = self.graph_data.max_lanes.max(MIN_VISIBLE_GRAPH_LANES).min(8);
+        (LANE_WIDTH * visible_lanes as f32) + LEFT_PADDING * 2.0
     }
 
     pub fn new(
@@ -899,7 +904,6 @@ impl GitGraph {
                 }
             }
             GitStoreEvent::ActiveRepositoryChanged(changed_repo_id) => {
-                // todo(git_graph): Make this selectable from UI so we don't have to always use active repository
                 if this.selected_repo_id != *changed_repo_id {
                     this.selected_repo_id = *changed_repo_id;
                     this.graph_data.clear();
@@ -1056,6 +1060,23 @@ impl GitGraph {
         self.selected_repo_id
             .as_ref()
             .and_then(|repo_id| project.repositories(cx).get(&repo_id).cloned())
+    }
+
+    fn is_single_repository(&self, cx: &App) -> bool {
+        self.project
+            .read(cx)
+            .git_store()
+            .read(cx)
+            .repositories()
+            .len()
+            == 1
+    }
+
+    fn selected_repo_display_name(&self, cx: &App) -> SharedString {
+        self.get_selected_repository(cx)
+            .map(|repo| repo.read(cx).display_name())
+            .unwrap_or_default()
+            .into()
     }
 
     fn render_chip(&self, name: &SharedString, accent_color: gpui::Hsla) -> impl IntoElement {
@@ -1708,7 +1729,7 @@ impl GitGraph {
         let vertical_scroll_offset = scroll_offset_y - (first_visible_row as f32 * row_height);
         let horizontal_scroll_offset = self.horizontal_scroll_offset;
 
-        let max_lanes = self.graph_data.max_lanes.max(6);
+        let max_lanes = self.graph_data.max_lanes.max(MIN_VISIBLE_GRAPH_LANES);
         let graph_width = LANE_WIDTH * max_lanes as f32 + LEFT_PADDING * 2.0;
         let last_visible_row =
             first_visible_row + (viewport_height / row_height).ceil() as usize + 1;
@@ -2131,14 +2152,63 @@ impl Render for GitGraph {
                         .h_full()
                         .flex()
                         .flex_col()
-                        .child(
+                        .child({
+                            let single_repo = self.is_single_repository(cx);
+                            let selected_repo_name = self.selected_repo_display_name(cx);
+                            let repo_selector = (!single_repo).then(|| {
+                                let project = self.project.clone();
+                                PopoverMenu::new("repository-switcher")
+                                    .menu({
+                                        let project = project;
+                                        move |window, cx| {
+                                            let project = project.clone();
+                                            Some(cx.new(|cx| {
+                                                RepositorySelector::for_popover(
+                                                    project,
+                                                    rems(30.),
+                                                    window,
+                                                    cx,
+                                                )
+                                            }))
+                                        }
+                                    })
+                                    .trigger_with_tooltip(
+                                        IconButton::new("repo-selector", IconName::GitBranch)
+                                            .size(ButtonSize::None)
+                                            .icon_size(IconSize::Small)
+                                            .icon_color(Color::Muted),
+                                        move |_, cx| {
+                                            Tooltip::simple(
+                                                format!("Switch Repository ({selected_repo_name})"),
+                                                cx,
+                                            )
+                                        },
+                                    )
+                                        .anchor(Corner::TopLeft)
+                                        .offset(point(px(0.), px(24.0)))
+                                    .into_any_element()
+                            });
+
                             div()
                                 .p_2()
                                 .border_b_1()
-                                .whitespace_nowrap()
+                                .overflow_hidden()
                                 .border_color(cx.theme().colors().border)
-                                .child(Label::new("Graph").color(Color::Muted)),
-                        )
+                                .child(
+                                    h_flex()
+                                        .w_full()
+                                        .overflow_hidden()
+                                        .items_center()
+                                        .gap_2()
+                                        .when_some(repo_selector, |this, selector| {
+                                            this.child(selector)
+                                        })
+                                        .child(
+                                            Label::new("Graph")
+                                                .color(Color::Muted),
+                                        ),
+                                )
+                        })
                         .child(
                             div()
                                 .id("graph-canvas")
