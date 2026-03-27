@@ -3428,6 +3428,7 @@ dependencies = [
  "session",
  "settings",
  "theme",
+ "theme_settings",
  "ui",
  "ui_input",
  "uuid",
