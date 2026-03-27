@@ -1,3 +1,8 @@
+---
+title: Rough quick CPU profiling (Flamechart)
+description: "Performance profiling and optimization for Zed development."
+---
+
 How to use our internal tools to profile and keep Zed fast.
 
 # Rough quick CPU profiling (Flamechart)
@@ -10,7 +15,7 @@ See [samply](https://github.com/mstange/samply)'s README on how to install and r
 
 The profile.json does not contain any symbols. Firefox profiler can add the local symbols to the profile for for. To do that hit the upload local profile button in the top right corner.
 
-<img width="851" height="613" alt="image" src="https://github.com/user-attachments/assets/cbef2b51-0442-4ee9-bc5c-95f6ccf9be2c" />
+<img width="851" height="auto" alt="image" src="https://github.com/user-attachments/assets/cbef2b51-0442-4ee9-bc5c-95f6ccf9be2c" />
 
 # In depth CPU profiling (Tracing)
 
@@ -47,10 +52,12 @@ Download the profiler:
 ## Usage
 
 Open the profiler (tracy-profiler), you should see zed in the list of `Discovered clients` click it.
-<img width="392" height="287" alt="image" src="https://github.com/user-attachments/assets/b6f06fc3-6b25-41c7-ade9-558cc93d6033" />
+
+<img width="392" height="auto" alt="image" src="https://github.com/user-attachments/assets/b6f06fc3-6b25-41c7-ade9-558cc93d6033" />
 
 To find functions that take a long time follow this image:
-<img width="888" height="1159" alt="image" src="https://github.com/user-attachments/assets/77087617-f53a-4331-863d-e59f8a5b6f0b" />
+
+<img width="888" height="auto" alt="image" src="https://github.com/user-attachments/assets/77087617-f53a-4331-863d-e59f8a5b6f0b" />
 
 # Task/Async profiling
 
@@ -73,7 +80,7 @@ Download the importer
 - `cd import && mkdir build && cd build`
 - Run cmake to generate build files: `cmake -G Ninja -DCMAKE_BUILD_TYPE=Release ..`
 - Build the importer: `ninja`
-- Run the importer on the trace file: `./tracy-import-miniprofiler /path/to/trace.miniprof /path/to/output.tracy`
+- Run the importer on the trace file: `./tracy-import-miniprofiler /path/to/trace.miniprof.json /path/to/output.tracy`
 - Open the trace in tracy:
   - If you're on windows download the v0.12.2 version from the releases on the upstream repo
   - If you're on other platforms open it on the website: https://tracy.nereid.pl/ (the version might mismatch so your luck might vary, we need to host our own ideally..)
@@ -82,7 +89,7 @@ Download the importer
 
 - Run the action: `zed open performance profiler`
 - Hit the save button. This opens a save dialog or if that fails to open the trace gets saved in your working directory.
-- Convert the profile so it can be imported in tracy using the importer: `./tracy-import-miniprofiler <path to performance_profile.miniprof> output.tracy`
+- Convert the profile so it can be imported in tracy using the importer: `./tracy-import-miniprofiler <path to performance_profile.miniprof.json> output.tracy`
 - Go to <https://tracy.nereid.pl/> hit the 'power button' in the top left and then open saved trace.
 - Now zoom in to see the tasks and how long they took
 

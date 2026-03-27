@@ -1,14 +1,14 @@
 # Tool Permissions
 
-Configure which agent actions run automatically and which require your approval.
+Configure which [Agent Panel](./agent-panel.md) tools run automatically and which require your approval.
+For a list of available tools, [see the Tools page](./tools.md).
 
-> **Note:** In Zed v0.224.0 and above, this page documents the granular `agent.tool_permissions` system.
->
-> **Note:** Before Zed v0.224.0, tool approval was controlled by the `agent.always_allow_tool_actions` boolean (default `false`). Set it to `true` to auto-approve tool actions, or leave it `false` to require confirmation.
+> **Note:** In Zed v0.224.0 and above, tool approval is controlled by `agent.tool_permissions.default`.
+> In earlier versions, it was controlled by the `agent.always_allow_tool_actions` boolean (default `false`).
 
 ## Quick Start
 
-You can use Zed's Settings UI to configure tool permissions, or add rules directly to your `settings.json`:
+Use Zed's Settings Editor to [configure tool permissions](zed://settings/agent.tool_permissions), or add rules directly to your settings file:
 
 ```json [settings]
 {
@@ -30,7 +30,8 @@ You can use Zed's Settings UI to configure tool permissions, or add rules direct
 }
 ```
 
-This example auto-approves `cargo` and `npm` commands in the terminal tool, while requiring manual confirmation on a case-by-case basis for `sudo` commands. Non-terminal commands follow the global `"default": "allow"` setting, but tool-specific defaults and `always_confirm` rules can still prompt.
+This example auto-approves `cargo` and `npm` commands in the terminal tool, while requiring manual confirmation on a case-by-case basis for `sudo` commands.
+Non-terminal commands follow the global `"default": "allow"` setting, but tool-specific defaults and `always_confirm` rules can still prompt.
 
 ## How It Works
 
@@ -55,7 +56,8 @@ The `tool_permissions` setting lets you customize tool permissions by specifying
 | `fetch`                  | The URL                      |
 | `web_search`             | The search query             |
 
-For MCP tools, use the format `mcp:<server>:<tool_name>`. For example, a tool called `create_issue` on a server called `github` would be `mcp:github:create_issue`.
+For MCP tools, use the format `mcp:<server>:<tool_name>`.
+For example, a tool called `create_issue` on a server called `github` would be `mcp:github:create_issue`.
 
 ## Configuration
 
@@ -90,23 +92,100 @@ For MCP tools, use the format `mcp:<server>:<tool_name>`. For example, a tool ca
 
 ```json [settings]
 {
-  "pattern": "your-regex-here",
-  "case_sensitive": false
+  "agent": {
+    "tool_permissions": {
+      "tools": {
+        "edit_file": {
+          "always_allow": [
+            {
+              "pattern": "your-regex-here",
+              "case_sensitive": false
+            }
+          ]
+        }
+      }
+    }
+  }
 }
 ```
 
-Patterns use Rust regex syntax. Matching is case-insensitive by default.
+Patterns use Rust regex syntax.
+Matching is case-insensitive by default.
 
 ## Rule Precedence
 
 From highest to lowest priority:
 
-1. **Built-in security rules** — Hardcoded protections (e.g., `rm -rf /`). Cannot be overridden.
-2. **`always_deny`** — Blocks matching actions
-3. **`always_confirm`** — Requires confirmation for matching actions
-4. **`always_allow`** — Auto-approves matching actions
-5. **Tool-specific `default`** — Per-tool fallback when no patterns match (e.g., `tools.terminal.default`)
-6. **Global `default`** — Falls back to `tool_permissions.default` when no tool-specific default is set
+1. **Built-in security rules**: Hardcoded protections (e.g., `rm -rf /`). Cannot be overridden.
+2. **`always_deny`**: Blocks matching actions
+3. **`always_confirm`**: Requires confirmation for matching actions
+4. **`always_allow`**: Auto-approves matching actions
+5. **Tool-specific `default`**: Per-tool fallback when no patterns match (e.g., `tools.terminal.default`)
+6. **Global `default`**: Falls back to `tool_permissions.default` when no tool-specific default is set
+
+## Global Auto-Approve
+
+To auto-approve all tool actions:
+
+```json [settings]
+{
+  "agent": {
+    "tool_permissions": {
+      "default": "allow"
+    }
+  }
+}
+```
+
+This bypasses confirmation prompts for most tools, but `always_deny`, `always_confirm`, built-in security rules, and paths inside Zed settings directories still prompt or block.
+
+## Shell Compatibility
+
+For the `terminal` tool, Zed parses chained commands (e.g., `echo hello && rm file`) to check each sub-command against your patterns.
+
+All supported shells work with tool permission patterns, including sh, bash, zsh, dash, fish, PowerShell 7+, pwsh, cmd, xonsh, csh, tcsh, Nushell, Elvish, and rc (Plan 9).
+
+## Writing Patterns
+
+- Use `\b` for word boundaries: `\brm\b` matches "rm" but not "storm"
+- Use `^` and `$` to anchor patterns to start/end of input
+- Escape special characters: `\.` for literal dot, `\\` for backslash
+
+<div class="warning">
+
+Test carefully—a typo in a deny pattern blocks legitimate actions.
+You can use the "Test Your Rules" checker, available in each individual tool page, to confirm whether a pattern is correctly falling in the desired condition.
+
+</div>
+
+## Built-in Security Rules
+
+Zed includes a small set of hardcoded security rules that **cannot be overridden** by any setting.
+These only apply to the **terminal** tool and block recursive deletion of critical directories:
+
+- `rm -rf /` and `rm -rf /*` — filesystem root
+- `rm -rf ~` and `rm -rf ~/*` — home directory
+- `rm -rf $HOME` / `rm -rf ${HOME}` (and `$HOME/*`) — home directory via environment variable
+- `rm -rf .` and `rm -rf ./*` — current directory
+- `rm -rf ..` and `rm -rf ../*` — parent directory
+
+These patterns catch any flag combination (e.g., `-fr`, `-rfv`, `-r -f`, `--recursive --force`) and are case-insensitive.
+They are checked against both the raw command and each parsed sub-command in chained commands (e.g., `ls && rm -rf /`).
+
+There are no other built-in rules.
+The default settings file ({#action zed::OpenDefaultSettings}) includes commented-out examples for protecting `.env` files, secrets directories, and private keys — you can uncomment or adapt these to suit your needs.
+
+## Permission Request in the UI
+
+When the agent requests permission, you'll see in the thread view a tool card with a menu that includes:
+
+- **Allow once** / **Deny once** — One-time decision
+- **Always for <tool>** — Sets a tool-level default to allow or deny
+- **Always for <pattern>** — Adds an `always_allow` or `always_deny` pattern (when a safe pattern can be extracted)
+
+Selecting "Always for <tool>" sets `tools.<tool>.default` to allow or deny.
+When a pattern can be safely extracted, selecting "Always for <pattern>" adds an `always_allow` or `always_deny` rule for that input.
+MCP tools only support the tool-level option.
 
 ## Examples
 
@@ -227,56 +306,3 @@ From highest to lowest priority:
   }
 }
 ```
-
-## Global Auto-Approve
-
-To auto-approve all tool actions:
-
-```json [settings]
-{
-  "agent": {
-    "tool_permissions": {
-      "default": "allow"
-    }
-  }
-}
-```
-
-This bypasses confirmation prompts for most actions, but `always_deny`, `always_confirm`, built-in security rules, and paths inside Zed settings directories still prompt or block.
-
-## Shell Compatibility
-
-For the `terminal` tool, Zed parses chained commands (e.g., `echo hello && rm file`) to check each sub-command against your patterns.
-
-All supported shells work with tool permission patterns, including sh, bash, zsh, dash, fish, PowerShell 7+, pwsh, cmd, xonsh, csh, tcsh, Nushell, Elvish, and rc (Plan 9).
-
-## Writing Patterns
-
-- Use `\b` for word boundaries: `\brm\b` matches "rm" but not "storm"
-- Use `^` and `$` to anchor patterns to start/end of input
-- Escape special characters: `\.` for literal dot, `\\` for backslash
-- Test carefully—a typo in a deny pattern blocks legitimate actions
-
-## Built-in Security Rules
-
-Zed includes a small set of hardcoded security rules that **cannot be overridden** by any setting. These only apply to the **terminal** tool and block recursive deletion of critical directories:
-
-- `rm -rf /` and `rm -rf /*` — filesystem root
-- `rm -rf ~` and `rm -rf ~/*` — home directory
-- `rm -rf $HOME` / `rm -rf ${HOME}` (and `$HOME/*`) — home directory via environment variable
-- `rm -rf .` and `rm -rf ./*` — current directory
-- `rm -rf ..` and `rm -rf ../*` — parent directory
-
-These patterns catch any flag combination (e.g., `-fr`, `-rfv`, `-r -f`, `--recursive --force`) and are case-insensitive. They are checked against both the raw command and each parsed sub-command in chained commands (e.g., `ls && rm -rf /`).
-
-There are no other built-in rules. The default settings file ({#action zed::OpenDefaultSettings}) includes commented-out examples for protecting `.env` files, secrets directories, and private keys — you can uncomment or adapt these to suit your needs.
-
-## UI Options
-
-When the agent requests permission, the dialog includes:
-
-- **Allow once** / **Deny once** — One-time decision
-- **Always for <tool>** — Sets a tool-level default to allow or deny
-- **Always for <pattern>** — Adds an `always_allow` or `always_deny` pattern (when a safe pattern can be extracted)
-
-Selecting "Always for <tool>" sets `tools.<tool>.default` to allow or deny. When a pattern can be safely extracted, selecting "Always for <pattern>" adds an `always_allow` or `always_deny` rule for that input. MCP tools only support the tool-level option.

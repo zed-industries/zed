@@ -180,7 +180,7 @@ fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
             }))
         }),
     }
-    .map(|path_with_pos| path_with_pos.to_string(|path| path.to_string_lossy().into_owned()))
+    .map(|path_with_pos| path_with_pos.to_string(&|path| path.to_string_lossy().into_owned()))
 }
 
 fn expand_directory_diff_pairs(
@@ -445,7 +445,7 @@ fn parse_path_in_wsl(source: &str, wsl: &str) -> Result<String> {
 
     source.path = Path::new(result.trim()).to_owned();
 
-    Ok(source.to_string(|path| path.to_string_lossy().into_owned()))
+    Ok(source.to_string(&|path| path.to_string_lossy().into_owned()))
 }
 
 fn main() -> Result<()> {

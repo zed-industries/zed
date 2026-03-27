@@ -1,3 +1,8 @@
+---
+title: Zed on Linux
+description: "The installation script on the download page is the fastest way to install Zed:"
+---
+
 # Zed on Linux
 
 ## Standard Installation
@@ -60,7 +65,7 @@ We'd love your help making Zed available for everyone. If Zed is not yet availab
 
 The packages in this section provide binary installs for Zed but are not official packages within the associated distributions. These packages are maintained by community members and as such a higher level of caution should be taken when installing them.
 
-#### Debian
+#### Debian and Ubuntu
 
 Zed is available in [this community-maintained repository](https://debian.griffo.io/).
 
@@ -91,9 +96,9 @@ ln -sf ~/.local/zed.app/bin/zed ~/.local/bin/zed
 If you'd like integration with an XDG-compatible desktop environment, you will also need to install the `.desktop` file:
 
 ```sh
-cp ~/.local/zed.app/share/applications/zed.desktop ~/.local/share/applications/dev.zed.Zed.desktop
+install -D ~/.local/zed.app/share/applications/dev.zed.Zed.desktop -t ~/.local/share/applications
 sed -i "s|Icon=zed|Icon=$HOME/.local/zed.app/share/icons/hicolor/512x512/apps/zed.png|g" ~/.local/share/applications/dev.zed.Zed.desktop
-sed -i "s|Exec=zed|Exec=$HOME/.local/zed.app/libexec/zed-editor|g" ~/.local/share/applications/dev.zed.Zed.desktop
+sed -i "s|Exec=zed|Exec=$HOME/.local/zed.app/bin/zed|g" ~/.local/share/applications/dev.zed.Zed.desktop
 ```
 
 ## Uninstalling Zed

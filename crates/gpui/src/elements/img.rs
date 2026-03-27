@@ -4,13 +4,15 @@ use crate::{
     Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource,
     SharedString, SharedUri, StyleRefinement, Styled, Task, Window, px,
 };
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 
-use futures::{AsyncReadExt, Future};
+use futures::Future;
+use gpui_util::ResultExt;
 use image::{
     AnimationDecoder, DynamicImage, Frame, ImageError, ImageFormat, Rgba,
     codecs::{gif::GifDecoder, webp::WebPDecoder},
 };
+use scheduler::Instant;
 use smallvec::SmallVec;
 use std::{
     fs,
@@ -19,10 +21,9 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
-    time::{Duration, Instant},
+    time::Duration,
 };
 use thiserror::Error;
-use util::ResultExt;
 
 use super::{Stateful, StatefulInteractiveElement};
 
@@ -49,7 +50,7 @@ pub enum ImageSource {
 }
 
 fn is_uri(uri: &str) -> bool {
-    http_client::Uri::from_str(uri).is_ok()
+    url::Url::from_str(uri).is_ok()
 }
 
 impl From<SharedUri> for ImageSource {
@@ -602,6 +603,9 @@ impl Asset for ImageAssetLoader {
             let bytes = match source.clone() {
                 Resource::Path(uri) => fs::read(uri.as_ref())?,
                 Resource::Uri(uri) => {
+                    use anyhow::Context as _;
+                    use futures::AsyncReadExt as _;
+
                     let mut response = client
                         .get(uri.as_ref(), ().into(), true)
                         .await

@@ -4,10 +4,10 @@ use crate::{
     PromptLevel, Render, Reservation, Result, Subscription, Task, VisualContext, Window,
     WindowHandle,
 };
-use anyhow::Context as _;
+use anyhow::{Context as _, bail};
 use derive_more::{Deref, DerefMut};
 use futures::channel::oneshot;
-use smol::future::FutureExt;
+use futures::future::FutureExt;
 use std::{future::Future, rc::Weak};
 
 use super::{Context, WeakEntity};
@@ -88,6 +88,9 @@ impl AppContext for AsyncApp {
     {
         let app = self.app.upgrade().context("app was released")?;
         let mut lock = app.try_borrow_mut()?;
+        if lock.quitting {
+            bail!("app is quitting");
+        }
         lock.update_window(window, f)
     }
 
@@ -101,9 +104,13 @@ impl AppContext for AsyncApp {
     {
         let app = self.app.upgrade().context("app was released")?;
         let lock = app.borrow();
+        if lock.quitting {
+            bail!("app is quitting");
+        }
         lock.read_window(window, read)
     }
 
+    #[track_caller]
     fn background_spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Task<R>
     where
         R: Send + 'static,
@@ -173,6 +180,9 @@ impl AsyncApp {
     {
         let app = self.app();
         let mut lock = app.borrow_mut();
+        if lock.quitting {
+            bail!("app is quitting");
+        }
         lock.open_window(options, build_root_view)
     }
 
@@ -210,6 +220,9 @@ impl AsyncApp {
     pub fn try_read_global<G: Global, R>(&self, read: impl FnOnce(&G, &App) -> R) -> Option<R> {
         let app = self.app();
         let app = app.borrow_mut();
+        if app.quitting {
+            return None;
+        }
         Some(read(app.try_global()?, &app))
     }
 
@@ -240,10 +253,10 @@ impl AsyncApp {
         &self,
         entity: &WeakEntity<T>,
         f: Callback,
-    ) -> util::Deferred<impl FnOnce() + use<T, Callback>> {
+    ) -> gpui_util::Deferred<impl FnOnce() + use<T, Callback>> {
         let entity = entity.clone();
         let mut cx = self.clone();
-        util::defer(move || {
+        gpui_util::defer(move || {
             entity.update(&mut cx, f).ok();
         })
     }
@@ -407,6 +420,7 @@ impl AppContext for AsyncWindowContext {
         self.app.read_window(window, read)
     }
 
+    #[track_caller]
     fn background_spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Task<R>
     where
         R: Send + 'static,

@@ -20,7 +20,6 @@ pub use settings::OllamaAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore, update_settings_file};
 use std::pin::Pin;
 use std::sync::LazyLock;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::HashMap, sync::Arc};
 use ui::{
     ButtonLike, ButtonLink, ConfiguredApiCard, ElevationIndex, List, ListBulletItem, Tooltip,
@@ -368,7 +367,7 @@ impl OllamaLanguageModel {
                             }
                             MessageContent::ToolUse(tool_use) => {
                                 tool_calls.push(OllamaToolCall {
-                                    id: Some(tool_use.id.to_string()),
+                                    id: tool_use.id.to_string(),
                                     function: OllamaFunctionCall {
                                         name: tool_use.name.to_string(),
                                         arguments: tool_use.input,
@@ -401,7 +400,14 @@ impl OllamaLanguageModel {
             stream: true,
             options: Some(ChatOptions {
                 num_ctx: Some(self.model.max_tokens),
-                stop: Some(request.stop),
+                // Only send stop tokens if explicitly provided. When empty/None,
+                // Ollama will use the model's default stop tokens from its Modelfile.
+                // Sending an empty array would override and disable the defaults.
+                stop: if request.stop.is_empty() {
+                    None
+                } else {
+                    Some(request.stop)
+                },
                 temperature: request.temperature.or(Some(1.0)),
                 ..Default::default()
             }),
@@ -441,6 +447,10 @@ impl LanguageModel for OllamaLanguageModel {
 
     fn supports_images(&self) -> bool {
         self.model.supports_vision.unwrap_or(false)
+    }
+
+    fn supports_thinking(&self) -> bool {
+        self.model.supports_thinking.unwrap_or(false)
     }
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
@@ -510,9 +520,6 @@ impl LanguageModel for OllamaLanguageModel {
 fn map_to_language_model_completion_events(
     stream: Pin<Box<dyn Stream<Item = anyhow::Result<ChatResponseDelta>> + Send>>,
 ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
-    // Used for creating unique tool use ids
-    static TOOL_CALL_COUNTER: AtomicU64 = AtomicU64::new(0);
-
     struct State {
         stream: Pin<Box<dyn Stream<Item = anyhow::Result<ChatResponseDelta>> + Send>>,
         used_tools: bool,
@@ -563,13 +570,6 @@ fn map_to_language_model_completion_events(
 
                     if let Some(tool_call) = tool_calls.and_then(|v| v.into_iter().next()) {
                         let OllamaToolCall { id, function } = tool_call;
-                        let id = id.unwrap_or_else(|| {
-                            format!(
-                                "{}-{}",
-                                &function.name,
-                                TOOL_CALL_COUNTER.fetch_add(1, Ordering::Relaxed)
-                            )
-                        });
                         let event = LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
                             id: LanguageModelToolUseId::from(id),
                             name: Arc::from(function.name),
@@ -865,9 +865,7 @@ impl ConfigurationView {
                 .child(
                     Button::new("reset-context-window", "Reset")
                         .label_size(LabelSize::Small)
-                        .icon(IconName::Undo)
-                        .icon_size(IconSize::Small)
-                        .icon_position(IconPosition::Start)
+                        .start_icon(Icon::new(IconName::Undo).size(IconSize::Small))
                         .layer(ElevationIndex::ModalSurface)
                         .on_click(
                             cx.listener(|this, _, window, cx| {
@@ -912,9 +910,7 @@ impl ConfigurationView {
                 .child(
                     Button::new("reset-api-url", "Reset API URL")
                         .label_size(LabelSize::Small)
-                        .icon(IconName::Undo)
-                        .icon_size(IconSize::Small)
-                        .icon_position(IconPosition::Start)
+                        .start_icon(Icon::new(IconName::Undo).size(IconSize::Small))
                         .layer(ElevationIndex::ModalSurface)
                         .on_click(
                             cx.listener(|this, _, window, cx| this.reset_api_url(window, cx)),
@@ -956,9 +952,11 @@ impl Render for ConfigurationView {
                                     this.child(
                                         Button::new("ollama-site", "Ollama")
                                             .style(ButtonStyle::Subtle)
-                                            .icon(IconName::ArrowUpRight)
-                                            .icon_size(IconSize::XSmall)
-                                            .icon_color(Color::Muted)
+                                            .end_icon(
+                                                Icon::new(IconName::ArrowUpRight)
+                                                    .size(IconSize::XSmall)
+                                                    .color(Color::Muted),
+                                            )
                                             .on_click(move |_, _, cx| cx.open_url(OLLAMA_SITE))
                                             .into_any_element(),
                                     )
@@ -966,9 +964,11 @@ impl Render for ConfigurationView {
                                     this.child(
                                         Button::new("download_ollama_button", "Download Ollama")
                                             .style(ButtonStyle::Subtle)
-                                            .icon(IconName::ArrowUpRight)
-                                            .icon_size(IconSize::XSmall)
-                                            .icon_color(Color::Muted)
+                                            .end_icon(
+                                                Icon::new(IconName::ArrowUpRight)
+                                                    .size(IconSize::XSmall)
+                                                    .color(Color::Muted),
+                                            )
                                             .on_click(move |_, _, cx| {
                                                 cx.open_url(OLLAMA_DOWNLOAD_URL)
                                             })
@@ -979,9 +979,11 @@ impl Render for ConfigurationView {
                             .child(
                                 Button::new("view-models", "View All Models")
                                     .style(ButtonStyle::Subtle)
-                                    .icon(IconName::ArrowUpRight)
-                                    .icon_size(IconSize::XSmall)
-                                    .icon_color(Color::Muted)
+                                    .end_icon(
+                                        Icon::new(IconName::ArrowUpRight)
+                                            .size(IconSize::XSmall)
+                                            .color(Color::Muted),
+                                    )
                                     .on_click(move |_, _, cx| cx.open_url(OLLAMA_LIBRARY_URL)),
                             ),
                     )
@@ -1012,9 +1014,9 @@ impl Render for ConfigurationView {
                         } else {
                             this.child(
                                 Button::new("retry_ollama_models", "Connect")
-                                    .icon_position(IconPosition::Start)
-                                    .icon_size(IconSize::XSmall)
-                                    .icon(IconName::PlayOutlined)
+                                    .start_icon(
+                                        Icon::new(IconName::PlayOutlined).size(IconSize::XSmall),
+                                    )
                                     .on_click(cx.listener(move |this, _, window, cx| {
                                         this.retry_connection(window, cx)
                                     })),

@@ -4,7 +4,7 @@ use serde_json::Value;
 use crate::migrations::migrate_settings;
 
 pub fn make_relative_line_numbers_an_enum(value: &mut Value) -> Result<()> {
-    migrate_settings(value, migrate_one)
+    migrate_settings(value, &mut migrate_one)
 }
 
 fn migrate_one(obj: &mut serde_json::Map<String, Value>) -> Result<()> {

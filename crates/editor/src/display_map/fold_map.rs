@@ -57,7 +57,8 @@ impl FoldPlaceholder {
     pub fn fold_element(fold_id: FoldId, cx: &App) -> Stateful<gpui::Div> {
         use gpui::{InteractiveElement as _, StatefulInteractiveElement as _, Styled as _};
         use settings::Settings as _;
-        use theme::{ActiveTheme as _, ThemeSettings};
+        use theme::ActiveTheme as _;
+        use theme_settings::ThemeSettings;
         let settings = ThemeSettings::get_global(cx);
         gpui::div()
             .id(fold_id)
@@ -1400,6 +1401,8 @@ pub struct Chunk<'a> {
     pub tabs: u128,
     /// Bitmap of character locations in chunk
     pub chars: u128,
+    /// Bitmap of newline locations in chunk
+    pub newlines: u128,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -1564,6 +1567,7 @@ impl<'a> Iterator for FoldChunks<'a> {
 
             chunk.tabs = (chunk.tabs >> bit_start) & mask;
             chunk.chars = (chunk.chars >> bit_start) & mask;
+            chunk.newlines = (chunk.newlines >> bit_start) & mask;
 
             if chunk_end == transform_end {
                 self.transform_cursor.next();
@@ -1577,6 +1581,7 @@ impl<'a> Iterator for FoldChunks<'a> {
                 text: chunk.text,
                 tabs: chunk.tabs,
                 chars: chunk.chars,
+                newlines: chunk.newlines,
                 syntax_highlight_id: chunk.syntax_highlight_id,
                 highlight_style: chunk.highlight_style,
                 diagnostic_severity: chunk.diagnostic_severity,

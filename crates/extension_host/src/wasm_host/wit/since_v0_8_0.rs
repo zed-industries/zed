@@ -868,7 +868,7 @@ impl process::Host for WasmState {
             self.capability_granter
                 .grant_exec(&command.command, &command.args)?;
 
-            let output = util::command::new_smol_command(command.command.as_str())
+            let output = util::command::new_command(command.command.as_str())
                 .args(&command.args)
                 .envs(command.env)
                 .output()
@@ -941,6 +941,7 @@ impl ExtensionImports for WasmState {
                         );
                         Ok(serde_json::to_string(&settings::LanguageSettings {
                             tab_size: settings.tab_size,
+                            preferred_line_length: settings.preferred_line_length,
                         })?)
                     }
                     "lsp" => {
