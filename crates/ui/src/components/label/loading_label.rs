@@ -93,14 +93,15 @@ impl RenderOnce for LoadingLabel {
             move |mut label, animation_ix, delta| {
                 match animation_ix {
                     0 => {
-                        let chars_to_show = (delta * text.len() as f32).ceil() as usize;
-                        let text = SharedString::from(text[0..chars_to_show].to_string());
-                        label.set_text(text);
+                        let byte_end =
+                            text.floor_char_boundary((delta * text.len() as f32).ceil() as usize);
+                        let visible_text = SharedString::new(&text[0..byte_end]);
+                        label.set_text(visible_text);
                     }
                     1 => match delta {
-                        d if d < 0.25 => label.set_text(text.clone()),
-                        d if d < 0.5 => label.set_text(format!("{}.", text)),
-                        d if d < 0.75 => label.set_text(format!("{}..", text)),
+                        ..0.25 => label.set_text(text.clone()),
+                        ..0.5 => label.set_text(format!("{}.", text)),
+                        ..0.75 => label.set_text(format!("{}..", text)),
                         _ => label.set_text(format!("{}...", text)),
                     },
                     _ => {}

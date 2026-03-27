@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use crate::{
     Vim,
-    motion::right,
+    motion::{is_subword_end, is_subword_start, right},
     state::{Mode, Operator},
 };
 use editor::{
@@ -85,7 +85,7 @@ pub struct CandidateWithRanges {
     close_range: Range<MultiBufferOffset>,
 }
 
-/// Selects text at the same indentation level.
+/// Operates on text within or around parentheses `()`.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -94,7 +94,7 @@ struct Parentheses {
     opening: bool,
 }
 
-/// Selects text at the same indentation level.
+/// Operates on text within or around square brackets `[]`.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -103,7 +103,7 @@ struct SquareBrackets {
     opening: bool,
 }
 
-/// Selects text at the same indentation level.
+/// Operates on text within or around angle brackets `<>`.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -111,7 +111,8 @@ struct AngleBrackets {
     #[serde(default)]
     opening: bool,
 }
-/// Selects text at the same indentation level.
+
+/// Operates on text within or around curly brackets `{}`.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -814,15 +815,17 @@ fn in_word(
         map,
         right(map, relative_to, 1),
         movement::FindRange::SingleLine,
-        |left, right| classifier.kind(left) != classifier.kind(right),
+        &mut |left, right| classifier.kind(left) != classifier.kind(right),
     );
 
-    let mut end =
-        movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
-            classifier.kind(left) != classifier.kind(right)
-        });
+    let mut end = movement::find_boundary(
+        map,
+        relative_to,
+        FindRange::SingleLine,
+        &mut |left, right| classifier.kind(left) != classifier.kind(right),
+    );
 
-    let is_boundary = |left: char, right: char| classifier.kind(left) != classifier.kind(right);
+    let mut is_boundary = |left: char, right: char| classifier.kind(left) != classifier.kind(right);
 
     for _ in 1..times {
         let kind_at_end = map
@@ -833,10 +836,15 @@ fn in_word(
         // Skip whitespace but not punctuation (punctuation is its own word unit).
         let next_end = if kind_at_end == Some(CharKind::Whitespace) {
             let after_whitespace =
-                movement::find_boundary(map, end, FindRange::MultiLine, is_boundary);
-            movement::find_boundary(map, after_whitespace, FindRange::MultiLine, is_boundary)
+                movement::find_boundary(map, end, FindRange::MultiLine, &mut is_boundary);
+            movement::find_boundary(
+                map,
+                after_whitespace,
+                FindRange::MultiLine,
+                &mut is_boundary,
+            )
         } else {
-            movement::find_boundary(map, end, FindRange::MultiLine, is_boundary)
+            movement::find_boundary(map, end, FindRange::MultiLine, &mut is_boundary)
         };
         if next_end == end {
             break;
@@ -862,11 +870,8 @@ fn in_subword(
         .buffer_chars_at(offset)
         .next()
         .map(|(c, _)| {
-            if classifier.is_word('-') {
-                !classifier.is_whitespace(c) && c != '_' && c != '-'
-            } else {
-                !classifier.is_whitespace(c) && c != '_'
-            }
+            let is_separator = "._-".contains(c);
+            !classifier.is_whitespace(c) && !is_separator
         })
         .unwrap_or(false);
 
@@ -875,31 +880,32 @@ fn in_subword(
             map,
             right(map, relative_to, 1),
             movement::FindRange::SingleLine,
-            |left, right| {
+            &mut |left, right| {
                 let is_word_start = classifier.kind(left) != classifier.kind(right);
-                let is_subword_start = classifier.is_word('-') && left == '-' && right != '-'
-                    || left == '_' && right != '_'
-                    || left.is_lowercase() && right.is_uppercase();
-                is_word_start || is_subword_start
+                is_word_start || is_subword_start(left, right, "._-")
             },
         )
     } else {
-        movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
-            let is_word_start = classifier.kind(left) != classifier.kind(right);
-            let is_subword_start = classifier.is_word('-') && left == '-' && right != '-'
-                || left == '_' && right != '_'
-                || left.is_lowercase() && right.is_uppercase();
-            is_word_start || is_subword_start
-        })
+        movement::find_boundary(
+            map,
+            relative_to,
+            FindRange::SingleLine,
+            &mut |left, right| {
+                let is_word_start = classifier.kind(left) != classifier.kind(right);
+                is_word_start || is_subword_start(left, right, "._-")
+            },
+        )
     };
 
-    let end = movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
-        let is_word_end = classifier.kind(left) != classifier.kind(right);
-        let is_subword_end = classifier.is_word('-') && left != '-' && right == '-'
-            || left != '_' && right == '_'
-            || left.is_lowercase() && right.is_uppercase();
-        is_word_end || is_subword_end
-    });
+    let end = movement::find_boundary(
+        map,
+        relative_to,
+        FindRange::SingleLine,
+        &mut |left, right| {
+            let is_word_end = classifier.kind(left) != classifier.kind(right);
+            is_word_end || is_subword_end(left, right, "._-")
+        },
+    );
 
     Some(start..end)
 }
@@ -1038,22 +1044,25 @@ fn around_subword(
         map,
         right(map, relative_to, 1),
         movement::FindRange::SingleLine,
-        |left, right| {
-            let is_word_start = classifier.kind(left) != classifier.kind(right);
-            let is_subword_start = classifier.is_word('-') && left != '-' && right == '-'
-                || left != '_' && right == '_'
-                || left.is_lowercase() && right.is_uppercase();
-            is_word_start || is_subword_start
+        &mut |left, right| {
+            let is_separator = |c: char| "._-".contains(c);
+            let is_word_start =
+                classifier.kind(left) != classifier.kind(right) && !is_separator(left);
+            is_word_start || is_subword_start(left, right, "._-")
         },
     );
 
-    let end = movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
-        let is_word_end = classifier.kind(left) != classifier.kind(right);
-        let is_subword_end = classifier.is_word('-') && left != '-' && right == '-'
-            || left != '_' && right == '_'
-            || left.is_lowercase() && right.is_uppercase();
-        is_word_end || is_subword_end
-    });
+    let end = movement::find_boundary(
+        map,
+        relative_to,
+        FindRange::SingleLine,
+        &mut |left, right| {
+            let is_separator = |c: char| "._-".contains(c);
+            let is_word_end =
+                classifier.kind(left) != classifier.kind(right) && !is_separator(right);
+            is_word_end || is_subword_end(left, right, "._-")
+        },
+    );
 
     Some(start..end).map(|range| expand_to_include_whitespace(map, range, true))
 }
@@ -1102,31 +1111,37 @@ fn around_next_word(
         map,
         right(map, relative_to, 1),
         FindRange::SingleLine,
-        |left, right| classifier.kind(left) != classifier.kind(right),
+        &mut |left, right| classifier.kind(left) != classifier.kind(right),
     );
 
     let mut word_found = false;
-    let mut end = movement::find_boundary(map, relative_to, FindRange::MultiLine, |left, right| {
-        let left_kind = classifier.kind(left);
-        let right_kind = classifier.kind(right);
-
-        let found = (word_found && left_kind != right_kind) || right == '\n' && left == '\n';
-
-        if right_kind != CharKind::Whitespace {
-            word_found = true;
-        }
-
-        found
-    });
-
-    for _ in 1..times {
-        let next_end = movement::find_boundary(map, end, FindRange::MultiLine, |left, right| {
+    let mut end = movement::find_boundary(
+        map,
+        relative_to,
+        FindRange::MultiLine,
+        &mut |left, right| {
             let left_kind = classifier.kind(left);
             let right_kind = classifier.kind(right);
 
-            let in_word_unit = left_kind != CharKind::Whitespace;
-            (in_word_unit && left_kind != right_kind) || right == '\n' && left == '\n'
-        });
+            let found = (word_found && left_kind != right_kind) || right == '\n' && left == '\n';
+
+            if right_kind != CharKind::Whitespace {
+                word_found = true;
+            }
+
+            found
+        },
+    );
+
+    for _ in 1..times {
+        let next_end =
+            movement::find_boundary(map, end, FindRange::MultiLine, &mut |left, right| {
+                let left_kind = classifier.kind(left);
+                let right_kind = classifier.kind(right);
+
+                let in_word_unit = left_kind != CharKind::Whitespace;
+                (in_word_unit && left_kind != right_kind) || right == '\n' && left == '\n'
+            });
         if next_end == end {
             break;
         }
@@ -3908,5 +3923,74 @@ mod test {
             "#},
             Mode::VisualLine,
         );
+    }
+
+    #[gpui::test]
+    async fn test_subword_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Setup custom keybindings for subword object so we can use the
+        // bindings in `simulate_keystrokes`.
+        cx.update(|_window, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "w",
+                super::Subword {
+                    ignore_punctuation: false,
+                },
+                Some("vim_operator"),
+            )]);
+        });
+
+        cx.set_state("foo_ˇbar_baz", Mode::Normal);
+        cx.simulate_keystrokes("c i w");
+        cx.assert_state("foo_ˇ_baz", Mode::Insert);
+
+        cx.set_state("ˇfoo_bar_baz", Mode::Normal);
+        cx.simulate_keystrokes("c i w");
+        cx.assert_state("ˇ_bar_baz", Mode::Insert);
+
+        cx.set_state("foo_bar_baˇz", Mode::Normal);
+        cx.simulate_keystrokes("c i w");
+        cx.assert_state("foo_bar_ˇ", Mode::Insert);
+
+        cx.set_state("fooˇBarBaz", Mode::Normal);
+        cx.simulate_keystrokes("c i w");
+        cx.assert_state("fooˇBaz", Mode::Insert);
+
+        cx.set_state("ˇfooBarBaz", Mode::Normal);
+        cx.simulate_keystrokes("c i w");
+        cx.assert_state("ˇBarBaz", Mode::Insert);
+
+        cx.set_state("fooBarBaˇz", Mode::Normal);
+        cx.simulate_keystrokes("c i w");
+        cx.assert_state("fooBarˇ", Mode::Insert);
+
+        cx.set_state("foo.ˇbar.baz", Mode::Normal);
+        cx.simulate_keystrokes("c i w");
+        cx.assert_state("foo.ˇ.baz", Mode::Insert);
+
+        cx.set_state("foo_ˇbar_baz", Mode::Normal);
+        cx.simulate_keystrokes("d i w");
+        cx.assert_state("foo_ˇ_baz", Mode::Normal);
+
+        cx.set_state("fooˇBarBaz", Mode::Normal);
+        cx.simulate_keystrokes("d i w");
+        cx.assert_state("fooˇBaz", Mode::Normal);
+
+        cx.set_state("foo_ˇbar_baz", Mode::Normal);
+        cx.simulate_keystrokes("c a w");
+        cx.assert_state("foo_ˇ_baz", Mode::Insert);
+
+        cx.set_state("fooˇBarBaz", Mode::Normal);
+        cx.simulate_keystrokes("c a w");
+        cx.assert_state("fooˇBaz", Mode::Insert);
+
+        cx.set_state("foo_ˇbar_baz", Mode::Normal);
+        cx.simulate_keystrokes("d a w");
+        cx.assert_state("foo_ˇ_baz", Mode::Normal);
+
+        cx.set_state("fooˇBarBaz", Mode::Normal);
+        cx.simulate_keystrokes("d a w");
+        cx.assert_state("fooˇBaz", Mode::Normal);
     }
 }

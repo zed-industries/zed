@@ -1,12 +1,11 @@
 use crate::notification_window_options;
-use crate::notifications::collab_notification::CollabNotification;
 use call::{ActiveCall, room};
 use client::User;
 use collections::HashMap;
 use gpui::{App, Size};
 use std::sync::{Arc, Weak};
 
-use ui::{Button, Label, prelude::*};
+use ui::{CollabNotification, prelude::*};
 use util::ResultExt;
 use workspace::AppState;
 
@@ -122,6 +121,14 @@ impl ProjectSharedNotification {
 impl Render for ProjectSharedNotification {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui_font = theme::setup_ui_font(window, cx);
+        let no_worktree_root_names = self.worktree_root_names.is_empty();
+
+        let punctuation = if no_worktree_root_names { "" } else { ":" };
+        let main_label = format!(
+            "{} is sharing a project with you{}",
+            self.owner.github_login.clone(),
+            punctuation
+        );
 
         div().size_full().font(ui_font).child(
             CollabNotification::new(
@@ -135,19 +142,9 @@ impl Render for ProjectSharedNotification {
                     },
                 )),
             )
-            .child(Label::new(self.owner.github_login.clone()))
-            .child(Label::new(format!(
-                "is sharing a project in Zed{}",
-                if self.worktree_root_names.is_empty() {
-                    ""
-                } else {
-                    ":"
-                }
-            )))
-            .children(if self.worktree_root_names.is_empty() {
-                None
-            } else {
-                Some(Label::new(self.worktree_root_names.join(", ")))
+            .child(Label::new(main_label))
+            .when(!no_worktree_root_names, |this| {
+                this.child(Label::new(self.worktree_root_names.join(", ")).color(Color::Muted))
             }),
         )
     }

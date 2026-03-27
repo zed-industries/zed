@@ -7,7 +7,7 @@ use std::{
 use collections::HashMap;
 use gpui::Pixels;
 use itertools::Itertools as _;
-use language::{Bias, Point, Selection, SelectionGoal};
+use language::{Bias, Point, PointUtf16, Selection, SelectionGoal};
 use multi_buffer::{MultiBufferDimension, MultiBufferOffset};
 use util::post_inc;
 
@@ -107,10 +107,6 @@ impl SelectionsCollection {
 
     pub fn pending_anchor(&self) -> Option<&Selection<Anchor>> {
         self.pending.as_ref().map(|pending| &pending.selection)
-    }
-
-    pub fn pending_anchor_mut(&mut self) -> Option<&mut Selection<Anchor>> {
-        self.pending.as_mut().map(|pending| &mut pending.selection)
     }
 
     pub fn pending<D>(&self, snapshot: &DisplaySnapshot) -> Option<Selection<D>>
@@ -412,11 +408,11 @@ impl SelectionsCollection {
     }
 
     /// Attempts to build a selection in the provided buffer row using the
-    /// same buffer column range as specified.
+    /// same UTF-16 column range as specified.
     /// Returns `None` if the range is not empty but it starts past the line's
     /// length, meaning that the line isn't long enough to be contained within
     /// part of the provided range.
-    pub fn build_columnar_selection_from_buffer_columns(
+    fn build_columnar_selection_from_utf16_columns(
         &mut self,
         display_map: &DisplaySnapshot,
         buffer_row: u32,
@@ -424,23 +420,22 @@ impl SelectionsCollection {
         reversed: bool,
         text_layout_details: &TextLayoutDetails,
     ) -> Option<Selection<Point>> {
+        let snapshot = display_map.buffer_snapshot();
         let is_empty = positions.start == positions.end;
-        let line_len = display_map
-            .buffer_snapshot()
-            .line_len(multi_buffer::MultiBufferRow(buffer_row));
+        let line_len_utf16 = snapshot.line_len_utf16(multi_buffer::MultiBufferRow(buffer_row));
 
         let (start, end) = if is_empty {
-            let column = std::cmp::min(positions.start, line_len);
-            let point = Point::new(buffer_row, column);
+            let column = std::cmp::min(positions.start, line_len_utf16);
+            let point = snapshot.point_utf16_to_point(PointUtf16::new(buffer_row, column));
             (point, point)
         } else {
-            if positions.start >= line_len {
+            if positions.start >= line_len_utf16 {
                 return None;
             }
 
-            let start = Point::new(buffer_row, positions.start);
-            let end_column = std::cmp::min(positions.end, line_len);
-            let end = Point::new(buffer_row, end_column);
+            let start = snapshot.point_utf16_to_point(PointUtf16::new(buffer_row, positions.start));
+            let end_column = std::cmp::min(positions.end, line_len_utf16);
+            let end = snapshot.point_utf16_to_point(PointUtf16::new(buffer_row, end_column));
             (start, end)
         };
 
@@ -459,6 +454,72 @@ impl SelectionsCollection {
                 end: start_x.max(end_x).into(),
             },
         })
+    }
+
+    /// Finds the next columnar selection by walking display rows one at a time
+    /// so that soft-wrapped lines are considered and not skipped.
+    pub fn find_next_columnar_selection_by_display_row(
+        &mut self,
+        display_map: &DisplaySnapshot,
+        start_row: DisplayRow,
+        end_row: DisplayRow,
+        above: bool,
+        positions: &Range<Pixels>,
+        reversed: bool,
+        text_layout_details: &TextLayoutDetails,
+    ) -> Option<Selection<Point>> {
+        let mut row = start_row;
+        while row != end_row {
+            if above {
+                row.0 -= 1;
+            } else {
+                row.0 += 1;
+            }
+
+            if let Some(selection) = self.build_columnar_selection(
+                display_map,
+                row,
+                positions,
+                reversed,
+                text_layout_details,
+            ) {
+                return Some(selection);
+            }
+        }
+        None
+    }
+
+    /// Finds the next columnar selection by skipping to the next buffer row,
+    /// ignoring soft-wrapped lines.
+    pub fn find_next_columnar_selection_by_buffer_row(
+        &mut self,
+        display_map: &DisplaySnapshot,
+        start_row: DisplayRow,
+        end_row: DisplayRow,
+        above: bool,
+        goal_columns: &Range<u32>,
+        reversed: bool,
+        text_layout_details: &TextLayoutDetails,
+    ) -> Option<Selection<Point>> {
+        let mut row = start_row;
+        let direction = if above { -1 } else { 1 };
+        while row != end_row {
+            let new_row =
+                display_map.start_of_relative_buffer_row(DisplayPoint::new(row, 0), direction);
+            row = new_row.row();
+            let buffer_row = new_row.to_point(display_map).row;
+
+            if let Some(selection) = self.build_columnar_selection_from_utf16_columns(
+                display_map,
+                buffer_row,
+                goal_columns,
+                reversed,
+                text_layout_details,
+            ) {
+                return Some(selection);
+            }
+        }
+        None
     }
 
     pub fn change_with<R>(
@@ -480,6 +541,11 @@ impl SelectionsCollection {
         if cfg!(debug_assertions) {
             mutable_collection.disjoint.iter().for_each(|selection| {
                 assert!(
+                     selection.start.cmp(&selection.end, &snapshot).is_le(),
+                    "disjoint selection has start > end: {:?}",
+                    mutable_collection.disjoint
+                );
+                assert!(
                     snapshot.can_resolve(&selection.start),
                     "disjoint selection start is not resolvable for the given snapshot:\n{selection:?}, {excerpt:?}",
                     excerpt = snapshot.buffer_for_excerpt(selection.start.excerpt_id).map(|snapshot| snapshot.remote_id()),
@@ -490,8 +556,20 @@ impl SelectionsCollection {
                     excerpt = snapshot.buffer_for_excerpt(selection.end.excerpt_id).map(|snapshot| snapshot.remote_id()),
                 );
             });
+            assert!(
+                mutable_collection
+                    .disjoint
+                    .is_sorted_by(|first, second| first.end.cmp(&second.start, &snapshot).is_le()),
+                "disjoint selections are not sorted: {:?}",
+                mutable_collection.disjoint
+            );
             if let Some(pending) = &mutable_collection.pending {
                 let selection = &pending.selection;
+                assert!(
+                    selection.start.cmp(&selection.end, &snapshot).is_le(),
+                    "pending selection has start > end: {:?}",
+                    selection
+                );
                 assert!(
                     snapshot.can_resolve(&selection.start),
                     "pending selection start is not resolvable for the given snapshot: {pending:?}, {excerpt:?}",
@@ -867,7 +945,6 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
         for selection in disjoint
             .iter()
             .sorted_by(|first, second| Ord::cmp(&second.id, &first.id))
-            .collect::<Vec<&Selection<Anchor>>>()
         {
             new_selections.push(Selection {
                 id: self.new_selection_id(),
@@ -888,7 +965,7 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
 
     pub fn move_with(
         &mut self,
-        mut move_selection: impl FnMut(&DisplaySnapshot, &mut Selection<DisplayPoint>),
+        move_selection: &mut dyn FnMut(&DisplaySnapshot, &mut Selection<DisplayPoint>),
     ) {
         let mut changed = false;
         let display_map = self.display_snapshot();
@@ -912,7 +989,7 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
 
     pub fn move_offsets_with(
         &mut self,
-        mut move_selection: impl FnMut(&MultiBufferSnapshot, &mut Selection<MultiBufferOffset>),
+        move_selection: &mut dyn FnMut(&MultiBufferSnapshot, &mut Selection<MultiBufferOffset>),
     ) {
         let mut changed = false;
         let display_map = self.display_snapshot();
@@ -937,13 +1014,13 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
 
     pub fn move_heads_with(
         &mut self,
-        mut update_head: impl FnMut(
+        update_head: &mut dyn FnMut(
             &DisplaySnapshot,
             DisplayPoint,
             SelectionGoal,
         ) -> (DisplayPoint, SelectionGoal),
     ) {
-        self.move_with(|map, selection| {
+        self.move_with(&mut |map, selection| {
             let (new_head, new_goal) = update_head(map, selection.head(), selection.goal);
             selection.set_head(new_head, new_goal);
         });
@@ -951,13 +1028,13 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
 
     pub fn move_cursors_with(
         &mut self,
-        mut update_cursor_position: impl FnMut(
+        update_cursor_position: &mut dyn FnMut(
             &DisplaySnapshot,
             DisplayPoint,
             SelectionGoal,
         ) -> (DisplayPoint, SelectionGoal),
     ) {
-        self.move_with(|map, selection| {
+        self.move_with(&mut |map, selection| {
             let (cursor, new_goal) = update_cursor_position(map, selection.head(), selection.goal);
             selection.collapse_to(cursor, new_goal)
         });
@@ -965,13 +1042,13 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
 
     pub fn maybe_move_cursors_with(
         &mut self,
-        mut update_cursor_position: impl FnMut(
+        update_cursor_position: &mut dyn FnMut(
             &DisplaySnapshot,
             DisplayPoint,
             SelectionGoal,
         ) -> Option<(DisplayPoint, SelectionGoal)>,
     ) {
-        self.move_cursors_with(|map, point, goal| {
+        self.move_cursors_with(&mut |map, point, goal| {
             update_cursor_position(map, point, goal).unwrap_or((point, goal))
         })
     }
@@ -994,6 +1071,11 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
             })
             .collect();
         self.select(new_selections);
+    }
+
+    pub fn pending_anchor_mut(&mut self) -> Option<&mut Selection<Anchor>> {
+        self.selections_changed = true;
+        self.pending.as_mut().map(|pending| &mut pending.selection)
     }
 
     /// Compute new ranges for any selections that were located in excerpts that have
@@ -1114,7 +1196,14 @@ fn resolve_selections_point<'a>(
     selections.map(move |s| {
         let start = summaries.next().unwrap();
         let end = summaries.next().unwrap();
-        assert!(start <= end, "start: {:?}, end: {:?}", start, end);
+        assert!(
+            start <= end,
+            "anchors: start: {:?}, end: {:?}; resolved to: start: {:?}, end: {:?}",
+            s.start,
+            s.end,
+            start,
+            end
+        );
         Selection {
             id: s.id,
             start,

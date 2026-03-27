@@ -1,6 +1,7 @@
 use anyhow::{Context as _, Result};
 use editor::Editor;
 use fs::Fs;
+use gpui::WeakEntity;
 use migrator::{migrate_keymap, migrate_settings};
 use settings::{KeymapFile, Settings, SettingsStore};
 use util::ResultExt;
@@ -22,6 +23,7 @@ pub enum MigrationType {
 }
 
 pub struct MigrationBanner {
+    workspace: WeakEntity<Workspace>,
     migration_type: Option<MigrationType>,
     should_migrate_task: Option<Task<()>>,
     markdown: Option<Entity<Markdown>>,
@@ -54,7 +56,7 @@ struct GlobalMigrationNotification(Entity<MigrationNotification>);
 impl Global for GlobalMigrationNotification {}
 
 impl MigrationBanner {
-    pub fn new(_: &Workspace, cx: &mut Context<Self>) -> Self {
+    pub fn new(workspace: WeakEntity<Workspace>, cx: &mut Context<Self>) -> Self {
         if let Some(notifier) = MigrationNotification::try_global(cx) {
             cx.subscribe(
                 &notifier,
@@ -65,6 +67,7 @@ impl MigrationBanner {
             .detach();
         }
         Self {
+            workspace,
             migration_type: None,
             should_migrate_task: None,
             markdown: None,
@@ -235,22 +238,22 @@ impl Render for MigrationBanner {
                     ),
             )
             .child(
-                Button::new("backup-and-migrate", "Backup and Update").on_click(
+                Button::new("backup-and-migrate", "Backup and Update").on_click({
+                    let workspace = self.workspace.clone();
                     move |_, window, cx| {
                         let fs = <dyn Fs>::global(cx);
-                        match migration_type {
+                        let task = match migration_type {
                             Some(MigrationType::Keymap) => {
                                 cx.background_spawn(write_keymap_migration(fs.clone()))
-                                    .detach_and_notify_err(window, cx);
                             }
                             Some(MigrationType::Settings) => {
                                 cx.background_spawn(write_settings_migration(fs.clone()))
-                                    .detach_and_notify_err(window, cx);
                             }
                             None => unreachable!(),
-                        }
-                    },
-                ),
+                        };
+                        task.detach_and_notify_err(workspace.clone(), window, cx);
+                    }
+                }),
             )
             .into_any_element()
     }

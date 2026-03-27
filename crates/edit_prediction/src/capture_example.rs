@@ -1,24 +1,19 @@
-use crate::{
-    EditPredictionExampleCaptureFeatureFlag, StoredEvent,
-    cursor_excerpt::editable_and_context_ranges_for_cursor_position, example_spec::ExampleSpec,
-};
+use crate::{StoredEvent, example_spec::ExampleSpec};
 use anyhow::Result;
 use buffer_diff::BufferDiffSnapshot;
 use collections::HashMap;
-use feature_flags::FeatureFlagAppExt as _;
 use gpui::{App, Entity, Task};
-use language::{Buffer, ToPoint as _};
+use language::Buffer;
 use project::{Project, WorktreeId};
-use std::{collections::hash_map, fmt::Write as _, path::Path, sync::Arc};
-use text::BufferSnapshot as TextBufferSnapshot;
-
-pub(crate) const DEFAULT_EXAMPLE_CAPTURE_RATE_PER_10K_PREDICTIONS: u16 = 10;
+use std::{collections::hash_map, fmt::Write as _, ops::Range, path::Path, sync::Arc};
+use text::{BufferSnapshot as TextBufferSnapshot, Point};
 
 pub fn capture_example(
     project: Entity<Project>,
     buffer: Entity<Buffer>,
     cursor_anchor: language::Anchor,
     mut events: Vec<StoredEvent>,
+    populate_expected_patch: bool,
     cx: &mut App,
 ) -> Option<Task<Result<ExampleSpec>>> {
     let snapshot = buffer.read(cx).snapshot();
@@ -56,7 +51,8 @@ pub fn capture_example(
             .and_then(|lang| lang.config().line_comments.first())
             .map(|s| s.to_string())
             .unwrap_or_default();
-        let (cursor_excerpt, cursor_offset) = cx
+
+        let (cursor_excerpt, cursor_offset_in_excerpt, cursor_excerpt_range) = cx
             .background_executor()
             .spawn(async move { compute_cursor_excerpt(&snapshot, cursor_anchor) })
             .await;
@@ -73,6 +69,30 @@ pub fn capture_example(
             }
         }
 
+        // Initialize an empty patch with context lines, to make it easy
+        // to write the expected patch by hand.
+        let mut expected_patches = Vec::new();
+        let mut rejected_patch = None;
+        if populate_expected_patch {
+            let mut empty_patch = String::new();
+            let start_row = cursor_excerpt_range.start.row + 1;
+            let row_count = cursor_excerpt_range.end.row - cursor_excerpt_range.start.row + 1;
+            writeln!(&mut empty_patch, "--- a/{}", cursor_path.display()).ok();
+            writeln!(&mut empty_patch, "+++ b/{}", cursor_path.display()).ok();
+            writeln!(
+                &mut empty_patch,
+                "@@ -{},{} +{},{} @@",
+                start_row, row_count, start_row, row_count,
+            )
+            .ok();
+            for line in cursor_excerpt.lines() {
+                writeln!(&mut empty_patch, " {}", line).ok();
+            }
+
+            expected_patches.push(empty_patch.clone());
+            rejected_patch = Some(empty_patch);
+        }
+
         let mut spec = ExampleSpec {
             name: generate_timestamp_name(),
             repository_url,
@@ -83,9 +103,17 @@ pub fn capture_example(
             cursor_path,
             cursor_position: String::new(),
             edit_history,
-            expected_patches: Vec::new(),
+            expected_patches,
+            rejected_patch,
+            telemetry: None,
+            human_feedback: Vec::new(),
+            rating: None,
         };
-        spec.set_cursor_excerpt(&cursor_excerpt, cursor_offset, &line_comment_prefix);
+        spec.set_cursor_excerpt(
+            &cursor_excerpt,
+            cursor_offset_in_excerpt,
+            &line_comment_prefix,
+        );
         Ok(spec)
     }))
 }
@@ -124,17 +152,36 @@ fn write_event_with_relative_paths(
 fn compute_cursor_excerpt(
     snapshot: &language::BufferSnapshot,
     cursor_anchor: language::Anchor,
-) -> (String, usize) {
+) -> (String, usize, Range<Point>) {
     use text::ToOffset as _;
+    use text::ToPoint as _;
 
-    let cursor_point = cursor_anchor.to_point(snapshot);
-    let (_editable_range, context_range) =
-        editable_and_context_ranges_for_cursor_position(cursor_point, snapshot, 100, 50);
-    let context_start_offset = context_range.start.to_offset(snapshot);
     let cursor_offset = cursor_anchor.to_offset(snapshot);
-    let cursor_offset_in_excerpt = cursor_offset.saturating_sub(context_start_offset);
-    let excerpt = snapshot.text_for_range(context_range).collect::<String>();
-    (excerpt, cursor_offset_in_excerpt)
+    let (excerpt_point_range, excerpt_offset_range, cursor_offset_in_excerpt) =
+        crate::cursor_excerpt::compute_cursor_excerpt(snapshot, cursor_offset);
+    let syntax_ranges = crate::cursor_excerpt::compute_syntax_ranges(
+        snapshot,
+        cursor_offset,
+        &excerpt_offset_range,
+    );
+    let excerpt_text: String = snapshot.text_for_range(excerpt_point_range).collect();
+    let (_, context_range) = zeta_prompt::compute_editable_and_context_ranges(
+        &excerpt_text,
+        cursor_offset_in_excerpt,
+        &syntax_ranges,
+        100,
+        50,
+    );
+    let context_text = excerpt_text[context_range.clone()].to_string();
+    let cursor_in_context = cursor_offset_in_excerpt.saturating_sub(context_range.start);
+    let context_buffer_start =
+        (excerpt_offset_range.start + context_range.start).to_point(snapshot);
+    let context_buffer_end = (excerpt_offset_range.start + context_range.end).to_point(snapshot);
+    (
+        context_text,
+        cursor_in_context,
+        context_buffer_start..context_buffer_end,
+    )
 }
 
 async fn collect_snapshots(
@@ -205,15 +252,6 @@ fn generate_timestamp_name() -> String {
         }
         Err(_) => "unknown-time".to_string(),
     }
-}
-
-pub(crate) fn should_sample_edit_prediction_example_capture(cx: &App) -> bool {
-    let capture_rate = language::language_settings::all_language_settings(None, cx)
-        .edit_predictions
-        .example_capture_rate
-        .unwrap_or(DEFAULT_EXAMPLE_CAPTURE_RATE_PER_10K_PREDICTIONS);
-    cx.has_flag::<EditPredictionExampleCaptureFeatureFlag>()
-        && rand::random::<u16>() % 10_000 < capture_rate
 }
 
 #[cfg(test)]
@@ -358,9 +396,7 @@ mod tests {
         cx.run_until_parked();
 
         // Verify the external edit was recorded in events
-        let events = ep_store.update(cx, |store, cx| {
-            store.edit_history_for_project_with_pause_split_last_event(&project, cx)
-        });
+        let events = ep_store.update(cx, |store, cx| store.edit_history_for_project(&project, cx));
         assert!(
             matches!(
                 events
@@ -375,7 +411,15 @@ mod tests {
 
         let mut example = cx
             .update(|cx| {
-                capture_example(project.clone(), buffer.clone(), Anchor::MIN, events, cx).unwrap()
+                capture_example(
+                    project.clone(),
+                    buffer.clone(),
+                    Anchor::MIN,
+                    events,
+                    true,
+                    cx,
+                )
+                .unwrap()
             })
             .await
             .unwrap();
@@ -443,7 +487,55 @@ mod tests {
                          seven();
                 "}
                 .to_string(),
-                expected_patches: Vec::new()
+                expected_patches: vec![
+                    indoc! {"
+                        --- a/src/main.rs
+                        +++ b/src/main.rs
+                        @@ -1,16 +1,16 @@
+                         fn main() {
+                             // comment 1
+                             one();
+                             two();
+                             // comment 4
+                             three();
+                             four();
+                             // comment 3
+                             five();
+                             six();
+                             seven();
+                             eight();
+                             // comment 2
+                             nine();
+                         }
+                    "}
+                    .to_string()
+                ],
+                rejected_patch: Some(
+                    indoc! {"
+                        --- a/src/main.rs
+                        +++ b/src/main.rs
+                        @@ -1,16 +1,16 @@
+                         fn main() {
+                             // comment 1
+                             one();
+                             two();
+                             // comment 4
+                             three();
+                             four();
+                             // comment 3
+                             five();
+                             six();
+                             seven();
+                             eight();
+                             // comment 2
+                             nine();
+                         }
+                    "}
+                    .to_string()
+                ),
+                telemetry: None,
+                human_feedback: Vec::new(),
+                rating: None,
             }
         );
     }
@@ -455,8 +547,8 @@ mod tests {
             zlog::init_test();
             let http_client = FakeHttpClient::with_404_response();
             let client = Client::new(Arc::new(FakeSystemClock::new()), http_client, cx);
-            language_model::init(client.clone(), cx);
             let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
+            language_model::init(user_store.clone(), client.clone(), cx);
             EditPredictionStore::global(&client, &user_store, cx);
         })
     }

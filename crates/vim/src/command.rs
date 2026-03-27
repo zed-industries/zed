@@ -28,7 +28,7 @@ use std::{
     sync::OnceLock,
     time::Instant,
 };
-use task::{HideStrategy, RevealStrategy, SpawnInTerminal, TaskId};
+use task::{HideStrategy, RevealStrategy, SaveStrategy, SpawnInTerminal, TaskId};
 use ui::ActiveTheme;
 use util::{
     ResultExt,
@@ -40,13 +40,14 @@ use workspace::{SplitDirection, notifications::DetachAndPromptErr};
 use zed_actions::{OpenDocs, RevealTarget};
 
 use crate::{
-    ToggleMarksView, ToggleRegistersView, Vim,
+    ToggleMarksView, ToggleRegistersView, Vim, VimSettings,
     motion::{EndOfDocument, Motion, MotionKind, StartOfDocument},
     normal::{
         JoinLines,
         search::{FindCommand, ReplaceCommand, Replacement},
     },
     object::Object,
+    rewrap::Rewrap,
     state::{Mark, Mode},
     visual::VisualDeleteLine,
 };
@@ -88,6 +89,7 @@ pub enum VimOption {
     Number(bool),
     RelativeNumber(bool),
     IgnoreCase(bool),
+    GDefault(bool),
 }
 
 impl VimOption {
@@ -134,6 +136,10 @@ impl VimOption {
             (None, VimOption::IgnoreCase(false)),
             (Some("ic"), VimOption::IgnoreCase(true)),
             (Some("noic"), VimOption::IgnoreCase(false)),
+            (None, VimOption::GDefault(true)),
+            (Some("gd"), VimOption::GDefault(true)),
+            (None, VimOption::GDefault(false)),
+            (Some("nogd"), VimOption::GDefault(false)),
         ]
         .into_iter()
         .filter(move |(prefix, option)| prefix.unwrap_or(option.to_string()).starts_with(query))
@@ -160,6 +166,11 @@ impl VimOption {
             "noignorecase" => Some(Self::IgnoreCase(false)),
             "noic" => Some(Self::IgnoreCase(false)),
 
+            "gdefault" => Some(Self::GDefault(true)),
+            "gd" => Some(Self::GDefault(true)),
+            "nogdefault" => Some(Self::GDefault(false)),
+            "nogd" => Some(Self::GDefault(false)),
+
             _ => None,
         }
     }
@@ -174,6 +185,8 @@ impl VimOption {
             VimOption::RelativeNumber(false) => "norelativenumber",
             VimOption::IgnoreCase(true) => "ignorecase",
             VimOption::IgnoreCase(false) => "noignorecase",
+            VimOption::GDefault(true) => "gdefault",
+            VimOption::GDefault(false) => "nogdefault",
         }
     }
 }
@@ -271,7 +284,6 @@ impl Deref for WrappedAction {
 }
 
 pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
-    // Vim::action(editor, cx, |vim, action: &StartOfLine, window, cx| {
     Vim::action(editor, cx, |vim, action: &VimSet, _, cx| {
         for option in action.options.iter() {
             vim.update_editor(cx, |_, editor, cx| match option {
@@ -295,11 +307,19 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                         store.override_global(settings);
                     });
                 }
+                VimOption::GDefault(enabled) => {
+                    let mut settings = VimSettings::get_global(cx).clone();
+                    settings.gdefault = *enabled;
+
+                    SettingsStore::update(cx, |store, _| {
+                        store.override_global(settings);
+                    })
+                }
             });
         }
     });
     Vim::action(editor, cx, |vim, _: &VisualCommand, window, cx| {
-        let Some(workspace) = vim.workspace(window) else {
+        let Some(workspace) = vim.workspace(window, cx) else {
             return;
         };
         workspace.update(cx, |workspace, cx| {
@@ -308,7 +328,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     });
 
     Vim::action(editor, cx, |vim, _: &ShellCommand, window, cx| {
-        let Some(workspace) = vim.workspace(window) else {
+        let Some(workspace) = vim.workspace(window, cx) else {
             return;
         };
         workspace.update(cx, |workspace, cx| {
@@ -327,7 +347,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     });
 
     Vim::action(editor, cx, |vim, _: &ShellCommand, window, cx| {
-        let Some(workspace) = vim.workspace(window) else {
+        let Some(workspace) = vim.workspace(window, cx) else {
             return;
         };
         workspace.update(cx, |workspace, cx| {
@@ -379,7 +399,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 
                 if action.filename.is_empty() {
                     if whole_buffer {
-                        if let Some(workspace) = vim.workspace(window) {
+                        if let Some(workspace) = vim.workspace(window, cx) {
                             workspace.update(cx, |workspace, cx| {
                                 workspace
                                     .save_active_item(
@@ -453,7 +473,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             return;
         }
         if action.filename.is_empty() {
-            if let Some(workspace) = vim.workspace(window) {
+            if let Some(workspace) = vim.workspace(window, cx) {
                 workspace.update(cx, |workspace, cx| {
                     workspace
                         .save_active_item(
@@ -530,7 +550,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     });
 
     Vim::action(editor, cx, |vim, action: &VimSplit, window, cx| {
-        let Some(workspace) = vim.workspace(window) else {
+        let Some(workspace) = vim.workspace(window, cx) else {
             return;
         };
 
@@ -628,7 +648,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 
     Vim::action(editor, cx, |vim, action: &VimEdit, window, cx| {
         vim.update_editor(cx, |vim, editor, cx| {
-            let Some(workspace) = vim.workspace(window) else {
+            let Some(workspace) = vim.workspace(window, cx) else {
                 return;
             };
             let Some(project) = editor.project().cloned() else {
@@ -795,7 +815,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             }
         };
 
-        let Some(workspace) = vim.workspace(window) else {
+        let Some(workspace) = vim.workspace(window, cx) else {
             return;
         };
         let task = workspace.update(cx, |workspace, cx| {
@@ -836,7 +856,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     });
 
     Vim::action(editor, cx, |vim, _: &CountCommand, window, cx| {
-        let Some(workspace) = vim.workspace(window) else {
+        let Some(workspace) = vim.workspace(window, cx) else {
             return;
         };
         let count = Vim::take_count(cx).unwrap_or(1);
@@ -869,7 +889,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             anyhow::Ok(())
         });
         if let Some(e @ Err(_)) = result {
-            let Some(workspace) = vim.workspace(window) else {
+            let Some(workspace) = vim.workspace(window, cx) else {
                 return;
             };
             workspace.update(cx, |workspace, cx| {
@@ -913,7 +933,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         let range = match result {
             None => return,
             Some(e @ Err(_)) => {
-                let Some(workspace) = vim.workspace(window) else {
+                let Some(workspace) = vim.workspace(window, cx) else {
                     return;
                 };
                 workspace.update(cx, |workspace, cx| {
@@ -1020,6 +1040,7 @@ impl VimCommand {
         self
     }
 
+    /// Set argument handler. Trailing whitespace in arguments will be preserved.
     fn args(
         mut self,
         f: impl Fn(Box<dyn Action>, String) -> Option<Box<dyn Action>> + Send + Sync + 'static,
@@ -1028,6 +1049,8 @@ impl VimCommand {
         self
     }
 
+    /// Set argument handler. Trailing whitespace in arguments will be trimmed.
+    /// Supports filename autocompletion.
     fn filename(
         mut self,
         f: impl Fn(Box<dyn Action>, String) -> Option<Box<dyn Action>> + Send + Sync + 'static,
@@ -1139,11 +1162,11 @@ impl VimCommand {
         let has_bang = rest.starts_with('!');
         let has_space = rest.starts_with("! ") || rest.starts_with(' ');
         let args = if has_bang {
-            rest.strip_prefix('!')?.trim().to_string()
+            rest.strip_prefix('!')?.trim_start().to_string()
         } else if rest.is_empty() {
             "".into()
         } else {
-            rest.strip_prefix(' ')?.trim().to_string()
+            rest.strip_prefix(' ')?.trim_start().to_string()
         };
         Some(ParsedQuery {
             args,
@@ -1163,8 +1186,8 @@ impl VimCommand {
             has_bang,
             has_space: _,
         } = self.get_parsed_query(query.to_string())?;
-        let action = if has_bang && self.bang_action.is_some() {
-            self.bang_action.as_ref().unwrap().boxed_clone()
+        let action = if has_bang && let Some(bang_action) = self.bang_action.as_ref() {
+            bang_action.boxed_clone()
         } else if let Some(action) = self.action.as_ref() {
             action.boxed_clone()
         } else if let Some(action_name) = self.action_name {
@@ -1173,10 +1196,13 @@ impl VimCommand {
             return None;
         };
 
+        // If the command does not accept args and we have args, we should do no
+        // action.
         let action = if args.is_empty() {
             action
+        } else if self.has_filename {
+            self.args.as_ref()?(action, args.trim().into())?
         } else {
-            // if command does not accept args and we have args then we should do no action
             self.args.as_ref()?(action, args)?
         };
 
@@ -1602,12 +1628,12 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::new(("cq", "uit"), zed_actions::Quit),
         VimCommand::new(
             ("bd", "elete"),
-            workspace::CloseActiveItem {
+            workspace::CloseItemInAllPanes {
                 save_intent: Some(SaveIntent::Close),
                 close_pinned: false,
             },
         )
-        .bang(workspace::CloseActiveItem {
+        .bang(workspace::CloseItemInAllPanes {
             save_intent: Some(SaveIntent::Skip),
             close_pinned: true,
         }),
@@ -1700,6 +1726,15 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         )
         .range(wrap_count),
         VimCommand::new(("j", "oin"), JoinLines).range(select_range),
+        VimCommand::new(("reflow", ""), Rewrap { line_length: None })
+            .range(select_range)
+            .args(|_action, args| {
+                args.parse::<usize>().map_or(None, |length| {
+                    Some(Box::new(Rewrap {
+                        line_length: Some(length),
+                    }))
+                })
+            }),
         VimCommand::new(("fo", "ld"), editor::actions::FoldSelectedRanges).range(act_on_range),
         VimCommand::new(("foldo", "pen"), editor::actions::UnfoldLines)
             .bang(editor::actions::UnfoldRecursive)
@@ -1812,7 +1847,7 @@ pub fn command_interceptor(
     let (range, query) = VimCommand::parse_range(input);
     let range_prefix = input[0..(input.len() - query.len())].to_string();
     let has_trailing_space = query.ends_with(" ");
-    let mut query = query.as_str().trim();
+    let mut query = query.as_str().trim_start();
 
     let on_matching_lines = (query.starts_with('g') || query.starts_with('v'))
         .then(|| {
@@ -2107,7 +2142,7 @@ impl OnMatchingLines {
         let range = match result {
             None => return,
             Some(e @ Err(_)) => {
-                let Some(workspace) = vim.workspace(window) else {
+                let Some(workspace) = vim.workspace(window, cx) else {
                     return;
                 };
                 workspace.update(cx, |workspace, cx| {
@@ -2124,7 +2159,7 @@ impl OnMatchingLines {
         let mut regexes = match Regex::new(&self.search) {
             Ok(regex) => vec![(regex, !self.invert)],
             e @ Err(_) => {
-                let Some(workspace) = vim.workspace(window) else {
+                let Some(workspace) = vim.workspace(window, cx) else {
                     return;
                 };
                 workspace.update(cx, |workspace, cx| {
@@ -2322,7 +2357,7 @@ impl Vim {
         cx: &mut Context<Vim>,
     ) {
         self.stop_recording(cx);
-        let Some(workspace) = self.workspace(window) else {
+        let Some(workspace) = self.workspace(window, cx) else {
             return;
         };
         let command = self.update_editor(cx, |_, editor, cx| {
@@ -2330,7 +2365,7 @@ impl Vim {
             let start = editor
                 .selections
                 .newest_display(&editor.display_snapshot(cx));
-            let text_layout_details = editor.text_layout_details(window);
+            let text_layout_details = editor.text_layout_details(window, cx);
             let (mut range, _) = motion
                 .range(
                     &snapshot,
@@ -2371,7 +2406,7 @@ impl Vim {
         cx: &mut Context<Vim>,
     ) {
         self.stop_recording(cx);
-        let Some(workspace) = self.workspace(window) else {
+        let Some(workspace) = self.workspace(window, cx) else {
             return;
         };
         let command = self.update_editor(cx, |_, editor, cx| {
@@ -2423,7 +2458,7 @@ impl ShellExec {
     }
 
     pub fn run(&self, vim: &mut Vim, window: &mut Window, cx: &mut Context<Vim>) {
-        let Some(workspace) = vim.workspace(window) else {
+        let Some(workspace) = vim.workspace(window, cx) else {
             return;
         };
 
@@ -2454,6 +2489,7 @@ impl ShellExec {
                     show_summary: false,
                     show_command: false,
                     show_rerun: false,
+                    save: SaveStrategy::default(),
                 };
 
                 let task_status = workspace.spawn_in_terminal(spawn_in_terminal, window, cx);
@@ -3197,6 +3233,25 @@ mod test {
             the lazy dog
         "});
 
+        cx.set_shared_state(indoc! {"
+            ˇquick
+            brown fox
+            jumps over
+            the lazy dog
+        "})
+            .await;
+
+        cx.simulate_shared_keystrokes(": n o r m space I T h e space")
+            .await;
+        cx.simulate_shared_keystrokes("enter").await;
+
+        cx.shared_state().await.assert_eq(indoc! {"
+            Theˇ quick
+            brown fox
+            jumps over
+            the lazy dog
+        "});
+
         // Once ctrl-v to input character literals is added there should be a test for redo
     }
 
@@ -3490,6 +3545,90 @@ mod test {
                 quirrel
             "},
             Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_reflow(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.update_editor(|editor, _window, cx| {
+            editor.set_hard_wrap(Some(10), cx);
+        });
+
+        cx.set_state(
+            indoc! {"
+                ˇ0123456789 0123456789
+            "},
+            Mode::Normal,
+        );
+
+        cx.simulate_keystrokes(": reflow");
+        cx.simulate_keystrokes("enter");
+
+        cx.assert_state(
+            indoc! {"
+                0123456789
+                ˇ0123456789
+            "},
+            Mode::Normal,
+        );
+
+        cx.set_state(
+            indoc! {"
+                ˇ0123456789 0123456789
+            "},
+            Mode::VisualLine,
+        );
+
+        cx.simulate_keystrokes("shift-v : reflow");
+        cx.simulate_keystrokes("enter");
+
+        cx.assert_state(
+            indoc! {"
+                0123456789
+                ˇ0123456789
+            "},
+            Mode::Normal,
+        );
+
+        cx.set_state(
+            indoc! {"
+                ˇ0123 4567 0123 4567
+            "},
+            Mode::VisualLine,
+        );
+
+        cx.simulate_keystrokes(": reflow space 7");
+        cx.simulate_keystrokes("enter");
+
+        cx.assert_state(
+            indoc! {"
+                ˇ0123
+                4567
+                0123
+                4567
+            "},
+            Mode::Normal,
+        );
+
+        // Assert that, if `:reflow` is invoked with an invalid argument, it
+        // does not actually have any effect in the buffer's contents.
+        cx.set_state(
+            indoc! {"
+                ˇ0123 4567 0123 4567
+            "},
+            Mode::VisualLine,
+        );
+
+        cx.simulate_keystrokes(": reflow space a");
+        cx.simulate_keystrokes("enter");
+
+        cx.assert_state(
+            indoc! {"
+                ˇ0123 4567 0123 4567
+            "},
+            Mode::VisualLine,
         );
     }
 }

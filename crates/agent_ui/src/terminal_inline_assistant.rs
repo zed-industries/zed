@@ -1,23 +1,23 @@
 use crate::{
+    ThreadHistory,
     context::load_context,
     inline_prompt_editor::{
         CodegenStatus, PromptEditor, PromptEditorEvent, TerminalInlineAssistId,
     },
     terminal_codegen::{CLEAR_INPUT, CodegenEvent, TerminalCodegen},
 };
-use agent::HistoryStore;
+use agent::ThreadStore;
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
 
-use cloud_llm_client::CompletionIntent;
 use collections::{HashMap, VecDeque};
 use editor::{MultiBuffer, actions::SelectAll};
 use fs::Fs;
 use gpui::{App, Entity, Focusable, Global, Subscription, Task, UpdateGlobal, WeakEntity};
 use language::Buffer;
 use language_model::{
-    ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    Role, report_anthropic_event,
+    CompletionIntent, ConfiguredModel, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, Role, report_anthropic_event,
 };
 use project::Project;
 use prompt_store::{PromptBuilder, PromptStore};
@@ -61,8 +61,9 @@ impl TerminalInlineAssistant {
         terminal_view: &Entity<TerminalView>,
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
-        thread_store: Entity<HistoryStore>,
+        thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
+        history: Option<WeakEntity<ThreadHistory>>,
         initial_prompt: Option<String>,
         window: &mut Window,
         cx: &mut App,
@@ -88,6 +89,7 @@ impl TerminalInlineAssistant {
                 self.fs.clone(),
                 thread_store.clone(),
                 prompt_store.clone(),
+                history,
                 project.clone(),
                 workspace.clone(),
                 window,
@@ -265,7 +267,6 @@ impl TerminalInlineAssistant {
             LanguageModelRequest {
                 thread_id: None,
                 prompt_id: None,
-                mode: None,
                 intent: Some(CompletionIntent::TerminalInlineAssist),
                 messages: vec![request_message],
                 tools: Vec::new(),
@@ -273,6 +274,8 @@ impl TerminalInlineAssistant {
                 stop: Vec::new(),
                 temperature,
                 thinking_allowed: false,
+                thinking_effort: None,
+                speed: None,
             }
         }))
     }

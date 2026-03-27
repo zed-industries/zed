@@ -489,6 +489,7 @@ impl GitBlame {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     fn generate(&mut self, cx: &mut Context<Self>) {
         if !self.focused {
             self.changed_while_blurred = true;
@@ -511,6 +512,8 @@ impl GitBlame {
             let mut all_errors = Vec::new();
 
             for buffers in buffers_to_blame.chunks(4) {
+                let span = ztracing::debug_span!("for each chunk of buffers");
+                let _enter = span.enter();
                 let blame = cx.update(|cx| {
                     buffers
                         .iter()
@@ -607,20 +610,23 @@ impl GitBlame {
                 cx.notify();
                 if !all_errors.is_empty() {
                     this.project.update(cx, |_, cx| {
+                        let all_errors = all_errors
+                            .into_iter()
+                            .map(|e| format!("{e:#}"))
+                            .dedup()
+                            .collect::<Vec<_>>();
+                        let all_errors = all_errors.join(", ");
                         if this.user_triggered {
-                            log::error!("failed to get git blame data: {all_errors:?}");
-                            let notification = all_errors
-                                .into_iter()
-                                .format_with(",", |e, f| f(&format_args!("{:#}", e)))
-                                .to_string();
+                            log::error!("failed to get git blame data: {all_errors}");
                             cx.emit(project::Event::Toast {
                                 notification_id: "git-blame".into(),
-                                message: notification,
+                                message: all_errors,
+                                link: None,
                             });
                         } else {
                             // If we weren't triggered by a user, we just log errors in the background, instead of sending
                             // notifications.
-                            log::debug!("failed to get git blame data: {all_errors:?}");
+                            log::debug!("failed to get git blame data: {all_errors}");
                         }
                     })
                 }
@@ -783,7 +789,8 @@ mod tests {
             project::Event::Toast {
                 notification_id: "git-blame".into(),
                 message: "Failed to blame \"file.txt\": failed to get blame for \"file.txt\""
-                    .to_string()
+                    .to_string(),
+                link: None
             }
         );
 

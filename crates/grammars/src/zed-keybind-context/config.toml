@@ -1,0 +1,7 @@
+name = "Zed Keybind Context"
+grammar = "rust"
+hidden = true
+autoclose_before = ")"
+brackets = [
+    { start = "(", end = ")", close = true, newline = false },
+]

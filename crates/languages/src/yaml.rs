@@ -156,13 +156,45 @@ impl LspAdapter for YamlLspAdapter {
 
         let project_options = cx.update(|cx| {
             language_server_settings(delegate.as_ref(), &Self::SERVER_NAME, cx)
-                .and_then(|s| s.settings.clone())
+                .and_then(|s| worktree_root(delegate, s.settings.clone()))
         });
         if let Some(override_options) = project_options {
             merge_json_value_into(override_options, &mut options);
         }
         Ok(options)
     }
+}
+
+fn worktree_root(delegate: &Arc<dyn LspAdapterDelegate>, settings: Option<Value>) -> Option<Value> {
+    let Some(Value::Object(mut settings_map)) = settings else {
+        return settings;
+    };
+
+    let Some(Value::Object(yaml_config)) = settings_map.get_mut("yaml") else {
+        return Some(Value::Object(settings_map));
+    };
+
+    let Some(Value::Object(schemas)) = yaml_config.remove("schemas") else {
+        return Some(Value::Object(settings_map));
+    };
+
+    let schemas = schemas
+        .into_iter()
+        .map(|(url, v)| {
+            if !url.starts_with(".") && !url.starts_with("~") {
+                (url, v)
+            } else {
+                let resolved_url = delegate
+                    .resolve_relative_path(url.into())
+                    .to_string_lossy()
+                    .into_owned();
+                (resolved_url, v)
+            }
+        })
+        .collect::<serde_json::Map<String, Value>>();
+
+    yaml_config.insert("schemas".into(), Value::Object(schemas));
+    Some(Value::Object(settings_map))
 }
 
 async fn get_cached_server_binary(

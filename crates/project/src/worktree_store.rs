@@ -1,6 +1,10 @@
 use std::{
+    future::Future,
     path::{Path, PathBuf},
-    sync::{Arc, atomic::AtomicUsize},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, AtomicUsize},
+    },
 };
 
 use anyhow::{Context as _, Result, anyhow, bail};
@@ -8,8 +12,11 @@ use collections::HashMap;
 use fs::{Fs, copy_recursive};
 use futures::{FutureExt, future::Shared};
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Task, WeakEntity,
+    App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Global, Task,
+    WeakEntity,
 };
+use itertools::Either;
+use postage::{prelude::Stream as _, watch};
 use rpc::{
     AnyProtoClient, ErrorExt, TypedEnvelope,
     proto::{self, REMOTE_SERVER_PROJECT_ID},
@@ -38,8 +45,30 @@ enum WorktreeStoreState {
     },
 }
 
+#[derive(Clone)]
+pub struct WorktreeIdCounter(Arc<AtomicU64>);
+
+impl Default for WorktreeIdCounter {
+    fn default() -> Self {
+        Self(Arc::new(AtomicU64::new(1)))
+    }
+}
+
+impl WorktreeIdCounter {
+    pub fn get(cx: &mut App) -> Self {
+        cx.default_global::<Self>().clone()
+    }
+
+    fn next(&self) -> u64 {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+impl Global for WorktreeIdCounter {}
+
 pub struct WorktreeStore {
     next_entry_id: Arc<AtomicUsize>,
+    next_worktree_id: WorktreeIdCounter,
     downstream_client: Option<(AnyProtoClient, u64)>,
     retain_worktrees: bool,
     worktrees: Vec<WorktreeHandle>,
@@ -48,6 +77,7 @@ pub struct WorktreeStore {
     #[allow(clippy::type_complexity)]
     loading_worktrees:
         HashMap<Arc<SanitizedPath>, Shared<Task<Result<Entity<Worktree>, Arc<anyhow::Error>>>>>,
+    initial_scan_complete: (watch::Sender<bool>, watch::Receiver<bool>),
     state: WorktreeStoreState,
 }
 
@@ -74,15 +104,25 @@ impl WorktreeStore {
         client.add_entity_request_handler(Self::handle_expand_all_for_project_entry);
     }
 
-    pub fn local(retain_worktrees: bool, fs: Arc<dyn Fs>) -> Self {
+    pub fn init_remote(client: &AnyProtoClient) {
+        client.add_entity_request_handler(Self::handle_allocate_worktree_id);
+    }
+
+    pub fn local(
+        retain_worktrees: bool,
+        fs: Arc<dyn Fs>,
+        next_worktree_id: WorktreeIdCounter,
+    ) -> Self {
         Self {
             next_entry_id: Default::default(),
+            next_worktree_id,
             loading_worktrees: Default::default(),
             downstream_client: None,
             worktrees: Vec::new(),
             worktrees_reordered: false,
             scanning_enabled: true,
             retain_worktrees,
+            initial_scan_complete: watch::channel_with(true),
             state: WorktreeStoreState::Local { fs },
         }
     }
@@ -92,15 +132,18 @@ impl WorktreeStore {
         upstream_client: AnyProtoClient,
         upstream_project_id: u64,
         path_style: PathStyle,
+        next_worktree_id: WorktreeIdCounter,
     ) -> Self {
         Self {
             next_entry_id: Default::default(),
+            next_worktree_id,
             loading_worktrees: Default::default(),
             downstream_client: None,
             worktrees: Vec::new(),
             worktrees_reordered: false,
             scanning_enabled: true,
             retain_worktrees,
+            initial_scan_complete: watch::channel_with(true),
             state: WorktreeStoreState::Remote {
                 upstream_client,
                 upstream_project_id,
@@ -109,8 +152,84 @@ impl WorktreeStore {
         }
     }
 
+    pub fn next_worktree_id(&self) -> impl Future<Output = Result<WorktreeId>> + use<> {
+        let strategy = match (&self.state, &self.downstream_client) {
+            // we are a remote server, the client is in charge of assigning worktree ids
+            (WorktreeStoreState::Local { .. }, Some((client, REMOTE_SERVER_PROJECT_ID))) => {
+                Either::Left(client.clone())
+            }
+            // we are just a local zed project, we can assign ids
+            (WorktreeStoreState::Local { .. }, _) => Either::Right(self.next_worktree_id.next()),
+            // we are connected to a remote server, we are in charge of assigning worktree ids
+            (WorktreeStoreState::Remote { .. }, _) => Either::Right(self.next_worktree_id.next()),
+        };
+        async move {
+            match strategy {
+                Either::Left(client) => Ok(client
+                    .request(proto::AllocateWorktreeId {
+                        project_id: REMOTE_SERVER_PROJECT_ID,
+                    })
+                    .await?
+                    .worktree_id),
+                Either::Right(id) => Ok(id),
+            }
+            .map(WorktreeId::from_proto)
+        }
+    }
+
     pub fn disable_scanner(&mut self) {
         self.scanning_enabled = false;
+        *self.initial_scan_complete.0.borrow_mut() = true;
+    }
+
+    /// Returns a future that resolves when all visible worktrees have completed
+    /// their initial scan (entries populated, git repos detected).
+    pub fn wait_for_initial_scan(&self) -> impl Future<Output = ()> + use<> {
+        let mut rx = self.initial_scan_complete.1.clone();
+        async move {
+            let mut done = *rx.borrow();
+            while !done {
+                if let Some(value) = rx.recv().await {
+                    done = value;
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Returns whether all visible worktrees have completed their initial scan.
+    pub fn initial_scan_completed(&self) -> bool {
+        *self.initial_scan_complete.1.borrow()
+    }
+
+    /// Checks whether all visible worktrees have completed their initial scan
+    /// and no worktree creations are pending, and updates the watch channel accordingly.
+    fn update_initial_scan_state(&mut self, cx: &App) {
+        let complete = self.loading_worktrees.is_empty()
+            && self
+                .visible_worktrees(cx)
+                .all(|wt| wt.read(cx).completed_scan_id() >= 1);
+        *self.initial_scan_complete.0.borrow_mut() = complete;
+    }
+
+    /// Spawns a detached task that waits for a worktree's initial scan to complete,
+    /// then rechecks and updates the aggregate initial scan state.
+    fn observe_worktree_scan_completion(
+        &mut self,
+        worktree: &Entity<Worktree>,
+        cx: &mut Context<Self>,
+    ) {
+        let await_scan = worktree.update(cx, |worktree, _cx| worktree.wait_for_snapshot(1));
+        cx.spawn(async move |this, cx| {
+            await_scan.await.ok();
+            this.update(cx, |this, cx| {
+                this.update_initial_scan_state(cx);
+            })
+            .ok();
+            anyhow::Ok(())
+        })
+        .detach();
     }
 
     /// Iterates through all worktrees, including ones that don't appear in the project panel
@@ -160,8 +279,8 @@ impl WorktreeStore {
         let abs_path = SanitizedPath::new(abs_path.as_ref());
         for tree in self.worktrees() {
             let path_style = tree.read(cx).path_style();
-            if let Ok(relative_path) = abs_path.as_ref().strip_prefix(tree.read(cx).abs_path())
-                && let Ok(relative_path) = RelPath::new(relative_path, path_style)
+            if let Some(relative_path) =
+                path_style.strip_prefix(abs_path.as_ref(), tree.read(cx).abs_path().as_ref())
             {
                 return Some((tree.clone(), relative_path.into_arc()));
             }
@@ -491,12 +610,22 @@ impl WorktreeStore {
 
             self.loading_worktrees
                 .insert(abs_path.clone(), task.shared());
+
+            if visible && self.scanning_enabled {
+                *self.initial_scan_complete.0.borrow_mut() = false;
+            }
         }
         let task = self.loading_worktrees.get(&abs_path).unwrap().clone();
         cx.spawn(async move |this, cx| {
             let result = task.await;
-            this.update(cx, |this, _| this.loading_worktrees.remove(&abs_path))
-                .ok();
+            this.update(cx, |this, cx| {
+                this.loading_worktrees.remove(&abs_path);
+                if !visible || !this.scanning_enabled || result.is_err() {
+                    this.update_initial_scan_state(cx);
+                }
+            })
+            .ok();
+
             match result {
                 Ok(worktree) => {
                     if !is_via_collab {
@@ -515,6 +644,13 @@ impl WorktreeStore {
                                 );
                             });
                         }
+
+                        this.update(cx, |this, cx| {
+                            if this.scanning_enabled && visible {
+                                this.observe_worktree_scan_completion(&worktree, cx);
+                            }
+                        })
+                        .ok();
                     }
                     Ok(worktree)
                 }
@@ -600,18 +736,20 @@ impl WorktreeStore {
         let next_entry_id = self.next_entry_id.clone();
         let scanning_enabled = self.scanning_enabled;
 
+        let next_worktree_id = self.next_worktree_id();
+
         cx.spawn(async move |this, cx| {
+            let worktree_id = next_worktree_id.await?;
             let worktree = Worktree::local(
                 SanitizedPath::cast_arc(abs_path.clone()),
                 visible,
                 fs,
                 next_entry_id,
                 scanning_enabled,
+                worktree_id,
                 cx,
             )
-            .await;
-
-            let worktree = worktree?;
+            .await?;
 
             this.update(cx, |this, cx| this.add(&worktree, cx))?;
 
@@ -703,6 +841,7 @@ impl WorktreeStore {
                 false
             }
         });
+        self.update_initial_scan_state(cx);
         self.send_project_updates(cx);
     }
 
@@ -915,7 +1054,13 @@ impl WorktreeStore {
                 }
             }
         }
-        self.send_project_updates(cx);
+        // Only send project updates if we share in a collaborative mode.
+        // Otherwise we are the remote server which is currently constructing
+        // worktree store before the client actually has set up its message
+        // handlers.
+        if remote_id != REMOTE_SERVER_PROJECT_ID {
+            self.send_project_updates(cx);
+        }
     }
 
     pub fn unshared(&mut self, cx: &mut Context<Self>) {
@@ -1072,6 +1217,15 @@ impl WorktreeStore {
             .update(&mut cx, |this, cx| this.worktree_for_entry(entry_id, cx))
             .context("invalid request")?;
         Worktree::handle_expand_all_for_entry(worktree, envelope.payload, cx).await
+    }
+
+    pub async fn handle_allocate_worktree_id(
+        _this: Entity<Self>,
+        _envelope: TypedEnvelope<proto::AllocateWorktreeId>,
+        cx: AsyncApp,
+    ) -> Result<proto::AllocateWorktreeIdResponse> {
+        let worktree_id = cx.update(|cx| WorktreeIdCounter::get(cx).next());
+        Ok(proto::AllocateWorktreeIdResponse { worktree_id })
     }
 
     pub fn fs(&self) -> Option<Arc<dyn Fs>> {

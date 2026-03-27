@@ -17,13 +17,15 @@ cli-support = []
 [dependencies]
 ai_onboarding.workspace = true
 anyhow.workspace = true
-arrayvec.workspace = true
-brotli.workspace = true
+heapless.workspace = true
 buffer_diff.workspace = true
 client.workspace = true
+clock.workspace = true
+cloud_api_types.workspace = true
 cloud_llm_client.workspace = true
 collections.workspace = true
 copilot.workspace = true
+copilot_ui.workspace = true
 db.workspace = true
 edit_prediction_types.workspace = true
 edit_prediction_context.workspace = true
@@ -64,10 +66,10 @@ workspace.workspace = true
 worktree.workspace = true
 zed_actions.workspace = true
 zeta_prompt.workspace = true
+zstd.workspace = true
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }
-cloud_api_types.workspace = true
 cloud_llm_client = { workspace = true, features = ["test-support"] }
 ctor.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
@@ -79,4 +81,5 @@ parking_lot.workspace = true
 project = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
+
 zlog.workspace = true

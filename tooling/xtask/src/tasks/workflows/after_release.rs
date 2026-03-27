@@ -51,8 +51,7 @@ fn rebuild_releases_page() -> NamedJob {
     }
 
     fn redeploy_zed_dev() -> Step<Run> {
-        named::bash("npm exec --yes -- vercel@37 --token=\"$VERCEL_TOKEN\" --scope zed-industries redeploy https://zed.dev")
-            .add_env(("VERCEL_TOKEN", vars::VERCEL_TOKEN))
+        named::bash("./script/redeploy-vercel").add_env(("VERCEL_TOKEN", vars::VERCEL_TOKEN))
     }
 
     named::job(
@@ -60,6 +59,7 @@ fn rebuild_releases_page() -> NamedJob {
             .runs_on(runners::LINUX_SMALL)
             .with_repository_owner_guard()
             .add_step(refresh_cloud_releases())
+            .add_step(checkout_repo())
             .add_step(redeploy_zed_dev()),
     )
 }
@@ -123,7 +123,7 @@ fn publish_winget() -> NamedJob {
                 "X-GitHub-Api-Version" = "2022-11-28"
             }
             $body = @{ branch = "master" } | ConvertTo-Json
-            $uri = "https://api.github.com/repos/${{ github.repository_owner }}/winget-pkgs/merge-upstream"
+            $uri = "https://api.github.com/repos/$env:GITHUB_REPOSITORY_OWNER/winget-pkgs/merge-upstream"
             try {
                 Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body $body -ContentType "application/json"
                 Write-Host "Successfully synced winget-pkgs fork"

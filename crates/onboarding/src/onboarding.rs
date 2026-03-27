@@ -1,6 +1,6 @@
 use crate::multibuffer_hint::MultibufferHint;
 use client::{Client, UserStore, zed_urls};
-use db::kvp::KEY_VALUE_STORE;
+use db::kvp::KeyValueStore;
 use fs::Fs;
 use gpui::{
     Action, AnyElement, App, AppContext, AsyncWindowContext, Context, Entity, EventEmitter,
@@ -194,8 +194,10 @@ pub fn show_onboarding_view(app_state: Arc<AppState>, cx: &mut App) -> Task<anyh
 
                 cx.notify();
             };
-            db::write_and_log(cx, || {
-                KEY_VALUE_STORE.write_kvp(FIRST_OPEN.to_string(), "false".to_string())
+            let kvp = KeyValueStore::global(cx);
+            db::write_and_log(cx, move || async move {
+                kvp.write_kvp(FIRST_OPEN.to_string(), "false".to_string())
+                    .await
             });
         },
     )
@@ -238,15 +240,16 @@ impl Onboarding {
         go_to_welcome_page(cx);
     }
 
-    fn handle_sign_in(_: &SignIn, window: &mut Window, cx: &mut App) {
+    fn handle_sign_in(&mut self, _: &SignIn, window: &mut Window, cx: &mut Context<Self>) {
         let client = Client::global(cx);
+        let workspace = self.workspace.clone();
 
         window
-            .spawn(cx, async move |cx| {
+            .spawn(cx, async move |mut cx| {
                 client
-                    .sign_in_with_optional_connect(true, cx)
+                    .sign_in_with_optional_connect(true, &cx)
                     .await
-                    .notify_async_err(cx);
+                    .notify_workspace_async_err(workspace, &mut cx);
             })
             .detach();
     }
@@ -274,7 +277,7 @@ impl Render for Onboarding {
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .on_action(Self::on_finish)
-            .on_action(Self::handle_sign_in)
+            .on_action(cx.listener(Self::handle_sign_in))
             .on_action(Self::handle_open_account)
             .on_action(cx.listener(|_, _: &menu::SelectNext, window, cx| {
                 window.focus_next(cx);
@@ -391,7 +394,7 @@ impl Item for Onboarding {
         })))
     }
 
-    fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
+    fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(workspace::item::ItemEvent)) {
         f(*event)
     }
 }
@@ -558,7 +561,7 @@ impl workspace::SerializableItem for Onboarding {
             alive_items,
             workspace_id,
             "onboarding_pages",
-            &persistence::ONBOARDING_PAGES,
+            &persistence::OnboardingPagesDb::global(cx),
             cx,
         )
     }
@@ -571,10 +574,9 @@ impl workspace::SerializableItem for Onboarding {
         window: &mut Window,
         cx: &mut App,
     ) -> gpui::Task<gpui::Result<Entity<Self>>> {
+        let db = persistence::OnboardingPagesDb::global(cx);
         window.spawn(cx, async move |cx| {
-            if let Some(_) =
-                persistence::ONBOARDING_PAGES.get_onboarding_page(item_id, workspace_id)?
-            {
+            if let Some(_) = db.get_onboarding_page(item_id, workspace_id)? {
                 workspace.update(cx, |workspace, cx| Onboarding::new(workspace, cx))
             } else {
                 Err(anyhow::anyhow!("No onboarding page to deserialize"))
@@ -592,11 +594,12 @@ impl workspace::SerializableItem for Onboarding {
     ) -> Option<gpui::Task<gpui::Result<()>>> {
         let workspace_id = workspace.database_id()?;
 
-        Some(cx.background_spawn(async move {
-            persistence::ONBOARDING_PAGES
-                .save_onboarding_page(item_id, workspace_id)
-                .await
-        }))
+        let db = persistence::OnboardingPagesDb::global(cx);
+        Some(
+            cx.background_spawn(
+                async move { db.save_onboarding_page(item_id, workspace_id).await },
+            ),
+        )
     }
 
     fn should_serialize(&self, event: &Self::Event) -> bool {
@@ -645,7 +648,7 @@ mod persistence {
         ];
     }
 
-    db::static_connection!(ONBOARDING_PAGES, OnboardingPagesDb, [WorkspaceDb]);
+    db::static_connection!(OnboardingPagesDb, [WorkspaceDb]);
 
     impl OnboardingPagesDb {
         query! {

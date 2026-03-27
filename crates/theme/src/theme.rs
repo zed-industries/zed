@@ -19,15 +19,14 @@ mod schema;
 mod settings;
 mod styles;
 
-use std::path::Path;
 use std::sync::Arc;
 
 use ::settings::DEFAULT_DARK_THEME;
+use ::settings::IntoGpui;
 use ::settings::Settings;
 use ::settings::SettingsStore;
 use anyhow::Result;
 use fallback_themes::apply_status_color_defaults;
-use fs::Fs;
 use gpui::BorrowAppContext;
 use gpui::Global;
 use gpui::{
@@ -257,35 +256,30 @@ impl ThemeFamily {
         };
         refined_accent_colors.merge(&theme.style.accents);
 
-        let syntax_highlights = theme
-            .style
-            .syntax
-            .iter()
-            .map(|(syntax_token, highlight)| {
-                (
-                    syntax_token.clone(),
-                    HighlightStyle {
-                        color: highlight
-                            .color
-                            .as_ref()
-                            .and_then(|color| try_parse_color(color).ok()),
-                        background_color: highlight
-                            .background_color
-                            .as_ref()
-                            .and_then(|color| try_parse_color(color).ok()),
-                        font_style: highlight.font_style.map(Into::into),
-                        font_weight: highlight.font_weight.map(Into::into),
-                        ..Default::default()
-                    },
-                )
-            })
-            .collect::<Vec<_>>();
-        let syntax_theme = SyntaxTheme::merge(Arc::new(SyntaxTheme::default()), syntax_highlights);
+        let syntax_highlights = theme.style.syntax.iter().map(|(syntax_token, highlight)| {
+            (
+                syntax_token.clone(),
+                HighlightStyle {
+                    color: highlight
+                        .color
+                        .as_ref()
+                        .and_then(|color| try_parse_color(color).ok()),
+                    background_color: highlight
+                        .background_color
+                        .as_ref()
+                        .and_then(|color| try_parse_color(color).ok()),
+                    font_style: highlight.font_style.map(|s| s.into_gpui()),
+                    font_weight: highlight.font_weight.map(|w| w.into_gpui()),
+                    ..Default::default()
+                },
+            )
+        });
+        let syntax_theme = Arc::new(SyntaxTheme::new(syntax_highlights));
 
         let window_background_appearance = theme
             .style
             .window_background_appearance
-            .map(Into::into)
+            .map(|w| w.into_gpui())
             .unwrap_or_default();
 
         Theme {
@@ -380,12 +374,6 @@ impl Theme {
         &self.styles.status
     }
 
-    /// Returns the color for the syntax node with the given name.
-    #[inline(always)]
-    pub fn syntax_color(&self, name: &str) -> Hsla {
-        self.syntax().color(name)
-    }
-
     /// Returns the [`Appearance`] for the theme.
     #[inline(always)]
     pub fn appearance(&self) -> Appearance {
@@ -415,10 +403,9 @@ impl Theme {
     }
 }
 
-/// Asynchronously reads the user theme from the specified path.
-pub async fn read_user_theme(theme_path: &Path, fs: Arc<dyn Fs>) -> Result<ThemeFamilyContent> {
-    let bytes = fs.load_bytes(theme_path).await?;
-    let theme_family: ThemeFamilyContent = serde_json_lenient::from_slice(&bytes)?;
+/// Deserializes a user theme from the given bytes.
+pub fn deserialize_user_theme(bytes: &[u8]) -> Result<ThemeFamilyContent> {
+    let theme_family: ThemeFamilyContent = serde_json_lenient::from_slice(bytes)?;
 
     for theme in &theme_family.themes {
         if theme
@@ -437,13 +424,9 @@ pub async fn read_user_theme(theme_path: &Path, fs: Arc<dyn Fs>) -> Result<Theme
     Ok(theme_family)
 }
 
-/// Asynchronously reads the icon theme from the specified path.
-pub async fn read_icon_theme(
-    icon_theme_path: &Path,
-    fs: Arc<dyn Fs>,
-) -> Result<IconThemeFamilyContent> {
-    let bytes = fs.load_bytes(icon_theme_path).await?;
-    let icon_theme_family: IconThemeFamilyContent = serde_json_lenient::from_slice(&bytes)?;
+/// Deserializes a icon theme from the given bytes.
+pub fn deserialize_icon_theme(bytes: &[u8]) -> Result<IconThemeFamilyContent> {
+    let icon_theme_family: IconThemeFamilyContent = serde_json_lenient::from_slice(bytes)?;
 
     Ok(icon_theme_family)
 }

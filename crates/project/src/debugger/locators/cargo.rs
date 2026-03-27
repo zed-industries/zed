@@ -1,21 +1,25 @@
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use dap::{DapLocator, DebugRequest, adapters::DebugAdapterName};
-use gpui::SharedString;
+use gpui::{BackgroundExecutor, SharedString};
 use serde_json::{Value, json};
-use smol::{Timer, io::AsyncReadExt, process::Stdio};
+use smol::{io::AsyncReadExt, process::Stdio as SmolStdio};
 use std::time::Duration;
 use task::{BuildTaskDefinition, DebugScenario, ShellBuilder, SpawnInTerminal, TaskTemplate};
-use util::command::new_smol_command;
+use util::command::{Stdio, new_command};
 
 pub(crate) struct CargoLocator;
 
-async fn find_best_executable(executables: &[String], test_name: &str) -> Option<String> {
+async fn find_best_executable(
+    executables: &[String],
+    test_name: &str,
+    executor: BackgroundExecutor,
+) -> Option<String> {
     if executables.len() == 1 {
         return executables.first().cloned();
     }
     for executable in executables {
-        let Some(mut child) = new_smol_command(&executable)
+        let Some(mut child) = new_command(&executable)
             .arg("--list")
             .stdout(Stdio::piped())
             .spawn()
@@ -32,7 +36,7 @@ async fn find_best_executable(executables: &[String], test_name: &str) -> Option
                 Ok(())
             },
             async {
-                Timer::after(Duration::from_secs(3)).await;
+                executor.timer(Duration::from_secs(3)).await;
                 anyhow::bail!("Timed out waiting for executable stdout")
             },
         );
@@ -109,7 +113,11 @@ impl DapLocator for CargoLocator {
         })
     }
 
-    async fn run(&self, build_config: SpawnInTerminal) -> Result<DebugRequest> {
+    async fn run(
+        &self,
+        build_config: SpawnInTerminal,
+        executor: BackgroundExecutor,
+    ) -> Result<DebugRequest> {
         let cwd = build_config
             .cwd
             .clone()
@@ -128,7 +136,7 @@ impl DapLocator for CargoLocator {
             )
             .envs(build_config.env.iter().map(|(k, v)| (k.clone(), v.clone())))
             .current_dir(cwd)
-            .stdout(Stdio::piped())
+            .stdout(SmolStdio::piped())
             .spawn()?;
 
         let mut output = String::new();
@@ -190,7 +198,7 @@ impl DapLocator for CargoLocator {
                     .map(|name| build_config.env.get(name))
                     .unwrap_or(Some(name))
             }) {
-                find_best_executable(&executables, name).await
+                find_best_executable(&executables, name, executor).await
             } else {
                 None
             }

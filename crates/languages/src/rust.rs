@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
 use futures::lock::OwnedMutexGuard;
-use gpui::{App, AppContext, AsyncApp, SharedString, Task};
+use gpui::{App, AppContext, AsyncApp, Entity, SharedString, Task};
 use http_client::github::AssetKind;
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 use http_client::github_download::{GithubBinaryMetadata, download_server_binary};
@@ -13,25 +13,33 @@ use project::lsp_store::rust_analyzer_ext::CARGO_DIAGNOSTICS_SOURCE_NAME;
 use project::project_settings::ProjectSettings;
 use regex::Regex;
 use serde_json::json;
-use settings::Settings as _;
+use settings::{SemanticTokenRules, Settings as _};
 use smallvec::SmallVec;
 use smol::fs::{self};
 use std::cmp::Reverse;
 use std::fmt::Display;
 use std::ops::Range;
-use std::process::Stdio;
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
 };
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
+use util::command::Stdio;
 use util::fs::{make_file_executable, remove_matching};
 use util::merge_json_value_into;
 use util::rel_path::RelPath;
 use util::{ResultExt, maybe};
 
-use crate::language_settings::language_settings;
+use crate::language_settings::LanguageSettings;
+
+pub(crate) fn semantic_token_rules() -> SemanticTokenRules {
+    let content = grammars::get_file("rust/semantic_token_rules.json")
+        .expect("missing rust/semantic_token_rules.json");
+    let json = std::str::from_utf8(&content.data).expect("invalid utf-8 in semantic_token_rules");
+    settings::parse_json_with_comments::<SemanticTokenRules>(json)
+        .expect("failed to parse rust semantic_token_rules.json")
+}
 
 pub struct RustLspAdapter;
 
@@ -135,13 +143,9 @@ impl RustLspAdapter {
         use futures::pin_mut;
 
         async fn from_ldd_version() -> Option<LibcType> {
-            use util::command::new_smol_command;
+            use util::command::new_command;
 
-            let ldd_output = new_smol_command("ldd")
-                .arg("--version")
-                .output()
-                .await
-                .ok()?;
+            let ldd_output = new_command("ldd").arg("--version").output().await.ok()?;
             let ldd_version = String::from_utf8_lossy(&ldd_output.stdout);
 
             if ldd_version.contains("GNU libc") || ldd_version.contains("GLIBC") {
@@ -197,6 +201,7 @@ impl RustLspAdapter {
     async fn build_asset_name() -> String {
         let extension = match Self::GITHUB_ASSET_KIND {
             AssetKind::TarGz => "tar.gz",
+            AssetKind::TarBz2 => "tar.bz2",
             AssetKind::Gz => "gz",
             AssetKind::Zip => "zip",
         };
@@ -257,12 +262,7 @@ impl LspAdapter for RustLspAdapter {
         Some("rust-analyzer/flycheck".into())
     }
 
-    fn process_diagnostics(
-        &self,
-        params: &mut lsp::PublishDiagnosticsParams,
-        _: LanguageServerId,
-        _: Option<&'_ Buffer>,
-    ) {
+    fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams, _: LanguageServerId) {
         static REGEX: LazyLock<Regex> =
             LazyLock::new(|| Regex::new(r"(?m)`([^`]+)\n`$").expect("Failed to create REGEX"));
 
@@ -534,7 +534,7 @@ impl LspAdapter for RustLspAdapter {
             .0
             .ok()?;
 
-        let mut command = util::command::new_smol_command(&binary.path);
+        let mut command = util::command::new_command(&binary.path);
         command
             .arg("--print-config-schema")
             .stdout(Stdio::piped())
@@ -563,18 +563,30 @@ impl LspAdapter for RustLspAdapter {
 
     async fn label_for_symbol(
         &self,
-        name: &str,
-        kind: lsp::SymbolKind,
+        symbol: &language::Symbol,
         language: &Arc<Language>,
     ) -> Option<CodeLabel> {
-        let (prefix, suffix) = match kind {
-            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => ("fn ", " () {}"),
-            lsp::SymbolKind::STRUCT => ("struct ", " {}"),
-            lsp::SymbolKind::ENUM => ("enum ", " {}"),
-            lsp::SymbolKind::INTERFACE => ("trait ", " {}"),
-            lsp::SymbolKind::CONSTANT => ("const ", ": () = ();"),
-            lsp::SymbolKind::MODULE => ("mod ", " {}"),
-            lsp::SymbolKind::TYPE_PARAMETER => ("type ", " {}"),
+        let name = &symbol.name;
+        let (prefix, suffix) = match symbol.kind {
+            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => ("fn ", "();"),
+            lsp::SymbolKind::STRUCT => ("struct ", ";"),
+            lsp::SymbolKind::ENUM => ("enum ", "{}"),
+            lsp::SymbolKind::INTERFACE => ("trait ", "{}"),
+            lsp::SymbolKind::CONSTANT => ("const ", ":()=();"),
+            lsp::SymbolKind::MODULE => ("mod ", ";"),
+            lsp::SymbolKind::PACKAGE => ("extern crate ", ";"),
+            lsp::SymbolKind::TYPE_PARAMETER => ("type ", "=();"),
+            lsp::SymbolKind::ENUM_MEMBER => {
+                let prefix = "enum E {";
+                return Some(CodeLabel::new(
+                    name.to_string(),
+                    0..name.len(),
+                    language.highlight_text(
+                        &Rope::from_iter([prefix, name, "}"]),
+                        prefix.len()..prefix.len() + name.len(),
+                    ),
+                ));
+            }
             _ => return None,
         };
 
@@ -689,7 +701,7 @@ impl LspInstaller for RustLspAdapter {
         } = version;
         let destination_path = container_dir.join(format!("rust-analyzer-{name}"));
         let server_path = match Self::GITHUB_ASSET_KIND {
-            AssetKind::TarGz | AssetKind::Gz => destination_path.clone(), // Tar and gzip extract in place.
+            AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Gz => destination_path.clone(), // Tar and gzip extract in place.
             AssetKind::Zip => destination_path.clone().join("rust-analyzer.exe"), // zip contains a .exe
         };
 
@@ -881,23 +893,16 @@ impl ContextProvider for RustContextProvider {
 
     fn associated_tasks(
         &self,
-        file: Option<Arc<dyn language::File>>,
+        buffer: Option<Entity<Buffer>>,
         cx: &App,
     ) -> Task<Option<TaskTemplates>> {
         const DEFAULT_RUN_NAME_STR: &str = "RUST_DEFAULT_PACKAGE_RUN";
         const CUSTOM_TARGET_DIR: &str = "RUST_TARGET_DIR";
 
-        let language_sets = language_settings(Some("Rust".into()), file.as_ref(), cx);
-        let package_to_run = language_sets
-            .tasks
-            .variables
-            .get(DEFAULT_RUN_NAME_STR)
-            .cloned();
-        let custom_target_dir = language_sets
-            .tasks
-            .variables
-            .get(CUSTOM_TARGET_DIR)
-            .cloned();
+        let language = LanguageName::new_static("Rust");
+        let settings = LanguageSettings::resolve(buffer.map(|b| b.read(cx)), Some(&language), cx);
+        let package_to_run = settings.tasks.variables.get(DEFAULT_RUN_NAME_STR).cloned();
+        let custom_target_dir = settings.tasks.variables.get(CUSTOM_TARGET_DIR).cloned();
         let run_task_args = if let Some(package_to_run) = package_to_run {
             vec!["run".into(), "-p".into(), package_to_run]
         } else {
@@ -1119,7 +1124,7 @@ async fn target_info_from_abs_path(
     abs_path: &Path,
     project_env: Option<&HashMap<String, String>>,
 ) -> Option<(Option<TargetInfo>, Arc<Path>)> {
-    let mut command = util::command::new_smol_command("cargo");
+    let mut command = util::command::new_command("cargo");
     if let Some(envs) = project_env {
         command.envs(envs);
     }
@@ -1194,7 +1199,7 @@ async fn human_readable_package_name(
     package_directory: &Path,
     project_env: Option<&HashMap<String, String>>,
 ) -> Option<String> {
-    let mut command = util::command::new_smol_command("cargo");
+    let mut command = util::command::new_command("cargo");
     if let Some(envs) = project_env {
         command.envs(envs);
     }
@@ -1263,8 +1268,8 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
             None => return Ok(None),
         };
         let path = match RustLspAdapter::GITHUB_ASSET_KIND {
-            AssetKind::TarGz | AssetKind::Gz => path, // Tar and gzip extract in place.
-            AssetKind::Zip => path.join("rust-analyzer.exe"), // zip contains a .exe
+            AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Gz => path, // Tar and gzip extract in place.
+            AssetKind::Zip => path.join("rust-analyzer.exe"),             // zip contains a .exe
         };
 
         anyhow::Ok(Some(LanguageServerBinary {
@@ -1347,7 +1352,7 @@ mod tests {
                 },
             ],
         };
-        RustLspAdapter.process_diagnostics(&mut params, LanguageServerId(0), None);
+        RustLspAdapter.process_diagnostics(&mut params, LanguageServerId(0));
 
         assert_eq!(params.diagnostics[0].message, "use of moved value `a`");
 
@@ -1805,7 +1810,14 @@ mod tests {
 
         assert_eq!(
             adapter
-                .label_for_symbol("hello", lsp::SymbolKind::FUNCTION, &language)
+                .label_for_symbol(
+                    &language::Symbol {
+                        name: "hello".to_string(),
+                        kind: lsp::SymbolKind::FUNCTION,
+                        container_name: None,
+                    },
+                    &language
+                )
                 .await,
             Some(CodeLabel::new(
                 "fn hello".to_string(),
@@ -1816,12 +1828,55 @@ mod tests {
 
         assert_eq!(
             adapter
-                .label_for_symbol("World", lsp::SymbolKind::TYPE_PARAMETER, &language)
+                .label_for_symbol(
+                    &language::Symbol {
+                        name: "World".to_string(),
+                        kind: lsp::SymbolKind::TYPE_PARAMETER,
+                        container_name: None,
+                    },
+                    &language
+                )
                 .await,
             Some(CodeLabel::new(
                 "type World".to_string(),
                 5..10,
                 vec![(0..4, highlight_keyword), (5..10, highlight_type)],
+            ))
+        );
+
+        assert_eq!(
+            adapter
+                .label_for_symbol(
+                    &language::Symbol {
+                        name: "zed".to_string(),
+                        kind: lsp::SymbolKind::PACKAGE,
+                        container_name: None,
+                    },
+                    &language
+                )
+                .await,
+            Some(CodeLabel::new(
+                "extern crate zed".to_string(),
+                13..16,
+                vec![(0..6, highlight_keyword), (7..12, highlight_keyword),],
+            ))
+        );
+
+        assert_eq!(
+            adapter
+                .label_for_symbol(
+                    &language::Symbol {
+                        name: "Variant".to_string(),
+                        kind: lsp::SymbolKind::ENUM_MEMBER,
+                        container_name: None,
+                    },
+                    &language
+                )
+                .await,
+            Some(CodeLabel::new(
+                "Variant".to_string(),
+                0..7,
+                vec![(0..7, highlight_type)],
             ))
         );
     }

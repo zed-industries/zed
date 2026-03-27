@@ -1,9 +1,6 @@
 use crate::{context::LoadedContext, inline_prompt_editor::CodegenStatus};
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
-use uuid::Uuid;
-
-use cloud_llm_client::CompletionIntent;
 use collections::HashSet;
 use editor::{Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint};
 use futures::{
@@ -16,7 +13,7 @@ use futures::{
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task};
 use language::{Buffer, IndentKind, LanguageName, Point, TransactionId, line_diff};
 use language_model::{
-    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    CompletionIntent, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelRequestTool, LanguageModelTextStream, LanguageModelToolChoice,
     LanguageModelToolUse, Role, TokenUsage,
@@ -40,6 +37,7 @@ use std::{
     time::Instant,
 };
 use streaming_diff::{CharOperation, LineDiff, LineOperation, StreamingDiff};
+use uuid::Uuid;
 
 /// Use this tool when you cannot or should not make a rewrite. This includes:
 /// - The user's request is unclear, ambiguous, or nonsensical
@@ -302,7 +300,7 @@ impl CodegenAlternative {
         let snapshot = buffer.read(cx).snapshot(cx);
 
         let (old_buffer, _, _) = snapshot
-            .range_to_buffer_ranges(range.clone())
+            .range_to_buffer_ranges(range.start..=range.end)
             .pop()
             .unwrap();
         let old_buffer = cx.new(|cx| {
@@ -526,11 +524,13 @@ impl CodegenAlternative {
                     name: REWRITE_SECTION_TOOL_NAME.to_string(),
                     description: "Replaces text in <rewrite_this></rewrite_this> tags with your replacement_text.".to_string(),
                     input_schema: language_model::tool_schema::root_schema_for::<RewriteSectionInput>(tool_input_format).to_value(),
+                    use_input_streaming: false,
                 },
                 LanguageModelRequestTool {
                     name: FAILURE_MESSAGE_TOOL_NAME.to_string(),
                     description: "Use this tool to provide a message to the user when you're unable to complete a task.".to_string(),
                     input_schema: language_model::tool_schema::root_schema_for::<FailureMessageInput>(tool_input_format).to_value(),
+                    use_input_streaming: false,
                 },
             ];
 
@@ -538,13 +538,14 @@ impl CodegenAlternative {
                 thread_id: None,
                 prompt_id: None,
                 intent: Some(CompletionIntent::InlineAssist),
-                mode: None,
                 tools,
                 tool_choice,
                 stop: Vec::new(),
                 temperature,
                 messages,
                 thinking_allowed: false,
+                thinking_effort: None,
+                speed: None,
             }
         }))
     }
@@ -617,13 +618,14 @@ impl CodegenAlternative {
                 thread_id: None,
                 prompt_id: None,
                 intent: Some(CompletionIntent::InlineAssist),
-                mode: None,
                 tools: Vec::new(),
                 tool_choice: None,
                 stop: Vec::new(),
                 temperature,
                 messages: vec![request_message],
                 thinking_allowed: false,
+                thinking_effort: None,
+                speed: None,
             }
         }))
     }
@@ -679,7 +681,7 @@ impl CodegenAlternative {
         let language_name = {
             let multibuffer = self.buffer.read(cx);
             let snapshot = multibuffer.snapshot(cx);
-            let ranges = snapshot.range_to_buffer_ranges(self.range.clone());
+            let ranges = snapshot.range_to_buffer_ranges(self.range.start..=self.range.end);
             ranges
                 .first()
                 .and_then(|(buffer, _, _)| buffer.language())

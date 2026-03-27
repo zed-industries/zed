@@ -55,7 +55,8 @@ fn download_patch_artifact() -> Step<Use> {
 
 fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJob {
     fn checkout_pr(pr_number: &WorkflowInput) -> Step<Run> {
-        named::bash(&format!("gh pr checkout {pr_number}"))
+        named::bash(r#"gh pr checkout "$PR_NUMBER""#)
+            .add_env(("PR_NUMBER", pr_number.to_string()))
             .add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN))
     }
 
@@ -119,12 +120,12 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
             .add_step(steps::cache_rust_dependencies_namespace())
             .map(steps::install_linux_dependencies)
             .add_step(steps::setup_pnpm())
-            .add_step(run_prettier_fix())
-            .add_step(run_cargo_fmt())
             .add_step(install_cargo_machete().if_condition(Expression::new(run_clippy.to_string())))
             .add_step(run_cargo_fix().if_condition(Expression::new(run_clippy.to_string())))
             .add_step(run_cargo_machete_fix().if_condition(Expression::new(run_clippy.to_string())))
             .add_step(run_clippy_fix().if_condition(Expression::new(run_clippy.to_string())))
+            .add_step(run_prettier_fix())
+            .add_step(run_cargo_fmt())
             .add_step(create_patch())
             .add_step(upload_patch_artifact())
             .add_step(steps::cleanup_cargo_config(runners::Platform::Linux)),
@@ -133,7 +134,9 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
 
 fn commit_changes(pr_number: &WorkflowInput, autofix_job: &NamedJob) -> NamedJob {
     fn checkout_pr(pr_number: &WorkflowInput, token: &StepOutput) -> Step<Run> {
-        named::bash(&format!("gh pr checkout {pr_number}")).add_env(("GITHUB_TOKEN", token))
+        named::bash(r#"gh pr checkout "$PR_NUMBER""#)
+            .add_env(("PR_NUMBER", pr_number.to_string()))
+            .add_env(("GITHUB_TOKEN", token))
     }
 
     fn apply_patch() -> Step<Run> {
@@ -169,7 +172,7 @@ fn commit_changes(pr_number: &WorkflowInput, autofix_job: &NamedJob) -> NamedJob
                 autofix_job.name
             )))
             .add_step(authenticate)
-            .add_step(steps::checkout_repo_with_token(&token))
+            .add_step(steps::checkout_repo().with_token(&token))
             .add_step(checkout_pr(pr_number, &token))
             .add_step(download_patch_artifact())
             .add_step(apply_patch())

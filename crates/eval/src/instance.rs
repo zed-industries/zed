@@ -26,7 +26,7 @@ use std::{
     time::Duration,
 };
 use unindent::Unindent as _;
-use util::{ResultExt as _, command::new_smol_command, markdown::MarkdownCodeBlock};
+use util::{ResultExt as _, command::new_command, markdown::MarkdownCodeBlock};
 
 use crate::{
     AgentAppState, ToolMetrics,
@@ -202,7 +202,10 @@ impl ExampleInstance {
             app_state.languages.clone(),
             app_state.fs.clone(),
             None,
-            false,
+            project::LocalProjectFlags {
+                init_worktree_trust: false,
+                ..Default::default()
+            },
             cx,
         );
 
@@ -548,7 +551,6 @@ impl ExampleInstance {
             let request = LanguageModelRequest {
                 thread_id: None,
                 prompt_id: None,
-                mode: None,
                 intent: None,
                 messages: vec![LanguageModelRequestMessage {
                     role: Role::User,
@@ -561,6 +563,8 @@ impl ExampleInstance {
                 tool_choice: None,
                 stop: Vec::new(),
                 thinking_allowed: true,
+                thinking_effort: None,
+                speed: None,
             };
 
             let model = model.clone();
@@ -675,6 +679,14 @@ impl agent::ThreadEnvironment for EvalThreadEnvironment {
             });
             Ok(Rc::new(EvalTerminalHandle { terminal }) as Rc<dyn agent::TerminalHandle>)
         })
+    }
+
+    fn create_subagent(
+        &self,
+        _label: String,
+        _cx: &mut App,
+    ) -> Result<Rc<dyn agent::SubagentHandle>> {
+        unimplemented!()
     }
 }
 
@@ -1057,7 +1069,7 @@ pub fn repo_path_for_url(repos_dir: &Path, repo_url: &str) -> PathBuf {
 }
 
 pub async fn run_git(repo_path: &Path, args: &[&str]) -> Result<String> {
-    let output = new_smol_command("git")
+    let output = new_command("git")
         .current_dir(repo_path)
         .args(args)
         .output()
@@ -1265,9 +1277,7 @@ pub fn response_events_to_markdown(
             }
             Ok(
                 LanguageModelCompletionEvent::UsageUpdate(_)
-                | LanguageModelCompletionEvent::ToolUseLimitReached
                 | LanguageModelCompletionEvent::StartMessage { .. }
-                | LanguageModelCompletionEvent::UsageUpdated { .. }
                 | LanguageModelCompletionEvent::Queued { .. }
                 | LanguageModelCompletionEvent::Started
                 | LanguageModelCompletionEvent::ReasoningDetails(_),
@@ -1359,9 +1369,7 @@ impl ThreadDialog {
                 | Ok(LanguageModelCompletionEvent::ReasoningDetails(_))
                 | Ok(LanguageModelCompletionEvent::Stop(_))
                 | Ok(LanguageModelCompletionEvent::Queued { .. })
-                | Ok(LanguageModelCompletionEvent::Started)
-                | Ok(LanguageModelCompletionEvent::UsageUpdated { .. })
-                | Ok(LanguageModelCompletionEvent::ToolUseLimitReached) => {}
+                | Ok(LanguageModelCompletionEvent::Started) => {}
 
                 Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
                     json_parse_error,

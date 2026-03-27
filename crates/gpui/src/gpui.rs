@@ -1,11 +1,12 @@
 #![doc = include_str!("../README.md")]
-#![deny(missing_docs)]
+#![warn(missing_docs)]
 #![allow(clippy::type_complexity)] // Not useful, GPUI makes heavy use of callbacks
 #![allow(clippy::collapsible_else_if)] // False positives in platform specific code
 #![allow(unused_mut)] // False positives in platform specific code
 
 extern crate self as gpui;
-
+#[doc(hidden)]
+pub static GPUI_MANIFEST_DIR: &'static str = env!("CARGO_MANIFEST_DIR");
 #[macro_use]
 mod action;
 mod app;
@@ -20,6 +21,8 @@ pub mod colors;
 mod element;
 mod elements;
 mod executor;
+mod platform_scheduler;
+pub(crate) use platform_scheduler::PlatformScheduler;
 mod geometry;
 mod global;
 mod input;
@@ -30,9 +33,11 @@ mod keymap;
 mod path_builder;
 mod platform;
 pub mod prelude;
-mod profiler;
-#[cfg(any(target_os = "windows", target_os = "linux"))]
-mod queue;
+/// Profiling utilities for task timing and thread performance tracking.
+pub mod profiler;
+#[cfg(any(target_os = "windows", target_os = "linux", target_family = "wasm"))]
+#[expect(missing_docs)]
+pub mod queue;
 mod scene;
 mod shared_string;
 mod shared_uri;
@@ -48,6 +53,9 @@ mod text_system;
 mod util;
 mod view;
 mod window;
+
+#[cfg(any(test, feature = "test-support"))]
+pub use proptest;
 
 #[cfg(doc)]
 pub mod _ownership_and_data_flow;
@@ -81,7 +89,10 @@ pub use elements::*;
 pub use executor::*;
 pub use geometry::*;
 pub use global::*;
-pub use gpui_macros::{AppContext, IntoElement, Render, VisualContext, register_action, test};
+pub use gpui_macros::{
+    AppContext, IntoElement, Render, VisualContext, property_test, register_action, test,
+};
+pub use gpui_util::arc_cow::ArcCow;
 pub use http_client;
 pub use input::*;
 pub use inspector::*;
@@ -91,13 +102,12 @@ pub use keymap::*;
 pub use path_builder::*;
 pub use platform::*;
 pub use profiler::*;
-#[cfg(any(target_os = "windows", target_os = "linux"))]
-pub(crate) use queue::{PriorityQueueReceiver, PriorityQueueSender};
+#[cfg(any(target_os = "windows", target_os = "linux", target_family = "wasm"))]
+pub use queue::{PriorityQueueReceiver, PriorityQueueSender};
 pub use refineable::*;
 pub use scene::*;
 pub use shared_string::*;
 pub use shared_uri::*;
-pub use smol::Timer;
 use std::{any::Any, future::Future};
 pub use style::*;
 pub use styled::*;
@@ -109,9 +119,7 @@ pub use taffy::{AvailableSpace, LayoutId};
 #[cfg(any(test, feature = "test-support"))]
 pub use test::*;
 pub use text_system::*;
-#[cfg(any(test, feature = "test-support"))]
-pub use util::smol_timeout;
-pub use util::{FutureExt, Timeout, arc_cow::ArcCow};
+pub use util::{FutureExt, Timeout};
 pub use view::*;
 pub use window::*;
 

@@ -1,8 +1,8 @@
 use crate::{
     language_model_selector::{LanguageModelSelector, language_model_selector},
-    ui::{BurnModeTooltip, ModelSelectorTooltip},
+    mention_set::load_external_image_from_path,
+    ui::ModelSelectorTooltip,
 };
-use agent_settings::CompletionMode;
 use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection, SlashCommandWorkingSet};
 use assistant_slash_commands::{DefaultSlashCommand, FileSlashCommand, selections_creases};
@@ -10,7 +10,7 @@ use client::{proto, zed_urls};
 use collections::{BTreeSet, HashMap, HashSet, hash_map};
 use editor::{
     Anchor, Editor, EditorEvent, MenuEditPredictionsPolicy, MultiBuffer, MultiBufferOffset,
-    MultiBufferSnapshot, RowExt, ToOffset as _, ToPoint,
+    MultiBufferSnapshot, RowExt, ToOffset as _, ToPoint as _,
     actions::{MoveToEndOfLine, Newline, ShowCompletions},
     display_map::{
         BlockPlacement, BlockProperties, BlockStyle, Crease, CreaseMetadata, CustomBlockId, FoldId,
@@ -33,8 +33,7 @@ use language::{
     language_settings::{SoftWrap, all_language_settings},
 };
 use language_model::{
-    ConfigurationError, IconOrSvg, LanguageModelExt, LanguageModelImage, LanguageModelRegistry,
-    Role,
+    ConfigurationError, IconOrSvg, LanguageModelImage, LanguageModelRegistry, Role,
 };
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, popover_menu::PickerPopoverMenu};
@@ -47,7 +46,7 @@ use settings::{
     update_settings_file,
 };
 use std::{
-    any::TypeId,
+    any::{Any, TypeId},
     cmp,
     ops::Range,
     path::{Path, PathBuf},
@@ -63,8 +62,9 @@ use ui::{
 use util::{ResultExt, maybe};
 use workspace::{
     CollaboratorId,
-    searchable::{Direction, SearchableItemHandle},
+    searchable::{Direction, SearchToken, SearchableItemHandle},
 };
+
 use workspace::{
     Save, Toast, Workspace,
     item::{self, FollowableItem, Item},
@@ -157,6 +157,14 @@ pub trait AgentPanelDelegate {
         workspace: &mut Workspace,
         selection_ranges: Vec<Range<Anchor>>,
         buffer: Entity<MultiBuffer>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    );
+
+    fn quote_terminal_text(
+        &self,
+        workspace: &mut Workspace,
+        text: String,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     );
@@ -312,11 +320,15 @@ impl TextThreadEditor {
                         move |model, cx| {
                             update_settings_file(fs.clone(), cx, move |settings, _| {
                                 let provider = model.provider_id().0.to_string();
-                                let model = model.id().0.to_string();
+                                let model_id = model.id().0.to_string();
                                 settings.agent.get_or_insert_default().set_model(
                                     LanguageModelSelection {
                                         provider: LanguageModelProviderSetting(provider),
-                                        model,
+                                        model: model_id,
+                                        enable_thinking: model.supports_thinking(),
+                                        effort: model
+                                            .default_effort_level()
+                                            .map(|effort| effort.value.to_string()),
                                     },
                                 )
                             });
@@ -676,7 +688,7 @@ impl TextThreadEditor {
             TextThreadEvent::ParsedSlashCommandsUpdated { removed, updated } => {
                 self.editor.update(cx, |editor, cx| {
                     let buffer = editor.buffer().read(cx).snapshot(cx);
-                    let (&excerpt_id, _, _) = buffer.as_singleton().unwrap();
+                    let (excerpt_id, _, _) = buffer.as_singleton().unwrap();
 
                     editor.remove_creases(
                         removed
@@ -799,8 +811,7 @@ impl TextThreadEditor {
             {
                 if let InvokedSlashCommandStatus::Finished = invoked_slash_command.status {
                     let buffer = editor.buffer().read(cx).snapshot(cx);
-                    let (&excerpt_id, _buffer_id, _buffer_snapshot) =
-                        buffer.as_singleton().unwrap();
+                    let (excerpt_id, _buffer_id, _buffer_snapshot) = buffer.as_singleton().unwrap();
 
                     let range = buffer
                         .anchor_range_in_excerpt(excerpt_id, invoked_slash_command.range.clone())
@@ -820,8 +831,7 @@ impl TextThreadEditor {
                     self.invoked_slash_command_creases.entry(command_id)
                 {
                     let buffer = editor.buffer().read(cx).snapshot(cx);
-                    let (&excerpt_id, _buffer_id, _buffer_snapshot) =
-                        buffer.as_singleton().unwrap();
+                    let (excerpt_id, _buffer_id, _buffer_snapshot) = buffer.as_singleton().unwrap();
                     let context = self.text_thread.downgrade();
                     let range = buffer
                         .anchor_range_in_excerpt(excerpt_id, invoked_slash_command.range.clone())
@@ -861,7 +871,7 @@ impl TextThreadEditor {
     ) -> Vec<CreaseId> {
         self.editor.update(cx, |editor, cx| {
             let buffer = editor.buffer().read(cx).snapshot(cx);
-            let excerpt_id = *buffer.as_singleton().unwrap().0;
+            let excerpt_id = buffer.as_singleton().unwrap().0;
             let mut buffer_rows_to_fold = BTreeSet::new();
             let mut creases = Vec::new();
             for (section, status) in sections {
@@ -885,7 +895,7 @@ impl TextThreadEditor {
                         |_, _, _, _| Empty.into_any_element(),
                     )
                     .with_metadata(CreaseMetadata {
-                        icon_path: SharedString::from(IconName::Ai.path()),
+                        icon_path: SharedString::from(IconName::ZedAgent.path()),
                         label: "Thinking Process".into(),
                     }),
                 );
@@ -910,7 +920,7 @@ impl TextThreadEditor {
     ) {
         self.editor.update(cx, |editor, cx| {
             let buffer = editor.buffer().read(cx).snapshot(cx);
-            let excerpt_id = *buffer.as_singleton().unwrap().0;
+            let excerpt_id = buffer.as_singleton().unwrap().0;
             let mut buffer_rows_to_fold = BTreeSet::new();
             let mut creases = Vec::new();
             for section in sections {
@@ -1000,8 +1010,7 @@ impl TextThreadEditor {
                 .as_f64();
             let scroll_position = editor
                 .scroll_manager
-                .anchor()
-                .scroll_position(&snapshot.display_snapshot);
+                .scroll_position(&snapshot.display_snapshot, cx);
 
             let scroll_bottom = scroll_position.y + editor.visible_line_count().unwrap_or(0.);
             if (scroll_position.y..scroll_bottom).contains(&cursor_row) {
@@ -1042,7 +1051,7 @@ impl TextThreadEditor {
         self.editor.update(cx, |editor, cx| {
             let buffer = editor.buffer().read(cx).snapshot(cx);
 
-            let excerpt_id = *buffer.as_singleton().unwrap().0;
+            let excerpt_id = buffer.as_singleton().unwrap().0;
             let mut old_blocks = std::mem::take(&mut self.blocks);
             let mut blocks_to_remove: HashMap<_, _> = old_blocks
                 .iter()
@@ -1183,11 +1192,11 @@ impl TextThreadEditor {
                                     Button::new("show-error", "Error")
                                         .color(Color::Error)
                                         .selected_label_color(Color::Error)
-                                        .selected_icon_color(Color::Error)
-                                        .icon(IconName::XCircle)
-                                        .icon_color(Color::Error)
-                                        .icon_size(IconSize::XSmall)
-                                        .icon_position(IconPosition::Start)
+                                        .start_icon(
+                                            Icon::new(IconName::XCircle)
+                                                .size(IconSize::XSmall)
+                                                .color(Color::Error),
+                                        )
                                         .tooltip(Tooltip::text("View Details"))
                                         .on_click({
                                             let text_thread = text_thread.clone();
@@ -1487,7 +1496,9 @@ impl TextThreadEditor {
             return;
         };
 
-        let Some((selections, buffer)) = maybe!({
+        // Get buffer info for the delegate call (even if empty, ThreadView ignores these
+        // params and calls insert_selections which handles both terminal and buffer)
+        if let Some((selections, buffer)) = maybe!({
             let editor = workspace
                 .active_item(cx)
                 .and_then(|item| item.act_as::<Editor>(cx))?;
@@ -1499,22 +1510,23 @@ impl TextThreadEditor {
                     .selections
                     .all_adjusted(&editor.display_snapshot(cx))
                     .into_iter()
-                    .filter_map(|s| {
-                        (!s.is_empty())
-                            .then(|| snapshot.anchor_after(s.start)..snapshot.anchor_before(s.end))
+                    .map(|s| {
+                        let (start, end) = if s.is_empty() {
+                            let row = multi_buffer::MultiBufferRow(s.start.row);
+                            let line_start = text::Point::new(s.start.row, 0);
+                            let line_end = text::Point::new(s.start.row, snapshot.line_len(row));
+                            (line_start, line_end)
+                        } else {
+                            (s.start, s.end)
+                        };
+                        snapshot.anchor_after(start)..snapshot.anchor_before(end)
                     })
                     .collect::<Vec<_>>()
             });
             Some((selections, buffer))
-        }) else {
-            return;
-        };
-
-        if selections.is_empty() {
-            return;
+        }) {
+            agent_panel_delegate.quote_selection(workspace, selections, buffer, window, cx);
         }
-
-        agent_panel_delegate.quote_selection(workspace, selections, buffer, window, cx);
     }
 
     pub fn quote_ranges(
@@ -1558,6 +1570,54 @@ impl TextThreadEditor {
                 editor.insert_creases(vec![crease], cx);
                 editor.fold_at(start_row, window, cx);
             }
+        })
+    }
+
+    pub fn quote_terminal_text(
+        &mut self,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let crease_title = "terminal".to_string();
+        let formatted_text = format!("```console\n{}\n```\n", text);
+
+        self.editor.update(cx, |editor, cx| {
+            // Insert newline first if not at the start of a line
+            let point = editor
+                .selections
+                .newest::<Point>(&editor.display_snapshot(cx))
+                .head();
+            if point.column > 0 {
+                editor.insert("\n", window, cx);
+            }
+
+            let point = editor
+                .selections
+                .newest::<Point>(&editor.display_snapshot(cx))
+                .head();
+            let start_row = MultiBufferRow(point.row);
+
+            editor.insert(&formatted_text, window, cx);
+
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let anchor_before = snapshot.anchor_after(point);
+            let anchor_after = editor
+                .selections
+                .newest_anchor()
+                .head()
+                .bias_left(&snapshot);
+
+            let fold_placeholder =
+                quote_selection_fold_placeholder(crease_title, cx.entity().downgrade());
+            let crease = Crease::inline(
+                anchor_before..anchor_after,
+                fold_placeholder,
+                render_quote_selection_output_toggle,
+                |_, _, _, _| Empty.into_any(),
+            );
+            editor.insert_creases(vec![crease], cx);
+            editor.fold_at(start_row, window, cx);
         })
     }
 
@@ -1702,15 +1762,14 @@ impl TextThreadEditor {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
-        let editor_clipboard_selections = cx
-            .read_from_clipboard()
-            .and_then(|item| item.entries().first().cloned())
-            .and_then(|entry| match entry {
+        let editor_clipboard_selections = cx.read_from_clipboard().and_then(|item| {
+            item.entries().iter().find_map(|entry| match entry {
                 ClipboardEntry::String(text) => {
                     text.metadata_json::<Vec<editor::ClipboardSelection>>()
                 }
                 _ => None,
-            });
+            })
+        });
 
         // Insert creases for pasted clipboard selections that:
         // 1. Contain exactly one selection
@@ -1742,7 +1801,14 @@ impl TextThreadEditor {
         .unwrap_or(false);
 
         if should_insert_creases && let Some(clipboard_item) = cx.read_from_clipboard() {
-            if let Some(ClipboardEntry::String(clipboard_text)) = clipboard_item.entries().first() {
+            let clipboard_text = clipboard_item
+                .entries()
+                .iter()
+                .find_map(|entry| match entry {
+                    ClipboardEntry::String(s) => Some(s),
+                    _ => None,
+                });
+            if let Some(clipboard_text) = clipboard_text {
                 if let Some(selections) = editor_clipboard_selections {
                     cx.stop_propagation();
 
@@ -1813,65 +1879,46 @@ impl TextThreadEditor {
 
         cx.stop_propagation();
 
-        let mut images = if let Some(item) = cx.read_from_clipboard() {
-            item.into_entries()
-                .filter_map(|entry| {
-                    if let ClipboardEntry::Image(image) = entry {
-                        Some(image)
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
+        let clipboard_item = cx.read_from_clipboard();
 
-        if let Some(paths) = cx.read_from_clipboard() {
-            for path in paths
-                .into_entries()
-                .filter_map(|entry| {
-                    if let ClipboardEntry::ExternalPaths(paths) = entry {
-                        Some(paths.paths().to_owned())
-                    } else {
-                        None
+        let mut images: Vec<gpui::Image> = Vec::new();
+        let mut paths: Vec<std::path::PathBuf> = Vec::new();
+        let mut metadata: Option<CopyMetadata> = None;
+
+        if let Some(item) = &clipboard_item {
+            for entry in item.entries() {
+                match entry {
+                    ClipboardEntry::Image(image) => images.push(image.clone()),
+                    ClipboardEntry::ExternalPaths(external) => {
+                        paths.extend(external.paths().iter().cloned());
                     }
-                })
-                .flatten()
-            {
-                let Ok(content) = std::fs::read(path) else {
-                    continue;
-                };
-                let Ok(format) = image::guess_format(&content) else {
-                    continue;
-                };
-                images.push(gpui::Image::from_bytes(
-                    match format {
-                        image::ImageFormat::Png => gpui::ImageFormat::Png,
-                        image::ImageFormat::Jpeg => gpui::ImageFormat::Jpeg,
-                        image::ImageFormat::WebP => gpui::ImageFormat::Webp,
-                        image::ImageFormat::Gif => gpui::ImageFormat::Gif,
-                        image::ImageFormat::Bmp => gpui::ImageFormat::Bmp,
-                        image::ImageFormat::Tiff => gpui::ImageFormat::Tiff,
-                        image::ImageFormat::Ico => gpui::ImageFormat::Ico,
-                        _ => continue,
-                    },
-                    content,
-                ));
+                    ClipboardEntry::String(text) => {
+                        if metadata.is_none() {
+                            metadata = text.metadata_json::<CopyMetadata>();
+                        }
+                    }
+                }
             }
         }
 
-        let metadata = if let Some(item) = cx.read_from_clipboard() {
-            item.entries().first().and_then(|entry| {
-                if let ClipboardEntry::String(text) = entry {
-                    text.metadata_json::<CopyMetadata>()
-                } else {
-                    None
-                }
-            })
-        } else {
-            None
-        };
+        let default_image_name: SharedString = "Image".into();
+        for path in paths {
+            let Some((image, _)) = load_external_image_from_path(&path, &default_image_name) else {
+                continue;
+            };
+            images.push(image);
+        }
+
+        // Respect entry priority order — if the first entry is text, the source
+        // application considers text the primary content. Discard collected images
+        // so the text-paste branch runs instead.
+        if clipboard_item
+            .as_ref()
+            .and_then(|item| item.entries().first())
+            .is_some_and(|entry| matches!(entry, ClipboardEntry::String(_)))
+        {
+            images.clear();
+        }
 
         if images.is_empty() {
             self.editor.update(cx, |editor, cx| {
@@ -1974,7 +2021,7 @@ impl TextThreadEditor {
     fn update_image_blocks(&mut self, cx: &mut Context<Self>) {
         self.editor.update(cx, |editor, cx| {
             let buffer = editor.buffer().read(cx).snapshot(cx);
-            let excerpt_id = *buffer.as_singleton().unwrap().0;
+            let excerpt_id = buffer.as_singleton().unwrap().0;
             let old_blocks = std::mem::take(&mut self.image_blocks);
             let new_blocks = self
                 .text_thread
@@ -2176,45 +2223,6 @@ impl TextThreadEditor {
         )
     }
 
-    fn render_burn_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let text_thread = self.text_thread().read(cx);
-        let active_model = LanguageModelRegistry::read_global(cx)
-            .default_model()
-            .map(|default| default.model)?;
-        if !active_model.supports_burn_mode() {
-            return None;
-        }
-
-        let active_completion_mode = text_thread.completion_mode();
-        let burn_mode_enabled = active_completion_mode == CompletionMode::Burn;
-        let icon = if burn_mode_enabled {
-            IconName::ZedBurnModeOn
-        } else {
-            IconName::ZedBurnMode
-        };
-
-        Some(
-            IconButton::new("burn-mode", icon)
-                .icon_size(IconSize::Small)
-                .icon_color(Color::Muted)
-                .toggle_state(burn_mode_enabled)
-                .selected_icon_color(Color::Error)
-                .on_click(cx.listener(move |this, _event, _window, cx| {
-                    this.text_thread().update(cx, |text_thread, _cx| {
-                        text_thread.set_completion_mode(match active_completion_mode {
-                            CompletionMode::Burn => CompletionMode::Normal,
-                            CompletionMode::Normal => CompletionMode::Burn,
-                        });
-                    });
-                }))
-                .tooltip(move |_window, cx| {
-                    cx.new(|_| BurnModeTooltip::new().selected(burn_mode_enabled))
-                        .into()
-                })
-                .into_any_element(),
-        )
-    }
-
     fn render_language_model_selector(
         &self,
         window: &mut Window,
@@ -2235,9 +2243,7 @@ impl TextThreadEditor {
         let provider_icon = active_provider
             .as_ref()
             .map(|p| p.icon())
-            .unwrap_or(IconOrSvg::Icon(IconName::Ai));
-
-        let focus_handle = self.editor().focus_handle(cx);
+            .unwrap_or(IconOrSvg::Icon(IconName::ZedAgent));
 
         let (color, icon) = if self.language_model_selector_menu_handle.is_deployed() {
             (Color::Accent, IconName::ChevronUp)
@@ -2261,7 +2267,7 @@ impl TextThreadEditor {
 
         let tooltip = Tooltip::element({
             move |_, _cx| {
-                ModelSelectorTooltip::new(focus_handle.clone())
+                ModelSelectorTooltip::new()
                     .show_cycle_row(show_cycle_row)
                     .into_any_element()
             }
@@ -2269,20 +2275,11 @@ impl TextThreadEditor {
 
         PickerPopoverMenu::new(
             self.language_model_selector.clone(),
-            ButtonLike::new("active-model")
-                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                .child(
-                    h_flex()
-                        .gap_0p5()
-                        .child(provider_icon_element)
-                        .child(
-                            Label::new(model_name)
-                                .color(color)
-                                .size(LabelSize::Small)
-                                .ml_0p5(),
-                        )
-                        .child(Icon::new(icon).color(color).size(IconSize::XSmall)),
-                ),
+            Button::new("active-model", model_name)
+                .color(color)
+                .label_size(LabelSize::Small)
+                .start_icon(provider_icon_element)
+                .end_icon(Icon::new(icon).color(color).size(IconSize::XSmall)),
             tooltip,
             gpui::Corner::BottomRight,
             cx,
@@ -2671,8 +2668,7 @@ impl Render for TextThreadEditor {
                     .child(
                         h_flex()
                             .gap_0p5()
-                            .child(self.render_inject_context_menu(cx))
-                            .children(self.render_burn_mode_toggle(cx)),
+                            .child(self.render_inject_context_menu(cx)),
                     )
                     .child(
                         h_flex()
@@ -2702,7 +2698,7 @@ impl Item for TextThreadEditor {
         util::truncate_and_trailoff(&self.title(cx), MAX_TAB_TITLE_LEN).into()
     }
 
-    fn to_item_events(event: &Self::Event, mut f: impl FnMut(item::ItemEvent)) {
+    fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(item::ItemEvent)) {
         match event {
             EditorEvent::Edited { .. } => {
                 f(item::ItemEvent::Edit);
@@ -2739,7 +2735,7 @@ impl Item for TextThreadEditor {
 
     fn navigate(
         &mut self,
-        data: Box<dyn std::any::Any>,
+        data: Arc<dyn Any + Send>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -2785,11 +2781,12 @@ impl SearchableItem for TextThreadEditor {
         &mut self,
         matches: &[Self::Match],
         active_match_index: Option<usize>,
+        token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.editor.update(cx, |editor, cx| {
-            editor.update_matches(matches, active_match_index, window, cx)
+            editor.update_matches(matches, active_match_index, token, window, cx)
         });
     }
 
@@ -2802,33 +2799,37 @@ impl SearchableItem for TextThreadEditor {
         &mut self,
         index: usize,
         matches: &[Self::Match],
+        token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.editor.update(cx, |editor, cx| {
-            editor.activate_match(index, matches, window, cx);
+            editor.activate_match(index, matches, token, window, cx);
         });
     }
 
     fn select_matches(
         &mut self,
         matches: &[Self::Match],
+        token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editor
-            .update(cx, |editor, cx| editor.select_matches(matches, window, cx));
+        self.editor.update(cx, |editor, cx| {
+            editor.select_matches(matches, token, window, cx)
+        });
     }
 
     fn replace(
         &mut self,
         identifier: &Self::Match,
         query: &project::search::SearchQuery,
+        token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.editor.update(cx, |editor, cx| {
-            editor.replace(identifier, query, window, cx)
+            editor.replace(identifier, query, token, window, cx)
         });
     }
 
@@ -2846,11 +2847,12 @@ impl SearchableItem for TextThreadEditor {
         &mut self,
         direction: Direction,
         matches: &[Self::Match],
+        token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<usize> {
         self.editor.update(cx, |editor, cx| {
-            editor.active_match_index(direction, matches, window, cx)
+            editor.active_match_index(direction, matches, token, window, cx)
         })
     }
 }
@@ -2860,14 +2862,15 @@ impl FollowableItem for TextThreadEditor {
         self.remote_id
     }
 
-    fn to_state_proto(&self, window: &Window, cx: &App) -> Option<proto::view::Variant> {
-        let text_thread = self.text_thread.read(cx);
+    fn to_state_proto(&self, window: &mut Window, cx: &mut App) -> Option<proto::view::Variant> {
+        let context_id = self.text_thread.read(cx).id().to_proto();
+        let editor_proto = self
+            .editor
+            .update(cx, |editor, cx| editor.to_state_proto(window, cx));
         Some(proto::view::Variant::ContextEditor(
             proto::view::ContextEditor {
-                context_id: text_thread.id().to_proto(),
-                editor: if let Some(proto::view::Variant::Editor(proto)) =
-                    self.editor.read(cx).to_state_proto(window, cx)
-                {
+                context_id,
+                editor: if let Some(proto::view::Variant::Editor(proto)) = editor_proto {
                     Some(proto)
                 } else {
                     None
@@ -2934,12 +2937,12 @@ impl FollowableItem for TextThreadEditor {
         &self,
         event: &Self::Event,
         update: &mut Option<proto::update_view::Variant>,
-        window: &Window,
-        cx: &App,
+        window: &mut Window,
+        cx: &mut App,
     ) -> bool {
-        self.editor
-            .read(cx)
-            .add_event_to_update_proto(event, update, window, cx)
+        self.editor.update(cx, |editor, cx| {
+            editor.add_event_to_update_proto(event, update, window, cx)
+        })
     }
 
     fn apply_update_proto(
@@ -2984,6 +2987,7 @@ fn invoked_slash_command_fold_placeholder(
     text_thread: WeakEntity<TextThread>,
 ) -> FoldPlaceholder {
     FoldPlaceholder {
+        collapsed_text: None,
         constrain_width: false,
         merge_adjacent: false,
         render: Arc::new(move |fold_id, _, cx| {
@@ -3039,8 +3043,7 @@ fn token_state(text_thread: &Entity<TextThread>, cx: &App) -> Option<TokenState>
         .default_model()?
         .model;
     let token_count = text_thread.read(cx).token_count()?;
-    let max_token_count =
-        model.max_token_count_for_mode(text_thread.read(cx).completion_mode().into());
+    let max_token_count = model.max_token_count();
     let token_state = if max_token_count.saturating_sub(token_count) == 0 {
         TokenState::NoTokensLeft {
             max_token_count,
@@ -3149,6 +3152,7 @@ mod tests {
     use text::OffsetRangeExt;
     use unindent::Unindent;
     use util::path;
+    use workspace::MultiWorkspace;
 
     #[gpui::test]
     async fn test_copy_paste_whole_message(cx: &mut TestAppContext) {
@@ -3318,25 +3322,27 @@ mod tests {
         let text_thread = create_text_thread_with_messages(messages, cx);
 
         let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
-        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let workspace = window.root(cx).unwrap();
-        let mut cx = VisualTestContext::from_window(*window, cx);
-
-        let text_thread_editor = window
-            .update(&mut cx, |_, window, cx| {
-                cx.new(|cx| {
-                    TextThreadEditor::for_text_thread(
-                        text_thread.clone(),
-                        fs,
-                        workspace.downgrade(),
-                        project,
-                        None,
-                        window,
-                        cx,
-                    )
-                })
-            })
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+
+        let weak_workspace = workspace.downgrade();
+        let text_thread_editor = workspace.update_in(&mut cx, |_, window, cx| {
+            cx.new(|cx| {
+                TextThreadEditor::for_text_thread(
+                    text_thread.clone(),
+                    fs,
+                    weak_workspace,
+                    project,
+                    None,
+                    window,
+                    cx,
+                )
+            })
+        });
 
         (text_thread, text_thread_editor, cx)
     }
@@ -3393,7 +3399,6 @@ mod tests {
         cx.new(|cx| {
             let mut text_thread = TextThread::local(
                 registry,
-                None,
                 prompt_builder.clone(),
                 Arc::new(SlashCommandWorkingSet::default()),
                 cx,
@@ -3431,9 +3436,32 @@ mod tests {
     fn init_test(cx: &mut App) {
         let settings_store = SettingsStore::test(cx);
         prompt_store::init(cx);
+        editor::init(cx);
         LanguageModelRegistry::test(cx);
         cx.set_global(settings_store);
 
         theme::init(theme::LoadThemes::JustBase, cx);
+    }
+
+    #[gpui::test]
+    async fn test_quote_terminal_text(cx: &mut TestAppContext) {
+        let (_context, text_thread_editor, mut cx) =
+            setup_text_thread_editor_text(vec![(Role::User, "")], cx).await;
+
+        let terminal_output = "$ ls -la\ntotal 0\ndrwxr-xr-x  2 user user  40 Jan  1 00:00 .";
+
+        text_thread_editor.update_in(&mut cx, |text_thread_editor, window, cx| {
+            text_thread_editor.quote_terminal_text(terminal_output.to_string(), window, cx);
+
+            text_thread_editor.editor.update(cx, |editor, cx| {
+                let text = editor.text(cx);
+                // The text should contain the terminal output wrapped in a code block
+                assert!(
+                    text.contains(&format!("```console\n{}\n```", terminal_output)),
+                    "Terminal text should be wrapped in code block. Got: {}",
+                    text
+                );
+            });
+        });
     }
 }
