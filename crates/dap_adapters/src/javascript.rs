@@ -143,8 +143,9 @@ impl JsDebugAdapter {
             .await
             .with_context(|| {
                 format!(
-                    "JavaScript debug adapter not found in {}. \
+                    "{} debug adapter not found in {}. \
                      It may need to be downloaded — check your network connection and try again.",
+                    self.name(),
                     adapter_path.display()
                 )
             })?
@@ -542,11 +543,12 @@ impl DebugAdapter for JsDebugAdapter {
                             "Failed to fetch latest version, using cached adapter: {error}"
                         ));
                     } else {
-                        return Err(error).context(
-                            "Failed to download JavaScript debug adapter \
+                        return Err(error).context(format!(
+                            "Failed to download {} debug adapter \
                              (no cached version available). \
                              Check your network connection and try again.",
-                        );
+                            self.name(),
+                        ));
                     }
                 }
             }
@@ -585,41 +587,6 @@ impl DebugAdapter for JsDebugAdapter {
 mod tests {
     use super::*;
     use serde_json::json;
-
-    #[test]
-    fn test_get_installed_binary_error_contains_path_and_guidance() {
-        // Use a path that definitely doesn't exist to simulate a missing adapter
-        let adapter_path = PathBuf::from("/tmp/nonexistent_debug_adapters/JavaScript");
-        let file_name_prefix = format!("{}_", JsDebugAdapter::ADAPTER_NAME);
-
-        let result = smol::block_on(util::fs::find_file_name_in_dir(
-            adapter_path.as_path(),
-            |file_name| file_name.starts_with(&file_name_prefix),
-        ));
-
-        assert!(result.is_none());
-
-        // Verify our error formatting matches what get_installed_binary produces
-        let error = result
-            .with_context(|| {
-                format!(
-                    "JavaScript debug adapter not found in {}. \
-                     It may need to be downloaded — check your network connection and try again.",
-                    adapter_path.display()
-                )
-            })
-            .unwrap_err();
-
-        let error_message = format!("{:#}", error);
-        assert!(
-            error_message.contains("debug_adapters"),
-            "Error should include the adapter path, got: {error_message}"
-        );
-        assert!(
-            error_message.contains("network connection"),
-            "Error should include actionable guidance, got: {error_message}"
-        );
-    }
 
     #[test]
     fn test_normalize_task_type() {
