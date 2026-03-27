@@ -17334,6 +17334,7 @@ dependencies = [
  "settings",
  "smol",
  "theme",
+ "theme_settings",
  "ui",
  "util",
  "workspace",
