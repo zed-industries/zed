@@ -1008,7 +1008,7 @@ impl Vim {
                 let original_positions = vim.save_selection_starts(editor, cx);
                 if is_visual_line {
                     editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                        s.move_with(|map, selection| {
+                        s.move_with(&mut |map, selection| {
                             let start_row = selection.start.to_point(map).row;
                             let end_row = selection.end.to_point(map).row;
                             let end_col =
