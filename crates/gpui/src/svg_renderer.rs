@@ -24,6 +24,14 @@ const EMOJI_FONT_FAMILIES: &[&str] = &[
     "JoyPixels",
 ];
 
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "windows",
+    target_os = "linux",
+    target_os = "freebsd",
+)))]
+const EMOJI_FONT_FAMILIES: &[&str] = &[];
+
 fn is_emoji_presentation(c: char) -> bool {
     static EMOJI_PRESENTATION_REGEX: LazyLock<regex::Regex> =
         LazyLock::new(|| regex::Regex::new("\\p{Emoji_Presentation}").unwrap());
