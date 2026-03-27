@@ -16,9 +16,9 @@ pub(crate) fn release() -> Workflow {
     let macos_tests = run_tests::run_platform_tests_no_filter(Platform::Mac);
     let linux_tests = run_tests::run_platform_tests_no_filter(Platform::Linux);
     let windows_tests = run_tests::run_platform_tests_no_filter(Platform::Windows);
-    let macos_clippy = run_tests::clippy(Platform::Mac);
-    let linux_clippy = run_tests::clippy(Platform::Linux);
-    let windows_clippy = run_tests::clippy(Platform::Windows);
+    let macos_clippy = run_tests::clippy(Platform::Mac, None);
+    let linux_clippy = run_tests::clippy(Platform::Linux, None);
+    let windows_clippy = run_tests::clippy(Platform::Windows, None);
     let check_scripts = run_tests::check_scripts();
 
     let create_draft_release = create_draft_release();

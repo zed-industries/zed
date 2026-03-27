@@ -16,7 +16,7 @@ use serde::Deserialize;
 use std::{
     cell::Cell, cell::RefCell, collections::HashMap, ops::Range, rc::Rc, sync::Arc, time::Duration,
 };
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{
     Color, Divider, DocumentationAside, DocumentationSide, Label, ListItem, ListItemSpacing,
     ScrollAxes, Scrollbars, WithScrollbar, prelude::*, utils::WithRemSize, v_flex,
@@ -788,6 +788,12 @@ impl<D: PickerDelegate> Picker<D> {
                     this.handle_click(ix, event.modifiers.platform, window, cx)
                 }),
             )
+            .on_hover(cx.listener(move |this, hovered: &bool, window, cx| {
+                if *hovered {
+                    this.set_selected_index(ix, None, false, window, cx);
+                    cx.notify();
+                }
+            }))
             .children(self.delegate.render_match(
                 ix,
                 ix == self.delegate.selected_index(),
@@ -949,7 +955,7 @@ mod tests {
         cx.update(|cx| {
             let store = settings::SettingsStore::test(cx);
             cx.set_global(store);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
         });
     }

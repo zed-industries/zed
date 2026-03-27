@@ -1,5 +1,7 @@
 use crate::{
-    BoolExt, DisplayLink, MacDisplay, NSRange, NSStringExt, events::platform_input_from_native,
+    BoolExt, DisplayLink, MacDisplay, NSRange, NSStringExt, TISCopyCurrentKeyboardInputSource,
+    TISGetInputSourceProperty, events::platform_input_from_native,
+    kTISPropertyInputSourceIsASCIICapable, kTISPropertyInputSourceType, kTISTypeKeyboardInputMode,
     ns_string, renderer,
 };
 #[cfg(any(test, feature = "test-support"))]
@@ -34,6 +36,9 @@ use gpui::{
 #[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
 
+use core_foundation::base::{CFRelease, CFTypeRef};
+use core_foundation_sys::base::CFEqual;
+use core_foundation_sys::number::{CFBooleanGetValue, CFBooleanRef};
 use core_graphics::display::{CGDirectDisplayID, CGPoint, CGRect};
 use ctor::ctor;
 use futures::channel::oneshot;
@@ -55,7 +60,10 @@ use std::{
     path::PathBuf,
     ptr::{self, NonNull},
     rc::Rc,
-    sync::{Arc, Weak},
+    sync::{
+        Arc, Weak,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 use util::ResultExt;
@@ -440,6 +448,7 @@ struct MacWindowState {
     select_previous_tab_callback: Option<Box<dyn FnMut()>>,
     toggle_tab_bar_callback: Option<Box<dyn FnMut()>>,
     activated_least_once: bool,
+    closed: Arc<AtomicBool>,
     // The parent window if this window is a sheet (Dialog kind)
     sheet_parent: Option<id>,
 }
@@ -764,6 +773,7 @@ impl MacWindow {
                 select_previous_tab_callback: None,
                 toggle_tab_bar_callback: None,
                 activated_least_once: false,
+                closed: Arc::new(AtomicBool::new(false)),
                 sheet_parent: None,
             })));
 
@@ -1020,6 +1030,17 @@ impl Drop for MacWindow {
     }
 }
 
+/// Calls `f` if the window is not closed.
+///
+/// This should be used when spawning foreground tasks interacting with the
+/// window, as some messages will end hard faulting if dispatched to no longer
+/// valid window handles.
+fn if_window_not_closed(closed: Arc<AtomicBool>, f: impl FnOnce()) {
+    if !closed.load(Ordering::Acquire) {
+        f();
+    }
+}
+
 impl PlatformWindow for MacWindow {
     fn bounds(&self) -> Bounds<Pixels> {
         self.0.as_ref().lock().bounds()
@@ -1040,14 +1061,15 @@ impl PlatformWindow for MacWindow {
     fn resize(&mut self, size: Size<Pixels>) {
         let this = self.0.lock();
         let window = this.native_window;
+        let closed = this.closed.clone();
         this.foreground_executor
             .spawn(async move {
-                unsafe {
+                if_window_not_closed(closed, || unsafe {
                     window.setContentSize_(NSSize {
                         width: size.width.as_f32() as f64,
                         height: size.height.as_f32() as f64,
                     });
-                }
+                })
             })
             .detach();
     }
@@ -1260,15 +1282,21 @@ impl PlatformWindow for MacWindow {
                 }
             });
             let block = block.copy();
-            let native_window = self.0.lock().native_window;
-            let executor = self.0.lock().foreground_executor.clone();
+            let lock = self.0.lock();
+            let native_window = lock.native_window;
+            let closed = lock.closed.clone();
+            let executor = lock.foreground_executor.clone();
             executor
                 .spawn(async move {
-                    let _: () = msg_send![
-                        alert,
-                        beginSheetModalForWindow: native_window
-                        completionHandler: block
-                    ];
+                    if !closed.load(Ordering::Acquire) {
+                        let _: () = msg_send![
+                            alert,
+                            beginSheetModalForWindow: native_window
+                            completionHandler: block
+                        ];
+                    } else {
+                        let _: () = msg_send![alert, release];
+                    }
                 })
                 .detach();
 
@@ -1277,12 +1305,16 @@ impl PlatformWindow for MacWindow {
     }
 
     fn activate(&self) {
-        let window = self.0.lock().native_window;
-        let executor = self.0.lock().foreground_executor.clone();
+        let lock = self.0.lock();
+        let window = lock.native_window;
+        let closed = lock.closed.clone();
+        let executor = lock.foreground_executor.clone();
         executor
             .spawn(async move {
-                unsafe {
-                    let _: () = msg_send![window, makeKeyAndOrderFront: nil];
+                if !closed.load(Ordering::Acquire) {
+                    unsafe {
+                        let _: () = msg_send![window, makeKeyAndOrderFront: nil];
+                    }
                 }
             })
             .detach();
@@ -1420,11 +1452,12 @@ impl PlatformWindow for MacWindow {
     fn zoom(&self) {
         let this = self.0.lock();
         let window = this.native_window;
+        let closed = this.closed.clone();
         this.foreground_executor
             .spawn(async move {
-                unsafe {
+                if_window_not_closed(closed, || unsafe {
                     window.zoom_(nil);
-                }
+                })
             })
             .detach();
     }
@@ -1432,11 +1465,12 @@ impl PlatformWindow for MacWindow {
     fn toggle_fullscreen(&self) {
         let this = self.0.lock();
         let window = this.native_window;
+        let closed = this.closed.clone();
         this.foreground_executor
             .spawn(async move {
-                unsafe {
+                if_window_not_closed(closed, || unsafe {
                     window.toggleFullScreen_(nil);
-                }
+                })
             })
             .detach();
     }
@@ -1577,45 +1611,48 @@ impl PlatformWindow for MacWindow {
     fn titlebar_double_click(&self) {
         let this = self.0.lock();
         let window = this.native_window;
+        let closed = this.closed.clone();
         this.foreground_executor
             .spawn(async move {
-                unsafe {
-                    let defaults: id = NSUserDefaults::standardUserDefaults();
-                    let domain = ns_string("NSGlobalDomain");
-                    let key = ns_string("AppleActionOnDoubleClick");
+                if_window_not_closed(closed, || {
+                    unsafe {
+                        let defaults: id = NSUserDefaults::standardUserDefaults();
+                        let domain = ns_string("NSGlobalDomain");
+                        let key = ns_string("AppleActionOnDoubleClick");
 
-                    let dict: id = msg_send![defaults, persistentDomainForName: domain];
-                    let action: id = if !dict.is_null() {
-                        msg_send![dict, objectForKey: key]
-                    } else {
-                        nil
-                    };
+                        let dict: id = msg_send![defaults, persistentDomainForName: domain];
+                        let action: id = if !dict.is_null() {
+                            msg_send![dict, objectForKey: key]
+                        } else {
+                            nil
+                        };
 
-                    let action_str = if !action.is_null() {
-                        CStr::from_ptr(NSString::UTF8String(action)).to_string_lossy()
-                    } else {
-                        "".into()
-                    };
+                        let action_str = if !action.is_null() {
+                            CStr::from_ptr(NSString::UTF8String(action)).to_string_lossy()
+                        } else {
+                            "".into()
+                        };
 
-                    match action_str.as_ref() {
-                        "None" => {
-                            // "Do Nothing" selected, so do no action
-                        }
-                        "Minimize" => {
-                            window.miniaturize_(nil);
-                        }
-                        "Maximize" => {
-                            window.zoom_(nil);
-                        }
-                        "Fill" => {
-                            // There is no documented API for "Fill" action, so we'll just zoom the window
-                            window.zoom_(nil);
-                        }
-                        _ => {
-                            window.zoom_(nil);
+                        match action_str.as_ref() {
+                            "None" => {
+                                // "Do Nothing" selected, so do no action
+                            }
+                            "Minimize" => {
+                                window.miniaturize_(nil);
+                            }
+                            "Maximize" => {
+                                window.zoom_(nil);
+                            }
+                            "Fill" => {
+                                // There is no documented API for "Fill" action, so we'll just zoom the window
+                                window.zoom_(nil);
+                            }
+                            _ => {
+                                window.zoom_(nil);
+                            }
                         }
                     }
-                }
+                })
             })
             .detach();
     }
@@ -1750,6 +1787,45 @@ extern "C" fn handle_key_up(this: &Object, _: Sel, native_event: id) {
 //   - in vim mode `option-4`  should go to end of line (same as $)
 //  Japanese (Romaji) layout:
 //   - type `a i left down up enter enter` should create an unmarked text "愛"
+//   - In vim mode with `jj` bound to `vim::NormalBefore` in insert mode, typing 'j i' with
+//     Japanese IME should produce "じ" (ji), not "jい"
+
+/// Returns true if the current keyboard input source is a composition-based IME
+/// (e.g. Japanese Hiragana, Korean, Chinese Pinyin) that produces non-ASCII output.
+///
+/// This checks two properties:
+/// 1. The source type is `kTISTypeKeyboardInputMode` (an IME input mode, not a plain
+///    keyboard layout). This excludes non-ASCII layouts like Armenian and Ukrainian
+///    that map keys directly without composition.
+/// 2. The source is not ASCII-capable, which excludes modes like Japanese Romaji that
+///    produce ASCII characters and should allow multi-stroke keybindings like `jj`.
+unsafe fn is_ime_input_source_active() -> bool {
+    unsafe {
+        let source = TISCopyCurrentKeyboardInputSource();
+        if source.is_null() {
+            return false;
+        }
+
+        let source_type =
+            TISGetInputSourceProperty(source, kTISPropertyInputSourceType as *const c_void);
+        let is_input_mode = !source_type.is_null()
+            && CFEqual(
+                source_type as CFTypeRef,
+                kTISTypeKeyboardInputMode as CFTypeRef,
+            ) != 0;
+
+        let is_ascii = TISGetInputSourceProperty(
+            source,
+            kTISPropertyInputSourceIsASCIICapable as *const c_void,
+        );
+        let is_ascii_capable = !is_ascii.is_null() && CFBooleanGetValue(is_ascii as CFBooleanRef);
+
+        CFRelease(source as CFTypeRef);
+
+        is_input_mode && !is_ascii_capable
+    }
+}
+
 extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: bool) -> BOOL {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
@@ -1801,7 +1877,28 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
             // and keys with function, as the input handler swallows them.
             // and keys with platform (Cmd), so that Cmd+key events (e.g. Cmd+`) are not
             // consumed by the IME on non-QWERTY / dead-key layouts.
+            // We also send printable keys to the IME first when an IME input source (e.g. Japanese,
+            // Korean, Chinese) is active and the input handler accepts text input. This prevents
+            // multi-stroke keybindings like `jj` from intercepting keys that the IME should compose
+            // (e.g. typing 'ji' should produce 'じ', not 'jい'). If the IME doesn't handle the key,
+            // it calls `doCommandBySelector:` which routes it back to keybinding matching.
+            let is_ime_printable_key = !is_composing
+                && key_down_event
+                    .keystroke
+                    .key_char
+                    .as_ref()
+                    .is_some_and(|key_char| key_char.chars().all(|c| !c.is_control()))
+                && !key_down_event.keystroke.modifiers.control
+                && !key_down_event.keystroke.modifiers.function
+                && !key_down_event.keystroke.modifiers.platform
+                && unsafe { is_ime_input_source_active() }
+                && with_input_handler(this, |input_handler| {
+                    input_handler.query_prefers_ime_for_printable_keys()
+                })
+                .unwrap_or(false);
+
             if is_composing
+                || is_ime_printable_key
                 || (key_down_event.keystroke.key_char.is_none()
                     && !key_down_event.keystroke.modifiers.control
                     && !key_down_event.keystroke.modifiers.function
@@ -2113,10 +2210,12 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
     // in theory, we're not supposed to invoke this method manually but it balances out
     // the spurious `becomeKeyWindow` event and helps us work around that bug.
     if selector == sel!(windowDidBecomeKey:) && !is_active {
+        let native_window = lock.native_window;
+        drop(lock);
         unsafe {
-            let _: () = msg_send![lock.native_window, resignKeyWindow];
-            return;
+            let _: () = msg_send![native_window, resignKeyWindow];
         }
+        return;
     }
 
     let executor = lock.foreground_executor.clone();
@@ -2183,6 +2282,7 @@ extern "C" fn close_window(this: &Object, _: Sel) {
         let close_callback = {
             let window_state = get_window_state(this);
             let mut lock = window_state.as_ref().lock();
+            lock.closed.store(true, Ordering::Release);
             lock.close_callback.take()
         };
 

@@ -36,6 +36,7 @@ pub struct ProjectPanelSettings {
     pub auto_open: AutoOpenSettings,
     pub sort_mode: ProjectPanelSortMode,
     pub diagnostic_badges: bool,
+    pub git_status_indicator: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -137,6 +138,7 @@ impl Settings for ProjectPanelSettings {
             },
             sort_mode: project_panel.sort_mode.unwrap(),
             diagnostic_badges: project_panel.diagnostic_badges.unwrap(),
+            git_status_indicator: project_panel.git_status_indicator.unwrap(),
         }
     }
 }

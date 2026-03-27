@@ -50,8 +50,10 @@ pub(crate) struct Callbacks {
     should_close: Option<Box<dyn FnMut() -> bool>>,
     close: Option<Box<dyn FnOnce()>>,
     appearance_changed: Option<Box<dyn FnMut()>>,
+    button_layout_changed: Option<Box<dyn FnMut()>>,
 }
 
+#[derive(Debug, Clone, Copy)]
 struct RawWindow {
     window: *mut c_void,
     display: *mut c_void,
@@ -114,6 +116,7 @@ pub struct WaylandWindowState {
     handle: AnyWindowHandle,
     active: bool,
     hovered: bool,
+    pub(crate) force_render_after_recovery: bool,
     in_progress_configure: Option<InProgressConfigure>,
     resize_throttle: bool,
     in_progress_window_controls: Option<WindowControls>,
@@ -387,6 +390,7 @@ impl WaylandWindowState {
             handle,
             active: false,
             hovered: false,
+            force_render_after_recovery: false,
             in_progress_window_controls: None,
             window_controls: WindowControls::default(),
             client_inset: None,
@@ -568,11 +572,16 @@ impl WaylandWindowStatePtr {
         let mut state = self.state.borrow_mut();
         state.surface.frame(&state.globals.qh, state.surface.id());
         state.resize_throttle = false;
+        let force_render = state.force_render_after_recovery;
+        state.force_render_after_recovery = false;
         drop(state);
 
         let mut cb = self.callbacks.borrow_mut();
         if let Some(fun) = cb.request_frame.as_mut() {
-            fun(Default::default());
+            fun(RequestFrameOptions {
+                force_render,
+                ..Default::default()
+            });
         }
     }
 
@@ -600,6 +609,7 @@ impl WaylandWindowStatePtr {
                     state.tiling = configure.tiling;
                     // Limit interactive resizes to once per vblank
                     if configure.resizing && state.resize_throttle {
+                        state.surface_state.ack_configure(serial);
                         return;
                     } else if configure.resizing {
                         state.resize_throttle = true;
@@ -1036,6 +1046,14 @@ impl WaylandWindowStatePtr {
         }
     }
 
+    pub fn set_button_layout(&self) {
+        let callback = self.callbacks.borrow_mut().button_layout_changed.take();
+        if let Some(mut fun) = callback {
+            fun();
+            self.callbacks.borrow_mut().button_layout_changed = Some(fun);
+        }
+    }
+
     pub fn primary_output_scale(&self) -> i32 {
         self.state.borrow_mut().primary_output_scale()
     }
@@ -1333,6 +1351,10 @@ impl PlatformWindow for WaylandWindow {
         self.0.callbacks.borrow_mut().appearance_changed = Some(callback);
     }
 
+    fn on_button_layout_changed(&self, callback: Box<dyn FnMut()>) {
+        self.0.callbacks.borrow_mut().button_layout_changed = Some(callback);
+    }
+
     fn draw(&self, scene: &Scene) {
         let mut state = self.borrow_mut();
 
@@ -1347,26 +1369,17 @@ impl PlatformWindow for WaylandWindow {
                     .display_ptr()
                     .cast::<std::ffi::c_void>(),
             };
-            let display_handle = rwh::HasDisplayHandle::display_handle(&raw_window)
-                .unwrap()
-                .as_raw();
-            let window_handle = rwh::HasWindowHandle::window_handle(&raw_window)
-                .unwrap()
-                .as_raw();
-
-            state
-                .renderer
-                .recover(display_handle, window_handle)
-                .unwrap_or_else(|err| {
-                    panic!(
-                        "GPU device lost and recovery failed. \
+            state.renderer.recover(&raw_window).unwrap_or_else(|err| {
+                panic!(
+                    "GPU device lost and recovery failed. \
                         This may happen after system suspend/resume. \
                         Please restart the application.\n\nError: {err}"
-                    )
-                });
+                )
+            });
 
             // The current scene references atlas textures that were cleared during recovery.
             // Skip this frame and let the next frame rebuild the scene with fresh textures.
+            state.force_render_after_recovery = true;
             return;
         }
 

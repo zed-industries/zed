@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition.workspace = true
 name = "zed"
-version = "0.229.0"
+version = "0.231.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -13,6 +13,8 @@ workspace = true
 
 [features]
 tracy = ["ztracing/tracy"]
+# LEAK_BACKTRACE=1 cargo run --features zed/track-project-leak --profile release-fast
+track-project-leak = ["gpui/leak-detection"]
 test-support = [
     "gpui/test-support",
     "gpui_platform/screen-capture",
@@ -182,6 +184,7 @@ settings.workspace = true
 settings_profile_selector.workspace = true
 settings_ui.workspace = true
 shellexpand.workspace = true
+sidebar.workspace = true
 smol.workspace = true
 snippet_provider.workspace = true
 snippets_ui.workspace = true
@@ -194,6 +197,7 @@ telemetry.workspace = true
 telemetry_events.workspace = true
 terminal_view.workspace = true
 theme.workspace = true
+theme_settings.workspace = true
 theme_extension.workspace = true
 theme_selector.workspace = true
 time.workspace = true

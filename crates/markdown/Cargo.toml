@@ -19,17 +19,23 @@ test-support = [
 ]
 
 [dependencies]
+anyhow.workspace = true
 base64.workspace = true
 collections.workspace = true
 futures.workspace = true
 gpui.workspace = true
+html5ever.workspace = true
 language.workspace = true
 linkify.workspace = true
 log.workspace = true
+markup5ever_rcdom.workspace = true
+mermaid-rs-renderer.workspace = true
 pulldown-cmark.workspace = true
 settings.workspace = true
+stacksafe.workspace = true
 sum_tree.workspace = true
 theme.workspace = true
+theme_settings.workspace = true
 ui.workspace = true
 util.workspace = true
 

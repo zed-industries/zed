@@ -191,7 +191,7 @@ pub async fn run_randomized_test<T: RandomizedTest>(
             let settings = cx.remove_global::<SettingsStore>();
             cx.clear_globals();
             cx.set_global(settings);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             drop(client);
         });
         executor.run_until_parked();

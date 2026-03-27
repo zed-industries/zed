@@ -16,10 +16,10 @@ use gpui::{
     WeakEntity, Window, actions, checkerboard, div, img, point, px, size,
 };
 use language::File as _;
-use persistence::IMAGE_VIEWER;
+use persistence::ImageViewerDb;
 use project::{ImageItem, Project, ProjectPath, image_store::ImageItemEvent};
 use settings::Settings;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{Tooltip, prelude::*};
 use util::paths::PathExt;
 use workspace::{
@@ -600,8 +600,9 @@ impl SerializableItem for ImageView {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<anyhow::Result<Entity<Self>>> {
+        let db = ImageViewerDb::global(cx);
         window.spawn(cx, async move |cx| {
-            let image_path = IMAGE_VIEWER
+            let image_path = db
                 .get_image_path(item_id, workspace_id)?
                 .context("No image path found")?;
 
@@ -634,13 +635,8 @@ impl SerializableItem for ImageView {
         _window: &mut Window,
         cx: &mut App,
     ) -> Task<anyhow::Result<()>> {
-        delete_unloaded_items(
-            alive_items,
-            workspace_id,
-            "image_viewers",
-            &IMAGE_VIEWER,
-            cx,
-        )
+        let db = ImageViewerDb::global(cx);
+        delete_unloaded_items(alive_items, workspace_id, "image_viewers", &db, cx)
     }
 
     fn serialize(
@@ -654,12 +650,11 @@ impl SerializableItem for ImageView {
         let workspace_id = workspace.database_id()?;
         let image_path = self.image_item.read(cx).abs_path(cx)?;
 
+        let db = ImageViewerDb::global(cx);
         Some(cx.background_spawn({
             async move {
                 log::debug!("Saving image at path {image_path:?}");
-                IMAGE_VIEWER
-                    .save_image_path(item_id, workspace_id, image_path)
-                    .await
+                db.save_image_path(item_id, workspace_id, image_path).await
             }
         }))
     }
@@ -910,7 +905,7 @@ mod persistence {
         )];
     }
 
-    db::static_connection!(IMAGE_VIEWER, ImageViewerDb, [WorkspaceDb]);
+    db::static_connection!(ImageViewerDb, [WorkspaceDb]);
 
     impl ImageViewerDb {
         query! {

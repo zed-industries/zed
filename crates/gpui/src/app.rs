@@ -49,7 +49,8 @@ use crate::{
     PlatformKeyboardMapper, Point, Priority, PromptBuilder, PromptButton, PromptHandle,
     PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
     SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextRenderingMode, TextSystem,
-    ThermalState, Window, WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
+    ThermalState, Window, WindowAppearance, WindowButtonLayout, WindowHandle, WindowId,
+    WindowInvalidator,
     colors::{Colors, GlobalColors},
     hash, init_app_menus,
 };
@@ -240,7 +241,7 @@ type Listener = Box<dyn FnMut(&dyn Any, &mut App) -> bool + 'static>;
 pub(crate) type KeystrokeObserver =
     Box<dyn FnMut(&KeystrokeEvent, &mut Window, &mut App) -> bool + 'static>;
 type QuitHandler = Box<dyn FnOnce(&mut App) -> LocalBoxFuture<'static, ()> + 'static>;
-type WindowClosedHandler = Box<dyn FnMut(&mut App)>;
+type WindowClosedHandler = Box<dyn FnMut(&mut App, WindowId)>;
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut App) + 'static>;
 type NewEntityListener = Box<dyn FnMut(AnyEntity, &mut Option<&mut Window>, &mut App) + 'static>;
 
@@ -579,21 +580,13 @@ impl GpuiMode {
 pub struct App {
     pub(crate) this: Weak<AppCell>,
     pub(crate) platform: Rc<dyn Platform>,
-    pub(crate) mode: GpuiMode,
     text_system: Arc<TextSystem>,
-    flushing_effects: bool,
-    pending_updates: usize,
+
     pub(crate) actions: Rc<ActionRegistry>,
     pub(crate) active_drag: Option<AnyDrag>,
     pub(crate) background_executor: BackgroundExecutor,
     pub(crate) foreground_executor: ForegroundExecutor,
-    pub(crate) loading_assets: FxHashMap<(TypeId, u64), Box<dyn Any>>,
-    asset_source: Arc<dyn AssetSource>,
-    pub(crate) svg_renderer: SvgRenderer,
-    http_client: Arc<dyn HttpClient>,
-    pub(crate) globals_by_type: FxHashMap<TypeId, Box<dyn Any>>,
     pub(crate) entities: EntityMap,
-    pub(crate) window_update_stack: Vec<WindowId>,
     pub(crate) new_entity_observers: SubscriberSet<TypeId, NewEntityListener>,
     pub(crate) windows: SlotMap<WindowId, Option<Box<Window>>>,
     pub(crate) window_handles: FxHashMap<WindowId, AnyWindowHandle>,
@@ -604,10 +597,8 @@ pub struct App {
     pub(crate) global_action_listeners:
         FxHashMap<TypeId, Vec<Rc<dyn Fn(&dyn Any, DispatchPhase, &mut Self)>>>,
     pending_effects: VecDeque<Effect>,
-    pub(crate) pending_notifications: FxHashSet<EntityId>,
-    pub(crate) pending_global_notifications: FxHashSet<TypeId>,
+
     pub(crate) observers: SubscriberSet<EntityId, Handler>,
-    // TypeId is the type of the event that the listener callback expects
     pub(crate) event_listeners: SubscriberSet<EntityId, (TypeId, Listener)>,
     pub(crate) keystroke_observers: SubscriberSet<(), KeystrokeObserver>,
     pub(crate) keystroke_interceptors: SubscriberSet<(), KeystrokeObserver>,
@@ -617,8 +608,30 @@ pub struct App {
     pub(crate) global_observers: SubscriberSet<TypeId, Handler>,
     pub(crate) quit_observers: SubscriberSet<(), QuitHandler>,
     pub(crate) restart_observers: SubscriberSet<(), Handler>,
-    pub(crate) restart_path: Option<PathBuf>,
     pub(crate) window_closed_observers: SubscriberSet<(), WindowClosedHandler>,
+
+    /// Per-App element arena. This isolates element allocations between different
+    /// App instances (important for tests where multiple Apps run concurrently).
+    pub(crate) element_arena: RefCell<Arena>,
+    /// Per-App event arena.
+    pub(crate) event_arena: Arena,
+
+    // Drop globals last. We need to ensure all tasks owned by entities and
+    // callbacks are marked cancelled at this point as this will also shutdown
+    // the tokio runtime. As any task attempting to spawn a blocking tokio task,
+    // might panic.
+    pub(crate) globals_by_type: FxHashMap<TypeId, Box<dyn Any>>,
+
+    // assets
+    pub(crate) loading_assets: FxHashMap<(TypeId, u64), Box<dyn Any>>,
+    asset_source: Arc<dyn AssetSource>,
+    pub(crate) svg_renderer: SvgRenderer,
+    http_client: Arc<dyn HttpClient>,
+
+    // below is plain data, the drop order is insignificant here
+    pub(crate) pending_notifications: FxHashSet<EntityId>,
+    pub(crate) pending_global_notifications: FxHashSet<TypeId>,
+    pub(crate) restart_path: Option<PathBuf>,
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
     pub(crate) propagate_event: bool,
     pub(crate) prompt_builder: Option<PromptBuilder>,
@@ -632,13 +645,18 @@ pub struct App {
     #[cfg(any(test, feature = "test-support", debug_assertions))]
     pub(crate) name: Option<&'static str>,
     pub(crate) text_rendering_mode: Rc<Cell<TextRenderingMode>>,
+
+    pub(crate) window_update_stack: Vec<WindowId>,
+    pub(crate) mode: GpuiMode,
+    flushing_effects: bool,
+    pending_updates: usize,
     quit_mode: QuitMode,
     quitting: bool,
-    /// Per-App element arena. This isolates element allocations between different
-    /// App instances (important for tests where multiple Apps run concurrently).
-    pub(crate) element_arena: RefCell<Arena>,
-    /// Per-App event arena.
-    pub(crate) event_arena: Arena,
+
+    // We need to ensure the leak detector drops last, after all tasks, callbacks and things have been dropped.
+    // Otherwise it may report false positives.
+    #[cfg(any(test, feature = "leak-detection"))]
+    _ref_counts: Arc<RwLock<EntityRefCounts>>,
 }
 
 impl App {
@@ -659,6 +677,9 @@ impl App {
         let entities = EntityMap::new();
         let keyboard_layout = platform.keyboard_layout();
         let keyboard_mapper = platform.keyboard_mapper();
+
+        #[cfg(any(test, feature = "leak-detection"))]
+        let _ref_counts = entities.ref_counts_drop_handle();
 
         let app = Rc::new_cyclic(|this| AppCell {
             app: RefCell::new(App {
@@ -719,6 +740,9 @@ impl App {
                 name: None,
                 element_arena: RefCell::new(Arena::new(1024 * 1024)),
                 event_arena: Arena::new(1024 * 1024),
+
+                #[cfg(any(test, feature = "leak-detection"))]
+                _ref_counts,
             }),
         });
 
@@ -1154,6 +1178,11 @@ impl App {
         self.platform.window_appearance()
     }
 
+    /// Returns the window button layout configuration when supported.
+    pub fn button_layout(&self) -> Option<WindowButtonLayout> {
+        self.platform.button_layout()
+    }
+
     /// Reads data from the platform clipboard.
     pub fn read_from_clipboard(&self) -> Option<ClipboardItem> {
         self.platform.read_from_clipboard()
@@ -1538,7 +1567,7 @@ impl App {
                     cx.windows.remove(id);
 
                     cx.window_closed_observers.clone().retain(&(), |callback| {
-                        callback(cx);
+                        callback(cx, id);
                         true
                     });
 
@@ -2012,7 +2041,10 @@ impl App {
 
     /// Register a callback to be invoked when a window is closed
     /// The window is no longer accessible at the point this callback is invoked.
-    pub fn on_window_closed(&self, mut on_closed: impl FnMut(&mut App) + 'static) -> Subscription {
+    pub fn on_window_closed(
+        &self,
+        mut on_closed: impl FnMut(&mut App, WindowId) + 'static,
+    ) -> Subscription {
         let (subscription, activate) = self.window_closed_observers.insert((), Box::new(on_closed));
         activate();
         subscription
@@ -2049,7 +2081,8 @@ impl App {
     }
 
     /// Sets the menu bar for this application. This will replace any existing menu bar.
-    pub fn set_menus(&self, menus: Vec<Menu>) {
+    pub fn set_menus(&self, menus: impl IntoIterator<Item = Menu>) {
+        let menus: Vec<Menu> = menus.into_iter().collect();
         self.platform.set_menus(menus, &self.keymap.borrow());
     }
 
@@ -2327,13 +2360,12 @@ impl AppContext for App {
             let entity = build_entity(&mut Context::new_context(cx, slot.downgrade()));
 
             cx.push_effect(Effect::EntityCreated {
-                entity: handle.clone().into_any(),
+                entity: handle.into_any(),
                 tid: TypeId::of::<T>(),
                 window: cx.window_update_stack.last().cloned(),
             });
 
-            cx.entities.insert(slot, entity);
-            handle
+            cx.entities.insert(slot, entity)
         })
     }
 

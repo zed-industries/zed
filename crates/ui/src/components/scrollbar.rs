@@ -15,10 +15,10 @@ use gpui::{
     UniformListScrollHandle, Window, ease_in_out, prelude::FluentBuilder as _, px, quad, relative,
     size,
 };
+use gpui_util::ResultExt;
 use settings::SettingsStore;
 use smallvec::SmallVec;
 use theme::ActiveTheme as _;
-use util::ResultExt;
 
 use std::ops::Range;
 

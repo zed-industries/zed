@@ -29,7 +29,7 @@ serde_json_lenient.workspace = true
 settings_content.workspace = true
 snippet_provider.workspace = true
 task.workspace = true
-theme.workspace = true
+theme_settings.workspace = true
 tokio = { workspace = true, features = ["full"] }
 toml.workspace = true
 tree-sitter.workspace = true

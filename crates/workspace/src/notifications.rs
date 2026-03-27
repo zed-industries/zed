@@ -9,7 +9,7 @@ use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use parking_lot::Mutex;
 use project::project_settings::ProjectSettings;
 use settings::Settings;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 
 use std::ops::Deref;
 use std::sync::{Arc, LazyLock};
@@ -232,6 +232,14 @@ impl Workspace {
     pub fn suppress_notification(&mut self, id: &NotificationId, cx: &mut Context<Self>) {
         self.dismiss_notification(id, cx);
         self.suppressed_notifications.insert(id.clone());
+    }
+
+    pub fn is_notification_suppressed(&self, notification_id: NotificationId) -> bool {
+        self.suppressed_notifications.contains(&notification_id)
+    }
+
+    pub fn unsuppress(&mut self, notification_id: NotificationId) {
+        self.suppressed_notifications.remove(&notification_id);
     }
 
     pub fn show_initial_notifications(&mut self, cx: &mut Context<Self>) {

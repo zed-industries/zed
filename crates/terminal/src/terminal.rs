@@ -207,11 +207,16 @@ impl TerminalBounds {
     }
 
     pub fn num_lines(&self) -> usize {
-        (self.bounds.size.height / self.line_height).floor() as usize
+        // Tolerance to prevent f32 precision from losing a row:
+        // `N * line_height / line_height` can be N-epsilon, which floor()
+        // would round down, pushing the first line into invisible scrollback.
+        let raw = self.bounds.size.height / self.line_height;
+        raw.next_up().floor() as usize
     }
 
     pub fn num_columns(&self) -> usize {
-        (self.bounds.size.width / self.cell_width).floor() as usize
+        let raw = self.bounds.size.width / self.cell_width;
+        raw.next_up().floor() as usize
     }
 
     pub fn height(&self) -> Pixels {
@@ -412,6 +417,7 @@ impl TerminalBuilder {
                 window_id,
             },
             child_exited: None,
+            keyboard_input_sent: false,
             event_loop_task: Task::ready(Ok(())),
             background_executor: background_executor.clone(),
             path_style,
@@ -645,6 +651,7 @@ impl TerminalBuilder {
                     window_id,
                 },
                 child_exited: None,
+                keyboard_input_sent: false,
                 event_loop_task: Task::ready(Ok(())),
                 background_executor,
                 path_style,
@@ -871,6 +878,7 @@ pub struct Terminal {
     template: CopyTemplate,
     activation_script: Vec<String>,
     child_exited: Option<ExitStatus>,
+    keyboard_input_sent: bool,
     event_loop_task: Task<Result<(), anyhow::Error>>,
     background_executor: BackgroundExecutor,
     path_style: PathStyle,
@@ -1457,6 +1465,7 @@ impl Terminal {
             .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
         self.events.push_back(InternalEvent::SetSelection(None));
 
+        self.keyboard_input_sent = true;
         let input = input.into();
         #[cfg(any(test, feature = "test-support"))]
         self.input_log.push(input.to_vec());
@@ -2240,7 +2249,17 @@ impl Terminal {
         let task = match &mut self.task {
             Some(task) => task,
             None => {
-                if self.child_exited.is_none_or(|e| e.code() == Some(0)) {
+                // For interactive shells (no task), we need to differentiate:
+                // 1. User-initiated exits (typed "exit", Ctrl+D, etc.) - always close,
+                //    even if the shell exits with a non-zero code (e.g. after `false`).
+                // 2. Shell spawn failures (bad $SHELL) - don't close, so the user sees
+                //    the error. Spawn failures never receive keyboard input.
+                let should_close = if self.keyboard_input_sent {
+                    true
+                } else {
+                    self.child_exited.is_none_or(|e| e.code() == Some(0))
+                };
+                if should_close {
                     cx.emit(Event::CloseTerminal);
                 }
                 return;
@@ -2551,16 +2570,16 @@ mod tests {
         Point, TestAppContext, bounds, point, size,
     };
     use parking_lot::Mutex;
-    use rand::{Rng, distr, rngs::ThreadRng};
+    use rand::{Rng, distr, rngs::StdRng};
     use smol::channel::Receiver;
     use task::{Shell, ShellBuilder};
 
-    #[cfg(target_os = "macos")]
+    #[cfg(not(target_os = "windows"))]
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = settings::SettingsStore::test(cx);
             cx.set_global(settings_store);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
         });
     }
 
@@ -2790,6 +2809,68 @@ mod tests {
         );
     }
 
+    #[cfg(not(target_os = "windows"))]
+    #[gpui::test(iterations = 10)]
+    async fn test_terminal_closes_after_nonzero_exit(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.executor().allow_parking();
+
+        let builder = cx
+            .update(|cx| {
+                TerminalBuilder::new(
+                    None,
+                    None,
+                    task::Shell::System,
+                    HashMap::default(),
+                    CursorShape::default(),
+                    AlternateScroll::On,
+                    None,
+                    vec![],
+                    0,
+                    false,
+                    0,
+                    None,
+                    cx,
+                    Vec::new(),
+                    PathStyle::local(),
+                )
+            })
+            .await
+            .unwrap();
+        let terminal = cx.new(|cx| builder.subscribe(cx));
+
+        let (event_tx, event_rx) = smol::channel::unbounded::<Event>();
+        cx.update(|cx| {
+            cx.subscribe(&terminal, move |_, e, _| {
+                event_tx.send_blocking(e.clone()).unwrap();
+            })
+        })
+        .detach();
+
+        let first_event = event_rx.recv().await.expect("No wakeup event received");
+
+        terminal.update(cx, |terminal, _| {
+            terminal.input(b"false\r".to_vec());
+        });
+        cx.executor().timer(Duration::from_millis(500)).await;
+        terminal.update(cx, |terminal, _| {
+            terminal.input(b"exit\r".to_vec());
+        });
+
+        let mut all_events = vec![first_event];
+        while let Ok(new_event) = event_rx.recv().await {
+            all_events.push(new_event.clone());
+            if new_event == Event::CloseTerminal {
+                break;
+            }
+        }
+        assert!(
+            all_events.contains(&Event::CloseTerminal),
+            "Shell exiting after `false && exit` should close terminal, but got events: {all_events:?}",
+        );
+    }
+
     #[gpui::test(iterations = 10)]
     async fn test_terminal_no_exit_on_spawn_failure(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
@@ -2872,9 +2953,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_mouse_to_cell_test() {
-        let mut rng = rand::rng();
+    #[gpui::test]
+    fn test_mouse_to_cell_test(mut rng: StdRng) {
         const ITERATIONS: usize = 10;
         const PRECISION: usize = 1000;
 
@@ -2922,10 +3002,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_mouse_to_cell_clamp() {
-        let mut rng = rand::rng();
-
+    #[gpui::test]
+    fn test_mouse_to_cell_clamp(mut rng: StdRng) {
         let size = crate::TerminalBounds {
             cell_width: Pixels::from(10.),
             line_height: Pixels::from(10.),
@@ -2956,12 +3034,12 @@ mod tests {
         );
     }
 
-    fn get_cells(size: TerminalBounds, rng: &mut ThreadRng) -> Vec<Vec<char>> {
+    fn get_cells(size: TerminalBounds, rng: &mut StdRng) -> Vec<Vec<char>> {
         let mut cells = Vec::new();
 
-        for _ in 0..((size.height() / size.line_height()) as usize) {
+        for _ in 0..size.num_lines() {
             let mut row_vec = Vec::new();
-            for _ in 0..((size.width() / size.cell_width()) as usize) {
+            for _ in 0..size.num_columns() {
                 let cell_char = rng.sample(distr::Alphanumeric) as char;
                 row_vec.push(cell_char)
             }
@@ -3362,6 +3440,60 @@ mod tests {
             for _ in 0..20000 {
                 scroll_by(1);
                 scroll_by(-1);
+            }
+        }
+
+        #[test]
+        fn test_num_lines_float_precision() {
+            let line_heights = [
+                20.1f32, 16.7, 18.3, 22.9, 14.1, 15.6, 17.8, 19.4, 21.3, 23.7,
+            ];
+            for &line_height in &line_heights {
+                for n in 1..=100 {
+                    let height = n as f32 * line_height;
+                    let bounds = TerminalBounds::new(
+                        px(line_height),
+                        px(8.0),
+                        Bounds {
+                            origin: Point::default(),
+                            size: Size {
+                                width: px(800.0),
+                                height: px(height),
+                            },
+                        },
+                    );
+                    assert_eq!(
+                        bounds.num_lines(),
+                        n,
+                        "num_lines() should be {n} for height={height}, line_height={line_height}"
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn test_num_columns_float_precision() {
+            let cell_widths = [8.1f32, 7.3, 9.7, 6.9, 10.1];
+            for &cell_width in &cell_widths {
+                for n in 1..=200 {
+                    let width = n as f32 * cell_width;
+                    let bounds = TerminalBounds::new(
+                        px(20.0),
+                        px(cell_width),
+                        Bounds {
+                            origin: Point::default(),
+                            size: Size {
+                                width: px(width),
+                                height: px(400.0),
+                            },
+                        },
+                    );
+                    assert_eq!(
+                        bounds.num_columns(),
+                        n,
+                        "num_columns() should be {n} for width={width}, cell_width={cell_width}"
+                    );
+                }
             }
         }
     }

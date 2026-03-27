@@ -584,7 +584,7 @@ impl Editor {
         project: Entity<Project>,
         snapshot: MultiBufferSnapshot,
         prefer_lsp: bool,
-        runnable_ranges: Vec<(Range<MultiBufferOffset>, language::RunnableRange)>,
+        runnable_ranges: Vec<(Range<Anchor>, language::RunnableRange)>,
         cx: AsyncWindowContext,
     ) -> Task<Vec<((BufferId, BufferRow), RunnableTasks)>> {
         cx.spawn(async move |cx| {
@@ -621,7 +621,7 @@ impl Editor {
                     (runnable.buffer_id, row),
                     RunnableTasks {
                         templates: tasks,
-                        offset: snapshot.anchor_before(run_range.start),
+                        offset: run_range.start,
                         context_range,
                         column: point.column,
                         extra_variables: runnable.extra_captures,
@@ -637,17 +637,17 @@ impl Editor {
         runnable: &mut Runnable,
         cx: &mut App,
     ) -> Task<Vec<(TaskSourceKind, TaskTemplate)>> {
-        let (inventory, worktree_id, file) = project.read_with(cx, |project, cx| {
-            let (worktree_id, file) = project
-                .buffer_for_id(runnable.buffer, cx)
+        let (inventory, worktree_id, buffer) = project.read_with(cx, |project, cx| {
+            let buffer = project.buffer_for_id(runnable.buffer, cx);
+            let worktree_id = buffer
+                .as_ref()
                 .and_then(|buffer| buffer.read(cx).file())
-                .map(|file| (file.worktree_id(cx), file.clone()))
-                .unzip();
+                .map(|file| file.worktree_id(cx));
 
             (
                 project.task_store().read(cx).task_inventory().cloned(),
                 worktree_id,
-                file,
+                buffer,
             )
         });
 
@@ -658,7 +658,12 @@ impl Editor {
             if let Some(inventory) = inventory {
                 for RunnableTag(tag) in tags {
                     let new_tasks = inventory.update(cx, |inventory, cx| {
-                        inventory.list_tasks(file.clone(), Some(language.clone()), worktree_id, cx)
+                        inventory.list_tasks(
+                            buffer.clone(),
+                            Some(language.clone()),
+                            worktree_id,
+                            cx,
+                        )
                     });
                     templates_with_tags.extend(new_tasks.await.into_iter().filter(
                         move |(_, template)| {
@@ -715,7 +720,7 @@ mod tests {
     use std::{sync::Arc, time::Duration};
 
     use futures::StreamExt as _;
-    use gpui::{AppContext as _, Task, TestAppContext};
+    use gpui::{AppContext as _, Entity, Task, TestAppContext};
     use indoc::indoc;
     use language::{ContextProvider, FakeLspAdapter};
     use languages::rust_lang;
@@ -742,7 +747,7 @@ mod tests {
     impl ContextProvider for TestRustContextProvider {
         fn associated_tasks(
             &self,
-            _: Option<Arc<dyn language::File>>,
+            _: Option<Entity<language::Buffer>>,
             _: &gpui::App,
         ) -> Task<Option<TaskTemplates>> {
             Task::ready(Some(TaskTemplates(vec![
@@ -769,7 +774,7 @@ mod tests {
     impl ContextProvider for TestRustContextProviderWithLsp {
         fn associated_tasks(
             &self,
-            _: Option<Arc<dyn language::File>>,
+            _: Option<Entity<language::Buffer>>,
             _: &gpui::App,
         ) -> Task<Option<TaskTemplates>> {
             Task::ready(Some(TaskTemplates(vec![TaskTemplate {
