@@ -129,6 +129,7 @@ pub trait Platform: 'static {
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
     fn active_window(&self) -> Option<AnyWindowHandle>;
+    fn set_active_window_handle(&self, _handle: AnyWindowHandle) {}
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
         None
     }

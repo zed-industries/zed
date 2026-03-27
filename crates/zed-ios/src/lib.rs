@@ -19,6 +19,7 @@ mod ios {
         PromptButton, PromptLevel, Render, SharedString, UTF16Selection, Window, WindowOptions,
         div, prelude::*,
     };
+    use theme::ActiveTheme;
     use gpui_ios::IosPlatform;
     use std::{cell::RefCell, ops::Range, rc::Rc, sync::Arc};
     use util::ResultExt as _;
@@ -357,6 +358,8 @@ mod ios {
             // Navigation and search
             gpui::KeyBinding::new("cmd-f", search::buffer_search::Deploy { focus: true, replace_enabled: false, selection_search_enabled: false }, Some("Editor")),
             gpui::KeyBinding::new("cmd-shift-f", workspace::NewSearch, None),
+            gpui::KeyBinding::new("cmd-shift-p", zed_actions::command_palette::Toggle, None),
+            gpui::KeyBinding::new("cmd-k cmd-t", zed_actions::theme_selector::Toggle { themes_filter: None }, None),
             gpui::KeyBinding::new("escape", editor::actions::Cancel, Some("Editor")),
         ]);
 
@@ -367,7 +370,7 @@ mod ios {
         cx.set_http_client(http);
 
         // Theme and fonts
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme::init(theme::LoadThemes::All(Box::new(assets::Assets)), cx);
         assets::Assets.load_fonts(cx).log_err();
 
         // Filesystem
@@ -391,6 +394,14 @@ mod ios {
             node_runtime::NodeRuntime::unavailable(),
             cx,
         );
+        languages.set_theme(cx.theme().clone());
+        cx.observe_global::<theme::GlobalTheme>({
+            let languages = languages.clone();
+            move |cx| {
+                languages.set_theme(cx.theme().clone());
+            }
+        })
+        .detach();
 
         // Menu and actions
         menu::init();
@@ -415,11 +426,14 @@ mod ios {
                     session,
                 });
 
+                AppState::set_global(Arc::downgrade(&app_state), cx);
+
                 git::GitHostingProviderRegistry::set_global(
                     git::GitHostingProviderRegistry::default_global(cx),
                     cx,
                 );
                 language_model::init_settings(cx);
+                command_palette::init(cx);
                 editor::init(cx);
                 go_to_line::init(cx);
                 diagnostics::init(cx);
@@ -428,6 +442,7 @@ mod ios {
                 git_ui::init(cx);
                 outline_panel::init(cx);
                 language_selector::init(cx);
+                theme_selector::init(cx);
                 workspace::init(app_state.clone(), cx);
                 project_panel::init(cx);
                 recent_projects::init(cx);

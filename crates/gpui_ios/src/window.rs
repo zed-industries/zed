@@ -1400,30 +1400,30 @@ extern "C" fn can_perform_action(_this: &Object, _sel: Sel, _action: Sel, _sende
 
 // ─── Touch input (single-finger → left mouse button) ─────────────────────────
 
-extern "C" fn touches_began(this: &Object, _sel: Sel, touches: *mut Object, _event: *mut Object) {
-    handle_touches(this, touches, TouchKind::Began)
+extern "C" fn touches_began(this: &Object, _sel: Sel, touches: *mut Object, event: *mut Object) {
+    handle_touches(this, touches, event, TouchKind::Began)
 }
 
-extern "C" fn touches_moved(this: &Object, _sel: Sel, touches: *mut Object, _event: *mut Object) {
-    handle_touches(this, touches, TouchKind::Moved)
+extern "C" fn touches_moved(this: &Object, _sel: Sel, touches: *mut Object, event: *mut Object) {
+    handle_touches(this, touches, event, TouchKind::Moved)
 }
 
 extern "C" fn touches_ended(
     this: &Object,
     _sel: Sel,
     touches: *mut Object,
-    _event: *mut Object,
+    event: *mut Object,
 ) {
-    handle_touches(this, touches, TouchKind::Ended)
+    handle_touches(this, touches, event, TouchKind::Ended)
 }
 
 extern "C" fn touches_cancelled(
     this: &Object,
     _sel: Sel,
     touches: *mut Object,
-    _event: *mut Object,
+    event: *mut Object,
 ) {
-    handle_touches(this, touches, TouchKind::Cancelled)
+    handle_touches(this, touches, event, TouchKind::Cancelled)
 }
 
 #[derive(PartialEq)]
@@ -1586,7 +1586,7 @@ extern "C" fn uit_has_text(this: &Object, _sel: Sel) -> bool {
 /// reclassified from a pending tap to a drag. Matches gpui-mobile.
 const TOUCH_SLOP: f32 = 8.0;
 
-fn handle_touches(this: &Object, touches: *mut Object, kind: TouchKind) {
+fn handle_touches(this: &Object, touches: *mut Object, event: *mut Object, kind: TouchKind) {
     let Some(state_rc) = state_from_view(this) else { return };
 
     let (position, tap_count) = unsafe {
@@ -1608,7 +1608,18 @@ fn handle_touches(this: &Object, touches: *mut Object, kind: TouchKind) {
     };
 
     state_rc.borrow_mut().touch_position = Some(position);
-    let modifiers = state_rc.borrow().current_modifiers;
+
+    // Query modifier flags directly from the UIEvent rather than relying on
+    // cached state, which can become stale if pressesEnded: events are missed
+    // (e.g. when the software keyboard steals first responder).
+    let modifiers = if !event.is_null() {
+        let flags: usize = unsafe { msg_send![event, modifierFlags] };
+        let (modifiers, _) = modifiers_from_ui_flags(flags);
+        state_rc.borrow_mut().current_modifiers = modifiers;
+        modifiers
+    } else {
+        state_rc.borrow().current_modifiers
+    };
 
     match kind {
         TouchKind::Began => {

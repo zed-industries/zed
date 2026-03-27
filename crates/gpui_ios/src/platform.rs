@@ -121,6 +121,10 @@ impl Platform for IosPlatform {
         *self.active_window.borrow()
     }
 
+    fn set_active_window_handle(&self, handle: AnyWindowHandle) {
+        *self.active_window.borrow_mut() = Some(handle);
+    }
+
     fn open_window(
         &self,
         handle: AnyWindowHandle,

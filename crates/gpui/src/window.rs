@@ -1571,6 +1571,8 @@ impl Window {
     {
         let view = cx.new(|cx| build_view(self, cx));
         self.root = Some(view.clone().into());
+        self.handle.state_type = TypeId::of::<E>();
+        cx.platform.set_active_window_handle(self.handle);
         self.refresh();
         view
     }

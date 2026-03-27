@@ -294,6 +294,14 @@ impl Render for WorkspaceSwitcher {
     }
 }
 
+struct StatusBarSuffix;
+
+impl Render for StatusBarSuffix {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div().pr(px(24.))
+    }
+}
+
 /// Navigate back to the landing screen without closing any SSH connections.
 /// Workspaces are already stored in ActiveConnections from `do_connect`.
 fn return_to_landing(window: &mut Window, cx: &mut App) {
@@ -1070,8 +1078,10 @@ impl ConnectionLanding {
             });
 
             let switcher = cx.new(|_cx| WorkspaceSwitcher::new(path, host, username));
+            let suffix = cx.new(|_cx| StatusBarSuffix);
             workspace.update(cx, |ws, cx| {
                 ws.set_status_bar_prefix(switcher.into(), cx);
+                ws.set_status_bar_suffix(suffix.into(), cx);
             });
 
             workspace

@@ -316,6 +316,7 @@
 				);
 				MARKETING_VERSION = 1.0;
 				OTHER_LDFLAGS = (
+					"-Wl,-no_compact_unwind",
 					"-ObjC",
 					"-lzed_ios",
 					"-lc++",
@@ -387,6 +388,7 @@
 				);
 				MARKETING_VERSION = 1.0;
 				OTHER_LDFLAGS = (
+					"-Wl,-no_compact_unwind",
 					"-ObjC",
 					"-lzed_ios",
 					"-lc++",
