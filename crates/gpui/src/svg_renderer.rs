@@ -9,8 +9,7 @@ use std::{
     hash::Hash,
     sync::{Arc, LazyLock},
 };
-/// Emoji font families for each platform
-/// Hardcoded for simplicity
+
 #[cfg(target_os = "macos")]
 const EMOJI_FONT_FAMILIES: &[&str] = &["Apple Color Emoji", ".AppleColorEmojiUI"];
 
@@ -30,6 +29,44 @@ fn is_emoji_presentation(c: char) -> bool {
         LazyLock::new(|| regex::Regex::new("\\p{Emoji_Presentation}").unwrap());
     let mut buf = [0u8; 4];
     EMOJI_PRESENTATION_REGEX.is_match(c.encode_utf8(&mut buf))
+}
+
+fn font_has_char(db: &usvg::fontdb::Database, id: usvg::fontdb::ID, ch: char) -> bool {
+    db.with_face_data(id, |font_data, face_index| {
+        ttf_parser::Face::parse(font_data, face_index)
+            .ok()
+            .and_then(|face| face.glyph_index(ch))
+            .is_some()
+    })
+    .unwrap_or(false)
+}
+
+fn select_emoji_font(
+    ch: char,
+    fonts: &[usvg::fontdb::ID],
+    db: &usvg::fontdb::Database,
+    families: &[&str],
+) -> Option<usvg::fontdb::ID> {
+    for family_name in families {
+        let query = usvg::fontdb::Query {
+            families: &[usvg::fontdb::Family::Name(family_name)],
+            weight: usvg::fontdb::Weight(400),
+            stretch: usvg::fontdb::Stretch::Normal,
+            style: usvg::fontdb::Style::Normal,
+        };
+
+        let Some(id) = db.query(&query) else {
+            continue;
+        };
+
+        if fonts.contains(&id) || !font_has_char(db, id, ch) {
+            continue;
+        }
+
+        return Some(id);
+    }
+
+    None
 }
 
 /// When rendering SVGs, we render them at twice the size to get a higher-quality result.
@@ -78,25 +115,12 @@ impl SvgRenderer {
         let fallback_selection = Box::new(
             move |ch: char, fonts: &[usvg::fontdb::ID], db: &mut Arc<usvg::fontdb::Database>| {
                 if is_emoji_presentation(ch) {
-                    for family_name in EMOJI_FONT_FAMILIES {
-                        let query = usvg::fontdb::Query {
-                            families: &[usvg::fontdb::Family::Name(family_name)],
-                            weight: usvg::fontdb::Weight(400),
-                            stretch: usvg::fontdb::Stretch::Normal,
-                            style: usvg::fontdb::Style::Normal,
-                        };
-
-                        if let Some(id) = db.query(&query) {
-                            if !fonts.contains(&id) {
-                                // Note: fontdb does not provide a has_char(id, ch) method.
-                                // which would be better check to return early
-                                return Some(id);
-                            }
-                        }
+                    if let Some(id) = select_emoji_font(ch, fonts, db.as_ref(), EMOJI_FONT_FAMILIES)
+                    {
+                        return Some(id);
                     }
                 }
 
-                // Fall back to default behavior for non-emoji or when no emoji font found
                 default_fallback_selection(ch, fonts, db)
             },
         );
@@ -201,21 +225,30 @@ impl SvgRenderer {
 mod tests {
     use super::*;
 
+    const IBM_PLEX_REGULAR: &[u8] =
+        include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf");
+    const LILEX_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/lilex/Lilex-Regular.ttf");
+
     #[test]
     fn test_is_emoji_presentation() {
         let cases = [
             ("a", false),
             ("Z", false),
             ("1", false),
+            ("#", false),
+            ("*", false),
             ("漢", false),
             ("中", false),
             ("カ", false),
             ("©", false),
             ("♥", false),
-            ("1", false),
             ("😀", true),
             ("✅", true),
             ("🇺🇸", true),
+            // SVG fallback is not cluster-aware yet
+            ("©️", false),
+            ("♥️", false),
+            ("1️⃣", false),
         ];
         for (s, expected) in cases {
             assert_eq!(
@@ -225,5 +258,35 @@ mod tests {
                 s
             );
         }
+    }
+
+    #[test]
+    fn test_select_emoji_font_skips_family_without_glyph() {
+        let mut db = usvg::fontdb::Database::new();
+
+        db.load_font_data(IBM_PLEX_REGULAR.to_vec());
+        db.load_font_data(LILEX_REGULAR.to_vec());
+
+        let ibm_plex_sans = db
+            .query(&usvg::fontdb::Query {
+                families: &[usvg::fontdb::Family::Name("IBM Plex Sans")],
+                weight: usvg::fontdb::Weight(400),
+                stretch: usvg::fontdb::Stretch::Normal,
+                style: usvg::fontdb::Style::Normal,
+            })
+            .unwrap();
+        let lilex = db
+            .query(&usvg::fontdb::Query {
+                families: &[usvg::fontdb::Family::Name("Lilex")],
+                weight: usvg::fontdb::Weight(400),
+                stretch: usvg::fontdb::Stretch::Normal,
+                style: usvg::fontdb::Style::Normal,
+            })
+            .unwrap();
+        let selected = select_emoji_font('│', &[], &db, &["IBM Plex Sans", "Lilex"]).unwrap();
+
+        assert_eq!(selected, lilex);
+        assert!(!font_has_char(&db, ibm_plex_sans, '│'));
+        assert!(font_has_char(&db, selected, '│'));
     }
 }

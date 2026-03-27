@@ -80,6 +80,7 @@ resvg = { version = "0.45.0", default-features = false, features = [
     "raster-images"
 ] }
 usvg = { version = "0.45.0", default-features = false }
+ttf-parser = "0.25"
 util_macros.workspace = true
 schemars.workspace = true
 seahash = "4.1"
@@ -147,11 +148,11 @@ backtrace.workspace = true
 collections = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 gpui_platform = { workspace = true, features = ["font-kit"] }
+gpui_util = { workspace = true }
 lyon = { version = "1.0", features = ["extra"] }
+proptest = { workspace = true }
 rand.workspace = true
 scheduler = { workspace = true, features = ["test-support"] }
-gpui_util = { workspace = true }
-proptest = { workspace = true }
 unicode-segmentation = { workspace = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
