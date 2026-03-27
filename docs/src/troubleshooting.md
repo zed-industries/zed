@@ -88,8 +88,6 @@ If you're experiencing language-server related issues, such as stale diagnostics
 
 ### "Max tokens reached"
 
-> **Preview:** This error handling is available in Zed Preview. It will be included in the next Stable release.
-
 You see this error when the agent's response exceeds the model's maximum token limit. This happens when:
 
 - The agent generates an extremely long response

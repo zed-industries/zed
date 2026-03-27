@@ -286,13 +286,7 @@ pub fn deploy_context_menu(
                 .separator()
                 .action_disabled_when(
                     !has_reveal_target,
-                    if cfg!(target_os = "macos") {
-                        "Reveal in Finder"
-                    } else if cfg!(target_os = "windows") {
-                        "Reveal in File Explorer"
-                    } else {
-                        "Reveal in File Manager"
-                    },
+                    ui::utils::reveal_in_file_manager_label(false),
                     Box::new(RevealInFileManager),
                 )
                 .when(is_markdown, |builder| {

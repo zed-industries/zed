@@ -6,7 +6,6 @@ use assistant_slash_command::{
 };
 use client::{self, proto};
 use clock::ReplicaId;
-use cloud_llm_client::CompletionIntent;
 use collections::{HashMap, HashSet};
 use fs::{Fs, RenameOptions};
 
@@ -18,9 +17,9 @@ use gpui::{
 use itertools::Itertools as _;
 use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
 use language_model::{
-    AnthropicCompletionType, AnthropicEventData, AnthropicEventType, LanguageModel,
-    LanguageModelCacheConfiguration, LanguageModelCompletionEvent, LanguageModelImage,
-    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
+    AnthropicCompletionType, AnthropicEventData, AnthropicEventType, CompletionIntent,
+    LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent,
+    LanguageModelImage, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelToolUseId, MessageContent, PaymentRequiredError, Role, StopReason,
     report_anthropic_event,
 };
@@ -1219,7 +1218,7 @@ impl TextThread {
             } => cx.emit(TextThreadEvent::Operation(
                 TextThreadOperation::BufferOperation(operation.clone()),
             )),
-            language::BufferEvent::Edited => {
+            language::BufferEvent::Edited { .. } => {
                 self.count_remaining_tokens(cx);
                 self.reparse(cx);
                 cx.emit(TextThreadEvent::MessagesEdited);

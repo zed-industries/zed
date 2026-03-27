@@ -54,10 +54,13 @@ struct WebPlatformCallbacks {
 }
 
 impl WebPlatform {
-    pub fn new() -> Self {
+    pub fn new(allow_multi_threading: bool) -> Self {
         let browser_window =
             web_sys::window().expect("must be running in a browser window context");
-        let dispatcher = Arc::new(WebDispatcher::new(browser_window.clone()));
+        let dispatcher = Arc::new(WebDispatcher::new(
+            browser_window.clone(),
+            allow_multi_threading,
+        ));
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
         let text_system = Arc::new(gpui_wgpu::CosmicTextSystem::new_without_system_fonts(

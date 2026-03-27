@@ -1,0 +1,29 @@
+[package]
+name = "language_core"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+path = "src/language_core.rs"
+
+[dependencies]
+anyhow.workspace = true
+collections.workspace = true
+gpui.workspace = true
+log.workspace = true
+lsp.workspace = true
+parking_lot.workspace = true
+regex.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+tree-sitter.workspace = true
+util.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+
+[features]
+test-support = []
