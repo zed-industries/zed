@@ -1585,6 +1585,98 @@ async fn test_toggle_comments(cx: &mut gpui::TestAppContext) {
 
 #[perf]
 #[gpui::test]
+async fn test_toggle_block_comments(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    let language = std::sync::Arc::new(language::Language::new(
+        language::LanguageConfig {
+            block_comment: Some(language::BlockCommentConfig {
+                start: "/* ".into(),
+                prefix: "".into(),
+                end: " */".into(),
+                tab_size: 1,
+            }),
+            ..Default::default()
+        },
+        Some(language::tree_sitter_rust::LANGUAGE.into()),
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    // works in normal mode with current-line shorthand
+    cx.set_state(
+        indoc! {"
+        ˇone
+        two
+        three
+        "},
+        Mode::Normal,
+    );
+    cx.simulate_keystrokes("g b c");
+    cx.assert_state(
+        indoc! {"
+        /* ˇone */
+        two
+        three
+        "},
+        Mode::Normal,
+    );
+
+    // toggle off with cursor inside the comment
+    cx.simulate_keystrokes("g b c");
+    cx.assert_state(
+        indoc! {"
+        ˇone
+        two
+        three
+        "},
+        Mode::Normal,
+    );
+
+    // works in visual line mode (wraps full lines)
+    cx.simulate_keystrokes("shift-v j g b");
+    cx.assert_state(
+        indoc! {"
+        /* ˇone
+        two */
+        three
+        "},
+        Mode::Normal,
+    );
+
+    // works with count
+    cx.set_state(
+        indoc! {"
+        ˇone
+        two
+        three
+        "},
+        Mode::Normal,
+    );
+    cx.simulate_keystrokes("g b 2 j");
+    cx.assert_state(
+        indoc! {"
+        /* ˇone
+        two
+        three */
+        "},
+        Mode::Normal,
+    );
+
+    // works with motion object
+    cx.simulate_keystrokes("shift-g");
+    cx.simulate_keystrokes("g b g g");
+    cx.assert_state(
+        indoc! {"
+        one
+        two
+        three
+        ˇ"},
+        Mode::Normal,
+    );
+}
+
+#[perf]
+#[gpui::test]
 async fn test_find_multibyte(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
 

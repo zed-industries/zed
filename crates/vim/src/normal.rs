@@ -993,9 +993,24 @@ impl Vim {
     ) {
         self.record_current_action(cx);
         self.store_visual_marks(window, cx);
+        let is_visual_line = self.mode == Mode::VisualLine;
         self.update_editor(cx, |vim, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 let original_positions = vim.save_selection_starts(editor, cx);
+                if is_visual_line {
+                    editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                        s.move_with(|map, selection| {
+                            let start_row = selection.start.to_point(map).row;
+                            let end_row = selection.end.to_point(map).row;
+                            let end_col =
+                                map.buffer_snapshot().line_len(MultiBufferRow(end_row));
+                            selection.start =
+                                Point::new(start_row, 0).to_display_point(map);
+                            selection.end =
+                                Point::new(end_row, end_col).to_display_point(map);
+                        });
+                    });
+                }
                 editor.toggle_block_comments(&Default::default(), window, cx);
                 vim.restore_selection_cursors(editor, window, cx, original_positions);
             });
