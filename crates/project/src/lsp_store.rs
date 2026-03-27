@@ -6542,10 +6542,15 @@ impl LspStore {
         completions: Rc<RefCell<Box<[Completion]>>>,
         completion_index: usize,
     ) -> Result<()> {
-        let completion_item = completions.borrow()[completion_index]
+        let mut completion_item = completions.borrow()[completion_index]
             .source
             .lsp_completion(true)
             .map(Cow::into_owned);
+        if let Some(completion_item) = completion_item.as_mut() {
+            adapter
+                .process_completions(std::slice::from_mut(completion_item))
+                .await;
+        }
         if let Some(lsp_documentation) = completion_item
             .as_ref()
             .and_then(|completion_item| completion_item.documentation.clone())
@@ -10214,13 +10219,13 @@ impl LspStore {
         mut cx: AsyncApp,
     ) -> Result<proto::ResolveCompletionDocumentationResponse> {
         let lsp_completion = serde_json::from_slice(&envelope.payload.lsp_completion)?;
+        let language_server_id = LanguageServerId(envelope.payload.language_server_id as usize);
 
-        let completion = this
+        let mut completion = this
             .read_with(&cx, |this, cx| {
-                let id = LanguageServerId(envelope.payload.language_server_id as usize);
                 let server = this
-                    .language_server_for_id(id)
-                    .with_context(|| format!("No language server {id}"))?;
+                    .language_server_for_id(language_server_id)
+                    .with_context(|| format!("No language server {language_server_id}"))?;
 
                 let request_timeout = ProjectSettings::get_global(cx)
                     .global_lsp_settings
@@ -10248,6 +10253,14 @@ impl LspStore {
                 }))
             })?
             .await?;
+
+        if let Some(adapter) = this.read_with(&cx, |this, _| {
+            this.language_server_adapter_for_id(language_server_id)
+        }) {
+            adapter
+                .process_completions(std::slice::from_mut(&mut completion))
+                .await;
+        }
 
         let mut documentation_is_markdown = false;
         let lsp_completion = serde_json::to_string(&completion)?.into_bytes();

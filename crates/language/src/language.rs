@@ -576,6 +576,468 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
     fn process_prompt_response(&self, _context: &PromptResponseContext, _cx: &mut AsyncApp) {}
 }
 
+const VOLAR_IMPORT_FROM_MARKER: &str = "import from ";
+
+#[derive(Default)]
+struct VolarCompletionTextRewrite {
+    inline_text: Option<String>,
+    documentation_text: Option<String>,
+}
+
+pub fn should_normalize_volar_completion_item(completion_item: &lsp::CompletionItem) -> bool {
+    let mut has_signature = false;
+    let mut has_module_specifier = false;
+
+    for text in completion_item_texts(completion_item) {
+        if text.contains(" import from ")
+            || text.contains("(alias)")
+            || find_volar_label_signature_suffix(text).is_some()
+        {
+            return true;
+        }
+
+        has_signature |= looks_like_volar_signature(text);
+        has_module_specifier |= extract_volar_auto_import_module_specifier(text).is_some()
+            || looks_like_deep_module_specifier(text);
+    }
+
+    has_signature && has_module_specifier
+}
+
+pub fn normalize_volar_completion_item(completion_item: &mut lsp::CompletionItem) {
+    if !should_normalize_volar_completion_item(completion_item) {
+        return;
+    }
+
+    let label_rewrite = rewrite_volar_completion_label(&completion_item.label);
+    if let Some(inline_label) = label_rewrite.inline_text {
+        completion_item.label = inline_label;
+    }
+
+    let detail_rewrite = completion_item
+        .detail
+        .as_deref()
+        .map(rewrite_volar_completion_text);
+    let label_detail_rewrite = completion_item
+        .label_details
+        .as_ref()
+        .and_then(|label_details| label_details.detail.as_deref())
+        .map(rewrite_volar_completion_text);
+    let description_rewrite = completion_item
+        .label_details
+        .as_ref()
+        .and_then(|label_details| label_details.description.as_deref())
+        .map(rewrite_volar_completion_text);
+
+    let mut documentation_fragments = Vec::new();
+    if let Some(documentation_text) = label_rewrite.documentation_text.as_ref() {
+        push_unique_string(&mut documentation_fragments, documentation_text.clone());
+    }
+    if let Some(documentation_text) = detail_rewrite
+        .as_ref()
+        .and_then(|rewrite| rewrite.documentation_text.as_ref())
+    {
+        push_unique_string(&mut documentation_fragments, documentation_text.clone());
+    }
+    if let Some(documentation_text) = label_detail_rewrite
+        .as_ref()
+        .and_then(|rewrite| rewrite.documentation_text.as_ref())
+    {
+        push_unique_string(&mut documentation_fragments, documentation_text.clone());
+    }
+    if let Some(documentation_text) = description_rewrite
+        .as_ref()
+        .and_then(|rewrite| rewrite.documentation_text.as_ref())
+    {
+        push_unique_string(&mut documentation_fragments, documentation_text.clone());
+    }
+
+    let label_inline_detail = label_rewrite
+        .documentation_text
+        .as_deref()
+        .and_then(extract_volar_auto_import_module_specifier)
+        .map(str::to_string);
+
+    let inline_detail = detail_rewrite
+        .as_ref()
+        .and_then(|rewrite| rewrite.inline_text.clone())
+        .or_else(|| {
+            description_rewrite
+                .as_ref()
+                .and_then(|rewrite| rewrite.inline_text.clone())
+        })
+        .or(label_inline_detail);
+    completion_item.detail = inline_detail.clone();
+
+    if let Some(label_details) = completion_item.label_details.as_mut() {
+        label_details.detail = label_detail_rewrite
+            .and_then(|rewrite| rewrite.inline_text)
+            .filter(|detail| Some(detail.as_str()) != inline_detail.as_deref());
+        label_details.description = description_rewrite
+            .and_then(|rewrite| rewrite.inline_text)
+            .filter(|description| Some(description.as_str()) != inline_detail.as_deref());
+    }
+
+    if !documentation_fragments.is_empty() {
+        completion_item.documentation = merge_volar_completion_documentation(
+            completion_item.documentation.take(),
+            &documentation_fragments,
+        );
+    }
+}
+
+fn completion_item_texts(completion_item: &lsp::CompletionItem) -> Vec<&str> {
+    [
+        Some(completion_item.label.as_str()),
+        completion_item.detail.as_deref(),
+        completion_item
+            .label_details
+            .as_ref()
+            .and_then(|label_details| label_details.detail.as_deref()),
+        completion_item
+            .label_details
+            .as_ref()
+            .and_then(|label_details| label_details.description.as_deref()),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+fn rewrite_volar_completion_label(text: &str) -> VolarCompletionTextRewrite {
+    let trimmed_text = text.trim();
+    if trimmed_text.is_empty() {
+        return VolarCompletionTextRewrite::default();
+    }
+
+    let suffix_start = [
+        find_volar_label_import_suffix(trimmed_text),
+        find_volar_label_signature_suffix(trimmed_text),
+        trimmed_text.find(" (alias)"),
+        trimmed_text.find('\n'),
+    ]
+    .into_iter()
+    .flatten()
+    .min();
+    if let Some(suffix_start) = suffix_start {
+        let inline_text = trimmed_text[..suffix_start].trim_end();
+        let documentation_text = trimmed_text[suffix_start..].trim();
+        if !inline_text.is_empty() && !documentation_text.is_empty() {
+            return VolarCompletionTextRewrite {
+                inline_text: Some(inline_text.to_string()),
+                documentation_text: Some(documentation_text.to_string()),
+            };
+        }
+    }
+
+    VolarCompletionTextRewrite {
+        inline_text: Some(trimmed_text.to_string()),
+        documentation_text: None,
+    }
+}
+
+fn find_volar_label_import_suffix(text: &str) -> Option<usize> {
+    [" Add import from ", " Update import from ", " import from "]
+        .into_iter()
+        .filter_map(|marker| text.find(marker))
+        .min()
+}
+
+fn find_volar_label_signature_suffix(text: &str) -> Option<usize> {
+    let symbol_end = text.find(char::is_whitespace)?;
+    let suffix = &text[symbol_end..];
+
+    let signature_markers = [
+        " (alias)",
+        " interface ",
+        " var ",
+        " function ",
+        " class ",
+        " type ",
+    ];
+
+    signature_markers
+        .into_iter()
+        .any(|marker| suffix.starts_with(marker))
+        .then_some(symbol_end)
+}
+
+fn rewrite_volar_completion_text(text: &str) -> VolarCompletionTextRewrite {
+    let trimmed_text = text.trim();
+    if trimmed_text.is_empty() {
+        return VolarCompletionTextRewrite::default();
+    }
+
+    if let Some(module_specifier) = extract_volar_auto_import_module_specifier(trimmed_text) {
+        return VolarCompletionTextRewrite {
+            inline_text: Some(module_specifier.to_string()),
+            documentation_text: Some(trimmed_text.to_string()),
+        };
+    }
+
+    if looks_like_deep_module_specifier(trimmed_text) {
+        return VolarCompletionTextRewrite {
+            inline_text: Some(trimmed_text.to_string()),
+            documentation_text: Some(trimmed_text.to_string()),
+        };
+    }
+
+    if looks_like_volar_signature(trimmed_text) {
+        return VolarCompletionTextRewrite {
+            inline_text: None,
+            documentation_text: Some(trimmed_text.to_string()),
+        };
+    }
+
+    VolarCompletionTextRewrite {
+        inline_text: Some(trimmed_text.to_string()),
+        documentation_text: None,
+    }
+}
+
+fn extract_volar_auto_import_module_specifier(text: &str) -> Option<&str> {
+    let marker_start = text.find(VOLAR_IMPORT_FROM_MARKER)?;
+    let trimmed_rest = text[marker_start + VOLAR_IMPORT_FROM_MARKER.len()..].trim();
+    let quote = trimmed_rest.chars().next()?;
+    if !matches!(quote, '"' | '\'' | '`') {
+        return None;
+    }
+
+    let quoted_text = &trimmed_rest[quote.len_utf8()..];
+    let end = quoted_text.find(quote)?;
+    Some(&quoted_text[..end])
+}
+
+fn looks_like_deep_module_specifier(text: &str) -> bool {
+    let trimmed_text = text.trim_matches(|character| matches!(character, '"' | '\'' | '`'));
+    if trimmed_text.is_empty() || trimmed_text.chars().any(char::is_whitespace) {
+        return false;
+    }
+
+    let segment_count = trimmed_text
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .count();
+    if trimmed_text.starts_with('@') {
+        segment_count > 2
+    } else {
+        segment_count > 1
+    }
+}
+
+fn looks_like_volar_signature(text: &str) -> bool {
+    text.contains('\n')
+        || text.len() > 48
+        || text.starts_with('(')
+        || text.starts_with("interface ")
+        || text.starts_with("var ")
+        || text.starts_with("class ")
+        || text.starts_with("type ")
+        || text.contains("(alias)")
+        || text.contains("function ")
+        || text.contains("=>")
+        || text.contains("():")
+        || text.contains("):")
+}
+
+fn merge_volar_completion_documentation(
+    existing_documentation: Option<lsp::Documentation>,
+    documentation_fragments: &[String],
+) -> Option<lsp::Documentation> {
+    if documentation_fragments.is_empty() {
+        return existing_documentation;
+    }
+
+    let detail_markdown = documentation_fragments
+        .iter()
+        .map(|fragment| format!("```text\n{fragment}\n```"))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+
+    let value = match existing_documentation {
+        Some(lsp::Documentation::MarkupContent(lsp::MarkupContent {
+            kind: lsp::MarkupKind::Markdown,
+            value,
+        })) if !value.trim().is_empty() => format!("{detail_markdown}\n\n{value}"),
+        Some(lsp::Documentation::MarkupContent(lsp::MarkupContent { value, .. }))
+            if !value.trim().is_empty() =>
+        {
+            format!("{detail_markdown}\n\n{}", value.trim())
+        }
+        Some(lsp::Documentation::String(value)) if !value.trim().is_empty() => {
+            format!("{detail_markdown}\n\n{}", value.trim())
+        }
+        _ => detail_markdown,
+    };
+
+    Some(lsp::Documentation::MarkupContent(lsp::MarkupContent {
+        kind: lsp::MarkupKind::Markdown,
+        value,
+    }))
+}
+
+fn push_unique_string(values: &mut Vec<String>, candidate: String) {
+    if values.iter().all(|value| value != &candidate) {
+        values.push(candidate);
+    }
+}
+
+#[cfg(test)]
+mod volar_completion_tests {
+    use super::{normalize_volar_completion_item, should_normalize_volar_completion_item};
+
+    #[test]
+    fn normalizes_auto_import_details_into_documentation() {
+        let mut completion_item = lsp::CompletionItem {
+            label: "useMessage".to_string(),
+            detail: Some(r#"Add import from "naive-ui/es/message/src/use-message""#.to_string()),
+            ..Default::default()
+        };
+
+        normalize_volar_completion_item(&mut completion_item);
+
+        assert_eq!(
+            completion_item.detail.as_deref(),
+            Some("naive-ui/es/message/src/use-message")
+        );
+        assert!(matches!(
+            completion_item.documentation,
+            Some(lsp::Documentation::MarkupContent(lsp::MarkupContent { kind: lsp::MarkupKind::Markdown, value }))
+                if value.contains(r#"Add import from "naive-ui/es/message/src/use-message""#)
+        ));
+    }
+
+    #[test]
+    fn normalizes_signature_with_module_path_descriptions() {
+        let mut completion_item = lsp::CompletionItem {
+            label: "useMessage".to_string(),
+            detail: Some("(alias) function useMessage(): MessageApiInjection".to_string()),
+            label_details: Some(lsp::CompletionItemLabelDetails {
+                detail: None,
+                description: Some("naive-ui/es/message/src/use-message".to_string()),
+            }),
+            ..Default::default()
+        };
+
+        normalize_volar_completion_item(&mut completion_item);
+
+        assert_eq!(
+            completion_item.detail.as_deref(),
+            Some("naive-ui/es/message/src/use-message")
+        );
+        assert!(matches!(
+            completion_item.documentation,
+            Some(lsp::Documentation::MarkupContent(lsp::MarkupContent { kind: lsp::MarkupKind::Markdown, value }))
+                if value.contains("(alias) function useMessage(): MessageApiInjection")
+                    && value.contains("naive-ui/es/message/src/use-message")
+        ));
+    }
+
+    #[test]
+    fn strips_volar_suffixes_from_labels() {
+        let mut completion_item = lsp::CompletionItem {
+            label: r#"useMergedCheckStrategy Add import from "naive-ui/es/tree/src/utils""#
+                .to_string(),
+            ..Default::default()
+        };
+
+        normalize_volar_completion_item(&mut completion_item);
+
+        assert_eq!(completion_item.label, "useMergedCheckStrategy");
+        assert_eq!(
+            completion_item.detail.as_deref(),
+            Some("naive-ui/es/tree/src/utils")
+        );
+        assert!(matches!(
+            completion_item.documentation,
+            Some(lsp::Documentation::MarkupContent(lsp::MarkupContent { value, .. }))
+                if value.contains(r#"Add import from "naive-ui/es/tree/src/utils""#)
+        ));
+    }
+
+    #[test]
+    fn strips_update_import_and_signature_suffixes_from_labels() {
+        let mut completion_item = lsp::CompletionItem {
+            label:
+                r#"useModal Update import from "naive-ui" function useModal(): ModalApiInjection"#
+                    .to_string(),
+            ..Default::default()
+        };
+
+        normalize_volar_completion_item(&mut completion_item);
+
+        assert_eq!(completion_item.label, "useModal");
+        assert_eq!(completion_item.detail.as_deref(), Some("naive-ui"));
+        assert!(matches!(
+            completion_item.documentation,
+            Some(lsp::Documentation::MarkupContent(lsp::MarkupContent { value, .. }))
+                if value.contains(r#"Update import from "naive-ui" function useModal(): ModalApiInjection"#)
+        ));
+    }
+
+    #[test]
+    fn strips_global_type_signatures_from_labels() {
+        let mut completion_item = lsp::CompletionItem {
+            label: "URLSearchParams interface URLSearchParams var URLSearchParams: { prototype: URLSearchParams; new(init?: string[][] | Record<string, string> | string | URLSearchParams): URLSearchParams; }".to_string(),
+            ..Default::default()
+        };
+
+        normalize_volar_completion_item(&mut completion_item);
+
+        assert_eq!(completion_item.label, "URLSearchParams");
+        assert!(matches!(
+            completion_item.documentation,
+            Some(lsp::Documentation::MarkupContent(lsp::MarkupContent { value, .. }))
+                if value.contains("interface URLSearchParams")
+                    && value.contains("var URLSearchParams")
+        ));
+    }
+
+    #[test]
+    fn strips_global_variable_signatures_from_labels() {
+        let mut completion_item = lsp::CompletionItem {
+            label: "onmousemove var onmousemove: ((this: Window, ev: MouseEvent) => any) | null"
+                .to_string(),
+            ..Default::default()
+        };
+
+        normalize_volar_completion_item(&mut completion_item);
+
+        assert_eq!(completion_item.label, "onmousemove");
+        assert!(matches!(
+            completion_item.documentation,
+            Some(lsp::Documentation::MarkupContent(lsp::MarkupContent { value, .. }))
+                if value.contains("var onmousemove")
+                    && value.contains("MouseEvent")
+        ));
+    }
+
+    #[test]
+    fn detects_volar_shaped_completions() {
+        let completion_item = lsp::CompletionItem {
+            label: "useMessage".to_string(),
+            detail: Some("(alias) function useMessage(): MessageApiInjection".to_string()),
+            label_details: Some(lsp::CompletionItemLabelDetails {
+                detail: None,
+                description: Some("naive-ui/es/message/src/use-message".to_string()),
+            }),
+            ..Default::default()
+        };
+
+        assert!(should_normalize_volar_completion_item(&completion_item));
+    }
+
+    #[test]
+    fn detects_global_signature_labels() {
+        let completion_item = lsp::CompletionItem {
+            label: "customElements var customElements: CustomElementRegistry".to_string(),
+            ..Default::default()
+        };
+
+        assert!(should_normalize_volar_completion_item(&completion_item));
+    }
+}
+
 pub trait LspInstaller {
     type BinaryVersion;
     fn check_if_user_installed(

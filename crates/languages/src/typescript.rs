@@ -7,7 +7,8 @@ use gpui::{App, AppContext, AsyncApp, Entity, Task};
 use itertools::Itertools as _;
 use language::{
     Buffer, ContextLocation, ContextProvider, File, LanguageName, LanguageToolchainStore,
-    LspAdapter, LspAdapterDelegate, LspInstaller, Toolchain,
+    LspAdapter, LspAdapterDelegate, LspInstaller, Toolchain, normalize_volar_completion_item,
+    should_normalize_volar_completion_item,
 };
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName, Uri};
 use node_runtime::{NodeRuntime, VersionStrategy};
@@ -770,6 +771,18 @@ impl LspAdapter for TypeScriptLspAdapter {
         item: &lsp::CompletionItem,
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
+        let normalized_item;
+        let item = if language.name().as_ref() == "Vue.js" {
+            normalized_item = {
+                let mut item = item.clone();
+                normalize_volar_completion_item(&mut item);
+                item
+            };
+            &normalized_item
+        } else {
+            item
+        };
+
         use lsp::CompletionItemKind as Kind;
         let label_len = item.label.len();
         let grammar = language.grammar()?;
@@ -800,6 +813,14 @@ impl LspAdapter for TypeScriptLspAdapter {
             item.filter_text.as_deref(),
             vec![(0..label_len, highlight_id)],
         ))
+    }
+
+    async fn process_completions(&self, completion_items: &mut [lsp::CompletionItem]) {
+        for completion_item in completion_items {
+            if should_normalize_volar_completion_item(completion_item) {
+                normalize_volar_completion_item(completion_item);
+            }
+        }
     }
 
     async fn initialization_options(

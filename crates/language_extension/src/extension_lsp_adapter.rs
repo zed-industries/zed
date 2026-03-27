@@ -11,6 +11,7 @@ use gpui::{App, AppContext, AsyncApp, Task};
 use language::{
     BinaryStatus, CodeLabel, DynLspInstaller, HighlightId, Language, LanguageName,
     LanguageServerBinaryLocations, LspAdapter, LspAdapterDelegate, Toolchain,
+    normalize_volar_completion_item, should_normalize_volar_completion_item,
 };
 use lsp::{
     CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerName,
@@ -285,6 +286,16 @@ impl LspAdapter for ExtensionLspAdapter {
             CodeActionKind::REFACTOR_EXTRACT,
             CodeActionKind::SOURCE,
         ]))
+    }
+
+    async fn process_completions(&self, completion_items: &mut [lsp::CompletionItem]) {
+        for completion_item in completion_items {
+            if self.language_name.as_ref() == "Vue.js"
+                && should_normalize_volar_completion_item(completion_item)
+            {
+                normalize_volar_completion_item(completion_item);
+            }
+        }
     }
 
     fn language_ids(&self) -> HashMap<LanguageName, String> {
