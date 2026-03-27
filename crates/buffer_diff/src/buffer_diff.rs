@@ -248,7 +248,7 @@ impl BufferDiffSnapshot {
         self.inner.buffer_version()
     }
 
-    pub fn original_buffer_snapshot(&self) -> &text::BufferSnapshot {
+    fn original_buffer_snapshot(&self) -> &text::BufferSnapshot {
         &self.inner.buffer_snapshot
     }
 
@@ -914,28 +914,25 @@ impl BufferDiffInner<language::BufferSnapshot> {
         buffer: &'a text::BufferSnapshot,
         secondary: Option<&'a Self>,
     ) -> impl 'a + Iterator<Item = DiffHunk> {
-        let mut cursor = self.hunks.filter::<_, DiffHunkSummary>(buffer, filter);
-
-        let anchor_iter = iter::from_fn(move || {
-            cursor.next();
-            cursor.item()
-        })
-        .flat_map(move |hunk| {
-            [
-                (
-                    &hunk.buffer_range.start,
+        let anchor_iter = self
+            .hunks
+            .filter::<_, DiffHunkSummary>(buffer, filter)
+            .flat_map(move |hunk| {
+                [
                     (
-                        hunk.buffer_range.start,
-                        hunk.diff_base_byte_range.start,
-                        hunk,
+                        &hunk.buffer_range.start,
+                        (
+                            hunk.buffer_range.start,
+                            hunk.diff_base_byte_range.start,
+                            hunk,
+                        ),
                     ),
-                ),
-                (
-                    &hunk.buffer_range.end,
-                    (hunk.buffer_range.end, hunk.diff_base_byte_range.end, hunk),
-                ),
-            ]
-        });
+                    (
+                        &hunk.buffer_range.end,
+                        (hunk.buffer_range.end, hunk.diff_base_byte_range.end, hunk),
+                    ),
+                ]
+            });
 
         let mut pending_hunks_cursor = self.pending_hunks.cursor::<DiffHunkSummary>(buffer);
         pending_hunks_cursor.next();
@@ -1724,7 +1721,7 @@ impl BufferDiff {
             if let Some(language_registry) = language_registry {
                 base_text.set_language_registry(language_registry);
             }
-            base_text.set_language(language, cx);
+            base_text.set_language_async(language, cx);
             base_text.parsing_idle()
         });
         cx.spawn(async move |this, cx| {
@@ -1756,6 +1753,7 @@ impl BufferDiff {
         let should_compare_hunks = update.base_text_edits.is_some() || !base_text_changed;
         let parsing_idle = if let Some(diff) = update.base_text_edits {
             state.base_text.update(cx, |base_text, cx| {
+                base_text.set_sync_parse_timeout(None);
                 base_text.set_capability(Capability::ReadWrite, cx);
                 base_text.apply_diff(diff, cx);
                 base_text.set_capability(Capability::ReadOnly, cx);
@@ -1763,6 +1761,7 @@ impl BufferDiff {
             })
         } else if update.base_text_changed {
             state.base_text.update(cx, |base_text, cx| {
+                base_text.set_sync_parse_timeout(None);
                 base_text.set_capability(Capability::ReadWrite, cx);
                 base_text.set_text(new_state.base_text.clone(), cx);
                 base_text.set_capability(Capability::ReadOnly, cx);
@@ -1981,8 +1980,8 @@ impl BufferDiff {
         cx.emit(BufferDiffEvent::DiffChanged(change));
     }
 
-    pub fn base_text_buffer(&self) -> Entity<language::Buffer> {
-        self.inner.base_text.clone()
+    pub fn base_text_buffer(&self) -> &Entity<language::Buffer> {
+        &self.inner.base_text
     }
 }
 

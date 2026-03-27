@@ -107,7 +107,11 @@ impl Vim {
                             if let Some(clipboard_selection) = clipboard_selections.get(ix) {
                                 let end_offset = start_offset + clipboard_selection.len;
                                 let text = text[start_offset..end_offset].to_string();
-                                start_offset = end_offset + 1;
+                                start_offset = if clipboard_selection.is_entire_line {
+                                    end_offset
+                                } else {
+                                    end_offset + 1
+                                };
                                 (text, Some(clipboard_selection.first_line_indent))
                             } else {
                                 ("".to_string(), first_selection_indent_column)
@@ -249,7 +253,7 @@ impl Vim {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.move_with(|map, selection| {
+                    s.move_with(&mut |map, selection| {
                         object.expand_selection(map, selection, around, None);
                     });
                 });
@@ -263,7 +267,7 @@ impl Vim {
                 editor.insert(&text, window, cx);
                 editor.set_clip_at_line_ends(true, cx);
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.move_with(|map, selection| {
+                    s.move_with(&mut |map, selection| {
                         selection.start = map.clip_point(selection.start, Bias::Left);
                         selection.end = selection.start
                     })
@@ -287,7 +291,7 @@ impl Vim {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.move_with(|map, selection| {
+                    s.move_with(&mut |map, selection| {
                         motion.expand_selection(
                             map,
                             selection,
@@ -307,7 +311,7 @@ impl Vim {
                 editor.insert(&text, window, cx);
                 editor.set_clip_at_line_ends(true, cx);
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.move_with(|map, selection| {
+                    s.move_with(&mut |map, selection| {
                         selection.start = map.clip_point(selection.start, Bias::Left);
                         selection.end = selection.start
                     })
@@ -1080,6 +1084,54 @@ mod test {
                 fish fish
                 two fisˇh
                 "},
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_paste_entire_line_from_editor_copy(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+                ˇline one
+                line two
+                line three"},
+            Mode::Normal,
+        );
+
+        // Simulate what the editor's do_copy produces for two entire-line selections:
+        // entire-line selections are NOT separated by an extra newline in the clipboard text.
+        let clipboard_text = "line one\nline two\n".to_string();
+        let clipboard_selections = vec![
+            editor::ClipboardSelection {
+                len: "line one\n".len(),
+                is_entire_line: true,
+                first_line_indent: 0,
+                file_path: None,
+                line_range: None,
+            },
+            editor::ClipboardSelection {
+                len: "line two\n".len(),
+                is_entire_line: true,
+                first_line_indent: 0,
+                file_path: None,
+                line_range: None,
+            },
+        ];
+        cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(
+            clipboard_text,
+            clipboard_selections,
+        ));
+
+        cx.simulate_keystrokes("p");
+        cx.assert_state(
+            indoc! {"
+                line one
+                ˇline one
+                line two
+                line two
+                line three"},
             Mode::Normal,
         );
     }

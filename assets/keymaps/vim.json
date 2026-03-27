@@ -429,6 +429,7 @@
       "escape": "vim::SwitchToHelixNormalMode",
       "i": "vim::HelixInsert",
       "a": "vim::HelixAppend",
+      "shift-a": "vim::HelixInsertEndOfLine",
       "ctrl-[": "editor::Cancel",
     },
   },
@@ -1116,6 +1117,14 @@
       "k": "menu::SelectPrevious",
       "g g": "menu::SelectFirst",
       "shift-g": "menu::SelectLast",
+    },
+  },
+  {
+    "context": "NotebookEditor > Editor && VimControl && vim_mode == normal",
+
+    "bindings": {
+      "j": "notebook::NotebookMoveDown",
+      "k": "notebook::NotebookMoveUp",
     },
   },
 ]

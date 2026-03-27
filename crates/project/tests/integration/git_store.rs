@@ -336,7 +336,7 @@ mod conflict_set_tests {
                     second_head: UnmergedStatusCode::Updated,
                 },
             );
-            // Cause the repository to emit MergeHeadsChanged.
+            // Cause the repository to update cached conflicts
             state.refs.insert("MERGE_HEAD".into(), "123".into())
         })
         .unwrap();
@@ -459,6 +459,168 @@ mod conflict_set_tests {
                 .range
                 .to_point(buffer.read(cx));
             assert_eq!(conflict_range, Point::new(1, 0)..Point::new(6, 0));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_conflict_updates_with_delayed_merge_head_conflicts(
+        executor: BackgroundExecutor,
+        cx: &mut TestAppContext,
+    ) {
+        zlog::init_test();
+        cx.update(|cx| {
+            settings::init(cx);
+        });
+
+        let initial_text = "
+            one
+            two
+            three
+            four
+        "
+        .unindent();
+
+        let conflicted_text = "
+            one
+            <<<<<<< HEAD
+            two
+            =======
+            TWO
+            >>>>>>> branch
+            three
+            four
+        "
+        .unindent();
+
+        let resolved_text = "
+            one
+            TWO
+            three
+            four
+        "
+        .unindent();
+
+        let fs = FakeFs::new(executor);
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "a.txt": initial_text,
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (git_store, buffer) = project.update(cx, |project, cx| {
+            (
+                project.git_store().clone(),
+                project.open_local_buffer(path!("/project/a.txt"), cx),
+            )
+        });
+        let buffer = buffer.await.unwrap();
+        let conflict_set = git_store.update(cx, |git_store, cx| {
+            git_store.open_conflict_set(buffer.clone(), cx)
+        });
+
+        let (events_tx, events_rx) = mpsc::channel::<ConflictSetUpdate>();
+        let _conflict_set_subscription = cx.update(|cx| {
+            cx.subscribe(&conflict_set, move |_, event, _| {
+                events_tx.send(event.clone()).ok();
+            })
+        });
+
+        cx.run_until_parked();
+        events_rx
+            .try_recv()
+            .expect_err("conflict set should start empty");
+
+        fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
+            state.refs.insert("MERGE_HEAD".into(), "123".into())
+        })
+        .unwrap();
+
+        cx.run_until_parked();
+        events_rx
+            .try_recv()
+            .expect_err("merge head without conflicted paths should not publish conflicts");
+        conflict_set.update(cx, |conflict_set, _| {
+            assert!(!conflict_set.has_conflict);
+            assert_eq!(conflict_set.snapshot.conflicts.len(), 0);
+        });
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_text(conflicted_text.clone(), cx);
+        });
+        fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
+            state.unmerged_paths.insert(
+                repo_path("a.txt"),
+                UnmergedStatus {
+                    first_head: UnmergedStatusCode::Updated,
+                    second_head: UnmergedStatusCode::Updated,
+                },
+            );
+        })
+        .unwrap();
+
+        cx.run_until_parked();
+        let update = events_rx
+            .try_recv()
+            .expect("conflicts should appear once conflicted paths are visible");
+        assert_eq!(update.old_range, 0..0);
+        assert_eq!(update.new_range, 0..1);
+        conflict_set.update(cx, |conflict_set, cx| {
+            assert!(conflict_set.has_conflict);
+            let conflict_range = conflict_set.snapshot().conflicts[0]
+                .range
+                .to_point(buffer.read(cx));
+            assert_eq!(conflict_range, Point::new(1, 0)..Point::new(6, 0));
+        });
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_text(resolved_text.clone(), cx);
+        });
+
+        cx.run_until_parked();
+        let update = events_rx
+            .try_recv()
+            .expect("resolved buffer text should clear visible conflict markers");
+        assert_eq!(update.old_range, 0..1);
+        assert_eq!(update.new_range, 0..0);
+        conflict_set.update(cx, |conflict_set, _| {
+            assert!(conflict_set.has_conflict);
+            assert_eq!(conflict_set.snapshot.conflicts.len(), 0);
+        });
+
+        fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
+            state.refs.insert("MERGE_HEAD".into(), "456".into());
+        })
+        .unwrap();
+
+        cx.run_until_parked();
+        events_rx.try_recv().expect_err(
+            "merge-head change without unmerged-path changes should not emit marker updates",
+        );
+        conflict_set.update(cx, |conflict_set, _| {
+            assert!(conflict_set.has_conflict);
+            assert_eq!(conflict_set.snapshot.conflicts.len(), 0);
+        });
+
+        fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
+            state.unmerged_paths.remove(&repo_path("a.txt"));
+            state.refs.remove("MERGE_HEAD");
+        })
+        .unwrap();
+
+        cx.run_until_parked();
+        let update = events_rx.try_recv().expect(
+            "status catch-up should emit a no-op update when clearing stale conflict state",
+        );
+        assert_eq!(update.old_range, 0..0);
+        assert_eq!(update.new_range, 0..0);
+        assert!(update.buffer_range.is_none());
+        conflict_set.update(cx, |conflict_set, _| {
+            assert!(!conflict_set.has_conflict);
+            assert_eq!(conflict_set.snapshot.conflicts.len(), 0);
         });
     }
 }
@@ -1010,5 +1172,329 @@ mod git_traversal {
             })
             .collect::<Vec<_>>();
         pretty_assertions::assert_eq!(found_statuses, expected_statuses);
+    }
+}
+
+mod git_worktrees {
+    use std::path::PathBuf;
+
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+    use serde_json::json;
+    use settings::SettingsStore;
+    use util::path;
+
+    fn init_test(cx: &mut gpui::TestAppContext) {
+        zlog::init_test();
+
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_git_worktrees_list_and_create(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project.repositories(cx).values().next().unwrap().clone()
+        });
+
+        let worktrees = cx
+            .update(|cx| repository.update(cx, |repository, _| repository.worktrees()))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(worktrees.len(), 1);
+        assert_eq!(worktrees[0].path, PathBuf::from(path!("/root")));
+
+        let worktree_directory = PathBuf::from(path!("/root"));
+        cx.update(|cx| {
+            repository.update(cx, |repository, _| {
+                repository.create_worktree(
+                    "feature-branch".to_string(),
+                    worktree_directory.clone(),
+                    Some("abc123".to_string()),
+                )
+            })
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+        cx.executor().run_until_parked();
+
+        let worktrees = cx
+            .update(|cx| repository.update(cx, |repository, _| repository.worktrees()))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(worktrees.len(), 2);
+        assert_eq!(worktrees[0].path, PathBuf::from(path!("/root")));
+        assert_eq!(worktrees[1].path, worktree_directory.join("feature-branch"));
+        assert_eq!(worktrees[1].ref_name.as_ref(), "refs/heads/feature-branch");
+        assert_eq!(worktrees[1].sha.as_ref(), "abc123");
+
+        cx.update(|cx| {
+            repository.update(cx, |repository, _| {
+                repository.create_worktree(
+                    "bugfix-branch".to_string(),
+                    worktree_directory.clone(),
+                    None,
+                )
+            })
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+        cx.executor().run_until_parked();
+
+        // List worktrees — should now have main + two created
+        let worktrees = cx
+            .update(|cx| repository.update(cx, |repository, _| repository.worktrees()))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(worktrees.len(), 3);
+
+        let feature_worktree = worktrees
+            .iter()
+            .find(|worktree| worktree.ref_name.as_ref() == "refs/heads/feature-branch")
+            .expect("should find feature-branch worktree");
+        assert_eq!(
+            feature_worktree.path,
+            worktree_directory.join("feature-branch")
+        );
+
+        let bugfix_worktree = worktrees
+            .iter()
+            .find(|worktree| worktree.ref_name.as_ref() == "refs/heads/bugfix-branch")
+            .expect("should find bugfix-branch worktree");
+        assert_eq!(
+            bugfix_worktree.path,
+            worktree_directory.join("bugfix-branch")
+        );
+        assert_eq!(bugfix_worktree.sha.as_ref(), "fake-sha");
+    }
+
+    use crate::Project;
+}
+
+mod trust_tests {
+    use collections::HashSet;
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+    use project::trusted_worktrees::*;
+
+    use serde_json::json;
+    use settings::SettingsStore;
+    use util::path;
+
+    use crate::Project;
+
+    fn init_test(cx: &mut TestAppContext) {
+        zlog::init_test();
+
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_repository_defaults_to_untrusted_without_trust_system(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "a.txt": "hello",
+            }),
+        )
+        .await;
+
+        // Create project without trust system — repos should default to untrusted.
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project.repositories(cx).values().next().unwrap().clone()
+        });
+
+        repository.read_with(cx, |repo, _| {
+            assert!(
+                !repo.is_trusted(),
+                "repository should default to untrusted when no trust system is initialized"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_multiple_repos_trust_with_single_worktree(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "a.txt": "hello",
+                "sub": {
+                    ".git": {},
+                    "b.txt": "world",
+                },
+            }),
+        )
+        .await;
+
+        cx.update(|cx| {
+            init(DbTrustedPaths::default(), cx);
+        });
+
+        let project =
+            Project::test_with_worktree_trust(fs.clone(), [path!("/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+        let worktree_id = worktree_store.read_with(cx, |store, cx| {
+            store.worktrees().next().unwrap().read(cx).id()
+        });
+
+        let repos = project.read_with(cx, |project, cx| {
+            project
+                .repositories(cx)
+                .values()
+                .cloned()
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(repos.len(), 2, "should have two repositories");
+        for repo in &repos {
+            repo.read_with(cx, |repo, _| {
+                assert!(
+                    !repo.is_trusted(),
+                    "all repos should be untrusted initially"
+                );
+            });
+        }
+
+        let trusted_worktrees = cx
+            .update(|cx| TrustedWorktrees::try_get_global(cx).expect("trust global should be set"));
+        trusted_worktrees.update(cx, |store, cx| {
+            store.trust(
+                &worktree_store,
+                HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
+                cx,
+            );
+        });
+        cx.executor().run_until_parked();
+
+        for repo in &repos {
+            repo.read_with(cx, |repo, _| {
+                assert!(
+                    repo.is_trusted(),
+                    "all repos should be trusted after worktree is trusted"
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
+    async fn test_repository_trust_restrict_trust_cycle(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "a.txt": "hello",
+            }),
+        )
+        .await;
+
+        cx.update(|cx| {
+            project::trusted_worktrees::init(DbTrustedPaths::default(), cx);
+        });
+
+        let project =
+            Project::test_with_worktree_trust(fs.clone(), [path!("/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+        let worktree_id = worktree_store.read_with(cx, |store, cx| {
+            store.worktrees().next().unwrap().read(cx).id()
+        });
+
+        let repository = project.read_with(cx, |project, cx| {
+            project.repositories(cx).values().next().unwrap().clone()
+        });
+
+        repository.read_with(cx, |repo, _| {
+            assert!(!repo.is_trusted(), "repository should start untrusted");
+        });
+
+        let trusted_worktrees = cx
+            .update(|cx| TrustedWorktrees::try_get_global(cx).expect("trust global should be set"));
+
+        trusted_worktrees.update(cx, |store, cx| {
+            store.trust(
+                &worktree_store,
+                HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
+                cx,
+            );
+        });
+        cx.executor().run_until_parked();
+
+        repository.read_with(cx, |repo, _| {
+            assert!(
+                repo.is_trusted(),
+                "repository should be trusted after worktree is trusted"
+            );
+        });
+
+        trusted_worktrees.update(cx, |store, cx| {
+            store.restrict(
+                worktree_store.downgrade(),
+                HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
+                cx,
+            );
+        });
+        cx.executor().run_until_parked();
+
+        repository.read_with(cx, |repo, _| {
+            assert!(
+                !repo.is_trusted(),
+                "repository should be untrusted after worktree is restricted"
+            );
+        });
+
+        trusted_worktrees.update(cx, |store, cx| {
+            store.trust(
+                &worktree_store,
+                HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
+                cx,
+            );
+        });
+        cx.executor().run_until_parked();
+
+        repository.read_with(cx, |repo, _| {
+            assert!(
+                repo.is_trusted(),
+                "repository should be trusted again after second trust"
+            );
+        });
     }
 }

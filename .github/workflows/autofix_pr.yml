@@ -22,8 +22,9 @@ jobs:
       with:
         clean: false
     - name: autofix_pr::run_autofix::checkout_pr
-      run: gh pr checkout ${{ inputs.pr_number }}
+      run: gh pr checkout "$PR_NUMBER"
       env:
+        PR_NUMBER: ${{ inputs.pr_number }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     - name: steps::setup_cargo_config
       run: |
@@ -98,14 +99,15 @@ jobs:
       with:
         app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
         private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
-    - name: steps::checkout_repo_with_token
+    - name: steps::checkout_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
         clean: false
         token: ${{ steps.get-app-token.outputs.token }}
     - name: autofix_pr::commit_changes::checkout_pr
-      run: gh pr checkout ${{ inputs.pr_number }}
+      run: gh pr checkout "$PR_NUMBER"
       env:
+        PR_NUMBER: ${{ inputs.pr_number }}
         GITHUB_TOKEN: ${{ steps.get-app-token.outputs.token }}
     - name: autofix_pr::download_patch_artifact
       uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53

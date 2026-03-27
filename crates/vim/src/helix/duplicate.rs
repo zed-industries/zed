@@ -20,8 +20,8 @@ impl Vim {
             times,
             window,
             cx,
-            |prev_point| *prev_point.row_mut() += 1,
-            |prev_range, map| prev_range.end.row() >= map.max_point().row(),
+            &|prev_point| *prev_point.row_mut() += 1,
+            &|prev_range, map| prev_range.end.row() >= map.max_point().row(),
             false,
         );
     }
@@ -38,8 +38,8 @@ impl Vim {
             times,
             window,
             cx,
-            |prev_point| *prev_point.row_mut() = prev_point.row().0.saturating_sub(1),
-            |prev_range, _| prev_range.start.row() == DisplayPoint::zero().row(),
+            &|prev_point| *prev_point.row_mut() = prev_point.row().0.saturating_sub(1),
+            &|prev_range, _| prev_range.start.row() == DisplayPoint::zero().row(),
             true,
         );
     }
@@ -49,8 +49,8 @@ impl Vim {
         times: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
-        advance_search: impl Fn(&mut DisplayPoint),
-        end_search: impl Fn(&Range<DisplayPoint>, &DisplaySnapshot) -> bool,
+        advance_search: &dyn Fn(&mut DisplayPoint),
+        end_search: &dyn Fn(&Range<DisplayPoint>, &DisplaySnapshot) -> bool,
         above: bool,
     ) {
         let times = times.unwrap_or(1);

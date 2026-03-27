@@ -28,7 +28,7 @@ const CONNECTION_INITIALIZE_QUERY: &str = sql!(
 
 const DB_INITIALIZE_QUERY: &str = sql!(
     PRAGMA journal_mode=WAL;
-    PRAGMA busy_timeout=1;
+    PRAGMA busy_timeout=500;
     PRAGMA case_sensitive_like=TRUE;
     PRAGMA synchronous=NORMAL;
 );

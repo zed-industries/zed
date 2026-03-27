@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use super::copilot_request_headers;
+use super::{ChatLocation, copilot_request_headers};
 use anyhow::{Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 pub use settings::OpenAiReasoningEffort as ReasoningEffort;
@@ -24,6 +24,7 @@ pub struct Request {
     pub reasoning: Option<ReasoningConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub include: Option<Vec<ResponseIncludable>>,
+    pub store: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -280,6 +281,7 @@ pub async fn stream_response(
     api_url: String,
     request: Request,
     is_user_initiated: bool,
+    location: ChatLocation,
 ) -> Result<BoxStream<'static, Result<StreamEvent>>> {
     let is_vision_request = request.input.iter().any(|item| match item {
         ResponseInputItem::Message {
@@ -295,13 +297,11 @@ pub async fn stream_response(
         HttpRequest::builder().method(Method::POST).uri(&api_url),
         &oauth_token,
         Some(is_user_initiated),
-    );
-
-    let request_builder = if is_vision_request {
-        request_builder.header("Copilot-Vision-Request", "true")
-    } else {
-        request_builder
-    };
+        Some(location),
+    )
+    .when(is_vision_request, |builder| {
+        builder.header("Copilot-Vision-Request", "true")
+    });
 
     let is_streaming = request.stream;
     let json = serde_json::to_string(&request)?;

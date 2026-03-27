@@ -20,7 +20,7 @@ use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
 };
-use util::command::new_smol_command;
+use util::command::new_command;
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
 
 enum DebugpyLaunchMode<'a> {
@@ -121,7 +121,7 @@ impl PythonDebugAdapter {
         std::fs::create_dir_all(&download_dir)?;
         let venv_python = self.base_venv_path(toolchain, delegate).await?;
 
-        let installation_succeeded = util::command::new_smol_command(venv_python.as_ref())
+        let installation_succeeded = util::command::new_command(venv_python.as_ref())
             .args([
                 "-m",
                 "pip",
@@ -259,7 +259,7 @@ impl PythonDebugAdapter {
                 };
 
                 let debug_adapter_path = paths::debug_adapters_dir().join(Self::DEBUG_ADAPTER_NAME.as_ref());
-                let output = util::command::new_smol_command(&base_python)
+                let output = util::command::new_command(&base_python)
                     .args(["-m", "venv", "zed_base_venv"])
                     .current_dir(
                         &debug_adapter_path,
@@ -308,7 +308,7 @@ impl PythonDebugAdapter {
             // Try to detect situations where `python3` exists but is not a real Python interpreter.
             // Notably, on fresh Windows installs, `python3` is a shim that opens the Microsoft Store app
             // when run with no arguments, and just fails otherwise.
-            let Some(output) = new_smol_command(&path)
+            let Some(output) = new_command(&path)
                 .args(["-c", "print(1 + 2)"])
                 .output()
                 .await

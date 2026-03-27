@@ -25,6 +25,7 @@ html5ever.workspace = true
 language.workspace = true
 linkify.workspace = true
 log.workspace = true
+markdown.workspace = true
 markup5ever_rcdom.workspace = true
 pretty_assertions.workspace = true
 pulldown-cmark.workspace = true
@@ -35,6 +36,7 @@ urlencoding.workspace = true
 util.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+mermaid-rs-renderer.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

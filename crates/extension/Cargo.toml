@@ -14,6 +14,7 @@ path = "src/extension.rs"
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+cloud_api_types.workspace = true
 collections.workspace = true
 dap.workspace = true
 fs.workspace = true

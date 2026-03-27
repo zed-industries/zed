@@ -2,6 +2,7 @@ name = "Go"
 grammar = "go"
 path_suffixes = ["go"]
 line_comments = ["// "]
+first_line_pattern = '^//.*\bgo run\b'
 autoclose_before = ";:.,=}])>"
 brackets = [
     { start = "{", end = "}", close = true, newline = true },

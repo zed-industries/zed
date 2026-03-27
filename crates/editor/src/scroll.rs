@@ -669,9 +669,9 @@ impl Editor {
                 editor
                     .update_in(cx, |editor, window, cx| {
                         editor.register_visible_buffers(cx);
+                        editor.colorize_brackets(false, cx);
                         editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                         editor.update_lsp_data(None, window, cx);
-                        editor.colorize_brackets(false, cx);
                     })
                     .ok();
             });

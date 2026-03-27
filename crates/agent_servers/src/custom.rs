@@ -3,11 +3,15 @@ use acp_thread::AgentConnection;
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result};
 use collections::HashSet;
+use credentials_provider::CredentialsProvider;
 use fs::Fs;
 use gpui::{App, AppContext as _, SharedString, Task};
-use project::agent_server_store::{AllAgentServersSettings, ExternalAgentServerName};
+use language_model::{ApiKey, EnvVar};
+use project::agent_server_store::{
+    AllAgentServersSettings, CLAUDE_AGENT_NAME, CODEX_NAME, ExternalAgentServerName, GEMINI_NAME,
+};
 use settings::{SettingsStore, update_settings_file};
-use std::{path::Path, rc::Rc, sync::Arc};
+use std::{rc::Rc, sync::Arc};
 use ui::IconName;
 
 /// A generic agent server implementation for custom user-defined agents
@@ -34,7 +38,6 @@ impl AgentServer for CustomAgentServer {
         let settings = cx.read_global(|settings: &SettingsStore, _| {
             settings
                 .get::<AllAgentServersSettings>(None)
-                .custom
                 .get(self.name().as_ref())
                 .cloned()
         });
@@ -52,7 +55,6 @@ impl AgentServer for CustomAgentServer {
         let settings = cx.read_global(|settings: &SettingsStore, _| {
             settings
                 .get::<AllAgentServersSettings>(None)
-                .custom
                 .get(self.name().as_ref())
                 .cloned()
         });
@@ -82,20 +84,12 @@ impl AgentServer for CustomAgentServer {
         let config_id = config_id.to_string();
         let value_id = value_id.to_string();
 
-        update_settings_file(fs, cx, move |settings, _| {
+        update_settings_file(fs, cx, move |settings, cx| {
             let settings = settings
                 .agent_servers
                 .get_or_insert_default()
-                .custom
                 .entry(name.to_string())
-                .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
-                    default_model: None,
-                    default_mode: None,
-                    env: Default::default(),
-                    favorite_models: Vec::new(),
-                    default_config_options: Default::default(),
-                    favorite_config_option_values: Default::default(),
-                });
+                .or_insert_with(|| default_settings_for_agent(&name, cx));
 
             match settings {
                 settings::CustomAgentServerSettings::Custom {
@@ -131,20 +125,12 @@ impl AgentServer for CustomAgentServer {
 
     fn set_default_mode(&self, mode_id: Option<acp::SessionModeId>, fs: Arc<dyn Fs>, cx: &mut App) {
         let name = self.name();
-        update_settings_file(fs, cx, move |settings, _| {
+        update_settings_file(fs, cx, move |settings, cx| {
             let settings = settings
                 .agent_servers
                 .get_or_insert_default()
-                .custom
                 .entry(name.to_string())
-                .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
-                    default_model: None,
-                    default_mode: None,
-                    env: Default::default(),
-                    favorite_models: Vec::new(),
-                    default_config_options: Default::default(),
-                    favorite_config_option_values: Default::default(),
-                });
+                .or_insert_with(|| default_settings_for_agent(&name, cx));
 
             match settings {
                 settings::CustomAgentServerSettings::Custom { default_mode, .. }
@@ -160,7 +146,6 @@ impl AgentServer for CustomAgentServer {
         let settings = cx.read_global(|settings: &SettingsStore, _| {
             settings
                 .get::<AllAgentServersSettings>(None)
-                .custom
                 .get(self.name().as_ref())
                 .cloned()
         });
@@ -172,20 +157,12 @@ impl AgentServer for CustomAgentServer {
 
     fn set_default_model(&self, model_id: Option<acp::ModelId>, fs: Arc<dyn Fs>, cx: &mut App) {
         let name = self.name();
-        update_settings_file(fs, cx, move |settings, _| {
+        update_settings_file(fs, cx, move |settings, cx| {
             let settings = settings
                 .agent_servers
                 .get_or_insert_default()
-                .custom
                 .entry(name.to_string())
-                .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
-                    default_model: None,
-                    default_mode: None,
-                    env: Default::default(),
-                    favorite_models: Vec::new(),
-                    default_config_options: Default::default(),
-                    favorite_config_option_values: Default::default(),
-                });
+                .or_insert_with(|| default_settings_for_agent(&name, cx));
 
             match settings {
                 settings::CustomAgentServerSettings::Custom { default_model, .. }
@@ -201,7 +178,6 @@ impl AgentServer for CustomAgentServer {
         let settings = cx.read_global(|settings: &SettingsStore, _| {
             settings
                 .get::<AllAgentServersSettings>(None)
-                .custom
                 .get(self.name().as_ref())
                 .cloned()
         });
@@ -225,20 +201,12 @@ impl AgentServer for CustomAgentServer {
         cx: &App,
     ) {
         let name = self.name();
-        update_settings_file(fs, cx, move |settings, _| {
+        update_settings_file(fs, cx, move |settings, cx| {
             let settings = settings
                 .agent_servers
                 .get_or_insert_default()
-                .custom
                 .entry(name.to_string())
-                .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
-                    default_model: None,
-                    default_mode: None,
-                    env: Default::default(),
-                    favorite_models: Vec::new(),
-                    default_config_options: Default::default(),
-                    favorite_config_option_values: Default::default(),
-                });
+                .or_insert_with(|| default_settings_for_agent(&name, cx));
 
             let favorite_models = match settings {
                 settings::CustomAgentServerSettings::Custom {
@@ -267,7 +235,6 @@ impl AgentServer for CustomAgentServer {
         let settings = cx.read_global(|settings: &SettingsStore, _| {
             settings
                 .get::<AllAgentServersSettings>(None)
-                .custom
                 .get(self.name().as_ref())
                 .cloned()
         });
@@ -287,20 +254,12 @@ impl AgentServer for CustomAgentServer {
         let name = self.name();
         let config_id = config_id.to_string();
         let value_id = value_id.map(|s| s.to_string());
-        update_settings_file(fs, cx, move |settings, _| {
+        update_settings_file(fs, cx, move |settings, cx| {
             let settings = settings
                 .agent_servers
                 .get_or_insert_default()
-                .custom
                 .entry(name.to_string())
-                .or_insert_with(|| settings::CustomAgentServerSettings::Extension {
-                    default_model: None,
-                    default_mode: None,
-                    env: Default::default(),
-                    favorite_models: Vec::new(),
-                    default_config_options: Default::default(),
-                    favorite_config_option_values: Default::default(),
-                });
+                .or_insert_with(|| default_settings_for_agent(&name, cx));
 
             match settings {
                 settings::CustomAgentServerSettings::Custom {
@@ -327,50 +286,38 @@ impl AgentServer for CustomAgentServer {
 
     fn connect(
         &self,
-        root_dir: Option<&Path>,
         delegate: AgentServerDelegate,
         cx: &mut App,
-    ) -> Task<Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>> {
+    ) -> Task<Result<Rc<dyn AgentConnection>>> {
         let name = self.name();
-        let root_dir = root_dir.map(|root_dir| root_dir.to_string_lossy().into_owned());
-        let is_remote = delegate.project.read(cx).is_via_remote_server();
+        let display_name = delegate
+            .store
+            .read(cx)
+            .agent_display_name(&ExternalAgentServerName(name.clone()))
+            .unwrap_or_else(|| name.clone());
         let default_mode = self.default_mode(cx);
         let default_model = self.default_model(cx);
-        let (default_config_options, is_registry_agent) =
-            cx.read_global(|settings: &SettingsStore, _| {
-                let agent_settings = settings
-                    .get::<AllAgentServersSettings>(None)
-                    .custom
-                    .get(self.name().as_ref());
-
-                let is_registry = agent_settings
-                    .map(|s| {
-                        matches!(
-                            s,
-                            project::agent_server_store::CustomAgentServerSettings::Registry { .. }
-                        )
-                    })
-                    .unwrap_or(false);
-
-                let config_options = agent_settings
-                    .map(|s| match s {
-                        project::agent_server_store::CustomAgentServerSettings::Custom {
-                            default_config_options,
-                            ..
-                        }
-                        | project::agent_server_store::CustomAgentServerSettings::Extension {
-                            default_config_options,
-                            ..
-                        }
-                        | project::agent_server_store::CustomAgentServerSettings::Registry {
-                            default_config_options,
-                            ..
-                        } => default_config_options.clone(),
-                    })
-                    .unwrap_or_default();
-
-                (config_options, is_registry)
-            });
+        let is_registry_agent = is_registry_agent(&name, cx);
+        let default_config_options = cx.read_global(|settings: &SettingsStore, _| {
+            settings
+                .get::<AllAgentServersSettings>(None)
+                .get(self.name().as_ref())
+                .map(|s| match s {
+                    project::agent_server_store::CustomAgentServerSettings::Custom {
+                        default_config_options,
+                        ..
+                    }
+                    | project::agent_server_store::CustomAgentServerSettings::Extension {
+                        default_config_options,
+                        ..
+                    }
+                    | project::agent_server_store::CustomAgentServerSettings::Registry {
+                        default_config_options,
+                        ..
+                    } => default_config_options.clone(),
+                })
+                .unwrap_or_default()
+        });
 
         if is_registry_agent {
             if let Some(registry_store) = project::AgentRegistryStore::try_global(cx) {
@@ -378,10 +325,37 @@ impl AgentServer for CustomAgentServer {
             }
         }
 
+        let mut extra_env = load_proxy_env(cx);
+        if delegate.store.read(cx).no_browser() {
+            extra_env.insert("NO_BROWSER".to_owned(), "1".to_owned());
+        }
+        if is_registry_agent {
+            match name.as_ref() {
+                CLAUDE_AGENT_NAME => {
+                    extra_env.insert("ANTHROPIC_API_KEY".into(), "".into());
+                }
+                CODEX_NAME => {
+                    if let Ok(api_key) = std::env::var("CODEX_API_KEY") {
+                        extra_env.insert("CODEX_API_KEY".into(), api_key);
+                    }
+                    if let Ok(api_key) = std::env::var("OPEN_AI_API_KEY") {
+                        extra_env.insert("OPEN_AI_API_KEY".into(), api_key);
+                    }
+                }
+                GEMINI_NAME => {
+                    extra_env.insert("SURFACE".to_owned(), "zed".to_owned());
+                }
+                _ => {}
+            }
+        }
         let store = delegate.store.downgrade();
-        let extra_env = load_proxy_env(cx);
         cx.spawn(async move |cx| {
-            let (command, root_dir, login) = store
+            if is_registry_agent && name.as_ref() == GEMINI_NAME {
+                if let Some(api_key) = cx.update(api_key_for_gemini_cli).await.ok() {
+                    extra_env.insert("GEMINI_API_KEY".into(), api_key);
+                }
+            }
+            let command = store
                 .update(cx, |store, cx| {
                     let agent = store
                         .get_external_agent(&ExternalAgentServerName(name.clone()))
@@ -389,9 +363,7 @@ impl AgentServer for CustomAgentServer {
                             format!("Custom agent server `{}` is not registered", name)
                         })?;
                     anyhow::Ok(agent.get_command(
-                        root_dir.as_deref(),
                         extra_env,
-                        delegate.status_tx,
                         delegate.new_version_available,
                         &mut cx.to_async(),
                     ))
@@ -399,20 +371,255 @@ impl AgentServer for CustomAgentServer {
                 .await?;
             let connection = crate::acp::connect(
                 name,
+                display_name,
                 command,
-                root_dir.as_ref(),
                 default_mode,
                 default_model,
                 default_config_options,
-                is_remote,
                 cx,
             )
             .await?;
-            Ok((connection, login))
+            Ok(connection)
         })
     }
 
     fn into_any(self: Rc<Self>) -> Rc<dyn std::any::Any> {
         self
+    }
+}
+
+fn api_key_for_gemini_cli(cx: &mut App) -> Task<Result<String>> {
+    let env_var = EnvVar::new("GEMINI_API_KEY".into()).or(EnvVar::new("GOOGLE_AI_API_KEY".into()));
+    if let Some(key) = env_var.value {
+        return Task::ready(Ok(key));
+    }
+    let credentials_provider = <dyn CredentialsProvider>::global(cx);
+    let api_url = google_ai::API_URL.to_string();
+    cx.spawn(async move |cx| {
+        Ok(
+            ApiKey::load_from_system_keychain(&api_url, credentials_provider.as_ref(), cx)
+                .await?
+                .key()
+                .to_string(),
+        )
+    })
+}
+
+fn is_registry_agent(name: &str, cx: &App) -> bool {
+    let is_previous_built_in = matches!(name, CLAUDE_AGENT_NAME | CODEX_NAME | GEMINI_NAME);
+    let is_in_registry = project::AgentRegistryStore::try_global(cx)
+        .map(|store| store.read(cx).agent(name).is_some())
+        .unwrap_or(false);
+    let is_settings_registry = cx.read_global(|settings: &SettingsStore, _| {
+        settings
+            .get::<AllAgentServersSettings>(None)
+            .get(name)
+            .is_some_and(|s| {
+                matches!(
+                    s,
+                    project::agent_server_store::CustomAgentServerSettings::Registry { .. }
+                )
+            })
+    });
+    is_previous_built_in || is_in_registry || is_settings_registry
+}
+
+fn default_settings_for_agent(name: &str, cx: &App) -> settings::CustomAgentServerSettings {
+    if is_registry_agent(name, cx) {
+        settings::CustomAgentServerSettings::Registry {
+            default_model: None,
+            default_mode: None,
+            env: Default::default(),
+            favorite_models: Vec::new(),
+            default_config_options: Default::default(),
+            favorite_config_option_values: Default::default(),
+        }
+    } else {
+        settings::CustomAgentServerSettings::Extension {
+            default_model: None,
+            default_mode: None,
+            env: Default::default(),
+            favorite_models: Vec::new(),
+            default_config_options: Default::default(),
+            favorite_config_option_values: Default::default(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use collections::HashMap;
+    use gpui::TestAppContext;
+    use project::agent_registry_store::{
+        AgentRegistryStore, RegistryAgent, RegistryAgentMetadata, RegistryNpxAgent,
+    };
+    use settings::Settings as _;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+    }
+
+    fn init_registry_with_agents(cx: &mut TestAppContext, agent_ids: &[&str]) {
+        let agents: Vec<RegistryAgent> = agent_ids
+            .iter()
+            .map(|id| {
+                let id = SharedString::from(id.to_string());
+                RegistryAgent::Npx(RegistryNpxAgent {
+                    metadata: RegistryAgentMetadata {
+                        id: id.clone(),
+                        name: id.clone(),
+                        description: SharedString::from(""),
+                        version: SharedString::from("1.0.0"),
+                        repository: None,
+                        icon_path: None,
+                    },
+                    package: id,
+                    args: Vec::new(),
+                    env: HashMap::default(),
+                })
+            })
+            .collect();
+        cx.update(|cx| {
+            AgentRegistryStore::init_test_global(cx, agents);
+        });
+    }
+
+    fn set_agent_server_settings(
+        cx: &mut TestAppContext,
+        entries: Vec<(&str, settings::CustomAgentServerSettings)>,
+    ) {
+        cx.update(|cx| {
+            AllAgentServersSettings::override_global(
+                project::agent_server_store::AllAgentServersSettings(
+                    entries
+                        .into_iter()
+                        .map(|(name, settings)| (name.to_string(), settings.into()))
+                        .collect(),
+                ),
+                cx,
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_previous_builtins_are_registry(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            assert!(is_registry_agent(CLAUDE_AGENT_NAME, cx));
+            assert!(is_registry_agent(CODEX_NAME, cx));
+            assert!(is_registry_agent(GEMINI_NAME, cx));
+        });
+    }
+
+    #[gpui::test]
+    fn test_unknown_agent_is_not_registry(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            assert!(!is_registry_agent("my-custom-agent", cx));
+        });
+    }
+
+    #[gpui::test]
+    fn test_agent_in_registry_store_is_registry(cx: &mut TestAppContext) {
+        init_test(cx);
+        init_registry_with_agents(cx, &["some-new-registry-agent"]);
+        cx.update(|cx| {
+            assert!(is_registry_agent("some-new-registry-agent", cx));
+            assert!(!is_registry_agent("not-in-registry", cx));
+        });
+    }
+
+    #[gpui::test]
+    fn test_agent_with_registry_settings_type_is_registry(cx: &mut TestAppContext) {
+        init_test(cx);
+        set_agent_server_settings(
+            cx,
+            vec![(
+                "agent-from-settings",
+                settings::CustomAgentServerSettings::Registry {
+                    env: HashMap::default(),
+                    default_mode: None,
+                    default_model: None,
+                    favorite_models: Vec::new(),
+                    default_config_options: HashMap::default(),
+                    favorite_config_option_values: HashMap::default(),
+                },
+            )],
+        );
+        cx.update(|cx| {
+            assert!(is_registry_agent("agent-from-settings", cx));
+        });
+    }
+
+    #[gpui::test]
+    fn test_agent_with_extension_settings_type_is_not_registry(cx: &mut TestAppContext) {
+        init_test(cx);
+        set_agent_server_settings(
+            cx,
+            vec![(
+                "my-extension-agent",
+                settings::CustomAgentServerSettings::Extension {
+                    env: HashMap::default(),
+                    default_mode: None,
+                    default_model: None,
+                    favorite_models: Vec::new(),
+                    default_config_options: HashMap::default(),
+                    favorite_config_option_values: HashMap::default(),
+                },
+            )],
+        );
+        cx.update(|cx| {
+            assert!(!is_registry_agent("my-extension-agent", cx));
+        });
+    }
+
+    #[gpui::test]
+    fn test_default_settings_for_builtin_agent(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            assert!(matches!(
+                default_settings_for_agent(CODEX_NAME, cx),
+                settings::CustomAgentServerSettings::Registry { .. }
+            ));
+            assert!(matches!(
+                default_settings_for_agent(CLAUDE_AGENT_NAME, cx),
+                settings::CustomAgentServerSettings::Registry { .. }
+            ));
+            assert!(matches!(
+                default_settings_for_agent(GEMINI_NAME, cx),
+                settings::CustomAgentServerSettings::Registry { .. }
+            ));
+        });
+    }
+
+    #[gpui::test]
+    fn test_default_settings_for_extension_agent(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            assert!(matches!(
+                default_settings_for_agent("some-extension-agent", cx),
+                settings::CustomAgentServerSettings::Extension { .. }
+            ));
+        });
+    }
+
+    #[gpui::test]
+    fn test_default_settings_for_agent_in_registry(cx: &mut TestAppContext) {
+        init_test(cx);
+        init_registry_with_agents(cx, &["new-registry-agent"]);
+        cx.update(|cx| {
+            assert!(matches!(
+                default_settings_for_agent("new-registry-agent", cx),
+                settings::CustomAgentServerSettings::Registry { .. }
+            ));
+            assert!(matches!(
+                default_settings_for_agent("not-in-registry", cx),
+                settings::CustomAgentServerSettings::Extension { .. }
+            ));
+        });
     }
 }

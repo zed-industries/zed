@@ -1,3 +1,8 @@
+---
+title: XML
+description: "Configure XML language support in Zed, including language servers, formatting, and debugging."
+---
+
 # XML
 
 XML support is available through the [XML extension](https://github.com/sweetppro/zed-xml/).

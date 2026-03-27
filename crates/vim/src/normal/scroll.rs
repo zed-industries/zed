@@ -157,7 +157,7 @@ fn scroll_editor(
         window,
         cx,
         |s| {
-            s.move_with(|map, selection| {
+            s.move_with(&mut |map, selection| {
                 // TODO: Improve the logic and function calls below to be dependent on
                 // the `amount`. If the amount is vertical, we don't care about
                 // columns, while if it's horizontal, we don't care about rows,

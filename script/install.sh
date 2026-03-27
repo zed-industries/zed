@@ -129,7 +129,13 @@ linux() {
 
     # Copy .desktop file
     desktop_file_path="$HOME/.local/share/applications/${appid}.desktop"
-    cp "$HOME/.local/zed$suffix.app/share/applications/zed$suffix.desktop" "${desktop_file_path}"
+    src_dir="$HOME/.local/zed$suffix.app/share/applications"
+    if [ -f "$src_dir/${appid}.desktop" ]; then
+        cp "$src_dir/${appid}.desktop" "${desktop_file_path}"
+    else
+        # Fallback for older tarballs
+        cp "$src_dir/zed$suffix.desktop" "${desktop_file_path}"
+    fi
     sed -i "s|Icon=zed|Icon=$HOME/.local/zed$suffix.app/share/icons/hicolor/512x512/apps/zed.png|g" "${desktop_file_path}"
     sed -i "s|Exec=zed|Exec=$HOME/.local/zed$suffix.app/bin/zed|g" "${desktop_file_path}"
 }

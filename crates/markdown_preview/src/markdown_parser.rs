@@ -7,8 +7,9 @@ use collections::FxHashMap;
 use gpui::{DefiniteLength, FontWeight, px, relative};
 use html5ever::{ParseOpts, local_name, parse_document, tendril::TendrilSink};
 use language::LanguageRegistry;
+use markdown::parser::PARSE_OPTIONS;
 use markup5ever_rcdom::RcDom;
-use pulldown_cmark::{Alignment, Event, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{Alignment, Event, Parser, Tag, TagEnd};
 use std::{
     cell::RefCell, collections::HashMap, mem, ops::Range, path::PathBuf, rc::Rc, sync::Arc, vec,
 };
@@ -19,10 +20,7 @@ pub async fn parse_markdown(
     file_location_directory: Option<PathBuf>,
     language_registry: Option<Arc<LanguageRegistry>>,
 ) -> ParsedMarkdown {
-    let mut options = Options::all();
-    options.remove(pulldown_cmark::Options::ENABLE_DEFINITION_LIST);
-
-    let parser = Parser::new_ext(markdown_input, options);
+    let parser = Parser::new_ext(markdown_input, PARSE_OPTIONS);
     let parser = MarkdownParser::new(
         parser.into_offset_iter().collect(),
         file_location_directory,
@@ -196,21 +194,29 @@ impl<'a> MarkdownParser<'a> {
                     Some(vec![ParsedMarkdownElement::BlockQuote(block_quote)])
                 }
                 Tag::CodeBlock(kind) => {
-                    let language = match kind {
-                        pulldown_cmark::CodeBlockKind::Indented => None,
+                    let (language, scale) = match kind {
+                        pulldown_cmark::CodeBlockKind::Indented => (None, None),
                         pulldown_cmark::CodeBlockKind::Fenced(language) => {
                             if language.is_empty() {
-                                None
+                                (None, None)
                             } else {
-                                Some(language.to_string())
+                                let parts: Vec<&str> = language.split_whitespace().collect();
+                                let lang = parts.first().map(|s| s.to_string());
+                                let scale = parts.get(1).and_then(|s| s.parse::<u32>().ok());
+                                (lang, scale)
                             }
                         }
                     };
 
                     self.cursor += 1;
 
-                    let code_block = self.parse_code_block(language).await?;
-                    Some(vec![ParsedMarkdownElement::CodeBlock(code_block)])
+                    if language.as_deref() == Some("mermaid") {
+                        let mermaid_diagram = self.parse_mermaid_diagram(scale).await?;
+                        Some(vec![ParsedMarkdownElement::MermaidDiagram(mermaid_diagram)])
+                    } else {
+                        let code_block = self.parse_code_block(language).await?;
+                        Some(vec![ParsedMarkdownElement::CodeBlock(code_block)])
+                    }
                 }
                 Tag::HtmlBlock => {
                     self.cursor += 1;
@@ -803,6 +809,50 @@ impl<'a> MarkdownParser<'a> {
             contents: code.into(),
             language,
             highlights,
+        })
+    }
+
+    async fn parse_mermaid_diagram(
+        &mut self,
+        scale: Option<u32>,
+    ) -> Option<ParsedMarkdownMermaidDiagram> {
+        let Some((_event, source_range)) = self.previous() else {
+            return None;
+        };
+
+        let source_range = source_range.clone();
+        let mut code = String::new();
+
+        while !self.eof() {
+            let Some((current, _source_range)) = self.current() else {
+                break;
+            };
+
+            match current {
+                Event::Text(text) => {
+                    code.push_str(text);
+                    self.cursor += 1;
+                }
+                Event::End(TagEnd::CodeBlock) => {
+                    self.cursor += 1;
+                    break;
+                }
+                _ => {
+                    break;
+                }
+            }
+        }
+
+        code = code.strip_suffix('\n').unwrap_or(&code).to_string();
+
+        let scale = scale.unwrap_or(100).clamp(10, 500);
+
+        Some(ParsedMarkdownMermaidDiagram {
+            source_range,
+            contents: ParsedMarkdownMermaidDiagramContents {
+                contents: code.into(),
+                scale,
+            },
         })
     }
 
@@ -3020,6 +3070,26 @@ More text
                     0..20
                 ),
                 p("More text", 21..31)
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_dollar_signs_are_plain_text() {
+        // Dollar signs should be preserved as plain text, not treated as math delimiters.
+        // Regression test for https://github.com/zed-industries/zed/issues/50170
+        let parsed = parse("$100$ per unit").await;
+        assert_eq!(parsed.children, vec![p("$100$ per unit", 0..14)]);
+    }
+
+    #[gpui::test]
+    async fn test_dollar_signs_in_list_items() {
+        let parsed = parse("- $18,000 budget\n- $20,000 budget\n").await;
+        assert_eq!(
+            parsed.children,
+            vec![
+                list_item(0..16, 1, Unordered, vec![p("$18,000 budget", 2..16)]),
+                list_item(17..33, 1, Unordered, vec![p("$20,000 budget", 19..33)]),
             ]
         );
     }

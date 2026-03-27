@@ -1,3 +1,8 @@
+---
+title: PowerShell
+description: "Configure PowerShell language support in Zed, including language servers, formatting, and debugging."
+---
+
 # PowerShell
 
 PowerShell language support in Zed is provided by the community-maintained [Zed PowerShell extension](https://github.com/wingyplus/zed-powershell). Please report issues to: [github.com/wingyplus/zed-powershell/issues](https://github.com/wingyplus/zed-powershell/issues)

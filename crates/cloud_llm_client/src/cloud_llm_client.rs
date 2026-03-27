@@ -43,6 +43,10 @@ pub const MINIMUM_REQUIRED_VERSION_HEADER_NAME: &str = "x-zed-minimum-required-v
 pub const CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME: &str =
     "x-zed-client-supports-status-messages";
 
+/// The name of the header used by the client to indicate to the server that it supports receiving a "stream_ended" request completion status.
+pub const CLIENT_SUPPORTS_STATUS_STREAM_ENDED_HEADER_NAME: &str =
+    "x-zed-client-supports-stream-ended-request-completion-status";
+
 /// The name of the header used by the server to indicate to the client that it supports sending status messages.
 pub const SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME: &str =
     "x-zed-server-supports-status-messages";
@@ -138,6 +142,8 @@ pub struct PredictEditsResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AcceptEditPredictionBody {
     pub request_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_version: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -156,6 +162,8 @@ pub struct EditPredictionRejection {
     #[serde(default)]
     pub reason: EditPredictionRejectReason,
     pub was_shown: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_version: Option<String>,
 }
 
 #[derive(Default, Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -218,11 +226,10 @@ pub enum CompletionRequestStatus {
         /// Retry duration in seconds.
         retry_after: Option<f64>,
     },
-    UsageUpdated {
-        amount: usize,
-        limit: UsageLimit,
-    },
-    ToolUseLimitReached,
+    /// The cloud sends a StreamEnded message when the stream from the LLM provider finishes.
+    StreamEnded,
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -299,6 +306,8 @@ pub struct LanguageModel {
     pub supports_tools: bool,
     pub supports_images: bool,
     pub supports_thinking: bool,
+    #[serde(default)]
+    pub supports_fast_mode: bool,
     pub supported_effort_levels: Vec<SupportedEffortLevel>,
     #[serde(default)]
     pub supports_streaming_tools: bool,

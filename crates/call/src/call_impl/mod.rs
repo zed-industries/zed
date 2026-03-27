@@ -7,25 +7,265 @@ use client::{ChannelId, Client, TypedEnvelope, User, UserStore, ZED_ALWAYS_ACTIV
 use collections::HashSet;
 use futures::{Future, FutureExt, channel::oneshot, future::Shared};
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, Subscription, Task,
-    WeakEntity,
+    AnyView, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task,
+    WeakEntity, Window,
 };
 use postage::watch;
 use project::Project;
 use room::Event;
+use settings::Settings;
 use std::sync::Arc;
+use workspace::{
+    ActiveCallEvent, AnyActiveCall, GlobalAnyActiveCall, Pane, RemoteCollaborator, SharedScreen,
+    Workspace,
+};
 
 pub use livekit_client::{RemoteVideoTrack, RemoteVideoTrackView, RemoteVideoTrackViewEvent};
-pub use participant::ParticipantLocation;
 pub use room::Room;
 
-struct GlobalActiveCall(Entity<ActiveCall>);
-
-impl Global for GlobalActiveCall {}
+use crate::call_settings::CallSettings;
 
 pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     let active_call = cx.new(|cx| ActiveCall::new(client, user_store, cx));
-    cx.set_global(GlobalActiveCall(active_call));
+    cx.set_global(GlobalAnyActiveCall(Arc::new(ActiveCallEntity(active_call))))
+}
+
+#[derive(Clone)]
+struct ActiveCallEntity(Entity<ActiveCall>);
+
+impl AnyActiveCall for ActiveCallEntity {
+    fn entity(&self) -> gpui::AnyEntity {
+        self.0.clone().into_any()
+    }
+
+    fn is_in_room(&self, cx: &App) -> bool {
+        self.0.read(cx).room().is_some()
+    }
+
+    fn room_id(&self, cx: &App) -> Option<u64> {
+        Some(self.0.read(cx).room()?.read(cx).id())
+    }
+
+    fn channel_id(&self, cx: &App) -> Option<ChannelId> {
+        self.0.read(cx).room()?.read(cx).channel_id()
+    }
+
+    fn hang_up(&self, cx: &mut App) -> Task<Result<()>> {
+        self.0.update(cx, |this, cx| this.hang_up(cx))
+    }
+
+    fn unshare_project(&self, project: Entity<Project>, cx: &mut App) -> Result<()> {
+        self.0
+            .update(cx, |this, cx| this.unshare_project(project, cx))
+    }
+
+    fn remote_participant_for_peer_id(
+        &self,
+        peer_id: proto::PeerId,
+        cx: &App,
+    ) -> Option<workspace::RemoteCollaborator> {
+        let room = self.0.read(cx).room()?.read(cx);
+        let participant = room.remote_participant_for_peer_id(peer_id)?;
+        Some(RemoteCollaborator {
+            user: participant.user.clone(),
+            peer_id: participant.peer_id,
+            location: participant.location,
+            participant_index: participant.participant_index,
+        })
+    }
+
+    fn is_sharing_project(&self, cx: &App) -> bool {
+        self.0
+            .read(cx)
+            .room()
+            .map_or(false, |room| room.read(cx).is_sharing_project())
+    }
+
+    fn has_remote_participants(&self, cx: &App) -> bool {
+        self.0.read(cx).room().map_or(false, |room| {
+            !room.read(cx).remote_participants().is_empty()
+        })
+    }
+
+    fn local_participant_is_guest(&self, cx: &App) -> bool {
+        self.0
+            .read(cx)
+            .room()
+            .map_or(false, |room| room.read(cx).local_participant_is_guest())
+    }
+
+    fn client(&self, cx: &App) -> Arc<Client> {
+        self.0.read(cx).client()
+    }
+
+    fn share_on_join(&self, cx: &App) -> bool {
+        CallSettings::get_global(cx).share_on_join
+    }
+
+    fn join_channel(&self, channel_id: ChannelId, cx: &mut App) -> Task<Result<bool>> {
+        let task = self
+            .0
+            .update(cx, |this, cx| this.join_channel(channel_id, cx));
+        cx.spawn(async move |_cx| {
+            let result = task.await?;
+            Ok(result.is_some())
+        })
+    }
+
+    fn room_update_completed(&self, cx: &mut App) -> Task<()> {
+        let Some(room) = self.0.read(cx).room().cloned() else {
+            return Task::ready(());
+        };
+        let future = room.update(cx, |room, _cx| room.room_update_completed());
+        cx.spawn(async move |_cx| {
+            future.await;
+        })
+    }
+
+    fn most_active_project(&self, cx: &App) -> Option<(u64, u64)> {
+        let room = self.0.read(cx).room()?;
+        room.read(cx).most_active_project(cx)
+    }
+
+    fn share_project(&self, project: Entity<Project>, cx: &mut App) -> Task<Result<u64>> {
+        self.0
+            .update(cx, |this, cx| this.share_project(project, cx))
+    }
+
+    fn join_project(
+        &self,
+        project_id: u64,
+        language_registry: Arc<language::LanguageRegistry>,
+        fs: Arc<dyn fs::Fs>,
+        cx: &mut App,
+    ) -> Task<Result<Entity<Project>>> {
+        let Some(room) = self.0.read(cx).room().cloned() else {
+            return Task::ready(Err(anyhow::anyhow!("not in a call")));
+        };
+        room.update(cx, |room, cx| {
+            room.join_project(project_id, language_registry, fs, cx)
+        })
+    }
+
+    fn peer_id_for_user_in_room(&self, user_id: u64, cx: &App) -> Option<proto::PeerId> {
+        let room = self.0.read(cx).room()?.read(cx);
+        room.remote_participants()
+            .values()
+            .find(|p| p.user.id == user_id)
+            .map(|p| p.peer_id)
+    }
+
+    fn subscribe(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+        handler: Box<
+            dyn Fn(&mut Workspace, &ActiveCallEvent, &mut Window, &mut Context<Workspace>),
+        >,
+    ) -> Subscription {
+        cx.subscribe_in(
+            &self.0,
+            window,
+            move |workspace, _, event: &room::Event, window, cx| {
+                let mapped = match event {
+                    room::Event::ParticipantLocationChanged { participant_id } => {
+                        Some(ActiveCallEvent::ParticipantLocationChanged {
+                            participant_id: *participant_id,
+                        })
+                    }
+                    room::Event::RemoteVideoTracksChanged { participant_id } => {
+                        Some(ActiveCallEvent::RemoteVideoTracksChanged {
+                            participant_id: *participant_id,
+                        })
+                    }
+                    _ => None,
+                };
+                if let Some(event) = mapped {
+                    handler(workspace, &event, window, cx);
+                }
+            },
+        )
+    }
+
+    fn create_shared_screen(
+        &self,
+        peer_id: client::proto::PeerId,
+        pane: &Entity<Pane>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Entity<workspace::SharedScreen>> {
+        let room = self.0.read(cx).room()?.clone();
+        let participant = room.read(cx).remote_participant_for_peer_id(peer_id)?;
+        let track = participant.video_tracks.values().next()?.clone();
+        let user = participant.user.clone();
+
+        for item in pane.read(cx).items_of_type::<SharedScreen>() {
+            if item.read(cx).peer_id == peer_id {
+                return Some(item);
+            }
+        }
+
+        Some(cx.new(|cx: &mut Context<SharedScreen>| {
+            let my_sid = track.sid();
+            cx.subscribe(
+                &room,
+                move |_: &mut SharedScreen,
+                      _: Entity<Room>,
+                      ev: &room::Event,
+                      cx: &mut Context<SharedScreen>| {
+                    if let room::Event::RemoteVideoTrackUnsubscribed { sid } = ev
+                        && *sid == my_sid
+                    {
+                        cx.emit(workspace::shared_screen::Event::Close);
+                    }
+                },
+            )
+            .detach();
+
+            cx.observe_release(
+                &room,
+                |_: &mut SharedScreen, _: &mut Room, cx: &mut Context<SharedScreen>| {
+                    cx.emit(workspace::shared_screen::Event::Close);
+                },
+            )
+            .detach();
+
+            let view = cx.new(|cx| RemoteVideoTrackView::new(track.clone(), window, cx));
+            cx.subscribe(
+                &view,
+                |_: &mut SharedScreen,
+                 _: Entity<RemoteVideoTrackView>,
+                 ev: &RemoteVideoTrackViewEvent,
+                 cx: &mut Context<SharedScreen>| match ev {
+                    RemoteVideoTrackViewEvent::Close => {
+                        cx.emit(workspace::shared_screen::Event::Close);
+                    }
+                },
+            )
+            .detach();
+
+            pub(super) fn clone_remote_video_track_view(
+                view: &AnyView,
+                window: &mut Window,
+                cx: &mut App,
+            ) -> AnyView {
+                let view = view
+                    .clone()
+                    .downcast::<RemoteVideoTrackView>()
+                    .expect("SharedScreen view must be a RemoteVideoTrackView");
+                let cloned = view.update(cx, |view, cx| view.clone(window, cx));
+                AnyView::from(cloned)
+            }
+
+            SharedScreen::new(
+                peer_id,
+                user,
+                AnyView::from(view),
+                clone_remote_video_track_view,
+                cx,
+            )
+        }))
+    }
 }
 
 pub struct OneAtATime {
@@ -152,12 +392,12 @@ impl ActiveCall {
     }
 
     pub fn global(cx: &App) -> Entity<Self> {
-        cx.global::<GlobalActiveCall>().0.clone()
+        Self::try_global(cx).unwrap()
     }
 
     pub fn try_global(cx: &App) -> Option<Entity<Self>> {
-        cx.try_global::<GlobalActiveCall>()
-            .map(|call| call.0.clone())
+        let any = cx.try_global::<GlobalAnyActiveCall>()?;
+        any.0.entity().downcast::<Self>().ok()
     }
 
     pub fn invite(
