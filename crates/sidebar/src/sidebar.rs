@@ -6025,101 +6025,6 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_linked_worktree_threads_not_duplicated_across_groups(cx: &mut TestAppContext) {
-        // When a multi-root workspace (e.g. [/other, /project]) shares a
-        // repo with a single-root workspace (e.g. [/project]), linked
-        // worktree threads from the shared repo should only appear under
-        // the dedicated group [project], not under [other, project].
-        init_test(cx);
-        let fs = FakeFs::new(cx.executor());
-
-        // Two independent repos, each with their own git history.
-        fs.insert_tree(
-            "/project",
-            serde_json::json!({
-                ".git": {
-                    "worktrees": {
-                        "feature-a": {
-                            "commondir": "../../",
-                            "HEAD": "ref: refs/heads/feature-a",
-                        },
-                    },
-                },
-                "src": {},
-            }),
-        )
-        .await;
-        fs.insert_tree(
-            "/wt-feature-a",
-            serde_json::json!({
-                ".git": "gitdir: /project/.git/worktrees/feature-a",
-                "src": {},
-            }),
-        )
-        .await;
-        fs.insert_tree(
-            "/other",
-            serde_json::json!({
-                ".git": {},
-                "src": {},
-            }),
-        )
-        .await;
-
-        // Register the linked worktree in the main repo.
-        fs.with_git_state(std::path::Path::new("/project/.git"), false, |state| {
-            state.worktrees.push(git::repository::Worktree {
-                path: std::path::PathBuf::from("/wt-feature-a"),
-                ref_name: Some("refs/heads/feature-a".into()),
-                sha: "aaa".into(),
-            });
-        })
-        .unwrap();
-
-        cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
-
-        // Workspace 1: just /project.
-        let project_only = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
-        project_only
-            .update(cx, |p, cx| p.git_scans_complete(cx))
-            .await;
-
-        // Workspace 2: /other and /project together (multi-root).
-        let multi_root =
-            project::Project::test(fs.clone(), ["/other".as_ref(), "/project".as_ref()], cx).await;
-        multi_root
-            .update(cx, |p, cx| p.git_scans_complete(cx))
-            .await;
-
-        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
-            MultiWorkspace::test_new(project_only.clone(), window, cx)
-        });
-        multi_workspace.update_in(cx, |mw, window, cx| {
-            mw.test_add_workspace(multi_root.clone(), window, cx);
-        });
-        let sidebar = setup_sidebar(&multi_workspace, cx);
-
-        // Save a thread under the linked worktree path.
-        let wt_paths = PathList::new(&[std::path::PathBuf::from("/wt-feature-a")]);
-        save_named_thread_metadata("wt-thread", "Worktree Thread", &wt_paths, cx).await;
-
-        multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
-        cx.run_until_parked();
-
-        // The thread should appear only under [project] (the dedicated
-        // group for the /project repo), not under [other, project].
-        assert_eq!(
-            visible_entries_as_strings(&sidebar, cx),
-            vec![
-                "v [project]",
-                "  Worktree Thread {wt-feature-a}",
-                "v [other, project]",
-                "  [+ New Thread]",
-            ]
-        );
-    }
-
-    #[gpui::test]
     async fn test_multi_worktree_thread_shows_multiple_chips(cx: &mut TestAppContext) {
         // A thread created in a workspace with roots from different git
         // worktrees should show a chip for each distinct worktree name.
@@ -7571,6 +7476,101 @@ mod tests {
             entries_after.iter().any(|s| s.contains("{wt-feature-a}")),
             "T1 should still carry its linked-worktree chip after archiving T2: {:?}",
             entries_after
+        );
+    }
+
+    #[gpui::test]
+    async fn test_linked_worktree_threads_not_duplicated_across_groups(cx: &mut TestAppContext) {
+        // When a multi-root workspace (e.g. [/other, /project]) shares a
+        // repo with a single-root workspace (e.g. [/project]), linked
+        // worktree threads from the shared repo should only appear under
+        // the dedicated group [project], not under [other, project].
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        // Two independent repos, each with their own git history.
+        fs.insert_tree(
+            "/project",
+            serde_json::json!({
+                ".git": {
+                    "worktrees": {
+                        "feature-a": {
+                            "commondir": "../../",
+                            "HEAD": "ref: refs/heads/feature-a",
+                        },
+                    },
+                },
+                "src": {},
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            "/wt-feature-a",
+            serde_json::json!({
+                ".git": "gitdir: /project/.git/worktrees/feature-a",
+                "src": {},
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            "/other",
+            serde_json::json!({
+                ".git": {},
+                "src": {},
+            }),
+        )
+        .await;
+
+        // Register the linked worktree in the main repo.
+        fs.with_git_state(std::path::Path::new("/project/.git"), false, |state| {
+            state.worktrees.push(git::repository::Worktree {
+                path: std::path::PathBuf::from("/wt-feature-a"),
+                ref_name: Some("refs/heads/feature-a".into()),
+                sha: "aaa".into(),
+            });
+        })
+        .unwrap();
+
+        cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+        // Workspace 1: just /project.
+        let project_only = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+        project_only
+            .update(cx, |p, cx| p.git_scans_complete(cx))
+            .await;
+
+        // Workspace 2: /other and /project together (multi-root).
+        let multi_root =
+            project::Project::test(fs.clone(), ["/other".as_ref(), "/project".as_ref()], cx).await;
+        multi_root
+            .update(cx, |p, cx| p.git_scans_complete(cx))
+            .await;
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            MultiWorkspace::test_new(project_only.clone(), window, cx)
+        });
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.test_add_workspace(multi_root.clone(), window, cx);
+        });
+        let sidebar = setup_sidebar(&multi_workspace, cx);
+
+        // Save a thread under the linked worktree path.
+        let wt_paths = PathList::new(&[std::path::PathBuf::from("/wt-feature-a")]);
+        save_named_thread_metadata("wt-thread", "Worktree Thread", &wt_paths, cx).await;
+
+        multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
+        cx.run_until_parked();
+
+        // The thread should appear only under [project] (the dedicated
+        // group for the /project repo), not under [other, project].
+        assert_eq!(
+            visible_entries_as_strings(&sidebar, cx),
+            vec![
+                "v [project]",
+                "  Worktree Thread {wt-feature-a}",
+                "v [other, project]",
+                "  [+ New Thread]",
+            ]
         );
     }
 }
