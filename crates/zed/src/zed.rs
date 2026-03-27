@@ -2226,9 +2226,7 @@ pub(crate) fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &mut A
                 match load_target {
                     LoadTarget::Theme(theme_path) => {
                         if let Some(bytes) = fs.load_bytes(&theme_path).await.log_err()
-                            && load_user_theme(&*theme_registry, &bytes)
-                                .log_err()
-                                .is_some()
+                            && load_user_theme(theme_registry, &bytes).log_err().is_some()
                         {
                             reload_tasks.lock().push(ReloadTarget::Theme);
                         }

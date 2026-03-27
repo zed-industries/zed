@@ -1796,7 +1796,7 @@ fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut App) {
                     continue;
                 };
 
-                load_user_theme(&*theme_registry, &bytes).log_err();
+                load_user_theme(&theme_registry, &bytes).log_err();
             }
 
             cx.update(theme_settings::reload_theme);
@@ -1819,9 +1819,7 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut App) {
                 if fs.metadata(&event.path).await.ok().flatten().is_some() {
                     let theme_registry = cx.update(|cx| ThemeRegistry::global(cx));
                     if let Some(bytes) = fs.load_bytes(&event.path).await.log_err()
-                        && load_user_theme(&*theme_registry, &bytes)
-                            .log_err()
-                            .is_some()
+                        && load_user_theme(&theme_registry, &bytes).log_err().is_some()
                     {
                         cx.update(theme_settings::reload_theme);
                     }
