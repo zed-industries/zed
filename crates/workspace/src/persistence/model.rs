@@ -10,11 +10,12 @@ use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use gpui::{AsyncWindowContext, Entity, WeakEntity};
+use gpui::{AsyncWindowContext, Entity, WeakEntity, WindowId};
 
 use language::{Toolchain, ToolchainScope};
 use project::{Project, debugger::breakpoint_store::SourceBreakpoint};
 use remote::RemoteConnectionOptions;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -48,6 +49,32 @@ impl SerializedWorkspaceLocation {
     }
 }
 
+/// A workspace entry from a previous session, containing all the info needed
+/// to restore it including which window it belonged to (for MultiWorkspace grouping).
+#[derive(Debug, PartialEq, Clone)]
+pub struct SessionWorkspace {
+    pub workspace_id: WorkspaceId,
+    pub location: SerializedWorkspaceLocation,
+    pub paths: PathList,
+    pub window_id: Option<WindowId>,
+}
+
+/// Per-window state for a MultiWorkspace, persisted to KVP.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct MultiWorkspaceState {
+    pub active_workspace_id: Option<WorkspaceId>,
+    pub sidebar_open: bool,
+}
+
+/// The serialized state of a single MultiWorkspace window from a previous session:
+/// all workspaces that shared the window, which one was active, and whether the
+/// sidebar was open.
+#[derive(Debug, Clone)]
+pub struct SerializedMultiWorkspace {
+    pub workspaces: Vec<SessionWorkspace>,
+    pub state: MultiWorkspaceState,
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) struct SerializedWorkspace {
     pub(crate) id: WorkspaceId,
@@ -64,7 +91,7 @@ pub(crate) struct SerializedWorkspace {
     pub(crate) window_id: Option<u64>,
 }
 
-#[derive(Debug, PartialEq, Clone, Default)]
+#[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize)]
 pub struct DockStructure {
     pub(crate) left: DockData,
     pub(crate) right: DockData,
@@ -114,7 +141,7 @@ impl Bind for DockStructure {
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Default)]
+#[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize)]
 pub struct DockData {
     pub(crate) visible: bool,
     pub(crate) active_panel: Option<String>,

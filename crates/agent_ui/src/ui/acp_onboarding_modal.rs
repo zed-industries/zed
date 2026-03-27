@@ -1,8 +1,8 @@
-use client::zed_urls;
 use gpui::{
     ClickEvent, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, MouseDownEvent, Render,
     linear_color_stop, linear_gradient,
 };
+use project::agent_server_store::GEMINI_NAME;
 use ui::{TintColor, Vector, VectorName, prelude::*};
 use workspace::{ModalView, Workspace};
 
@@ -37,7 +37,13 @@ impl AcpOnboardingModal {
 
             if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                 panel.update(cx, |panel, cx| {
-                    panel.new_agent_thread(AgentType::Gemini, window, cx);
+                    panel.new_agent_thread(
+                        AgentType::Custom {
+                            name: GEMINI_NAME.into(),
+                        },
+                        window,
+                        cx,
+                    );
                 });
             }
         });
@@ -47,11 +53,11 @@ impl AcpOnboardingModal {
         acp_onboarding_event!("Open Panel Clicked");
     }
 
-    fn view_docs(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        cx.open_url(&zed_urls::external_agents_docs(cx));
+    fn open_agent_registry(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        window.dispatch_action(Box::new(zed_actions::AcpRegistry), cx);
         cx.notify();
 
-        acp_onboarding_event!("Documentation Link Clicked");
+        acp_onboarding_event!("Open Agent Registry Clicked");
     }
 
     fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
@@ -197,7 +203,7 @@ impl Render for AcpOnboardingModal {
             .icon_size(IconSize::Indicator)
             .icon_color(Color::Muted)
             .full_width()
-            .on_click(cx.listener(Self::view_docs));
+            .on_click(cx.listener(Self::open_agent_registry));
 
         let close_button = h_flex().absolute().top_2().right_2().child(
             IconButton::new("cancel", IconName::Close).on_click(cx.listener(

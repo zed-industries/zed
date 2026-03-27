@@ -335,7 +335,8 @@ impl Search {
                     assert!(num_cpus > 0);
                     _executor
                         .scoped(|scope| {
-                            for _ in 0..num_cpus - 1 {
+                            let worker_count = (num_cpus - 1).max(1);
+                            for _ in 0..worker_count {
                                 let worker = Worker {
                                     query: query.clone(),
                                     open_buffers: open_buffers.clone(),
@@ -727,9 +728,15 @@ impl RequestHandler<'_> {
     }
 
     async fn handle_find_first_match(&self, mut entry: MatchingEntry) {
-        _=maybe!(async move {
+        async move {
             let abs_path = entry.worktree_root.join(entry.path.path.as_std_path());
-            let Some(file) = self.fs.context("Trying to query filesystem in remote project search")?.open_sync(&abs_path).await.log_err() else {
+            let Some(file) = self
+                .fs
+                .context("Trying to query filesystem in remote project search")?
+                .open_sync(&abs_path)
+                .await
+                .log_err()
+            else {
                 return anyhow::Ok(());
             };
 
@@ -737,12 +744,13 @@ impl RequestHandler<'_> {
             let file_start = file.fill_buf()?;
 
             if let Err(Some(starting_position)) =
-            std::str::from_utf8(file_start).map_err(|e| e.error_len())
+                std::str::from_utf8(file_start).map_err(|e| e.error_len())
             {
                 // Before attempting to match the file content, throw away files that have invalid UTF-8 sequences early on;
                 // That way we can still match files in a streaming fashion without having look at "obviously binary" files.
                 log::debug!(
-                    "Invalid UTF-8 sequence in file {abs_path:?} at byte position {starting_position}"
+                    "Invalid UTF-8 sequence in file {abs_path:?} \
+                    at byte position {starting_position}"
                 );
                 return Ok(());
             }
@@ -752,7 +760,9 @@ impl RequestHandler<'_> {
                 entry.should_scan_tx.send(entry.path).await?;
             }
             Ok(())
-        }).await;
+        }
+        .await
+        .ok();
     }
 
     async fn handle_scan_path(&self, req: InputPath) {
@@ -824,13 +834,13 @@ struct MatchingEntry {
 /// scanned based on include/exclude patterns of a search query (as include/exclude parameters may match paths inside it).
 /// It is kind-of doing an inverse of glob. Given a glob pattern like `src/**/` and a parent path like `src`, we need to decide whether the parent
 /// may contain glob hits.
-struct PathInclusionMatcher {
+pub struct PathInclusionMatcher {
     included: BTreeSet<PathBuf>,
     query: Arc<SearchQuery>,
 }
 
 impl PathInclusionMatcher {
-    fn new(query: Arc<SearchQuery>) -> Self {
+    pub fn new(query: Arc<SearchQuery>) -> Self {
         let mut included = BTreeSet::new();
         // To do an inverse glob match, we split each glob into it's prefix and the glob part.
         // For example, `src/**/*.rs` becomes `src/` and `**/*.rs`. The glob part gets dropped.
@@ -846,7 +856,7 @@ impl PathInclusionMatcher {
         Self { included, query }
     }
 
-    fn should_scan_gitignored_dir(
+    pub fn should_scan_gitignored_dir(
         &self,
         entry: &Entry,
         snapshot: &Snapshot,
@@ -1022,125 +1032,5 @@ impl<T: 'static + Send> AdaptiveBatcher<T> {
     pub async fn flush(self) {
         _ = self.flush_batch.send(true).await;
         self._batch_task.await;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use fs::FakeFs;
-    use serde_json::json;
-    use settings::Settings;
-    use util::{
-        path,
-        paths::{PathMatcher, PathStyle},
-        rel_path::RelPath,
-    };
-    use worktree::{Entry, EntryKind, WorktreeSettings};
-
-    use crate::{
-        Project, project_search::PathInclusionMatcher, project_tests::init_test,
-        search::SearchQuery,
-    };
-
-    #[gpui::test]
-    async fn test_path_inclusion_matcher(cx: &mut gpui::TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.background_executor.clone());
-        fs.insert_tree(
-            "/root",
-            json!({
-                ".gitignore": "src/data/\n",
-                "src": {
-                    "data": {
-                        "main.csv": "field_1,field_2,field_3",
-                    },
-                    "lib": {
-                        "main.txt": "Are you familiar with fields?",
-                    },
-                },
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-        let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
-        let (worktree_settings, worktree_snapshot) = worktree.update(cx, |worktree, cx| {
-            let settings_location = worktree.settings_location(cx);
-            return (
-                WorktreeSettings::get(Some(settings_location), cx).clone(),
-                worktree.snapshot(),
-            );
-        });
-
-        // Manually create a test entry for the gitignored directory since it won't
-        // be loaded by the worktree
-        let entry = Entry {
-            id: ProjectEntryId::from_proto(1),
-            kind: EntryKind::UnloadedDir,
-            path: Arc::from(RelPath::unix(Path::new("src/data")).unwrap()),
-            inode: 0,
-            mtime: None,
-            canonical_path: None,
-            is_ignored: true,
-            is_hidden: false,
-            is_always_included: false,
-            is_external: false,
-            is_private: false,
-            size: 0,
-            char_bag: Default::default(),
-            is_fifo: false,
-        };
-
-        // 1. Test searching for `field`, including ignored files without any
-        // inclusion and exclusion filters.
-        let include_ignored = true;
-        let files_to_include = PathMatcher::default();
-        let files_to_exclude = PathMatcher::default();
-        let match_full_paths = false;
-        let search_query = SearchQuery::text(
-            "field",
-            false,
-            false,
-            include_ignored,
-            files_to_include,
-            files_to_exclude,
-            match_full_paths,
-            None,
-        )
-        .unwrap();
-
-        let path_matcher = PathInclusionMatcher::new(Arc::new(search_query));
-        assert!(path_matcher.should_scan_gitignored_dir(
-            &entry,
-            &worktree_snapshot,
-            &worktree_settings
-        ));
-
-        // 2. Test searching for `field`, including ignored files but updating
-        // `files_to_include` to only include files under `src/lib`.
-        let include_ignored = true;
-        let files_to_include = PathMatcher::new(vec!["src/lib"], PathStyle::Posix).unwrap();
-        let files_to_exclude = PathMatcher::default();
-        let match_full_paths = false;
-        let search_query = SearchQuery::text(
-            "field",
-            false,
-            false,
-            include_ignored,
-            files_to_include,
-            files_to_exclude,
-            match_full_paths,
-            None,
-        )
-        .unwrap();
-
-        let path_matcher = PathInclusionMatcher::new(Arc::new(search_query));
-        assert!(!path_matcher.should_scan_gitignored_dir(
-            &entry,
-            &worktree_snapshot,
-            &worktree_settings
-        ));
     }
 }

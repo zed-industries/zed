@@ -1,3 +1,8 @@
+---
+title: Swift
+description: "Configure Swift language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Swift
 
 Swift language support in Zed is provided by the community-maintained [Swift extension](https://github.com/zed-extensions/swift).

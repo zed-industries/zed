@@ -1,3 +1,8 @@
+---
+title: Rough quick CPU profiling (Flamechart)
+description: "Performance profiling and optimization for Zed development."
+---
+
 How to use our internal tools to profile and keep Zed fast.
 
 # Rough quick CPU profiling (Flamechart)

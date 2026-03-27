@@ -1,17 +1,18 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use ::fs::{CopyOptions, Fs, RealFs, copy_recursive};
-use anyhow::{Context as _, Result, bail};
+use anyhow::{Context as _, Result, anyhow, bail};
 use clap::Parser;
-use extension::ExtensionManifest;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
+use extension::{ExtensionManifest, ExtensionSnippets};
 use language::LanguageConfig;
 use reqwest_client::ReqwestClient;
-use rpc::ExtensionProvides;
+use snippet_provider::file_to_snippets;
+use snippet_provider::format::VsSnippetsFile;
 use tokio::process::Command;
 use tree_sitter::{Language, Query, WasmStore};
 
@@ -34,7 +35,7 @@ async fn main() -> Result<()> {
     env_logger::init();
 
     let args = Args::parse();
-    let fs = Arc::new(RealFs::new(None, gpui::background_executor()));
+    let fs = Arc::new(RealFs::new(None, gpui_platform::background_executor()));
     let engine = wasmtime::Engine::default();
     let mut wasm_store = WasmStore::new(&engine)?;
 
@@ -76,9 +77,16 @@ async fn main() -> Result<()> {
         .await
         .context("failed to compile extension")?;
 
+    let extension_provides = manifest.provides();
+
+    if extension_provides.is_empty() {
+        bail!("extension does not provide any features");
+    }
+
     let grammars = test_grammars(&manifest, &extension_path, &mut wasm_store)?;
     test_languages(&manifest, &extension_path, &grammars)?;
     test_themes(&manifest, &extension_path, fs.clone()).await?;
+    test_snippets(&manifest, &extension_path, fs.clone()).await?;
 
     let archive_dir = output_dir.join("archive");
     fs::remove_dir_all(&archive_dir).ok();
@@ -99,9 +107,7 @@ async fn main() -> Result<()> {
         );
     }
 
-    let extension_provides = extension_provides(&manifest);
-
-    let manifest_json = serde_json::to_string(&rpc::ExtensionApiManifest {
+    let manifest_json = serde_json::to_string(&cloud_api_types::ExtensionApiManifest {
         name: manifest.name,
         version: manifest.version,
         description: manifest.description,
@@ -117,48 +123,6 @@ async fn main() -> Result<()> {
     fs::write(output_dir.join("manifest.json"), manifest_json.as_bytes())?;
 
     Ok(())
-}
-
-/// Returns the set of features provided by the extension.
-fn extension_provides(manifest: &ExtensionManifest) -> BTreeSet<ExtensionProvides> {
-    let mut provides = BTreeSet::default();
-    if !manifest.themes.is_empty() {
-        provides.insert(ExtensionProvides::Themes);
-    }
-
-    if !manifest.icon_themes.is_empty() {
-        provides.insert(ExtensionProvides::IconThemes);
-    }
-
-    if !manifest.languages.is_empty() {
-        provides.insert(ExtensionProvides::Languages);
-    }
-
-    if !manifest.grammars.is_empty() {
-        provides.insert(ExtensionProvides::Grammars);
-    }
-
-    if !manifest.language_servers.is_empty() {
-        provides.insert(ExtensionProvides::LanguageServers);
-    }
-
-    if !manifest.context_servers.is_empty() {
-        provides.insert(ExtensionProvides::ContextServers);
-    }
-
-    if !manifest.agent_servers.is_empty() {
-        provides.insert(ExtensionProvides::AgentServers);
-    }
-
-    if manifest.snippets.is_some() {
-        provides.insert(ExtensionProvides::Snippets);
-    }
-
-    if !manifest.debug_adapters.is_empty() {
-        provides.insert(ExtensionProvides::DebugAdapters);
-    }
-
-    provides
 }
 
 async fn copy_extension_resources(
@@ -306,22 +270,26 @@ async fn copy_extension_resources(
         }
     }
 
-    if let Some(snippets_path) = manifest.snippets.as_ref() {
-        let parent = snippets_path.parent();
-        if let Some(parent) = parent.filter(|p| p.components().next().is_some()) {
-            fs::create_dir_all(output_dir.join(parent))?;
+    if let Some(snippets) = manifest.snippets.as_ref() {
+        for snippets_path in snippets.paths() {
+            let parent = snippets_path.parent();
+            if let Some(parent) = parent.filter(|p| p.components().next().is_some()) {
+                fs::create_dir_all(output_dir.join(parent))?;
+            }
+            copy_recursive(
+                fs.as_ref(),
+                &extension_path.join(&snippets_path),
+                &output_dir.join(&snippets_path),
+                CopyOptions {
+                    overwrite: true,
+                    ignore_if_exists: false,
+                },
+            )
+            .await
+            .with_context(|| {
+                format!("failed to copy snippets from '{}'", snippets_path.display())
+            })?;
         }
-        copy_recursive(
-            fs.as_ref(),
-            &extension_path.join(&snippets_path),
-            &output_dir.join(&snippets_path),
-            CopyOptions {
-                overwrite: true,
-                ignore_if_exists: false,
-            },
-        )
-        .await
-        .with_context(|| format!("failed to copy snippets from '{}'", snippets_path.display()))?;
     }
 
     Ok(())
@@ -415,6 +383,42 @@ async fn test_themes(
                 )
             }
         }
+    }
+
+    Ok(())
+}
+
+async fn test_snippets(
+    manifest: &ExtensionManifest,
+    extension_path: &Path,
+    fs: Arc<dyn Fs>,
+) -> Result<()> {
+    for relative_snippet_path in manifest
+        .snippets
+        .as_ref()
+        .map(ExtensionSnippets::paths)
+        .into_iter()
+        .flatten()
+    {
+        let snippet_path = extension_path.join(relative_snippet_path);
+        let snippets_content = fs.load_bytes(&snippet_path).await?;
+        let snippets_file = serde_json_lenient::from_slice::<VsSnippetsFile>(&snippets_content)
+            .with_context(|| anyhow!("Failed to parse snippet file at {snippet_path:?}"))?;
+        let snippet_errors = file_to_snippets(snippets_file, &snippet_path)
+            .flat_map(Result::err)
+            .collect::<Vec<_>>();
+        let error_count = snippet_errors.len();
+
+        anyhow::ensure!(
+            error_count == 0,
+            "Could not parse {error_count} snippet{suffix} in file {snippet_path:?}:\n\n{snippet_errors}",
+            suffix = if error_count == 1 { "" } else { "s" },
+            snippet_errors = snippet_errors
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
     }
 
     Ok(())

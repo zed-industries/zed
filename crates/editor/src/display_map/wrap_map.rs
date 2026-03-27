@@ -19,6 +19,8 @@ pub type WrapPatch = text::Patch<WrapRow>;
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct WrapRow(pub u32);
 
+const WRAP_YIELD_ROW_INTERVAL: usize = 100;
+
 impl_for_row_types! {
     WrapRow => RowDelta
 }
@@ -191,49 +193,58 @@ impl WrapMap {
         if let Some(wrap_width) = self.wrap_width {
             let mut new_snapshot = self.snapshot.clone();
 
-            let text_system = cx.text_system().clone();
+            let text_system = cx.text_system();
             let (font, font_size) = self.font_with_size.clone();
-            let task = cx.background_spawn(async move {
-                let mut line_wrapper = text_system.line_wrapper(font, font_size);
-                let tab_snapshot = new_snapshot.tab_snapshot.clone();
-                let range = TabPoint::zero()..tab_snapshot.max_point();
-                let edits = new_snapshot
-                    .update(
-                        tab_snapshot,
-                        &[TabEdit {
-                            old: range.clone(),
-                            new: range.clone(),
-                        }],
-                        wrap_width,
-                        &mut line_wrapper,
-                    )
-                    .await;
-                (new_snapshot, edits)
-            });
+            let mut line_wrapper = text_system.line_wrapper(font, font_size);
+            let tab_snapshot = new_snapshot.tab_snapshot.clone();
+            let total_rows = tab_snapshot.max_point().row() as usize + 1;
+            let range = TabPoint::zero()..tab_snapshot.max_point();
+            let tab_edits = [TabEdit {
+                old: range.clone(),
+                new: range,
+            }];
 
-            match cx
-                .foreground_executor()
-                .block_with_timeout(Duration::from_millis(5), task)
-            {
-                Ok((snapshot, edits)) => {
-                    self.snapshot = snapshot;
-                    self.edits_since_sync = self.edits_since_sync.compose(&edits);
-                }
-                Err(wrap_task) => {
-                    self.background_task = Some(cx.spawn(async move |this, cx| {
-                        let (snapshot, edits) = wrap_task.await;
-                        this.update(cx, |this, cx| {
-                            this.snapshot = snapshot;
-                            this.edits_since_sync = this
-                                .edits_since_sync
-                                .compose(mem::take(&mut this.interpolated_edits).invert())
-                                .compose(&edits);
-                            this.background_task = None;
-                            this.flush_edits(cx);
-                            cx.notify();
-                        })
-                        .ok();
-                    }));
+            if total_rows < WRAP_YIELD_ROW_INTERVAL {
+                let edits = smol::block_on(new_snapshot.update(
+                    tab_snapshot,
+                    &tab_edits,
+                    wrap_width,
+                    &mut line_wrapper,
+                ));
+                self.snapshot = new_snapshot;
+                self.edits_since_sync = self.edits_since_sync.compose(&edits);
+            } else {
+                let task = cx.background_spawn(async move {
+                    let edits = new_snapshot
+                        .update(tab_snapshot, &tab_edits, wrap_width, &mut line_wrapper)
+                        .await;
+                    (new_snapshot, edits)
+                });
+
+                match cx
+                    .foreground_executor()
+                    .block_with_timeout(Duration::from_millis(5), task)
+                {
+                    Ok((snapshot, edits)) => {
+                        self.snapshot = snapshot;
+                        self.edits_since_sync = self.edits_since_sync.compose(&edits);
+                    }
+                    Err(wrap_task) => {
+                        self.background_task = Some(cx.spawn(async move |this, cx| {
+                            let (snapshot, edits) = wrap_task.await;
+                            this.update(cx, |this, cx| {
+                                this.snapshot = snapshot;
+                                this.edits_since_sync = this
+                                    .edits_since_sync
+                                    .compose(mem::take(&mut this.interpolated_edits).invert())
+                                    .compose(&edits);
+                                this.background_task = None;
+                                this.flush_edits(cx);
+                                cx.notify();
+                            })
+                            .ok();
+                        }));
+                    }
                 }
             }
         } else {
@@ -275,45 +286,63 @@ impl WrapMap {
         if let Some(wrap_width) = self.wrap_width
             && self.background_task.is_none()
         {
-            let pending_edits = self.pending_edits.clone();
+            let mut pending_edits = self.pending_edits.clone();
             let mut snapshot = self.snapshot.clone();
             let text_system = cx.text_system().clone();
             let (font, font_size) = self.font_with_size.clone();
-            let update_task = cx.background_spawn(async move {
-                let mut edits = Patch::default();
-                let mut line_wrapper = text_system.line_wrapper(font, font_size);
-                for (tab_snapshot, tab_edits) in pending_edits {
-                    let wrap_edits = snapshot
-                        .update(tab_snapshot, &tab_edits, wrap_width, &mut line_wrapper)
-                        .await;
-                    edits = edits.compose(&wrap_edits);
-                }
-                (snapshot, edits)
-            });
+            let mut line_wrapper = text_system.line_wrapper(font, font_size);
 
-            match cx
-                .foreground_executor()
-                .block_with_timeout(Duration::from_millis(1), update_task)
+            if pending_edits.len() == 1
+                && let Some((_, tab_edits)) = pending_edits.back()
+                && let [edit] = &**tab_edits
+                && ((edit.new.end.row().saturating_sub(edit.new.start.row()) + 1) as usize)
+                    < WRAP_YIELD_ROW_INTERVAL
+                && let Some((tab_snapshot, tab_edits)) = pending_edits.pop_back()
             {
-                Ok((snapshot, output_edits)) => {
-                    self.snapshot = snapshot;
-                    self.edits_since_sync = self.edits_since_sync.compose(&output_edits);
-                }
-                Err(update_task) => {
-                    self.background_task = Some(cx.spawn(async move |this, cx| {
-                        let (snapshot, edits) = update_task.await;
-                        this.update(cx, |this, cx| {
-                            this.snapshot = snapshot;
-                            this.edits_since_sync = this
-                                .edits_since_sync
-                                .compose(mem::take(&mut this.interpolated_edits).invert())
-                                .compose(&edits);
-                            this.background_task = None;
-                            this.flush_edits(cx);
-                            cx.notify();
-                        })
-                        .ok();
-                    }));
+                let wrap_edits = smol::block_on(snapshot.update(
+                    tab_snapshot,
+                    &tab_edits,
+                    wrap_width,
+                    &mut line_wrapper,
+                ));
+                self.snapshot = snapshot;
+                self.edits_since_sync = self.edits_since_sync.compose(&wrap_edits);
+            } else {
+                let update_task = cx.background_spawn(async move {
+                    let mut edits = Patch::default();
+                    for (tab_snapshot, tab_edits) in pending_edits {
+                        let wrap_edits = snapshot
+                            .update(tab_snapshot, &tab_edits, wrap_width, &mut line_wrapper)
+                            .await;
+                        edits = edits.compose(&wrap_edits);
+                    }
+                    (snapshot, edits)
+                });
+
+                match cx
+                    .foreground_executor()
+                    .block_with_timeout(Duration::from_millis(1), update_task)
+                {
+                    Ok((snapshot, output_edits)) => {
+                        self.snapshot = snapshot;
+                        self.edits_since_sync = self.edits_since_sync.compose(&output_edits);
+                    }
+                    Err(update_task) => {
+                        self.background_task = Some(cx.spawn(async move |this, cx| {
+                            let (snapshot, edits) = update_task.await;
+                            this.update(cx, |this, cx| {
+                                this.snapshot = snapshot;
+                                this.edits_since_sync = this
+                                    .edits_since_sync
+                                    .compose(mem::take(&mut this.interpolated_edits).invert())
+                                    .compose(&edits);
+                                this.background_task = None;
+                                this.flush_edits(cx);
+                                cx.notify();
+                            })
+                            .ok();
+                        }));
+                    }
                 }
             }
         }
@@ -445,8 +474,10 @@ impl WrapSnapshot {
 
             while let Some(next_edit) = tab_edits_iter.peek() {
                 if next_edit.old.start.row() <= row_edit.old_rows.end {
-                    row_edit.old_rows.end = next_edit.old.end.row() + 1;
-                    row_edit.new_rows.end = next_edit.new.end.row() + 1;
+                    row_edit.old_rows.end =
+                        cmp::max(row_edit.old_rows.end, next_edit.old.end.row() + 1);
+                    row_edit.new_rows.end =
+                        cmp::max(row_edit.new_rows.end, next_edit.new.end.row() + 1);
                     tab_edits_iter.next();
                 } else {
                     break;
@@ -486,7 +517,7 @@ impl WrapSnapshot {
                     Highlights::default(),
                 );
                 let mut edit_transforms = Vec::<Transform>::new();
-                for _ in edit.new_rows.start..edit.new_rows.end {
+                for (i, _) in (edit.new_rows.start..edit.new_rows.end).enumerate() {
                     while let Some(chunk) = remaining.take().or_else(|| chunks.next()) {
                         if let Some(ix) = chunk.text.find('\n') {
                             let (prefix, suffix) = chunk.text.split_at(ix + 1);
@@ -531,7 +562,9 @@ impl WrapSnapshot {
 
                     line.clear();
                     line_fragments.clear();
-                    yield_now().await;
+                    if i % WRAP_YIELD_ROW_INTERVAL == WRAP_YIELD_ROW_INTERVAL - 1 {
+                        yield_now().await;
+                    }
                 }
 
                 let mut edit_transforms = edit_transforms.into_iter();
@@ -556,6 +589,7 @@ impl WrapSnapshot {
                             (),
                         );
                     }
+                    yield_now().await;
                 } else {
                     if old_cursor.end() > TabPoint::new(edit.old_rows.end, 0) {
                         let summary = self.tab_snapshot.text_summary_for_range(
@@ -1079,14 +1113,17 @@ impl<'a> Iterator for WrapChunks<'a> {
         let mask = 1u128.unbounded_shl(input_len as u32).wrapping_sub(1);
         let chars = self.input_chunk.chars & mask;
         let tabs = self.input_chunk.tabs & mask;
+        let newlines = self.input_chunk.newlines & mask;
         self.input_chunk.tabs = self.input_chunk.tabs.unbounded_shr(input_len as u32);
         self.input_chunk.chars = self.input_chunk.chars.unbounded_shr(input_len as u32);
+        self.input_chunk.newlines = self.input_chunk.newlines.unbounded_shr(input_len as u32);
 
         self.input_chunk.text = suffix;
         Some(Chunk {
             text: prefix,
             chars,
             tabs,
+            newlines,
             ..self.input_chunk.clone()
         })
     }

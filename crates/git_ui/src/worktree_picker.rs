@@ -2,25 +2,25 @@ use anyhow::Context as _;
 use collections::HashSet;
 use fuzzy::StringMatchCandidate;
 
-use git::repository::Worktree as GitWorktree;
+use git::repository::{Worktree as GitWorktree, validate_worktree_directory};
 use gpui::{
-    Action, App, AsyncApp, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement,
-    PathPromptOptions, Render, SharedString, Styled, Subscription, Task, WeakEntity, Window,
-    actions, rems,
+    Action, App, AsyncWindowContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement,
+    Render, SharedString, Styled, Subscription, Task, WeakEntity, Window, actions, rems,
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
+use project::project_settings::ProjectSettings;
 use project::{
-    DirectoryLister,
     git_store::Repository,
     trusted_worktrees::{PathTrust, TrustedWorktrees},
 };
-use recent_projects::{RemoteConnectionModal, connect};
 use remote::{RemoteConnectionOptions, remote_client::ConnectionIdentifier};
+use remote_connection::{RemoteConnectionModal, connect};
+use settings::Settings;
 use std::{path::PathBuf, sync::Arc};
 use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
-use workspace::{ModalView, Workspace, notifications::DetachAndPromptErr};
+use workspace::{ModalView, MultiWorkspace, Workspace, notifications::DetachAndPromptErr};
 
 actions!(git, [WorktreeFromDefault, WorktreeFromDefaultOnWindow]);
 
@@ -267,41 +267,22 @@ impl WorktreeListDelegate {
             return;
         };
 
-        let worktree_path = self
-            .workspace
-            .clone()
-            .update(cx, |this, cx| {
-                this.prompt_for_open_path(
-                    PathPromptOptions {
-                        files: false,
-                        directories: true,
-                        multiple: false,
-                        prompt: Some("Select directory for new worktree".into()),
-                    },
-                    DirectoryLister::Project(this.project().clone()),
-                    window,
-                    cx,
-                )
-            })
-            .log_err();
-        let Some(worktree_path) = worktree_path else {
-            return;
-        };
-
         let branch = worktree_branch.to_string();
-        let window_handle = window.window_handle();
         let workspace = self.workspace.clone();
         cx.spawn_in(window, async move |_, cx| {
-            let Some(paths) = worktree_path.await? else {
-                return anyhow::Ok(());
-            };
-            let path = paths.get(0).cloned().context("No path selected")?;
-
-            repo.update(cx, |repo, _| {
-                repo.create_worktree(branch.clone(), path.clone(), commit)
-            })
-            .await??;
-            let new_worktree_path = path.join(branch);
+            let (receiver, new_worktree_path) = repo.update(cx, |repo, cx| {
+                let worktree_directory_setting = ProjectSettings::get_global(cx)
+                    .git
+                    .worktree_directory
+                    .clone();
+                let work_dir = repo.work_directory_abs_path.clone();
+                let directory =
+                    validate_worktree_directory(&work_dir, &worktree_directory_setting)?;
+                let new_worktree_path = directory.join(&branch);
+                let receiver = repo.create_worktree(branch.clone(), directory, commit);
+                anyhow::Ok((receiver, new_worktree_path))
+            })?;
+            receiver.await??;
 
             workspace.update(cx, |workspace, cx| {
                 if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
@@ -355,7 +336,7 @@ impl WorktreeListDelegate {
                     connection_options,
                     vec![new_worktree_path],
                     app_state,
-                    window_handle,
+                    workspace.clone(),
                     replace_current_window,
                     cx,
                 )
@@ -365,7 +346,12 @@ impl WorktreeListDelegate {
             anyhow::Ok(())
         })
         .detach_and_prompt_err("Failed to create worktree", window, cx, |e, _, _| {
-            Some(e.to_string())
+            let msg = e.to_string();
+            if msg.contains("git.worktree_directory") {
+                Some(format!("Invalid git.worktree_directory setting: {}", e))
+            } else {
+                Some(msg)
+            }
         });
     }
 
@@ -407,13 +393,12 @@ impl WorktreeListDelegate {
                 |e, _, _| Some(e.to_string()),
             );
         } else if let Some(connection_options) = connection_options {
-            let window_handle = window.window_handle();
             cx.spawn_in(window, async move |_, cx| {
                 open_remote_worktree(
                     connection_options,
                     vec![path],
                     app_state,
-                    window_handle,
+                    workspace,
                     replace_current_window,
                     cx,
                 )
@@ -441,15 +426,16 @@ async fn open_remote_worktree(
     connection_options: RemoteConnectionOptions,
     paths: Vec<PathBuf>,
     app_state: Arc<workspace::AppState>,
-    window: gpui::AnyWindowHandle,
+    workspace: WeakEntity<Workspace>,
     replace_current_window: bool,
-    cx: &mut AsyncApp,
+    cx: &mut AsyncWindowContext,
 ) -> anyhow::Result<()> {
-    let workspace_window = window
-        .downcast::<Workspace>()
+    let workspace_window = cx
+        .window_handle()
+        .downcast::<MultiWorkspace>()
         .ok_or_else(|| anyhow::anyhow!("Window is not a Workspace window"))?;
 
-    let connect_task = workspace_window.update(cx, |workspace, window, cx| {
+    let connect_task = workspace.update_in(cx, |workspace, window, cx| {
         workspace.toggle_modal(window, cx, |window, cx| {
             RemoteConnectionModal::new(&connection_options, Vec::new(), window, cx)
         });
@@ -473,17 +459,19 @@ async fn open_remote_worktree(
 
     let session = connect_task.await;
 
-    workspace_window.update(cx, |workspace, _window, cx| {
-        if let Some(prompt) = workspace.active_modal::<RemoteConnectionModal>(cx) {
-            prompt.update(cx, |prompt, cx| prompt.finished(cx))
-        }
-    })?;
+    workspace
+        .update_in(cx, |workspace, _window, cx| {
+            if let Some(prompt) = workspace.active_modal::<RemoteConnectionModal>(cx) {
+                prompt.update(cx, |prompt, cx| prompt.finished(cx))
+            }
+        })
+        .ok();
 
     let Some(Some(session)) = session else {
         return Ok(());
     };
 
-    let new_project: Entity<project::Project> = cx.update(|cx| {
+    let new_project: Entity<project::Project> = cx.update(|_, cx| {
         project::Project::remote(
             session,
             app_state.client.clone(),
@@ -494,29 +482,30 @@ async fn open_remote_worktree(
             true,
             cx,
         )
-    });
+    })?;
 
     let window_to_use = if replace_current_window {
         workspace_window
     } else {
         let workspace_position = cx
-            .update(|cx| {
+            .update(|_, cx| {
                 workspace::remote_workspace_position_from_db(connection_options.clone(), &paths, cx)
-            })
+            })?
             .await
             .context("fetching workspace position from db")?;
 
         let mut options =
-            cx.update(|cx| (app_state.build_window_options)(workspace_position.display, cx));
+            cx.update(|_, cx| (app_state.build_window_options)(workspace_position.display, cx))?;
         options.window_bounds = workspace_position.window_bounds;
 
         cx.open_window(options, |window, cx| {
-            cx.new(|cx| {
+            let workspace = cx.new(|cx| {
                 let mut workspace =
                     Workspace::new(None, new_project.clone(), app_state.clone(), window, cx);
                 workspace.centered_layout = workspace_position.centered_layout;
                 workspace
-            })
+            });
+            cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
         })?
     };
 

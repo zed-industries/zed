@@ -63,6 +63,60 @@ If you need help deciding how to fix a bug, or finish implementing a feature
 that we've agreed we want, please open a PR early so we can discuss how to make
 the change with code in hand.
 
+### UI/UX checklist
+
+When your changes affect UI, consult this checklist:
+
+**Accessibility / Ergonomics**
+- Do all keyboard shortcuts work as intended?
+- Are shortcuts discoverable (tooltips, menus, docs)?
+- Do all mouse actions work (drag, context menus, resizing, scrolling)?
+- Does the feature look great in light mode and dark mode?
+- Are hover states, focus rings, and active states clear and consistent?
+- Is it usable without a mouse (keyboard-only navigation)?
+
+**Responsiveness**
+- Does the UI scale gracefully on:
+    - Narrow panes (e.g., side-by-side split views)?
+    - Short panes (e.g., laptops with 13" displays)?
+    - High-DPI / Retina displays?
+- Does resizing panes or windows keep the UI usable and attractive?
+- Do dialogs or modals stay centered and within viewport bounds?
+
+**Platform Consistency**
+- Is the feature fully usable on Windows, Linux, and Mac?
+- Does it respect system-level settings (fonts, scaling, input methods)?
+
+**Performance**
+- All user interactions must have instant feedback.
+    - If the user requests something slow (e.g. an LLM generation) there should be some indication of the work in progress.
+- Does it handle large files, big projects, or heavy workloads without degrading?
+- Frames must take no more than 8ms (120fps)
+
+**Consistency**
+- Does it match Zed’s design language (spacing, typography, icons)?
+- Are terminology, labels, and tone consistent with the rest of Zed?
+- Are interactions consistent (e.g., how tabs close, how modals dismiss, how errors show)?
+
+**Internationalization & Text**
+- Are strings concise, clear, and unambiguous?
+- Do we avoid internal Zed jargon that only insiders would know?
+
+**User Paths & Edge Cases**
+- What does the happy path look like?
+- What does the unhappy path look like? (errors, rejections, invalid states)
+- How does it work in offline vs. online states?
+- How does it work in unauthenticated vs. authenticated states?
+- How does it behave if data is missing, corrupted, or delayed?
+- Are error messages actionable and consistent with Zed’s voice?
+
+**Discoverability & Learning**
+- Can a first-time user figure it out without docs?
+- Is there an intuitive way to undo/redo actions?
+- Are power features discoverable but not intrusive?
+- Is there a path from beginner → expert usage (progressive disclosure)?
+
+
 ## Things we will (probably) not merge
 
 Although there are few hard and fast rules, typically we don't merge:

@@ -23,6 +23,8 @@ jobs:
       - name: Build docs
         uses: ./.github/actions/build_docs
         env:
+          CC: clang
+          CXX: clang++
           DOCS_AMPLITUDE_API_KEY: ${{ secrets.DOCS_AMPLITUDE_API_KEY }}
 
       - name: Deploy Docs

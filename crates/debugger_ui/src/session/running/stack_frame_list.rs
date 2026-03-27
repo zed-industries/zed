@@ -15,13 +15,13 @@ use util::{
     paths::{PathStyle, is_absolute},
 };
 
-use crate::{StackTraceView, ToggleUserFrames};
+use crate::ToggleUserFrames;
 use language::PointUtf16;
 use project::debugger::breakpoint_store::ActiveStackFrame;
 use project::debugger::session::{Session, SessionEvent, StackFrame, ThreadStatus};
 use project::{ProjectItem, ProjectPath};
 use ui::{Tooltip, WithScrollbar, prelude::*};
-use workspace::{ItemHandle, Workspace, WorkspaceId};
+use workspace::{Workspace, WorkspaceId};
 
 use super::RunningState;
 
@@ -154,6 +154,7 @@ impl StackFrameList {
         &self.entries
     }
 
+    #[cfg(test)]
     pub(crate) fn flatten_entries(
         &self,
         show_collapsed: bool,
@@ -429,34 +430,51 @@ impl StackFrameList {
             let position = buffer.read_with(cx, |this, _| {
                 this.snapshot().anchor_after(PointUtf16::new(row, 0))
             });
-            this.update_in(cx, |this, window, cx| {
-                this.workspace.update(cx, |workspace, cx| {
-                    let project_path = buffer
-                        .read(cx)
-                        .project_path(cx)
-                        .context("Could not select a stack frame for unnamed buffer")?;
+            let opened_item = this
+                .update_in(cx, |this, window, cx| {
+                    this.workspace.update(cx, |workspace, cx| {
+                        let project_path = buffer
+                            .read(cx)
+                            .project_path(cx)
+                            .context("Could not select a stack frame for unnamed buffer")?;
 
-                    let open_preview = !workspace
-                        .item_of_type::<StackTraceView>(cx)
-                        .map(|viewer| {
-                            workspace
-                                .active_item(cx)
-                                .is_some_and(|item| item.item_id() == viewer.item_id())
-                        })
-                        .unwrap_or_default();
+                        let open_preview = true;
 
-                    anyhow::Ok(workspace.open_path_preview(
-                        project_path,
-                        None,
-                        true,
-                        true,
-                        open_preview,
-                        window,
-                        cx,
-                    ))
-                })
-            })???
-            .await?;
+                        let active_debug_line_pane = workspace
+                            .project()
+                            .read(cx)
+                            .breakpoint_store()
+                            .read(cx)
+                            .active_debug_line_pane_id()
+                            .and_then(|id| workspace.pane_for_entity_id(id));
+
+                        let debug_pane = if let Some(pane) = active_debug_line_pane {
+                            Some(pane.downgrade())
+                        } else {
+                            // No debug pane set yet. Find a pane where the target file
+                            // is already the active tab so we don't disrupt other panes.
+                            let pane_with_active_file = workspace.panes().iter().find(|pane| {
+                                pane.read(cx)
+                                    .active_item()
+                                    .and_then(|item| item.project_path(cx))
+                                    .is_some_and(|path| path == project_path)
+                            });
+
+                            pane_with_active_file.map(|pane| pane.downgrade())
+                        };
+
+                        anyhow::Ok(workspace.open_path_preview(
+                            project_path,
+                            debug_pane,
+                            true,
+                            true,
+                            open_preview,
+                            window,
+                            cx,
+                        ))
+                    })
+                })???
+                .await?;
 
             this.update(cx, |this, cx| {
                 let thread_id = this.state.read_with(cx, |state, _| {
@@ -464,6 +482,19 @@ impl StackFrameList {
                 })??;
 
                 this.workspace.update(cx, |workspace, cx| {
+                    if let Some(pane_id) = workspace
+                        .pane_for(&*opened_item)
+                        .map(|pane| pane.entity_id())
+                    {
+                        workspace
+                            .project()
+                            .read(cx)
+                            .breakpoint_store()
+                            .update(cx, |store, _cx| {
+                                store.set_active_debug_pane_id(pane_id);
+                            });
+                    }
+
                     let breakpoint_store = workspace.project().read(cx).breakpoint_store();
 
                     breakpoint_store.update(cx, |store, cx| {

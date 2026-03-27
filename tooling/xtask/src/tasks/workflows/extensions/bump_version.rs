@@ -2,13 +2,13 @@ use gh_workflow::{
     Event, Expression, Input, Job, Level, Permissions, PullRequest, PullRequestType, Push, Run,
     Step, UsesJob, Workflow, WorkflowDispatch,
 };
-use indexmap::IndexMap;
 use indoc::indoc;
 
 use crate::tasks::workflows::{
+    extensions::WithAppSecrets,
     runners,
     steps::{CommonJobConditions, NamedJob, named},
-    vars::{self, JobOutput, StepOutput, one_workflow_per_non_main_branch_and_token},
+    vars::{JobOutput, StepOutput, one_workflow_per_non_main_branch_and_token},
 };
 
 pub(crate) fn bump_version() -> Workflow {
@@ -57,15 +57,9 @@ pub(crate) fn call_bump_version(
         .with(
             Input::default()
                 .add("bump-type", bump_type.to_string())
-                .add("force-bump", true),
+                .add("force-bump", "${{ github.event_name != 'push' }}"),
         )
-        .secrets(IndexMap::from([
-            ("app-id".to_owned(), vars::ZED_ZIPPY_APP_ID.to_owned()),
-            (
-                "app-secret".to_owned(),
-                vars::ZED_ZIPPY_APP_PRIVATE_KEY.to_owned(),
-            ),
-        ]));
+        .with_app_secrets();
 
     named::job(job)
 }

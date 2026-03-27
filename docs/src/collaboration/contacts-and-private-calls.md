@@ -1,11 +1,15 @@
-# Contacts and Private Calls
+---
+title: Contacts and Private Calls
+description: "Add contacts and start private collaboration sessions in Zed."
+---
 
-Zed allows you to have private calls / collaboration sessions with those in your contacts.
-These calls can be one-on-ones or contain any number of users from your contacts.
+# Contacts and Private Calls {#contacts}
+
+Private calls provide ad-hoc collaboration sessions outside of channels. Add contacts to your list and start calls with one or more people.
 
 ## Adding a Contact
 
-1. In the collaboration panel, click the `+` button next to the `Contacts` section
+1. In the Collaboration Panel, click the `+` button next to the `Contacts` section
 1. Search for the contact using their GitHub handle.\
    _Note: Your contact must be an existing Zed user who has completed the GitHub authentication sign-in flow._
 1. Your contact will receive a notification.
@@ -13,13 +17,13 @@ These calls can be one-on-ones or contain any number of users from your contacts
 
 ## Private Calls
 
-To start up a private call...
+To start a private call:
 
-1. Click the `...` menu next to an online contact's name in the collaboration panel.
+1. Click the `...` menu next to an online contact's name in the Collaboration Panel.
 1. Click `Call <username>`
 
-Once you've begun a private call, you can add other online contacts by clicking on their name in the collaboration panel.
+Once you've begun a private call, you can add other online contacts by clicking their name in the Collaboration Panel.
 
 ---
 
-_Aside from a few additional features (channel notes, etc.), collaboration in private calls is largely the same as it is in [channels](./channels.md)._
+_Private calls work like [channels](./channels.md), without channel-specific features such as channel notes._

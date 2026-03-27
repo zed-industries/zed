@@ -30,7 +30,7 @@ impl UserMessageId {
 pub trait AgentConnection {
     fn telemetry_id(&self) -> SharedString;
 
-    fn new_thread(
+    fn new_session(
         self: Rc<Self>,
         project: Entity<Project>,
         cwd: &Path,
@@ -38,7 +38,7 @@ pub trait AgentConnection {
     ) -> Task<Result<Entity<AcpThread>>>;
 
     /// Whether this agent supports loading existing sessions.
-    fn supports_load_session(&self, _cx: &App) -> bool {
+    fn supports_load_session(&self) -> bool {
         false
     }
 
@@ -53,6 +53,39 @@ pub trait AgentConnection {
         Task::ready(Err(anyhow::Error::msg("Loading sessions is not supported")))
     }
 
+    /// Whether this agent supports closing existing sessions.
+    fn supports_close_session(&self) -> bool {
+        false
+    }
+
+    /// Close an existing session. Allows the agent to free the session from memory.
+    fn close_session(&self, _session_id: &acp::SessionId, _cx: &mut App) -> Task<Result<()>> {
+        Task::ready(Err(anyhow::Error::msg("Closing sessions is not supported")))
+    }
+
+    /// Whether this agent supports resuming existing sessions without loading history.
+    fn supports_resume_session(&self) -> bool {
+        false
+    }
+
+    /// Resume an existing session by ID without replaying previous messages.
+    fn resume_session(
+        self: Rc<Self>,
+        _session: AgentSessionInfo,
+        _project: Entity<Project>,
+        _cwd: &Path,
+        _cx: &mut App,
+    ) -> Task<Result<Entity<AcpThread>>> {
+        Task::ready(Err(anyhow::Error::msg(
+            "Resuming sessions is not supported",
+        )))
+    }
+
+    /// Whether this agent supports showing session history.
+    fn supports_session_history(&self) -> bool {
+        self.supports_load_session() || self.supports_resume_session()
+    }
+
     fn auth_methods(&self) -> &[acp::AuthMethod];
 
     fn authenticate(&self, method: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>>;
@@ -64,11 +97,7 @@ pub trait AgentConnection {
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>>;
 
-    fn resume(
-        &self,
-        _session_id: &acp::SessionId,
-        _cx: &App,
-    ) -> Option<Rc<dyn AgentSessionResume>> {
+    fn retry(&self, _session_id: &acp::SessionId, _cx: &App) -> Option<Rc<dyn AgentSessionRetry>> {
         None
     }
 
@@ -135,7 +164,7 @@ pub trait AgentSessionTruncate {
     fn run(&self, message_id: UserMessageId, cx: &mut App) -> Task<Result<()>>;
 }
 
-pub trait AgentSessionResume {
+pub trait AgentSessionRetry {
     fn run(&self, cx: &mut App) -> Task<Result<acp::PromptResponse>>;
 }
 
@@ -226,6 +255,15 @@ impl AgentSessionInfo {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum SessionListUpdate {
+    Refresh,
+    SessionInfo {
+        session_id: acp::SessionId,
+        update: acp::SessionInfoUpdate,
+    },
+}
+
 pub trait AgentSessionList {
     fn list_sessions(
         &self,
@@ -245,9 +283,11 @@ pub trait AgentSessionList {
         Task::ready(Err(anyhow::anyhow!("delete_sessions not supported")))
     }
 
-    fn watch(&self, _cx: &mut App) -> Option<watch::Receiver<()>> {
+    fn watch(&self, _cx: &mut App) -> Option<smol::channel::Receiver<SessionListUpdate>> {
         None
     }
+
+    fn notify_refresh(&self) {}
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any>;
 }
@@ -352,6 +392,8 @@ pub struct AgentModelInfo {
     pub name: SharedString,
     pub description: Option<SharedString>,
     pub icon: Option<AgentModelIcon>,
+    pub is_latest: bool,
+    pub cost: Option<SharedString>,
 }
 
 impl From<acp::ModelInfo> for AgentModelInfo {
@@ -361,6 +403,8 @@ impl From<acp::ModelInfo> for AgentModelInfo {
             name: info.name.into(),
             description: info.description.map(|desc| desc.into()),
             icon: None,
+            is_latest: false,
+            cost: None,
         }
     }
 }
@@ -433,6 +477,11 @@ impl PermissionOptions {
 
     pub fn allow_once_option_id(&self) -> Option<acp::PermissionOptionId> {
         self.first_option_of_kind(acp::PermissionOptionKind::AllowOnce)
+            .map(|option| option.option_id.clone())
+    }
+
+    pub fn deny_once_option_id(&self) -> Option<acp::PermissionOptionId> {
+        self.first_option_of_kind(acp::PermissionOptionKind::RejectOnce)
             .map(|option| option.option_id.clone())
     }
 }
@@ -566,7 +615,7 @@ mod test_support {
             Some(self.model_selector_impl())
         }
 
-        fn new_thread(
+        fn new_session(
             self: Rc<Self>,
             project: Entity<Project>,
             _cwd: &Path,
@@ -576,6 +625,7 @@ mod test_support {
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
             let thread = cx.new(|cx| {
                 AcpThread::new(
+                    None,
                     "Test",
                     self.clone(),
                     project,
@@ -646,7 +696,6 @@ mod test_support {
                                     thread.request_tool_call_authorization(
                                         tool_call.clone().into(),
                                         options.clone(),
-                                        false,
                                         cx,
                                     )
                                 })??
@@ -680,6 +729,14 @@ mod test_support {
             }
         }
 
+        fn set_title(
+            &self,
+            _session_id: &acp::SessionId,
+            _cx: &App,
+        ) -> Option<Rc<dyn AgentSessionSetTitle>> {
+            Some(Rc::new(StubAgentSessionSetTitle))
+        }
+
         fn truncate(
             &self,
             _session_id: &agent_client_protocol::SessionId,
@@ -690,6 +747,14 @@ mod test_support {
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
+        }
+    }
+
+    struct StubAgentSessionSetTitle;
+
+    impl AgentSessionSetTitle for StubAgentSessionSetTitle {
+        fn run(&self, _title: SharedString, _cx: &mut App) -> Task<Result<()>> {
+            Task::ready(Ok(()))
         }
     }
 
@@ -714,6 +779,8 @@ mod test_support {
                     name: "Visual Test Model".into(),
                     description: Some("A stub model for visual testing".into()),
                     icon: Some(AgentModelIcon::Named(ui::IconName::ZedAssistant)),
+                    is_latest: false,
+                    cost: None,
                 })),
             }
         }

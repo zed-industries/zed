@@ -1,18 +1,30 @@
+---
+title: Themes - Zed
+description: Browse, install, and create themes for Zed. Includes built-in themes and community theme extensions.
+---
+
 # Themes
 
 Zed comes with a number of built-in themes, with more themes available as extensions.
 
 ## Selecting a Theme
 
-See what themes are installed and preview them via the Theme Selector, which you can open from the command palette with `theme selector: toggle` (bound to {#kb theme_selector::Toggle}).
+See what themes are installed and preview them via the Theme Selector, which you can open from the command palette with the `theme selector: toggle` (bound to {#kb theme_selector::Toggle}) action.
 
-Navigating through the theme list by moving up and down will change the theme in real time and hitting enter will save it to your settings file.
+Navigating through the theme list by moving up and down will change the theme in real time and hitting enter will save the selected one to your settings file.
 
-## Installing more Themes
+## Installing New Themes
 
-More themes are available from the Extensions page, which you can access via the command palette with `zed: extensions` or the [Zed website](https://zed.dev/extensions?filter=themes).
+You can find hundreds of different theme options in Zed's extensions store, which you can access via the command palette with `zed: extensions` or the [Zed website](https://zed.dev/extensions?filter=themes).
 
 Many popular themes have been ported to Zed, and if you're struggling to choose one, visit [zed-themes.com](https://zed-themes.com), a third-party gallery with visible previews for many of them.
+
+## Build Your Theme
+
+You can use [Zed's Theme Builder](https://zed.dev/theme-builder) to design your own custom theme based on an existing one.
+
+This tool lets you fine-tune and preview how every surface in the Zed app will look.
+You can then export the JSON for [local use](./themes.md#local-themes) or for [publishing in Zed's extension store](./extensions/themes.md).
 
 ## Configuring a Theme
 
@@ -70,13 +82,9 @@ To see a comprehensive list of list of captures (like `comment` and `comment.doc
 To see a list of available theme attributes look at the JSON file for your theme.
 For example, [assets/themes/one/one.json](https://github.com/zed-industries/zed/blob/main/assets/themes/one/one.json) for the default One Dark and One Light themes.
 
-## Local Themes
+## Local Themes {#local-themes}
 
 Store new themes locally by placing them in the `~/.config/zed/themes` directory (macOS and Linux) or `%USERPROFILE%\AppData\Roaming\Zed\themes\` (Windows).
 
 For example, to create a new theme called `my-cool-theme`, create a file called `my-cool-theme.json` in that directory.
 It will be available in the theme selector the next time Zed loads.
-
-## Theme Development
-
-See: [Developing Zed Themes](./extensions/themes.md)

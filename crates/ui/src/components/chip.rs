@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use gpui::{AnyElement, Hsla, IntoElement, ParentElement, Styled};
+use gpui::{AnyElement, AnyView, Hsla, IntoElement, ParentElement, Styled};
 
 /// Chips provide a container for an informative label.
 ///
@@ -16,6 +16,9 @@ pub struct Chip {
     label_color: Color,
     label_size: LabelSize,
     bg_color: Option<Hsla>,
+    border_color: Option<Hsla>,
+    height: Option<Pixels>,
+    tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
 }
 
 impl Chip {
@@ -26,6 +29,9 @@ impl Chip {
             label_color: Color::Default,
             label_size: LabelSize::XSmall,
             bg_color: None,
+            border_color: None,
+            height: None,
+            tooltip: None,
         }
     }
 
@@ -46,6 +52,23 @@ impl Chip {
         self.bg_color = Some(color);
         self
     }
+
+    /// Sets a custom border color for the chip.
+    pub fn border_color(mut self, color: Hsla) -> Self {
+        self.border_color = Some(color);
+        self
+    }
+
+    /// Sets a custom height for the chip.
+    pub fn height(mut self, height: Pixels) -> Self {
+        self.height = Some(height);
+        self
+    }
+
+    pub fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
+        self.tooltip = Some(Box::new(tooltip));
+        self
+    }
 }
 
 impl RenderOnce for Chip {
@@ -54,21 +77,27 @@ impl RenderOnce for Chip {
             .bg_color
             .unwrap_or(cx.theme().colors().element_background);
 
+        let border_color = self.border_color.unwrap_or(cx.theme().colors().border);
+
         h_flex()
+            .when_some(self.height, |this, h| this.h(h))
             .min_w_0()
             .flex_initial()
             .px_1()
             .border_1()
             .rounded_sm()
-            .border_color(cx.theme().colors().border)
+            .border_color(border_color)
             .bg(bg_color)
             .overflow_hidden()
             .child(
-                Label::new(self.label)
+                Label::new(self.label.clone())
                     .size(self.label_size)
                     .color(self.label_color)
-                    .buffer_font(cx),
+                    .buffer_font(cx)
+                    .truncate(),
             )
+            .id(self.label.clone())
+            .when_some(self.tooltip, |this, tooltip| this.tooltip(tooltip))
     }
 }
 

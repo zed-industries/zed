@@ -1,16 +1,21 @@
+---
+title: Building Zed for macOS
+description: "Guide to building zed for macos for Zed development."
+---
+
 # Building Zed for macOS
 
 ## Repository
 
-Clone down the [Zed repository](https://github.com/zed-industries/zed).
+Clone the [Zed repository](https://github.com/zed-industries/zed).
 
 ## Dependencies
 
 - Install [rustup](https://www.rust-lang.org/tools/install)
 
-- Install [Xcode](https://apps.apple.com/us/app/xcode/id497799835?mt=12) from the macOS App Store, or from the [Apple Developer](https://developer.apple.com/download/all/) website. Note this requires a developer account.
+- Install [Xcode](https://apps.apple.com/us/app/xcode/id497799835?mt=12) from the macOS App Store or from the [Apple Developer](https://developer.apple.com/download/all/) website. The Apple Developer download requires a developer account.
 
-> Ensure you launch Xcode after installing, and install the macOS components, which is the default option.
+> Launch Xcode after installation and install the macOS components (the default option).
 
 - Install [Xcode command line tools](https://developer.apple.com/xcode/resources/)
 
@@ -138,7 +143,7 @@ Caused by:
   cargo:rerun-if-env-changed=BINDGEN_EXTRA_CLANG_ARGS
 ```
 
-This file is part of Xcode. Ensure you have installed the Xcode command line tools and set the correct path:
+This file is part of Xcode. Make sure the Xcode command line tools are installed and the path is set correctly:
 
 ```sh
 xcode-select --install
@@ -169,21 +174,18 @@ This error seems to be caused by OS resource constraints. Installing and running
 
 ### Avoiding continual rebuilds
 
-If you are finding that Zed is continually rebuilding root crates, it may be because
-you are pointing your development Zed at the codebase itself.
+If Zed continually rebuilds root crates, you may be opening the Zed codebase itself in your development build.
 
 This causes problems because `cargo run` exports a bunch of environment
 variables which are picked up by the `rust-analyzer` that runs in the development
 build of Zed. These environment variables are in turn passed to `cargo check`, which
 invalidates the build cache of some of the crates we depend on.
 
-You can easily avoid running the built binary on the checked-out Zed codebase using `cargo run
-~/path/to/other/project` to ensure that you don't hit this.
+To avoid this, run the built binary against a different project, for example `cargo run ~/path/to/other/project`.
 
 ### Speeding up verification
 
-If you are building Zed a lot, you may find that macOS continually verifies new
-builds which can add a few seconds to your iteration cycles.
+If you build Zed frequently, macOS may keep verifying new builds, which can add a few seconds to each iteration.
 
 To fix this, you can:
 

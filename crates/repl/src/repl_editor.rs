@@ -8,11 +8,14 @@ use editor::{Editor, MultiBufferOffset};
 use gpui::{App, Entity, WeakEntity, Window, prelude::*};
 use language::{BufferSnapshot, Language, LanguageName, Point};
 use project::{ProjectItem as _, WorktreeId};
+use workspace::{Workspace, notifications::NotificationId};
 
+use crate::kernels::PythonEnvKernelSpecification;
 use crate::repl_store::ReplStore;
 use crate::session::SessionEvent;
 use crate::{
-    ClearOutputs, Interrupt, JupyterSettings, KernelSpecification, Restart, Session, Shutdown,
+    ClearCurrentOutput, ClearOutputs, Interrupt, JupyterSettings, KernelSpecification, Restart,
+    Session, Shutdown,
 };
 
 pub fn assign_kernelspec(
@@ -68,6 +71,112 @@ pub fn assign_kernelspec(
     store.update(cx, |store, _cx| {
         store.insert_session(weak_editor.entity_id(), session.clone());
     });
+
+    Ok(())
+}
+
+pub fn install_ipykernel_and_assign(
+    kernel_specification: KernelSpecification,
+    weak_editor: WeakEntity<Editor>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Result<()> {
+    let KernelSpecification::PythonEnv(ref env_spec) = kernel_specification else {
+        return assign_kernelspec(kernel_specification, weak_editor, window, cx);
+    };
+
+    let python_path = env_spec.path.clone();
+    let env_name = env_spec.name.clone();
+    let env_spec = env_spec.clone();
+
+    struct IpykernelInstall;
+    let notification_id = NotificationId::unique::<IpykernelInstall>();
+
+    let workspace = Workspace::for_window(window, cx);
+    if let Some(workspace) = &workspace {
+        workspace.update(cx, |workspace, cx| {
+            workspace.show_toast(
+                workspace::Toast::new(
+                    notification_id.clone(),
+                    format!("Installing ipykernel in {}...", env_name),
+                ),
+                cx,
+            );
+        });
+    }
+
+    let weak_workspace = workspace.map(|w| w.downgrade());
+    let window_handle = window.window_handle();
+
+    let install_task = cx.background_spawn(async move {
+        let output = util::command::new_command(python_path.to_string_lossy().as_ref())
+            .args(&["-m", "pip", "install", "ipykernel"])
+            .output()
+            .await
+            .context("failed to run pip install ipykernel")?;
+
+        if output.status.success() {
+            anyhow::Ok(())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("{}", stderr.lines().last().unwrap_or("unknown error"))
+        }
+    });
+
+    cx.spawn(async move |cx| {
+        let result = install_task.await;
+
+        match result {
+            Ok(()) => {
+                if let Some(weak_workspace) = &weak_workspace {
+                    weak_workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.dismiss_toast(&notification_id, cx);
+                            workspace.show_toast(
+                                workspace::Toast::new(
+                                    notification_id.clone(),
+                                    format!("ipykernel installed in {}", env_name),
+                                )
+                                .autohide(),
+                                cx,
+                            );
+                        })
+                        .ok();
+                }
+
+                window_handle
+                    .update(cx, |_, window, cx| {
+                        let updated_spec =
+                            KernelSpecification::PythonEnv(PythonEnvKernelSpecification {
+                                has_ipykernel: true,
+                                ..env_spec
+                            });
+                        assign_kernelspec(updated_spec, weak_editor, window, cx).ok();
+                    })
+                    .ok();
+            }
+            Err(error) => {
+                if let Some(weak_workspace) = &weak_workspace {
+                    weak_workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.dismiss_toast(&notification_id, cx);
+                            workspace.show_toast(
+                                workspace::Toast::new(
+                                    notification_id.clone(),
+                                    format!(
+                                        "Failed to install ipykernel in {}: {}",
+                                        env_name, error
+                                    ),
+                                ),
+                                cx,
+                            );
+                        })
+                        .ok();
+                }
+            }
+        }
+    })
+    .detach();
 
     Ok(())
 }
@@ -241,6 +350,24 @@ pub fn clear_outputs(editor: WeakEntity<Editor>, cx: &mut App) {
     });
 }
 
+pub fn clear_current_output(editor: WeakEntity<Editor>, cx: &mut App) {
+    let Some(editor_entity) = editor.upgrade() else {
+        return;
+    };
+
+    let store = ReplStore::global(cx);
+    let entity_id = editor.entity_id();
+    let Some(session) = store.read(cx).get_session(entity_id).cloned() else {
+        return;
+    };
+
+    let position = editor_entity.read(cx).selections.newest_anchor().head();
+
+    session.update(cx, |session, cx| {
+        session.clear_output_at_position(position, cx);
+    });
+}
+
 pub fn interrupt(editor: WeakEntity<Editor>, cx: &mut App) {
     let store = ReplStore::global(cx);
     let entity_id = editor.entity_id();
@@ -298,6 +425,19 @@ pub fn setup_editor_session_actions(editor: &mut Editor, editor_handle: WeakEnti
                 }
 
                 crate::clear_outputs(editor_handle.clone(), cx);
+            }
+        })
+        .detach();
+
+    editor
+        .register_action({
+            let editor_handle = editor_handle.clone();
+            move |_: &ClearCurrentOutput, _, cx| {
+                if !JupyterSettings::enabled(cx) {
+                    return;
+                }
+
+                crate::clear_current_output(editor_handle.clone(), cx);
             }
         })
         .detach();
@@ -422,7 +562,7 @@ fn runnable_ranges(
     cx: &mut App,
 ) -> (Vec<Range<Point>>, Option<Point>) {
     if let Some(language) = buffer.language()
-        && language.name() == "Markdown".into()
+        && language.name() == "Markdown"
     {
         return (markdown_code_blocks(buffer, range, cx), None);
     }

@@ -1,12 +1,12 @@
 use gh_workflow::{
-    Concurrency, Event, Expression, Job, PullRequest, Push, Run, Step, Use, Workflow,
+    Concurrency, Container, Event, Expression, Job, Port, PullRequest, Push, Run, Step, Use,
+    Workflow,
 };
 use indexmap::IndexMap;
+use indoc::formatdoc;
 
 use crate::tasks::workflows::{
-    nix_build::build_nix,
-    runners::Arch,
-    steps::{BASH_SHELL, CommonJobConditions, repository_owner_guard_expression},
+    steps::{CommonJobConditions, repository_owner_guard_expression, use_clang},
     vars::{self, PathCondition},
 };
 
@@ -32,16 +32,11 @@ pub(crate) fn run_tests() -> Workflow {
     );
     let should_check_licences =
         PathCondition::new("run_licenses", r"^(Cargo.lock|script/.*licenses)");
-    let should_build_nix = PathCondition::new(
-        "run_nix",
-        r"^(nix/|flake\.|Cargo\.|rust-toolchain.toml|\.cargo/config.toml)",
-    );
 
     let orchestrate = orchestrate(&[
         &should_check_scripts,
         &should_check_docs,
         &should_check_licences,
-        &should_build_nix,
         &should_run_tests,
     ]);
 
@@ -56,26 +51,11 @@ pub(crate) fn run_tests() -> Workflow {
         should_run_tests.guard(run_platform_tests(Platform::Mac)),
         should_run_tests.guard(doctests()),
         should_run_tests.guard(check_workspace_binaries()),
+        should_run_tests.guard(check_wasm()),
         should_run_tests.guard(check_dependencies()), // could be more specific here?
         should_check_docs.guard(check_docs()),
         should_check_licences.guard(check_licenses()),
         should_check_scripts.guard(check_scripts()),
-        should_build_nix.guard(build_nix(
-            Platform::Linux,
-            Arch::X86_64,
-            "debug",
-            // *don't* cache the built output
-            Some("-zed-editor-[0-9.]*-nightly"),
-            &[],
-        )),
-        should_build_nix.guard(build_nix(
-            Platform::Mac,
-            Arch::AARCH64,
-            "debug",
-            // *don't* cache the built output
-            Some("-zed-editor-[0-9.]*-nightly"),
-            &[],
-        )),
     ];
     let tests_pass = tests_pass(&jobs);
 
@@ -114,11 +94,20 @@ pub(crate) fn run_tests() -> Workflow {
 // Generates a bash script that checks changed files against regex patterns
 // and sets GitHub output variables accordingly
 pub fn orchestrate(rules: &[&PathCondition]) -> NamedJob {
+    orchestrate_impl(rules, true)
+}
+
+pub fn orchestrate_without_package_filter(rules: &[&PathCondition]) -> NamedJob {
+    orchestrate_impl(rules, false)
+}
+
+fn orchestrate_impl(rules: &[&PathCondition], include_package_filter: bool) -> NamedJob {
     let name = "orchestrate".to_owned();
     let step_name = "filter".to_owned();
     let mut script = String::new();
 
     script.push_str(indoc::indoc! {r#"
+        set -euo pipefail
         if [ -z "$GITHUB_BASE_REF" ]; then
           echo "Not in a PR context (i.e., push to main/stable/preview)"
           COMPARE_REV="$(git rev-parse HEAD~1)"
@@ -142,6 +131,69 @@ pub fn orchestrate(rules: &[&PathCondition]) -> NamedJob {
     "#});
 
     let mut outputs = IndexMap::new();
+
+    if include_package_filter {
+        script.push_str(indoc::indoc! {r#"
+        # Check for changes that require full rebuild (no filter)
+        # Direct pushes to main/stable/preview always run full suite
+        if [ -z "$GITHUB_BASE_REF" ]; then
+          echo "Not a PR, running full test suite"
+          echo "changed_packages=" >> "$GITHUB_OUTPUT"
+        elif echo "$CHANGED_FILES" | grep -qP '^(rust-toolchain\.toml|\.cargo/|\.github/|Cargo\.(toml|lock)$)'; then
+          echo "Toolchain, cargo config, or root Cargo files changed, will run all tests"
+          echo "changed_packages=" >> "$GITHUB_OUTPUT"
+        else
+          # Extract changed directories from file paths
+          CHANGED_DIRS=$(echo "$CHANGED_FILES" | \
+            grep -oP '^(crates|tooling)/\K[^/]+' | \
+            sort -u || true)
+
+          # Build directory-to-package mapping using cargo metadata
+          DIR_TO_PKG=$(cargo metadata --format-version=1 --no-deps 2>/dev/null | \
+            jq -r '.packages[] | select(.manifest_path | test("crates/|tooling/")) | "\(.manifest_path | capture("(crates|tooling)/(?<dir>[^/]+)") | .dir)=\(.name)"')
+
+          # Map directory names to package names
+          FILE_CHANGED_PKGS=""
+          for dir in $CHANGED_DIRS; do
+            pkg=$(echo "$DIR_TO_PKG" | grep "^${dir}=" | cut -d= -f2 | head -1)
+            if [ -n "$pkg" ]; then
+              FILE_CHANGED_PKGS=$(printf '%s\n%s' "$FILE_CHANGED_PKGS" "$pkg")
+            else
+              # Fall back to directory name if no mapping found
+              FILE_CHANGED_PKGS=$(printf '%s\n%s' "$FILE_CHANGED_PKGS" "$dir")
+            fi
+          done
+          FILE_CHANGED_PKGS=$(echo "$FILE_CHANGED_PKGS" | grep -v '^$' | sort -u || true)
+
+          # If assets/ changed, add crates that depend on those assets
+          if echo "$CHANGED_FILES" | grep -qP '^assets/'; then
+            FILE_CHANGED_PKGS=$(printf '%s\n%s\n%s\n%s' "$FILE_CHANGED_PKGS" "settings" "storybook" "assets" | sort -u)
+          fi
+
+          # Combine all changed packages
+          ALL_CHANGED_PKGS=$(echo "$FILE_CHANGED_PKGS" | grep -v '^$' || true)
+
+          if [ -z "$ALL_CHANGED_PKGS" ]; then
+            echo "No package changes detected, will run all tests"
+            echo "changed_packages=" >> "$GITHUB_OUTPUT"
+          else
+            # Build nextest filterset with rdeps for each package
+            FILTERSET=$(echo "$ALL_CHANGED_PKGS" | \
+              sed 's/.*/rdeps(&)/' | \
+              tr '\n' '|' | \
+              sed 's/|$//')
+            echo "Changed packages filterset: $FILTERSET"
+            echo "changed_packages=$FILTERSET" >> "$GITHUB_OUTPUT"
+          fi
+        fi
+
+    "#});
+
+        outputs.insert(
+            "changed_packages".to_owned(),
+            format!("${{{{ steps.{}.outputs.changed_packages }}}}", step_name),
+        );
+    }
 
     for rule in rules {
         assert!(
@@ -170,16 +222,8 @@ pub fn orchestrate(rules: &[&PathCondition]) -> NamedJob {
         .runs_on(runners::LINUX_SMALL)
         .with_repository_owner_guard()
         .outputs(outputs)
-        .add_step(steps::checkout_repo().add_with((
-            "fetch-depth",
-            "${{ github.ref == 'refs/heads/main' && 2 || 350 }}",
-        )))
-        .add_step(
-            Step::new(step_name.clone())
-                .run(script)
-                .id(step_name)
-                .shell(BASH_SHELL),
-        );
+        .add_step(steps::checkout_repo().with_deep_history_on_non_main())
+        .add_step(Step::new(step_name.clone()).run(script).id(step_name));
 
     NamedJob { name, job }
 }
@@ -224,6 +268,32 @@ pub fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
     named::job(job)
 }
 
+const TS_QUERY_LS_FILE: &str = "ts_query_ls-x86_64-unknown-linux-gnu.tar.gz";
+const CI_TS_QUERY_RELEASE: &str = "tags/v3.15.1";
+
+pub(crate) fn fetch_ts_query_ls() -> Step<Use> {
+    named::uses(
+        "dsaltares",
+        "fetch-gh-release-asset",
+        "aa37ae5c44d3c9820bc12fe675e8670ecd93bd1c",
+    ) // v1.1.1
+    .add_with(("repo", "ribru17/ts_query_ls"))
+    .add_with(("version", CI_TS_QUERY_RELEASE))
+    .add_with(("file", TS_QUERY_LS_FILE))
+}
+
+pub(crate) fn run_ts_query_ls() -> Step<Run> {
+    named::bash(formatdoc!(
+        r#"tar -xf {TS_QUERY_LS_FILE}
+        ./ts_query_ls format --check . || {{
+            echo "Found unformatted queries, please format them with ts_query_ls."
+            echo "For easy use, install the Tree-sitter query extension:"
+            echo "zed://extension/tree-sitter-query"
+            false
+        }}"#
+    ))
+}
+
 fn check_style() -> NamedJob {
     fn check_for_typos() -> Step<Use> {
         named::uses(
@@ -233,6 +303,7 @@ fn check_style() -> NamedJob {
         ) // v1.40.0
         .with(("config", "./typos.toml"))
     }
+
     named::job(
         release_job(&[])
             .runs_on(runners::LINUX_MEDIUM)
@@ -243,7 +314,9 @@ fn check_style() -> NamedJob {
             .add_step(steps::cargo_fmt())
             .add_step(steps::script("./script/check-todos"))
             .add_step(steps::script("./script/check-keymaps"))
-            .add_step(check_for_typos()),
+            .add_step(check_for_typos())
+            .add_step(fetch_ts_query_ls())
+            .add_step(run_ts_query_ls()),
     )
 }
 
@@ -281,7 +354,7 @@ fn check_dependencies() -> NamedJob {
         .with(("license-check", false))
     }
 
-    named::job(
+    named::job(use_clang(
         release_job(&[])
             .runs_on(runners::LINUX_SMALL)
             .add_step(steps::checkout_repo())
@@ -290,21 +363,55 @@ fn check_dependencies() -> NamedJob {
             .add_step(run_cargo_machete())
             .add_step(check_cargo_lock())
             .add_step(check_vulnerable_dependencies()),
-    )
+    ))
 }
 
-fn check_workspace_binaries() -> NamedJob {
+fn check_wasm() -> NamedJob {
+    fn install_nightly_wasm_toolchain() -> Step<Run> {
+        named::bash(
+            "rustup toolchain install nightly --component rust-src --target wasm32-unknown-unknown",
+        )
+    }
+
+    fn cargo_check_wasm() -> Step<Run> {
+        named::bash(concat!(
+            "cargo +nightly -Zbuild-std=std,panic_abort ",
+            "check --target wasm32-unknown-unknown -p gpui_platform",
+        ))
+        .add_env((
+            "CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS",
+            "-C target-feature=+atomics,+bulk-memory,+mutable-globals",
+        ))
+    }
+
     named::job(
         release_job(&[])
             .runs_on(runners::LINUX_LARGE)
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(Platform::Linux))
             .add_step(steps::cache_rust_dependencies_namespace())
-            .map(steps::install_linux_dependencies)
-            .add_step(steps::script("cargo build -p collab"))
-            .add_step(steps::script("cargo build --workspace --bins --examples"))
+            .add_step(install_nightly_wasm_toolchain())
+            .add_step(steps::setup_sccache(Platform::Linux))
+            .add_step(cargo_check_wasm())
+            .add_step(steps::show_sccache_stats(Platform::Linux))
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),
     )
+}
+
+fn check_workspace_binaries() -> NamedJob {
+    named::job(use_clang(
+        release_job(&[])
+            .runs_on(runners::LINUX_LARGE)
+            .add_step(steps::checkout_repo())
+            .add_step(steps::setup_cargo_config(Platform::Linux))
+            .add_step(steps::cache_rust_dependencies_namespace())
+            .map(steps::install_linux_dependencies)
+            .add_step(steps::setup_sccache(Platform::Linux))
+            .add_step(steps::script("cargo build -p collab"))
+            .add_step(steps::script("cargo build --workspace --bins --examples"))
+            .add_step(steps::show_sccache_stats(Platform::Linux))
+            .add_step(steps::cleanup_cargo_config(Platform::Linux)),
+    ))
 }
 
 pub(crate) fn clippy(platform: Platform) -> NamedJob {
@@ -313,24 +420,39 @@ pub(crate) fn clippy(platform: Platform) -> NamedJob {
         Platform::Linux => runners::LINUX_DEFAULT,
         Platform::Mac => runners::MAC_DEFAULT,
     };
+    let mut job = release_job(&[])
+        .runs_on(runner)
+        .add_step(steps::checkout_repo())
+        .add_step(steps::setup_cargo_config(platform))
+        .when(
+            platform == Platform::Linux || platform == Platform::Mac,
+            |this| this.add_step(steps::cache_rust_dependencies_namespace()),
+        )
+        .when(
+            platform == Platform::Linux,
+            steps::install_linux_dependencies,
+        )
+        .add_step(steps::setup_sccache(platform))
+        .add_step(steps::clippy(platform))
+        .add_step(steps::show_sccache_stats(platform));
+    if platform == Platform::Linux {
+        job = use_clang(job);
+    }
     NamedJob {
         name: format!("clippy_{platform}"),
-        job: release_job(&[])
-            .runs_on(runner)
-            .add_step(steps::checkout_repo())
-            .add_step(steps::setup_cargo_config(platform))
-            .when(platform == Platform::Linux, |this| {
-                this.add_step(steps::cache_rust_dependencies_namespace())
-            })
-            .when(
-                platform == Platform::Linux,
-                steps::install_linux_dependencies,
-            )
-            .add_step(steps::clippy(platform)),
+        job,
     }
 }
 
 pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
+    run_platform_tests_impl(platform, true)
+}
+
+pub(crate) fn run_platform_tests_no_filter(platform: Platform) -> NamedJob {
+    run_platform_tests_impl(platform, false)
+}
+
+fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> NamedJob {
     let runner = match platform {
         Platform::Windows => runners::WINDOWS_DEFAULT,
         Platform::Linux => runners::LINUX_DEFAULT,
@@ -340,30 +462,53 @@ pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
         name: format!("run_tests_{platform}"),
         job: release_job(&[])
             .runs_on(runner)
+            .when(platform == Platform::Linux, |job| {
+                job.add_service(
+                    "postgres",
+                    Container::new("postgres:15")
+                        .add_env(("POSTGRES_HOST_AUTH_METHOD", "trust"))
+                        .ports(vec![Port::Name("5432:5432".into())])
+                        .options(
+                            "--health-cmd pg_isready \
+                             --health-interval 500ms \
+                             --health-timeout 5s \
+                             --health-retries 10",
+                        ),
+                )
+            })
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(platform))
-            .when(platform == Platform::Linux, |this| {
+            .when(platform == Platform::Mac, |this| {
                 this.add_step(steps::cache_rust_dependencies_namespace())
+            })
+            .when(platform == Platform::Linux, |this| {
+                use_clang(this.add_step(steps::cache_rust_dependencies_namespace()))
             })
             .when(
                 platform == Platform::Linux,
                 steps::install_linux_dependencies,
             )
             .add_step(steps::setup_node())
-            .when(platform == Platform::Linux, |job| {
-                job.add_step(steps::cargo_install_nextest())
-            })
+            .when(
+                platform == Platform::Linux || platform == Platform::Mac,
+                |job| job.add_step(steps::cargo_install_nextest()),
+            )
             .add_step(steps::clear_target_dir_if_large(platform))
-            .add_step(steps::cargo_nextest(platform))
+            .add_step(steps::setup_sccache(platform))
+            .when(filter_packages, |job| {
+                job.add_step(
+                    steps::cargo_nextest(platform).with_changed_packages_filter("orchestrate"),
+                )
+            })
+            .when(!filter_packages, |job| {
+                job.add_step(steps::cargo_nextest(platform))
+            })
+            .add_step(steps::show_sccache_stats(platform))
             .add_step(steps::cleanup_cargo_config(platform)),
     }
 }
 
 pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
-    fn remove_untracked_files() -> Step<Run> {
-        named::bash("git clean -df")
-    }
-
     fn ensure_fresh_merge() -> Step<Run> {
         named::bash(indoc::indoc! {r#"
             if [ -z "$GITHUB_BASE_REF" ];
@@ -388,6 +533,14 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
             .add_with(("against", "https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/proto/proto/"))
     }
 
+    fn buf_lint() -> Step<Run> {
+        named::bash("buf lint crates/proto/proto")
+    }
+
+    fn check_protobuf_formatting() -> Step<Run> {
+        named::bash("buf format --diff --exit-code crates/proto/proto")
+    }
+
     named::job(
         release_job(&[])
             .runs_on(runners::LINUX_DEFAULT)
@@ -395,11 +548,12 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
             .add_env(("GIT_AUTHOR_EMAIL", "ci@zed.dev"))
             .add_env(("GIT_COMMITTER_NAME", "Protobuf Action"))
             .add_env(("GIT_COMMITTER_EMAIL", "ci@zed.dev"))
-            .add_step(steps::checkout_repo().with(("fetch-depth", 0))) // fetch full history
-            .add_step(remove_untracked_files())
+            .add_step(steps::checkout_repo().with_full_history())
             .add_step(ensure_fresh_merge())
             .add_step(bufbuild_setup_action())
-            .add_step(bufbuild_breaking_action()),
+            .add_step(bufbuild_breaking_action())
+            .add_step(buf_lint())
+            .add_step(check_protobuf_formatting()),
     )
 }
 
@@ -411,16 +565,18 @@ fn doctests() -> NamedJob {
         .id("run_doctests")
     }
 
-    named::job(
+    named::job(use_clang(
         release_job(&[])
             .runs_on(runners::LINUX_DEFAULT)
             .add_step(steps::checkout_repo())
             .add_step(steps::cache_rust_dependencies_namespace())
             .map(steps::install_linux_dependencies)
             .add_step(steps::setup_cargo_config(Platform::Linux))
+            .add_step(steps::setup_sccache(Platform::Linux))
             .add_step(run_doctests())
+            .add_step(steps::show_sccache_stats(Platform::Linux))
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),
-    )
+    ))
 }
 
 fn check_licenses() -> NamedJob {
@@ -462,7 +618,7 @@ fn check_docs() -> NamedJob {
         "#})
     }
 
-    named::job(
+    named::job(use_clang(
         release_job(&[])
             .runs_on(runners::LINUX_LARGE)
             .add_step(steps::checkout_repo())
@@ -479,7 +635,7 @@ fn check_docs() -> NamedJob {
             .add_step(
                 lychee_link_check("target/deploy/docs"), // check links in generated html
             ),
-    )
+    ))
 }
 
 pub(crate) fn check_scripts() -> NamedJob {

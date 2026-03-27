@@ -120,6 +120,7 @@ impl Render for OnboardingBanner {
             .rounded_sm()
             .border_1()
             .border_color(border_color)
+            .occlude()
             .child(
                 ButtonLike::new("try-a-feature")
                     .child(

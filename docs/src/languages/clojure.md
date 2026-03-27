@@ -1,3 +1,8 @@
+---
+title: Clojure
+description: "Configure Clojure language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Clojure
 
 Clojure support is available through the [Clojure extension](https://github.com/zed-extensions/clojure).

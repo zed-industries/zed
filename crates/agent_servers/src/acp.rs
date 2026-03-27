@@ -7,11 +7,10 @@ use action_log::ActionLog;
 use agent_client_protocol::{self as acp, Agent as _, ErrorCode};
 use anyhow::anyhow;
 use collections::HashMap;
-use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use futures::AsyncBufReadExt as _;
 use futures::io::BufReader;
 use project::Project;
-use project::agent_server_store::AgentServerCommand;
+use project::agent_server_store::{AgentServerCommand, GEMINI_NAME};
 use serde::Deserialize;
 use settings::Settings as _;
 use task::ShellBuilder;
@@ -37,6 +36,7 @@ pub struct UnsupportedVersion;
 
 pub struct AcpConnection {
     server_name: SharedString,
+    display_name: SharedString,
     telemetry_id: SharedString,
     connection: Rc<acp::ClientSideConnection>,
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
@@ -45,7 +45,6 @@ pub struct AcpConnection {
     default_mode: Option<acp::SessionModeId>,
     default_model: Option<acp::ModelId>,
     default_config_options: HashMap<String, String>,
-    root_dir: PathBuf,
     child: Child,
     session_list: Option<Rc<AcpSessionList>>,
     _io_task: Task<Result<(), acp::Error>>,
@@ -80,22 +79,30 @@ pub struct AcpSession {
 
 pub struct AcpSessionList {
     connection: Rc<acp::ClientSideConnection>,
-    updates_tx: Rc<RefCell<watch::Sender<()>>>,
-    updates_rx: watch::Receiver<()>,
+    updates_tx: smol::channel::Sender<acp_thread::SessionListUpdate>,
+    updates_rx: smol::channel::Receiver<acp_thread::SessionListUpdate>,
 }
 
 impl AcpSessionList {
     fn new(connection: Rc<acp::ClientSideConnection>) -> Self {
-        let (tx, rx) = watch::channel(());
+        let (tx, rx) = smol::channel::unbounded();
         Self {
             connection,
-            updates_tx: Rc::new(RefCell::new(tx)),
+            updates_tx: tx,
             updates_rx: rx,
         }
     }
 
     fn notify_update(&self) {
-        self.updates_tx.borrow_mut().send(()).ok();
+        self.updates_tx
+            .try_send(acp_thread::SessionListUpdate::Refresh)
+            .log_err();
+    }
+
+    fn send_info_update(&self, session_id: acp::SessionId, update: acp::SessionInfoUpdate) {
+        self.updates_tx
+            .try_send(acp_thread::SessionListUpdate::SessionInfo { session_id, update })
+            .log_err();
     }
 }
 
@@ -133,8 +140,15 @@ impl AgentSessionList for AcpSessionList {
         })
     }
 
-    fn watch(&self, _cx: &mut App) -> Option<watch::Receiver<()>> {
+    fn watch(
+        &self,
+        _cx: &mut App,
+    ) -> Option<smol::channel::Receiver<acp_thread::SessionListUpdate>> {
         Some(self.updates_rx.clone())
+    }
+
+    fn notify_refresh(&self) {
+        self.notify_update();
     }
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
@@ -144,22 +158,20 @@ impl AgentSessionList for AcpSessionList {
 
 pub async fn connect(
     server_name: SharedString,
+    display_name: SharedString,
     command: AgentServerCommand,
-    root_dir: &Path,
     default_mode: Option<acp::SessionModeId>,
     default_model: Option<acp::ModelId>,
     default_config_options: HashMap<String, String>,
-    is_remote: bool,
     cx: &mut AsyncApp,
 ) -> Result<Rc<dyn AgentConnection>> {
     let conn = AcpConnection::stdio(
         server_name,
+        display_name,
         command.clone(),
-        root_dir,
         default_mode,
         default_model,
         default_config_options,
-        is_remote,
         cx,
     )
     .await?;
@@ -171,12 +183,11 @@ const MINIMUM_SUPPORTED_VERSION: acp::ProtocolVersion = acp::ProtocolVersion::V1
 impl AcpConnection {
     pub async fn stdio(
         server_name: SharedString,
+        display_name: SharedString,
         command: AgentServerCommand,
-        root_dir: &Path,
         default_mode: Option<acp::SessionModeId>,
         default_model: Option<acp::ModelId>,
         default_config_options: HashMap<String, String>,
-        is_remote: bool,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
         let shell = cx.update(|cx| TerminalSettings::get(None, cx).shell.clone());
@@ -184,9 +195,6 @@ impl AcpConnection {
         let mut child =
             builder.build_std_command(Some(command.path.display().to_string()), &command.args);
         child.envs(command.env.iter().flatten());
-        if !is_remote {
-            child.current_dir(root_dir);
-        }
         let mut child = Child::spawn(child, Stdio::piped(), Stdio::piped(), Stdio::piped())?;
 
         let stdout = child.stdout.take().context("Failed to take stdout")?;
@@ -209,8 +217,12 @@ impl AcpConnection {
             )
         });
 
+        let client_session_list: Rc<RefCell<Option<Rc<AcpSessionList>>>> =
+            Rc::new(RefCell::new(None));
+
         let client = ClientDelegate {
             sessions: sessions.clone(),
+            session_list: client_session_list.clone(),
             cx: cx.clone(),
         };
         let (connection, io_task) = acp::ClientSideConnection::new(client, stdin, stdout, {
@@ -300,16 +312,37 @@ impl AcpConnection {
             .list
             .is_some()
         {
-            Some(Rc::new(AcpSessionList::new(connection.clone())))
+            let list = Rc::new(AcpSessionList::new(connection.clone()));
+            *client_session_list.borrow_mut() = Some(list.clone());
+            Some(list)
         } else {
             None
         };
 
+        // TODO: Remove this override once Google team releases their official auth methods
+        let auth_methods = if server_name == GEMINI_NAME {
+            let mut args = command.args.clone();
+            args.retain(|a| a != "--experimental-acp");
+            let value = serde_json::json!({
+                "label": "gemini /auth",
+                "command": command.path.to_string_lossy().into_owned(),
+                "args": args,
+                "env": command.env.clone().unwrap_or_default(),
+            });
+            let meta = acp::Meta::from_iter([("terminal-auth".to_string(), value)]);
+            vec![
+                acp::AuthMethod::new("spawn-gemini-cli", "Login")
+                    .description("Login with your Google or Vertex AI account")
+                    .meta(meta),
+            ]
+        } else {
+            response.auth_methods
+        };
         Ok(Self {
-            auth_methods: response.auth_methods,
-            root_dir: root_dir.to_owned(),
+            auth_methods,
             connection,
             server_name,
+            display_name,
             telemetry_id,
             sessions,
             agent_capabilities: response.agent_capabilities,
@@ -327,10 +360,6 @@ impl AcpConnection {
     pub fn prompt_capabilities(&self) -> &acp::PromptCapabilities {
         &self.agent_capabilities.prompt_capabilities
     }
-
-    pub fn root_dir(&self) -> &Path {
-        &self.root_dir
-    }
 }
 
 impl Drop for AcpConnection {
@@ -344,7 +373,7 @@ impl AgentConnection for AcpConnection {
         self.telemetry_id.clone()
     }
 
-    fn new_thread(
+    fn new_session(
         self: Rc<Self>,
         project: Entity<Project>,
         cwd: &Path,
@@ -360,9 +389,7 @@ impl AgentConnection for AcpConnection {
                 .await
                 .map_err(map_acp_error)?;
 
-            let (modes, models, config_options) = cx.update(|cx| {
-                config_state(cx, response.modes, response.models, response.config_options)
-            });
+            let (modes, models, config_options) = config_state(response.modes, response.models, response.config_options);
 
             if let Some(default_mode) = self.default_mode.clone() {
                 if let Some(modes) = modes.as_ref() {
@@ -400,10 +427,6 @@ impl AgentConnection for AcpConnection {
                             "`{default_mode}` is not valid {name} mode. Available options:\n{available_modes}",
                         );
                     }
-                } else {
-                    log::warn!(
-                        "`{name}` does not support modes, but `default_mode` was set in settings.",
-                    );
                 }
             }
 
@@ -443,10 +466,6 @@ impl AgentConnection for AcpConnection {
                             "`{default_model}` is not a valid {name} model. Available options:\n{available_models}",
                         );
                     }
-                } else {
-                    log::warn!(
-                        "`{name}` does not support model selection, but `default_model` was set in settings.",
-                    );
                 }
             }
 
@@ -539,7 +558,8 @@ impl AgentConnection for AcpConnection {
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
             let thread: Entity<AcpThread> = cx.new(|cx| {
                 AcpThread::new(
-                    self.server_name.clone(),
+                    None,
+                    self.display_name.clone(),
                     self.clone(),
                     project,
                     action_log,
@@ -561,16 +581,19 @@ impl AgentConnection for AcpConnection {
                 },
             );
 
-            if let Some(session_list) = &self.session_list {
-                session_list.notify_update();
-            }
-
             Ok(thread)
         })
     }
 
-    fn supports_load_session(&self, cx: &App) -> bool {
-        cx.has_flag::<AcpBetaFeatureFlag>() && self.agent_capabilities.load_session
+    fn supports_load_session(&self) -> bool {
+        self.agent_capabilities.load_session
+    }
+
+    fn supports_resume_session(&self) -> bool {
+        self.agent_capabilities
+            .session_capabilities
+            .resume
+            .is_some()
     }
 
     fn load_session(
@@ -580,7 +603,7 @@ impl AgentConnection for AcpConnection {
         cwd: &Path,
         cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
-        if !cx.has_flag::<AcpBetaFeatureFlag>() || !self.agent_capabilities.load_session {
+        if !self.agent_capabilities.load_session {
             return Task::ready(Err(anyhow!(LoadError::Other(
                 "Loading sessions is not supported by this agent.".into()
             ))));
@@ -589,9 +612,14 @@ impl AgentConnection for AcpConnection {
         let cwd = cwd.to_path_buf();
         let mcp_servers = mcp_servers_for_project(&project, cx);
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let title = session
+            .title
+            .clone()
+            .unwrap_or_else(|| self.display_name.clone());
         let thread: Entity<AcpThread> = cx.new(|cx| {
             AcpThread::new(
-                self.server_name.clone(),
+                None,
+                title,
                 self.clone(),
                 project,
                 action_log,
@@ -612,7 +640,7 @@ impl AgentConnection for AcpConnection {
             },
         );
 
-        cx.spawn(async move |cx| {
+        cx.spawn(async move |_| {
             let response = match self
                 .connection
                 .load_session(
@@ -628,17 +656,89 @@ impl AgentConnection for AcpConnection {
                 }
             };
 
-            let (modes, models, config_options) = cx.update(|cx| {
-                config_state(cx, response.modes, response.models, response.config_options)
-            });
+            let (modes, models, config_options) =
+                config_state(response.modes, response.models, response.config_options);
             if let Some(session) = self.sessions.borrow_mut().get_mut(&session.session_id) {
                 session.session_modes = modes;
                 session.models = models;
                 session.config_options = config_options.map(ConfigOptions::new);
             }
 
-            if let Some(session_list) = &self.session_list {
-                session_list.notify_update();
+            Ok(thread)
+        })
+    }
+
+    fn resume_session(
+        self: Rc<Self>,
+        session: AgentSessionInfo,
+        project: Entity<Project>,
+        cwd: &Path,
+        cx: &mut App,
+    ) -> Task<Result<Entity<AcpThread>>> {
+        if self
+            .agent_capabilities
+            .session_capabilities
+            .resume
+            .is_none()
+        {
+            return Task::ready(Err(anyhow!(LoadError::Other(
+                "Resuming sessions is not supported by this agent.".into()
+            ))));
+        }
+
+        let cwd = cwd.to_path_buf();
+        let mcp_servers = mcp_servers_for_project(&project, cx);
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let title = session
+            .title
+            .clone()
+            .unwrap_or_else(|| self.display_name.clone());
+        let thread: Entity<AcpThread> = cx.new(|cx| {
+            AcpThread::new(
+                None,
+                title,
+                self.clone(),
+                project,
+                action_log,
+                session.session_id.clone(),
+                watch::Receiver::constant(self.agent_capabilities.prompt_capabilities.clone()),
+                cx,
+            )
+        });
+
+        self.sessions.borrow_mut().insert(
+            session.session_id.clone(),
+            AcpSession {
+                thread: thread.downgrade(),
+                suppress_abort_err: false,
+                session_modes: None,
+                models: None,
+                config_options: None,
+            },
+        );
+
+        cx.spawn(async move |_| {
+            let response = match self
+                .connection
+                .resume_session(
+                    acp::ResumeSessionRequest::new(session.session_id.clone(), cwd)
+                        .mcp_servers(mcp_servers),
+                )
+                .await
+            {
+                Ok(response) => response,
+                Err(err) => {
+                    self.sessions.borrow_mut().remove(&session.session_id);
+                    return Err(map_acp_error(err));
+                }
+            };
+
+            let (modes, models, config_options) =
+                config_state(response.modes, response.models, response.config_options);
+            if let Some(session) = self.sessions.borrow_mut().get_mut(&session.session_id) {
+                session.session_modes = modes;
+                session.models = models;
+                session.config_options = config_options.map(ConfigOptions::new);
             }
 
             Ok(thread)
@@ -792,12 +892,8 @@ impl AgentConnection for AcpConnection {
         }) as _)
     }
 
-    fn session_list(&self, cx: &mut App) -> Option<Rc<dyn AgentSessionList>> {
-        if cx.has_flag::<AcpBetaFeatureFlag>() {
-            self.session_list.clone().map(|s| s as _)
-        } else {
-            None
-        }
+    fn session_list(&self, _cx: &mut App) -> Option<Rc<dyn AgentSessionList>> {
+        self.session_list.clone().map(|s| s as _)
     }
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
@@ -867,7 +963,6 @@ fn mcp_servers_for_project(project: &Entity<Project>, cx: &App) -> Vec<acp::McpS
 }
 
 fn config_state(
-    cx: &App,
     modes: Option<acp::SessionModeState>,
     models: Option<acp::SessionModelState>,
     config_options: Option<Vec<acp::SessionConfigOption>>,
@@ -876,9 +971,7 @@ fn config_state(
     Option<Rc<RefCell<acp::SessionModelState>>>,
     Option<Rc<RefCell<Vec<acp::SessionConfigOption>>>>,
 ) {
-    if cx.has_flag::<AcpBetaFeatureFlag>()
-        && let Some(opts) = config_options
-    {
+    if let Some(opts) = config_options {
         return (None, None, Some(Rc::new(RefCell::new(opts))));
     }
 
@@ -1045,6 +1138,7 @@ impl acp_thread::AgentSessionConfigOptions for AcpSessionConfigOptions {
 
 struct ClientDelegate {
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
+    session_list: Rc<RefCell<Option<Rc<AcpSessionList>>>>,
     cx: AsyncApp,
 }
 
@@ -1054,14 +1148,12 @@ impl acp::Client for ClientDelegate {
         &self,
         arguments: acp::RequestPermissionRequest,
     ) -> Result<acp::RequestPermissionResponse, acp::Error> {
-        let respect_always_allow_setting;
         let thread;
         {
             let sessions_ref = self.sessions.borrow();
             let session = sessions_ref
                 .get(&arguments.session_id)
                 .context("Failed to get session")?;
-            respect_always_allow_setting = session.session_modes.is_none();
             thread = session.thread.clone();
         }
 
@@ -1071,7 +1163,6 @@ impl acp::Client for ClientDelegate {
             thread.request_tool_call_authorization(
                 arguments.tool_call,
                 acp_thread::PermissionOptions::Flat(arguments.options),
-                respect_always_allow_setting,
                 cx,
             )
         })??;
@@ -1129,10 +1220,6 @@ impl acp::Client for ClientDelegate {
         {
             if let Some(session_modes) = &session.session_modes {
                 session_modes.borrow_mut().current_mode_id = current_mode_id.clone();
-            } else {
-                log::error!(
-                    "Got a `CurrentModeUpdate` notification, but they agent didn't specify `modes` during setting setup."
-                );
             }
         }
 
@@ -1144,11 +1231,13 @@ impl acp::Client for ClientDelegate {
             if let Some(opts) = &session.config_options {
                 *opts.config_options.borrow_mut() = config_options.clone();
                 opts.tx.borrow_mut().send(()).ok();
-            } else {
-                log::error!(
-                    "Got a `ConfigOptionUpdate` notification, but the agent didn't specify `config_options` during session setup."
-                );
             }
+        }
+
+        if let acp::SessionUpdate::SessionInfoUpdate(info_update) = &notification.update
+            && let Some(session_list) = self.session_list.borrow().as_ref()
+        {
+            session_list.send_info_update(notification.session_id.clone(), info_update.clone());
         }
 
         // Clone so we can inspect meta both before and after handing off to the thread
@@ -1172,6 +1261,8 @@ impl acp::Client for ClientDelegate {
                                 AlternateScroll::On,
                                 None,
                                 0,
+                                cx.background_executor(),
+                                thread.project().read(cx).path_style(cx),
                             )?;
                             let lower = cx.new(|cx| builder.subscribe(cx));
                             thread.on_terminal_provider_event(

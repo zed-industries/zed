@@ -475,7 +475,12 @@ impl FromStr for GitStatus {
                     }
                     .into();
                 }
-                _ => panic!("Unexpected duplicated status entries: {a_status:?} and {b_status:?}"),
+                (x, y) if x == y => {}
+                _ => {
+                    log::warn!(
+                        "Unexpected duplicated status entries: {a_status:?} and {b_status:?}"
+                    );
+                }
             }
             true
         });
@@ -575,13 +580,150 @@ impl FromStr for TreeDiff {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DiffStat {
+    pub added: u32,
+    pub deleted: u32,
+}
+
+/// Parses the output of `git diff --numstat` where output looks like:
+///
+/// ```text
+/// 24   12   dir/file.txt
+/// ```
+pub fn parse_numstat(output: &str) -> HashMap<RepoPath, DiffStat> {
+    let mut stats = HashMap::default();
+    for line in output.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let mut parts = line.splitn(3, '\t');
+        let (Some(added_str), Some(deleted_str), Some(path_str)) =
+            (parts.next(), parts.next(), parts.next())
+        else {
+            continue;
+        };
+        let Ok(added) = added_str.parse::<u32>() else {
+            continue;
+        };
+        let Ok(deleted) = deleted_str.parse::<u32>() else {
+            continue;
+        };
+        let Ok(path) = RepoPath::new(path_str) else {
+            continue;
+        };
+        let stat = DiffStat { added, deleted };
+        stats.insert(path, stat);
+    }
+    stats
+}
+
 #[cfg(test)]
 mod tests {
 
     use crate::{
         repository::RepoPath,
-        status::{TreeDiff, TreeDiffStatus},
+        status::{FileStatus, GitStatus, TreeDiff, TreeDiffStatus},
     };
+
+    use super::{DiffStat, parse_numstat};
+
+    #[test]
+    fn test_parse_numstat_normal() {
+        let input = "10\t5\tsrc/main.rs\n3\t1\tREADME.md\n";
+        let result = parse_numstat(input);
+        assert_eq!(result.len(), 2);
+        assert_eq!(
+            result.get(&RepoPath::new("src/main.rs").unwrap()),
+            Some(&DiffStat {
+                added: 10,
+                deleted: 5
+            })
+        );
+        assert_eq!(
+            result.get(&RepoPath::new("README.md").unwrap()),
+            Some(&DiffStat {
+                added: 3,
+                deleted: 1
+            })
+        );
+    }
+
+    #[test]
+    fn test_parse_numstat_binary_files_skipped() {
+        // git diff --numstat outputs "-\t-\tpath" for binary files
+        let input = "-\t-\timage.png\n5\t2\tsrc/lib.rs\n";
+        let result = parse_numstat(input);
+        assert_eq!(result.len(), 1);
+        assert!(!result.contains_key(&RepoPath::new("image.png").unwrap()));
+        assert_eq!(
+            result.get(&RepoPath::new("src/lib.rs").unwrap()),
+            Some(&DiffStat {
+                added: 5,
+                deleted: 2
+            })
+        );
+    }
+
+    #[test]
+    fn test_parse_numstat_empty_input() {
+        assert!(parse_numstat("").is_empty());
+        assert!(parse_numstat("\n\n").is_empty());
+        assert!(parse_numstat("   \n  \n").is_empty());
+    }
+
+    #[test]
+    fn test_parse_numstat_malformed_lines_skipped() {
+        let input = "not_a_number\t5\tfile.rs\n10\t5\tvalid.rs\n";
+        let result = parse_numstat(input);
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result.get(&RepoPath::new("valid.rs").unwrap()),
+            Some(&DiffStat {
+                added: 10,
+                deleted: 5
+            })
+        );
+    }
+
+    #[test]
+    fn test_parse_numstat_incomplete_lines_skipped() {
+        // Lines with fewer than 3 tab-separated fields are skipped
+        let input = "10\t5\n7\t3\tok.rs\n";
+        let result = parse_numstat(input);
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result.get(&RepoPath::new("ok.rs").unwrap()),
+            Some(&DiffStat {
+                added: 7,
+                deleted: 3
+            })
+        );
+    }
+
+    #[test]
+    fn test_parse_numstat_zero_stats() {
+        let input = "0\t0\tunchanged_but_present.rs\n";
+        let result = parse_numstat(input);
+        assert_eq!(
+            result.get(&RepoPath::new("unchanged_but_present.rs").unwrap()),
+            Some(&DiffStat {
+                added: 0,
+                deleted: 0
+            })
+        );
+    }
+
+    #[test]
+    fn test_duplicate_untracked_entries() {
+        // Regression test for ZED-2XA: git can produce duplicate untracked entries
+        // for the same path. This should deduplicate them instead of panicking.
+        let input = "?? file.txt\0?? file.txt";
+        let status: GitStatus = input.parse().unwrap();
+        assert_eq!(status.entries.len(), 1);
+        assert_eq!(status.entries[0].1, FileStatus::Untracked);
+    }
 
     #[test]
     fn test_tree_diff_parsing() {

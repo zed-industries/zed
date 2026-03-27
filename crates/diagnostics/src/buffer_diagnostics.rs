@@ -866,7 +866,7 @@ impl Item for BufferDiagnosticsEditor {
         Some("Buffer Diagnostics Opened")
     }
 
-    fn to_item_events(event: &EditorEvent, f: impl FnMut(ItemEvent)) {
+    fn to_item_events(event: &EditorEvent, f: &mut dyn FnMut(ItemEvent)) {
         Editor::to_item_events(event, f)
     }
 }
@@ -904,7 +904,7 @@ impl Render for BufferDiagnosticsEditor {
                                 .style(ButtonStyle::Transparent)
                                 .tooltip(Tooltip::text("Open File"))
                                 .on_click(cx.listener(|buffer_diagnostics, _, window, cx| {
-                                    if let Some(workspace) = window.root::<Workspace>().flatten() {
+                                    if let Some(workspace) = Workspace::for_window(window, cx) {
                                         workspace.update(cx, |workspace, cx| {
                                             workspace
                                                 .open_path(

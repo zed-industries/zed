@@ -7,7 +7,8 @@ use std::time::Duration;
 use std::{ops::Range, sync::Arc};
 
 use anyhow::Context as _;
-use client::{ExtensionMetadata, ExtensionProvides};
+use client::zed_urls;
+use cloud_api_types::{ExtensionMetadata, ExtensionProvides};
 use collections::{BTreeMap, BTreeSet};
 use editor::{Editor, EditorElement, EditorStyle};
 use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore};
@@ -247,7 +248,10 @@ fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
     static KEYWORDS_BY_FEATURE: OnceLock<BTreeMap<Feature, Vec<&'static str>>> = OnceLock::new();
     KEYWORDS_BY_FEATURE.get_or_init(|| {
         BTreeMap::from_iter([
-            (Feature::AgentClaude, vec!["claude", "claude code"]),
+            (
+                Feature::AgentClaude,
+                vec!["claude", "claude code", "claude agent"],
+            ),
             (Feature::AgentCodex, vec!["codex", "codex cli"]),
             (Feature::AgentGemini, vec!["gemini", "gemini cli"]),
             (
@@ -287,6 +291,23 @@ fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
     })
 }
 
+fn acp_registry_upsell_keywords() -> &'static [&'static str] {
+    &[
+        "opencode",
+        "mistral",
+        "auggie",
+        "stakpak",
+        "codebuddy",
+        "autohand",
+        "factory droid",
+        "corust",
+    ]
+}
+
+fn extension_button_id(extension_id: &Arc<str>, operation: ExtensionOperation) -> ElementId {
+    (SharedString::from(extension_id.clone()), operation as usize).into()
+}
+
 struct ExtensionCardButtons {
     install_or_uninstall: Button,
     upgrade: Option<Button>,
@@ -302,12 +323,14 @@ pub struct ExtensionsPage {
     remote_extension_entries: Vec<ExtensionMetadata>,
     dev_extension_entries: Vec<Arc<ExtensionManifest>>,
     filtered_remote_extension_indices: Vec<usize>,
+    filtered_dev_extension_indices: Vec<usize>,
     query_editor: Entity<Editor>,
     query_contains_error: bool,
     provides_filter: Option<ExtensionProvides>,
     _subscriptions: [gpui::Subscription; 2],
     extension_fetch_task: Option<Task<()>>,
     upsells: BTreeSet<Feature>,
+    show_acp_registry_upsell: bool,
 }
 
 impl ExtensionsPage {
@@ -362,6 +385,7 @@ impl ExtensionsPage {
                 filter: ExtensionFilter::All,
                 dev_extension_entries: Vec::new(),
                 filtered_remote_extension_indices: Vec::new(),
+                filtered_dev_extension_indices: Vec::new(),
                 remote_extension_entries: Vec::new(),
                 query_contains_error: false,
                 provides_filter,
@@ -369,6 +393,7 @@ impl ExtensionsPage {
                 _subscriptions: subscriptions,
                 query_editor,
                 upsells: BTreeSet::default(),
+                show_acp_registry_upsell: false,
             };
             this.fetch_extensions(
                 this.search_query(cx),
@@ -467,8 +492,25 @@ impl ExtensionsPage {
                         matches!(status, ExtensionStatus::NotInstalled)
                     }
                 })
+                .filter(|(_, extension)| match self.provides_filter {
+                    Some(provides) => extension.manifest.provides.contains(&provides),
+                    None => true,
+                })
                 .map(|(ix, _)| ix),
         );
+
+        self.filtered_dev_extension_indices.clear();
+        self.filtered_dev_extension_indices.extend(
+            self.dev_extension_entries
+                .iter()
+                .enumerate()
+                .filter(|(_, manifest)| match self.provides_filter {
+                    Some(provides) => manifest.provides().contains(&provides),
+                    None => true,
+                })
+                .map(|(ix, _)| ix),
+        );
+
         cx.notify();
     }
 
@@ -577,14 +619,15 @@ impl ExtensionsPage {
         cx: &mut Context<Self>,
     ) -> Vec<ExtensionCard> {
         let dev_extension_entries_len = if self.filter.include_dev_extensions() {
-            self.dev_extension_entries.len()
+            self.filtered_dev_extension_indices.len()
         } else {
             0
         };
         range
             .map(|ix| {
                 if ix < dev_extension_entries_len {
-                    let extension = &self.dev_extension_entries[ix];
+                    let dev_ix = self.filtered_dev_extension_indices[ix];
+                    let extension = &self.dev_extension_entries[dev_ix];
                     self.render_dev_extension(extension, cx)
                 } else {
                     let extension_ix =
@@ -642,7 +685,7 @@ impl ExtensionsPage {
                                 }),
                             )
                             .child(
-                                Button::new(SharedString::from(extension.id.clone()), "Uninstall")
+                                Button::new(extension_button_id(&extension.id, ExtensionOperation::Remove), "Uninstall")
                                     .color(Color::Accent)
                                     .disabled(matches!(status, ExtensionStatus::Removing))
                                     .on_click({
@@ -989,7 +1032,7 @@ impl ExtensionsPage {
             // The button here is a placeholder, as it won't be interactable anyways.
             return ExtensionCardButtons {
                 install_or_uninstall: Button::new(
-                    SharedString::from(extension.id.clone()),
+                    extension_button_id(&extension.id, ExtensionOperation::Install),
                     "Install",
                 ),
                 configure: None,
@@ -1005,7 +1048,7 @@ impl ExtensionsPage {
         match status.clone() {
             ExtensionStatus::NotInstalled => ExtensionCardButtons {
                 install_or_uninstall: Button::new(
-                    SharedString::from(extension.id.clone()),
+                    extension_button_id(&extension.id, ExtensionOperation::Install),
                     "Install",
                 )
                 .style(ButtonStyle::Tinted(ui::TintColor::Accent))
@@ -1027,7 +1070,7 @@ impl ExtensionsPage {
             },
             ExtensionStatus::Installing => ExtensionCardButtons {
                 install_or_uninstall: Button::new(
-                    SharedString::from(extension.id.clone()),
+                    extension_button_id(&extension.id, ExtensionOperation::Install),
                     "Install",
                 )
                 .style(ButtonStyle::Tinted(ui::TintColor::Accent))
@@ -1041,7 +1084,7 @@ impl ExtensionsPage {
             },
             ExtensionStatus::Upgrading => ExtensionCardButtons {
                 install_or_uninstall: Button::new(
-                    SharedString::from(extension.id.clone()),
+                    extension_button_id(&extension.id, ExtensionOperation::Remove),
                     "Uninstall",
                 )
                 .style(ButtonStyle::OutlinedGhost)
@@ -1054,12 +1097,16 @@ impl ExtensionsPage {
                     .disabled(true)
                 }),
                 upgrade: Some(
-                    Button::new(SharedString::from(extension.id.clone()), "Upgrade").disabled(true),
+                    Button::new(
+                        extension_button_id(&extension.id, ExtensionOperation::Upgrade),
+                        "Upgrade",
+                    )
+                    .disabled(true),
                 ),
             },
             ExtensionStatus::Installed(installed_version) => ExtensionCardButtons {
                 install_or_uninstall: Button::new(
-                    SharedString::from(extension.id.clone()),
+                    extension_button_id(&extension.id, ExtensionOperation::Remove),
                     "Uninstall",
                 )
                 .style(ButtonStyle::OutlinedGhost)
@@ -1103,7 +1150,7 @@ impl ExtensionsPage {
                     None
                 } else {
                     Some(
-                        Button::new(SharedString::from(extension.id.clone()), "Upgrade")
+                        Button::new(extension_button_id(&extension.id, ExtensionOperation::Upgrade), "Upgrade")
                           .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                             .when(!is_compatible, |upgrade_button| {
                                 upgrade_button.disabled(true).tooltip({
@@ -1140,7 +1187,7 @@ impl ExtensionsPage {
             },
             ExtensionStatus::Removing => ExtensionCardButtons {
                 install_or_uninstall: Button::new(
-                    SharedString::from(extension.id.clone()),
+                    extension_button_id(&extension.id, ExtensionOperation::Remove),
                     "Uninstall",
                 )
                 .style(ButtonStyle::OutlinedGhost)
@@ -1367,11 +1414,13 @@ impl ExtensionsPage {
     fn refresh_feature_upsells(&mut self, cx: &mut Context<Self>) {
         let Some(search) = self.search_query(cx) else {
             self.upsells.clear();
+            self.show_acp_registry_upsell = false;
             return;
         };
 
         if let Some(id) = search.strip_prefix("id:") {
             self.upsells.clear();
+            self.show_acp_registry_upsell = false;
 
             let upsell = match id.to_lowercase().as_str() {
                 "ruff" => Some(Feature::ExtensionRuff),
@@ -1403,6 +1452,60 @@ impl ExtensionsPage {
                 self.upsells.remove(feature);
             }
         }
+
+        self.show_acp_registry_upsell = acp_registry_upsell_keywords()
+            .iter()
+            .any(|keyword| search_terms.iter().any(|term| keyword.contains(term)));
+    }
+
+    fn render_acp_registry_upsell(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let registry_url = zed_urls::acp_registry_blog(cx);
+
+        let view_registry = Button::new("view_registry", "View Registry")
+            .style(ButtonStyle::Tinted(ui::TintColor::Warning))
+            .on_click({
+                let registry_url = registry_url.clone();
+                move |_, window, cx| {
+                    telemetry::event!(
+                        "ACP Registry Opened from Extensions",
+                        source = "ACP Registry Upsell",
+                        url = registry_url,
+                    );
+                    window.dispatch_action(Box::new(zed_actions::AcpRegistry), cx)
+                }
+            });
+        let open_registry_button = Button::new("open_registry", "Learn More")
+            .icon(IconName::ArrowUpRight)
+            .icon_size(IconSize::Small)
+            .icon_position(IconPosition::End)
+            .icon_color(Color::Muted)
+            .on_click({
+                move |_event, _window, cx| {
+                    telemetry::event!(
+                        "ACP Registry Viewed",
+                        source = "ACP Registry Upsell",
+                        url = registry_url,
+                    );
+                    cx.open_url(&registry_url)
+                }
+            });
+
+        div().pt_4().px_4().child(
+            Banner::new()
+                .severity(Severity::Warning)
+                .child(
+                    Label::new(
+                        "Agent Server extensions will be deprecated in favor of the ACP registry.",
+                    )
+                    .mt_0p5(),
+                )
+                .action_slot(
+                    h_flex()
+                        .gap_1()
+                        .child(open_registry_button)
+                        .child(view_registry),
+                ),
+        )
     }
 
     fn render_feature_upsell_banner(
@@ -1487,8 +1590,8 @@ impl ExtensionsPage {
         for feature in &self.upsells {
             let banner = match feature {
                 Feature::AgentClaude => self.render_feature_upsell_banner(
-                    "Claude Code support is built-in to Zed!".into(),
-                    "https://zed.dev/docs/ai/external-agents#claude-code".into(),
+                    "Claude Agent support is built-in to Zed!".into(),
+                    "https://zed.dev/docs/ai/external-agents#claude-agent".into(),
                     false,
                     cx,
                 ),
@@ -1619,7 +1722,7 @@ impl Render for ExtensionsPage {
                             .w_full()
                             .gap_1p5()
                             .justify_between()
-                            .child(Headline::new("Extensions").size(HeadlineSize::XLarge))
+                            .child(Headline::new("Extensions").size(HeadlineSize::Large))
                             .child(
                                 Button::new("install-dev-extension", "Install Dev Extension")
                                     .style(ButtonStyle::Outlined)
@@ -1728,11 +1831,16 @@ impl Render for ExtensionsPage {
                         )
                     })),
             )
+            .when(
+                self.provides_filter == Some(ExtensionProvides::AgentServers)
+                    || self.show_acp_registry_upsell,
+                |this| this.child(self.render_acp_registry_upsell(cx)),
+            )
             .child(self.render_feature_upsells(cx))
             .child(v_flex().px_4().size_full().overflow_y_hidden().map(|this| {
                 let mut count = self.filtered_remote_extension_indices.len();
                 if self.filter.include_dev_extensions() {
-                    count += self.dev_extension_entries.len();
+                    count += self.filtered_dev_extension_indices.len();
                 }
 
                 if count == 0 {
@@ -1775,7 +1883,7 @@ impl Item for ExtensionsPage {
         false
     }
 
-    fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
+    fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(workspace::item::ItemEvent)) {
         f(*event)
     }
 }

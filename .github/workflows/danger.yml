@@ -31,10 +31,11 @@ jobs:
         cache-dependency-path: script/danger/pnpm-lock.yaml
     - name: danger::danger_job::install_deps
       run: pnpm install --dir script/danger
-      shell: bash -euxo pipefail {0}
     - name: danger::danger_job::run
       run: pnpm run --dir script/danger danger ci
-      shell: bash -euxo pipefail {0}
       env:
         GITHUB_TOKEN: not_a_real_token
         DANGER_GITHUB_API_BASE_URL: https://danger-proxy.zed.dev/github
+defaults:
+  run:
+    shell: bash -euxo pipefail {0}

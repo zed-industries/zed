@@ -1,41 +1,127 @@
-name: Publish zed-extension CLI
-
+# Generated from xtask::workflows::publish_extension_cli
+# Rebuild with `cargo xtask workflows`.
+name: publish_extension_cli
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: '0'
 on:
   push:
     tags:
-      - extension-cli
-
-env:
-  CARGO_TERM_COLOR: always
-  CARGO_INCREMENTAL: 0
-
+    - extension-cli
 jobs:
-  publish:
-    name: Publish zed-extension CLI
-    if: github.repository_owner == 'zed-industries'
-    runs-on:
-      - ubuntu-latest
+  publish_job:
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-        with:
-          clean: false
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+        path: ~/.rustup
+    - name: steps::setup_linux
+      run: ./script/linux
+    - name: publish_extension_cli::publish_job::build_extension_cli
+      run: cargo build --release --package extension_cli
+    - name: publish_extension_cli::publish_job::upload_binary
+      run: script/upload-extension-cli ${{ github.sha }}
+      env:
+        DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
+        DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
+  update_sha_in_zed:
+    needs:
+    - publish_job
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: namespace-profile-8x16-ubuntu-2204
+    steps:
+    - id: generate-token
+      name: extension_bump::generate_token
+      uses: actions/create-github-app-token@v2
+      with:
+        app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
+        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+    - name: steps::checkout_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        clean: false
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@v1
+      with:
+        cache: rust
+        path: ~/.rustup
+    - id: short-sha
+      name: publish_extension_cli::get_short_sha
+      run: |
+        echo "sha_short=$(echo "${{ github.sha }}" | cut -c1-7)" >> "$GITHUB_OUTPUT"
+    - name: publish_extension_cli::update_sha_in_zed::replace_sha
+      run: |
+        sed -i "s/ZED_EXTENSION_CLI_SHA: &str = \"[a-f0-9]*\"/ZED_EXTENSION_CLI_SHA: \&str = \"${{ github.sha }}\"/" \
+            tooling/xtask/src/tasks/workflows/extension_tests.rs
+    - name: publish_extension_cli::update_sha_in_zed::regenerate_workflows
+      run: cargo xtask workflows
+    - name: publish_extension_cli::create_pull_request_zed
+      uses: peter-evans/create-pull-request@v7
+      with:
+        title: 'extension_ci: Bump extension CLI version to `${{ steps.short-sha.outputs.sha_short }}`'
+        body: |
+          This PR bumps the extension CLI version used in the extension workflows to `${{ github.sha }}`.
 
-      - name: Cache dependencies
-        uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          cache-provider: "github"
+          Release Notes:
 
-      - name: Configure linux
-        shell: bash -euxo pipefail {0}
-        run: script/linux
-
-      - name: Build extension CLI
-        run: cargo build --release --package extension_cli
-
-      - name: Upload binary
-        env:
-          DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
-          DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
-        run: script/upload-extension-cli ${{ github.sha }}
+          - N/A
+        commit-message: 'extension_ci: Bump extension CLI version to `${{ steps.short-sha.outputs.sha_short }}`'
+        branch: update-extension-cli-sha
+        committer: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
+        base: main
+        delete-branch: true
+        token: ${{ steps.generate-token.outputs.token }}
+        sign-commits: true
+        assignees: ${{ github.actor }}
+  update_sha_in_extensions:
+    needs:
+    - publish_job
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    steps:
+    - id: generate-token
+      name: extension_bump::generate_token
+      uses: actions/create-github-app-token@v2
+      with:
+        app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
+        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+        owner: zed-industries
+        repositories: extensions
+    - id: short-sha
+      name: publish_extension_cli::get_short_sha
+      run: |
+        echo "sha_short=$(echo "${{ github.sha }}" | cut -c1-7)" >> "$GITHUB_OUTPUT"
+    - name: publish_extension_cli::update_sha_in_extensions::checkout_extensions_repo
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        repository: zed-industries/extensions
+        token: ${{ steps.generate-token.outputs.token }}
+    - name: publish_extension_cli::update_sha_in_extensions::replace_sha
+      run: |
+        sed -i "s/ZED_EXTENSION_CLI_SHA: [a-f0-9]*/ZED_EXTENSION_CLI_SHA: ${{ github.sha }}/" \
+            .github/workflows/ci.yml
+    - name: publish_extension_cli::create_pull_request_extensions
+      uses: peter-evans/create-pull-request@v7
+      with:
+        title: Bump extension CLI version to `${{ steps.short-sha.outputs.sha_short }}`
+        body: |
+          This PR bumps the extension CLI version to https://github.com/zed-industries/zed/commit/${{ github.sha }}.
+        commit-message: Bump extension CLI version to `${{ steps.short-sha.outputs.sha_short }}`
+        branch: update-extension-cli-sha
+        committer: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
+        base: main
+        delete-branch: true
+        token: ${{ steps.generate-token.outputs.token }}
+        sign-commits: true
+        labels: allow-no-extension
+        assignees: ${{ github.actor }}
+defaults:
+  run:
+    shell: bash -euxo pipefail {0}

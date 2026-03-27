@@ -1,3 +1,8 @@
+---
+title: Emmet
+description: "Configure Emmet language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Emmet
 
 Emmet support is available through the [Emmet extension](https://github.com/zed-extensions/emmet).

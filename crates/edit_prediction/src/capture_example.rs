@@ -1,19 +1,15 @@
 use crate::{
-    EditPredictionExampleCaptureFeatureFlag, StoredEvent,
-    cursor_excerpt::editable_and_context_ranges_for_cursor_position, example_spec::ExampleSpec,
+    StoredEvent, cursor_excerpt::editable_and_context_ranges_for_cursor_position,
+    example_spec::ExampleSpec,
 };
 use anyhow::Result;
 use buffer_diff::BufferDiffSnapshot;
 use collections::HashMap;
-use feature_flags::FeatureFlagAppExt as _;
 use gpui::{App, Entity, Task};
 use language::{Buffer, ToPoint as _};
 use project::{Project, WorktreeId};
 use std::{collections::hash_map, fmt::Write as _, ops::Range, path::Path, sync::Arc};
 use text::{BufferSnapshot as TextBufferSnapshot, Point};
-
-pub(crate) const DEFAULT_EXAMPLE_CAPTURE_RATE_PER_10K_PREDICTIONS: u16 = 10;
-pub(crate) const DEFAULT_STAFF_EXAMPLE_CAPTURE_RATE_PER_10K_PREDICTIONS: u16 = 100;
 
 pub fn capture_example(
     project: Entity<Project>,
@@ -58,7 +54,8 @@ pub fn capture_example(
             .and_then(|lang| lang.config().line_comments.first())
             .map(|s| s.to_string())
             .unwrap_or_default();
-        let (cursor_excerpt, cursor_offset, cursor_excerpt_range) = cx
+
+        let (cursor_excerpt, cursor_offset_in_excerpt, cursor_excerpt_range) = cx
             .background_executor()
             .spawn(async move { compute_cursor_excerpt(&snapshot, cursor_anchor) })
             .await;
@@ -111,8 +108,15 @@ pub fn capture_example(
             edit_history,
             expected_patches,
             rejected_patch,
+            telemetry: None,
+            human_feedback: Vec::new(),
+            rating: None,
         };
-        spec.set_cursor_excerpt(&cursor_excerpt, cursor_offset, &line_comment_prefix);
+        spec.set_cursor_excerpt(
+            &cursor_excerpt,
+            cursor_offset_in_excerpt,
+            &line_comment_prefix,
+        );
         Ok(spec)
     }))
 }
@@ -234,20 +238,6 @@ fn generate_timestamp_name() -> String {
         }
         Err(_) => "unknown-time".to_string(),
     }
-}
-
-pub(crate) fn should_sample_edit_prediction_example_capture(cx: &App) -> bool {
-    let default_rate = if cx.is_staff() {
-        DEFAULT_STAFF_EXAMPLE_CAPTURE_RATE_PER_10K_PREDICTIONS
-    } else {
-        DEFAULT_EXAMPLE_CAPTURE_RATE_PER_10K_PREDICTIONS
-    };
-    let capture_rate = language::language_settings::all_language_settings(None, cx)
-        .edit_predictions
-        .example_capture_rate
-        .unwrap_or(default_rate);
-    cx.has_flag::<EditPredictionExampleCaptureFeatureFlag>()
-        && rand::random::<u16>() % 10_000 < capture_rate
 }
 
 #[cfg(test)]
@@ -392,9 +382,7 @@ mod tests {
         cx.run_until_parked();
 
         // Verify the external edit was recorded in events
-        let events = ep_store.update(cx, |store, cx| {
-            store.edit_history_for_project_with_pause_split_last_event(&project, cx)
-        });
+        let events = ep_store.update(cx, |store, cx| store.edit_history_for_project(&project, cx));
         assert!(
             matches!(
                 events
@@ -530,7 +518,10 @@ mod tests {
                          }
                     "}
                     .to_string()
-                )
+                ),
+                telemetry: None,
+                human_feedback: Vec::new(),
+                rating: None,
             }
         );
     }

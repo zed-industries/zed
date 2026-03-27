@@ -29,12 +29,13 @@ gpui.workspace = true
 itertools.workspace = true
 language.workspace = true
 log.workspace = true
+menu.workspace = true
 pretty_assertions.workspace = true
 project.workspace = true
 regex.workspace = true
 task.workspace = true
 schemars.workspace = true
-search.workspace = true
+
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true

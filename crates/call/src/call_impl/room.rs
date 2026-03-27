@@ -1,6 +1,6 @@
 use crate::{
     call_settings::CallSettings,
-    participant::{LocalParticipant, ParticipantLocation, RemoteParticipant},
+    participant::{LocalParticipant, RemoteParticipant},
 };
 use anyhow::{Context as _, Result, anyhow};
 use audio::{Audio, Sound};
@@ -25,6 +25,7 @@ use project::Project;
 use settings::Settings as _;
 use std::{future::Future, mem, rc::Rc, sync::Arc, time::Duration, time::Instant};
 use util::{ResultExt, TryFutureExt, paths::PathStyle, post_inc};
+use workspace::ParticipantLocation;
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 

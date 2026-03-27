@@ -429,7 +429,7 @@ impl DebugAdapter for GoDebugAdapter {
 
             let adapter_path = paths::debug_adapters_dir().join(&Self::ADAPTER_NAME);
 
-            let install_output = util::command::new_smol_command(&go)
+            let install_output = util::command::new_command(&go)
                 .env("GO111MODULE", "on")
                 .env("GOBIN", &adapter_path)
                 .args(&["install", "github.com/go-delve/delve/cmd/dlv@latest"])

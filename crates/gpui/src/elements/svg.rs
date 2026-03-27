@@ -6,7 +6,7 @@ use crate::{
     StyleRefinement, Styled, TransformationMatrix, Window, geometry::Negate as _, point, px,
     radians, size,
 };
-use util::ResultExt;
+use gpui_util::ResultExt;
 
 /// An SVG element.
 pub struct Svg {

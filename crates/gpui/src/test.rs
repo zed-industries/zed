@@ -27,7 +27,6 @@
 //! ```
 use crate::{Entity, Subscription, TestAppContext, TestDispatcher};
 use futures::StreamExt as _;
-use smol::channel;
 use std::{
     env,
     panic::{self, RefUnwindSafe},
@@ -136,7 +135,7 @@ fn calculate_seeds(
 
 /// A test struct for converting an observation callback into a stream.
 pub struct Observation<T> {
-    rx: Pin<Box<channel::Receiver<T>>>,
+    rx: Pin<Box<async_channel::Receiver<T>>>,
     _subscription: Subscription,
 }
 
@@ -153,10 +152,10 @@ impl<T: 'static> futures::Stream for Observation<T> {
 
 /// observe returns a stream of the change events from the given `Entity`
 pub fn observe<T: 'static>(entity: &Entity<T>, cx: &mut TestAppContext) -> Observation<()> {
-    let (tx, rx) = smol::channel::unbounded();
+    let (tx, rx) = async_channel::unbounded();
     let _subscription = cx.update(|cx| {
         cx.observe(entity, move |_, _| {
-            let _ = smol::block_on(tx.send(()));
+            let _ = pollster::block_on(tx.send(()));
         })
     });
     let rx = Box::pin(rx);
