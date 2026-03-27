@@ -16024,7 +16024,7 @@ impl Editor {
 
             for selection in &mut selections {
                 let start_point = selection.start;
-                let mut end_point = selection.end;
+                let end_point = selection.end;
 
                 let Some(language) =
                     snapshot.language_scope_at(Point::new(start_point.row, start_point.column))
@@ -16040,17 +16040,6 @@ impl Editor {
                 else {
                     continue;
                 };
-
-                // Visual line mode: move end back to end of previous line.
-                // Only adjust when the line at end_point has content — column 0
-                // on an empty line is the actual end-of-line, not a trailing newline.
-                if end_point.column == 0
-                    && end_point.row > start_point.row
-                    && snapshot.line_len(MultiBufferRow(end_point.row)) > 0
-                {
-                    end_point.row -= 1;
-                    end_point.column = snapshot.line_len(MultiBufferRow(end_point.row));
-                }
 
                 let prefix_needle = comment_start.trim_end().as_bytes();
                 let suffix_needle = comment_end.trim_start().as_bytes();
