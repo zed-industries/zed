@@ -18837,7 +18837,6 @@ dependencies = [
  "story",
  "strum 0.27.2",
  "theme",
- "theme_settings",
  "ui_macros",
  "windows 0.61.3",
 ]

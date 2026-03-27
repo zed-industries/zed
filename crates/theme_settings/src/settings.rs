@@ -12,83 +12,17 @@ use serde::{Deserialize, Serialize};
 pub use settings::{FontFamilyName, IconThemeName, ThemeAppearanceMode, ThemeName};
 use settings::{IntoGpui, RegisterSetting, Settings, SettingsContent};
 use std::sync::Arc;
-use theme::{Appearance, DEFAULT_ICON_THEME_NAME, SyntaxTheme, Theme};
+use theme::{Appearance, DEFAULT_ICON_THEME_NAME, SyntaxTheme, Theme, UiDensity};
 
 const MIN_FONT_SIZE: Pixels = px(6.0);
 const MAX_FONT_SIZE: Pixels = px(100.0);
 const MIN_LINE_HEIGHT: f32 = 1.0;
 
-#[derive(
-    Debug,
-    Default,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Clone,
-    Copy,
-    Serialize,
-    Deserialize,
-    JsonSchema,
-)]
-
-/// Specifies the density of the UI.
-/// Note: This setting is still experimental. See [this tracking issue](https://github.com/zed-industries/zed/issues/18078)
-#[serde(rename_all = "snake_case")]
-pub enum UiDensity {
-    /// A denser UI with tighter spacing and smaller elements.
-    #[serde(alias = "compact")]
-    Compact,
-    #[default]
-    #[serde(alias = "default")]
-    /// The default UI density.
-    Default,
-    #[serde(alias = "comfortable")]
-    /// A looser UI with more spacing and larger elements.
-    Comfortable,
-}
-
-impl UiDensity {
-    /// The spacing ratio of a given density.
-    /// TODO: Standardize usage throughout the app or remove
-    pub fn spacing_ratio(self) -> f32 {
-        match self {
-            UiDensity::Compact => 0.75,
-            UiDensity::Default => 1.0,
-            UiDensity::Comfortable => 1.25,
-        }
-    }
-}
-
-impl From<String> for UiDensity {
-    fn from(s: String) -> Self {
-        match s.as_str() {
-            "compact" => Self::Compact,
-            "default" => Self::Default,
-            "comfortable" => Self::Comfortable,
-            _ => Self::default(),
-        }
-    }
-}
-
-impl From<UiDensity> for String {
-    fn from(val: UiDensity) -> Self {
-        match val {
-            UiDensity::Compact => "compact".to_string(),
-            UiDensity::Default => "default".to_string(),
-            UiDensity::Comfortable => "comfortable".to_string(),
-        }
-    }
-}
-
-impl From<settings::UiDensity> for UiDensity {
-    fn from(val: settings::UiDensity) -> Self {
-        match val {
-            settings::UiDensity::Compact => Self::Compact,
-            settings::UiDensity::Default => Self::Default,
-            settings::UiDensity::Comfortable => Self::Comfortable,
-        }
+pub(crate) fn ui_density_from_settings(val: settings::UiDensity) -> UiDensity {
+    match val {
+        settings::UiDensity::Compact => UiDensity::Compact,
+        settings::UiDensity::Default => UiDensity::Default,
+        settings::UiDensity::Comfortable => UiDensity::Comfortable,
     }
 }
 
@@ -693,7 +627,7 @@ impl settings::Settings for ThemeSettings {
             experimental_theme_overrides: content.experimental_theme_overrides.clone(),
             theme_overrides: content.theme_overrides.clone(),
             icon_theme: icon_theme_selection,
-            ui_density: content.ui_density.unwrap_or_default().into(),
+            ui_density: ui_density_from_settings(content.ui_density.unwrap_or_default()),
             unnecessary_code_fade: content.unnecessary_code_fade.unwrap().0.clamp(0.0, 0.9),
         }
     }
