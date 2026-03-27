@@ -2567,7 +2567,7 @@ impl Sidebar {
                         session_info: thread.session_info.clone(),
                         workspace,
                         worktree_name: thread.worktree_name.clone(),
-                        
+
                         diff_stats: thread.diff_stats,
                         is_title_generating: thread.is_title_generating,
                         notified,
@@ -2595,10 +2595,8 @@ impl Sidebar {
                         (Some(_), None) => std::cmp::Ordering::Less,
                         (None, Some(_)) => std::cmp::Ordering::Greater,
                         (None, None) => {
-                            let a_time =
-                                a.session_info.created_at.or(a.session_info.updated_at);
-                            let b_time =
-                                b.session_info.created_at.or(b.session_info.updated_at);
+                            let a_time = a.session_info.created_at.or(a.session_info.updated_at);
+                            let b_time = b.session_info.created_at.or(b.session_info.updated_at);
                             b_time.cmp(&a_time)
                         }
                     }

@@ -878,11 +878,7 @@ impl Render for MultiWorkspace {
                     .on_action(cx.listener(
                         |this: &mut Self, action: &ToggleThreadSwitcher, window, cx| {
                             if let Some(sidebar) = &this.sidebar {
-                                sidebar.toggle_thread_switcher(
-                                    action.select_last,
-                                    window,
-                                    cx,
-                                );
+                                sidebar.toggle_thread_switcher(action.select_last, window, cx);
                             }
                         },
                     ))
