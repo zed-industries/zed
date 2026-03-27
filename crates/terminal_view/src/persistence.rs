@@ -1,12 +1,12 @@
 use anyhow::Result;
 use async_recursion::async_recursion;
 use collections::HashSet;
-use futures::{StreamExt as _, stream::FuturesUnordered};
+use futures::future::join_all;
 use gpui::{AppContext as _, AsyncWindowContext, Axis, Entity, Task, WeakEntity};
 use project::Project;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use ui::{App, Context, Pixels, Window};
+use ui::{App, Context, Window};
 use util::ResultExt as _;
 
 use db::{
@@ -97,12 +97,7 @@ pub(crate) fn deserialize_terminal_panel(
 ) -> Task<anyhow::Result<Entity<TerminalPanel>>> {
     window.spawn(cx, async move |cx| {
         let terminal_panel = workspace.update_in(cx, |workspace, window, cx| {
-            cx.new(|cx| {
-                let mut panel = TerminalPanel::new(workspace, window, cx);
-                panel.height = serialized_panel.height.map(|h| h.round());
-                panel.width = serialized_panel.width.map(|w| w.round());
-                panel
-            })
+            cx.new(|cx| TerminalPanel::new(workspace, window, cx))
         })?;
         match &serialized_panel.items {
             SerializedItems::NoSplits(item_ids) => {
@@ -136,7 +131,7 @@ pub(crate) fn deserialize_terminal_panel(
                         terminal_panel.center = PaneGroup::with_root(center_group);
                         terminal_panel.active_pane =
                             active_pane.unwrap_or_else(|| terminal_panel.center.first_pane());
-                    })?;
+                    });
                 }
             }
         }
@@ -214,14 +209,6 @@ async fn deserialize_pane_group(
         }
         SerializedPaneGroup::Pane(serialized_pane) => {
             let active = serialized_pane.active;
-            let new_items = deserialize_terminal_views(
-                workspace_id,
-                project.clone(),
-                workspace.clone(),
-                serialized_pane.children.as_slice(),
-                cx,
-            )
-            .await;
 
             let pane = panel
                 .update_in(cx, |terminal_panel, window, cx| {
@@ -236,78 +223,88 @@ async fn deserialize_pane_group(
                 .log_err()?;
             let active_item = serialized_pane.active_item;
             let pinned_count = serialized_pane.pinned_count;
-            let terminal = pane
-                .update_in(cx, |pane, window, cx| {
-                    populate_pane_items(pane, new_items, active_item, window, cx);
-                    pane.set_pinned_count(pinned_count);
+            let new_items = deserialize_terminal_views(
+                workspace_id,
+                project.clone(),
+                workspace.clone(),
+                serialized_pane.children.as_slice(),
+                cx,
+            );
+            cx.spawn({
+                let pane = pane.downgrade();
+                async move |cx| {
+                    let new_items = new_items.await;
+
+                    let items = pane.update_in(cx, |pane, window, cx| {
+                        populate_pane_items(pane, new_items, active_item, window, cx);
+                        pane.set_pinned_count(pinned_count.min(pane.items_len()));
+                        pane.items_len()
+                    });
                     // Avoid blank panes in splits
-                    if pane.items_len() == 0 {
+                    if items.is_ok_and(|items| items == 0) {
                         let working_directory = workspace
                             .update(cx, |workspace, cx| default_working_directory(workspace, cx))
                             .ok()
                             .flatten();
-                        let terminal = project.update(cx, |project, cx| {
-                            project.create_terminal_shell(working_directory, cx)
-                        });
-                        Some(Some(terminal))
-                    } else {
-                        Some(None)
+                        let terminal = project
+                            .update(cx, |project, cx| {
+                                project.create_terminal_shell(working_directory, cx)
+                            })
+                            .await
+                            .log_err();
+                        let Some(terminal) = terminal else {
+                            return;
+                        };
+                        pane.update_in(cx, |pane, window, cx| {
+                            let terminal_view = Box::new(cx.new(|cx| {
+                                TerminalView::new(
+                                    terminal,
+                                    workspace.clone(),
+                                    Some(workspace_id),
+                                    project.downgrade(),
+                                    window,
+                                    cx,
+                                )
+                            }));
+                            pane.add_item(terminal_view, true, false, None, window, cx);
+                        })
+                        .ok();
                     }
-                })
-                .ok()
-                .flatten()?;
-            if let Some(terminal) = terminal {
-                let terminal = terminal.await.ok()?;
-                pane.update_in(cx, |pane, window, cx| {
-                    let terminal_view = Box::new(cx.new(|cx| {
-                        TerminalView::new(
-                            terminal,
-                            workspace.clone(),
-                            Some(workspace_id),
-                            project.downgrade(),
-                            window,
-                            cx,
-                        )
-                    }));
-                    pane.add_item(terminal_view, true, false, None, window, cx);
-                })
-                .ok()?;
-            }
+                }
+            })
+            .await;
             Some((Member::Pane(pane.clone()), active.then_some(pane)))
         }
     }
 }
 
-async fn deserialize_terminal_views(
+fn deserialize_terminal_views(
     workspace_id: WorkspaceId,
     project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
     item_ids: &[u64],
     cx: &mut AsyncWindowContext,
-) -> Vec<Entity<TerminalView>> {
-    let mut items = Vec::with_capacity(item_ids.len());
-    let mut deserialized_items = item_ids
-        .iter()
-        .map(|item_id| {
-            cx.update(|window, cx| {
-                TerminalView::deserialize(
-                    project.clone(),
-                    workspace.clone(),
-                    workspace_id,
-                    *item_id,
-                    window,
-                    cx,
-                )
-            })
-            .unwrap_or_else(|e| Task::ready(Err(e.context("no window present"))))
+) -> impl Future<Output = Vec<Entity<TerminalView>>> + use<> {
+    let deserialized_items = join_all(item_ids.iter().filter_map(|item_id| {
+        cx.update(|window, cx| {
+            TerminalView::deserialize(
+                project.clone(),
+                workspace.clone(),
+                workspace_id,
+                *item_id,
+                window,
+                cx,
+            )
         })
-        .collect::<FuturesUnordered<_>>();
-    while let Some(item) = deserialized_items.next().await {
-        if let Some(item) = item.log_err() {
-            items.push(item);
-        }
+        .ok()
+    }));
+    async move {
+        deserialized_items
+            .await
+            .into_iter()
+            .filter_map(|item| item.log_err())
+            .collect()
     }
-    items
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -315,8 +312,6 @@ pub(crate) struct SerializedTerminalPanel {
     pub items: SerializedItems,
     // A deprecated field, kept for backwards compatibility for the code before terminal splits were introduced.
     pub active_item_id: Option<u64>,
-    pub width: Option<Pixels>,
-    pub height: Option<Pixels>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -417,10 +412,13 @@ impl Domain for TerminalDb {
             ALTER TABLE terminals ADD COLUMN working_directory_path TEXT;
             UPDATE terminals SET working_directory_path = CAST(working_directory AS TEXT);
         ),
+        sql! (
+            ALTER TABLE terminals ADD COLUMN custom_title TEXT;
+        ),
     ];
 }
 
-db::static_connection!(TERMINAL_DB, TerminalDb, [WorkspaceDb]);
+db::static_connection!(TerminalDb, [WorkspaceDb]);
 
 impl TerminalDb {
     query! {
@@ -470,6 +468,40 @@ impl TerminalDb {
     query! {
         pub fn get_working_directory(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<PathBuf>> {
             SELECT working_directory
+            FROM terminals
+            WHERE item_id = ? AND workspace_id = ?
+        }
+    }
+
+    pub async fn save_custom_title(
+        &self,
+        item_id: ItemId,
+        workspace_id: WorkspaceId,
+        custom_title: Option<String>,
+    ) -> Result<()> {
+        log::debug!(
+            "Saving custom title {:?} for item {} in workspace {:?}",
+            custom_title,
+            item_id,
+            workspace_id
+        );
+        self.write(move |conn| {
+            let query = "INSERT INTO terminals (item_id, workspace_id, custom_title)
+                VALUES (?1, ?2, ?3)
+                ON CONFLICT (workspace_id, item_id) DO UPDATE SET
+                    custom_title = excluded.custom_title";
+            let mut statement = Statement::prepare(conn, query)?;
+            let mut next_index = statement.bind(&item_id, 1)?;
+            next_index = statement.bind(&workspace_id, next_index)?;
+            statement.bind(&custom_title, next_index)?;
+            statement.exec()
+        })
+        .await
+    }
+
+    query! {
+        pub fn get_custom_title(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<String>> {
+            SELECT custom_title
             FROM terminals
             WHERE item_id = ? AND workspace_id = ?
         }

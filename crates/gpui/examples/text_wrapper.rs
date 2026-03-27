@@ -1,13 +1,20 @@
+#![cfg_attr(target_family = "wasm", no_main)]
+
 use gpui::{
-    App, Application, Bounds, Context, TextOverflow, Window, WindowBounds, WindowOptions, div,
-    prelude::*, px, size,
+    App, Bounds, Context, TextOverflow, Window, WindowBounds, WindowOptions, div, prelude::*, px,
+    size,
 };
+use gpui_platform::application;
 
 struct HelloWorld {}
 
 impl Render for HelloWorld {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let text = "The longest word 你好世界这段是中文，こんにちはこの段落は日本語です in any of the major English language dictionaries is pneumonoultramicroscopicsilicovolcanoconiosis, a word that refers to a lung disease contracted from the inhalation of very fine silica particles, specifically from a volcano; medically, it is the same as silicosis.";
+        let text = "The longest word 你好世界这段是中文，こんにちはこの段落は日本語です in any of the major \
+            English language dictionaries is pneumonoultramicroscopicsilicovolcanoconiosis, a word that \
+            refers to a lung disease contracted from the inhalation of very fine silica particles, \
+            a url https://github.com/zed-industries/zed/pull/35724?query=foo&bar=2, \
+            specifically from a volcano; medically, it is the same as silicosis.";
         div()
             .id("page")
             .size_full()
@@ -103,8 +110,8 @@ impl Render for HelloWorld {
     }
 }
 
-fn main() {
-    Application::new().run(|cx: &mut App| {
+fn run_example() {
+    application().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(800.0), px(600.0)), cx);
         cx.open_window(
             WindowOptions {
@@ -116,4 +123,16 @@ fn main() {
         .unwrap();
         cx.activate(true);
     });
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn main() {
+    run_example();
+}
+
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn start() {
+    gpui_platform::web_init();
+    run_example();
 }

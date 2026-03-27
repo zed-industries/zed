@@ -265,7 +265,8 @@ impl Keystroke {
 
 impl KeybindingKeystroke {
     #[cfg(target_os = "windows")]
-    pub(crate) fn new(inner: Keystroke, display_modifiers: Modifiers, display_key: String) -> Self {
+    #[expect(missing_docs)]
+    pub fn new(inner: Keystroke, display_modifiers: Modifiers, display_key: String) -> Self {
         KeybindingKeystroke {
             inner,
             display_modifiers,
@@ -568,6 +569,14 @@ impl Modifiers {
     pub fn shift() -> Modifiers {
         Modifiers {
             shift: true,
+            ..Default::default()
+        }
+    }
+
+    /// Returns [`Modifiers`] with just function.
+    pub fn function() -> Modifiers {
+        Modifiers {
+            function: true,
             ..Default::default()
         }
     }

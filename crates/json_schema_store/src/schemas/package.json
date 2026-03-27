@@ -1030,22 +1030,22 @@
       "$ref": "#"
     },
     "eslintConfig": {
-      "$ref": "https://json.schemastore.org/eslintrc.json"
+      "$ref": "https://www.schemastore.org/eslintrc.json"
     },
     "prettier": {
-      "$ref": "https://json.schemastore.org/prettierrc.json"
+      "$ref": "https://www.schemastore.org/prettierrc.json"
     },
     "stylelint": {
-      "$ref": "https://json.schemastore.org/stylelintrc.json"
+      "$ref": "https://www.schemastore.org/stylelintrc.json"
     },
     "ava": {
-      "$ref": "https://json.schemastore.org/ava.json"
+      "$ref": "https://www.schemastore.org/ava.json"
     },
     "release": {
-      "$ref": "https://json.schemastore.org/semantic-release.json"
+      "$ref": "https://www.schemastore.org/semantic-release.json"
     },
     "jscpd": {
-      "$ref": "https://json.schemastore.org/jscpd.json"
+      "$ref": "https://www.schemastore.org/jscpd.json"
     },
     "pnpm": {
       "description": "Defines pnpm specific configuration.",
@@ -1305,5 +1305,5 @@
       ]
     }
   ],
-  "$id": "https://json.schemastore.org/package.json"
+  "$id": "https://www.schemastore.org/package.json"
 }

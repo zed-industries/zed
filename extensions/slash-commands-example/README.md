@@ -76,8 +76,7 @@ Rebuild to see these changes reflected:
 
 ## Troubleshooting / Logs
 
-- MacOS: `tail -f ~/Library/Logs/Zed/Zed.log`
-- Linux: `tail -f ~/.local/share/zed/logs/Zed.log`
+- [zed.dev docs: Troubleshooting](https://zed.dev/docs/troubleshooting)
 
 ## Documentation
 

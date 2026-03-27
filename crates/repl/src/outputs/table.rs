@@ -59,7 +59,7 @@ use runtimelib::datatable::TableSchema;
 use runtimelib::media::datatable::TabularDataResource;
 use serde_json::Value;
 use settings::Settings;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{IntoElement, Styled, div, prelude::*, v_flex};
 use util::markdown::MarkdownEscaped;
 
@@ -101,9 +101,7 @@ impl TableView {
             len: 0,
             font: text_font,
             color: text_style.color,
-            background_color: None,
-            underline: None,
-            strikethrough: None,
+            ..Default::default()
         }];
 
         for field in table.schema.fields.iter() {

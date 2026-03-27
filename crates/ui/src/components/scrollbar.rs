@@ -9,16 +9,16 @@ use gpui::{
     Along, App, AppContext as _, Axis as ScrollbarAxis, BorderStyle, Bounds, ContentMask, Context,
     Corner, Corners, CursorStyle, DispatchPhase, Div, Edges, Element, ElementId, Entity, EntityId,
     GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero,
-    LayoutId, ListState, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Negate,
-    ParentElement, Pixels, Point, Position, Render, ScrollHandle, ScrollWheelEvent, Size, Stateful,
+    LayoutId, ListState, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
+    Pixels, Point, Position, Render, ScrollHandle, ScrollWheelEvent, Size, Stateful,
     StatefulInteractiveElement, Style, Styled, Task, UniformListDecoration,
     UniformListScrollHandle, Window, ease_in_out, prelude::FluentBuilder as _, px, quad, relative,
     size,
 };
+use gpui_util::ResultExt;
 use settings::SettingsStore;
 use smallvec::SmallVec;
 use theme::ActiveTheme as _;
-use util::ResultExt;
 
 use std::ops::Range;
 
@@ -101,13 +101,21 @@ where
     T: ScrollableHandle,
 {
     let element_id = config.id.take().unwrap_or_else(|| caller_location.into());
+    let track_color = config.track_color;
 
-    window.use_keyed_state(element_id, cx, |window, cx| {
+    let state = window.use_keyed_state(element_id, cx, |window, cx| {
         let parent_id = cx.entity_id();
         ScrollbarStateWrapper(
             cx.new(|cx| ScrollbarState::new_from_config(config, parent_id, window, cx)),
         )
-    })
+    });
+
+    state.update(cx, |state, cx| {
+        state
+            .0
+            .update(cx, |state, _cx| state.update_track_color(track_color))
+    });
+    state
 }
 
 pub trait WithScrollbar: Sized {
@@ -142,9 +150,9 @@ pub trait WithScrollbar: Sized {
     // }
 
     #[track_caller]
-    fn vertical_scrollbar_for<ScrollHandle: ScrollableHandle>(
+    fn vertical_scrollbar_for<ScrollHandle: ScrollableHandle + Clone>(
         self,
-        scroll_handle: ScrollHandle,
+        scroll_handle: &ScrollHandle,
         window: &mut Window,
         cx: &mut App,
     ) -> Self::Output {
@@ -250,7 +258,7 @@ impl<T: ScrollableHandle> UniformListDecoration for ScrollbarStateWrapper<T> {
         _cx: &mut App,
     ) -> gpui::AnyElement {
         ScrollbarElement {
-            origin: scroll_offset.negate(),
+            origin: -scroll_offset,
             state: self.0.clone(),
         }
         .into_any()
@@ -334,7 +342,7 @@ enum ReservedSpace {
     #[default]
     None,
     Thumb,
-    Track(Hsla),
+    Track,
 }
 
 impl ReservedSpace {
@@ -343,14 +351,7 @@ impl ReservedSpace {
     }
 
     fn needs_scroll_track(&self) -> bool {
-        matches!(self, ReservedSpace::Track(_))
-    }
-
-    fn track_color(&self) -> Option<Hsla> {
-        match self {
-            ReservedSpace::Track(color) => Some(*color),
-            _ => None,
-        }
+        *self == ReservedSpace::Track
     }
 }
 
@@ -385,12 +386,17 @@ pub struct Scrollbars<T: ScrollableHandle = ScrollHandle> {
     tracked_entity: Option<Option<EntityId>>,
     scrollable_handle: Handle<T>,
     visibility: Point<ReservedSpace>,
+    track_color: Option<Hsla>,
     scrollbar_width: ScrollbarWidth,
 }
 
 impl Scrollbars {
     pub fn new(show_along: ScrollAxes) -> Self {
         Self::new_with_setting(show_along, |_| ShowScrollbar::default())
+    }
+
+    pub fn always_visible(show_along: ScrollAxes) -> Self {
+        Self::new_with_setting(show_along, |_| ShowScrollbar::Always)
     }
 
     pub fn for_settings<S: ScrollbarVisibility>() -> Scrollbars {
@@ -406,6 +412,7 @@ impl Scrollbars {
             scrollable_handle: Handle::Untracked(ScrollHandle::new),
             tracked_entity: None,
             visibility: show_along.apply_to(Default::default(), ReservedSpace::Thumb),
+            track_color: None,
             scrollbar_width: ScrollbarWidth::Normal,
         }
     }
@@ -438,7 +445,7 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
 
     pub fn tracked_scroll_handle<TrackedHandle: ScrollableHandle>(
         self,
-        tracked_scroll_handle: TrackedHandle,
+        tracked_scroll_handle: &TrackedHandle,
     ) -> Scrollbars<TrackedHandle> {
         let Self {
             id,
@@ -446,15 +453,17 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
             scrollbar_width,
             visibility,
             get_visibility,
+            track_color,
             ..
         } = self;
 
         Scrollbars {
-            scrollable_handle: Handle::Tracked(tracked_scroll_handle),
+            scrollable_handle: Handle::Tracked(tracked_scroll_handle.clone()),
             id,
             tracked_entity: tracked_entity_id,
             visibility,
             scrollbar_width,
+            track_color,
             get_visibility,
         }
     }
@@ -465,7 +474,8 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
     }
 
     pub fn with_track_along(mut self, along: ScrollAxes, background_color: Hsla) -> Self {
-        self.visibility = along.apply_to(self.visibility, ReservedSpace::Track(background_color));
+        self.visibility = along.apply_to(self.visibility, ReservedSpace::Track);
+        self.track_color = Some(background_color);
         self
     }
 
@@ -593,6 +603,7 @@ struct ScrollbarState<T: ScrollableHandle = ScrollHandle> {
     show_behavior: ShowBehavior,
     get_visibility: fn(&App) -> ShowScrollbar,
     visibility: Point<ReservedSpace>,
+    track_color: Option<Hsla>,
     show_state: VisibilityState,
     mouse_in_parent: bool,
     last_prepaint_state: Option<ScrollbarPrepaintState>,
@@ -622,6 +633,7 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
             scroll_handle,
             width: config.scrollbar_width,
             visibility: config.visibility,
+            track_color: config.track_color,
             show_behavior,
             get_visibility: config.get_visibility,
             show_state: VisibilityState::from_behavior(show_behavior),
@@ -794,6 +806,10 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
         }
     }
 
+    fn update_track_color(&mut self, track_color: Option<Hsla>) {
+        self.track_color = track_color;
+    }
+
     fn parent_hovered(&self, window: &Window) -> bool {
         self.last_prepaint_state
             .as_ref()
@@ -895,7 +911,7 @@ impl ThumbState {
 }
 
 impl ScrollableHandle for UniformListScrollHandle {
-    fn max_offset(&self) -> Size<Pixels> {
+    fn max_offset(&self) -> Point<Pixels> {
         self.0.borrow().base_handle.max_offset()
     }
 
@@ -913,7 +929,7 @@ impl ScrollableHandle for UniformListScrollHandle {
 }
 
 impl ScrollableHandle for ListState {
-    fn max_offset(&self) -> Size<Pixels> {
+    fn max_offset(&self) -> Point<Pixels> {
         self.max_offset_for_scrollbar()
     }
 
@@ -939,7 +955,7 @@ impl ScrollableHandle for ListState {
 }
 
 impl ScrollableHandle for ScrollHandle {
-    fn max_offset(&self) -> Size<Pixels> {
+    fn max_offset(&self) -> Point<Pixels> {
         self.max_offset()
     }
 
@@ -956,8 +972,8 @@ impl ScrollableHandle for ScrollHandle {
     }
 }
 
-pub trait ScrollableHandle: 'static + Any + Sized {
-    fn max_offset(&self) -> Size<Pixels>;
+pub trait ScrollableHandle: 'static + Any + Sized + Clone {
+    fn max_offset(&self) -> Point<Pixels>;
     fn set_offset(&self, point: Point<Pixels>);
     fn offset(&self) -> Point<Pixels>;
     fn viewport(&self) -> Bounds<Pixels>;
@@ -968,7 +984,7 @@ pub trait ScrollableHandle: 'static + Any + Sized {
         self.max_offset().along(axis) > Pixels::ZERO
     }
     fn content_size(&self) -> Size<Pixels> {
-        self.viewport().size + self.max_offset()
+        self.viewport().size + self.max_offset().into()
     }
 }
 
@@ -990,7 +1006,7 @@ impl ScrollbarLayout {
     fn compute_click_offset(
         &self,
         event_position: Point<Pixels>,
-        max_offset: Size<Pixels>,
+        max_offset: Point<Pixels>,
         event_type: ScrollbarMouseEvent,
     ) -> Pixels {
         let Self {
@@ -1025,7 +1041,18 @@ impl ScrollbarLayout {
 
 impl PartialEq for ScrollbarLayout {
     fn eq(&self, other: &Self) -> bool {
-        self.axis == other.axis && self.thumb_bounds == other.thumb_bounds
+        if self.axis != other.axis {
+            return false;
+        }
+
+        let axis = self.axis;
+        let thumb_offset =
+            self.thumb_bounds.origin.along(axis) - self.track_bounds.origin.along(axis);
+        let other_thumb_offset =
+            other.thumb_bounds.origin.along(axis) - other.track_bounds.origin.along(axis);
+
+        thumb_offset == other_thumb_offset
+            && self.thumb_bounds.size.along(axis) == other.thumb_bounds.size.along(axis)
     }
 }
 
@@ -1102,10 +1129,11 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
             .disabled()
             .not()
             .then(|| ScrollbarPrepaintState {
-                parent_bounds_hitbox: window.insert_hitbox(bounds, HitboxBehavior::Normal),
                 thumbs: {
-                    let thumb_ranges = self.state.read(cx).thumb_ranges().collect::<Vec<_>>();
-                    let width = self.state.read(cx).width.to_pixels();
+                    let state = self.state.read(cx);
+                    let thumb_ranges = state.thumb_ranges().collect::<Vec<_>>();
+                    let width = state.width.to_pixels();
+                    let track_color = state.track_color;
 
                     let additional_padding = if thumb_ranges.len() == 2 {
                         width
@@ -1158,26 +1186,29 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                                     .apply_along(axis, |_| thumb_end - thumb_offset),
                             );
 
+                            let needs_scroll_track = reserved_space.needs_scroll_track();
+
                             ScrollbarLayout {
                                 thumb_bounds,
                                 track_bounds: padded_bounds,
                                 axis,
                                 cursor_hitbox: window.insert_hitbox(
-                                    if reserved_space.needs_scroll_track() {
+                                    if needs_scroll_track {
                                         padded_bounds
                                     } else {
                                         thumb_bounds
                                     },
                                     HitboxBehavior::BlockMouseExceptScroll,
                                 ),
-                                track_background: reserved_space
-                                    .track_color()
+                                track_background: track_color
+                                    .filter(|_| needs_scroll_track)
                                     .map(|color| (padded_bounds.dilate(SCROLLBAR_PADDING), color)),
                                 reserved_space,
                             }
                         })
                         .collect()
                 },
+                parent_bounds_hitbox: window.insert_hitbox(bounds, HitboxBehavior::Normal),
             });
         if prepaint_state
             .as_ref()
@@ -1279,10 +1310,15 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                     }
 
                     if let Some((track_bounds, color)) = track_background {
+                        let mut color = *color;
+                        if let Some(fade) = autohide_fade {
+                            color.fade_out(fade);
+                        }
+
                         window.paint_quad(quad(
                             *track_bounds,
                             Corners::default(),
-                            *color,
+                            color,
                             Edges::default(),
                             Hsla::transparent_black(),
                             BorderStyle::default(),

@@ -4,9 +4,6 @@ CREATE TABLE "users" (
     "admin" BOOLEAN,
     "email_address" VARCHAR(255) DEFAULT NULL,
     "name" TEXT,
-    "invite_code" VARCHAR(64),
-    "invite_count" INTEGER NOT NULL DEFAULT 0,
-    "inviter_id" INTEGER REFERENCES users (id),
     "connected_once" BOOLEAN NOT NULL DEFAULT false,
     "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "metrics_id" TEXT,
@@ -18,20 +15,9 @@ CREATE TABLE "users" (
 
 CREATE UNIQUE INDEX "index_users_github_login" ON "users" ("github_login");
 
-CREATE UNIQUE INDEX "index_invite_code_users" ON "users" ("invite_code");
-
 CREATE INDEX "index_users_on_email_address" ON "users" ("email_address");
 
 CREATE UNIQUE INDEX "index_users_on_github_user_id" ON "users" ("github_user_id");
-
-CREATE TABLE "access_tokens" (
-    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-    "user_id" INTEGER REFERENCES users (id) ON DELETE CASCADE,
-    "impersonated_user_id" INTEGER REFERENCES users (id),
-    "hash" VARCHAR(128)
-);
-
-CREATE INDEX "index_access_tokens_user_id" ON "access_tokens" ("user_id");
 
 CREATE TABLE "contacts" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -97,6 +83,7 @@ CREATE TABLE "worktree_entries" (
     "is_external" BOOL NOT NULL,
     "is_ignored" BOOL NOT NULL,
     "is_deleted" BOOL NOT NULL,
+    "is_hidden" BOOL NOT NULL,
     "git_status" INTEGER,
     "is_fifo" BOOL NOT NULL,
     PRIMARY KEY (project_id, worktree_id, id),
@@ -120,6 +107,9 @@ CREATE TABLE "project_repositories" (
     "merge_message" VARCHAR,
     "branch_summary" VARCHAR,
     "head_commit_details" VARCHAR,
+    "remote_upstream_url" VARCHAR,
+    "remote_origin_url" VARCHAR,
+    "linked_worktrees" VARCHAR,
     PRIMARY KEY (project_id, id)
 );
 
@@ -133,6 +123,8 @@ CREATE TABLE "project_repository_statuses" (
     "status_kind" INT4 NOT NULL,
     "first_status" INT4 NULL,
     "second_status" INT4 NULL,
+    "lines_added" INT4 NULL,
+    "lines_deleted" INT4 NULL,
     "scan_id" INT8 NOT NULL,
     "is_deleted" BOOL NOT NULL,
     PRIMARY KEY (project_id, repository_id, repo_path)
@@ -148,6 +140,7 @@ CREATE TABLE "worktree_settings_files" (
     "path" VARCHAR NOT NULL,
     "content" TEXT,
     "kind" VARCHAR,
+    "outside_worktree" BOOL NOT NULL DEFAULT FALSE,
     PRIMARY KEY (project_id, worktree_id, path),
     FOREIGN KEY (project_id, worktree_id) REFERENCES worktrees (project_id, id) ON DELETE CASCADE
 );
@@ -290,29 +283,6 @@ CREATE TABLE IF NOT EXISTS "channel_chat_participants" (
 
 CREATE INDEX "index_channel_chat_participants_on_channel_id" ON "channel_chat_participants" ("channel_id");
 
-CREATE TABLE IF NOT EXISTS "channel_messages" (
-    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-    "channel_id" INTEGER NOT NULL REFERENCES channels (id) ON DELETE CASCADE,
-    "sender_id" INTEGER NOT NULL REFERENCES users (id),
-    "body" TEXT NOT NULL,
-    "sent_at" TIMESTAMP,
-    "edited_at" TIMESTAMP,
-    "nonce" BLOB NOT NULL,
-    "reply_to_message_id" INTEGER DEFAULT NULL
-);
-
-CREATE INDEX "index_channel_messages_on_channel_id" ON "channel_messages" ("channel_id");
-
-CREATE UNIQUE INDEX "index_channel_messages_on_sender_id_nonce" ON "channel_messages" ("sender_id", "nonce");
-
-CREATE TABLE "channel_message_mentions" (
-    "message_id" INTEGER NOT NULL REFERENCES channel_messages (id) ON DELETE CASCADE,
-    "start_offset" INTEGER NOT NULL,
-    "end_offset" INTEGER NOT NULL,
-    "user_id" INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
-    PRIMARY KEY (message_id, start_offset)
-);
-
 CREATE TABLE "channel_members" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
     "channel_id" INTEGER NOT NULL REFERENCES channels (id) ON DELETE CASCADE,
@@ -376,26 +346,6 @@ CREATE UNIQUE INDEX "index_channel_buffer_collaborators_on_channel_id_connection
     "connection_server_id"
 );
 
-CREATE TABLE "feature_flags" (
-    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-    "flag" TEXT NOT NULL UNIQUE,
-    "enabled_for_all" BOOLEAN NOT NULL DEFAULT false
-);
-
-CREATE INDEX "index_feature_flags" ON "feature_flags" ("id");
-
-CREATE TABLE "user_features" (
-    "user_id" INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
-    "feature_id" INTEGER NOT NULL REFERENCES feature_flags (id) ON DELETE CASCADE,
-    PRIMARY KEY (user_id, feature_id)
-);
-
-CREATE UNIQUE INDEX "index_user_features_user_id_and_feature_id" ON "user_features" ("user_id", "feature_id");
-
-CREATE INDEX "index_user_features_on_user_id" ON "user_features" ("user_id");
-
-CREATE INDEX "index_user_features_on_feature_id" ON "user_features" ("feature_id");
-
 CREATE TABLE "observed_buffer_edits" (
     "user_id" INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
     "buffer_id" INTEGER NOT NULL REFERENCES buffers (id) ON DELETE CASCADE,
@@ -406,15 +356,6 @@ CREATE TABLE "observed_buffer_edits" (
 );
 
 CREATE UNIQUE INDEX "index_observed_buffers_user_and_buffer_id" ON "observed_buffer_edits" ("user_id", "buffer_id");
-
-CREATE TABLE IF NOT EXISTS "observed_channel_messages" (
-    "user_id" INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
-    "channel_id" INTEGER NOT NULL REFERENCES channels (id) ON DELETE CASCADE,
-    "channel_message_id" INTEGER NOT NULL,
-    PRIMARY KEY (user_id, channel_id)
-);
-
-CREATE UNIQUE INDEX "index_observed_channel_messages_user_and_channel_id" ON "observed_channel_messages" ("user_id", "channel_id");
 
 CREATE TABLE "notification_kinds" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -466,6 +407,7 @@ CREATE TABLE extension_versions (
     provides_grammars BOOLEAN NOT NULL DEFAULT FALSE,
     provides_language_servers BOOLEAN NOT NULL DEFAULT FALSE,
     provides_context_servers BOOLEAN NOT NULL DEFAULT FALSE,
+    provides_agent_servers BOOLEAN NOT NULL DEFAULT FALSE,
     provides_slash_commands BOOLEAN NOT NULL DEFAULT FALSE,
     provides_indexed_docs_providers BOOLEAN NOT NULL DEFAULT FALSE,
     provides_snippets BOOLEAN NOT NULL DEFAULT FALSE,
@@ -488,3 +430,14 @@ CREATE TABLE IF NOT EXISTS "breakpoints" (
 );
 
 CREATE INDEX "index_breakpoints_on_project_id" ON "breakpoints" ("project_id");
+
+CREATE TABLE IF NOT EXISTS "shared_threads" (
+    "id" TEXT PRIMARY KEY NOT NULL,
+    "user_id" INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    "title" VARCHAR(512) NOT NULL,
+    "data" BLOB NOT NULL,
+    "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX "index_shared_threads_user_id" ON "shared_threads" ("user_id");

@@ -1,3 +1,8 @@
+---
+title: Fish
+description: "Configure Fish language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Fish
 
 Fish language support in Zed is provided by the community-maintained [Fish extension](https://github.com/hasit/zed-fish).
@@ -18,7 +23,7 @@ fish_indent --version
 
 2. Configure Zed to automatically format fish code with `fish_indent`:
 
-```json
+```json [settings]
   "languages": {
     "Fish": {
       "formatter": {

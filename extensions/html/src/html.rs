@@ -68,22 +68,24 @@ impl zed::Extension for HtmlExtension {
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
         let server_path = if let Some(path) = worktree.which(BINARY_NAME) {
-            path
+            return Ok(zed::Command {
+                command: path,
+                args: vec!["--stdio".to_string()],
+                env: Default::default(),
+            });
         } else {
-            self.server_script_path(language_server_id)?
+            let server_path = self.server_script_path(language_server_id)?;
+            env::current_dir()
+                .unwrap()
+                .join(&server_path)
+                .to_string_lossy()
+                .to_string()
         };
         self.cached_binary_path = Some(server_path.clone());
 
         Ok(zed::Command {
             command: zed::node_binary_path()?,
-            args: vec![
-                env::current_dir()
-                    .unwrap()
-                    .join(&server_path)
-                    .to_string_lossy()
-                    .to_string(),
-                "--stdio".to_string(),
-            ],
+            args: vec![server_path, "--stdio".to_string()],
             env: Default::default(),
         })
     }
@@ -93,11 +95,8 @@ impl zed::Extension for HtmlExtension {
         server_id: &LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<Option<zed::serde_json::Value>> {
-        let settings = LspSettings::for_worktree(server_id.as_ref(), worktree)
-            .ok()
-            .and_then(|lsp_settings| lsp_settings.settings)
-            .unwrap_or_default();
-        Ok(Some(settings))
+        LspSettings::for_worktree(server_id.as_ref(), worktree)
+            .map(|lsp_settings| lsp_settings.settings)
     }
 
     fn language_server_initialization_options(

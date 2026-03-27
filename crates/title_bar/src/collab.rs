@@ -1,36 +1,39 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
-use call::{ActiveCall, ParticipantLocation, Room};
+use call::{ActiveCall, Room};
+use channel::ChannelStore;
 use client::{User, proto::PeerId};
 use gpui::{
     AnyElement, Hsla, IntoElement, MouseButton, Path, ScreenCaptureSource, Styled, WeakEntity,
     canvas, point,
 };
-use gpui::{App, Task, Window, actions};
+use gpui::{App, Task, Window};
+use icons::IconName;
+use livekit_client::ConnectionQuality;
+use project::WorktreeSettings;
+use remote_connection::RemoteConnectionModal;
 use rpc::proto::{self};
+use settings::{Settings as _, SettingsLocation};
 use theme::ActiveTheme;
 use ui::{
     Avatar, AvatarAudioStatusIndicator, ContextMenu, ContextMenuItem, Divider, DividerColor,
     Facepile, PopoverMenu, SplitButton, SplitButtonStyle, TintColor, Tooltip, prelude::*,
 };
-use workspace::notifications::DetachAndPromptErr;
+use util::rel_path::RelPath;
+use workspace::{ParticipantLocation, notifications::DetachAndPromptErr};
+use zed_actions::ShowCallStats;
 
 use crate::TitleBar;
 
-actions!(
-    collab,
-    [
-        /// Toggles screen sharing on or off.
-        ToggleScreenSharing,
-        /// Toggles microphone mute.
-        ToggleMute,
-        /// Toggles deafen mode (mute both microphone and speakers).
-        ToggleDeafen
-    ]
-);
+fn format_stat(value: Option<f64>, format: impl Fn(f64) -> String) -> String {
+    match value {
+        Some(v) => format(v),
+        None => "—".to_string(),
+    }
+}
 
-fn toggle_screen_sharing(
+pub fn toggle_screen_sharing(
     screen: anyhow::Result<Option<Rc<dyn ScreenCaptureSource>>>,
     window: &mut Window,
     cx: &mut App,
@@ -86,7 +89,7 @@ fn toggle_screen_sharing(
     toggle_screen_sharing.detach_and_prompt_err("Sharing Screen Failed", window, cx, |e, _, _| Some(format!("{:?}\n\nPlease check that you have given Zed permissions to record your screen in Settings.", e)));
 }
 
-fn toggle_mute(_: &ToggleMute, cx: &mut App) {
+pub fn toggle_mute(cx: &mut App) {
     let call = ActiveCall::global(cx).read(cx);
     if let Some(room) = call.room().cloned() {
         room.update(cx, |room, cx| {
@@ -106,7 +109,7 @@ fn toggle_mute(_: &ToggleMute, cx: &mut App) {
     }
 }
 
-fn toggle_deafen(_: &ToggleDeafen, cx: &mut App) {
+pub fn toggle_deafen(cx: &mut App) {
     if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
         room.update(cx, |room, cx| room.toggle_deafen(cx));
     }
@@ -178,7 +181,9 @@ impl TitleBar {
 
                     this.children(current_user_face_pile.map(|face_pile| {
                         v_flex()
-                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_mouse_down(MouseButton::Left, |_, window, _| {
+                                window.prevent_default()
+                            })
                             .child(face_pile)
                             .child(render_color_ribbon(player_colors.local().cursor))
                     }))
@@ -213,9 +218,14 @@ impl TitleBar {
                                 .child(facepile)
                                 .child(render_color_ribbon(player_color.cursor))
                                 .cursor_pointer()
+                                .on_mouse_down(MouseButton::Left, |_, window, _| {
+                                    window.prevent_default()
+                                })
                                 .on_click({
                                     let peer_id = collaborator.peer_id;
                                     cx.listener(move |this, _, window, cx| {
+                                        cx.stop_propagation();
+
                                         this.workspace
                                             .update(cx, |workspace, cx| {
                                                 if is_following {
@@ -227,6 +237,7 @@ impl TitleBar {
                                             .ok();
                                     })
                                 })
+                                .occlude()
                                 .tooltip({
                                     let login = collaborator.user.github_login.clone();
                                     Tooltip::text(format!("Follow {login}"))
@@ -332,7 +343,11 @@ impl TitleBar {
 
         let is_connecting_to_project = self
             .workspace
-            .update(cx, |workspace, cx| workspace.has_active_modal(window, cx))
+            .update(cx, |workspace, cx| {
+                workspace
+                    .active_modal::<RemoteConnectionModal>(cx)
+                    .is_some()
+            })
             .unwrap_or(false);
 
         let room = room.read(cx);
@@ -347,7 +362,29 @@ impl TitleBar {
         let can_share_projects = room.can_share_projects();
         let screen_sharing_supported = cx.is_screen_capture_supported();
 
+        let stats = room
+            .diagnostics()
+            .map(|d| d.read(cx).stats().clone())
+            .unwrap_or_default();
+
+        let channel_store = ChannelStore::global(cx);
+        let channel = room
+            .channel_id()
+            .and_then(|channel_id| channel_store.read(cx).channel_for_id(channel_id).cloned());
+
         let mut children = Vec::new();
+
+        let effective_quality = stats.effective_quality.unwrap_or(ConnectionQuality::Lost);
+        let (signal_icon, signal_color, quality_label) = match effective_quality {
+            ConnectionQuality::Excellent => {
+                (IconName::SignalHigh, Some(Color::Success), "Excellent")
+            }
+            ConnectionQuality::Good => (IconName::SignalHigh, None, "Good"),
+            ConnectionQuality::Poor => (IconName::SignalMedium, Some(Color::Warning), "Poor"),
+            ConnectionQuality::Lost => (IconName::SignalLow, Some(Color::Error), "Lost"),
+        };
+
+        let quality_label: SharedString = quality_label.into();
 
         children.push(
             h_flex()
@@ -367,7 +404,50 @@ impl TitleBar {
                 .into_any_element(),
         );
 
+        children.push(
+            IconButton::new("call-quality", signal_icon)
+                .icon_size(IconSize::Small)
+                .when_some(signal_color, |button, color| button.icon_color(color))
+                .tooltip(move |_window, cx| {
+                    let quality_label = quality_label.clone();
+                    let latency = format_stat(stats.latency_ms, |v| format!("{:.0}ms", v));
+                    let jitter = format_stat(stats.jitter_ms, |v| format!("{:.0}ms", v));
+                    let packet_loss = format_stat(stats.packet_loss_pct, |v| format!("{:.1}%", v));
+                    let input_lag =
+                        format_stat(stats.input_lag.map(|d| d.as_secs_f64() * 1000.0), |v| {
+                            format!("{:.1}ms", v)
+                        });
+
+                    Tooltip::with_meta(
+                        format!("Connection: {quality_label}"),
+                        Some(&ShowCallStats),
+                        format!(
+                            "Latency: {latency} · Jitter: {jitter} · Loss: {packet_loss} · Input lag: {input_lag}",
+                        ),
+                        cx,
+                    )
+                })
+                .on_click(move |_, window, cx| {
+                    window.dispatch_action(Box::new(ShowCallStats), cx);
+                })
+                .into_any_element(),
+        );
+
         if is_local && can_share_projects && !is_connecting_to_project {
+            let is_sharing_disabled = channel.is_some_and(|channel| match channel.visibility {
+                proto::ChannelVisibility::Public => project.visible_worktrees(cx).any(|worktree| {
+                    let worktree_id = worktree.read(cx).id();
+
+                    let settings_location = Some(SettingsLocation {
+                        worktree_id,
+                        path: RelPath::empty(),
+                    });
+
+                    WorktreeSettings::get(settings_location, cx).prevent_sharing_in_public_channels
+                }),
+                proto::ChannelVisibility::Members => false,
+            });
+
             children.push(
                 Button::new(
                     "toggle_sharing",
@@ -382,6 +462,11 @@ impl TitleBar {
                 .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                 .toggle_state(is_shared)
                 .label_size(LabelSize::Small)
+                .when(is_sharing_disabled, |parent| {
+                    parent.disabled(true).tooltip(Tooltip::text(
+                        "This project may not be shared in a public channel.",
+                    ))
+                })
                 .on_click(cx.listener(move |this, _, window, cx| {
                     if is_shared {
                         this.unshare_project(window, cx);
@@ -403,14 +488,13 @@ impl TitleBar {
                         IconName::Mic
                     },
                 )
-                .tooltip(move |window, cx| {
+                .tooltip(move |_window, cx| {
                     if is_muted {
                         if is_deafened {
                             Tooltip::with_meta(
                                 "Unmute Microphone",
                                 None,
                                 "Audio will be unmuted",
-                                window,
                                 cx,
                             )
                         } else {
@@ -424,9 +508,7 @@ impl TitleBar {
                 .icon_size(IconSize::Small)
                 .toggle_state(is_muted)
                 .selected_style(ButtonStyle::Tinted(TintColor::Error))
-                .on_click(move |_, _window, cx| {
-                    toggle_mute(&Default::default(), cx);
-                })
+                .on_click(move |_, _window, cx| toggle_mute(cx))
                 .into_any_element(),
             );
         }
@@ -444,12 +526,12 @@ impl TitleBar {
             .selected_style(ButtonStyle::Tinted(TintColor::Error))
             .icon_size(IconSize::Small)
             .toggle_state(is_deafened)
-            .tooltip(move |window, cx| {
+            .tooltip(move |_window, cx| {
                 if is_deafened {
                     let label = "Unmute Audio";
 
                     if !muted_by_user {
-                        Tooltip::with_meta(label, None, "Microphone will be unmuted", window, cx)
+                        Tooltip::with_meta(label, None, "Microphone will be unmuted", cx)
                     } else {
                         Tooltip::simple(label, cx)
                     }
@@ -457,17 +539,22 @@ impl TitleBar {
                     let label = "Mute Audio";
 
                     if !muted_by_user {
-                        Tooltip::with_meta(label, None, "Microphone will be muted", window, cx)
+                        Tooltip::with_meta(label, None, "Microphone will be muted", cx)
                     } else {
                         Tooltip::simple(label, cx)
                     }
                 }
             })
-            .on_click(move |_, _, cx| toggle_deafen(&Default::default(), cx))
+            .on_click(move |_, _, cx| toggle_deafen(cx))
             .into_any_element(),
         );
 
         if can_use_microphone && screen_sharing_supported {
+            #[cfg(target_os = "linux")]
+            let is_wayland = gpui::guess_compositor() == "Wayland";
+            #[cfg(not(target_os = "linux"))]
+            let is_wayland = false;
+
             let trigger = IconButton::new("screen-share", IconName::Screen)
                 .style(ButtonStyle::Subtle)
                 .icon_size(IconSize::Small)
@@ -484,28 +571,56 @@ impl TitleBar {
                         .room()
                         .is_some_and(|room| !room.read(cx).is_sharing_screen());
 
-                    window
-                        .spawn(cx, async move |cx| {
-                            let screen = if should_share {
-                                cx.update(|_, cx| pick_default_screen(cx))?.await
-                            } else {
-                                Ok(None)
-                            };
-                            cx.update(|window, cx| toggle_screen_sharing(screen, window, cx))?;
+                    #[cfg(target_os = "linux")]
+                    {
+                        if is_wayland
+                            && let Some(room) = ActiveCall::global(cx).read(cx).room().cloned()
+                        {
+                            let task = room.update(cx, |room, cx| {
+                                if should_share {
+                                    room.share_screen_wayland(cx)
+                                } else {
+                                    room.unshare_screen(true, cx)
+                                        .map(|()| Task::ready(Ok(())))
+                                        .unwrap_or_else(|e| Task::ready(Err(e)))
+                                }
+                            });
+                            task.detach_and_prompt_err(
+                                "Sharing Screen Failed",
+                                window,
+                                cx,
+                                |e, _, _| Some(format!("{e:?}")),
+                            );
+                        }
+                    }
+                    if !is_wayland {
+                        window
+                            .spawn(cx, async move |cx| {
+                                let screen = if should_share {
+                                    cx.update(|_, cx| pick_default_screen(cx))?.await
+                                } else {
+                                    Ok(None)
+                                };
+                                cx.update(|window, cx| toggle_screen_sharing(screen, window, cx))?;
 
-                            Result::<_, anyhow::Error>::Ok(())
-                        })
-                        .detach();
+                                Result::<_, anyhow::Error>::Ok(())
+                            })
+                            .detach();
+                    }
                 });
 
-            children.push(
-                SplitButton::new(
-                    trigger.render(window, cx),
-                    self.render_screen_list().into_any_element(),
-                )
-                .style(SplitButtonStyle::Transparent)
-                .into_any_element(),
-            );
+            if is_wayland {
+                children.push(trigger.into_any_element());
+            } else {
+                children.push(
+                    SplitButton::new(
+                        trigger.render(window, cx),
+                        self.render_screen_list().into_any_element(),
+                    )
+                    .style(SplitButtonStyle::Transparent)
+                    .into_any_element(),
+                );
+            }
         }
 
         children.push(div().pr_2().into_any_element());

@@ -169,6 +169,7 @@ impl GitHostingProvider for Chromium {
         _repo_owner: &str,
         repo: &str,
         commit: SharedString,
+        _author_email: Option<SharedString>,
         http_client: Arc<dyn HttpClient>,
     ) -> Result<Option<Url>> {
         let commit = commit.to_string();
@@ -191,6 +192,7 @@ impl GitHostingProvider for Chromium {
 
 #[cfg(test)]
 mod tests {
+    use git::repository::repo_path;
     use indoc::indoc;
     use pretty_assertions::assert_eq;
 
@@ -218,11 +220,11 @@ mod tests {
                 owner: Arc::from(""),
                 repo: "chromium/src".into(),
             },
-            BuildPermalinkParams {
-                sha: "fea5080b182fc92e3be0c01c5dece602fe70b588",
-                path: "ui/base/cursor/cursor.h",
-                selection: None,
-            },
+            BuildPermalinkParams::new(
+                "fea5080b182fc92e3be0c01c5dece602fe70b588",
+                &repo_path("ui/base/cursor/cursor.h"),
+                None,
+            ),
         );
 
         let expected_url = "https://chromium.googlesource.com/chromium/src/+/fea5080b182fc92e3be0c01c5dece602fe70b588/ui/base/cursor/cursor.h";
@@ -236,11 +238,11 @@ mod tests {
                 owner: Arc::from(""),
                 repo: "chromium/src".into(),
             },
-            BuildPermalinkParams {
-                sha: "fea5080b182fc92e3be0c01c5dece602fe70b588",
-                path: "ui/base/cursor/cursor.h",
-                selection: Some(18..18),
-            },
+            BuildPermalinkParams::new(
+                "fea5080b182fc92e3be0c01c5dece602fe70b588",
+                &repo_path("ui/base/cursor/cursor.h"),
+                Some(18..18),
+            ),
         );
 
         let expected_url = "https://chromium.googlesource.com/chromium/src/+/fea5080b182fc92e3be0c01c5dece602fe70b588/ui/base/cursor/cursor.h#19";
@@ -254,11 +256,11 @@ mod tests {
                 owner: Arc::from(""),
                 repo: "chromium/src".into(),
             },
-            BuildPermalinkParams {
-                sha: "fea5080b182fc92e3be0c01c5dece602fe70b588",
-                path: "ui/base/cursor/cursor.h",
-                selection: Some(18..30),
-            },
+            BuildPermalinkParams::new(
+                "fea5080b182fc92e3be0c01c5dece602fe70b588",
+                &repo_path("ui/base/cursor/cursor.h"),
+                Some(18..30),
+            ),
         );
 
         let expected_url = "https://chromium.googlesource.com/chromium/src/+/fea5080b182fc92e3be0c01c5dece602fe70b588/ui/base/cursor/cursor.h#19";

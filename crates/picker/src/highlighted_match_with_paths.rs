@@ -2,6 +2,7 @@ use ui::{HighlightedLabel, prelude::*};
 
 #[derive(Clone)]
 pub struct HighlightedMatchWithPaths {
+    pub prefix: Option<SharedString>,
     pub match_label: HighlightedMatch,
     pub paths: Vec<HighlightedMatch>,
 }
@@ -67,7 +68,14 @@ impl HighlightedMatchWithPaths {
 impl RenderOnce for HighlightedMatchWithPaths {
     fn render(mut self, _window: &mut Window, _: &mut App) -> impl IntoElement {
         v_flex()
-            .child(self.match_label.clone())
+            .child(
+                h_flex().gap_1().child(self.match_label.clone()).when_some(
+                    self.prefix.as_ref(),
+                    |this, prefix| {
+                        this.child(Label::new(format!("({})", prefix)).color(Color::Muted))
+                    },
+                ),
+            )
             .when(!self.paths.is_empty(), |this| {
                 self.render_paths_children(this)
             })

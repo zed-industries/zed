@@ -1,3 +1,8 @@
+---
+title: Swift
+description: "Configure Swift language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Swift
 
 Swift language support in Zed is provided by the community-maintained [Swift extension](https://github.com/zed-extensions/swift).
@@ -18,11 +23,13 @@ Zed's name for the adapter (in the UI and `debug.json`) is `Swift`, and under th
 The extension tries to find an `lldb-dap` binary using `swiftly`, using `xcrun`, and by searching `$PATH`, in that order of preference.
 The extension doesn't attempt to download `lldb-dap` if it's not found.
 
+- [lldb-dap configuration documentation](https://github.com/llvm/llvm-project/blob/main/lldb/tools/lldb-dap/README.md#configuration-settings-reference)
+
 ### Examples
 
 #### Build and debug a Swift binary
 
-```json
+```json [debug]
 [
   {
     "label": "Debug Swift",

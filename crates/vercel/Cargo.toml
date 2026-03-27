@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/vercel.rs"
+test = false
 
 [features]
 default = []
@@ -20,4 +21,3 @@ anyhow.workspace = true
 schemars = { workspace = true, optional = true }
 serde.workspace = true
 strum.workspace = true
-workspace-hack.workspace = true

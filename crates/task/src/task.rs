@@ -3,31 +3,31 @@
 mod adapter_schema;
 mod debug_format;
 mod serde_helpers;
-mod shell_builder;
 pub mod static_source;
 mod task_template;
 mod vscode_debug_format;
 mod vscode_format;
 
+use anyhow::Context as _;
 use collections::{HashMap, HashSet, hash_map};
 use gpui::SharedString;
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::path::PathBuf;
 use std::str::FromStr;
-use util::get_system_shell;
+use std::sync::Arc;
 
 pub use adapter_schema::{AdapterSchema, AdapterSchemas};
 pub use debug_format::{
     AttachRequest, BuildTaskDefinition, DebugRequest, DebugScenario, DebugTaskFile, LaunchRequest,
     Request, TcpArgumentsTemplate, ZedDebugConfig,
 };
-pub use shell_builder::{ShellBuilder, ShellKind};
 pub use task_template::{
-    DebugArgsRequest, HideStrategy, RevealStrategy, TaskTemplate, TaskTemplates,
+    DebugArgsRequest, HideStrategy, RevealStrategy, SaveStrategy, TaskTemplate, TaskTemplates,
     substitute_variables_in_map, substitute_variables_in_str,
 };
+pub use util::shell::{Shell, ShellKind};
+pub use util::shell_builder::ShellBuilder;
 pub use vscode_debug_format::VsCodeDebugTaskFile;
 pub use vscode_format::VsCodeTaskFile;
 pub use zed_actions::RevealTarget;
@@ -75,6 +75,8 @@ pub struct SpawnInTerminal {
     pub show_command: bool,
     /// Whether to show the rerun button in the terminal tab.
     pub show_rerun: bool,
+    /// Which edited buffers to save before running the task.
+    pub save: SaveStrategy,
 }
 
 impl SpawnInTerminal {
@@ -172,8 +174,13 @@ pub enum VariableName {
     Column,
     /// Text from the latest selection.
     SelectedText,
+    /// The language of the currently opened buffer (e.g., "Rust", "Python").
+    Language,
     /// The symbol selected by the symbol tagging system, specifically the @run capture in a runnables.scm
     RunnableSymbol,
+    /// Open a Picker to select a process ID to use in place
+    /// Can only be used to debug configurations
+    PickProcessId,
     /// Custom variable, provided by the plugin or other external source.
     /// Will be printed with `CUSTOM_` prefix to avoid potential conflicts with other variables.
     Custom(Cow<'static, str>),
@@ -206,6 +213,7 @@ impl FromStr for VariableName {
             "SYMBOL" => Self::Symbol,
             "RUNNABLE_SYMBOL" => Self::RunnableSymbol,
             "SELECTED_TEXT" => Self::SelectedText,
+            "LANGUAGE" => Self::Language,
             "ROW" => Self::Row,
             "COLUMN" => Self::Column,
             _ => {
@@ -240,7 +248,9 @@ impl std::fmt::Display for VariableName {
             Self::Row => write!(f, "{ZED_VARIABLE_NAME_PREFIX}ROW"),
             Self::Column => write!(f, "{ZED_VARIABLE_NAME_PREFIX}COLUMN"),
             Self::SelectedText => write!(f, "{ZED_VARIABLE_NAME_PREFIX}SELECTED_TEXT"),
+            Self::Language => write!(f, "{ZED_VARIABLE_NAME_PREFIX}LANGUAGE"),
             Self::RunnableSymbol => write!(f, "{ZED_VARIABLE_NAME_PREFIX}RUNNABLE_SYMBOL"),
+            Self::PickProcessId => write!(f, "{ZED_VARIABLE_NAME_PREFIX}PICK_PID"),
             Self::Custom(s) => write!(
                 f,
                 "{ZED_VARIABLE_NAME_PREFIX}{ZED_CUSTOM_VARIABLE_NAME_PREFIX}{s}"
@@ -313,66 +323,80 @@ pub struct TaskContext {
     pub project_env: HashMap<String, String>,
 }
 
+/// A shared reference to a [`TaskContext`], used to avoid cloning the context multiple times.
+#[derive(Clone, Debug, Default)]
+pub struct SharedTaskContext(Arc<TaskContext>);
+
+impl std::ops::Deref for SharedTaskContext {
+    type Target = TaskContext;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<TaskContext> for SharedTaskContext {
+    fn from(context: TaskContext) -> Self {
+        Self(Arc::new(context))
+    }
+}
+
 /// This is a new type representing a 'tag' on a 'runnable symbol', typically a test of main() function, found via treesitter.
 #[derive(Clone, Debug)]
 pub struct RunnableTag(pub SharedString);
 
-/// Shell configuration to open the terminal with.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
-#[serde(rename_all = "snake_case")]
-pub enum Shell {
-    /// Use the system's default terminal configuration in /etc/passwd
-    #[default]
-    System,
-    /// Use a specific program with no arguments.
-    Program(String),
-    /// Use a specific program with arguments.
-    WithArguments {
-        /// The program to run.
-        program: String,
-        /// The arguments to pass to the program.
-        args: Vec<String>,
-        /// An optional string to override the title of the terminal tab
-        title_override: Option<SharedString>,
-    },
+pub fn shell_from_proto(proto: proto::Shell) -> anyhow::Result<Shell> {
+    let shell_type = proto.shell_type.context("invalid shell type")?;
+    let shell = match shell_type {
+        proto::shell::ShellType::System(_) => Shell::System,
+        proto::shell::ShellType::Program(program) => Shell::Program(program),
+        proto::shell::ShellType::WithArguments(program) => Shell::WithArguments {
+            program: program.program,
+            args: program.args,
+            title_override: None,
+        },
+    };
+    Ok(shell)
 }
 
-impl Shell {
-    pub fn program(&self) -> String {
-        match self {
-            Shell::Program(program) => program.clone(),
-            Shell::WithArguments { program, .. } => program.clone(),
-            Shell::System => get_system_shell(),
-        }
-    }
-
-    pub fn program_and_args(&self) -> (String, &[String]) {
-        match self {
-            Shell::Program(program) => (program.clone(), &[]),
-            Shell::WithArguments { program, args, .. } => (program.clone(), args),
-            Shell::System => (get_system_shell(), &[]),
-        }
-    }
-
-    pub fn shell_kind(&self) -> ShellKind {
-        match self {
-            Shell::Program(program) => ShellKind::new(program),
-            Shell::WithArguments { program, .. } => ShellKind::new(program),
-            Shell::System => ShellKind::system(),
-        }
+pub fn shell_to_proto(shell: Shell) -> proto::Shell {
+    let shell_type = match shell {
+        Shell::System => proto::shell::ShellType::System(proto::System {}),
+        Shell::Program(program) => proto::shell::ShellType::Program(program),
+        Shell::WithArguments {
+            program,
+            args,
+            title_override: _,
+        } => proto::shell::ShellType::WithArguments(proto::shell::WithArguments { program, args }),
+    };
+    proto::Shell {
+        shell_type: Some(shell_type),
     }
 }
 
 type VsCodeEnvVariable = String;
+type VsCodeCommand = String;
 type ZedEnvVariable = String;
 
 struct EnvVariableReplacer {
     variables: HashMap<VsCodeEnvVariable, ZedEnvVariable>,
+    commands: HashMap<VsCodeCommand, ZedEnvVariable>,
 }
 
 impl EnvVariableReplacer {
     fn new(variables: HashMap<VsCodeEnvVariable, ZedEnvVariable>) -> Self {
-        Self { variables }
+        Self {
+            variables,
+            commands: HashMap::default(),
+        }
+    }
+
+    fn with_commands(
+        mut self,
+        commands: impl IntoIterator<Item = (VsCodeCommand, ZedEnvVariable)>,
+    ) -> Self {
+        self.commands = commands.into_iter().collect();
+        self
     }
 
     fn replace_value(&self, input: serde_json::Value) -> serde_json::Value {
@@ -398,7 +422,13 @@ impl EnvVariableReplacer {
             if left == "env" && !right.is_empty() {
                 let variable_name = &right[1..];
                 return Some(format!("${{{variable_name}}}"));
+            } else if left == "command" && !right.is_empty() {
+                let command_name = &right[1..];
+                if let Some(replacement_command) = self.commands.get(command_name) {
+                    return Some(format!("${{{replacement_command}}}"));
+                }
             }
+
             let (variable_name, default) = (left, right);
             let append_previous_default = |ret: &mut String| {
                 if !default.is_empty() {

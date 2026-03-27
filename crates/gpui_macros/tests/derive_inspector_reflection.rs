@@ -1,8 +1,7 @@
 //! This code was generated using Zed Agent with Claude Opus 4.
 
-use gpui_macros::derive_inspector_reflection;
-
-#[derive_inspector_reflection]
+// gate on rust-analyzer so rust-analyzer never needs to expand this macro, it takes up to 10 seconds to expand due to inefficiencies in rust-analyzers proc-macro srv
+#[cfg_attr(not(rust_analyzer), gpui_macros::derive_inspector_reflection)]
 trait Transform: Clone {
     /// Doubles the value
     fn double(self) -> Self;

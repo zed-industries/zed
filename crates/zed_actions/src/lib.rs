@@ -27,25 +27,39 @@ pub struct OpenZedUrl {
     pub url: String,
 }
 
+/// Opens the keymap to either add a keybinding or change an existing one
+#[derive(PartialEq, Clone, Default, Action, JsonSchema, Serialize, Deserialize)]
+#[action(namespace = zed, no_json, no_register)]
+pub struct ChangeKeybinding {
+    pub action: String,
+}
+
 actions!(
     zed,
     [
-        /// Opens the settings JSON file.
-        OpenSettings,
         /// Opens the settings editor.
-        OpenSettingsEditor,
+        #[action(deprecated_aliases = ["zed_actions::OpenSettingsEditor"])]
+        OpenSettings,
+        /// Opens the settings JSON file.
+        #[action(deprecated_aliases = ["zed_actions::OpenSettings"])]
+        OpenSettingsFile,
+        /// Opens project-specific settings.
+        #[action(deprecated_aliases = ["zed_actions::OpenProjectSettings"])]
+        OpenProjectSettings,
         /// Opens the default keymap file.
         OpenDefaultKeymap,
+        /// Opens the user keymap file.
+        #[action(deprecated_aliases = ["zed_actions::OpenKeymap"])]
+        OpenKeymapFile,
+        /// Opens the keymap editor.
+        #[action(deprecated_aliases = ["zed_actions::OpenKeymapEditor"])]
+        OpenKeymap,
         /// Opens account settings.
         OpenAccountSettings,
-        /// Opens the keymap editor.
-        OpenKeymapEditor,
         /// Opens server settings.
         OpenServerSettings,
         /// Quits the application.
         Quit,
-        /// Opens the user keymap file.
-        OpenKeymap,
         /// Shows information about Zed.
         About,
         /// Opens the documentation website.
@@ -54,6 +68,10 @@ actions!(
         OpenLicenses,
         /// Opens the telemetry log.
         OpenTelemetryLog,
+        /// Opens the performance profiler.
+        OpenPerformanceProfiler,
+        /// Opens the onboarding view.
+        OpenOnboarding,
     ]
 );
 
@@ -66,6 +84,7 @@ pub enum ExtensionCategoryFilter {
     Grammars,
     LanguageServers,
     ContextServers,
+    AgentServers,
     SlashCommands,
     IndexedDocsProviders,
     Snippets,
@@ -85,6 +104,18 @@ pub struct Extensions {
     pub id: Option<String>,
 }
 
+/// Opens the ACP registry.
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = zed)]
+#[serde(deny_unknown_fields)]
+pub struct AcpRegistry;
+
+/// Show call diagnostics and connection quality statistics.
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = collab)]
+#[serde(deny_unknown_fields)]
+pub struct ShowCallStats;
+
 /// Decreases the font size in the editor buffer.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = zed)]
@@ -101,6 +132,15 @@ pub struct DecreaseBufferFontSize {
 pub struct IncreaseBufferFontSize {
     #[serde(default)]
     pub persist: bool,
+}
+
+/// Opens the settings editor at a specific path.
+#[derive(PartialEq, Clone, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = zed)]
+#[serde(deny_unknown_fields)]
+pub struct OpenSettingsAt {
+    /// A path to a specific setting (e.g. `theme.mode`)
+    pub path: String,
 }
 
 /// Resets the buffer font size to the default value.
@@ -139,6 +179,30 @@ pub struct ResetUiFontSize {
     pub persist: bool,
 }
 
+/// Resets all zoom levels (UI and buffer font sizes, including in the agent panel) to their default values.
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = zed)]
+#[serde(deny_unknown_fields)]
+pub struct ResetAllZoom {
+    #[serde(default)]
+    pub persist: bool,
+}
+
+pub mod editor {
+    use gpui::actions;
+    actions!(
+        editor,
+        [
+            /// Moves cursor up.
+            MoveUp,
+            /// Moves cursor down.
+            MoveDown,
+            /// Reveals the current file in the system file manager.
+            RevealInFileManager,
+        ]
+    );
+}
+
 pub mod dev {
     use gpui::actions;
 
@@ -147,6 +211,25 @@ pub mod dev {
         [
             /// Toggles the developer inspector for debugging UI elements.
             ToggleInspector
+        ]
+    );
+}
+
+pub mod remote_debug {
+    use gpui::actions;
+
+    actions!(
+        remote_debug,
+        [
+            /// Simulates a disconnection from the remote server for testing purposes.
+            /// This will trigger the reconnection logic.
+            SimulateDisconnect,
+            /// Simulates a timeout/slow connection to the remote server for testing purposes.
+            /// This will cause heartbeat failures and trigger reconnection.
+            SimulateTimeout,
+            /// Simulates a timeout/slow connection to the remote server for testing purposes.
+            /// This will cause heartbeat failures and attempting a reconnection while having exhausted all attempts.
+            SimulateTimeoutExhausted,
         ]
     );
 }
@@ -180,11 +263,19 @@ pub mod git {
             Switch,
             /// Selects a different repository.
             SelectRepo,
+            /// Filter remotes.
+            FilterRemotes,
+            /// Create a git remote.
+            CreateRemote,
             /// Opens the git branch selector.
             #[action(deprecated_aliases = ["branches::OpenRecent"])]
             Branch,
             /// Opens the git stash selector.
-            ViewStash
+            ViewStash,
+            /// Opens the git worktree selector.
+            Worktree,
+            /// Creates a pull request for the current branch.
+            CreatePullRequest
         ]
     );
 }
@@ -208,23 +299,44 @@ pub mod command_palette {
         command_palette,
         [
             /// Toggles the command palette.
-            Toggle
+            Toggle,
         ]
     );
 }
 
+pub mod project_panel {
+    use gpui::actions;
+
+    actions!(
+        project_panel,
+        [
+            /// Toggles the project panel.
+            Toggle,
+            /// Toggles focus on the project panel.
+            ToggleFocus
+        ]
+    );
+}
 pub mod feedback {
     use gpui::actions;
 
     actions!(
         feedback,
         [
+            /// Opens email client to send feedback to Zed support.
+            EmailZed,
             /// Opens the bug report form.
             FileBugReport,
-            /// Opens the feedback form.
-            GiveFeedback
+            /// Opens the feature request form.
+            RequestFeature
         ]
     );
+}
+
+pub mod theme {
+    use gpui::actions;
+
+    actions!(theme, [ToggleMode]);
 }
 
 pub mod theme_selector {
@@ -257,6 +369,64 @@ pub mod icon_theme_selector {
     }
 }
 
+pub mod search {
+    use gpui::actions;
+    actions!(
+        search,
+        [
+            /// Toggles searching in ignored files.
+            ToggleIncludeIgnored
+        ]
+    );
+}
+pub mod buffer_search {
+    use gpui::{Action, actions};
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+
+    /// Opens the buffer search interface with the specified configuration.
+    #[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
+    #[action(namespace = buffer_search)]
+    #[serde(deny_unknown_fields)]
+    pub struct Deploy {
+        #[serde(default = "util::serde::default_true")]
+        pub focus: bool,
+        #[serde(default)]
+        pub replace_enabled: bool,
+        #[serde(default)]
+        pub selection_search_enabled: bool,
+    }
+
+    impl Deploy {
+        pub fn find() -> Self {
+            Self {
+                focus: true,
+                replace_enabled: false,
+                selection_search_enabled: false,
+            }
+        }
+
+        pub fn replace() -> Self {
+            Self {
+                focus: true,
+                replace_enabled: true,
+                selection_search_enabled: false,
+            }
+        }
+    }
+
+    actions!(
+        buffer_search,
+        [
+            /// Deploys the search and replace interface.
+            DeployReplace,
+            /// Dismisses the search bar.
+            Dismiss,
+            /// Focuses back on the editor.
+            FocusEditor
+        ]
+    );
+}
 pub mod settings_profile_selector {
     use gpui::Action;
     use schemars::JsonSchema;
@@ -268,7 +438,9 @@ pub mod settings_profile_selector {
 }
 
 pub mod agent {
-    use gpui::actions;
+    use gpui::{Action, SharedString, actions};
+    use schemars::JsonSchema;
+    use serde::Deserialize;
 
     actions!(
         agent,
@@ -280,8 +452,8 @@ pub mod agent {
             OpenOnboardingModal,
             /// Opens the ACP onboarding modal.
             OpenAcpOnboardingModal,
-            /// Opens the Claude Code onboarding modal.
-            OpenClaudeCodeOnboardingModal,
+            /// Opens the Claude Agent onboarding modal.
+            OpenClaudeAgentOnboardingModal,
             /// Resets the agent onboarding state.
             ResetOnboarding,
             /// Starts a chat conversation with the agent.
@@ -290,9 +462,54 @@ pub mod agent {
             #[action(deprecated_aliases = ["assistant::ToggleModelSelector", "assistant2::ToggleModelSelector"])]
             ToggleModelSelector,
             /// Triggers re-authentication on Gemini
-            ReauthenticateAgent
+            ReauthenticateAgent,
+            /// Add the current selection as context for threads in the agent panel.
+            #[action(deprecated_aliases = ["assistant::QuoteSelection", "agent::QuoteSelection"])]
+            AddSelectionToThread,
+            /// Resets the agent panel zoom levels (agent UI and buffer font sizes).
+            ResetAgentZoom,
+            /// Pastes clipboard content without any formatting.
+            PasteRaw,
         ]
     );
+
+    /// Opens a new agent thread with the provided branch diff for review.
+    #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+    #[action(namespace = agent)]
+    #[serde(deny_unknown_fields)]
+    pub struct ReviewBranchDiff {
+        /// The full text of the diff to review.
+        pub diff_text: SharedString,
+        /// The base ref that the diff was computed against (e.g. "main").
+        pub base_ref: SharedString,
+    }
+
+    /// A single merge conflict region extracted from a file.
+    #[derive(Clone, Debug, PartialEq, Deserialize, JsonSchema)]
+    pub struct ConflictContent {
+        pub file_path: String,
+        pub conflict_text: String,
+        pub ours_branch_name: String,
+        pub theirs_branch_name: String,
+    }
+
+    /// Opens a new agent thread to resolve specific merge conflicts.
+    #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+    #[action(namespace = agent)]
+    #[serde(deny_unknown_fields)]
+    pub struct ResolveConflictsWithAgent {
+        /// Individual conflicts with their full text.
+        pub conflicts: Vec<ConflictContent>,
+    }
+
+    /// Opens a new agent thread to resolve merge conflicts in the given file paths.
+    #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+    #[action(namespace = agent)]
+    #[serde(deny_unknown_fields)]
+    pub struct ResolveConflictedFilesWithAgent {
+        /// File paths with unresolved conflicts (for project-wide resolution).
+        pub conflicted_file_paths: Vec<String>,
+    }
 }
 
 pub mod assistant {
@@ -304,6 +521,8 @@ pub mod assistant {
     actions!(
         agent,
         [
+            /// Toggles the agent panel.
+            Toggle,
             #[action(deprecated_aliases = ["assistant::ToggleFocus"])]
             ToggleFocus
         ]
@@ -335,20 +554,6 @@ pub mod assistant {
     }
 }
 
-pub mod debugger {
-    use gpui::actions;
-
-    actions!(
-        debugger,
-        [
-            /// Opens the debugger onboarding modal.
-            OpenOnboardingModal,
-            /// Resets the debugger onboarding state.
-            ResetOnboarding
-        ]
-    );
-}
-
 /// Opens the recent projects interface.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = projects)]
@@ -368,6 +573,12 @@ pub struct OpenRemote {
     #[serde(default)]
     pub create_new_window: bool,
 }
+
+/// Opens the dev container connection modal.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = projects)]
+#[serde(deny_unknown_fields)]
+pub struct OpenDevContainer;
 
 /// Where to spawn the task in the UI.
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -391,7 +602,7 @@ pub enum Spawn {
         #[serde(default)]
         reveal_target: Option<RevealTarget>,
     },
-    /// Spawns a task by the name given.
+    /// Spawns a task by the tag given.
     ByTag {
         task_tag: String,
         #[serde(default)]
@@ -469,13 +680,19 @@ actions!(
     ]
 );
 
-actions!(
-    debug_panel,
-    [
-        /// Toggles focus on the debug panel.
-        ToggleFocus
-    ]
-);
+pub mod debug_panel {
+    use gpui::actions;
+    actions!(
+        debug_panel,
+        [
+            /// Toggles the debug panel.
+            Toggle,
+            /// Toggles focus on the debug panel.
+            ToggleFocus
+        ]
+    );
+}
+
 actions!(
     debugger,
     [
@@ -487,6 +704,24 @@ actions!(
         OpenProjectDebugTasks,
     ]
 );
+
+pub mod vim {
+    use gpui::actions;
+
+    actions!(
+        vim,
+        [
+            /// Opens the default keymap file.
+            OpenDefaultKeymap
+        ]
+    );
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct WslConnectionOptions {
+    pub distro_name: String,
+    pub user: Option<String>,
+}
 
 #[cfg(target_os = "windows")]
 pub mod wsl_actions {
@@ -511,4 +746,62 @@ pub mod wsl_actions {
         #[serde(default)]
         pub create_new_window: bool,
     }
+}
+
+pub mod preview {
+    pub mod markdown {
+        use gpui::actions;
+
+        actions!(
+            markdown,
+            [
+                /// Opens a markdown preview for the current file.
+                OpenPreview,
+                /// Opens a markdown preview in a split pane.
+                OpenPreviewToTheSide,
+            ]
+        );
+    }
+
+    pub mod svg {
+        use gpui::actions;
+
+        actions!(
+            svg,
+            [
+                /// Opens an SVG preview for the current file.
+                OpenPreview,
+                /// Opens an SVG preview in a split pane.
+                OpenPreviewToTheSide,
+            ]
+        );
+    }
+}
+
+pub mod agents_sidebar {
+    use gpui::actions;
+
+    actions!(
+        agents_sidebar,
+        [
+            /// Moves focus to the sidebar's search/filter editor.
+            FocusSidebarFilter,
+            /// Moves the active workspace to a new window.
+            MoveWorkspaceToNewWindow,
+        ]
+    );
+}
+
+pub mod notebook {
+    use gpui::actions;
+
+    actions!(
+        notebook,
+        [
+            /// Move to down in cells
+            NotebookMoveDown,
+            /// Move to up in cells
+            NotebookMoveUp,
+        ]
+    );
 }

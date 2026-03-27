@@ -29,8 +29,7 @@ story = { workspace = true, optional = true }
 strum.workspace = true
 theme.workspace = true
 ui_macros.workspace = true
-util.workspace = true
-workspace-hack.workspace = true
+gpui_util.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true

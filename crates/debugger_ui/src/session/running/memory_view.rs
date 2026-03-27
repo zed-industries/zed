@@ -10,13 +10,14 @@ use std::{
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
     Action, Along, AppContext, Axis, DismissEvent, DragMoveEvent, Empty, Entity, FocusHandle,
-    Focusable, MouseButton, Point, ScrollStrategy, ScrollWheelEvent, Subscription, Task, TextStyle,
-    UniformList, UniformListScrollHandle, WeakEntity, actions, anchored, deferred, uniform_list,
+    Focusable, ListHorizontalSizingBehavior, MouseButton, Point, ScrollStrategy, ScrollWheelEvent,
+    Subscription, Task, TextStyle, UniformList, UniformListScrollHandle, WeakEntity, actions,
+    anchored, deferred, uniform_list,
 };
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::debugger::{MemoryCell, dap_command::DataBreakpointContext, session::Session};
 use settings::Settings;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{
     ContextMenu, Divider, DropdownMenu, FluentBuilder, IntoElement, PopoverMenuHandle, Render,
     ScrollableHandle, StatefulInteractiveElement, Tooltip, WithScrollbar, prelude::*,
@@ -132,7 +133,7 @@ impl ViewState {
     fn set_offset(&mut self, point: Point<Pixels>) {
         if point.y >= -Pixels::ZERO {
             self.schedule_scroll_up();
-        } else if point.y <= -self.scroll_handle.max_offset().height {
+        } else if point.y <= -self.scroll_handle.max_offset().y {
             self.schedule_scroll_down();
         }
         self.scroll_handle.set_offset(point);
@@ -140,7 +141,7 @@ impl ViewState {
 }
 
 impl ScrollableHandle for ViewStateHandle {
-    fn max_offset(&self) -> gpui::Size<Pixels> {
+    fn max_offset(&self) -> gpui::Point<Pixels> {
         self.0.borrow().scroll_handle.max_offset()
     }
 
@@ -228,7 +229,8 @@ impl MemoryView {
                 rows
             },
         )
-        .track_scroll(view_state.scroll_handle)
+        .track_scroll(&view_state.scroll_handle)
+        .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
         .on_scroll_wheel(cx.listener(|this, evt: &ScrollWheelEvent, window, _| {
             let mut view_state = this.view_state();
             let delta = evt.delta.pixel_delta(window.line_height());
@@ -401,7 +403,7 @@ impl MemoryView {
                 this.set_placeholder_text("Write to Selected Memory Range", window, cx);
             });
             self.is_writing_memory = true;
-            self.query_editor.focus_handle(cx).focus(window);
+            self.query_editor.focus_handle(cx).focus(window, cx);
         } else {
             self.query_editor.update(cx, |this, cx| {
                 this.clear(window, cx);
@@ -917,7 +919,17 @@ impl Render for MemoryView {
                         )
                         .with_priority(1)
                     }))
-                    .vertical_scrollbar_for(self.view_state_handle.clone(), window, cx),
+                    .custom_scrollbars(
+                        ui::Scrollbars::new(ui::ScrollAxes::Both)
+                            .tracked_scroll_handle(&self.view_state_handle)
+                            .with_track_along(
+                                ui::ScrollAxes::Both,
+                                cx.theme().colors().panel_background,
+                            )
+                            .tracked_entity(cx.entity_id()),
+                        window,
+                        cx,
+                    ),
             )
     }
 }

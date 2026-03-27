@@ -1,6 +1,6 @@
 use crate::db::ExtensionId;
+use cloud_api_types::ExtensionProvides;
 use collections::BTreeSet;
-use rpc::ExtensionProvides;
 use sea_orm::entity::prelude::*;
 use time::PrimitiveDateTime;
 
@@ -24,6 +24,7 @@ pub struct Model {
     pub provides_grammars: bool,
     pub provides_language_servers: bool,
     pub provides_context_servers: bool,
+    pub provides_agent_servers: bool,
     pub provides_slash_commands: bool,
     pub provides_indexed_docs_providers: bool,
     pub provides_snippets: bool,
@@ -55,6 +56,10 @@ impl Model {
 
         if self.provides_context_servers {
             provides.insert(ExtensionProvides::ContextServers);
+        }
+
+        if self.provides_agent_servers {
+            provides.insert(ExtensionProvides::AgentServers);
         }
 
         if self.provides_slash_commands {

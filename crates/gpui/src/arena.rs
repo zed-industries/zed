@@ -15,9 +15,7 @@ struct ArenaElement {
 impl Drop for ArenaElement {
     #[inline(always)]
     fn drop(&mut self) {
-        unsafe {
-            (self.drop)(self.value);
-        }
+        unsafe { (self.drop)(self.value) };
     }
 }
 
@@ -40,33 +38,29 @@ impl Drop for Chunk {
 
 impl Chunk {
     fn new(chunk_size: NonZeroUsize) -> Self {
-        unsafe {
-            // this only fails if chunk_size is unreasonably huge
-            let layout = alloc::Layout::from_size_align(chunk_size.get(), 1).unwrap();
-            let start = alloc::alloc(layout);
-            if start.is_null() {
-                handle_alloc_error(layout);
-            }
-            let end = start.add(chunk_size.get());
-            Self {
-                start,
-                end,
-                offset: start,
-            }
+        // this only fails if chunk_size is unreasonably huge
+        let layout = alloc::Layout::from_size_align(chunk_size.get(), 1).unwrap();
+        let start = unsafe { alloc::alloc(layout) };
+        if start.is_null() {
+            handle_alloc_error(layout);
+        }
+        let end = unsafe { start.add(chunk_size.get()) };
+        Self {
+            start,
+            end,
+            offset: start,
         }
     }
 
     fn allocate(&mut self, layout: alloc::Layout) -> Option<NonNull<u8>> {
-        unsafe {
-            let aligned = self.offset.add(self.offset.align_offset(layout.align()));
-            let next = aligned.add(layout.size());
+        let aligned = unsafe { self.offset.add(self.offset.align_offset(layout.align())) };
+        let next = unsafe { aligned.add(layout.size()) };
 
-            if next <= self.end {
-                self.offset = next;
-                NonNull::new(aligned)
-            } else {
-                None
-            }
+        if next <= self.end {
+            self.offset = next;
+            NonNull::new(aligned)
+        } else {
+            None
         }
     }
 
@@ -122,54 +116,48 @@ impl Arena {
         where
             F: FnOnce() -> T,
         {
-            unsafe {
-                ptr::write(ptr, f());
-            }
+            unsafe { ptr::write(ptr, f()) };
         }
 
         unsafe fn drop<T>(ptr: *mut u8) {
-            unsafe {
-                std::ptr::drop_in_place(ptr.cast::<T>());
-            }
+            unsafe { std::ptr::drop_in_place(ptr.cast::<T>()) };
         }
 
-        unsafe {
-            let layout = alloc::Layout::new::<T>();
-            let mut current_chunk = &mut self.chunks[self.current_chunk_index];
-            let ptr = if let Some(ptr) = current_chunk.allocate(layout) {
+        let layout = alloc::Layout::new::<T>();
+        let mut current_chunk = &mut self.chunks[self.current_chunk_index];
+        let ptr = if let Some(ptr) = current_chunk.allocate(layout) {
+            ptr.as_ptr()
+        } else {
+            self.current_chunk_index += 1;
+            if self.current_chunk_index >= self.chunks.len() {
+                self.chunks.push(Chunk::new(self.chunk_size));
+                assert_eq!(self.current_chunk_index, self.chunks.len() - 1);
+                log::trace!(
+                    "increased element arena capacity to {}kb",
+                    self.capacity() / 1024,
+                );
+            }
+            current_chunk = &mut self.chunks[self.current_chunk_index];
+            if let Some(ptr) = current_chunk.allocate(layout) {
                 ptr.as_ptr()
             } else {
-                self.current_chunk_index += 1;
-                if self.current_chunk_index >= self.chunks.len() {
-                    self.chunks.push(Chunk::new(self.chunk_size));
-                    assert_eq!(self.current_chunk_index, self.chunks.len() - 1);
-                    log::trace!(
-                        "increased element arena capacity to {}kb",
-                        self.capacity() / 1024,
-                    );
-                }
-                current_chunk = &mut self.chunks[self.current_chunk_index];
-                if let Some(ptr) = current_chunk.allocate(layout) {
-                    ptr.as_ptr()
-                } else {
-                    panic!(
-                        "Arena chunk_size of {} is too small to allocate {} bytes",
-                        self.chunk_size,
-                        layout.size()
-                    );
-                }
-            };
-
-            inner_writer(ptr.cast(), f);
-            self.elements.push(ArenaElement {
-                value: ptr,
-                drop: drop::<T>,
-            });
-
-            ArenaBox {
-                ptr: ptr.cast(),
-                valid: self.valid.clone(),
+                panic!(
+                    "Arena chunk_size of {} is too small to allocate {} bytes",
+                    self.chunk_size,
+                    layout.size()
+                );
             }
+        };
+
+        unsafe { inner_writer(ptr.cast(), f) };
+        self.elements.push(ArenaElement {
+            value: ptr,
+            drop: drop::<T>,
+        });
+
+        ArenaBox {
+            ptr: ptr.cast(),
+            valid: self.valid.clone(),
         }
     }
 }

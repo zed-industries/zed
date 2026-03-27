@@ -32,7 +32,9 @@ impl ModuleList {
         let focus_handle = cx.focus_handle();
 
         let _subscription = cx.subscribe(&session, |this, _, event, cx| match event {
-            SessionEvent::Stopped(_) | SessionEvent::Modules => {
+            SessionEvent::Stopped(_)
+            | SessionEvent::HistoricSnapshotSelected
+            | SessionEvent::Modules => {
                 if this._rebuild_task.is_some() {
                     this.schedule_rebuild(cx);
                 }
@@ -253,7 +255,7 @@ impl ModuleList {
                 range.map(|ix| this.render_entry(ix, cx)).collect()
             }),
         )
-        .track_scroll(self.scroll_handle.clone())
+        .track_scroll(&self.scroll_handle)
         .size_full()
     }
 }
@@ -279,6 +281,6 @@ impl Render for ModuleList {
             .size_full()
             .p_1()
             .child(self.render_list(window, cx))
-            .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx)
+            .vertical_scrollbar_for(&self.scroll_handle, window, cx)
     }
 }

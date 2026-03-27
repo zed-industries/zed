@@ -82,7 +82,7 @@ pub struct Model {
 }
 
 impl Model {
-    pub fn default_fast() -> Self {
+    pub fn default() -> Self {
         Self::new(
             "openrouter/auto",
             Some("Auto Router"),
@@ -92,10 +92,6 @@ impl Model {
             Some(ModelMode::Default),
             None,
         )
-    }
-
-    pub fn default() -> Self {
-        Self::default_fast()
     }
 
     pub fn new(
@@ -215,6 +211,8 @@ pub enum RequestMessage {
         content: Option<MessageContent>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         tool_calls: Vec<ToolCall>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reasoning_details: Option<serde_json::Value>,
     },
     User {
         content: MessageContent,
@@ -341,6 +339,8 @@ pub enum ToolCallContent {
 pub struct FunctionContent {
     pub name: String,
     pub arguments: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thought_signature: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -350,6 +350,8 @@ pub struct ResponseMessageDelta {
     pub reasoning: Option<String>,
     #[serde(default, skip_serializing_if = "is_none_or_empty")]
     pub tool_calls: Option<Vec<ToolCallChunk>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_details: Option<serde_json::Value>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -363,6 +365,8 @@ pub struct ToolCallChunk {
 pub struct FunctionChunk {
     pub name: Option<String>,
     pub arguments: Option<String>,
+    #[serde(default)]
+    pub thought_signature: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

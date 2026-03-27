@@ -9,11 +9,20 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [dependencies]
+annotate-snippets = "0.12.1"
 anyhow.workspace = true
+backtrace.workspace = true
 cargo_metadata.workspace = true
 cargo_toml.workspace = true
 clap = { workspace = true, features = ["derive"] }
 toml.workspace = true
 indoc.workspace = true
+indexmap.workspace = true
+itertools.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml = "0.9.34"
+strum.workspace = true
 toml_edit.workspace = true
-workspace-hack.workspace = true
+gh-workflow.workspace = true

@@ -1,3 +1,8 @@
+---
+title: Elm
+description: "Configure Elm language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Elm
 
 Elm support is available through the [Elm extension](https://github.com/zed-extensions/elm).
@@ -23,7 +28,7 @@ Zed support for Elm requires installation of `elm`, `elm-format`, and `elm-revie
 
 Elm language server can be configured in your `settings.json`, e.g.:
 
-```json
+```json [settings]
 {
   "lsp": {
     "elm-language-server": {

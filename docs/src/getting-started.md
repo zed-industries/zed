@@ -1,88 +1,90 @@
+---
+title: Getting Started with Zed
+description: Get started with Zed, the fast open-source code editor. Essential commands, environment setup, and navigation basics.
+---
+
 # Getting Started
 
-Welcome to Zed! We are excited to have you. Here is a jumping-off point to getting started.
+Zed is an open-source code editor with built-in collaboration and AI tools.
 
-## Download Zed
+This guide covers the essential commands, environment setup, and navigation basics.
 
-### macOS
+## Quick Start
 
-Get the latest stable builds via [the download page](https://zed.dev/download). If you want to download our preview build, you can find it on its [releases page](https://zed.dev/releases/preview). After the first manual installation, Zed will periodically check for install updates.
+### Welcome Page
 
-You can also install Zed stable via Homebrew:
+When you open Zed without a folder, you see the welcome page in the main editor area. The welcome page offers quick actions to open a folder, clone a repository, or view documentation. Once you open a folder or file, the welcome page disappears. If you split the editor into multiple panes, the welcome page appears only in the center pane when empty—other panes show a standard empty state.
 
-```sh
-brew install --cask zed
-```
+To reopen the welcome page, close all items in the center pane or use the command palette to search for "Welcome".
 
-As well as Zed preview:
+### 1. Open a Project
 
-```sh
-brew install --cask zed@preview
-```
-
-### Linux
-
-For most Linux users, the easiest way to install Zed is through our installation script:
+Open a folder from the command line:
 
 ```sh
-curl -f https://zed.dev/install.sh | sh
+zed ~/projects/my-app
 ```
 
-If you'd like to help us test our new features, you can also install our preview build:
+Or use `Cmd+O` (macOS) / `Ctrl+O` (Linux/Windows) to open a folder from within Zed.
 
-```sh
-curl -f https://zed.dev/install.sh | ZED_CHANNEL=preview sh
-```
+### 2. Learn the Essential Commands
 
-This script supports `x86_64` and `AArch64`, as well as common Linux distributions: Ubuntu, Arch, Debian, RedHat, CentOS, Fedora, and more.
+| Action          | macOS         | Linux/Windows  |
+| --------------- | ------------- | -------------- |
+| Command palette | `Cmd+Shift+P` | `Ctrl+Shift+P` |
+| Go to file      | `Cmd+P`       | `Ctrl+P`       |
+| Go to symbol    | `Cmd+Shift+O` | `Ctrl+Shift+O` |
+| Find in project | `Cmd+Shift+F` | `Ctrl+Shift+F` |
+| Toggle terminal | `` Ctrl+` ``  | `` Ctrl+` ``   |
+| Open settings   | `Cmd+,`       | `Ctrl+,`       |
 
-If Zed is installed using this installation script, it can be uninstalled at any time by running the shell command `zed --uninstall`. The shell will then prompt you whether you'd like to keep your preferences or delete them. After making a choice, you should see a message that Zed was successfully uninstalled.
+The command palette (`Cmd+Shift+P`) is your gateway to every action in Zed. If you forget a shortcut, search for it there.
 
-If this script is insufficient for your use case, you run into problems running Zed, or there are errors in uninstalling Zed, please see our [Linux-specific documentation](./linux.md).
+### 3. Configure Your Editor
 
-## Command Palette
+Open the Settings Editor with `Cmd+,` (macOS) or `Ctrl+,` (Linux/Windows). Search for any setting and change it directly.
 
-The Command Palette is the main way to access pretty much any functionality that's available in Zed. Its keybinding is the first one you should make yourself familiar with. To open it, hit: {#kb command_palette::Toggle}.
+Common first changes:
 
-![The opened Command Palette](https://zed.dev/img/features/command-palette.jpg)
+- **Theme**: Press `Cmd+K Cmd+T` (macOS) or `Ctrl+K Ctrl+T` (Linux/Windows) to open the theme selector
+- **Font**: Search for `buffer_font_family` in Settings
+- **Format on save**: Search for `format_on_save` and set to `on`
 
-Try it! Open the Command Palette and type in `new file`. You should see the list of commands being filtered down to `workspace: new file`. Hit return and you end up with a new buffer.
+### 4. Set Up Your Language
 
-Any time you see instructions that include commands of the form `zed: ...` or `editor: ...` and so on that means you need to execute them in the Command Palette.
+Zed includes built-in support for many languages. For others, install the extension:
 
-## CLI
+1. Open Extensions with `Cmd+Shift+X` (macOS) or `Ctrl+Shift+X` (Linux/Windows)
+2. Search for your language
+3. Click Install
 
-Zed has a CLI, on Linux this should come with the distribution's Zed package (binary name can vary from distribution to distribution, `zed` will be used later for brevity).
-For macOS, the CLI comes in the same package with the editor binary, and could be installed into the system with the `cli: install` Zed command which will create a symlink to the `/usr/local/bin/zed`.
-It can also be built from source out of the `cli` crate in this repository.
+See [Languages](./languages.md) for language-specific setup instructions.
 
-Use `zed --help` to see the full list of capabilities.
-General highlights:
+### 5. Try AI Features
 
-- Opening another empty Zed window: `zed`
+Zed includes built-in AI assistance. Open the Agent Panel with `Cmd+Shift+A` (macOS) or `Ctrl+Shift+A` (Linux/Windows) to start a conversation, or use `Cmd+Enter` (macOS) / `Ctrl+Enter` (Linux/Windows) for inline assistance.
 
-- Opening a file or directory in Zed: `zed /path/to/entry` (use `-n` to open in the new window)
+See [AI Overview](./ai/overview.md) to configure providers and learn what's possible.
 
-- Reading from stdin: `ps axf | zed -`
+## Coming from Another Editor?
 
-- Starting Zed with logs in the terminal: `zed --foreground`
+We have dedicated guides for switching from other editors:
 
-- Uninstalling Zed and all its related files: `zed --uninstall`
+- [VS Code](./migrate/vs-code.md) — Import settings, map keybindings, find equivalent features
+- [IntelliJ IDEA](./migrate/intellij.md) — Adapt to Zed's approach to navigation and refactoring
+- [PyCharm](./migrate/pycharm.md) — Set up Python development in Zed
+- [WebStorm](./migrate/webstorm.md) — Configure JavaScript/TypeScript workflows
+- [RustRover](./migrate/rustrover.md) — Rust development in Zed
 
-## Configure Zed
+You can also enable familiar keybindings:
 
-To open your custom settings to set things like fonts, formatting settings, per-language settings, and more, use the {#kb zed::OpenSettings} keybinding.
+- **Vim**: Enable `vim_mode` in settings. See [Vim Mode](./vim.md).
+- **Helix**: Enable `helix_mode` in settings. See [Helix Mode](./helix.md).
 
-To see all available settings, open the Command Palette with {#kb command_palette::Toggle} and search for `zed: open default settings`.
-You can also check them all out in the [Configuring Zed](./configuring-zed.md) documentation.
+## Join the Community
 
-## Configure AI in Zed
+Zed is open source. Join us on GitHub or in Discord to contribute code, report bugs, or suggest features.
 
-Zed smoothly integrates LLMs in multiple ways across the editor.
-Visit [the AI overview page](./ai/overview.md) to learn how to quickly get started with LLMs on Zed.
-
-## Set up your key bindings
-
-To edit your custom keymap and add or remap bindings, you can either use {#kb zed::OpenKeymapEditor} to spawn the Zed Keymap Editor ({#action zed::OpenKeymapEditor}) or you can directly open your Zed Keymap json (`~/.config/zed/keymap.json`) with {#action zed::OpenKeymap}.
-
-To access the default key binding set, open the Command Palette with {#kb command_palette::Toggle} and search for "zed: open default keymap". See [Key Bindings](./key-bindings.md) for more info.
+- [Discord](https://discord.com/invite/zedindustries)
+- [GitHub Discussions](https://github.com/zed-industries/zed/discussions)
+- [Zed Reddit](https://www.reddit.com/r/ZedEditor)

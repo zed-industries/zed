@@ -1,3 +1,8 @@
+---
+title: JSON
+description: "Configure JSON language support in Zed, including language servers, formatting, and debugging."
+---
+
 # JSON
 
 JSON support is available natively in Zed.
@@ -49,16 +54,22 @@ For example to for a `.luarc.json` for use with [lua-language-server](https://gi
 
 ### Schema Specification via Settings
 
-You can alternatively associate JSON Schemas with file paths by via Zed LSP settings.
+You can associate JSON Schemas with file paths using relative paths in your language server settings. Zed resolves paths relative to your project root:
 
-To
-
-```json
+```json [settings]
 "lsp": {
   "json-language-server": {
     "settings": {
       "json": {
         "schemas": [
+          {
+            "fileMatch": ["config/*.json"],
+            "url": "./schemas/custom-schema.json"
+          },
+          {
+            "fileMatch": ["*.config.json"],
+            "url": "~/global-schemas/shared.json"
+          },
           {
             "fileMatch": ["*/*.luarc.json"],
             "url": "https://raw.githubusercontent.com/sumneko/vscode-lua/master/setting/schema.json"
@@ -69,6 +80,8 @@ To
   }
 }
 ```
+
+Paths starting with `./` resolve relative to the worktree root. Paths starting with `~/` expand to your home directory.
 
 You can also pass any of the [supported settings](https://github.com/Microsoft/vscode/blob/main/extensions/json-language-features/server/README.md#settings) to json-language-server by specifying them in your Zed settings.json:
 

@@ -2,7 +2,7 @@ use editor::EditorSettings;
 use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsContent, StatusStyle};
+use settings::{RegisterSetting, Settings, StatusStyle};
 use ui::{
     px,
     scrollbars::{ScrollbarVisibility, ShowScrollbar},
@@ -14,16 +14,22 @@ pub struct ScrollbarSettings {
     pub show: Option<ShowScrollbar>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, RegisterSetting)]
 pub struct GitPanelSettings {
     pub button: bool,
     pub dock: DockPosition,
     pub default_width: Pixels,
     pub status_style: StatusStyle,
+    pub file_icons: bool,
+    pub folder_icons: bool,
     pub scrollbar: ScrollbarSettings,
     pub fallback_branch_name: String,
     pub sort_by_path: bool,
     pub collapse_untracked_diff: bool,
+    pub tree_view: bool,
+    pub diff_stats: bool,
+    pub show_count_badge: bool,
+    pub starts_open: bool,
 }
 
 impl ScrollbarVisibility for GitPanelSettings {
@@ -50,24 +56,18 @@ impl Settings for GitPanelSettings {
             dock: git_panel.dock.unwrap().into(),
             default_width: px(git_panel.default_width.unwrap()),
             status_style: git_panel.status_style.unwrap(),
+            file_icons: git_panel.file_icons.unwrap(),
+            folder_icons: git_panel.folder_icons.unwrap(),
             scrollbar: ScrollbarSettings {
                 show: git_panel.scrollbar.unwrap().show.map(Into::into),
             },
             fallback_branch_name: git_panel.fallback_branch_name.unwrap(),
             sort_by_path: git_panel.sort_by_path.unwrap(),
             collapse_untracked_diff: git_panel.collapse_untracked_diff.unwrap(),
-        }
-    }
-
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut SettingsContent) {
-        if let Some(git_enabled) = vscode.read_bool("git.enabled") {
-            current.git_panel.get_or_insert_default().button = Some(git_enabled);
-        }
-        if let Some(default_branch) = vscode.read_string("git.defaultBranchName") {
-            current
-                .git_panel
-                .get_or_insert_default()
-                .fallback_branch_name = Some(default_branch.to_string());
+            tree_view: git_panel.tree_view.unwrap(),
+            diff_stats: git_panel.diff_stats.unwrap(),
+            show_count_badge: git_panel.show_count_badge.unwrap(),
+            starts_open: git_panel.starts_open.unwrap(),
         }
     }
 }

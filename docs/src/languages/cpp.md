@@ -1,3 +1,8 @@
+---
+title: C++
+description: "Configure C++ language support in Zed, including language servers, formatting, and debugging."
+---
+
 # C++
 
 C++ support is available natively in Zed.
@@ -13,7 +18,7 @@ By default, Zed will try to find a `clangd` in your `$PATH` and try to use that.
 
 If you want to install a pre-release `clangd` version instead you can instruct Zed to do so by setting `pre_release` to `true` in your `settings.json`:
 
-```json
+```json [settings]
 {
   "lsp": {
     "clangd": {
@@ -27,7 +32,7 @@ If you want to install a pre-release `clangd` version instead you can instruct Z
 
 If you want to disable Zed looking for a `clangd` binary, you can set `ignore_system_version` to `true` in your `settings.json`:
 
-```json
+```json [settings]
 {
   "lsp": {
     "clangd": {
@@ -41,7 +46,7 @@ If you want to disable Zed looking for a `clangd` binary, you can set `ignore_sy
 
 If you want to use a binary in a custom location, you can specify a `path` and optional `arguments`:
 
-```json
+```json [settings]
 {
   "lsp": {
     "clangd": {
@@ -60,7 +65,7 @@ This `"path"` has to be an absolute path.
 
 You can pass any number of arguments to clangd. To see a full set of available options, run `clangd --help` from the command line. For example with `--function-arg-placeholders=0` completions contain only parentheses for function calls, while the default (`--function-arg-placeholders=1`) completions also contain placeholders for method parameters.
 
-```json
+```json [settings]
 {
   "lsp": {
     "clangd": {
@@ -78,6 +83,7 @@ You can pass any number of arguments to clangd. To see a full set of available o
 By default Zed will use the `clangd` language server for formatting C++ code. The Clangd is the same as the `clang-format` CLI tool. To configure this you can add a `.clang-format` file. For example:
 
 ```yaml
+# yaml-language-server: $schema=https://json.schemastore.org/clang-format-21.x.json
 ---
 BasedOnStyle: LLVM
 IndentWidth: 4
@@ -91,9 +97,11 @@ PointerAlignment: Left
 
 See [Clang-Format Style Options](https://clang.llvm.org/docs/ClangFormatStyleOptions.html) for a complete list of options.
 
-You can trigger formatting via {#kb editor::Format} or the `editor: format` action from the command palette or by adding `format_on_save` to your Zed settings:
+You can trigger formatting via {#kb editor::Format} or the `editor: format` action from the command palette or by enabling format on save.
 
-```json
+Configure formatting in Settings ({#kb zed::OpenSettings}) under Languages > C++, or add to your settings file:
+
+```json [settings]
   "languages": {
     "C++": {
       "format_on_save": "on",
@@ -106,7 +114,8 @@ You can trigger formatting via {#kb editor::Format} or the `editor: format` acti
 
 In the root of your project, it is generally common to create a `.clangd` file to set extra configuration.
 
-```text
+```yaml
+# yaml-language-server: $schema=https://json.schemastore.org/clangd.json
 CompileFlags:
   Add:
     - "--include-directory=/path/to/include"
@@ -135,9 +144,13 @@ After building your project, CMake will generate the `compile_commands.json` fil
 
 You can use CodeLLDB or GDB to debug native binaries. (Make sure that your build process passes `-g` to the C++ compiler, so that debug information is included in the resulting binary.) See below for examples of debug configurations that you can add to `.zed/debug.json`.
 
+- [CodeLLDB configuration documentation](https://github.com/vadimcn/codelldb/blob/master/MANUAL.md#starting-a-new-debug-session)
+- [GDB configuration documentation](https://sourceware.org/gdb/current/onlinedocs/gdb.html/Debugger-Adapter-Protocol.html)
+  - GDB needs to be at least v14.1
+
 ### Build and Debug Binary
 
-```json
+```json [debug]
 [
   {
     "label": "Debug native binary",
@@ -151,4 +164,27 @@ You can use CodeLLDB or GDB to debug native binaries. (Make sure that your build
     "adapter": "CodeLLDB"
   }
 ]
+```
+
+## Protocol Extensions
+
+Zed currently implements the following `clangd` [extensions](https://clangd.llvm.org/extensions):
+
+### Inactive Regions
+
+Automatically dims inactive sections of code due to preprocessor directives, such as `#if`, `#ifdef`, or `#ifndef` blocks that evaluate to false.
+
+### Switch Between Source and Header Files
+
+Allows switching between corresponding C++ source files (e.g., `.cpp`) and header files (e.g., `.h`).
+by running the command {#action editor::SwitchSourceHeader} from the command palette or by setting
+a keybinding for the `editor::SwitchSourceHeader` action.
+
+```json [keymap]
+{
+  "context": "Editor",
+  "bindings": {
+    "alt-enter": "editor::SwitchSourceHeader"
+  }
+}
 ```

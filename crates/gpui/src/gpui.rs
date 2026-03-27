@@ -1,74 +1,12 @@
-//! # Welcome to GPUI!
-//!
-//! GPUI is a hybrid immediate and retained mode, GPU accelerated, UI framework
-//! for Rust, designed to support a wide variety of applications.
-//!
-//! ## Getting Started
-//!
-//! GPUI is still in active development as we work on the Zed code editor and isn't yet on crates.io.
-//! You'll also need to use the latest version of stable rust. Add the following to your Cargo.toml:
-//!
-//! ```toml
-//! [dependencies]
-//! gpui = { git = "https://github.com/zed-industries/zed" }
-//! ```
-//!
-//! - [Ownership and data flow](_ownership_and_data_flow)
-//!
-//! Everything in GPUI starts with an [`Application`]. You can create one with [`Application::new`], and
-//! kick off your application by passing a callback to [`Application::run`]. Inside this callback,
-//! you can create a new window with [`App::open_window`], and register your first root
-//! view. See [gpui.rs](https://www.gpui.rs/) for a complete example.
-//!
-//! ## The Big Picture
-//!
-//! GPUI offers three different [registers](https://en.wikipedia.org/wiki/Register_(sociolinguistics)) depending on your needs:
-//!
-//! - State management and communication with [`Entity`]'s. Whenever you need to store application state
-//!   that communicates between different parts of your application, you'll want to use GPUI's
-//!   entities. Entities are owned by GPUI and are only accessible through an owned smart pointer
-//!   similar to an [`std::rc::Rc`]. See [`app::Context`] for more information.
-//!
-//! - High level, declarative UI with views. All UI in GPUI starts with a view. A view is simply
-//!   a [`Entity`] that can be rendered, by implementing the [`Render`] trait. At the start of each frame, GPUI
-//!   will call this render method on the root view of a given window. Views build a tree of
-//!   [`Element`]s, lay them out and style them with a tailwind-style API, and then give them to
-//!   GPUI to turn into pixels. See the [`elements::Div`] element for an all purpose swiss-army
-//!   knife for UI.
-//!
-//! - Low level, imperative UI with Elements. Elements are the building blocks of UI in GPUI, and they
-//!   provide a nice wrapper around an imperative API that provides as much flexibility and control as
-//!   you need. Elements have total control over how they and their child elements are rendered and
-//!   can be used for making efficient views into large lists, implement custom layouting for a code editor,
-//!   and anything else you can think of. See the [`elements`] module for more information.
-//!
-//!  Each of these registers has one or more corresponding contexts that can be accessed from all GPUI services.
-//!  This context is your main interface to GPUI, and is used extensively throughout the framework.
-//!
-//! ## Other Resources
-//!
-//! In addition to the systems above, GPUI provides a range of smaller services that are useful for building
-//! complex applications:
-//!
-//! - Actions are user-defined structs that are used for converting keystrokes into logical operations in your UI.
-//!   Use this for implementing keyboard shortcuts, such as cmd-q (See `action` module for more information).
-//! - Platform services, such as `quit the app` or `open a URL` are available as methods on the [`app::App`].
-//! - An async executor that is integrated with the platform's event loop. See the [`executor`] module for more information.,
-//! - The [`gpui::test`](macro@test) macro provides a convenient way to write tests for your GPUI applications. Tests also have their
-//!   own kind of context, a [`TestAppContext`] which provides ways of simulating common platform input. See [`TestAppContext`]
-//!   and [`mod@test`] modules for more details.
-//!
-//! Currently, the best way to learn about these APIs is to read the Zed source code, ask us about it at a fireside hack, or drop
-//! a question in the [Zed Discord](https://zed.dev/community-links). We're working on improving the documentation, creating more examples,
-//! and will be publishing more guides to GPUI on our [blog](https://zed.dev/blog).
-
-#![deny(missing_docs)]
+#![doc = include_str!("../README.md")]
+#![warn(missing_docs)]
 #![allow(clippy::type_complexity)] // Not useful, GPUI makes heavy use of callbacks
 #![allow(clippy::collapsible_else_if)] // False positives in platform specific code
 #![allow(unused_mut)] // False positives in platform specific code
 
 extern crate self as gpui;
-
+#[doc(hidden)]
+pub static GPUI_MANIFEST_DIR: &'static str = env!("CARGO_MANIFEST_DIR");
 #[macro_use]
 mod action;
 mod app;
@@ -83,6 +21,8 @@ pub mod colors;
 mod element;
 mod elements;
 mod executor;
+mod platform_scheduler;
+pub(crate) use platform_scheduler::PlatformScheduler;
 mod geometry;
 mod global;
 mod input;
@@ -93,6 +33,11 @@ mod keymap;
 mod path_builder;
 mod platform;
 pub mod prelude;
+/// Profiling utilities for task timing and thread performance tracking.
+pub mod profiler;
+#[cfg(any(target_os = "windows", target_os = "linux", target_family = "wasm"))]
+#[expect(missing_docs)]
+pub mod queue;
 mod scene;
 mod shared_string;
 mod shared_uri;
@@ -108,6 +53,9 @@ mod text_system;
 mod util;
 mod view;
 mod window;
+
+#[cfg(any(test, feature = "test-support"))]
+pub use proptest;
 
 #[cfg(doc)]
 pub mod _ownership_and_data_flow;
@@ -141,7 +89,10 @@ pub use elements::*;
 pub use executor::*;
 pub use geometry::*;
 pub use global::*;
-pub use gpui_macros::{AppContext, IntoElement, Render, VisualContext, register_action, test};
+pub use gpui_macros::{
+    AppContext, IntoElement, Render, VisualContext, property_test, register_action, test,
+};
+pub use gpui_util::arc_cow::ArcCow;
 pub use http_client;
 pub use input::*;
 pub use inspector::*;
@@ -150,49 +101,41 @@ use key_dispatch::*;
 pub use keymap::*;
 pub use path_builder::*;
 pub use platform::*;
+pub use profiler::*;
+#[cfg(any(target_os = "windows", target_os = "linux", target_family = "wasm"))]
+pub use queue::{PriorityQueueReceiver, PriorityQueueSender};
 pub use refineable::*;
 pub use scene::*;
 pub use shared_string::*;
 pub use shared_uri::*;
-pub use smol::Timer;
+use std::{any::Any, future::Future};
 pub use style::*;
 pub use styled::*;
 pub use subscription::*;
-use svg_renderer::*;
+pub use svg_renderer::*;
 pub(crate) use tab_stop::*;
+use taffy::TaffyLayoutEngine;
 pub use taffy::{AvailableSpace, LayoutId};
 #[cfg(any(test, feature = "test-support"))]
 pub use test::*;
 pub use text_system::*;
-#[cfg(any(test, feature = "test-support"))]
-pub use util::smol_timeout;
-pub use util::{FutureExt, Timeout, arc_cow::ArcCow};
+pub use util::{FutureExt, Timeout};
 pub use view::*;
 pub use window::*;
-
-use std::{any::Any, borrow::BorrowMut, future::Future};
-use taffy::TaffyLayoutEngine;
 
 /// The context trait, allows the different contexts in GPUI to be used
 /// interchangeably for certain operations.
 pub trait AppContext {
-    /// The result type for this context, used for async contexts that
-    /// can't hold a direct reference to the application context.
-    type Result<T>;
-
     /// Create a new entity in the app context.
     #[expect(
         clippy::wrong_self_convention,
         reason = "`App::new` is an ubiquitous function for creating entities"
     )]
-    fn new<T: 'static>(
-        &mut self,
-        build_entity: impl FnOnce(&mut Context<T>) -> T,
-    ) -> Self::Result<Entity<T>>;
+    fn new<T: 'static>(&mut self, build_entity: impl FnOnce(&mut Context<T>) -> T) -> Entity<T>;
 
     /// Reserve a slot for a entity to be inserted later.
     /// The returned [Reservation] allows you to obtain the [EntityId] for the future entity.
-    fn reserve_entity<T: 'static>(&mut self) -> Self::Result<Reservation<T>>;
+    fn reserve_entity<T: 'static>(&mut self) -> Reservation<T>;
 
     /// Insert a new entity in the app context based on a [Reservation] previously obtained from [`reserve_entity`].
     ///
@@ -201,28 +144,24 @@ pub trait AppContext {
         &mut self,
         reservation: Reservation<T>,
         build_entity: impl FnOnce(&mut Context<T>) -> T,
-    ) -> Self::Result<Entity<T>>;
+    ) -> Entity<T>;
 
     /// Update a entity in the app context.
     fn update_entity<T, R>(
         &mut self,
         handle: &Entity<T>,
         update: impl FnOnce(&mut T, &mut Context<T>) -> R,
-    ) -> Self::Result<R>
+    ) -> R
     where
         T: 'static;
 
     /// Update a entity in the app context.
-    fn as_mut<'a, T>(&'a mut self, handle: &Entity<T>) -> Self::Result<GpuiBorrow<'a, T>>
+    fn as_mut<'a, T>(&'a mut self, handle: &Entity<T>) -> GpuiBorrow<'a, T>
     where
         T: 'static;
 
     /// Read a entity from the app context.
-    fn read_entity<T, R>(
-        &self,
-        handle: &Entity<T>,
-        read: impl FnOnce(&T, &App) -> R,
-    ) -> Self::Result<R>
+    fn read_entity<T, R>(&self, handle: &Entity<T>, read: impl FnOnce(&T, &App) -> R) -> R
     where
         T: 'static;
 
@@ -246,7 +185,7 @@ pub trait AppContext {
         R: Send + 'static;
 
     /// Read a global from this app context
-    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> Self::Result<R>
+    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> R
     where
         G: Global;
 }
@@ -265,6 +204,9 @@ impl<T: 'static> Reservation<T> {
 /// This trait is used for the different visual contexts in GPUI that
 /// require a window to be present.
 pub trait VisualContext: AppContext {
+    /// The result type for window operations.
+    type Result<T>;
+
     /// Returns the handle of the window associated with this context.
     fn window_handle(&self) -> AnyWindowHandle;
 
@@ -316,7 +258,7 @@ pub trait BorrowAppContext {
 
 impl<C> BorrowAppContext for C
 where
-    C: BorrowMut<App>,
+    C: std::borrow::BorrowMut<App>,
 {
     fn set_global<G: Global>(&mut self, global: G) {
         self.borrow_mut().set_global(global)
@@ -339,24 +281,6 @@ where
     {
         self.borrow_mut().default_global::<G>();
         self.update_global(f)
-    }
-}
-
-/// A flatten equivalent for anyhow `Result`s.
-pub trait Flatten<T> {
-    /// Convert this type into a simple `Result<T>`.
-    fn flatten(self) -> Result<T>;
-}
-
-impl<T> Flatten<T> for Result<Result<T>> {
-    fn flatten(self) -> Result<T> {
-        self?
-    }
-}
-
-impl<T> Flatten<T> for Result<T> {
-    fn flatten(self) -> Result<T> {
-        self
     }
 }
 

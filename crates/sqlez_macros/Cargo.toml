@@ -17,4 +17,3 @@ doctest = false
 sqlez.workspace = true
 sqlformat.workspace = true
 syn.workspace = true
-workspace-hack.workspace = true

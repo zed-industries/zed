@@ -59,7 +59,9 @@ impl DebugAdapterClient {
 
     pub fn should_reconnect_for_ssh(&self) -> bool {
         self.transport_delegate.tcp_arguments().is_some()
-            && self.binary.command.as_deref() == Some("ssh")
+            && (self.binary.command.as_deref() == Some("ssh")
+                || (cfg!(feature = "test-support")
+                    && self.binary.command.as_deref() == Some("mock")))
     }
 
     pub async fn connect(
@@ -256,7 +258,7 @@ impl DebugAdapterClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{client::DebugAdapterClient, debugger_settings::DebuggerSettings};
+    use crate::client::DebugAdapterClient;
     use dap_types::{
         Capabilities, InitializeRequestArguments, InitializeRequestArgumentsPathFormat,
         RunInTerminalRequestArguments, StartDebuggingRequestArguments,
@@ -265,7 +267,7 @@ mod tests {
     };
     use gpui::TestAppContext;
     use serde_json::json;
-    use settings::{Settings, SettingsStore};
+    use settings::SettingsStore;
     use std::sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -277,7 +279,6 @@ mod tests {
         cx.update(|cx| {
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
-            DebuggerSettings::register(cx);
         });
     }
 

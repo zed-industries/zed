@@ -1,26 +1,18 @@
-# Configuring supported languages
+---
+title: Language Server and Tree-sitter Config - Zed
+description: Configure language support in Zed with Tree-sitter for syntax highlighting and LSP for diagnostics, completion, and formatting.
+---
 
-Zed offers powerful customization options for each programming language it supports. This guide will walk you through the various ways you can tailor your coding experience to your preferences and project requirements.
+# Configuring Supported Languages
 
-Zed's language support is built on two main technologies:
+Zed's language support is built on two technologies:
 
-1. Tree-sitter: This handles syntax highlighting and structure-based features like the outline panel.
-2. Language Server Protocol (LSP): This provides semantic features such as code completion and diagnostics.
+1. **Tree-sitter** handles syntax highlighting and structure-based features like the outline panel.
+2. **Language Server Protocol (LSP)** provides semantic features: code completion, diagnostics, go-to-definition, and refactoring.
 
-These components work together to provide Zed's language capabilities.
+This page covers language-specific settings, file associations, language server configuration, formatting, linting, and syntax highlighting.
 
-In this guide, we'll cover:
-
-- Language-specific settings
-- File associations
-- Working with language servers
-- Formatting and linting configuration
-- Customizing syntax highlighting and themes
-- Advanced language features
-
-By the end of this guide, you should know how to configure and customize supported languages in Zed.
-
-For a comprehensive list of languages supported by Zed and their specific configurations, see our [Supported Languages](./languages.md) page. To go further, you could explore developing your own extensions to add support for additional languages or enhance existing functionality. For more information on creating language extensions, see our [Language Extensions](./extensions/languages.md) guide.
+For a list of supported languages, see [Supported Languages](./languages.md). To add support for new languages, see [Language Extensions](./extensions/languages.md).
 
 ## Language-specific Settings
 
@@ -28,7 +20,7 @@ Zed allows you to override global settings for individual languages. These custo
 
 Here's an example of language-specific settings:
 
-```json
+```json [settings]
 "languages": {
   "Python": {
     "tab_size": 4,
@@ -49,15 +41,16 @@ Here's an example of language-specific settings:
 
 You can customize a wide range of settings for each language, including:
 
-- [`tab_size`](./configuring-zed.md#tab-size): The number of spaces for each indentation level
-- [`formatter`](./configuring-zed.md#formatter): The tool used for code formatting
-- [`format_on_save`](./configuring-zed.md#format-on-save): Whether to automatically format code when saving
-- [`enable_language_server`](./configuring-zed.md#enable-language-server): Toggle language server support
-- [`hard_tabs`](./configuring-zed.md#hard-tabs): Use tabs instead of spaces for indentation
-- [`preferred_line_length`](./configuring-zed.md#preferred-line-length): The recommended maximum line length
-- [`soft_wrap`](./configuring-zed.md#soft-wrap): How to wrap long lines of code
-- [`show_completions_on_input`](./configuring-zed.md#show-completions-on-input): Whether or not to show completions as you type
-- [`show_completion_documentation`](./configuring-zed.md#show-completion-documentation): Whether to display inline and alongside documentation for items in the completions menu
+- [`tab_size`](./reference/all-settings.md#tab-size): The number of spaces for each indentation level
+- [`formatter`](./reference/all-settings.md#formatter): The tool used for code formatting
+- [`format_on_save`](./reference/all-settings.md#format-on-save): Whether to automatically format code when saving
+- [`enable_language_server`](./reference/all-settings.md#enable-language-server): Toggle language server support
+- [`hard_tabs`](./reference/all-settings.md#hard-tabs): Use tabs instead of spaces for indentation
+- [`preferred_line_length`](./reference/all-settings.md#preferred-line-length): The recommended maximum line length
+- [`soft_wrap`](./reference/all-settings.md#soft-wrap): How to wrap long lines of code
+- [`show_completions_on_input`](./reference/all-settings.md#show-completions-on-input): Whether or not to show completions as you type
+- [`show_completion_documentation`](./reference/all-settings.md#show-completion-documentation): Whether to display inline and alongside documentation for items in the completions menu
+- [`colorize_brackets`](./reference/all-settings.md#colorize-brackets): Whether to use tree-sitter bracket queries to detect and colorize the brackets in the editor (also known as "rainbow brackets")
 
 These settings allow you to maintain specific coding styles across different languages and projects.
 
@@ -65,9 +58,9 @@ These settings allow you to maintain specific coding styles across different lan
 
 Zed automatically detects file types based on their extensions, but you can customize these associations to fit your workflow.
 
-To set up custom file associations, use the [`file_types`](./configuring-zed.md#file-types) setting in your `settings.json`:
+To set up custom file associations, use the [`file_types`](./reference/all-settings.md#file-types) setting in your `settings.json`:
 
-```json
+```json [settings]
 "file_types": {
   "C++": ["c"],
   "TOML": ["MyLockFile"],
@@ -119,21 +112,50 @@ Some languages in Zed offer multiple language server options. You might have mul
 
 You can specify your preference using the `language_servers` setting:
 
-```json
+```json [settings]
   "languages": {
     "PHP": {
-      "language_servers": ["intelephense", "!phpactor", "..."]
+      "language_servers": ["intelephense", "!phpactor", "!phptools", "..."]
     }
   }
 ```
 
 In this example:
 
-- `intelephense` is set as the primary language server
-- `phpactor` is disabled (note the `!` prefix)
-- `...` expands to the rest of the language servers that are registered for PHP
+- `intelephense` is set as the primary language server.
+- `phpactor` and `phptools` are disabled (note the `!` prefix).
+- `"..."` expands to the rest of the language servers registered for PHP that are not already listed.
 
-This configuration allows you to tailor the language server setup to your specific needs, ensuring that you get the most suitable functionality for your development workflow.
+The `"..."` entry acts as a wildcard that includes any registered language server you haven't explicitly mentioned. Servers you list by name keep their position, and `"..."` fills in the remaining ones at that point in the list. Servers prefixed with `!` are excluded entirely. This means that if a new language server extension is installed or a new server is registered for a language, `"..."` will automatically include it. If you want full control over which servers are enabled, omit `"..."` — only the servers you list by name will be used.
+
+#### Examples
+
+Suppose you're working with Ruby. The default configuration is:
+
+```json [settings]
+{
+  "language_servers": [
+    "solargraph",
+    "!ruby-lsp",
+    "!rubocop",
+    "!sorbet",
+    "!steep",
+    "!kanayago",
+    "..."
+  ]
+}
+```
+
+When you override `language_servers` in your settings, your list **replaces** the default entirely. This means default-disabled servers like `kanayago` will be re-enabled by `"..."` unless you explicitly disable them again.
+
+| Configuration                                     | Result                                                             |
+| ------------------------------------------------- | ------------------------------------------------------------------ |
+| `["..."]`                                         | `solargraph`, `ruby-lsp`, `rubocop`, `sorbet`, `steep`, `kanayago` |
+| `["ruby-lsp", "..."]`                             | `ruby-lsp`, `solargraph`, `rubocop`, `sorbet`, `steep`, `kanayago` |
+| `["ruby-lsp", "!solargraph", "!kanayago", "..."]` | `ruby-lsp`, `rubocop`, `sorbet`, `steep`                           |
+| `["ruby-lsp", "solargraph"]`                      | `ruby-lsp`, `solargraph`                                           |
+
+> Note: In the first example, `"..."` includes `kanayago` even though it is disabled by default. The override replaced the default list, so the `"!kanayago"` entry is no longer present. To keep it disabled, you must include `"!kanayago"` in your configuration.
 
 ### Toolchains
 
@@ -143,9 +165,11 @@ Not all languages in Zed support toolchain discovery and selection, but for thos
 
 ### Configuring Language Servers
 
+When configuring language servers in your `settings.json`, autocomplete suggestions include all available LSP adapters recognized by Zed, not only those currently active for loaded languages. This helps you discover and configure language servers before opening files that use them.
+
 Many language servers accept custom configuration options. You can set these in the `lsp` section of your `settings.json`:
 
-```json
+```json [settings]
   "lsp": {
     "rust-analyzer": {
       "initialization_options": {
@@ -170,7 +194,7 @@ Suppose you want to configure the following settings for TypeScript:
 
 Here's how you would structure these settings in Zed's `settings.json`:
 
-```json
+```json [settings]
 "lsp": {
   "typescript-language-server": {
     "initialization_options": {
@@ -198,7 +222,7 @@ Sent once during language server startup, requires server's restart to reapply c
 
 For example, rust-analyzer and clangd rely on this way of configuring only.
 
-```json
+```json [settings]
   "lsp": {
     "rust-analyzer": {
       "initialization_options": {
@@ -213,7 +237,7 @@ For example, rust-analyzer and clangd rely on this way of configuring only.
 May be queried by the server multiple times.
 Most of the servers would rely on this way of configuring only.
 
-```json
+```json [settings]
 "lsp": {
   "tailwindcss-language-server": {
     "settings": {
@@ -229,7 +253,7 @@ Apart of the LSP-related server configuration options, certain servers in Zed al
 
 Language servers are automatically downloaded or launched if found in your path, if you wish to specify an explicit alternate binary you can specify that in settings:
 
-```json
+```json [settings]
   "lsp": {
     "rust-analyzer": {
       "binary": {
@@ -249,7 +273,7 @@ Language servers are automatically downloaded or launched if found in your path,
 
 You can toggle language server support globally or per-language:
 
-```json
+```json [settings]
   "languages": {
     "Markdown": {
       "enable_language_server": false
@@ -265,9 +289,9 @@ Zed provides support for code formatting and linting to maintain consistent code
 
 ### Configuring Formatters
 
-Zed supports both built-in and external formatters. See [`formatter`](./configuring-zed.md#formatter) docs for more. You can configure formatters globally or per-language in your `settings.json`:
+Zed supports both built-in and external formatters. See [`formatter`](./reference/all-settings.md#formatter) docs for more. You can configure formatters globally or per-language in your `settings.json`:
 
-```json
+```json [settings]
 "languages": {
   "JavaScript": {
     "formatter": {
@@ -289,7 +313,7 @@ This example uses Prettier for JavaScript and the language server's formatter fo
 
 To disable formatting for a specific language:
 
-```json
+```json [settings]
 "languages": {
   "Markdown": {
     "format_on_save": "off"
@@ -301,7 +325,7 @@ To disable formatting for a specific language:
 
 Linting in Zed is typically handled by language servers. Many language servers allow you to configure linting rules:
 
-```json
+```json [settings]
 "lsp": {
   "eslint": {
     "settings": {
@@ -317,11 +341,11 @@ This configuration sets up ESLint to organize imports on save for JavaScript fil
 
 To run linter fixes automatically on save:
 
-```json
+```json [settings]
 "languages": {
   "JavaScript": {
-    "code_actions_on_format": {
-      "source.fixAll.eslint": true
+    "formatter": {
+      "code_action": "source.fixAll.eslint"
     }
   }
 }
@@ -331,18 +355,20 @@ To run linter fixes automatically on save:
 
 Zed allows you to run both formatting and linting on save. Here's an example that uses Prettier for formatting and ESLint for linting JavaScript files:
 
-```json
+```json [settings]
 "languages": {
   "JavaScript": {
-    "formatter": {
-      "external": {
-        "command": "prettier",
-        "arguments": ["--stdin-filepath", "{buffer_path}"]
+    "formatter": [
+      {
+        "code_action": "source.fixAll.eslint"
+      },
+      {
+        "external": {
+          "command": "prettier",
+          "arguments": ["--stdin-filepath", "{buffer_path}"]
+        }
       }
-    },
-    "code_actions_on_format": {
-      "source.fixAll.eslint": true
-    },
+    ],
     "format_on_save": "on"
   }
 }
@@ -362,18 +388,20 @@ Zed offers customization options for syntax highlighting and themes, allowing yo
 
 ### Customizing Syntax Highlighting
 
-Zed uses Tree-sitter grammars for syntax highlighting. Override the default highlighting using the `experimental.theme_overrides` setting.
+Zed uses Tree-sitter grammars for syntax highlighting. Override the default highlighting using the `theme_overrides` setting.
 
 This example makes comments italic and changes the color of strings:
 
-```json
-"experimental.theme_overrides": {
-  "syntax": {
-    "comment": {
-      "font_style": "italic"
-    },
-    "string": {
-      "color": "#00AA00"
+```json [settings]
+"theme_overrides": {
+  "One Dark": {
+    "syntax": {
+      "comment": {
+        "font_style": "italic"
+      },
+      "string": {
+        "color": "#00AA00"
+      }
     }
   }
 }
@@ -386,7 +414,7 @@ Change your theme:
 1. Use the theme selector ({#kb theme_selector::Toggle})
 2. Or set it in your `settings.json`:
 
-```json
+```json [settings]
 "theme": {
   "mode": "dark",
   "dark": "One Dark",
@@ -404,11 +432,27 @@ To create your own theme extension, refer to the [Developing Theme Extensions](.
 
 ## Using Language Server Features
 
+### Semantic Tokens
+
+Semantic tokens provide richer syntax highlighting by using type and scope information from language servers. Enable them with the `semantic_tokens` setting:
+
+```json [settings]
+"semantic_tokens": "combined"
+```
+
+- `"off"` — Tree-sitter highlighting only (default)
+- `"combined"` — LSP semantic tokens overlaid on tree-sitter
+- `"full"` — LSP semantic tokens replace tree-sitter entirely
+
+You can customize token colors and styles through `global_lsp_settings.semantic_token_rules` in your settings.
+
+→ [Semantic Tokens documentation](./semantic-tokens.md)
+
 ### Inlay Hints
 
 Inlay hints provide additional information inline in your code, such as parameter names or inferred types. Configure inlay hints in your `settings.json`:
 
-```json
+```json [settings]
 "inlay_hints": {
   "enabled": true,
   "show_type_hints": true,
@@ -449,7 +493,7 @@ Use the `editor: Hover` command to display information about the symbol under th
 
 ### Workspace Symbol Search
 
-The `workspace: Open Symbol` command allows you to search for symbols (functions, classes, variables) across your entire project. This is useful for quickly navigating large codebases.
+The {#action project_symbols::Toggle} command allows you to search for symbols (functions, classes, variables) across your entire project. This is useful for quickly navigating large codebases.
 
 ### Code Completion
 
@@ -457,4 +501,4 @@ Zed provides intelligent code completion suggestions as you type. You can manual
 
 ### Diagnostics
 
-Language servers provide real-time diagnostics (errors, warnings, hints) as you code. View all diagnostics for your project using the `diagnostics: Toggle` command.
+Language servers provide real-time diagnostics (errors, warnings, hints) as you code. View all diagnostics for your project using the {#action diagnostics::Deploy} command.

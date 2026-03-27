@@ -56,6 +56,12 @@ impl Label {
     pub fn set_text(&mut self, text: impl Into<SharedString>) {
         self.label = text.into();
     }
+
+    /// Truncates the label from the start, keeping the end visible.
+    pub fn truncate_start(mut self) -> Self {
+        self.base = self.base.truncate_start();
+        self
+    }
 }
 
 // Style methods.
@@ -67,6 +73,34 @@ impl Label {
     gpui::margin_style_methods!({
         visibility: pub
     });
+
+    pub fn flex_1(mut self) -> Self {
+        self.style().flex_grow = Some(1.);
+        self.style().flex_shrink = Some(1.);
+        self.style().flex_basis = Some(gpui::relative(0.).into());
+        self
+    }
+
+    pub fn flex_none(mut self) -> Self {
+        self.style().flex_grow = Some(0.);
+        self.style().flex_shrink = Some(0.);
+        self
+    }
+
+    pub fn flex_grow(mut self) -> Self {
+        self.style().flex_grow = Some(1.);
+        self
+    }
+
+    pub fn flex_shrink(mut self) -> Self {
+        self.style().flex_shrink = Some(1.);
+        self
+    }
+
+    pub fn flex_shrink_0(mut self) -> Self {
+        self.style().flex_shrink = Some(0.);
+        self
+    }
 }
 
 impl LabelCommon for Label {
@@ -256,7 +290,8 @@ impl Component for Label {
                         "Special Cases",
                         vec![
                             single_example("Single Line", Label::new("Line 1\nLine 2\nLine 3").single_line().into_any_element()),
-                            single_example("Text Ellipsis", div().max_w_24().child(Label::new("This is a very long file name that should be truncated: very_long_file_name_with_many_words.rs").truncate()).into_any_element()),
+                            single_example("Regular Truncation", div().max_w_24().child(Label::new("This is a very long file name that should be truncated: very_long_file_name_with_many_words.rs").truncate()).into_any_element()),
+                            single_example("Start Truncation", div().max_w_24().child(Label::new("zed/crates/ui/src/components/label/truncate/label/label.rs").truncate_start()).into_any_element()),
                         ],
                     ),
                 ])

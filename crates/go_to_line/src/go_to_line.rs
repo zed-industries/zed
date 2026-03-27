@@ -1,8 +1,8 @@
 pub mod cursor_position;
 
-use cursor_position::{LineIndicatorFormat, UserCaretPosition};
+use cursor_position::UserCaretPosition;
 use editor::{
-    Anchor, Editor, MultiBufferSnapshot, RowHighlightOptions, SelectionEffects, ToOffset, ToPoint,
+    Anchor, Editor, MultiBufferSnapshot, RowHighlightOptions, SelectionEffects, ToPoint,
     actions::Tab,
     scroll::{Autoscroll, ScrollOffset},
 };
@@ -11,15 +11,14 @@ use gpui::{
     Subscription, div, prelude::*,
 };
 use language::Buffer;
-use settings::Settings;
+use multi_buffer::MultiBufferRow;
 use text::{Bias, Point};
 use theme::ActiveTheme;
 use ui::prelude::*;
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
-use workspace::ModalView;
+use workspace::{DismissDecision, ModalView};
 
 pub fn init(cx: &mut App) {
-    LineIndicatorFormat::register(cx);
     cx.observe_new(GoToLine::register).detach();
 }
 
@@ -28,10 +27,20 @@ pub struct GoToLine {
     active_editor: Entity<Editor>,
     current_text: SharedString,
     prev_scroll_position: Option<gpui::Point<ScrollOffset>>,
+    current_line: u32,
     _subscriptions: Vec<Subscription>,
 }
 
-impl ModalView for GoToLine {}
+impl ModalView for GoToLine {
+    fn on_before_dismiss(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> DismissDecision {
+        self.prev_scroll_position.take();
+        DismissDecision::Dismiss(true)
+    }
+}
 
 impl Focusable for GoToLine {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
@@ -74,7 +83,9 @@ impl GoToLine {
     ) -> Self {
         let (user_caret, last_line, scroll_position) = active_editor.update(cx, |editor, cx| {
             let user_caret = UserCaretPosition::at_selection_end(
-                &editor.selections.last::<Point>(cx),
+                &editor
+                    .selections
+                    .last::<Point>(&editor.display_snapshot(cx)),
                 &editor.buffer().read(cx).snapshot(cx),
             );
 
@@ -84,7 +95,9 @@ impl GoToLine {
                 .read(cx)
                 .excerpts_for_buffer(snapshot.remote_id(), cx)
                 .into_iter()
-                .map(move |(_, range)| text::ToPoint::to_point(&range.context.end, &snapshot).row)
+                .map(move |(_, _, range)| {
+                    text::ToPoint::to_point(&range.context.end, &snapshot).row
+                })
                 .max()
                 .unwrap_or(0);
 
@@ -134,6 +147,7 @@ impl GoToLine {
             active_editor,
             current_text: current_text.into(),
             prev_scroll_position: Some(scroll_position),
+            current_line: line,
             _subscriptions: vec![line_editor_change, cx.on_release_in(window, Self::release)],
         }
     }
@@ -201,35 +215,63 @@ impl GoToLine {
         snapshot: &MultiBufferSnapshot,
         cx: &Context<Editor>,
     ) -> Option<Anchor> {
-        let (query_row, query_char) = self.line_and_char_from_query(cx)?;
+        let (query_row, query_char) = if let Some(offset) = self.relative_line_from_query(cx) {
+            let target = if offset >= 0 {
+                self.current_line.saturating_add(offset as u32)
+            } else {
+                self.current_line.saturating_sub(offset.unsigned_abs())
+            };
+            (target, None)
+        } else {
+            self.line_and_char_from_query(cx)?
+        };
+
         let row = query_row.saturating_sub(1);
         let character = query_char.unwrap_or(0).saturating_sub(1);
 
-        let start_offset = Point::new(row, 0).to_offset(snapshot);
-        const MAX_BYTES_IN_UTF_8: u32 = 4;
-        let max_end_offset = snapshot
-            .clip_point(
-                Point::new(row, character * MAX_BYTES_IN_UTF_8 + 1),
-                Bias::Right,
-            )
-            .to_offset(snapshot);
+        let target_multi_buffer_row = MultiBufferRow(row);
+        let (buffer_snapshot, target_in_buffer, _) = snapshot.point_to_buffer_point(Point::new(
+            target_multi_buffer_row.min(snapshot.max_row()).0,
+            0,
+        ))?;
+        let target_point =
+            buffer_snapshot.point_from_external_input(target_in_buffer.row, character);
+        Some(snapshot.anchor_before(target_point))
+    }
 
-        let mut chars_to_iterate = character;
-        let mut end_offset = start_offset;
-        'outer: for text_chunk in snapshot.text_for_range(start_offset..max_end_offset) {
-            let mut offset_increment = 0;
-            for c in text_chunk.chars() {
-                if chars_to_iterate == 0 {
-                    end_offset += offset_increment;
-                    break 'outer;
-                } else {
-                    chars_to_iterate -= 1;
-                    offset_increment += c.len_utf8();
+    fn relative_line_from_query(&self, cx: &App) -> Option<i32> {
+        let input = self.line_editor.read(cx).text(cx);
+        let trimmed = input.trim();
+
+        let mut last_direction_char: Option<char> = None;
+        let mut number_start_index = 0;
+
+        for (i, c) in trimmed.char_indices() {
+            match c {
+                '+' | 'f' | 'F' | '-' | 'b' | 'B' => {
+                    last_direction_char = Some(c);
+                    number_start_index = i + c.len_utf8();
                 }
+                _ => break,
             }
-            end_offset += offset_increment;
         }
-        Some(snapshot.anchor_before(snapshot.clip_offset(end_offset, Bias::Left)))
+
+        let direction = last_direction_char?;
+
+        let number_part = &trimmed[number_start_index..];
+        let line_part = number_part
+            .split(FILE_ROW_COLUMN_DELIMITER)
+            .next()
+            .unwrap_or(number_part)
+            .trim();
+
+        let value = line_part.parse::<u32>().ok()?;
+
+        match direction {
+            '+' | 'f' | 'F' => Some(value as i32),
+            '-' | 'b' | 'B' => Some(-(value as i32)),
+            _ => None,
+        }
     }
 
     fn line_and_char_from_query(&self, cx: &App) -> Option<(u32, Option<u32>)> {
@@ -259,7 +301,7 @@ impl GoToLine {
                 cx,
                 |s| s.select_anchor_ranges([start..start]),
             );
-            editor.focus_handle(cx).focus(window);
+            editor.focus_handle(cx).focus(window, cx);
             cx.notify()
         });
         self.prev_scroll_position.take();
@@ -270,12 +312,21 @@ impl GoToLine {
 
 impl Render for GoToLine {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let help_text = match self.line_and_char_from_query(cx) {
-            Some((line, Some(character))) => {
-                format!("Go to line {line}, character {character}").into()
+        let help_text = if let Some(offset) = self.relative_line_from_query(cx) {
+            let target_line = if offset >= 0 {
+                self.current_line.saturating_add(offset as u32)
+            } else {
+                self.current_line.saturating_sub(offset.unsigned_abs())
+            };
+            format!("Go to line {target_line} ({offset:+} from current)").into()
+        } else {
+            match self.line_and_char_from_query(cx) {
+                Some((line, Some(character))) => {
+                    format!("Go to line {line}, character {character}").into()
+                }
+                Some((line, None)) => format!("Go to line {line}").into(),
+                None => self.current_text.clone(),
             }
-            Some((line, None)) => format!("Go to line {line}").into(),
-            None => self.current_text.clone(),
         };
 
         v_flex()
@@ -313,7 +364,7 @@ mod tests {
     use serde_json::json;
     use std::{num::NonZeroU32, sync::Arc, time::Duration};
     use util::{path, rel_path::rel_path};
-    use workspace::{AppState, Workspace};
+    use workspace::{AppState, MultiWorkspace, Workspace};
 
     #[gpui::test]
     async fn test_go_to_line_view_row_highlights(cx: &mut TestAppContext) {
@@ -342,8 +393,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         let worktree_id = workspace.update(cx, |workspace, cx| {
             workspace.project().update(cx, |project, cx| {
                 project.worktrees(cx).next().unwrap().read(cx).id()
@@ -439,8 +491,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         workspace.update_in(cx, |workspace, window, cx| {
             let cursor_position = cx.new(|_| CursorPosition::new(workspace));
             workspace.status_bar().update(cx, |status_bar, cx| {
@@ -524,8 +577,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         workspace.update_in(cx, |workspace, window, cx| {
             let cursor_position = cx.new(|_| CursorPosition::new(workspace));
             workspace.status_bar().update(cx, |status_bar, cx| {
@@ -602,8 +656,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         workspace.update_in(cx, |workspace, window, cx| {
             let cursor_position = cx.new(|_| CursorPosition::new(workspace));
             workspace.status_bar().update(cx, |status_bar, cx| {
@@ -739,7 +794,7 @@ mod tests {
         let selections = editor.update(cx, |editor, cx| {
             editor
                 .selections
-                .all::<rope::Point>(cx)
+                .all::<rope::Point>(&editor.display_snapshot(cx))
                 .into_iter()
                 .map(|s| s.start..s.end)
                 .collect::<Vec<_>>()
@@ -759,12 +814,179 @@ mod tests {
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         cx.update(|cx| {
             let state = AppState::test(cx);
-            language::init(cx);
             crate::init(cx);
             editor::init(cx);
-            workspace::init_settings(cx);
-            Project::init_settings(cx);
             state
         })
+    }
+
+    #[gpui::test]
+    async fn test_scroll_position_on_outside_click(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let file_content = (0..100)
+            .map(|i| format!("struct Line{};", i))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs.insert_tree(path!("/dir"), json!({"a.rs": file_content}))
+            .await;
+
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, rel_path("a.rs")), None, true, window, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+        let go_to_line_view = open_go_to_line_view(&workspace, cx);
+
+        let scroll_position_before_input =
+            editor.update(cx, |editor, cx| editor.scroll_position(cx));
+        cx.simulate_input("47");
+        let scroll_position_after_input =
+            editor.update(cx, |editor, cx| editor.scroll_position(cx));
+        assert_ne!(scroll_position_before_input, scroll_position_after_input);
+
+        drop(go_to_line_view);
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.hide_modal(window, cx);
+        });
+        cx.run_until_parked();
+
+        let scroll_position_after_auto_dismiss =
+            editor.update(cx, |editor, cx| editor.scroll_position(cx));
+        assert_eq!(
+            scroll_position_after_auto_dismiss, scroll_position_after_input,
+            "Dismissing via outside click should maintain new scroll position"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_scroll_position_on_cancel(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let file_content = (0..100)
+            .map(|i| format!("struct Line{};", i))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs.insert_tree(path!("/dir"), json!({"a.rs": file_content}))
+            .await;
+
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, rel_path("a.rs")), None, true, window, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+        let go_to_line_view = open_go_to_line_view(&workspace, cx);
+
+        let scroll_position_before_input =
+            editor.update(cx, |editor, cx| editor.scroll_position(cx));
+        cx.simulate_input("47");
+        let scroll_position_after_input =
+            editor.update(cx, |editor, cx| editor.scroll_position(cx));
+        assert_ne!(scroll_position_before_input, scroll_position_after_input);
+
+        cx.dispatch_action(menu::Cancel);
+        drop(go_to_line_view);
+        cx.run_until_parked();
+
+        let scroll_position_after_cancel =
+            editor.update(cx, |editor, cx| editor.scroll_position(cx));
+        assert_eq!(
+            scroll_position_after_cancel, scroll_position_after_input,
+            "Cancel should maintain new scroll position"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_scroll_position_on_confirm(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let file_content = (0..100)
+            .map(|i| format!("struct Line{};", i))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs.insert_tree(path!("/dir"), json!({"a.rs": file_content}))
+            .await;
+
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, rel_path("a.rs")), None, true, window, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+        let go_to_line_view = open_go_to_line_view(&workspace, cx);
+
+        let scroll_position_before_input =
+            editor.update(cx, |editor, cx| editor.scroll_position(cx));
+        cx.simulate_input("47");
+        let scroll_position_after_input =
+            editor.update(cx, |editor, cx| editor.scroll_position(cx));
+        assert_ne!(scroll_position_before_input, scroll_position_after_input);
+
+        cx.dispatch_action(menu::Confirm);
+        drop(go_to_line_view);
+        cx.run_until_parked();
+
+        let scroll_position_after_confirm =
+            editor.update(cx, |editor, cx| editor.scroll_position(cx));
+        assert_eq!(
+            scroll_position_after_confirm, scroll_position_after_input,
+            "Confirm should maintain new scroll position"
+        );
     }
 }

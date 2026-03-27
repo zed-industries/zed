@@ -671,6 +671,7 @@ impl Database {
                             canonical_path: db_entry.canonical_path,
                             is_ignored: db_entry.is_ignored,
                             is_external: db_entry.is_external,
+                            is_hidden: db_entry.is_hidden,
                             // This is only used in the summarization backlog, so if it's None,
                             // that just means we won't be able to detect when to resummarize
                             // based on total number of backlogged bytes - instead, we'd go
@@ -737,7 +738,7 @@ impl Database {
                     while let Some(db_status) = db_statuses.next().await {
                         let db_status: project_repository_statuses::Model = db_status?;
                         if db_status.is_deleted {
-                            removed_statuses.push(db_status.repo_path);
+                            removed_statuses.push(db_status.repo_path.clone());
                         } else {
                             updated_statuses.push(db_status_to_proto(db_status)?);
                         }
@@ -790,11 +791,19 @@ impl Database {
                             head_commit_details,
                             project_id: project_id.to_proto(),
                             id: db_repository.id as u64,
-                            abs_path: db_repository.abs_path,
+                            abs_path: db_repository.abs_path.clone(),
                             scan_id: db_repository.scan_id as u64,
                             is_last_update: true,
                             merge_message: db_repository.merge_message,
                             stash_entries: Vec::new(),
+                            remote_upstream_url: db_repository.remote_upstream_url.clone(),
+                            remote_origin_url: db_repository.remote_origin_url.clone(),
+                            original_repo_abs_path: Some(db_repository.abs_path),
+                            linked_worktrees: db_repository
+                                .linked_worktrees
+                                .as_deref()
+                                .and_then(|s| serde_json::from_str(s).ok())
+                                .unwrap_or_default(),
                         });
                     }
                 }
@@ -831,6 +840,7 @@ impl Database {
                         path: db_settings_file.path,
                         content: db_settings_file.content,
                         kind: db_settings_file.kind,
+                        outside_worktree: db_settings_file.outside_worktree,
                     });
                 }
             }

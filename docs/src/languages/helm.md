@@ -1,3 +1,8 @@
+---
+title: Helm
+description: "Configure Helm language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Helm
 
 Support for Helm in Zed is provided by the community-maintained [Helm extension](https://github.com/cabrinha/helm.zed).
@@ -9,7 +14,7 @@ Support for Helm in Zed is provided by the community-maintained [Helm extension]
 
 Enable Helm language for Helm files by editing your `.zed/settings.json` and adding:
 
-```json
+```json [settings]
   "file_types": {
     "Helm": [
       "**/templates/**/*.tpl",

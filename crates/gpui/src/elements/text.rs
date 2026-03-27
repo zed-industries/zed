@@ -2,19 +2,21 @@ use crate::{
     ActiveTooltip, AnyView, App, Bounds, DispatchPhase, Element, ElementId, GlobalElementId,
     HighlightStyle, Hitbox, HitboxBehavior, InspectorElementId, IntoElement, LayoutId,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size, TextOverflow,
-    TextRun, TextStyle, TooltipId, WhiteSpace, Window, WrappedLine, WrappedLineLayout,
-    register_tooltip_mouse_handlers, set_tooltip_on_window,
+    TextRun, TextStyle, TooltipId, TruncateFrom, WhiteSpace, Window, WrappedLine,
+    WrappedLineLayout, register_tooltip_mouse_handlers, set_tooltip_on_window,
 };
 use anyhow::Context as _;
+use gpui_util::ResultExt;
+use itertools::Itertools;
 use smallvec::SmallVec;
 use std::{
+    borrow::Cow,
     cell::{Cell, RefCell},
     mem,
     ops::Range,
     rc::Rc,
     sync::Arc,
 };
-use util::ResultExt;
 
 impl Element for &'static str {
     type RequestLayoutState = TextLayout;
@@ -75,6 +77,14 @@ impl IntoElement for &'static str {
 }
 
 impl IntoElement for String {
+    type Element = SharedString;
+
+    fn into_element(self) -> Self::Element {
+        self.into()
+    }
+}
+
+impl IntoElement for Cow<'static, str> {
     type Element = SharedString;
 
     fn into_element(self) -> Self::Element {
@@ -180,8 +190,7 @@ impl StyledText {
             "Can't use `with_default_highlights` and `with_highlights`"
         );
         let runs = Self::compute_runs(&self.text, default_style, highlights);
-        self.runs = Some(runs);
-        self
+        self.with_runs(runs)
     }
 
     /// Set the styling attributes for the given text, as well as
@@ -194,7 +203,15 @@ impl StyledText {
             self.runs.is_none(),
             "Can't use `with_highlights` and `with_default_highlights`"
         );
-        self.delayed_highlights = Some(highlights.into_iter().collect::<Vec<_>>());
+        self.delayed_highlights = Some(
+            highlights
+                .into_iter()
+                .inspect(|(run, _)| {
+                    debug_assert!(self.text.is_char_boundary(run.start));
+                    debug_assert!(self.text.is_char_boundary(run.end));
+                })
+                .collect::<Vec<_>>(),
+        );
         self
     }
 
@@ -207,8 +224,10 @@ impl StyledText {
         let mut ix = 0;
         for (range, highlight) in highlights {
             if ix < range.start {
+                debug_assert!(text.is_char_boundary(range.start));
                 runs.push(default_style.clone().to_run(range.start - ix));
             }
+            debug_assert!(text.is_char_boundary(range.end));
             runs.push(
                 default_style
                     .clone()
@@ -225,6 +244,16 @@ impl StyledText {
 
     /// Set the text runs for this piece of text.
     pub fn with_runs(mut self, runs: Vec<TextRun>) -> Self {
+        let mut text = &**self.text;
+        for run in &runs {
+            text = text.get(run.len..).unwrap_or_else(|| {
+                #[cfg(debug_assertions)]
+                panic!("invalid text run. Text: '{text}', run: {run:?}");
+                #[cfg(not(debug_assertions))]
+                panic!("invalid text run");
+            });
+        }
+        assert!(text.is_empty(), "invalid text run");
         self.runs = Some(runs);
         self
     }
@@ -320,12 +349,11 @@ impl TextLayout {
             .line_height
             .to_pixels(font_size.into(), window.rem_size());
 
-        let mut runs = if let Some(runs) = runs {
+        let runs = if let Some(runs) = runs {
             runs
         } else {
             vec![text_style.to_run(text.len())]
         };
-
         window.request_measured_layout(Default::default(), {
             let element_state = self.clone();
 
@@ -339,7 +367,7 @@ impl TextLayout {
                     None
                 };
 
-                let (truncate_width, truncation_suffix) =
+                let (truncate_width, truncation_affix, truncate_from) =
                     if let Some(text_overflow) = text_style.text_overflow.clone() {
                         let width = known_dimensions.width.or(match available_space.width {
                             crate::AvailableSpace::Definite(x) => match text_style.line_clamp {
@@ -350,29 +378,37 @@ impl TextLayout {
                         });
 
                         match text_overflow {
-                            TextOverflow::Truncate(s) => (width, s),
+                            TextOverflow::Truncate(s) => (width, s, TruncateFrom::End),
+                            TextOverflow::TruncateStart(s) => (width, s, TruncateFrom::Start),
                         }
                     } else {
-                        (None, "".into())
+                        (None, "".into(), TruncateFrom::End)
                     };
 
+                // Only use cached layout if:
+                // 1. We have a cached size
+                // 2. wrap_width matches (or both are None)
+                // 3. truncate_width is None (if truncate_width is Some, we need to re-layout
+                //    because the previous layout may have been computed without truncation)
                 if let Some(text_layout) = element_state.0.borrow().as_ref()
-                    && text_layout.size.is_some()
+                    && let Some(size) = text_layout.size
                     && (wrap_width.is_none() || wrap_width == text_layout.wrap_width)
+                    && truncate_width.is_none()
                 {
-                    return text_layout.size.unwrap();
+                    return size;
                 }
 
                 let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
-                let text = if let Some(truncate_width) = truncate_width {
+                let (text, runs) = if let Some(truncate_width) = truncate_width {
                     line_wrapper.truncate_line(
                         text.clone(),
                         truncate_width,
-                        &truncation_suffix,
-                        &mut runs,
+                        &truncation_affix,
+                        &runs,
+                        truncate_from,
                     )
                 } else {
-                    text.clone()
+                    (text.clone(), Cow::Borrowed(&*runs))
                 };
                 let len = text.len();
 
@@ -583,14 +619,14 @@ impl TextLayout {
             .unwrap()
             .lines
             .iter()
-            .map(|s| s.text.to_string())
-            .collect::<Vec<_>>()
+            .map(|s| &s.text)
             .join("\n")
     }
 
     /// The text for this layout (with soft-wraps as newlines)
     pub fn wrapped_text(&self) -> String {
-        let mut lines = Vec::new();
+        let mut accumulator = String::new();
+
         for wrapped in self.0.borrow().as_ref().unwrap().lines.iter() {
             let mut seen = 0;
             for boundary in wrapped.layout.wrap_boundaries.iter() {
@@ -598,13 +634,16 @@ impl TextLayout {
                     [boundary.glyph_ix]
                     .index;
 
-                lines.push(wrapped.text[seen..index].to_string());
+                accumulator.push_str(&wrapped.text[seen..index]);
+                accumulator.push('\n');
                 seen = index;
             }
-            lines.push(wrapped.text[seen..].to_string());
+            accumulator.push_str(&wrapped.text[seen..]);
+            accumulator.push('\n');
         }
-
-        lines.join("\n")
+        // Remove trailing newline
+        accumulator.pop();
+        accumulator
     }
 }
 
@@ -896,5 +935,19 @@ impl IntoElement for InteractiveText {
 
     fn into_element(self) -> Self::Element {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_into_element_for() {
+        use crate::{ParentElement as _, SharedString, div};
+        use std::borrow::Cow;
+
+        let _ = div().child("static str");
+        let _ = div().child("String".to_string());
+        let _ = div().child(Cow::Borrowed("Cow"));
+        let _ = div().child(SharedString::from("SharedString"));
     }
 }

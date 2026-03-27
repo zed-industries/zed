@@ -1,6 +1,6 @@
+use agent::GrepToolInput;
 use agent_settings::AgentProfileId;
 use anyhow::Result;
-use assistant_tools::GrepToolInput;
 use async_trait::async_trait;
 
 use crate::example::{Example, ExampleContext, ExampleMetadata};
@@ -15,7 +15,7 @@ This eval checks that the model doesn't use HTML escapement for characters like 
                       original     +system_prompt change    +tool description
   claude-opus-4        89%          92%                     97%+
   claude-sonnet-4      100%
-  gpt-4.1-mini         100%
+  gpt-5-mini           100%
   gemini-2.5-pro                    98%
 
 */
@@ -36,9 +36,9 @@ impl Example for GrepParamsEscapementExample {
     }
 
     async fn conversation(&self, cx: &mut ExampleContext) -> Result<()> {
-        // cx.push_user_message("How does the precedence/specificity work with Keymap contexts? I am seeing that `MessageEditor > Editor` is lower precendence than `Editor` which is surprising to me, but might be how it works");
-        cx.push_user_message("Search for files containing the characters `>` or `<`");
-        let response = cx.run_turns(2).await?;
+        let response = cx
+            .prompt_with_max_turns("Search for files containing the characters `>` or `<`", 2)
+            .await?;
         let grep_input = response
             .find_tool_call("grep")
             .and_then(|tool_use| tool_use.parse_input::<GrepToolInput>().ok());

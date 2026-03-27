@@ -1,7 +1,10 @@
+#![cfg_attr(target_family = "wasm", no_main)]
+
 use gpui::{
-    App, Application, Bounds, Context, Window, WindowBounds, WindowOptions, div, prelude::*, px,
-    size,
+    App, Bounds, Context, FontStyle, FontWeight, StyledText, Window, WindowBounds, WindowOptions,
+    div, prelude::*, px, size,
 };
+use gpui_platform::application;
 
 struct HelloWorld {}
 
@@ -71,11 +74,17 @@ impl Render for HelloWorld {
                             .child("100%"),
                     ),
             )
+            .child(div().flex().gap_2().justify_between().child(
+                StyledText::new("ABCD").with_highlights([
+                    (0..1, FontWeight::EXTRA_BOLD.into()),
+                    (2..3, FontStyle::Italic.into()),
+                ]),
+            ))
     }
 }
 
-fn main() {
-    Application::new().run(|cx: &mut App| {
+fn run_example() {
+    application().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(800.0), px(600.0)), cx);
         cx.open_window(
             WindowOptions {
@@ -87,4 +96,16 @@ fn main() {
         .unwrap();
         cx.activate(true);
     });
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn main() {
+    run_example();
+}
+
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn start() {
+    gpui_platform::web_init();
+    run_example();
 }

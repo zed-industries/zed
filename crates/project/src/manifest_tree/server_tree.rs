@@ -47,7 +47,7 @@ pub struct LanguageServerTree {
 /// A node in language server tree represents either:
 /// - A language server that has already been initialized/updated for a given project
 /// - A soon-to-be-initialized language server.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct LanguageServerTreeNode(Weak<InnerTreeNode>);
 
 /// Describes a request to launch a language server.
@@ -421,11 +421,13 @@ impl ServerTreeRebase {
                     .and_then(|worktree_nodes| worktree_nodes.roots.get(&disposition.path.path))
                     .and_then(|roots| roots.get(&disposition.server_name))
                     .filter(|(old_node, _)| {
-                        (&disposition.toolchain, &disposition.settings)
-                            == (
-                                &old_node.disposition.toolchain,
-                                &old_node.disposition.settings,
-                            )
+                        // Only compare settings that require server restart.
+                        // Dynamic settings (settings.settings) can be updated via DidChangeConfiguration
+                        // without restarting the server.
+                        disposition.toolchain == old_node.disposition.toolchain
+                            && disposition.settings.binary == old_node.disposition.settings.binary
+                            && disposition.settings.initialization_options
+                                == old_node.disposition.settings.initialization_options
                     })
                 else {
                     return Some(node);

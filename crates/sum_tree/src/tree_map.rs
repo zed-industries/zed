@@ -53,10 +53,15 @@ impl<K: Clone + Ord, V: Clone> TreeMap<K, V> {
         self.0.is_empty()
     }
 
+    pub fn contains_key(&self, key: &K) -> bool {
+        self.get(key).is_some()
+    }
+
     pub fn get(&self, key: &K) -> Option<&V> {
-        let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>(());
-        cursor.seek(&MapKeyRef(Some(key)), Bias::Left);
-        if let Some(item) = cursor.item() {
+        let (.., item) = self
+            .0
+            .find::<MapKeyRef<'_, K>, _>((), &MapKeyRef(Some(key)), Bias::Left);
+        if let Some(item) = item {
             if Some(key) == item.key().0.as_ref() {
                 Some(&item.value)
             } else {
@@ -69,6 +74,12 @@ impl<K: Clone + Ord, V: Clone> TreeMap<K, V> {
 
     pub fn insert(&mut self, key: K, value: V) {
         self.0.insert_or_replace(MapEntry { key, value }, ());
+    }
+
+    pub fn insert_or_replace(&mut self, key: K, value: V) -> Option<V> {
+        self.0
+            .insert_or_replace(MapEntry { key, value }, ())
+            .map(|it| it.value)
     }
 
     pub fn extend(&mut self, iter: impl IntoIterator<Item = (K, V)>) {

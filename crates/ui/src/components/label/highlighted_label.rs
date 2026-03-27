@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use gpui::{FontWeight, HighlightStyle, StyledText};
+use gpui::{FontWeight, HighlightStyle, StyleRefinement, StyledText};
 
 use crate::{LabelCommon, LabelLike, LabelSize, LineHeightStyle, prelude::*};
 
@@ -15,9 +15,43 @@ impl HighlightedLabel {
     /// Constructs a label with the given characters highlighted.
     /// Characters are identified by UTF-8 byte position.
     pub fn new(label: impl Into<SharedString>, highlight_indices: Vec<usize>) -> Self {
+        let label = label.into();
+        for &run in &highlight_indices {
+            assert!(
+                label.is_char_boundary(run),
+                "highlight index {run} is not a valid UTF-8 boundary"
+            );
+        }
         Self {
             base: LabelLike::new(),
-            label: label.into(),
+            label,
+            highlight_indices,
+        }
+    }
+
+    /// Constructs a label with the given byte ranges highlighted.
+    /// Assumes that the highlight ranges are valid UTF-8 byte positions.
+    pub fn from_ranges(
+        label: impl Into<SharedString>,
+        highlight_ranges: Vec<Range<usize>>,
+    ) -> Self {
+        let label = label.into();
+        let highlight_indices = highlight_ranges
+            .iter()
+            .flat_map(|range| {
+                let mut indices = Vec::new();
+                let mut index = range.start;
+                while index < range.end {
+                    indices.push(index);
+                    index += label[index..].chars().next().map_or(0, |c| c.len_utf8());
+                }
+                indices
+            })
+            .collect();
+
+        Self {
+            base: LabelLike::new(),
+            label,
             highlight_indices,
         }
     }
@@ -28,6 +62,40 @@ impl HighlightedLabel {
 
     pub fn highlight_indices(&self) -> &[usize] {
         &self.highlight_indices
+    }
+}
+
+impl HighlightedLabel {
+    fn style(&mut self) -> &mut StyleRefinement {
+        self.base.base.style()
+    }
+
+    pub fn flex_1(mut self) -> Self {
+        self.style().flex_grow = Some(1.);
+        self.style().flex_shrink = Some(1.);
+        self.style().flex_basis = Some(gpui::relative(0.).into());
+        self
+    }
+
+    pub fn flex_none(mut self) -> Self {
+        self.style().flex_grow = Some(0.);
+        self.style().flex_shrink = Some(0.);
+        self
+    }
+
+    pub fn flex_grow(mut self) -> Self {
+        self.style().flex_grow = Some(1.);
+        self
+    }
+
+    pub fn flex_shrink(mut self) -> Self {
+        self.style().flex_shrink = Some(1.);
+        self
+    }
+
+    pub fn flex_shrink_0(mut self) -> Self {
+        self.style().flex_shrink = Some(0.);
+        self
     }
 }
 

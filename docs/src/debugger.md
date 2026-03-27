@@ -1,3 +1,8 @@
+---
+title: Debugger - Zed
+description: Debug code in Zed with the Debug Adapter Protocol (DAP). Breakpoints, stepping, variable inspection across multiple languages.
+---
+
 # Debugger
 
 Zed uses the [Debug Adapter Protocol (DAP)](https://microsoft.github.io/debug-adapter-protocol/) to provide debugging functionality across multiple programming languages.
@@ -17,6 +22,7 @@ To debug code written in a specific language, Zed needs to find a debug adapter 
 - [C](./languages/c.md#debugging) (built-in)
 - [C++](./languages/cpp.md#debugging) (built-in)
 - [Go](./languages/go.md#debugging) (built-in)
+- [Java](./languages/java.md#debugging) (provided by extension)
 - [JavaScript](./languages/javascript.md#debugging) (built-in)
 - [PHP](./languages/php.md#debugging) (built-in)
 - [Python](./languages/python.md#debugging) (built-in)
@@ -37,7 +43,7 @@ You can open the same modal by clicking the "plus" button at the top right of th
 
 For languages that don't provide preconfigured debug tasks (this includes C, C++, and some extension-supported languages), you can define debug configurations in the `.zed/debug.json` file in your project root. This file should be an array of configuration objects:
 
-```json
+```json [debug]
 [
   {
     "adapter": "CodeLLDB",
@@ -56,6 +62,16 @@ Check the documentation for your language for example configurations covering ty
 
 Zed will also load debug configurations from `.vscode/launch.json`, and show them in the new process modal if no configurations are found in `.zed/debug.json`.
 
+#### Global debug configurations
+
+If you run the same launch profiles across multiple projects, you can store them once in your user configuration. Invoke {#action zed::OpenDebugTasks} from the command palette to open the global `debug.json` file; Zed creates it next to your user `settings.json` and keeps it in sync with the debugger UI. The file lives at:
+
+- **macOS:** `~/Library/Application Support/Zed/debug.json`
+- **Linux/BSD:** `$XDG_CONFIG_HOME/zed/debug.json` (falls back to `~/.config/zed/debug.json`)
+- **Windows:** `%APPDATA%\Zed\debug.json`
+
+Populate this file with the same array of objects you would place in `.zed/debug.json`. Any scenarios defined there are merged into every workspace, so your favorite launch presets appear automatically in the "New Debug Session" dialog.
+
 ### Launching & Attaching
 
 Zed debugger offers two ways to debug your program; you can either _launch_ a new instance of your program or _attach_ to an existing process.
@@ -68,9 +84,11 @@ Compared to launching, attaching to an existing process might seem inferior, but
 
 ## Configuration
 
-While configuration fields are debug adapter-dependent, most adapters support the following fields:
+Zed requires the `adapter` and `label` fields for all debug tasks. In addition, Zed will use the `build` field to run any necessary setup steps before the debugger starts [(see below)](#build-tasks), and can accept a `tcp_connection` field to connect to an existing process.
 
-```json
+All other fields are provided by the debug adapter and can contain [task variables](./tasks.md#variables). Most adapters support `request`, `program`, and `cwd`:
+
+```json [debug]
 [
   {
     // The label for the debug configuration and used to identify the debug session inside the debug panel & new process modal
@@ -89,13 +107,13 @@ While configuration fields are debug adapter-dependent, most adapters support th
 ]
 ```
 
-All configuration fields support [task variables](./tasks.md#variables).
+Check your debug adapter's documentation for more information on the fields it supports.
 
 ### Build tasks
 
-Zed also allows embedding a Zed task in a `build` field that is run before the debugger starts. This is useful for setting up the environment or running any necessary setup steps before the debugger starts.
+Zed allows embedding a Zed task in the `build` field that is run before the debugger starts. This is useful for setting up the environment or running any necessary setup steps before the debugger starts.
 
-```json
+```json [debug]
 [
   {
     "label": "Build Binary",
@@ -112,7 +130,7 @@ Zed also allows embedding a Zed task in a `build` field that is run before the d
 
 Build tasks can also refer to the existing tasks by unsubstituted label:
 
-```json
+```json [debug]
 [
   {
     "label": "Build Binary",
@@ -145,6 +163,14 @@ Some debug adapters (e.g. CodeLLDB and JavaScript) will also _verify_ whether yo
 All breakpoints enabled for a given project are also listed in "Breakpoints" item in your debugging session UI. From "Breakpoints" item in your UI you can also manage exception breakpoints.
 The debug adapter will then stop whenever an exception of a given kind occurs. Which exception types are supported depends on the debug adapter.
 
+## Working with Split Panes
+
+When debugging with multiple split panes open, Zed shows the active debug line in one pane and preserves your layout in others. If you have the same file open in multiple panes, the debugger picks a pane where the file is already the active tab—it won't switch tabs in panes where the file is inactive.
+
+Once the debugger picks a pane, it continues using that pane for subsequent breakpoints during the session. If you drag the tab with the active debug line to a different split, the debugger tracks the move and uses the new pane.
+
+This ensures the debugger doesn't disrupt your workflow when stepping through code across different files.
+
 ## Settings
 
 The settings for the debugger are grouped under the `debugger` key in `settings.json`:
@@ -169,7 +195,7 @@ The settings for the debugger are grouped under the `debugger` key in `settings.
 2. `right` - The debug panel will be docked to the right side of the UI.
 3. `bottom` - The debug panel will be docked to the bottom of the UI.
 
-```json
+```json [settings]
 "debugger": {
   "dock": "bottom"
 },
@@ -185,9 +211,9 @@ The settings for the debugger are grouped under the `debugger` key in `settings.
 
 1. Statement - The step should allow the program to run until the current statement has finished executing.
    The meaning of a statement is determined by the adapter and it may be considered equivalent to a line.
-   For example 'for(int i = 0; i < 10; i++)' could be considered to have 3 statements 'int i = 0', 'i < 10', and 'i++'.
+   For example `for(int i = 0; i < 10; i++)` could be considered to have 3 statements `int i = 0`, `i < 10`, and `i++`.
 
-```json
+```json [settings]
 {
   "debugger": {
     "stepping_granularity": "statement"
@@ -197,7 +223,7 @@ The settings for the debugger are grouped under the `debugger` key in `settings.
 
 2. Line - The step should allow the program to run until the current source line has executed.
 
-```json
+```json [settings]
 {
   "debugger": {
     "stepping_granularity": "line"
@@ -207,7 +233,7 @@ The settings for the debugger are grouped under the `debugger` key in `settings.
 
 3. Instruction - The step should allow one instruction to execute (e.g. one x86 instruction).
 
-```json
+```json [settings]
 {
   "debugger": {
     "stepping_granularity": "instruction"
@@ -225,7 +251,7 @@ The settings for the debugger are grouped under the `debugger` key in `settings.
 
 `boolean` values
 
-```json
+```json [settings]
 {
   "debugger": {
     "save_breakpoints": true
@@ -237,16 +263,16 @@ The settings for the debugger are grouped under the `debugger` key in `settings.
 
 - Description: Whether the button should be displayed in the debugger toolbar.
 - Default: `true`
-- Setting: `debugger.show_button`
+- Setting: `debugger.button`
 
 **Options**
 
 `boolean` values
 
-```json
+```json [settings]
 {
   "debugger": {
-    "show_button": true
+    "button": true
   }
 }
 ```
@@ -261,7 +287,7 @@ The settings for the debugger are grouped under the `debugger` key in `settings.
 
 `integer` values
 
-```json
+```json [settings]
 {
   "debugger": {
     "timeout": 3000
@@ -277,7 +303,7 @@ The settings for the debugger are grouped under the `debugger` key in `settings.
 
 **Options**
 
-```json
+```json [settings]
 {
   "inlay_hints": {
     "show_value_hints": false
@@ -297,7 +323,7 @@ Inline value hints can also be toggled from the Editor Controls menu in the edit
 
 `boolean` values
 
-```json
+```json [settings]
 {
   "debugger": {
     "log_dap_communications": true
@@ -315,7 +341,7 @@ Inline value hints can also be toggled from the Editor Controls menu in the edit
 
 `boolean` values
 
-```json
+```json [settings]
 {
   "debugger": {
     "format_dap_log_messages": true
@@ -331,7 +357,7 @@ Inline value hints can also be toggled from the Editor Controls menu in the edit
 
 You can pass `binary`, `args`, or both. `binary` should be a path to a _debug adapter_ (like `lldb-dap`) not a _debugger_ (like `lldb` itself). The `args` setting overrides any arguments that Zed would otherwise pass to the adapter.
 
-```json
+```json [settings]
 {
   "dap": {
     "CodeLLDB": {

@@ -1,13 +1,13 @@
-use super::latest;
+use super::{latest, since_v0_6_0};
 use crate::wasm_host::WasmState;
 use anyhow::Result;
 use extension::WorktreeDelegate;
 use gpui::BackgroundExecutor;
-use semantic_version::SemanticVersion;
+use semver::Version;
 use std::sync::{Arc, OnceLock};
 use wasmtime::component::{Linker, Resource};
 
-pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 0, 4);
+pub const MIN_VERSION: Version = Version::new(0, 0, 4);
 
 wasmtime::component::bindgen!({
     async: true,
@@ -15,7 +15,7 @@ wasmtime::component::bindgen!({
     path: "../extension_api/wit/since_v0.0.4",
     with: {
          "worktree": ExtensionWorktree,
-         "zed:extension/github": latest::zed::extension::github,
+         "zed:extension/github": since_v0_6_0::zed::extension::github,
          "zed:extension/platform": latest::zed::extension::platform,
     },
 });
@@ -129,7 +129,7 @@ impl ExtensionImports for WasmState {
         repo: String,
         options: GithubReleaseOptions,
     ) -> wasmtime::Result<Result<GithubRelease, String>> {
-        latest::zed::extension::github::Host::latest_github_release(self, repo, options).await
+        since_v0_6_0::zed::extension::github::Host::latest_github_release(self, repo, options).await
     }
 
     async fn current_platform(&mut self) -> Result<(Os, Architecture)> {

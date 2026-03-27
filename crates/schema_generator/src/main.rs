@@ -1,7 +1,9 @@
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use schemars::schema_for;
-use theme::{IconThemeFamilyContent, ThemeFamilyContent};
+use settings::ProjectSettingsContent;
+use theme::IconThemeFamilyContent;
+use theme_settings::ThemeFamilyContent;
 
 #[derive(Parser, Debug)]
 pub struct Args {
@@ -14,6 +16,7 @@ pub struct Args {
 pub enum SchemaType {
     Theme,
     IconTheme,
+    Project,
 }
 
 fn main() -> Result<()> {
@@ -28,6 +31,10 @@ fn main() -> Result<()> {
         }
         SchemaType::IconTheme => {
             let schema = schema_for!(IconThemeFamilyContent);
+            println!("{}", serde_json::to_string_pretty(&schema)?);
+        }
+        SchemaType::Project => {
+            let schema = schema_for!(ProjectSettingsContent);
             println!("{}", serde_json::to_string_pretty(&schema)?);
         }
     }

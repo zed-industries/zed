@@ -32,14 +32,14 @@ impl RenderOnce for ExtensionCard {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         div().w_full().child(
             v_flex()
-                .w_full()
-                .h(rems(7.))
-                .p_3()
                 .mt_4()
+                .w_full()
+                .h(rems_from_px(110.))
+                .p_3()
                 .gap_2()
-                .bg(cx.theme().colors().elevated_surface_background)
+                .bg(cx.theme().colors().elevated_surface_background.opacity(0.5))
                 .border_1()
-                .border_color(cx.theme().colors().border)
+                .border_color(cx.theme().colors().border_variant)
                 .rounded_md()
                 .children(self.children)
                 .when(self.overridden_by_dev_extension, |card| {
@@ -51,7 +51,6 @@ impl RenderOnce for ExtensionCard {
                             .block_mouse_except_scroll()
                             .cursor_default()
                             .size_full()
-                            .items_center()
                             .justify_center()
                             .bg(cx.theme().colors().elevated_surface_background.alpha(0.8))
                             .child(Label::new("Overridden by dev extension.")),

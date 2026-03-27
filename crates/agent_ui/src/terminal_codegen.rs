@@ -1,35 +1,36 @@
 use crate::inline_prompt_editor::CodegenStatus;
-use client::telemetry::Telemetry;
 use futures::{SinkExt, StreamExt, channel::mpsc};
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task};
-use language_model::{
-    ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, report_assistant_event,
-};
-use std::{sync::Arc, time::Instant};
-use telemetry_events::{AssistantEventData, AssistantKind, AssistantPhase};
+use language_model::{ConfiguredModel, LanguageModelRegistry, LanguageModelRequest};
+use std::time::Instant;
 use terminal::Terminal;
+use uuid::Uuid;
 
 pub struct TerminalCodegen {
     pub status: CodegenStatus,
-    pub telemetry: Option<Arc<Telemetry>>,
     terminal: Entity<Terminal>,
     generation: Task<()>,
     pub message_id: Option<String>,
     transaction: Option<TerminalTransaction>,
+    session_id: Uuid,
 }
 
 impl EventEmitter<CodegenEvent> for TerminalCodegen {}
 
 impl TerminalCodegen {
-    pub fn new(terminal: Entity<Terminal>, telemetry: Option<Arc<Telemetry>>) -> Self {
+    pub fn new(terminal: Entity<Terminal>, session_id: Uuid) -> Self {
         Self {
             terminal,
-            telemetry,
             status: CodegenStatus::Idle,
             generation: Task::ready(()),
             message_id: None,
             transaction: None,
+            session_id,
         }
+    }
+
+    pub fn session_id(&self) -> Uuid {
+        self.session_id
     }
 
     pub fn start(&mut self, prompt_task: Task<LanguageModelRequest>, cx: &mut Context<Self>) {
@@ -39,15 +40,15 @@ impl TerminalCodegen {
             return;
         };
 
-        let model_api_key = model.api_key(cx);
-        let http_client = cx.http_client();
-        let telemetry = self.telemetry.clone();
+        let anthropic_reporter = language_model::AnthropicEventReporter::new(&model, cx);
+        let session_id = self.session_id;
+        let model_telemetry_id = model.telemetry_id();
+        let model_provider_id = model.provider_id().to_string();
+
         self.status = CodegenStatus::Pending;
         self.transaction = Some(TerminalTransaction::start(self.terminal.clone()));
         self.generation = cx.spawn(async move |this, cx| {
             let prompt = prompt_task.await;
-            let model_telemetry_id = model.telemetry_id();
-            let model_provider_id = model.provider_id();
             let response = model.stream_completion_text(prompt, cx).await;
             let generate = async {
                 let message_id = response
@@ -59,7 +60,7 @@ impl TerminalCodegen {
 
                 let task = cx.background_spawn({
                     let message_id = message_id.clone();
-                    let executor = cx.background_executor().clone();
+                    let anthropic_reporter = anthropic_reporter.clone();
                     async move {
                         let mut response_latency = None;
                         let request_start = Instant::now();
@@ -79,23 +80,26 @@ impl TerminalCodegen {
                         let result = task.await;
 
                         let error_message = result.as_ref().err().map(|error| error.to_string());
-                        report_assistant_event(
-                            AssistantEventData {
-                                conversation_id: None,
-                                kind: AssistantKind::InlineTerminal,
-                                message_id,
-                                phase: AssistantPhase::Response,
-                                model: model_telemetry_id,
-                                model_provider: model_provider_id.to_string(),
-                                response_latency,
-                                error_message,
-                                language_name: None,
-                            },
-                            telemetry,
-                            http_client,
-                            model_api_key,
-                            &executor,
+
+                        telemetry::event!(
+                            "Assistant Responded",
+                            session_id = session_id.to_string(),
+                            kind = "inline_terminal",
+                            phase = "response",
+                            model = model_telemetry_id,
+                            model_provider = model_provider_id,
+                            language_name = Option::<&str>::None,
+                            message_id = message_id,
+                            response_latency = response_latency,
+                            error_message = error_message,
                         );
+
+                        anthropic_reporter.report(language_model::AnthropicEventData {
+                            completion_type: language_model::AnthropicCompletionType::Terminal,
+                            event: language_model::AnthropicEventType::Response,
+                            language_name: None,
+                            message_id,
+                        });
 
                         result?;
                         anyhow::Ok(())
@@ -135,6 +139,12 @@ impl TerminalCodegen {
         cx.notify();
     }
 
+    pub fn completion(&self) -> Option<String> {
+        self.transaction
+            .as_ref()
+            .map(|transaction| transaction.completion.clone())
+    }
+
     pub fn stop(&mut self, cx: &mut Context<Self>) {
         self.status = CodegenStatus::Done;
         self.generation = Task::ready(());
@@ -167,27 +177,32 @@ pub const CLEAR_INPUT: &str = "\x03";
 const CARRIAGE_RETURN: &str = "\x0d";
 
 struct TerminalTransaction {
+    completion: String,
     terminal: Entity<Terminal>,
 }
 
 impl TerminalTransaction {
     pub fn start(terminal: Entity<Terminal>) -> Self {
-        Self { terminal }
+        Self {
+            completion: String::new(),
+            terminal,
+        }
     }
 
     pub fn push(&mut self, hunk: String, cx: &mut App) {
         // Ensure that the assistant cannot accidentally execute commands that are streamed into the terminal
         let input = Self::sanitize_input(hunk);
+        self.completion.push_str(&input);
         self.terminal
             .update(cx, |terminal, _| terminal.input(input.into_bytes()));
     }
 
-    pub fn undo(&self, cx: &mut App) {
+    pub fn undo(self, cx: &mut App) {
         self.terminal
             .update(cx, |terminal, _| terminal.input(CLEAR_INPUT.as_bytes()));
     }
 
-    pub fn complete(&self, cx: &mut App) {
+    pub fn complete(self, cx: &mut App) {
         self.terminal
             .update(cx, |terminal, _| terminal.input(CARRIAGE_RETURN.as_bytes()));
     }

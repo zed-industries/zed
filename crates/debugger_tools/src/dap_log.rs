@@ -28,7 +28,7 @@ use util::maybe;
 use workspace::{
     ToolbarItemEvent, ToolbarItemView, Workspace,
     item::Item,
-    searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
+    searchable::{Direction, SearchEvent, SearchToken, SearchableItem, SearchableItemHandle},
     ui::{Button, Clickable, ContextMenu, Label, LabelCommon, PopoverMenu, h_flex},
 };
 
@@ -155,7 +155,7 @@ impl LogStore {
                 if let Some(this) = this.upgrade() {
                     this.update(cx, |this, cx| {
                         this.add_debug_adapter_message(message, cx);
-                    })?;
+                    });
                 }
 
                 smol::future::yield_now().await;
@@ -170,7 +170,7 @@ impl LogStore {
                 if let Some(this) = this.upgrade() {
                     this.update(cx, |this, cx| {
                         this.add_debug_adapter_log(message, cx);
-                    })?;
+                    });
                 }
 
                 smol::future::yield_now().await;
@@ -902,10 +902,10 @@ impl DapLogView {
                             let language = language.await.ok();
                             buffer.update(cx, |buffer, cx| {
                                 buffer.set_language(language, cx);
-                            })
+                            });
                         }
                     })
-                    .detach_and_log_err(cx);
+                    .detach();
                 });
 
             self.editor = editor;
@@ -963,26 +963,21 @@ pub fn init(cx: &mut App) {
         };
 
         let project = workspace.project();
-        if project.read(cx).is_local() {
-            log_store.update(cx, |store, cx| {
-                store.add_project(project, cx);
-            });
-        }
+        log_store.update(cx, |store, cx| {
+            store.add_project(project, cx);
+        });
 
         let log_store = log_store.clone();
         workspace.register_action(move |workspace, _: &OpenDebugAdapterLogs, window, cx| {
-            let project = workspace.project().read(cx);
-            if project.is_local() {
-                workspace.add_item_to_active_pane(
-                    Box::new(cx.new(|cx| {
-                        DapLogView::new(workspace.project().clone(), log_store.clone(), window, cx)
-                    })),
-                    None,
-                    true,
-                    window,
-                    cx,
-                );
-            }
+            workspace.add_item_to_active_pane(
+                Box::new(cx.new(|cx| {
+                    DapLogView::new(workspace.project().clone(), log_store.clone(), window, cx)
+                })),
+                None,
+                true,
+                window,
+                cx,
+            );
         });
     })
     .detach();
@@ -991,7 +986,7 @@ pub fn init(cx: &mut App) {
 impl Item for DapLogView {
     type Event = EditorEvent;
 
-    fn to_item_events(event: &Self::Event, f: impl FnMut(workspace::item::ItemEvent)) {
+    fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(workspace::item::ItemEvent)) {
         Editor::to_item_events(event, f)
     }
 
@@ -1003,7 +998,11 @@ impl Item for DapLogView {
         None
     }
 
-    fn as_searchable(&self, handle: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(
+        &self,
+        handle: &Entity<Self>,
+        _: &App,
+    ) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(handle.clone()))
     }
 }
@@ -1018,11 +1017,14 @@ impl SearchableItem for DapLogView {
     fn update_matches(
         &mut self,
         matches: &[Self::Match],
+        active_match_index: Option<usize>,
+        token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editor
-            .update(cx, |e, cx| e.update_matches(matches, window, cx))
+        self.editor.update(cx, |e, cx| {
+            e.update_matches(matches, active_match_index, token, window, cx)
+        })
     }
 
     fn query_suggestion(&mut self, window: &mut Window, cx: &mut Context<Self>) -> String {
@@ -1034,21 +1036,24 @@ impl SearchableItem for DapLogView {
         &mut self,
         index: usize,
         matches: &[Self::Match],
+        token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editor
-            .update(cx, |e, cx| e.activate_match(index, matches, window, cx))
+        self.editor.update(cx, |e, cx| {
+            e.activate_match(index, matches, token, window, cx)
+        })
     }
 
     fn select_matches(
         &mut self,
         matches: &[Self::Match],
+        token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.editor
-            .update(cx, |e, cx| e.select_matches(matches, window, cx))
+            .update(cx, |e, cx| e.select_matches(matches, token, window, cx))
     }
 
     fn find_matches(
@@ -1065,6 +1070,7 @@ impl SearchableItem for DapLogView {
         &mut self,
         _: &Self::Match,
         _: &SearchQuery,
+        _token: SearchToken,
         _window: &mut Window,
         _: &mut Context<Self>,
     ) {
@@ -1086,11 +1092,12 @@ impl SearchableItem for DapLogView {
         &mut self,
         direction: Direction,
         matches: &[Self::Match],
+        token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<usize> {
         self.editor.update(cx, |e, cx| {
-            e.active_match_index(direction, matches, window, cx)
+            e.active_match_index(direction, matches, token, window, cx)
         })
     }
 }

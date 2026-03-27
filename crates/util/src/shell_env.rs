@@ -33,13 +33,14 @@ async fn capture_unix(
     directory: &Path,
 ) -> Result<collections::HashMap<String, String>> {
     use std::os::unix::process::CommandExt;
-    use std::process::Stdio;
 
-    let zed_path = super::get_shell_safe_zed_path()?;
-    let shell_kind = ShellKind::new(shell_path);
+    use crate::command::new_std_command;
+
+    let shell_kind = ShellKind::new(shell_path, false);
+    let zed_path = super::get_shell_safe_zed_path(shell_kind)?;
 
     let mut command_string = String::new();
-    let mut command = std::process::Command::new(shell_path);
+    let mut command = new_std_command(shell_path);
     command.args(args);
     // In some shells, file descriptors greater than 2 cannot be used in interactive mode,
     // so file descriptor 0 (stdin) is used instead. This impacts zsh, old bash; perhaps others.
@@ -54,11 +55,9 @@ async fn capture_unix(
         // xonsh doesn't support redirecting to stdin, and control sequences are printed to
         // stdout on startup
         ShellKind::Xonsh => (FD_STDERR, "o>e".to_string()),
+        ShellKind::PowerShell => (FD_STDIN, format!(">{}", FD_STDIN)),
         _ => (FD_STDIN, format!(">&{}", FD_STDIN)), // `>&0`
     };
-    command.stdin(Stdio::null());
-    command.stdout(Stdio::piped());
-    command.stderr(Stdio::piped());
 
     match shell_kind {
         ShellKind::Csh | ShellKind::Tcsh => {
@@ -74,13 +73,27 @@ async fn capture_unix(
             command.arg("-l");
         }
     }
+
+    match shell_kind {
+        // Nushell does not allow non-interactive login shells.
+        // Instead of doing "-l -i -c '<command>'"
+        // use "-l -e '<command>; exit'" instead
+        ShellKind::Nushell => command.arg("-e"),
+        _ => command.args(["-i", "-c"]),
+    };
+
     // cd into the directory, triggering directory specific side-effects (asdf, direnv, etc)
     command_string.push_str(&format!("cd '{}';", directory.display()));
     if let Some(prefix) = shell_kind.command_prefix() {
         command_string.push(prefix);
     }
     command_string.push_str(&format!("{} --printenv {}", zed_path, redir));
-    command.args(["-i", "-c", &command_string]);
+
+    if let ShellKind::Nushell = shell_kind {
+        command_string.push_str("; exit");
+    }
+
+    command.arg(&command_string);
 
     super::set_pre_exec_to_start_new_session(&mut command);
 
@@ -97,7 +110,9 @@ async fn capture_unix(
 
     // Parse the JSON output from zed --printenv
     let env_map: collections::HashMap<String, String> = serde_json::from_str(&env_output)
-        .with_context(|| "Failed to deserialize environment variables from json")?;
+        .with_context(|| {
+            format!("Failed to deserialize environment variables from json: {env_output}")
+        })?;
     Ok(env_map)
 }
 
@@ -107,7 +122,7 @@ async fn spawn_and_read_fd(
     child_fd: std::os::fd::RawFd,
 ) -> anyhow::Result<(Vec<u8>, std::process::Output)> {
     use command_fds::{CommandFdExt, FdMapping};
-    use std::io::Read;
+    use std::{io::Read, process::Stdio};
 
     let (mut reader, writer) = std::io::pipe()?;
 
@@ -116,7 +131,11 @@ async fn spawn_and_read_fd(
         child_fd,
     }])?;
 
-    let process = smol::process::Command::from(command).spawn()?;
+    let process = smol::process::Command::from(command)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
 
     let mut buffer = Vec::new();
     reader.read_to_end(&mut buffer)?;
@@ -127,7 +146,7 @@ async fn spawn_and_read_fd(
 #[cfg(windows)]
 async fn capture_windows(
     shell_path: &Path,
-    _args: &[String],
+    args: &[String],
     directory: &Path,
 ) -> Result<collections::HashMap<String, String>> {
     use std::process::Stdio;
@@ -135,98 +154,92 @@ async fn capture_windows(
     let zed_path =
         std::env::current_exe().context("Failed to determine current zed executable path.")?;
 
-    let shell_kind = ShellKind::new(shell_path);
-    let env_output = match shell_kind {
-        ShellKind::Posix
-        | ShellKind::Csh
+    let shell_kind = ShellKind::new(shell_path, true);
+    let directory_string = directory.display().to_string();
+    let zed_path_string = zed_path.display().to_string();
+    let quote_for_shell = |value: &str| {
+        shell_kind
+            .try_quote(value)
+            .map(|quoted| quoted.into_owned())
+            .unwrap_or_else(|| value.to_owned())
+    };
+    let mut cmd = crate::command::new_command(shell_path);
+    cmd.args(args);
+    let cmd = match shell_kind {
+        ShellKind::Csh
         | ShellKind::Tcsh
         | ShellKind::Rc
         | ShellKind::Fish
-        | ShellKind::Xonsh => {
-            return Err(anyhow::anyhow!("unsupported shell kind"));
+        | ShellKind::Xonsh
+        | ShellKind::Posix => {
+            let quoted_directory = quote_for_shell(&directory_string);
+            let quoted_zed_path = quote_for_shell(&zed_path_string);
+            cmd.args([
+                "-l",
+                "-i",
+                "-c",
+                &format!("cd {}; {} --printenv", quoted_directory, quoted_zed_path),
+            ])
         }
-        ShellKind::PowerShell => {
-            let output = crate::command::new_smol_command(shell_path)
-                .args([
-                    "-NonInteractive",
-                    "-NoProfile",
-                    "-Command",
-                    &format!(
-                        "Set-Location '{}'; & '{}' --printenv",
-                        directory.display(),
-                        zed_path.display()
-                    ),
-                ])
-                .stdin(Stdio::null())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .output()
-                .await?;
-
-            anyhow::ensure!(
-                output.status.success(),
-                "PowerShell command failed with {}. stdout: {:?}, stderr: {:?}",
-                output.status,
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr),
-            );
-            output
+        ShellKind::PowerShell | ShellKind::Pwsh => {
+            let quoted_directory = ShellKind::quote_pwsh(&directory_string);
+            let quoted_zed_path = ShellKind::quote_pwsh(&zed_path_string);
+            cmd.args([
+                "-NonInteractive",
+                "-NoProfile",
+                "-Command",
+                &format!(
+                    "Set-Location {}; & {} --printenv",
+                    quoted_directory, quoted_zed_path
+                ),
+            ])
+        }
+        ShellKind::Elvish => {
+            let quoted_directory = quote_for_shell(&directory_string);
+            let quoted_zed_path = quote_for_shell(&zed_path_string);
+            cmd.args([
+                "-c",
+                &format!("cd {}; {} --printenv", quoted_directory, quoted_zed_path),
+            ])
         }
         ShellKind::Nushell => {
-            let output = crate::command::new_smol_command(shell_path)
-                .args([
-                    "-c",
-                    &format!(
-                        "cd '{}'; {} --printenv",
-                        directory.display(),
-                        zed_path.display()
-                    ),
-                ])
-                .stdin(Stdio::null())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .output()
-                .await?;
-
-            anyhow::ensure!(
-                output.status.success(),
-                "Nushell command failed with {}. stdout: {:?}, stderr: {:?}",
-                output.status,
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr),
-            );
-            output
+            let quoted_directory = quote_for_shell(&directory_string);
+            let quoted_zed_path = quote_for_shell(&zed_path_string);
+            let zed_command = shell_kind
+                .prepend_command_prefix(&quoted_zed_path)
+                .into_owned();
+            cmd.args([
+                "-c",
+                &format!("cd {}; {} --printenv", quoted_directory, zed_command),
+            ])
         }
-        ShellKind::Cmd => {
-            let output = crate::command::new_smol_command(shell_path)
-                .args([
-                    "/c",
-                    &format!(
-                        "cd '{}'; {} --printenv",
-                        directory.display(),
-                        zed_path.display()
-                    ),
-                ])
-                .stdin(Stdio::null())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .output()
-                .await?;
-
-            anyhow::ensure!(
-                output.status.success(),
-                "Cmd command failed with {}. stdout: {:?}, stderr: {:?}",
-                output.status,
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr),
-            );
-            output
-        }
-    };
-
-    let env_output = String::from_utf8_lossy(&env_output.stdout);
+        ShellKind::Cmd => cmd.args([
+            "/c",
+            "cd",
+            &directory_string,
+            "&&",
+            &zed_path_string,
+            "--printenv",
+        ]),
+    }
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
+    let output = cmd
+        .output()
+        .await
+        .with_context(|| format!("command {cmd:?}"))?;
+    anyhow::ensure!(
+        output.status.success(),
+        "Command {cmd:?} failed with {}. stdout: {:?}, stderr: {:?}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let env_output = String::from_utf8_lossy(&output.stdout);
 
     // Parse the JSON output from zed --printenv
-    serde_json::from_str(&env_output)
-        .with_context(|| "Failed to deserialize environment variables from json")
+    serde_json::from_str(&env_output).with_context(|| {
+        format!("Failed to deserialize environment variables from json: {env_output}")
+    })
 }

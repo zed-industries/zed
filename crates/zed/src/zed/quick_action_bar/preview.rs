@@ -1,3 +1,8 @@
+use csv_preview::{
+    CsvPreviewView, OpenPreview as CsvOpenPreview, OpenPreviewToTheSide as CsvOpenPreviewToTheSide,
+    TabularDataPreviewFeatureFlag,
+};
+use feature_flags::FeatureFlagAppExt as _;
 use gpui::{AnyElement, Modifiers, WeakEntity};
 use markdown_preview::{
     OpenPreview as MarkdownOpenPreview, OpenPreviewToTheSide as MarkdownOpenPreviewToTheSide,
@@ -16,6 +21,7 @@ use super::QuickActionBar;
 enum PreviewType {
     Markdown,
     Svg,
+    Csv,
 }
 
 impl QuickActionBar {
@@ -32,9 +38,13 @@ impl QuickActionBar {
                     .is_some()
                 {
                     preview_type = Some(PreviewType::Markdown);
-                } else if SvgPreviewView::resolve_active_item_as_svg_editor(workspace, cx).is_some()
+                } else if SvgPreviewView::resolve_active_item_as_svg_buffer(workspace, cx).is_some()
                 {
                     preview_type = Some(PreviewType::Svg);
+                } else if cx.has_flag::<TabularDataPreviewFeatureFlag>()
+                    && CsvPreviewView::resolve_active_item_as_csv_editor(workspace, cx).is_some()
+                {
+                    preview_type = Some(PreviewType::Csv);
                 }
             });
         }
@@ -57,6 +67,13 @@ impl QuickActionBar {
                     Box::new(SvgOpenPreviewToTheSide) as Box<dyn gpui::Action>,
                     &svg_preview::OpenPreview as &dyn gpui::Action,
                 ),
+                PreviewType::Csv => (
+                    "toggle-csv-preview",
+                    "Preview CSV",
+                    Box::new(CsvOpenPreview) as Box<dyn gpui::Action>,
+                    Box::new(CsvOpenPreviewToTheSide) as Box<dyn gpui::Action>,
+                    &csv_preview::OpenPreview as &dyn gpui::Action,
+                ),
             };
 
         let alt_click = gpui::Keystroke {
@@ -68,7 +85,7 @@ impl QuickActionBar {
         let button = IconButton::new(button_id, IconName::Eye)
             .icon_size(IconSize::Small)
             .style(ButtonStyle::Subtle)
-            .tooltip(move |window, cx| {
+            .tooltip(move |_window, cx| {
                 Tooltip::with_meta(
                     tooltip_text,
                     Some(open_action_for_tooltip),
@@ -76,7 +93,6 @@ impl QuickActionBar {
                         "{} to open in a split",
                         text_for_keystroke(&alt_click.modifiers, &alt_click.key, cx)
                     ),
-                    window,
                     cx,
                 )
             })

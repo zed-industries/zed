@@ -23,7 +23,7 @@ pub(super) struct Socks5Authorization<'a> {
 
 /// Socks Proxy Protocol Version
 ///
-/// V4 allows idenfication using a user_id
+/// V4 allows identification using a user_id
 /// V5 allows authorization using a username and password
 pub(super) enum SocksVersion<'a> {
     V4 {

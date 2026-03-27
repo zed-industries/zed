@@ -5,8 +5,8 @@ use editor::Editor;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, AnyElement, App, AppContext as _, Context, DismissEvent, Entity, EventEmitter,
-    Focusable, InteractiveElement, ParentElement, Render, SharedString, Styled, Subscription, Task,
-    WeakEntity, Window, rems,
+    Focusable, InteractiveElement, ParentElement, Render, Styled, Subscription, Task, WeakEntity,
+    Window, rems,
 };
 use itertools::Itertools;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
@@ -124,7 +124,7 @@ impl TasksModalDelegate {
 
 pub struct TasksModal {
     pub picker: Entity<Picker<TasksModalDelegate>>,
-    _subscription: [Subscription; 2],
+    _subscriptions: [Subscription; 2],
 }
 
 impl TasksModal {
@@ -139,13 +139,18 @@ impl TasksModal {
     ) -> Self {
         let picker = cx.new(|cx| {
             Picker::uniform_list(
-                TasksModalDelegate::new(task_store, task_contexts, task_overrides, workspace),
+                TasksModalDelegate::new(
+                    task_store.clone(),
+                    task_contexts,
+                    task_overrides,
+                    workspace.clone(),
+                ),
                 window,
                 cx,
             )
             .modal(is_modal)
         });
-        let _subscription = [
+        let mut _subscriptions = [
             cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| {
                 cx.emit(DismissEvent);
             }),
@@ -155,9 +160,10 @@ impl TasksModal {
                 });
             }),
         ];
+
         Self {
             picker,
-            _subscription,
+            _subscriptions,
         }
     }
 
@@ -178,23 +184,11 @@ impl TasksModal {
         };
         let mut new_candidates = used_tasks;
         new_candidates.extend(lsp_tasks);
-        let hide_vscode = current_resolved_tasks.iter().any(|(kind, _)| match kind {
-            TaskSourceKind::Worktree {
-                id: _,
-                directory_in_worktree: dir,
-                id_base: _,
-            } => dir.file_name().is_some_and(|name| name == ".zed"),
-            _ => false,
-        });
         // todo(debugger): We're always adding lsp tasks here even if prefer_lsp is false
         // We should move the filter to new_candidates instead of on current
         // and add a test for this
         new_candidates.extend(current_resolved_tasks.into_iter().filter(|(task_kind, _)| {
             match task_kind {
-                TaskSourceKind::Worktree {
-                    directory_in_worktree: dir,
-                    ..
-                } => !(hide_vscode && dir.file_name().is_some_and(|name| name == ".vscode")),
                 TaskSourceKind::Language { .. } => add_current_language_tasks,
                 _ => true,
             }
@@ -448,11 +442,12 @@ impl PickerDelegate for TasksModalDelegate {
         let template = resolved_task.original_task();
         let display_label = resolved_task.display_label();
 
-        let mut tooltip_label_text = if display_label != &template.label {
-            resolved_task.resolved_label.clone()
-        } else {
-            String::new()
-        };
+        let mut tooltip_label_text =
+            if display_label != &template.label || source_kind == &TaskSourceKind::UserInput {
+                resolved_task.resolved_label.clone()
+            } else {
+                String::new()
+            };
 
         if resolved_task.resolved.command_label != resolved_task.resolved_label {
             if !tooltip_label_text.trim().is_empty() {
@@ -525,7 +520,7 @@ impl PickerDelegate for TasksModalDelegate {
         };
 
         Some(
-            ListItem::new(SharedString::from(format!("tasks-modal-{ix}")))
+            ListItem::new(format!("tasks-modal-{ix}"))
                 .inset(true)
                 .start_slot::<IconWithIndicator>(icon)
                 .end_slot::<AnyElement>(
@@ -664,10 +659,10 @@ impl PickerDelegate for TasksModalDelegate {
                 .child(
                     left_button
                         .map(|(label, action)| {
-                            let keybind = KeyBinding::for_action(&*action, window, cx);
+                            let keybind = KeyBinding::for_action(&*action, cx);
 
                             Button::new("edit-current-task", label)
-                                .when_some(keybind, |this, keybind| this.key_binding(keybind))
+                                .key_binding(keybind)
                                 .on_click(move |_, window, cx| {
                                     window.dispatch_action(action.boxed_clone(), cx);
                                 })
@@ -682,7 +677,7 @@ impl PickerDelegate for TasksModalDelegate {
                             secondary: current_modifiers.secondary(),
                         }
                         .boxed_clone();
-                        this.children(KeyBinding::for_action(&*action, window, cx).map(|keybind| {
+                        this.child({
                             let spawn_oneshot_label = if current_modifiers.secondary() {
                                 "Spawn Oneshot Without History"
                             } else {
@@ -690,44 +685,35 @@ impl PickerDelegate for TasksModalDelegate {
                             };
 
                             Button::new("spawn-onehshot", spawn_oneshot_label)
-                                .key_binding(keybind)
+                                .key_binding(KeyBinding::for_action(&*action, cx))
                                 .on_click(move |_, window, cx| {
                                     window.dispatch_action(action.boxed_clone(), cx)
                                 })
-                        }))
+                        })
                     } else if current_modifiers.secondary() {
-                        this.children(
-                            KeyBinding::for_action(&menu::SecondaryConfirm, window, cx).map(
-                                |keybind| {
-                                    let label = if is_recent_selected {
-                                        "Rerun Without History"
-                                    } else {
-                                        "Spawn Without History"
-                                    };
-                                    Button::new("spawn", label).key_binding(keybind).on_click(
-                                        move |_, window, cx| {
-                                            window.dispatch_action(
-                                                menu::SecondaryConfirm.boxed_clone(),
-                                                cx,
-                                            )
-                                        },
-                                    )
-                                },
-                            ),
-                        )
+                        this.child({
+                            let label = if is_recent_selected {
+                                "Rerun Without History"
+                            } else {
+                                "Spawn Without History"
+                            };
+                            Button::new("spawn", label)
+                                .key_binding(KeyBinding::for_action(&menu::SecondaryConfirm, cx))
+                                .on_click(move |_, window, cx| {
+                                    window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx)
+                                })
+                        })
                     } else {
-                        this.children(KeyBinding::for_action(&menu::Confirm, window, cx).map(
-                            |keybind| {
-                                let run_entry_label =
-                                    if is_recent_selected { "Rerun" } else { "Spawn" };
+                        this.child({
+                            let run_entry_label =
+                                if is_recent_selected { "Rerun" } else { "Spawn" };
 
-                                Button::new("spawn", run_entry_label)
-                                    .key_binding(keybind)
-                                    .on_click(|_, window, cx| {
-                                        window.dispatch_action(menu::Confirm.boxed_clone(), cx);
-                                    })
-                            },
-                        ))
+                            Button::new("spawn", run_entry_label)
+                                .key_binding(KeyBinding::for_action(&menu::Confirm, cx))
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(menu::Confirm.boxed_clone(), cx);
+                                })
+                        })
                     }
                 })
                 .into_any_element(),
@@ -756,7 +742,7 @@ mod tests {
     use serde_json::json;
     use task::TaskTemplates;
     use util::path;
-    use workspace::{CloseInactiveTabsAndPanes, OpenOptions, OpenVisible};
+    use workspace::{CloseInactiveTabsAndPanes, MultiWorkspace, OpenOptions, OpenVisible};
 
     use crate::{modal::Spawn, tests::init_test};
 
@@ -789,8 +775,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let tasks_picker = open_spawn_tasks(&workspace, cx);
         assert_eq!(
@@ -962,8 +949,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let tasks_picker = open_spawn_tasks(&workspace, cx);
         assert_eq!(
@@ -1117,8 +1105,9 @@ mod tests {
                 ))),
             ));
         });
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let _ts_file_1 = workspace
             .update_in(cx, |workspace, window, cx| {

@@ -1,3 +1,4 @@
+use agent_settings::AgentSettings;
 use collections::{HashMap, HashSet};
 use editor::{
     ConflictsOurs, ConflictsOursMarker, ConflictsOuter, ConflictsTheirs, ConflictsTheirsMarker,
@@ -5,14 +6,22 @@ use editor::{
     display_map::{BlockContext, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
 };
 use gpui::{
-    App, Context, Entity, InteractiveElement as _, ParentElement as _, Subscription, Task,
-    WeakEntity,
+    App, Context, DismissEvent, Entity, InteractiveElement as _, ParentElement as _, Subscription,
+    Task, WeakEntity,
 };
 use language::{Anchor, Buffer, BufferId};
-use project::{ConflictRegion, ConflictSet, ConflictSetUpdate, ProjectItem as _};
-use std::{ops::Range, sync::Arc};
-use ui::{ActiveTheme, Element as _, Styled, Window, prelude::*};
+use project::{
+    ConflictRegion, ConflictSet, ConflictSetUpdate, Project, ProjectItem as _,
+    git_store::{GitStoreEvent, RepositoryEvent},
+};
+use settings::Settings;
+use std::{cell::RefCell, ops::Range, rc::Rc, sync::Arc};
+use ui::{ActiveTheme, Divider, Element as _, Styled, Window, prelude::*};
 use util::{ResultExt as _, debug_panic, maybe};
+use workspace::{Workspace, notifications::simple_message_notification::MessageNotification};
+use zed_actions::agent::{
+    ConflictContent, ResolveConflictedFilesWithAgent, ResolveConflictsWithAgent,
+};
 
 pub(crate) struct ConflictAddon {
     buffers: HashMap<BufferId, BufferConflicts>,
@@ -47,6 +56,7 @@ pub fn register_editor(editor: &mut Editor, buffer: Entity<MultiBuffer>, cx: &mu
     if !editor.mode().is_full()
         || (!editor.buffer().read(cx).is_singleton()
             && !editor.buffer().read(cx).all_diff_hunks_expanded())
+        || editor.read_only(cx)
     {
         return;
     }
@@ -111,6 +121,7 @@ fn excerpt_for_buffer_updated(
     );
 }
 
+#[ztracing::instrument(skip_all)]
 fn buffer_added(editor: &mut Editor, buffer: Entity<Buffer>, cx: &mut Context<Editor>) {
     let Some(project) = editor.project() else {
         return;
@@ -166,6 +177,7 @@ fn buffers_removed(editor: &mut Editor, removed_buffer_ids: &[BufferId], cx: &mu
     editor.remove_blocks(removed_block_ids, None, cx);
 }
 
+#[ztracing::instrument(skip_all)]
 fn conflicts_updated(
     editor: &mut Editor,
     conflict_set: Entity<ConflictSet>,
@@ -179,7 +191,7 @@ fn conflicts_updated(
     let excerpts = multibuffer.excerpts_for_buffer(buffer_id, cx);
     let Some(buffer_snapshot) = excerpts
         .first()
-        .and_then(|(excerpt_id, _)| snapshot.buffer_for_excerpt(*excerpt_id))
+        .and_then(|(excerpt_id, _, _)| snapshot.buffer_for_excerpt(*excerpt_id))
     else {
         return;
     };
@@ -218,7 +230,7 @@ fn conflicts_updated(
         let mut removed_highlighted_ranges = Vec::new();
         let mut removed_block_ids = HashSet::default();
         for (conflict_range, block_id) in old_conflicts {
-            let Some((excerpt_id, _)) = excerpts.iter().find(|(_, range)| {
+            let Some((excerpt_id, _, _)) = excerpts.iter().find(|(_, _, range)| {
                 let precedes_start = range
                     .context
                     .start
@@ -234,11 +246,7 @@ fn conflicts_updated(
                 continue;
             };
             let excerpt_id = *excerpt_id;
-            let Some(range) = snapshot
-                .anchor_in_excerpt(excerpt_id, conflict_range.start)
-                .zip(snapshot.anchor_in_excerpt(excerpt_id, conflict_range.end))
-                .map(|(start, end)| start..end)
-            else {
+            let Some(range) = snapshot.anchor_range_in_excerpt(excerpt_id, conflict_range) else {
                 continue;
             };
             removed_highlighted_ranges.push(range.clone());
@@ -264,7 +272,7 @@ fn conflicts_updated(
     let new_conflicts = &conflict_set.conflicts[event.new_range.clone()];
     let mut blocks = Vec::new();
     for conflict in new_conflicts {
-        let Some((excerpt_id, _)) = excerpts.iter().find(|(_, range)| {
+        let Some((excerpt_id, _, _)) = excerpts.iter().find(|(_, _, range)| {
             let precedes_start = range
                 .context
                 .start
@@ -291,7 +299,7 @@ fn conflicts_updated(
         blocks.push(BlockProperties {
             placement: BlockPlacement::Above(anchor),
             height: Some(1),
-            style: BlockStyle::Fixed,
+            style: BlockStyle::Sticky,
             render: Arc::new({
                 let conflict = conflict.clone();
                 move |cx| render_conflict_buttons(&conflict, excerpt_id, editor_handle.clone(), cx)
@@ -315,33 +323,19 @@ fn conflicts_updated(
     }
 }
 
+#[ztracing::instrument(skip_all)]
 fn update_conflict_highlighting(
     editor: &mut Editor,
     conflict: &ConflictRegion,
     buffer: &editor::MultiBufferSnapshot,
     excerpt_id: editor::ExcerptId,
     cx: &mut Context<Editor>,
-) {
+) -> Option<()> {
     log::debug!("update conflict highlighting for {conflict:?}");
 
-    let outer_start = buffer
-        .anchor_in_excerpt(excerpt_id, conflict.range.start)
-        .unwrap();
-    let outer_end = buffer
-        .anchor_in_excerpt(excerpt_id, conflict.range.end)
-        .unwrap();
-    let our_start = buffer
-        .anchor_in_excerpt(excerpt_id, conflict.ours.start)
-        .unwrap();
-    let our_end = buffer
-        .anchor_in_excerpt(excerpt_id, conflict.ours.end)
-        .unwrap();
-    let their_start = buffer
-        .anchor_in_excerpt(excerpt_id, conflict.theirs.start)
-        .unwrap();
-    let their_end = buffer
-        .anchor_in_excerpt(excerpt_id, conflict.theirs.end)
-        .unwrap();
+    let outer = buffer.anchor_range_in_excerpt(excerpt_id, conflict.range.clone())?;
+    let ours = buffer.anchor_range_in_excerpt(excerpt_id, conflict.ours.clone())?;
+    let theirs = buffer.anchor_range_in_excerpt(excerpt_id, conflict.theirs.clone())?;
 
     let ours_background = cx.theme().colors().version_control_conflict_marker_ours;
     let theirs_background = cx.theme().colors().version_control_conflict_marker_theirs;
@@ -352,32 +346,29 @@ fn update_conflict_highlighting(
     };
 
     editor.insert_gutter_highlight::<ConflictsOuter>(
-        outer_start..their_end,
+        outer.start..theirs.end,
         |cx| cx.theme().colors().editor_background,
         cx,
     );
 
     // Prevent diff hunk highlighting within the entire conflict region.
-    editor.highlight_rows::<ConflictsOuter>(outer_start..outer_end, theirs_background, options, cx);
-    editor.highlight_rows::<ConflictsOurs>(our_start..our_end, ours_background, options, cx);
+    editor.highlight_rows::<ConflictsOuter>(outer.clone(), theirs_background, options, cx);
+    editor.highlight_rows::<ConflictsOurs>(ours.clone(), ours_background, options, cx);
     editor.highlight_rows::<ConflictsOursMarker>(
-        outer_start..our_start,
+        outer.start..ours.start,
         ours_background,
         options,
         cx,
     );
-    editor.highlight_rows::<ConflictsTheirs>(
-        their_start..their_end,
-        theirs_background,
-        options,
-        cx,
-    );
+    editor.highlight_rows::<ConflictsTheirs>(theirs.clone(), theirs_background, options, cx);
     editor.highlight_rows::<ConflictsTheirsMarker>(
-        their_end..outer_end,
+        theirs.end..outer.end,
         theirs_background,
         options,
         cx,
     );
+
+    Some(())
 }
 
 fn render_conflict_buttons(
@@ -386,15 +377,16 @@ fn render_conflict_buttons(
     editor: WeakEntity<Editor>,
     cx: &mut BlockContext,
 ) -> AnyElement {
+    let is_ai_enabled = AgentSettings::get_global(cx).enabled(cx);
+
     h_flex()
         .id(cx.block_id)
         .h(cx.line_height)
         .ml(cx.margins.gutter.width)
-        .items_end()
         .gap_1()
         .bg(cx.theme().colors().editor_background)
         .child(
-            Button::new("head", "Use HEAD")
+            Button::new("head", format!("Use {}", conflict.ours_branch_name))
                 .label_size(LabelSize::Small)
                 .on_click({
                     let editor = editor.clone();
@@ -414,7 +406,7 @@ fn render_conflict_buttons(
                 }),
         )
         .child(
-            Button::new("origin", "Use Origin")
+            Button::new("origin", format!("Use {}", conflict.theirs_branch_name))
                 .label_size(LabelSize::Small)
                 .on_click({
                     let editor = editor.clone();
@@ -437,6 +429,7 @@ fn render_conflict_buttons(
             Button::new("both", "Use Both")
                 .label_size(LabelSize::Small)
                 .on_click({
+                    let editor = editor.clone();
                     let conflict = conflict.clone();
                     let ours = conflict.ours.clone();
                     let theirs = conflict.theirs.clone();
@@ -453,7 +446,145 @@ fn render_conflict_buttons(
                     }
                 }),
         )
+        .when(is_ai_enabled, |this| {
+            this.child(Divider::vertical()).child(
+                Button::new("resolve-with-agent", "Resolve with Agent")
+                    .label_size(LabelSize::Small)
+                    .start_icon(
+                        Icon::new(IconName::ZedAssistant)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .on_click({
+                        let conflict = conflict.clone();
+                        move |_, window, cx| {
+                            let content = editor
+                                .update(cx, |editor, cx| {
+                                    let multibuffer = editor.buffer().read(cx);
+                                    let buffer_id = conflict.ours.end.buffer_id?;
+                                    let buffer = multibuffer.buffer(buffer_id)?;
+                                    let buffer_read = buffer.read(cx);
+                                    let snapshot = buffer_read.snapshot();
+                                    let conflict_text = snapshot
+                                        .text_for_range(conflict.range.clone())
+                                        .collect::<String>();
+                                    let file_path = buffer_read
+                                        .file()
+                                        .and_then(|file| file.as_local())
+                                        .map(|f| f.abs_path(cx).to_string_lossy().to_string())
+                                        .unwrap_or_default();
+                                    Some(ConflictContent {
+                                        file_path,
+                                        conflict_text,
+                                        ours_branch_name: conflict.ours_branch_name.to_string(),
+                                        theirs_branch_name: conflict.theirs_branch_name.to_string(),
+                                    })
+                                })
+                                .ok()
+                                .flatten();
+                            if let Some(content) = content {
+                                window.dispatch_action(
+                                    Box::new(ResolveConflictsWithAgent {
+                                        conflicts: vec![content],
+                                    }),
+                                    cx,
+                                );
+                            }
+                        }
+                    }),
+            )
+        })
         .into_any()
+}
+
+fn collect_conflicted_file_paths(project: &Project, cx: &App) -> Vec<String> {
+    let git_store = project.git_store().read(cx);
+    let mut paths = Vec::new();
+
+    for repo in git_store.repositories().values() {
+        let snapshot = repo.read(cx).snapshot();
+        for (repo_path, _) in snapshot.merge.merge_heads_by_conflicted_path.iter() {
+            if let Some(project_path) = repo.read(cx).repo_path_to_project_path(repo_path, cx) {
+                paths.push(
+                    project_path
+                        .path
+                        .as_std_path()
+                        .to_string_lossy()
+                        .to_string(),
+                );
+            }
+        }
+    }
+
+    paths
+}
+
+pub(crate) fn register_conflict_notification(
+    workspace: &mut Workspace,
+    cx: &mut Context<Workspace>,
+) {
+    let git_store = workspace.project().read(cx).git_store().clone();
+
+    let last_shown_paths: Rc<RefCell<HashSet<String>>> = Rc::new(RefCell::new(HashSet::default()));
+
+    cx.subscribe(&git_store, move |workspace, _git_store, event, cx| {
+        let conflicts_changed = matches!(
+            event,
+            GitStoreEvent::ConflictsUpdated
+                | GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::StatusesChanged, _)
+        );
+        if !AgentSettings::get_global(cx).enabled(cx) || !conflicts_changed {
+            return;
+        }
+        let project = workspace.project().read(cx);
+        if project.is_via_collab() {
+            return;
+        }
+
+        if workspace.is_notification_suppressed(workspace::merge_conflict_notification_id()) {
+            return;
+        }
+
+        let paths = collect_conflicted_file_paths(project, cx);
+        let notification_id = workspace::merge_conflict_notification_id();
+        let current_paths_set: HashSet<String> = paths.iter().cloned().collect();
+
+        if paths.is_empty() {
+            last_shown_paths.borrow_mut().clear();
+            workspace.dismiss_notification(&notification_id, cx);
+        } else if *last_shown_paths.borrow() != current_paths_set {
+            // Only show the notification if the set of conflicted paths has changed.
+            // This prevents re-showing after the user dismisses it while working on the same conflicts.
+            *last_shown_paths.borrow_mut() = current_paths_set;
+            let file_count = paths.len();
+            workspace.show_notification(notification_id, cx, |cx| {
+                cx.new(|cx| {
+                    let message = format!(
+                        "{file_count} file{} have unresolved merge conflicts",
+                        if file_count == 1 { "" } else { "s" }
+                    );
+
+                    MessageNotification::new(message, cx)
+                        .primary_message("Resolve with Agent")
+                        .primary_icon(IconName::ZedAssistant)
+                        .primary_icon_color(Color::Muted)
+                        .primary_on_click({
+                            let paths = paths.clone();
+                            move |window, cx| {
+                                window.dispatch_action(
+                                    Box::new(ResolveConflictedFilesWithAgent {
+                                        conflicted_file_paths: paths.clone(),
+                                    }),
+                                    cx,
+                                );
+                                cx.emit(DismissEvent);
+                            }
+                        })
+                })
+            });
+        }
+    })
+    .detach();
 }
 
 pub(crate) fn resolve_conflict(
@@ -488,20 +619,16 @@ pub(crate) fn resolve_conflict(
                     })
                     .ok()?;
                 let &(_, block_id) = &state.block_ids[ix];
-                let start = snapshot
-                    .anchor_in_excerpt(excerpt_id, resolved_conflict.range.start)
-                    .unwrap();
-                let end = snapshot
-                    .anchor_in_excerpt(excerpt_id, resolved_conflict.range.end)
-                    .unwrap();
+                let range =
+                    snapshot.anchor_range_in_excerpt(excerpt_id, resolved_conflict.range)?;
 
-                editor.remove_gutter_highlights::<ConflictsOuter>(vec![start..end], cx);
+                editor.remove_gutter_highlights::<ConflictsOuter>(vec![range.clone()], cx);
 
-                editor.remove_highlighted_rows::<ConflictsOuter>(vec![start..end], cx);
-                editor.remove_highlighted_rows::<ConflictsOurs>(vec![start..end], cx);
-                editor.remove_highlighted_rows::<ConflictsTheirs>(vec![start..end], cx);
-                editor.remove_highlighted_rows::<ConflictsOursMarker>(vec![start..end], cx);
-                editor.remove_highlighted_rows::<ConflictsTheirsMarker>(vec![start..end], cx);
+                editor.remove_highlighted_rows::<ConflictsOuter>(vec![range.clone()], cx);
+                editor.remove_highlighted_rows::<ConflictsOurs>(vec![range.clone()], cx);
+                editor.remove_highlighted_rows::<ConflictsTheirs>(vec![range.clone()], cx);
+                editor.remove_highlighted_rows::<ConflictsOursMarker>(vec![range.clone()], cx);
+                editor.remove_highlighted_rows::<ConflictsTheirsMarker>(vec![range], cx);
                 editor.remove_blocks(HashSet::from_iter([block_id]), None, cx);
                 Some((workspace, project, multibuffer, buffer))
             })
@@ -510,24 +637,16 @@ pub(crate) fn resolve_conflict(
         else {
             return;
         };
-        let Some(save) = project
-            .update(cx, |project, cx| {
-                if multibuffer.read(cx).all_diff_hunks_expanded() {
-                    project.save_buffer(buffer.clone(), cx)
-                } else {
-                    Task::ready(Ok(()))
-                }
-            })
-            .ok()
-        else {
-            return;
-        };
+        let save = project.update(cx, |project, cx| {
+            if multibuffer.read(cx).all_diff_hunks_expanded() {
+                project.save_buffer(buffer.clone(), cx)
+            } else {
+                Task::ready(Ok(()))
+            }
+        });
         if save.await.log_err().is_none() {
             let open_path = maybe!({
-                let path = buffer
-                    .read_with(cx, |buffer, cx| buffer.project_path(cx))
-                    .ok()
-                    .flatten()?;
+                let path = buffer.read_with(cx, |buffer, cx| buffer.project_path(cx))?;
                 workspace
                     .update_in(cx, |workspace, window, cx| {
                         workspace.open_path_preview(path, None, false, false, false, window, cx)

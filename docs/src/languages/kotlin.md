@@ -1,3 +1,8 @@
+---
+title: Kotlin
+description: "Configure Kotlin language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Kotlin
 
 Kotlin language support in Zed is provided by the community-maintained [Kotlin extension](https://github.com/zed-extensions/kotlin).
@@ -5,6 +10,7 @@ Report issues to: [https://github.com/zed-extensions/kotlin/issues](https://gith
 
 - Tree-sitter: [fwcd/tree-sitter-kotlin](https://github.com/fwcd/tree-sitter-kotlin)
 - Language Server: [fwcd/kotlin-language-server](https://github.com/fwcd/kotlin-language-server)
+- Alternate Language Server: [kotlin/kotlin-lsp](https://github.com/kotlin/kotlin-lsp)
 
 ## Configuration
 
@@ -20,7 +26,7 @@ under `class Configuration` and initialization_options under `class Initializati
 The following example changes the JVM target from `default` (which is 1.8) to
 `17`:
 
-```json
+```json [settings]
 {
   "lsp": {
     "kotlin-language-server": {
@@ -40,7 +46,7 @@ The following example changes the JVM target from `default` (which is 1.8) to
 
 To use a specific java installation, just specify the `JAVA_HOME` environment variable with:
 
-```json
+```json [settings]
 {
   "lsp": {
     "kotlin-language-server": {

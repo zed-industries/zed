@@ -1,7 +1,6 @@
-pub use crate::welcome::ShowWelcome;
-use crate::{multibuffer_hint::MultibufferHint, welcome::WelcomePage};
+use crate::multibuffer_hint::MultibufferHint;
 use client::{Client, UserStore, zed_urls};
-use db::kvp::KEY_VALUE_STORE;
+use db::kvp::KeyValueStore;
 use fs::Fs;
 use gpui::{
     Action, AnyElement, App, AppContext, AsyncWindowContext, Context, Entity, EventEmitter,
@@ -14,10 +13,11 @@ use serde::Deserialize;
 use settings::{SettingsStore, VsCodeSettingsSource};
 use std::sync::Arc;
 use ui::{
-    KeyBinding, ParentElement as _, StatefulInteractiveElement, Vector, VectorName,
+    Divider, KeyBinding, ParentElement as _, StatefulInteractiveElement, Vector, VectorName,
     WithScrollbar as _, prelude::*, rems_from_px,
 };
-pub use ui_input::font_picker;
+pub use workspace::welcome::ShowWelcome;
+use workspace::welcome::WelcomePage;
 use workspace::{
     AppState, Workspace, WorkspaceId,
     dock::DockPosition,
@@ -25,12 +25,12 @@ use workspace::{
     notifications::NotifyResultExt as _,
     open_new, register_serializable_item, with_active_or_new_workspace,
 };
+use zed_actions::OpenOnboarding;
 
 mod base_keymap_picker;
 mod basics_page;
 pub mod multibuffer_hint;
 mod theme_preview;
-mod welcome;
 
 /// Imports settings from Visual Studio Code.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Deserialize, JsonSchema, Action)]
@@ -52,14 +52,6 @@ pub struct ImportCursorSettings {
 
 pub const FIRST_OPEN: &str = "first_open";
 pub const DOCS_URL: &str = "https://zed.dev/docs/";
-
-actions!(
-    zed,
-    [
-        /// Opens the onboarding view.
-        OpenOnboarding
-    ]
-);
 
 actions!(
     onboarding,
@@ -122,7 +114,8 @@ pub fn init(cx: &mut App) {
                     if let Some(existing) = existing {
                         workspace.activate_item(&existing, true, true, window, cx);
                     } else {
-                        let settings_page = WelcomePage::new(window, cx);
+                        let settings_page = cx
+                            .new(|cx| WelcomePage::new(workspace.weak_handle(), false, window, cx));
                         workspace.add_item_to_active_pane(
                             Box::new(settings_page),
                             None,
@@ -197,12 +190,14 @@ pub fn show_onboarding_view(app_state: Arc<AppState>, cx: &mut App) -> Task<anyh
                 let onboarding_page = Onboarding::new(workspace, cx);
                 workspace.add_item_to_center(Box::new(onboarding_page.clone()), window, cx);
 
-                window.focus(&onboarding_page.focus_handle(cx));
+                window.focus(&onboarding_page.focus_handle(cx), cx);
 
                 cx.notify();
             };
-            db::write_and_log(cx, || {
-                KEY_VALUE_STORE.write_kvp(FIRST_OPEN.to_string(), "false".to_string())
+            let kvp = KeyValueStore::global(cx);
+            db::write_and_log(cx, move || async move {
+                kvp.write_kvp(FIRST_OPEN.to_string(), "false".to_string())
+                    .await
             });
         },
     )
@@ -245,15 +240,16 @@ impl Onboarding {
         go_to_welcome_page(cx);
     }
 
-    fn handle_sign_in(_: &SignIn, window: &mut Window, cx: &mut App) {
+    fn handle_sign_in(&mut self, _: &SignIn, window: &mut Window, cx: &mut Context<Self>) {
         let client = Client::global(cx);
+        let workspace = self.workspace.clone();
 
         window
-            .spawn(cx, async move |cx| {
+            .spawn(cx, async move |mut cx| {
                 client
-                    .sign_in_with_optional_connect(true, cx)
+                    .sign_in_with_optional_connect(true, &cx)
                     .await
-                    .notify_async_err(cx);
+                    .notify_workspace_async_err(workspace, &mut cx);
             })
             .detach();
     }
@@ -281,79 +277,77 @@ impl Render for Onboarding {
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .on_action(Self::on_finish)
-            .on_action(Self::handle_sign_in)
+            .on_action(cx.listener(Self::handle_sign_in))
             .on_action(Self::handle_open_account)
             .on_action(cx.listener(|_, _: &menu::SelectNext, window, cx| {
-                window.focus_next();
+                window.focus_next(cx);
                 cx.notify();
             }))
             .on_action(cx.listener(|_, _: &menu::SelectPrevious, window, cx| {
-                window.focus_prev();
+                window.focus_prev(cx);
                 cx.notify();
             }))
             .child(
                 div()
                     .max_w(Rems(48.0))
-                    .w_full()
-                    .mx_auto()
                     .size_full()
-                    .gap_6()
+                    .mx_auto()
                     .child(
                         v_flex()
-                            .m_auto()
                             .id("page-content")
-                            .gap_6()
+                            .m_auto()
+                            .p_12()
                             .size_full()
                             .max_w_full()
                             .min_w_0()
-                            .p_12()
-                            .border_color(cx.theme().colors().border_variant.opacity(0.5))
+                            .gap_6()
                             .overflow_y_scroll()
                             .child(
                                 h_flex()
                                     .w_full()
                                     .gap_4()
-                                    .child(Vector::square(VectorName::ZedLogo, rems(2.5)))
+                                    .justify_between()
                                     .child(
-                                        v_flex()
+                                        h_flex()
+                                            .gap_4()
+                                            .child(Vector::square(VectorName::ZedLogo, rems(2.5)))
                                             .child(
-                                                Headline::new("Welcome to Zed")
-                                                    .size(HeadlineSize::Small),
-                                            )
-                                            .child(
-                                                Label::new("The editor for what's next")
-                                                    .color(Color::Muted)
-                                                    .size(LabelSize::Small)
-                                                    .italic(),
+                                                v_flex()
+                                                    .child(
+                                                        Headline::new("Welcome to Zed")
+                                                            .size(HeadlineSize::Small),
+                                                    )
+                                                    .child(
+                                                        Label::new("The editor for what's next")
+                                                            .color(Color::Muted)
+                                                            .size(LabelSize::Small)
+                                                            .italic(),
+                                                    ),
                                             ),
                                     )
-                                    .child(div().w_full())
                                     .child({
                                         Button::new("finish_setup", "Finish Setup")
                                             .style(ButtonStyle::Filled)
-                                            .size(ButtonSize::Large)
+                                            .size(ButtonSize::Medium)
                                             .width(Rems(12.0))
                                             .key_binding(
                                                 KeyBinding::for_action_in(
                                                     &Finish,
                                                     &self.focus_handle,
-                                                    window,
                                                     cx,
                                                 )
-                                                .map(|kb| kb.size(rems_from_px(12.))),
+                                                .size(rems_from_px(12.)),
                                             )
                                             .on_click(|_, window, cx| {
                                                 window.dispatch_action(Finish.boxed_clone(), cx);
                                             })
-                                    })
-                                    .pb_6()
-                                    .border_b_1()
-                                    .border_color(cx.theme().colors().border_variant.opacity(0.5)),
+                                    }),
                             )
+                            .child(Divider::horizontal().color(ui::DividerColor::BorderVariant))
                             .child(self.render_page(cx))
                             .track_scroll(&self.scroll_handle),
                     )
-                    .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx),
+                    .vertical_scrollbar_for(&self.scroll_handle, window, cx),
             )
     }
 }
@@ -381,22 +375,26 @@ impl Item for Onboarding {
         false
     }
 
+    fn can_split(&self) -> bool {
+        true
+    }
+
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
         _: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>> {
-        Some(cx.new(|cx| Onboarding {
+    ) -> Task<Option<Entity<Self>>> {
+        Task::ready(Some(cx.new(|cx| Onboarding {
             workspace: self.workspace.clone(),
             user_store: self.user_store.clone(),
             scroll_handle: ScrollHandle::new(),
             focus_handle: cx.focus_handle(),
             _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
-        }))
+        })))
     }
 
-    fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
+    fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(workspace::item::ItemEvent)) {
         f(*event)
     }
 }
@@ -426,7 +424,9 @@ fn go_to_welcome_page(cx: &mut App) {
             if let Some(idx) = idx {
                 pane.activate_item(idx, true, true, window, cx);
             } else {
-                let item = Box::new(WelcomePage::new(window, cx));
+                let item = Box::new(
+                    cx.new(|cx| WelcomePage::new(workspace.weak_handle(), false, window, cx)),
+                );
                 pane.add_item(item, true, true, Some(onboarding_idx), window, cx);
             }
 
@@ -448,7 +448,7 @@ pub async fn handle_import_vscode_settings(
         match settings::VsCodeSettings::load_user_settings(source, fs.clone()).await {
             Ok(vscode_settings) => vscode_settings,
             Err(err) => {
-                zlog::error!("{err}");
+                zlog::error!("{err:?}");
                 let _ = cx.prompt(
                     gpui::PromptLevel::Info,
                     &format!("Could not find or load a {source} settings file"),
@@ -561,7 +561,7 @@ impl workspace::SerializableItem for Onboarding {
             alive_items,
             workspace_id,
             "onboarding_pages",
-            &persistence::ONBOARDING_PAGES,
+            &persistence::OnboardingPagesDb::global(cx),
             cx,
         )
     }
@@ -574,10 +574,9 @@ impl workspace::SerializableItem for Onboarding {
         window: &mut Window,
         cx: &mut App,
     ) -> gpui::Task<gpui::Result<Entity<Self>>> {
+        let db = persistence::OnboardingPagesDb::global(cx);
         window.spawn(cx, async move |cx| {
-            if let Some(_) =
-                persistence::ONBOARDING_PAGES.get_onboarding_page(item_id, workspace_id)?
-            {
+            if let Some(_) = db.get_onboarding_page(item_id, workspace_id)? {
                 workspace.update(cx, |workspace, cx| Onboarding::new(workspace, cx))
             } else {
                 Err(anyhow::anyhow!("No onboarding page to deserialize"))
@@ -595,11 +594,12 @@ impl workspace::SerializableItem for Onboarding {
     ) -> Option<gpui::Task<gpui::Result<()>>> {
         let workspace_id = workspace.database_id()?;
 
-        Some(cx.background_spawn(async move {
-            persistence::ONBOARDING_PAGES
-                .save_onboarding_page(item_id, workspace_id)
-                .await
-        }))
+        let db = persistence::OnboardingPagesDb::global(cx);
+        Some(
+            cx.background_spawn(
+                async move { db.save_onboarding_page(item_id, workspace_id).await },
+            ),
+        )
     }
 
     fn should_serialize(&self, event: &Self::Event) -> bool {
@@ -648,7 +648,7 @@ mod persistence {
         ];
     }
 
-    db::static_connection!(ONBOARDING_PAGES, OnboardingPagesDb, [WorkspaceDb]);
+    db::static_connection!(OnboardingPagesDb, [WorkspaceDb]);
 
     impl OnboardingPagesDb {
         query! {

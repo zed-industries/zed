@@ -6,7 +6,7 @@ use crate::{ToggleMarksView, ToggleRegistersView, UseSystemClipboard, Vim, VimAd
 use crate::{motion::Motion, object::Object};
 use anyhow::Result;
 use collections::HashMap;
-use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
+use command_palette_hooks::{CommandPaletteFilter, GlobalCommandPaletteInterceptor};
 use db::{
     sqlez::{domain::Domain, thread_safe_connection::ThreadSafeConnection},
     sqlez_macros::sql,
@@ -18,6 +18,7 @@ use gpui::{
     EntityId, Global, HighlightStyle, StyledText, Subscription, Task, TextStyle, WeakEntity,
 };
 use language::{Buffer, BufferEvent, BufferId, Chunk, Point};
+
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectItem, ProjectPath};
@@ -28,7 +29,7 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::{fmt::Display, ops::Range, sync::Arc};
 use text::{Bias, ToPoint};
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{
     ActiveTheme, Context, Div, FluentBuilder, KeyBinding, ParentElement, SharedString, Styled,
     StyledTypography, Window, h_flex, rems,
@@ -36,10 +37,11 @@ use ui::{
 use util::ResultExt;
 use util::rel_path::RelPath;
 use workspace::searchable::Direction;
-use workspace::{Workspace, WorkspaceDb, WorkspaceId};
+use workspace::{MultiWorkspace, Workspace, WorkspaceDb, WorkspaceId};
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Mode {
+    #[default]
     Normal,
     Insert,
     Replace,
@@ -72,11 +74,9 @@ impl Mode {
             Self::Normal | Self::Insert | Self::Replace | Self::HelixNormal => false,
         }
     }
-}
 
-impl Default for Mode {
-    fn default() -> Self {
-        Self::Normal
+    pub fn is_helix(&self) -> bool {
+        matches!(self, Self::HelixNormal | Self::HelixSelect)
     }
 }
 
@@ -147,6 +147,11 @@ pub enum Operator {
     HelixPrevious {
         around: bool,
     },
+    HelixSurroundAdd,
+    HelixSurroundReplace {
+        replaced_char: Option<char>,
+    },
+    HelixSurroundDelete,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -187,14 +192,15 @@ impl From<Register> for ClipboardItem {
 
 impl From<ClipboardItem> for Register {
     fn from(item: ClipboardItem) -> Self {
-        // For now, we don't store metadata for multiple entries.
-        match item.entries().first() {
-            Some(ClipboardEntry::String(value)) if item.entries().len() == 1 => Register {
+        match item.entries().iter().find_map(|entry| match entry {
+            ClipboardEntry::String(value) => Some(value),
+            _ => None,
+        }) {
+            Some(value) => Register {
                 text: value.text().to_owned().into(),
                 clipboard_selections: value.metadata_json::<Vec<ClipboardSelection>>(),
             },
-            // For now, registers can't store images. This could change in the future.
-            _ => Register::default(),
+            None => Register::default(),
         }
     }
 }
@@ -222,12 +228,21 @@ pub struct VimGlobals {
     pub forced_motion: bool,
     pub stop_recording_after_next_action: bool,
     pub ignore_current_insertion: bool,
+    pub recording_count: Option<usize>,
     pub recorded_count: Option<usize>,
     pub recording_actions: Vec<ReplayableAction>,
     pub recorded_actions: Vec<ReplayableAction>,
     pub recorded_selection: RecordedSelection,
 
+    /// The register being written to by the active `q{register}` macro
+    /// recording.
     pub recording_register: Option<char>,
+    /// The register that was selected at the start of the current
+    /// dot-recording, for example, `"ap`.
+    pub recording_register_for_dot: Option<char>,
+    /// The register from the last completed dot-recording. Used when replaying
+    /// with `.`.
+    pub recorded_register_for_dot: Option<char>,
     pub last_recorded_register: Option<char>,
     pub last_replayed_register: Option<char>,
     pub replayer: Option<Replayer>,
@@ -306,19 +321,22 @@ impl MarksState {
 
     fn load(&mut self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
-            let Some(workspace_id) = this.update(cx, |this, cx| this.workspace_id(cx))? else {
-                return Ok(());
+            let Some(workspace_id) = this.update(cx, |this, cx| this.workspace_id(cx)).ok()? else {
+                return None;
             };
+            let db = cx.update(|cx| VimDb::global(cx));
             let (marks, paths) = cx
                 .background_spawn(async move {
-                    let marks = DB.get_marks(workspace_id)?;
-                    let paths = DB.get_global_marks_paths(workspace_id)?;
+                    let marks = db.get_marks(workspace_id)?;
+                    let paths = db.get_global_marks_paths(workspace_id)?;
                     anyhow::Ok((marks, paths))
                 })
-                .await?;
+                .await
+                .log_err()?;
             this.update(cx, |this, cx| this.loaded(marks, paths, cx))
+                .ok()
         })
-        .detach_and_log_err(cx);
+        .detach();
     }
 
     fn loaded(
@@ -429,8 +447,9 @@ impl MarksState {
                 if let Some(workspace_id) = self.workspace_id(cx) {
                     let path = path.clone();
                     let key = key.clone();
+                    let db = VimDb::global(cx);
                     cx.background_spawn(async move {
-                        DB.set_global_mark_path(workspace_id, key, path).await
+                        db.set_global_mark_path(workspace_id, key, path).await
                     })
                     .detach_and_log_err(cx);
                 }
@@ -446,8 +465,9 @@ impl MarksState {
         self.serialized_marks.insert(path.clone(), new_points);
 
         if let Some(workspace_id) = self.workspace_id(cx) {
+            let db = VimDb::global(cx);
             cx.background_spawn(async move {
-                DB.set_marks(workspace_id, path.clone(), to_write).await?;
+                db.set_marks(workspace_id, path.clone(), to_write).await?;
                 anyhow::Ok(())
             })
             .detach_and_log_err(cx);
@@ -512,7 +532,7 @@ impl MarksState {
         cx: &mut Context<Self>,
     ) {
         let on_change = cx.subscribe(buffer_handle, move |this, buffer, event, cx| match event {
-            BufferEvent::Edited => {
+            BufferEvent::Edited { .. } => {
                 if let Some(path) = this.path_for_buffer(&buffer, cx) {
                     this.serialize_buffer_marks(path, &buffer, cx);
                 }
@@ -552,6 +572,10 @@ impl MarksState {
         let buffer = multibuffer.read(cx).as_singleton();
         let abs_path = buffer.as_ref().and_then(|b| self.path_for_buffer(b, cx));
 
+        if self.is_global_mark(&name) && self.global_marks.contains_key(&name) {
+            self.delete_mark(name.clone(), multibuffer, cx);
+        }
+
         let Some(abs_path) = abs_path else {
             self.multibuffer_marks
                 .entry(multibuffer.entity_id())
@@ -575,7 +599,7 @@ impl MarksState {
 
         let buffer_id = buffer.read(cx).remote_id();
         self.buffer_marks.entry(buffer_id).or_default().insert(
-            name,
+            name.clone(),
             anchors
                 .into_iter()
                 .map(|anchor| anchor.text_anchor)
@@ -583,6 +607,10 @@ impl MarksState {
         );
         if !self.watched_buffers.contains_key(&buffer_id) {
             self.watch_buffer(MarkLocation::Path(abs_path.clone()), &buffer, cx)
+        }
+        if self.is_global_mark(&name) {
+            self.global_marks
+                .insert(name, MarkLocation::Path(abs_path.clone()));
         }
         self.serialize_buffer_marks(abs_path, &buffer, cx)
     }
@@ -601,14 +629,12 @@ impl MarksState {
                 return Some(Mark::Local(anchors.get(name)?.clone()));
             }
 
-            let singleton = multi_buffer.read(cx).as_singleton()?;
-            let excerpt_id = *multi_buffer.read(cx).excerpt_ids().first()?;
-            let buffer_id = singleton.read(cx).remote_id();
+            let (excerpt_id, buffer_id, _) = multi_buffer.read(cx).read(cx).as_singleton()?;
             if let Some(anchors) = self.buffer_marks.get(&buffer_id) {
                 let text_anchors = anchors.get(name)?;
                 let anchors = text_anchors
                     .iter()
-                    .map(|anchor| Anchor::in_buffer(excerpt_id, buffer_id, *anchor))
+                    .map(|anchor| Anchor::in_buffer(excerpt_id, *anchor))
                     .collect();
                 return Some(Mark::Local(anchors));
             }
@@ -634,8 +660,9 @@ impl MarksState {
         let path = if let Some(target) = self.global_marks.get(&mark_name.clone()) {
             let name = mark_name.clone();
             if let Some(workspace_id) = self.workspace_id(cx) {
+                let db = VimDb::global(cx);
                 cx.background_spawn(async move {
-                    DB.delete_global_marks_path(workspace_id, name).await
+                    db.delete_global_marks_path(workspace_id, name).await
                 })
                 .detach_and_log_err(cx);
             }
@@ -675,7 +702,8 @@ impl MarksState {
             .get_mut(&path)
             .map(|m| m.remove(&mark_name.clone()));
         if let Some(workspace_id) = self.workspace_id(cx) {
-            cx.background_spawn(async move { DB.delete_mark(workspace_id, path, mark_name).await })
+            let db = VimDb::global(cx);
+            cx.background_spawn(async move { db.delete_mark(workspace_id, path, mark_name).await })
                 .detach_and_log_err(cx);
         }
     }
@@ -718,16 +746,18 @@ impl VimGlobals {
                 CommandPaletteFilter::update_global(cx, |filter, _| {
                     filter.show_namespace(Vim::NAMESPACE);
                 });
-                CommandPaletteInterceptor::update_global(cx, |interceptor, _| {
-                    interceptor.set(Box::new(command_interceptor));
-                });
+                GlobalCommandPaletteInterceptor::set(cx, command_interceptor);
                 for window in cx.windows() {
-                    if let Some(workspace) = window.downcast::<Workspace>() {
-                        workspace
-                            .update(cx, |workspace, _, cx| {
-                                Vim::update_globals(cx, |globals, cx| {
-                                    globals.register_workspace(workspace, cx)
-                                });
+                    if let Some(multi_workspace) = window.downcast::<MultiWorkspace>() {
+                        multi_workspace
+                            .update(cx, |multi_workspace, _, cx| {
+                                for workspace in multi_workspace.workspaces() {
+                                    workspace.update(cx, |workspace, cx| {
+                                        Vim::update_globals(cx, |globals, cx| {
+                                            globals.register_workspace(workspace, cx)
+                                        });
+                                    });
+                                }
                             })
                             .ok();
                     }
@@ -735,9 +765,7 @@ impl VimGlobals {
             } else {
                 KeyBinding::set_vim_mode(cx, false);
                 *Vim::globals(cx) = VimGlobals::default();
-                CommandPaletteInterceptor::update_global(cx, |interceptor, _| {
-                    interceptor.clear();
-                });
+                GlobalCommandPaletteInterceptor::clear(cx);
                 CommandPaletteFilter::update_global(cx, |filter, _| {
                     filter.hide_namespace(Vim::NAMESPACE);
                 });
@@ -867,7 +895,9 @@ impl VimGlobals {
                 }
             }
             '%' => editor.and_then(|editor| {
-                let selection = editor.selections.newest::<Point>(cx);
+                let selection = editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx));
                 if let Some((_, buffer, _)) = editor
                     .buffer()
                     .read(cx)
@@ -903,6 +933,8 @@ impl VimGlobals {
             if self.stop_recording_after_next_action {
                 self.dot_recording = false;
                 self.recorded_actions = std::mem::take(&mut self.recording_actions);
+                self.recorded_count = self.recording_count.take();
+                self.recorded_register_for_dot = self.recording_register_for_dot.take();
                 self.stop_recording_after_next_action = false;
             }
         }
@@ -929,6 +961,8 @@ impl VimGlobals {
             if self.stop_recording_after_next_action {
                 self.dot_recording = false;
                 self.recorded_actions = std::mem::take(&mut self.recording_actions);
+                self.recorded_count = self.recording_count.take();
+                self.recorded_register_for_dot = self.recording_register_for_dot.take();
                 self.stop_recording_after_next_action = false;
             }
         }
@@ -984,7 +1018,7 @@ impl Clone for ReplayableAction {
     }
 }
 
-#[derive(Clone, Default, Debug)]
+#[derive(Default, Debug)]
 pub struct SearchState {
     pub direction: Direction,
     pub count: usize,
@@ -993,6 +1027,7 @@ pub struct SearchState {
     pub prior_operator: Option<Operator>,
     pub prior_mode: Mode,
     pub helix_select: bool,
+    pub _dismiss_subscription: Option<gpui::Subscription>,
 }
 
 impl Operator {
@@ -1037,6 +1072,9 @@ impl Operator {
             Operator::HelixMatch => "helix_m",
             Operator::HelixNext { .. } => "helix_next",
             Operator::HelixPrevious { .. } => "helix_previous",
+            Operator::HelixSurroundAdd => "helix_ms",
+            Operator::HelixSurroundReplace { .. } => "helix_mr",
+            Operator::HelixSurroundDelete => "helix_md",
         }
     }
 
@@ -1061,6 +1099,14 @@ impl Operator {
             Operator::HelixMatch => "m".to_string(),
             Operator::HelixNext { .. } => "]".to_string(),
             Operator::HelixPrevious { .. } => "[".to_string(),
+            Operator::HelixSurroundAdd => "ms".to_string(),
+            Operator::HelixSurroundReplace {
+                replaced_char: None,
+            } => "mr".to_string(),
+            Operator::HelixSurroundReplace {
+                replaced_char: Some(c),
+            } => format!("mr{}", c),
+            Operator::HelixSurroundDelete => "md".to_string(),
             _ => self.id().to_string(),
         }
     }
@@ -1105,6 +1151,9 @@ impl Operator {
             | Operator::HelixMatch
             | Operator::HelixNext { .. }
             | Operator::HelixPrevious { .. } => false,
+            Operator::HelixSurroundAdd
+            | Operator::HelixSurroundReplace { .. }
+            | Operator::HelixSurroundDelete => true,
         }
     }
 
@@ -1130,7 +1179,10 @@ impl Operator {
             | Operator::DeleteSurrounds
             | Operator::Exchange
             | Operator::HelixNext { .. }
-            | Operator::HelixPrevious { .. } => true,
+            | Operator::HelixPrevious { .. }
+            | Operator::HelixSurroundAdd
+            | Operator::HelixSurroundReplace { .. }
+            | Operator::HelixSurroundDelete => true,
             Operator::Yank
             | Operator::Object { .. }
             | Operator::FindForward { .. }
@@ -1351,8 +1403,8 @@ impl MarksMatchInfo {
         let mut offset = 0;
         for chunk in chunks {
             line.push_str(chunk.text);
-            if let Some(highlight_style) = chunk.syntax_highlight_id
-                && let Some(highlight) = highlight_style.style(cx.theme().syntax())
+            if let Some(highlight_id) = chunk.syntax_highlight_id
+                && let Some(highlight) = cx.theme().syntax().get(highlight_id).cloned()
             {
                 highlights.push((offset..offset + chunk.text.len(), highlight))
             }
@@ -1719,7 +1771,7 @@ impl Domain for VimDb {
     ];
 }
 
-db::static_connection!(DB, VimDb, [WorkspaceDb]);
+db::static_connection!(VimDb, [WorkspaceDb]);
 
 struct SerializedMark {
     path: Arc<Path>,

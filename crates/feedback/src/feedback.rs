@@ -2,19 +2,13 @@ use gpui::{App, ClipboardItem, PromptLevel, actions};
 use system_specs::{CopySystemSpecsIntoClipboard, SystemSpecs};
 use util::ResultExt;
 use workspace::Workspace;
-use zed_actions::feedback::FileBugReport;
-
-pub mod feedback_modal;
+use zed_actions::feedback::{EmailZed, FileBugReport, RequestFeature};
 
 actions!(
     zed,
     [
-        /// Opens email client to send feedback to Zed support.
-        EmailZed,
         /// Opens the Zed repository on GitHub.
         OpenZedRepo,
-        /// Opens the feature request form.
-        RequestFeature,
     ]
 );
 
@@ -48,11 +42,7 @@ fn email_body(specs: &SystemSpecs) -> String {
 }
 
 pub fn init(cx: &mut App) {
-    cx.observe_new(|workspace: &mut Workspace, window, cx| {
-        let Some(window) = window else {
-            return;
-        };
-        feedback_modal::FeedbackModal::register(workspace, window, cx);
+    cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace
             .register_action(|_, _: &CopySystemSpecsIntoClipboard, window, cx| {
                 let specs = SystemSpecs::new(window, cx);

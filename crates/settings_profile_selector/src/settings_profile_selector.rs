@@ -280,16 +280,14 @@ fn display_name(profile_name: &Option<String>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use client;
     use editor;
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
-    use language;
     use menu::{Cancel, Confirm, SelectNext, SelectPrevious};
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::Settings;
-    use theme::{self, ThemeSettings};
-    use workspace::{self, AppState};
+    use theme_settings::ThemeSettings;
+    use workspace::{self, AppState, MultiWorkspace};
     use zed_actions::settings_profile_selector;
 
     async fn init_test(
@@ -301,13 +299,9 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             settings::init(cx);
-            theme::init(theme::LoadThemes::JustBase, cx);
-            client::init_settings(cx);
-            language::init(cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             super::init(cx);
             editor::init(cx);
-            workspace::init_settings(cx);
-            Project::init_settings(cx);
             state
         });
 
@@ -326,8 +320,11 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, ["/test".as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let cx = VisualTestContext::from_window(*window, cx).into_mut();
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
 
         cx.update(|_, cx| {
             assert!(!cx.has_global::<ActiveSettingsProfileName>());

@@ -27,7 +27,7 @@ pub struct RelPath(str);
 /// relative and normalized.
 ///
 /// This type is to [`RelPath`] as [`std::path::PathBuf`] is to [`std::path::Path`]
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub struct RelPathBuf(String);
 
 impl RelPath {
@@ -161,7 +161,7 @@ impl RelPath {
         false
     }
 
-    pub fn strip_prefix<'a>(&'a self, other: &Self) -> Result<&'a Self> {
+    pub fn strip_prefix<'a>(&'a self, other: &Self) -> Result<&'a Self, StripPrefixError> {
         if other.is_empty() {
             return Ok(self);
         }
@@ -172,7 +172,7 @@ impl RelPath {
                 return Ok(Self::empty());
             }
         }
-        Err(anyhow!("failed to strip prefix: {other:?} from {self:?}"))
+        Err(StripPrefixError)
     }
 
     pub fn len(&self) -> usize {
@@ -228,7 +228,8 @@ impl RelPath {
     pub fn display(&self, style: PathStyle) -> Cow<'_, str> {
         match style {
             PathStyle::Posix => Cow::Borrowed(&self.0),
-            PathStyle::Windows => Cow::Owned(self.0.replace('/', "\\")),
+            PathStyle::Windows if self.0.contains('/') => Cow::Owned(self.0.replace('/', "\\")),
+            PathStyle::Windows => Cow::Borrowed(&self.0),
         }
     }
 
@@ -249,6 +250,9 @@ impl RelPath {
         Path::new(&self.0)
     }
 }
+
+#[derive(Debug)]
+pub struct StripPrefixError;
 
 impl ToOwned for RelPath {
     type Owned = RelPathBuf;
@@ -341,6 +345,12 @@ impl AsRef<RelPath> for RelPathBuf {
     }
 }
 
+impl AsRef<RelPath> for RelPath {
+    fn as_ref(&self) -> &RelPath {
+        self
+    }
+}
+
 impl Deref for RelPathBuf {
     type Target = RelPath;
 
@@ -374,6 +384,7 @@ impl PartialEq<str> for RelPath {
     }
 }
 
+#[derive(Default)]
 pub struct RelPathComponents<'a>(&'a str);
 
 pub struct RelPathAncestors<'a>(Option<&'a str>);

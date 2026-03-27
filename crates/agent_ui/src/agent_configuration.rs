@@ -1,75 +1,78 @@
 mod add_llm_provider_modal;
-mod configure_context_server_modal;
+pub mod configure_context_server_modal;
 mod configure_context_server_tools_modal;
 mod manage_profiles_modal;
 mod tool_picker;
 
-use std::{ops::Range, sync::Arc};
+use std::{ops::Range, rc::Rc, sync::Arc};
 
-use agent_settings::AgentSettings;
+use agent::ContextServerRegistry;
 use anyhow::Result;
-use assistant_tool::{ToolSource, ToolWorkingSet};
-use cloud_llm_client::{Plan, PlanV1, PlanV2};
+use cloud_api_types::Plan;
 use collections::HashMap;
 use context_server::ContextServerId;
-use editor::{Editor, SelectionEffects, scroll::Autoscroll};
+use editor::{Editor, MultiBufferOffset, SelectionEffects, scroll::Autoscroll};
 use extension::ExtensionManifest;
 use extension_host::ExtensionStore;
-use feature_flags::{CodexAcpFeatureFlag, FeatureFlagAppExt as _};
 use fs::Fs;
 use gpui::{
     Action, AnyView, App, AsyncWindowContext, Corner, Entity, EventEmitter, FocusHandle, Focusable,
-    Hsla, ScrollHandle, Subscription, Task, WeakEntity,
+    ScrollHandle, Subscription, Task, WeakEntity,
 };
+use itertools::Itertools;
 use language::LanguageRegistry;
 use language_model::{
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID,
+    IconOrSvg, LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry,
+    ZED_CLOUD_PROVIDER_ID,
 };
+use language_models::AllLanguageModelSettings;
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{
-    agent_server_store::{AgentServerStore, CLAUDE_CODE_NAME, CODEX_NAME, GEMINI_NAME},
+    agent_server_store::{AgentId, AgentServerStore, ExternalAgentSource},
     context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
 };
 use settings::{Settings, SettingsStore, update_settings_file};
 use ui::{
-    Chip, CommonAnimationExt, ContextMenu, Disclosure, Divider, DividerColor, ElevationIndex,
-    Indicator, PopoverMenu, Switch, SwitchColor, SwitchField, Tooltip, WithScrollbar, prelude::*,
+    AiSettingItem, AiSettingItemSource, AiSettingItemStatus, ButtonStyle, Chip, ContextMenu,
+    ContextMenuEntry, Disclosure, Divider, DividerColor, ElevationIndex, LabelSize, PopoverMenu,
+    Switch, Tooltip, WithScrollbar, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::{Workspace, create_and_open_local_file};
-use zed_actions::ExtensionCategoryFilter;
+use zed_actions::{ExtensionCategoryFilter, OpenBrowser};
 
 pub(crate) use configure_context_server_modal::ConfigureContextServerModal;
 pub(crate) use configure_context_server_tools_modal::ConfigureContextServerToolsModal;
 pub(crate) use manage_profiles_modal::ManageProfilesModal;
 
 use crate::{
-    AddContextServer,
+    Agent,
     agent_configuration::add_llm_provider_modal::{AddLlmProviderModal, LlmCompatibleProvider},
+    agent_connection_store::{AgentConnectionStatus, AgentConnectionStore},
 };
 
 pub struct AgentConfiguration {
     fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
     agent_server_store: Entity<AgentServerStore>,
+    agent_connection_store: Entity<AgentConnectionStore>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     configuration_views_by_provider: HashMap<LanguageModelProviderId, AnyView>,
     context_server_store: Entity<ContextServerStore>,
-    expanded_context_server_tools: HashMap<ContextServerId, bool>,
     expanded_provider_configurations: HashMap<LanguageModelProviderId, bool>,
-    tools: Entity<ToolWorkingSet>,
-    _registry_subscription: Subscription,
+    context_server_registry: Entity<ContextServerRegistry>,
+    _subscriptions: Vec<Subscription>,
     scroll_handle: ScrollHandle,
-    _check_for_gemini: Task<()>,
 }
 
 impl AgentConfiguration {
     pub fn new(
         fs: Arc<dyn Fs>,
         agent_server_store: Entity<AgentServerStore>,
+        agent_connection_store: Entity<AgentConnectionStore>,
         context_server_store: Entity<ContextServerStore>,
-        tools: Entity<ToolWorkingSet>,
+        context_server_registry: Entity<ContextServerRegistry>,
         language_registry: Arc<LanguageRegistry>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
@@ -77,25 +80,27 @@ impl AgentConfiguration {
     ) -> Self {
         let focus_handle = cx.focus_handle();
 
-        let registry_subscription = cx.subscribe_in(
-            &LanguageModelRegistry::global(cx),
-            window,
-            |this, _, event: &language_model::Event, window, cx| match event {
-                language_model::Event::AddedProvider(provider_id) => {
-                    let provider = LanguageModelRegistry::read_global(cx).provider(provider_id);
-                    if let Some(provider) = provider {
-                        this.add_provider_configuration_view(&provider, window, cx);
+        let subscriptions = vec![
+            cx.subscribe_in(
+                &LanguageModelRegistry::global(cx),
+                window,
+                |this, _, event: &language_model::Event, window, cx| match event {
+                    language_model::Event::AddedProvider(provider_id) => {
+                        let provider = LanguageModelRegistry::read_global(cx).provider(provider_id);
+                        if let Some(provider) = provider {
+                            this.add_provider_configuration_view(&provider, window, cx);
+                        }
                     }
-                }
-                language_model::Event::RemovedProvider(provider_id) => {
-                    this.remove_provider_configuration_view(provider_id);
-                }
-                _ => {}
-            },
-        );
-
-        cx.subscribe(&context_server_store, |_, _, _, cx| cx.notify())
-            .detach();
+                    language_model::Event::RemovedProvider(provider_id) => {
+                        this.remove_provider_configuration_view(provider_id);
+                    }
+                    _ => {}
+                },
+            ),
+            cx.subscribe(&agent_server_store, |_, _, _, cx| cx.notify()),
+            cx.observe(&agent_connection_store, |_, _, cx| cx.notify()),
+            cx.subscribe(&context_server_store, |_, _, _, cx| cx.notify()),
+        ];
 
         let mut this = Self {
             fs,
@@ -104,20 +109,20 @@ impl AgentConfiguration {
             focus_handle,
             configuration_views_by_provider: HashMap::default(),
             agent_server_store,
+            agent_connection_store,
             context_server_store,
-            expanded_context_server_tools: HashMap::default(),
             expanded_provider_configurations: HashMap::default(),
-            tools,
-            _registry_subscription: registry_subscription,
+            context_server_registry,
+            _subscriptions: subscriptions,
             scroll_handle: ScrollHandle::new(),
-            _check_for_gemini: Task::ready(()),
         };
+
         this.build_provider_configuration_views(window, cx);
         this
     }
 
     fn build_provider_configuration_views(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let providers = LanguageModelRegistry::read_global(cx).providers();
+        let providers = LanguageModelRegistry::read_global(cx).visible_providers();
         for provider in providers {
             self.add_provider_configuration_view(&provider, window, cx);
         }
@@ -156,7 +161,42 @@ pub enum AssistantConfigurationEvent {
 
 impl EventEmitter<AssistantConfigurationEvent> for AgentConfiguration {}
 
+enum AgentIcon {
+    Name(IconName),
+    Path(SharedString),
+}
+
 impl AgentConfiguration {
+    fn render_section_title(
+        &mut self,
+        title: impl Into<SharedString>,
+        description: impl Into<SharedString>,
+        menu: AnyElement,
+    ) -> impl IntoElement {
+        h_flex()
+            .p_4()
+            .pb_0()
+            .mb_2p5()
+            .items_start()
+            .justify_between()
+            .child(
+                v_flex()
+                    .w_full()
+                    .gap_0p5()
+                    .child(
+                        h_flex()
+                            .pr_1()
+                            .w_full()
+                            .gap_2()
+                            .justify_between()
+                            .flex_wrap()
+                            .child(Headline::new(title.into()))
+                            .child(menu),
+                    )
+                    .child(Label::new(description.into()).color(Color::Muted)),
+            )
+    }
+
     fn render_provider_configuration_block(
         &mut self,
         provider: &Arc<dyn LanguageModelProvider>,
@@ -194,6 +234,7 @@ impl AgentConfiguration {
             .unwrap_or(false);
 
         v_flex()
+            .min_w_0()
             .w_full()
             .when(is_expanded, |this| this.mb_2())
             .child(
@@ -226,9 +267,12 @@ impl AgentConfiguration {
                                     .w_full()
                                     .gap_1p5()
                                     .child(
-                                        Icon::new(provider.icon())
-                                            .size(IconSize::Small)
-                                            .color(Color::Muted),
+                                        match provider.icon() {
+                                            IconOrSvg::Svg(path) => Icon::from_external_svg(path),
+                                            IconOrSvg::Icon(name) => Icon::new(name),
+                                        }
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
                                     )
                                     .child(
                                         h_flex()
@@ -275,6 +319,7 @@ impl AgentConfiguration {
             )
             .child(
                 v_flex()
+                    .min_w_0()
                     .w_full()
                     .px_2()
                     .gap_1()
@@ -291,12 +336,13 @@ impl AgentConfiguration {
                                 "Start New Thread",
                             )
                             .full_width()
-                            .style(ButtonStyle::Filled)
+                            .style(ButtonStyle::Outlined)
                             .layer(ElevationIndex::ModalSurface)
-                            .icon_position(IconPosition::Start)
-                            .icon(IconName::Thread)
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
+                            .start_icon(
+                                Icon::new(IconName::Thread)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            )
                             .label_size(LabelSize::Small)
                             .on_click(cx.listener({
                                 let provider = provider.clone();
@@ -307,89 +353,130 @@ impl AgentConfiguration {
                                 }
                             })),
                         )
-                    }),
+                    })
+                    .when(
+                        is_expanded && is_removable_provider(&provider.id(), cx),
+                        |this| {
+                            this.child(
+                                Button::new(
+                                    SharedString::from(format!("delete-provider-{provider_id}")),
+                                    "Remove Provider",
+                                )
+                                .full_width()
+                                .style(ButtonStyle::Outlined)
+                                .start_icon(
+                                    Icon::new(IconName::Trash)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
+                                .label_size(LabelSize::Small)
+                                .on_click(cx.listener({
+                                    let provider = provider.clone();
+                                    move |this, _event, window, cx| {
+                                        this.delete_provider(provider.clone(), window, cx);
+                                    }
+                                })),
+                            )
+                        },
+                    ),
             )
+    }
+
+    fn delete_provider(
+        &mut self,
+        provider: Arc<dyn LanguageModelProvider>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let fs = self.fs.clone();
+        let provider_id = provider.id();
+
+        cx.spawn_in(window, async move |_, cx| {
+            cx.update(|_window, cx| {
+                update_settings_file(fs.clone(), cx, {
+                    let provider_id = provider_id.clone();
+                    move |settings, _| {
+                        if let Some(ref mut openai_compatible) = settings
+                            .language_models
+                            .as_mut()
+                            .and_then(|lm| lm.openai_compatible.as_mut())
+                        {
+                            let key_to_remove: Arc<str> = Arc::from(provider_id.0.as_ref());
+                            openai_compatible.remove(&key_to_remove);
+                        }
+                    }
+                });
+            })
+            .log_err();
+
+            cx.update(|_window, cx| {
+                LanguageModelRegistry::global(cx).update(cx, {
+                    let provider_id = provider_id.clone();
+                    move |registry, cx| {
+                        registry.unregister_provider(provider_id, cx);
+                    }
+                })
+            })
+            .log_err();
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     fn render_provider_configuration_section(
         &mut self,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let providers = LanguageModelRegistry::read_global(cx).providers();
+        let providers = LanguageModelRegistry::read_global(cx).visible_providers();
+
+        let popover_menu = PopoverMenu::new("add-provider-popover")
+            .trigger(
+                Button::new("add-provider", "Add Provider")
+                    .style(ButtonStyle::Outlined)
+                    .start_icon(
+                        Icon::new(IconName::Plus)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .label_size(LabelSize::Small),
+            )
+            .menu({
+                let workspace = self.workspace.clone();
+                move |window, cx| {
+                    Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
+                        menu.header("Compatible APIs").entry("OpenAI", None, {
+                            let workspace = workspace.clone();
+                            move |window, cx| {
+                                workspace
+                                    .update(cx, |workspace, cx| {
+                                        AddLlmProviderModal::toggle(
+                                            LlmCompatibleProvider::OpenAi,
+                                            workspace,
+                                            window,
+                                            cx,
+                                        );
+                                    })
+                                    .log_err();
+                            }
+                        })
+                    }))
+                }
+            })
+            .anchor(gpui::Corner::TopRight)
+            .offset(gpui::Point {
+                x: px(0.0),
+                y: px(2.0),
+            });
 
         v_flex()
+            .min_w_0()
             .w_full()
-            .child(
-                h_flex()
-                    .p(DynamicSpacing::Base16.rems(cx))
-                    .pr(DynamicSpacing::Base20.rems(cx))
-                    .pb_0()
-                    .mb_2p5()
-                    .items_start()
-                    .justify_between()
-                    .child(
-                        v_flex()
-                            .w_full()
-                            .gap_0p5()
-                            .child(
-                                h_flex()
-                                    .pr_1()
-                                    .w_full()
-                                    .gap_2()
-                                    .justify_between()
-                                    .child(Headline::new("LLM Providers"))
-                                    .child(
-                                        PopoverMenu::new("add-provider-popover")
-                                            .trigger(
-                                                Button::new("add-provider", "Add Provider")
-                                                    .style(ButtonStyle::Filled)
-                                                    .layer(ElevationIndex::ModalSurface)
-                                                    .icon_position(IconPosition::Start)
-                                                    .icon(IconName::Plus)
-                                                    .icon_size(IconSize::Small)
-                                                    .icon_color(Color::Muted)
-                                                    .label_size(LabelSize::Small),
-                                            )
-                                            .anchor(gpui::Corner::TopRight)
-                                            .menu({
-                                                let workspace = self.workspace.clone();
-                                                move |window, cx| {
-                                                    Some(ContextMenu::build(
-                                                        window,
-                                                        cx,
-                                                        |menu, _window, _cx| {
-                                                            menu.header("Compatible APIs").entry(
-                                                                "OpenAI",
-                                                                None,
-                                                                {
-                                                                    let workspace =
-                                                                        workspace.clone();
-                                                                    move |window, cx| {
-                                                                        workspace
-                                                        .update(cx, |workspace, cx| {
-                                                            AddLlmProviderModal::toggle(
-                                                                LlmCompatibleProvider::OpenAi,
-                                                                workspace,
-                                                                window,
-                                                                cx,
-                                                            );
-                                                        })
-                                                        .log_err();
-                                                                    }
-                                                                },
-                                                            )
-                                                        },
-                                                    ))
-                                                }
-                                            }),
-                                    ),
-                            )
-                            .child(
-                                Label::new("Add at least one provider to use AI-powered features with Zed's native agent.")
-                                    .color(Color::Muted),
-                            ),
-                    ),
-            )
+            .child(self.render_section_title(
+                "LLM Providers",
+                "Add at least one provider to use AI-powered features with Zed's native agent.",
+                popover_menu.into_any_element(),
+            ))
             .child(
                 div()
                     .w_full()
@@ -401,101 +488,6 @@ impl AgentConfiguration {
                         }),
                     ),
             )
-    }
-
-    fn render_command_permission(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let always_allow_tool_actions = AgentSettings::get_global(cx).always_allow_tool_actions;
-        let fs = self.fs.clone();
-
-        SwitchField::new(
-            "always-allow-tool-actions-switch",
-            Some("Allow running commands without asking for confirmation"),
-            Some(
-                "The agent can perform potentially destructive actions without asking for your confirmation.".into(),
-            ),
-            always_allow_tool_actions,
-            move |state, _window, cx| {
-                let allow = state == &ToggleState::Selected;
-                update_settings_file(fs.clone(), cx, move |settings, _| {
-                    settings.agent.get_or_insert_default().set_always_allow_tool_actions(allow);
-                });
-            },
-        )
-    }
-
-    fn render_single_file_review(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let single_file_review = AgentSettings::get_global(cx).single_file_review;
-        let fs = self.fs.clone();
-
-        SwitchField::new(
-            "single-file-review",
-            Some("Enable single-file agent reviews"),
-            Some("Agent edits are also displayed in single-file editors for review.".into()),
-            single_file_review,
-            move |state, _window, cx| {
-                let allow = state == &ToggleState::Selected;
-                update_settings_file(fs.clone(), cx, move |settings, _| {
-                    settings
-                        .agent
-                        .get_or_insert_default()
-                        .set_single_file_review(allow);
-                });
-            },
-        )
-    }
-
-    fn render_sound_notification(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let play_sound_when_agent_done = AgentSettings::get_global(cx).play_sound_when_agent_done;
-        let fs = self.fs.clone();
-
-        SwitchField::new(
-            "sound-notification",
-            Some("Play sound when finished generating"),
-            Some(
-                "Hear a notification sound when the agent is done generating changes or needs your input.".into(),
-            ),
-            play_sound_when_agent_done,
-            move |state, _window, cx| {
-                let allow = state == &ToggleState::Selected;
-                update_settings_file(fs.clone(), cx, move |settings, _| {
-                    settings.agent.get_or_insert_default().set_play_sound_when_agent_done(allow);
-                });
-            },
-        )
-    }
-
-    fn render_modifier_to_send(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let use_modifier_to_send = AgentSettings::get_global(cx).use_modifier_to_send;
-        let fs = self.fs.clone();
-
-        SwitchField::new(
-            "modifier-send",
-            Some("Use modifier to submit a message"),
-            Some(
-                "Make a modifier (cmd-enter on macOS, ctrl-enter on Linux or Windows) required to send messages.".into(),
-            ),
-            use_modifier_to_send,
-            move |state, _window, cx| {
-                let allow = state == &ToggleState::Selected;
-                update_settings_file(fs.clone(), cx, move |settings, _| {
-                    settings.agent.get_or_insert_default().set_use_modifier_to_send(allow);
-                });
-            },
-        )
-    }
-
-    fn render_general_settings_section(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex()
-            .p(DynamicSpacing::Base16.rems(cx))
-            .pr(DynamicSpacing::Base20.rems(cx))
-            .gap_2p5()
-            .border_b_1()
-            .border_color(cx.theme().colors().border)
-            .child(Headline::new("General Settings"))
-            .child(self.render_command_permission(cx))
-            .child(self.render_single_file_review(cx))
-            .child(self.render_sound_notification(cx))
-            .child(self.render_modifier_to_send(cx))
     }
 
     fn render_zed_plan_info(&self, plan: Option<Plan>, cx: &mut Context<Self>) -> impl IntoElement {
@@ -515,15 +507,11 @@ impl AgentConfiguration {
                 .blend(cx.theme().colors().text_accent.opacity(0.2));
 
             let (plan_name, label_color, bg_color) = match plan {
-                Plan::V1(PlanV1::ZedFree) | Plan::V2(PlanV2::ZedFree) => {
-                    ("Free", Color::Default, free_chip_bg)
-                }
-                Plan::V1(PlanV1::ZedProTrial) | Plan::V2(PlanV2::ZedProTrial) => {
-                    ("Pro Trial", Color::Accent, pro_chip_bg)
-                }
-                Plan::V1(PlanV1::ZedPro) | Plan::V2(PlanV2::ZedPro) => {
-                    ("Pro", Color::Accent, pro_chip_bg)
-                }
+                Plan::ZedFree => ("Free", Color::Default, free_chip_bg),
+                Plan::ZedProTrial => ("Pro Trial", Color::Accent, pro_chip_bg),
+                Plan::ZedPro => ("Pro", Color::Accent, pro_chip_bg),
+                Plan::ZedBusiness => ("Business", Color::Accent, pro_chip_bg),
+                Plan::ZedStudent => ("Student", Color::Accent, pro_chip_bg),
             };
 
             Chip::new(plan_name.to_string())
@@ -535,52 +523,27 @@ impl AgentConfiguration {
         }
     }
 
-    fn card_item_border_color(&self, cx: &mut Context<Self>) -> Hsla {
-        cx.theme().colors().border.opacity(0.6)
-    }
-
-    fn render_context_servers_section(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let mut context_server_ids = self
-            .context_server_store
-            .read(cx)
-            .server_ids(cx)
-            .into_iter()
-            .collect::<Vec<_>>();
-
-        // Sort context servers: ones without mcp-server- prefix first, then prefixed ones
-        context_server_ids.sort_by(|a, b| {
-            const MCP_PREFIX: &str = "mcp-server-";
-            match (a.0.strip_prefix(MCP_PREFIX), b.0.strip_prefix(MCP_PREFIX)) {
-                // If one has mcp-server- prefix and other doesn't, non-mcp comes first
-                (Some(_), None) => std::cmp::Ordering::Greater,
-                (None, Some(_)) => std::cmp::Ordering::Less,
-                // If both have same prefix status, sort by appropriate key
-                (Some(a), Some(b)) => a.cmp(b),
-                (None, None) => a.0.cmp(&b.0),
-            }
-        });
+    fn render_context_servers_section(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let context_server_ids = self.context_server_store.read(cx).server_ids();
 
         let add_server_popover = PopoverMenu::new("add-server-popover")
             .trigger(
                 Button::new("add-server", "Add Server")
-                    .style(ButtonStyle::Filled)
-                    .layer(ElevationIndex::ModalSurface)
-                    .icon_position(IconPosition::Start)
-                    .icon(IconName::Plus)
-                    .icon_size(IconSize::Small)
-                    .icon_color(Color::Muted)
+                    .style(ButtonStyle::Outlined)
+                    .start_icon(
+                        Icon::new(IconName::Plus)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
                     .label_size(LabelSize::Small),
             )
-            .anchor(gpui::Corner::TopRight)
             .menu({
                 move |window, cx| {
                     Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
                         menu.entry("Add Custom Server", None, {
-                            |window, cx| window.dispatch_action(AddContextServer.boxed_clone(), cx)
+                            |window, cx| {
+                                window.dispatch_action(crate::AddContextServer.boxed_clone(), cx)
+                            }
                         })
                         .entry("Install from Extensions", None, {
                             |window, cx| {
@@ -598,73 +561,67 @@ impl AgentConfiguration {
                         })
                     }))
                 }
+            })
+            .anchor(gpui::Corner::TopRight)
+            .offset(gpui::Point {
+                x: px(0.0),
+                y: px(2.0),
             });
 
         v_flex()
-            .p(DynamicSpacing::Base16.rems(cx))
-            .pr(DynamicSpacing::Base20.rems(cx))
-            .gap_2()
+            .min_w_0()
             .border_b_1()
             .border_color(cx.theme().colors().border)
+            .child(self.render_section_title(
+                "Model Context Protocol (MCP) Servers",
+                "All MCP servers connected directly or via a Zed extension.",
+                add_server_popover.into_any_element(),
+            ))
             .child(
-                h_flex()
+                v_flex()
+                    .pl_4()
+                    .pb_4()
+                    .pr_5()
                     .w_full()
-                    .items_start()
-                    .justify_between()
                     .gap_1()
-                    .child(
-                        v_flex()
-                            .gap_0p5()
-                            .child(Headline::new("Model Context Protocol (MCP) Servers"))
-                            .child(
-                                Label::new(
-                                    "All MCP servers connected directly or via a Zed extension.",
-                                )
-                                .color(Color::Muted),
-                            ),
-                    )
-                    .child(add_server_popover),
-            )
-            .child(v_flex().w_full().gap_1().map(|mut parent| {
-                if context_server_ids.is_empty() {
-                    parent.child(
-                        h_flex()
-                            .p_4()
-                            .justify_center()
-                            .border_1()
-                            .border_dashed()
-                            .border_color(cx.theme().colors().border.opacity(0.6))
-                            .rounded_sm()
-                            .child(
-                                Label::new("No MCP servers added yet.")
-                                    .color(Color::Muted)
-                                    .size(LabelSize::Small),
-                            ),
-                    )
-                } else {
-                    for (index, context_server_id) in context_server_ids.into_iter().enumerate() {
-                        if index > 0 {
-                            parent = parent.child(
-                                Divider::horizontal()
-                                    .color(DividerColor::BorderFaded)
-                                    .into_any_element(),
-                            );
+                    .map(|parent| {
+                        if context_server_ids.is_empty() {
+                            parent.child(
+                                h_flex()
+                                    .p_4()
+                                    .justify_center()
+                                    .border_1()
+                                    .border_dashed()
+                                    .border_color(cx.theme().colors().border.opacity(0.6))
+                                    .rounded_sm()
+                                    .child(
+                                        Label::new("No MCP servers added yet.")
+                                            .color(Color::Muted)
+                                            .size(LabelSize::Small),
+                                    ),
+                            )
+                        } else {
+                            parent.children(itertools::intersperse_with(
+                                context_server_ids.iter().cloned().map(|context_server_id| {
+                                    self.render_context_server(context_server_id, cx)
+                                        .into_any_element()
+                                }),
+                                || {
+                                    Divider::horizontal()
+                                        .color(DividerColor::BorderFaded)
+                                        .into_any_element()
+                                },
+                            ))
                         }
-                        parent =
-                            parent.child(self.render_context_server(context_server_id, window, cx));
-                    }
-                    parent
-                }
-            }))
+                    }),
+            )
     }
 
     fn render_context_server(
         &self,
         context_server_id: ContextServerId,
-        window: &mut Window,
-        cx: &mut Context<Self>,
+        cx: &Context<Self>,
     ) -> impl use<> + IntoElement {
-        let tools_by_source = self.tools.read(cx).tools_by_source(cx);
         let server_status = self
             .context_server_store
             .read(cx)
@@ -677,71 +634,69 @@ impl AgentConfiguration {
 
         let is_running = matches!(server_status, ContextServerStatus::Running);
         let item_id = SharedString::from(context_server_id.0.clone());
-        let is_from_extension = server_configuration
-            .as_ref()
-            .map(|config| {
-                matches!(
-                    config.as_ref(),
-                    ContextServerConfiguration::Extension { .. }
-                )
-            })
-            .unwrap_or(false);
+        // Servers without a configuration can only be provided by extensions.
+        let provided_by_extension = server_configuration.as_ref().is_none_or(|config| {
+            matches!(
+                config.as_ref(),
+                ContextServerConfiguration::Extension { .. }
+            )
+        });
+
+        let display_name = if provided_by_extension {
+            resolve_extension_for_context_server(&context_server_id, cx)
+                .map(|(_, manifest)| {
+                    let name = manifest.name.as_str();
+                    let stripped = name
+                        .strip_suffix(" MCP Server")
+                        .or_else(|| name.strip_suffix(" MCP"))
+                        .or_else(|| name.strip_suffix(" Context Server"))
+                        .unwrap_or(name);
+                    SharedString::from(stripped.to_string())
+                })
+                .unwrap_or_else(|| item_id.clone())
+        } else {
+            item_id.clone()
+        };
 
         let error = if let ContextServerStatus::Error(error) = server_status.clone() {
             Some(error)
         } else {
             None
         };
+        let auth_required = matches!(server_status, ContextServerStatus::AuthRequired);
+        let authenticating = matches!(server_status, ContextServerStatus::Authenticating);
+        let context_server_store = self.context_server_store.clone();
 
-        let are_tools_expanded = self
-            .expanded_context_server_tools
-            .get(&context_server_id)
-            .copied()
-            .unwrap_or_default();
-        let tools = tools_by_source
-            .get(&ToolSource::ContextServer {
-                id: context_server_id.0.clone().into(),
-            })
-            .map_or([].as_slice(), |tools| tools.as_slice());
-        let tool_count = tools.len();
+        let tool_count = self
+            .context_server_registry
+            .read(cx)
+            .tools_for_server(&context_server_id)
+            .count();
 
-        let (source_icon, source_tooltip) = if is_from_extension {
-            (
-                IconName::ZedMcpExtension,
-                "This MCP server was installed from an extension.",
-            )
+        let source = if provided_by_extension {
+            AiSettingItemSource::Extension
         } else {
-            (
-                IconName::ZedMcpCustom,
-                "This custom MCP server was installed directly.",
-            )
+            AiSettingItemSource::Custom
         };
 
-        let (status_indicator, tooltip_text) = match server_status {
-            ContextServerStatus::Starting => (
-                Icon::new(IconName::LoadCircle)
-                    .size(IconSize::XSmall)
-                    .color(Color::Accent)
-                    .with_keyed_rotate_animation(
-                        SharedString::from(format!("{}-starting", context_server_id.0)),
-                        3,
-                    )
-                    .into_any_element(),
-                "Server is starting.",
-            ),
-            ContextServerStatus::Running => (
-                Indicator::dot().color(Color::Success).into_any_element(),
-                "Server is active.",
-            ),
-            ContextServerStatus::Error(_) => (
-                Indicator::dot().color(Color::Error).into_any_element(),
-                "Server has an error.",
-            ),
-            ContextServerStatus::Stopped => (
-                Indicator::dot().color(Color::Muted).into_any_element(),
-                "Server is stopped.",
-            ),
+        let status = match server_status {
+            ContextServerStatus::Starting => AiSettingItemStatus::Starting,
+            ContextServerStatus::Running => AiSettingItemStatus::Running,
+            ContextServerStatus::Error(_) => AiSettingItemStatus::Error,
+            ContextServerStatus::Stopped => AiSettingItemStatus::Stopped,
+            ContextServerStatus::AuthRequired => AiSettingItemStatus::AuthRequired,
+            ContextServerStatus::Authenticating => AiSettingItemStatus::Authenticating,
         };
+
+        let is_remote = server_configuration
+            .as_ref()
+            .map(|config| matches!(config.as_ref(), ContextServerConfiguration::Http { .. }))
+            .unwrap_or(false);
+
+        let should_show_logout_button = server_configuration.as_ref().is_some_and(|config| {
+            matches!(config.as_ref(), ContextServerConfiguration::Http { .. })
+                && !config.has_static_auth_header()
+        });
 
         let context_server_configuration_menu = PopoverMenu::new("context-server-config-menu")
             .trigger_with_tooltip(
@@ -755,9 +710,9 @@ impl AgentConfiguration {
                 let fs = self.fs.clone();
                 let context_server_id = context_server_id.clone();
                 let language_registry = self.language_registry.clone();
-                let context_server_store = self.context_server_store.clone();
                 let workspace = self.workspace.clone();
-                let tools = self.tools.clone();
+                let context_server_registry = self.context_server_registry.clone();
+                let context_server_store = context_server_store.clone();
 
                 move |window, cx| {
                     Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
@@ -766,29 +721,36 @@ impl AgentConfiguration {
                             let language_registry = language_registry.clone();
                             let workspace = workspace.clone();
                             move |window, cx| {
-                                ConfigureContextServerModal::show_modal_for_existing_server(
-                                    context_server_id.clone(),
-                                    language_registry.clone(),
-                                    workspace.clone(),
-                                    window,
-                                    cx,
-                                )
-                                .detach_and_log_err(cx);
+                                if is_remote {
+                                    crate::agent_configuration::configure_context_server_modal::ConfigureContextServerModal::show_modal_for_existing_server(
+                                        context_server_id.clone(),
+                                        language_registry.clone(),
+                                        workspace.clone(),
+                                        window,
+                                        cx,
+                                    )
+                                    .detach();
+                                } else {
+                                    ConfigureContextServerModal::show_modal_for_existing_server(
+                                        context_server_id.clone(),
+                                        language_registry.clone(),
+                                        workspace.clone(),
+                                        window,
+                                        cx,
+                                    )
+                                    .detach();
+                                }
                             }
-                        }).when(tool_count >= 1, |this| this.entry("View Tools", None, {
+                        }).when(tool_count > 0, |this| this.entry("View Tools", None, {
                             let context_server_id = context_server_id.clone();
-                            let tools = tools.clone();
+                            let context_server_registry = context_server_registry.clone();
                             let workspace = workspace.clone();
-
                             move |window, cx| {
                                 let context_server_id = context_server_id.clone();
-                                let tools = tools.clone();
-                                let workspace = workspace.clone();
-
                                 workspace.update(cx, |workspace, cx| {
                                     ConfigureContextServerToolsModal::toggle(
                                         context_server_id,
-                                        tools,
+                                        context_server_registry.clone(),
                                         workspace,
                                         window,
                                         cx,
@@ -797,27 +759,25 @@ impl AgentConfiguration {
                                 .ok();
                             }
                         }))
+                        .when(should_show_logout_button, |this| {
+                            this.entry("Log Out", None, {
+                                let context_server_store = context_server_store.clone();
+                                let context_server_id = context_server_id.clone();
+                                move |_window, cx| {
+                                    context_server_store.update(cx, |store, cx| {
+                                        store.logout_server(&context_server_id, cx).log_err();
+                                    });
+                                }
+                            })
+                        })
                         .separator()
                         .entry("Uninstall", None, {
                             let fs = fs.clone();
                             let context_server_id = context_server_id.clone();
-                            let context_server_store = context_server_store.clone();
                             let workspace = workspace.clone();
                             move |_, cx| {
-                                let is_provided_by_extension = context_server_store
-                                    .read(cx)
-                                    .configuration_for_server(&context_server_id)
-                                    .as_ref()
-                                    .map(|config| {
-                                        matches!(
-                                            config.as_ref(),
-                                            ContextServerConfiguration::Extension { .. }
-                                        )
-                                    })
-                                    .unwrap_or(false);
-
                                 let uninstall_extension_task = match (
-                                    is_provided_by_extension,
+                                    provided_by_extension,
                                     resolve_extension_for_context_server(&context_server_id, cx),
                                 ) {
                                     (true, Some((id, manifest))) => {
@@ -855,7 +815,8 @@ impl AgentConfiguration {
                                                     }
                                                 },
                                             )
-                                        })
+                                        });
+                                        anyhow::Ok(())
                                     }
                                 })
                                 .detach_and_log_err(cx);
@@ -865,264 +826,434 @@ impl AgentConfiguration {
                 }
             });
 
-        v_flex()
-            .id(item_id.clone())
-            .child(
-                h_flex()
-                    .justify_between()
-                    .when(
-                        error.is_none() && are_tools_expanded && tool_count >= 1,
-                        |element| {
-                            element
-                                .border_b_1()
-                                .border_color(self.card_item_border_color(cx))
-                        },
-                    )
+        let feedback_base_container =
+            || h_flex().py_1().min_w_0().w_full().gap_1().justify_between();
+
+        let details: Option<AnyElement> = if let Some(error) = error {
+            Some(
+                feedback_base_container()
                     .child(
                         h_flex()
-                            .flex_1()
+                            .pr_4()
                             .min_w_0()
+                            .w_full()
+                            .gap_2()
                             .child(
-                                h_flex()
-                                    .id(SharedString::from(format!("tooltip-{}", item_id)))
-                                    .h_full()
-                                    .w_3()
-                                    .mr_2()
-                                    .justify_center()
-                                    .tooltip(Tooltip::text(tooltip_text))
-                                    .child(status_indicator),
+                                Icon::new(IconName::XCircle)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Error),
                             )
-                            .child(Label::new(item_id).truncate())
-                            .child(
-                                div()
-                                    .id("extension-source")
-                                    .mt_0p5()
-                                    .mx_1()
-                                    .flex_none()
-                                    .tooltip(Tooltip::text(source_tooltip))
-                                    .child(
-                                        Icon::new(source_icon)
-                                            .size(IconSize::Small)
-                                            .color(Color::Muted),
-                                    ),
-                            )
-                            .when(is_running, |this| {
-                                this.child(
-                                    Label::new(if tool_count == 1 {
-                                        SharedString::from("1 tool")
-                                    } else {
-                                        SharedString::from(format!("{} tools", tool_count))
-                                    })
-                                    .color(Color::Muted)
-                                    .size(LabelSize::Small),
-                                )
-                            }),
+                            .child(div().min_w_0().flex_1().child(
+                                Label::new(error).color(Color::Muted).size(LabelSize::Small),
+                            )),
                     )
-                    .child(
-                        h_flex()
-                            .gap_0p5()
-                            .flex_none()
-                            .child(context_server_configuration_menu)
-                            .child(
-                            Switch::new("context-server-switch", is_running.into())
-                                .color(SwitchColor::Accent)
+                    .when(should_show_logout_button, |this| {
+                        this.child(
+                            Button::new("error-logout-server", "Log Out")
+                                .style(ButtonStyle::Outlined)
+                                .label_size(LabelSize::Small)
                                 .on_click({
-                                    let context_server_manager = self.context_server_store.clone();
-                                    let fs = self.fs.clone();
-
-                                    move |state, _window, cx| {
-                                        let is_enabled = match state {
-                                            ToggleState::Unselected
-                                            | ToggleState::Indeterminate => {
-                                                context_server_manager.update(cx, |this, cx| {
-                                                    this.stop_server(&context_server_id, cx)
-                                                        .log_err();
-                                                });
-                                                false
-                                            }
-                                            ToggleState::Selected => {
-                                                context_server_manager.update(cx, |this, cx| {
-                                                    if let Some(server) =
-                                                        this.get_server(&context_server_id)
-                                                    {
-                                                        this.start_server(server, cx);
-                                                    }
-                                                });
-                                                true
-                                            }
-                                        };
-                                        update_settings_file(fs.clone(), cx, {
-                                            let context_server_id = context_server_id.clone();
-
-                                            move |settings, _| {
-                                                settings
-                                                    .project
-                                                    .context_servers
-                                                    .entry(context_server_id.0)
-                                                    .or_insert_with(|| {
-                                                        settings::ContextServerSettingsContent::Extension {
-                                                            enabled: is_enabled,
-                                                            settings: serde_json::json!({}),
-                                                        }
-                                                    })
-                                                    .set_enabled(is_enabled);
-                                            }
+                                    let context_server_store = context_server_store.clone();
+                                    let context_server_id = context_server_id.clone();
+                                    move |_event, _window, cx| {
+                                        context_server_store.update(cx, |store, cx| {
+                                            store.logout_server(&context_server_id, cx).log_err();
                                         });
                                     }
                                 }),
-                        ),
-                    ),
+                        )
+                    })
+                    .into_any_element(),
             )
-            .map(|parent| {
-                if let Some(error) = error {
-                    return parent.child(
+        } else if auth_required {
+            Some(
+                feedback_base_container()
+                    .child(
                         h_flex()
-                            .gap_2()
                             .pr_4()
-                            .items_start()
+                            .min_w_0()
+                            .w_full()
+                            .gap_2()
                             .child(
-                                h_flex()
-                                    .flex_none()
-                                    .h(window.line_height() / 1.6_f32)
-                                    .justify_center()
-                                    .child(
-                                        Icon::new(IconName::XCircle)
-                                            .size(IconSize::XSmall)
-                                            .color(Color::Error),
-                                    ),
+                                Icon::new(IconName::Info)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted),
                             )
                             .child(
-                                div().w_full().child(
-                                    Label::new(error)
-                                        .buffer_font(cx)
-                                        .color(Color::Muted)
-                                        .size(LabelSize::Small),
-                                ),
+                                Label::new("Authenticate to connect this server")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
                             ),
-                    );
-                }
+                    )
+                    .child(
+                        Button::new("error-logout-server", "Authenticate")
+                            .style(ButtonStyle::Outlined)
+                            .label_size(LabelSize::Small)
+                            .on_click({
+                                let context_server_id = context_server_id.clone();
+                                move |_event, _window, cx| {
+                                    context_server_store.update(cx, |store, cx| {
+                                        store.authenticate_server(&context_server_id, cx).log_err();
+                                    });
+                                }
+                            }),
+                    )
+                    .into_any_element(),
+            )
+        } else if authenticating {
+            Some(
+                h_flex()
+                    .mt_1()
+                    .pr_4()
+                    .min_w_0()
+                    .w_full()
+                    .gap_2()
+                    .child(div().size_3().flex_shrink_0())
+                    .child(
+                        Label::new("Authenticating…")
+                            .color(Color::Muted)
+                            .size(LabelSize::Small),
+                    )
+                    .into_any_element(),
+            )
+        } else {
+            None
+        };
 
-                if !are_tools_expanded || tools.is_empty() {
-                    return parent;
-                }
-
-                parent
+        let tool_label = if is_running {
+            Some(if tool_count == 1 {
+                SharedString::from("1 tool")
+            } else {
+                SharedString::from(format!("{} tools", tool_count))
             })
+        } else {
+            None
+        };
+
+        AiSettingItem::new(item_id, display_name, status, source)
+            .action(context_server_configuration_menu)
+            .action(
+                Switch::new("context-server-switch", is_running.into()).on_click({
+                    let context_server_manager = self.context_server_store.clone();
+                    let fs = self.fs.clone();
+
+                    move |state, _window, cx| {
+                        let is_enabled = match state {
+                            ToggleState::Unselected | ToggleState::Indeterminate => {
+                                context_server_manager.update(cx, |this, cx| {
+                                    this.stop_server(&context_server_id, cx).log_err();
+                                });
+                                false
+                            }
+                            ToggleState::Selected => {
+                                context_server_manager.update(cx, |this, cx| {
+                                    if let Some(server) = this.get_server(&context_server_id) {
+                                        this.start_server(server, cx);
+                                    }
+                                });
+                                true
+                            }
+                        };
+                        update_settings_file(fs.clone(), cx, {
+                            let context_server_id = context_server_id.clone();
+
+                            move |settings, _| {
+                                settings
+                                    .project
+                                    .context_servers
+                                    .entry(context_server_id.0)
+                                    .or_insert_with(|| {
+                                        settings::ContextServerSettingsContent::Extension {
+                                            enabled: is_enabled,
+                                            remote: false,
+                                            settings: serde_json::json!({}),
+                                        }
+                                    })
+                                    .set_enabled(is_enabled);
+                            }
+                        });
+                    }
+                }),
+            )
+            .when_some(tool_label, |this, label| this.detail_label(label))
+            .when_some(details, |this, details| this.details(details))
     }
 
     fn render_agent_servers_section(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let user_defined_agents = self
-            .agent_server_store
-            .read(cx)
+        let agent_server_store = self.agent_server_store.read(cx);
+
+        let agents = agent_server_store
             .external_agents()
-            .filter(|name| {
-                name.0 != GEMINI_NAME && name.0 != CLAUDE_CODE_NAME && name.0 != CODEX_NAME
-            })
             .cloned()
             .collect::<Vec<_>>();
 
-        let user_defined_agents = user_defined_agents
+        let agents: Vec<_> = agents
             .into_iter()
             .map(|name| {
-                self.render_agent_server(IconName::Ai, name)
-                    .into_any_element()
+                let icon = if let Some(icon_path) = agent_server_store.agent_icon(&name) {
+                    AgentIcon::Path(icon_path)
+                } else {
+                    AgentIcon::Name(IconName::Sparkle)
+                };
+                let display_name = agent_server_store
+                    .agent_display_name(&name)
+                    .unwrap_or_else(|| name.0.clone());
+                let source = agent_server_store.agent_source(&name).unwrap_or_default();
+                (name, icon, display_name, source)
             })
-            .collect::<Vec<_>>();
+            .sorted_unstable_by_key(|(_, _, display_name, _)| display_name.to_lowercase())
+            .collect();
+
+        let add_agent_popover = PopoverMenu::new("add-agent-server-popover")
+            .trigger(
+                Button::new("add-agent", "Add Agent")
+                    .style(ButtonStyle::Outlined)
+                    .start_icon(
+                        Icon::new(IconName::Plus)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .label_size(LabelSize::Small),
+            )
+            .menu({
+                move |window, cx| {
+                    Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
+                        menu.entry("Install from Registry", None, {
+                            |window, cx| {
+                                window.dispatch_action(Box::new(zed_actions::AcpRegistry), cx)
+                            }
+                        })
+                        .entry("Add Custom Agent", None, {
+                            move |window, cx| {
+                                if let Some(workspace) = Workspace::for_window(window, cx) {
+                                    let workspace = workspace.downgrade();
+                                    window
+                                        .spawn(cx, async |cx| {
+                                            open_new_agent_servers_entry_in_settings_editor(
+                                                workspace, cx,
+                                            )
+                                            .await
+                                        })
+                                        .detach_and_log_err(cx);
+                                }
+                            }
+                        })
+                        .separator()
+                        .header("Learn More")
+                        .item(
+                            ContextMenuEntry::new("ACP Docs")
+                                .icon(IconName::ArrowUpRight)
+                                .icon_color(Color::Muted)
+                                .icon_position(IconPosition::End)
+                                .handler({
+                                    move |window, cx| {
+                                        window.dispatch_action(
+                                            Box::new(OpenBrowser {
+                                                url: "https://agentclientprotocol.com/".into(),
+                                            }),
+                                            cx,
+                                        );
+                                    }
+                                }),
+                        )
+                    }))
+                }
+            })
+            .anchor(gpui::Corner::TopRight)
+            .offset(gpui::Point {
+                x: px(0.0),
+                y: px(2.0),
+            });
 
         v_flex()
+            .min_w_0()
             .border_b_1()
             .border_color(cx.theme().colors().border)
             .child(
                 v_flex()
-                    .p(DynamicSpacing::Base16.rems(cx))
-                    .pr(DynamicSpacing::Base20.rems(cx))
-                    .gap_2()
+                    .child(self.render_section_title(
+                        "External Agents",
+                        "All agents connected through the Agent Client Protocol.",
+                        add_agent_popover.into_any_element(),
+                    ))
                     .child(
                         v_flex()
-                            .gap_0p5()
-                            .child(
-                                h_flex()
-                                    .pr_1()
-                                    .w_full()
-                                    .gap_2()
-                                    .justify_between()
-                                    .child(Headline::new("External Agents"))
-                                    .child(
-                                        Button::new("add-agent", "Add Agent")
-                                            .style(ButtonStyle::Filled)
-                                            .layer(ElevationIndex::ModalSurface)
-                                            .icon_position(IconPosition::Start)
-                                            .icon(IconName::Plus)
-                                            .icon_size(IconSize::Small)
-                                            .icon_color(Color::Muted)
-                                            .label_size(LabelSize::Small)
-                                            .on_click(
-                                                move |_, window, cx| {
-                                                    if let Some(workspace) = window.root().flatten() {
-                                                        let workspace = workspace.downgrade();
-                                                        window
-                                                            .spawn(cx, async |cx| {
-                                                                open_new_agent_servers_entry_in_settings_editor(
-                                                                    workspace,
-                                                                    cx,
-                                                                ).await
-                                                            })
-                                                            .detach_and_log_err(cx);
-                                                    }
-                                                }
-                                            ),
-                                    )
-                            )
-                            .child(
-                                Label::new(
-                                    "All agents connected through the Agent Client Protocol.",
-                                )
-                                .color(Color::Muted),
-                            ),
-                    )
-                    .child(self.render_agent_server(
-                        IconName::AiClaude,
-                        "Claude Code",
-                    ))
-                    .child(Divider::horizontal().color(DividerColor::BorderFaded))
-                    .when(cx.has_flag::<CodexAcpFeatureFlag>(), |this| {
-                        this
-                            .child(self.render_agent_server(
-                                IconName::AiOpenAi,
-                                "Codex",
-                            ))
-                            .child(Divider::horizontal().color(DividerColor::BorderFaded))
-                    })
-                    .child(self.render_agent_server(
-                        IconName::AiGemini,
-                        "Gemini CLI",
-                    ))
-                    .map(|mut parent| {
-                        for agent in user_defined_agents {
-                            parent = parent.child(Divider::horizontal().color(DividerColor::BorderFaded))
-                                .child(agent);
-                        }
-                        parent
-                    })
+                            .p_4()
+                            .pt_0()
+                            .gap_2()
+                            .children(Itertools::intersperse_with(
+                                agents
+                                    .into_iter()
+                                    .map(|(name, icon, display_name, source)| {
+                                        self.render_agent_server(
+                                            icon,
+                                            name,
+                                            display_name,
+                                            source,
+                                            cx,
+                                        )
+                                        .into_any_element()
+                                    }),
+                                || {
+                                    Divider::horizontal()
+                                        .color(DividerColor::BorderFaded)
+                                        .into_any_element()
+                                },
+                            )),
+                    ),
             )
     }
 
     fn render_agent_server(
         &self,
-        icon: IconName,
-        name: impl Into<SharedString>,
+        icon: AgentIcon,
+        id: impl Into<SharedString>,
+        display_name: impl Into<SharedString>,
+        source: ExternalAgentSource,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        h_flex().gap_1p5().justify_between().child(
-            h_flex()
-                .gap_1p5()
-                .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted))
-                .child(Label::new(name.into()))
-                .child(
-                    Icon::new(IconName::Check)
-                        .size(IconSize::Small)
-                        .color(Color::Success),
-                ),
+        let id = id.into();
+        let display_name = display_name.into();
+
+        let icon = match icon {
+            AgentIcon::Name(icon_name) => Icon::new(icon_name)
+                .size(IconSize::Small)
+                .color(Color::Muted),
+            AgentIcon::Path(icon_path) => Icon::from_external_svg(icon_path)
+                .size(IconSize::Small)
+                .color(Color::Muted),
+        };
+
+        let source_kind = match source {
+            ExternalAgentSource::Extension => AiSettingItemSource::Extension,
+            ExternalAgentSource::Registry => AiSettingItemSource::Registry,
+            ExternalAgentSource::Custom => AiSettingItemSource::Custom,
+        };
+
+        let agent_server_name = AgentId(id.clone());
+        let agent = Agent::Custom {
+            id: agent_server_name.clone(),
+        };
+
+        let connection_status = self
+            .agent_connection_store
+            .read(cx)
+            .connection_status(&agent, cx);
+
+        let restart_button = matches!(
+            connection_status,
+            AgentConnectionStatus::Connected | AgentConnectionStatus::Connecting
         )
+        .then(|| {
+            IconButton::new(
+                SharedString::from(format!("restart-{}", id)),
+                IconName::RotateCw,
+            )
+            .disabled(connection_status == AgentConnectionStatus::Connecting)
+            .icon_color(Color::Muted)
+            .icon_size(IconSize::Small)
+            .tooltip(Tooltip::text("Restart Agent Connection"))
+            .on_click(cx.listener({
+                let agent = agent.clone();
+                move |this, _, _window, cx| {
+                    let server: Rc<dyn agent_servers::AgentServer> =
+                        Rc::new(agent_servers::CustomAgentServer::new(agent.id()));
+                    this.agent_connection_store.update(cx, |store, cx| {
+                        store.restart_connection(agent.clone(), server, cx);
+                    });
+                }
+            }))
+        });
+
+        let uninstall_button = match source {
+            ExternalAgentSource::Extension => Some(
+                IconButton::new(
+                    SharedString::from(format!("uninstall-{}", id)),
+                    IconName::Trash,
+                )
+                .icon_color(Color::Muted)
+                .icon_size(IconSize::Small)
+                .tooltip(Tooltip::text("Uninstall Agent Extension"))
+                .on_click(cx.listener(move |this, _, _window, cx| {
+                    let agent_name = agent_server_name.clone();
+
+                    if let Some(ext_id) = this.agent_server_store.update(cx, |store, _cx| {
+                        store.get_extension_id_for_agent(&agent_name)
+                    }) {
+                        ExtensionStore::global(cx)
+                            .update(cx, |store, cx| store.uninstall_extension(ext_id, cx))
+                            .detach_and_log_err(cx);
+                    }
+                })),
+            ),
+            ExternalAgentSource::Registry => {
+                let fs = self.fs.clone();
+                Some(
+                    IconButton::new(
+                        SharedString::from(format!("uninstall-{}", id)),
+                        IconName::Trash,
+                    )
+                    .icon_color(Color::Muted)
+                    .icon_size(IconSize::Small)
+                    .tooltip(Tooltip::text("Remove Registry Agent"))
+                    .on_click(cx.listener(move |_, _, _window, cx| {
+                        let agent_name = agent_server_name.clone();
+                        update_settings_file(fs.clone(), cx, move |settings, _| {
+                            let Some(agent_servers) = settings.agent_servers.as_mut() else {
+                                return;
+                            };
+                            if let Some(entry) = agent_servers.get(agent_name.0.as_ref())
+                                && matches!(
+                                    entry,
+                                    settings::CustomAgentServerSettings::Registry { .. }
+                                )
+                            {
+                                agent_servers.remove(agent_name.0.as_ref());
+                            }
+                        });
+                    })),
+                )
+            }
+            ExternalAgentSource::Custom => {
+                let fs = self.fs.clone();
+                Some(
+                    IconButton::new(
+                        SharedString::from(format!("uninstall-{}", id)),
+                        IconName::Trash,
+                    )
+                    .icon_color(Color::Muted)
+                    .icon_size(IconSize::Small)
+                    .tooltip(Tooltip::text("Remove Custom Agent"))
+                    .on_click(cx.listener(move |_, _, _window, cx| {
+                        let agent_name = agent_server_name.clone();
+                        update_settings_file(fs.clone(), cx, move |settings, _| {
+                            let Some(agent_servers) = settings.agent_servers.as_mut() else {
+                                return;
+                            };
+                            if let Some(entry) = agent_servers.get(agent_name.0.as_ref())
+                                && matches!(
+                                    entry,
+                                    settings::CustomAgentServerSettings::Custom { .. }
+                                )
+                            {
+                                agent_servers.remove(agent_name.0.as_ref());
+                            }
+                        });
+                    })),
+                )
+            }
+        };
+
+        let status = match connection_status {
+            AgentConnectionStatus::Disconnected => AiSettingItemStatus::Stopped,
+            AgentConnectionStatus::Connecting => AiSettingItemStatus::Starting,
+            AgentConnectionStatus::Connected => AiSettingItemStatus::Running,
+        };
+
+        AiSettingItem::new(id, display_name, status, source_kind)
+            .icon(icon)
+            .when_some(restart_button, |this, button| this.action(button))
+            .when_some(uninstall_button, |this, button| this.action(button))
     }
 }
 
@@ -1144,13 +1275,13 @@ impl Render for AgentConfiguration {
                             .id("assistant-configuration-content")
                             .track_scroll(&self.scroll_handle)
                             .size_full()
+                            .min_w_0()
                             .overflow_y_scroll()
-                            .child(self.render_general_settings_section(cx))
                             .child(self.render_agent_servers_section(cx))
-                            .child(self.render_context_servers_section(window, cx))
+                            .child(self.render_context_servers_section(cx))
                             .child(self.render_provider_configuration_section(cx)),
                     )
-                    .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx),
+                    .vertical_scrollbar_for(&self.scroll_handle, window, cx),
             )
     }
 }
@@ -1224,7 +1355,7 @@ fn show_unable_to_uninstall_extension_with_context_server(
                                                     .context_servers
                                                     .remove(&context_server_id.0);
                                             });
-                                        })?;
+                                        });
                                         anyhow::Ok(())
                                     }
                                 })
@@ -1262,35 +1393,35 @@ async fn open_new_agent_servers_entry_in_settings_editor(
 
             let mut unique_server_name = None;
             let edits = settings.edits_for_update(&text, |settings| {
-                let server_name: Option<SharedString> = (0..u8::MAX)
+                let server_name: Option<String> = (0..u8::MAX)
                     .map(|i| {
                         if i == 0 {
-                            "your_agent".into()
+                            "your_agent".to_string()
                         } else {
-                            format!("your_agent_{}", i).into()
+                            format!("your_agent_{}", i)
                         }
                     })
                     .find(|name| {
                         !settings
                             .agent_servers
                             .as_ref()
-                            .is_some_and(|agent_servers| agent_servers.custom.contains_key(name))
+                            .is_some_and(|agent_servers| agent_servers.contains_key(name.as_str()))
                     });
                 if let Some(server_name) = server_name {
-                    unique_server_name = Some(server_name.clone());
-                    settings
-                        .agent_servers
-                        .get_or_insert_default()
-                        .custom
-                        .insert(
-                            server_name,
-                            settings::CustomAgentServerSettings {
-                                path: "path_to_executable".into(),
-                                args: vec![],
-                                env: Some(HashMap::default()),
-                                default_mode: None,
-                            },
-                        );
+                    unique_server_name = Some(SharedString::from(server_name.clone()));
+                    settings.agent_servers.get_or_insert_default().insert(
+                        server_name,
+                        settings::CustomAgentServerSettings::Custom {
+                            path: "path_to_executable".into(),
+                            args: vec![],
+                            env: HashMap::default(),
+                            default_mode: None,
+                            default_model: None,
+                            favorite_models: vec![],
+                            default_config_options: Default::default(),
+                            favorite_config_option_values: Default::default(),
+                        },
+                    );
                 }
             });
 
@@ -1303,7 +1434,15 @@ async fn open_new_agent_servers_entry_in_settings_editor(
                 .map(|(range, _)| range.clone())
                 .collect::<Vec<_>>();
 
-            item.edit(edits, cx);
+            item.edit(
+                edits.into_iter().map(|(range, s)| {
+                    (
+                        MultiBufferOffset(range.start)..MultiBufferOffset(range.end),
+                        s,
+                    )
+                }),
+                cx,
+            );
             if let Some((unique_server_name, buffer)) =
                 unique_server_name.zip(item.buffer().read(cx).as_singleton())
             {
@@ -1316,7 +1455,9 @@ async fn open_new_agent_servers_entry_in_settings_editor(
                         window,
                         cx,
                         |selections| {
-                            selections.select_ranges(vec![range]);
+                            selections.select_ranges(vec![
+                                MultiBufferOffset(range.start)..MultiBufferOffset(range.end),
+                            ]);
                         },
                     );
                 }
@@ -1351,4 +1492,15 @@ fn find_text_in_buffer(
     } else {
         None
     }
+}
+
+// OpenAI-compatible providers are user-configured and can be removed,
+// whereas built-in providers (like Anthropic, OpenAI, Google, etc.) can't.
+//
+// If in the future we have more "API-compatible-type" of providers,
+// they should be included here as removable providers.
+fn is_removable_provider(provider_id: &LanguageModelProviderId, cx: &App) -> bool {
+    AllLanguageModelSettings::get_global(cx)
+        .openai_compatible
+        .contains_key(provider_id.0.as_ref())
 }

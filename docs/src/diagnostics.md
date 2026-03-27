@@ -1,3 +1,8 @@
+---
+title: Diagnostics - Errors and Warnings in Zed
+description: View and navigate errors, warnings, and code diagnostics from language servers in Zed.
+---
+
 # Diagnostics
 
 Zed gets its diagnostics from the language servers and supports both push and pull variants of the LSP which makes it compatible with all existing language servers.
@@ -8,7 +13,7 @@ By default, Zed displays all diagnostics as underlined text in the editor and th
 
 Editor diagnostics could be filtered with the
 
-```json5
+```json [settings]
 "diagnostics_max_severity": null
 ```
 
@@ -16,7 +21,7 @@ editor setting (possible values: `"off"`, `"error"`, `"warning"`, `"info"`, `"hi
 
 The scrollbar ones are configured with the
 
-```json5
+```json [settings]
 "scrollbar": {
   "diagnostics": "all",
 }
@@ -32,7 +37,7 @@ Or, `editor::GoToDiagnostic` and `editor::GoToPreviousDiagnostic` could be used 
 Zed supports showing diagnostic as lens to the right of the code.
 This is disabled by default, but can either be temporarily turned on (or off) using the editor menu, or permanently, using the
 
-```json5
+```json [settings]
 "diagnostics": {
   "inline": {
     "enabled": true,
@@ -49,7 +54,7 @@ Project panel can have its entries coloured based on the severity of the diagnos
 
 To configure, use
 
-```json5
+```json [settings]
 "project_panel": {
   "show_diagnostics": "all",
 }
@@ -61,7 +66,7 @@ configuration (possible values: `"off"`, `"errors"`, `"all"` (default))
 
 Similar to the project panel, editor tabs can be colorized with the
 
-```json5
+```json [settings]
 "tabs": {
   "show_diagnostics": "off",
 }

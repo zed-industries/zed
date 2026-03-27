@@ -19,6 +19,18 @@ runs:
       shell: bash -euxo pipefail {0}
       run: ./script/linux
 
+    - name: Install mold linker
+      shell: bash -euxo pipefail {0}
+      run: ./script/install-mold
+
+    - name: Download WASI SDK
+      shell: bash -euxo pipefail {0}
+      run: ./script/download-wasi-sdk
+
+    - name: Generate action metadata
+      shell: bash -euxo pipefail {0}
+      run: ./script/generate-action-metadata
+
     - name: Check for broken links (in MD)
       uses: lycheeverse/lychee-action@82202e5e9c2f4ef1a55a3d02563e1cb6041e5332 # v2.4.1
       with:

@@ -24,8 +24,8 @@ impl TabBar {
         }
     }
 
-    pub fn track_scroll(mut self, scroll_handle: ScrollHandle) -> Self {
-        self.scroll_handle = Some(scroll_handle);
+    pub fn track_scroll(mut self, scroll_handle: &ScrollHandle) -> Self {
+        self.scroll_handle = Some(scroll_handle.clone());
         self
     }
 
@@ -143,9 +143,9 @@ impl RenderOnce for TabBar {
                         .flex_none()
                         .gap(DynamicSpacing::Base04.rems(cx))
                         .px(DynamicSpacing::Base06.rems(cx))
+                        .border_color(cx.theme().colors().border)
                         .border_b_1()
                         .border_l_1()
-                        .border_color(cx.theme().colors().border)
                         .children(self.end_children),
                 )
             })

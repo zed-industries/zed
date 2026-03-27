@@ -1,11 +1,13 @@
-use std::{fs, path::PathBuf, time::Duration};
+#![cfg_attr(target_family = "wasm", no_main)]
+
+use std::{fs, path::PathBuf};
 
 use anyhow::Result;
 use gpui::{
-    App, Application, AssetSource, Bounds, BoxShadow, ClickEvent, Context, SharedString, Task,
-    Timer, Window, WindowBounds, WindowOptions, div, hsla, img, point, prelude::*, px, rgb, size,
-    svg,
+    App, AssetSource, Bounds, BoxShadow, ClickEvent, Context, SharedString, Task, Window,
+    WindowBounds, WindowOptions, div, hsla, img, point, prelude::*, px, rgb, size, svg,
 };
+use gpui_platform::application;
 
 struct Assets {
     base: PathBuf,
@@ -37,6 +39,7 @@ impl AssetSource for Assets {
 struct HelloWorld {
     _task: Option<Task<()>>,
     opacity: f32,
+    animating: bool,
 }
 
 impl HelloWorld {
@@ -44,39 +47,29 @@ impl HelloWorld {
         Self {
             _task: None,
             opacity: 0.5,
+            animating: false,
         }
     }
 
-    fn change_opacity(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+    fn start_animation(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.opacity = 0.0;
+        self.animating = true;
         cx.notify();
-
-        self._task = Some(cx.spawn_in(window, async move |view, cx| {
-            loop {
-                Timer::after(Duration::from_secs_f32(0.05)).await;
-                let mut stop = false;
-                let _ = cx.update(|_, cx| {
-                    view.update(cx, |view, cx| {
-                        if view.opacity >= 1.0 {
-                            stop = true;
-                            return;
-                        }
-
-                        view.opacity += 0.1;
-                        cx.notify();
-                    })
-                });
-
-                if stop {
-                    break;
-                }
-            }
-        }));
     }
 }
 
 impl Render for HelloWorld {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.animating {
+            self.opacity += 0.005;
+            if self.opacity >= 1.0 {
+                self.animating = false;
+                self.opacity = 1.0;
+            } else {
+                window.request_animation_frame();
+            }
+        }
+
         div()
             .flex()
             .flex_row()
@@ -96,7 +89,7 @@ impl Render for HelloWorld {
             .child(
                 div()
                     .id("panel")
-                    .on_click(cx.listener(Self::change_opacity))
+                    .on_click(cx.listener(Self::start_animation))
                     .absolute()
                     .top_8()
                     .left_8()
@@ -150,15 +143,23 @@ impl Render for HelloWorld {
                                     .text_2xl()
                                     .size_8(),
                             )
-                            .child("🎊✈️🎉🎈🎁🎂")
+                            .child(
+                                div()
+                                    .flex()
+                                    .children(["🎊", "✈️", "🎉", "🎈", "🎁", "🎂"].map(|emoji| {
+                                        div()
+                                            .child(emoji.to_string())
+                                            .hover(|style| style.opacity(0.5))
+                                    })),
+                            )
                             .child(img("image/black-cat-typing.gif").size_12()),
                     ),
             )
     }
 }
 
-fn main() {
-    Application::new()
+fn run_example() {
+    application()
         .with_assets(Assets {
             base: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples"),
         })
@@ -174,4 +175,16 @@ fn main() {
             .unwrap();
             cx.activate(true);
         });
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn main() {
+    run_example();
+}
+
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn start() {
+    gpui_platform::web_init();
+    run_example();
 }

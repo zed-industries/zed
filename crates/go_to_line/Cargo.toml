@@ -17,6 +17,7 @@ editor.workspace = true
 gpui.workspace = true
 language.workspace = true
 menu.workspace = true
+multi_buffer.workspace = true
 serde.workspace = true
 settings.workspace = true
 text.workspace = true
@@ -24,7 +25,6 @@ theme.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }
@@ -35,6 +35,4 @@ menu.workspace = true
 project = { workspace = true, features = ["test-support"] }
 rope.workspace = true
 serde_json.workspace = true
-tree-sitter-rust.workspace = true
-tree-sitter-typescript.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
