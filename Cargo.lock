@@ -9624,6 +9624,7 @@ dependencies = [
  "sysinfo 0.37.2",
  "telemetry",
  "theme",
+ "theme_settings",
  "tree-sitter",
  "ui",
  "util",
