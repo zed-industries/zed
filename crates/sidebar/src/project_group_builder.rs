@@ -111,7 +111,7 @@ impl ProjectGroupBuilder {
     }
 
     fn project_group_entry(&mut self, name: &ProjectGroupName) -> &mut ProjectGroup {
-        self.project_groups.entry(name.clone()).or_insert_default()
+        self.project_groups.entry_ref(name).or_insert_default()
     }
 
     fn add_mapping(&mut self, work_directory: &Path, original_repo: &Path) {
