@@ -2086,7 +2086,7 @@ impl Vim {
             autoindent: self.should_autoindent(),
             cursor_offset: if matches!(self.mode, Mode::HelixNormal | Mode::HelixSelect) {
                 ModalCursorOffset::Helix
-            } else if self.mode.is_visual() || self.mode.is_helix() {
+            } else if self.mode.is_visual() {
                 ModalCursorOffset::Vim
             } else {
                 ModalCursorOffset::None
