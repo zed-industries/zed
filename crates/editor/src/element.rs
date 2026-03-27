@@ -6,7 +6,8 @@ use crate::{
     Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle, FILE_HEADER_HEIGHT,
     FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
     InlayHintRefreshReason, JumpData, LineDown, LineHighlight, LineUp, MAX_LINE_LEN,
-    MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown, PageUp,
+    MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, ModalCursorOffset, OpenExcerpts,
+    PageDown, PageUp,
     PhantomBreakpointIndicator, PhantomDiffReviewIndicator, Point, RowExt, RowRangeExt,
     SelectPhase, Selection, SelectionDragState, SelectionEffects, SizingBehavior, SoftWrap,
     StickyHeaderExcerpt, ToPoint, ToggleFold, ToggleFoldAll,
@@ -129,8 +130,7 @@ impl SelectionLayout {
     fn new<T: ToPoint + ToDisplayPoint + Clone>(
         selection: Selection<T>,
         line_mode: bool,
-        cursor_offset: bool,
-        cursor_offset_at_max_point: bool,
+        cursor_offset: ModalCursorOffset,
         cursor_shape: CursorShape,
         map: &DisplaySnapshot,
         is_newest: bool,
@@ -151,13 +151,12 @@ impl SelectionLayout {
         }
 
         // any vim visual mode (including line mode)
-        if cursor_offset && !range.is_empty() && !selection.reversed {
+        if cursor_offset.is_active() && !range.is_empty() && !selection.reversed {
             if head.column() > 0 {
                 head = map.clip_point(DisplayPoint::new(head.row(), head.column() - 1), Bias::Left);
-            } else if head.row().0 > 0 && (head != map.max_point() || cursor_offset_at_max_point) {
-                // cursor_offset_at_max_point case handles helix line selection
-                // removing head != map.max_point() would be the correct behavior in helix mode
-                // but causes a mismatch in vim mode.
+            } else if head.row().0 > 0
+                && (head != map.max_point() || cursor_offset == ModalCursorOffset::Helix)
+            {
                 head = map.clip_point(
                     DisplayPoint::new(
                         head.row().previous_row(),
@@ -165,7 +164,7 @@ impl SelectionLayout {
                     ),
                     Bias::Left,
                 );
-                // updating range.end is a no-op unless you're cursor is
+                // updating range.end is a no-op unless your cursor is
                 // on the newline containing a multi-buffer divider
                 // in which case the clip_point may have moved the head up
                 // an additional row.
@@ -1584,8 +1583,7 @@ impl EditorElement {
                     let layout = SelectionLayout::new(
                         selection,
                         editor.selections.line_mode(),
-                        editor.cursor_offset_on_selection,
-                        editor.cursor_offset_at_max_point,
+                        editor.cursor_offset,
                         editor.cursor_shape,
                         &snapshot.display_snapshot,
                         is_newest,
@@ -1632,8 +1630,7 @@ impl EditorElement {
                     let drag_cursor_layout = SelectionLayout::new(
                         drop_cursor.clone(),
                         false,
-                        editor.cursor_offset_on_selection,
-                        editor.cursor_offset_at_max_point,
+                        editor.cursor_offset,
                         CursorShape::Bar,
                         &snapshot.display_snapshot,
                         false,
@@ -1697,8 +1694,7 @@ impl EditorElement {
                         .push(SelectionLayout::new(
                             selection.selection,
                             selection.line_mode,
-                            editor.cursor_offset_on_selection,
-                            false,
+                            editor.cursor_offset.for_remote(),
                             selection.cursor_shape,
                             &snapshot.display_snapshot,
                             false,
@@ -1709,7 +1705,7 @@ impl EditorElement {
 
                 selections.extend(remote_selections.into_values());
             } else if !editor.is_focused(window) && editor.show_cursor_when_unfocused {
-                let cursor_offset_on_selection = editor.cursor_offset_on_selection;
+                let cursor_offset = editor.cursor_offset.for_remote();
 
                 let layouts = snapshot
                     .buffer_snapshot()
@@ -1718,8 +1714,7 @@ impl EditorElement {
                         SelectionLayout::new(
                             selection,
                             line_mode,
-                            cursor_offset_on_selection,
-                            false,
+                            cursor_offset,
                             cursor_shape,
                             &snapshot.display_snapshot,
                             false,
@@ -10101,8 +10096,7 @@ impl Element for EditorElement {
                             SelectionLayout::new(
                                 newest,
                                 editor.selections.line_mode(),
-                                editor.cursor_offset_on_selection,
-                                editor.cursor_offset_at_max_point,
+                                editor.cursor_offset,
                                 editor.cursor_shape,
                                 &snapshot,
                                 true,
@@ -12898,7 +12892,7 @@ mod tests {
 
         window
             .update(cx, |editor, window, cx| {
-                editor.cursor_offset_on_selection = true;
+                editor.cursor_offset = ModalCursorOffset::Vim;
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.select_ranges([
                         Point::new(0, 0)..Point::new(1, 0),

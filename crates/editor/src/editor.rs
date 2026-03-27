@@ -288,6 +288,27 @@ impl ReportEditorEvent {
     }
 }
 
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+pub enum ModalCursorOffset {
+    #[default]
+    None,
+    Vim,
+    Helix,
+}
+
+impl ModalCursorOffset {
+    pub fn is_active(self) -> bool {
+        !matches!(self, Self::None)
+    }
+
+    pub fn for_remote(self) -> Self {
+        match self {
+            Self::Helix => Self::Vim,
+            other => other,
+        }
+    }
+}
+
 pub enum ActiveDebugLine {}
 pub enum DebugStackFrameLine {}
 
@@ -1222,13 +1243,7 @@ pub struct Editor {
     pending_rename: Option<RenameState>,
     searchable: bool,
     cursor_shape: CursorShape,
-    /// Whether the cursor is offset one character to the left when something is
-    /// selected (needed for vim visual mode)
-    cursor_offset_on_selection: bool,
-    /// Whether to apply cursor offset even when the head is at the buffer's
-    /// max_point (needed for helix normal mode where line selections can end
-    /// on an empty trailing line)
-    cursor_offset_at_max_point: bool,
+    cursor_offset: ModalCursorOffset,
     current_line_highlight: Option<CurrentLineHighlight>,
     /// Whether to collapse search match ranges to just their start position.
     /// When true, navigating to a match positions the cursor at the match
@@ -2461,8 +2476,7 @@ impl Editor {
             cursor_shape: EditorSettings::get_global(cx)
                 .cursor_shape
                 .unwrap_or_default(),
-            cursor_offset_on_selection: false,
-            cursor_offset_at_max_point: false,
+            cursor_offset: ModalCursorOffset::None,
             current_line_highlight: None,
             autoindent_mode: Some(AutoindentMode::EachLine),
             collapse_matches: false,
@@ -3456,12 +3470,8 @@ impl Editor {
         self.cursor_shape
     }
 
-    pub fn set_cursor_offset_on_selection(&mut self, set_cursor_offset_on_selection: bool) {
-        self.cursor_offset_on_selection = set_cursor_offset_on_selection;
-    }
-
-    pub fn set_cursor_offset_at_max_point(&mut self, value: bool) {
-        self.cursor_offset_at_max_point = value;
+    pub fn set_cursor_offset(&mut self, cursor_offset: ModalCursorOffset) {
+        self.cursor_offset = cursor_offset;
     }
 
     pub fn set_current_line_highlight(

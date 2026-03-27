@@ -1123,6 +1123,23 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_visual_select_to_trailing_newline(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // When v j extends the selection head to the trailing empty line,
+        // the cursor should render *down* on that empty line — not stay on
+        // the content line. (Helix line-select has the opposite behavior;
+        // the max_point guard in SelectionLayout keeps them independent.)
+        cx.set_state("one\nˇtwo\n", Mode::Normal);
+        let cursor_y_before =
+            cx.update_editor(|editor, _, cx| editor.pixel_position_of_cursor(cx).map(|p| p.y));
+        cx.simulate_keystrokes("v j");
+        let cursor_y_after =
+            cx.update_editor(|editor, _, cx| editor.pixel_position_of_cursor(cx).map(|p| p.y));
+        assert_ne!(cursor_y_before, cursor_y_after);
+    }
+
+    #[gpui::test]
     async fn test_visual_delete(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
