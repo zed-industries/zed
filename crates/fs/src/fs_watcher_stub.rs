@@ -3,8 +3,7 @@ use std::sync::Arc;
 
 use crate::{PathEvent, Watcher};
 
-/// No-op file watcher for iOS. The thin client does not watch local files;
-/// all file operations happen on the remote host.
+/// No-op file watcher for platforms without a native watcher implementation.
 pub struct FsWatcher;
 
 impl FsWatcher {

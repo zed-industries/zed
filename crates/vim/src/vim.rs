@@ -529,6 +529,7 @@ pub(crate) struct Vim {
 
     editor: WeakEntity<Editor>,
 
+    #[cfg(not(target_os = "ios"))]
     last_command: Option<String>,
     running_command: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
@@ -588,6 +589,7 @@ impl Vim {
             selected_register: None,
             search: SearchState::default(),
 
+            #[cfg(not(target_os = "ios"))]
             last_command: None,
             running_command: None,
 

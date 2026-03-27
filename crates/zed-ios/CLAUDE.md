@@ -40,6 +40,21 @@ is gated by `cfg(target_os = "ios")` automatically when targeting `aarch64-apple
 - Depend on `node_runtime`, `lsp` (local), `task`, `dap`, `extension_host`, or `git` (CLI)
 - Link AppKit or any macOS-only framework
 
+## Keybindings
+
+iPad has its own standalone keymap at `assets/keymaps/default-ios.json`. It is **not** an
+overlay on the macOS keymap — it is a self-contained file that only references actions
+registered by crates initialized in `init_zed()`.
+
+When adding a new feature or action to the iPad build:
+1. Register / init the crate in `init_zed()` in `lib.rs`.
+2. Add keybindings for the new actions to `assets/keymaps/default-ios.json`.
+3. Only reference actions whose crates are initialized — unregistered actions cause a
+   load failure. Check `init_zed()` to see what's available.
+
+The vim keymap (`keymaps/vim.json`) is loaded separately with partial-failure tolerance
+since it may reference actions from crates not yet ported to iPad (e.g. terminal).
+
 ## FFI pattern
 
 All public functions use `#[no_mangle] pub extern "C" fn` with C-compatible types.

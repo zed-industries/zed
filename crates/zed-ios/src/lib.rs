@@ -325,9 +325,12 @@ mod ios {
 
     fn init_zed(cx: &mut App) {
         use fs::{Fs, RealFs};
+        use futures::StreamExt as _;
         use language::LanguageRegistry;
         use node_runtime::NodeRuntime;
         use session::{AppSession, Session};
+        use gpui::UpdateGlobal as _;
+        use settings::{SettingsStore, watch_config_file};
         use workspace::{AppState, WorkspaceStore};
 
         release_channel::init(semver::Version::new(0, 1, 0), cx);
@@ -337,77 +340,6 @@ mod ios {
 
         // Settings
         settings::init(cx);
-
-        // Minimal keybindings for the editor — just enough for text editing
-        // and form navigation. Loading the full default keymap is deferred until
-        // we understand the performance characteristics on iOS.
-        cx.bind_keys([
-            gpui::KeyBinding::new("tab", editor::actions::Tab, Some("Editor")),
-            gpui::KeyBinding::new("shift-tab", editor::actions::Backtab, Some("Editor")),
-            gpui::KeyBinding::new("tab", editor::actions::Tab, None),
-            gpui::KeyBinding::new("shift-tab", editor::actions::Backtab, None),
-            gpui::KeyBinding::new("backspace", editor::actions::Backspace, Some("Editor")),
-            gpui::KeyBinding::new("delete", editor::actions::Delete, Some("Editor")),
-            gpui::KeyBinding::new("enter", editor::actions::Newline, Some("Editor && mode == full")),
-            gpui::KeyBinding::new("cmd-a", editor::actions::SelectAll, Some("Editor")),
-            gpui::KeyBinding::new("cmd-c", editor::actions::Copy, Some("Editor")),
-            gpui::KeyBinding::new("cmd-v", editor::actions::Paste, Some("Editor")),
-            gpui::KeyBinding::new("cmd-x", editor::actions::Cut, Some("Editor")),
-            gpui::KeyBinding::new("cmd-z", editor::actions::Undo, Some("Editor")),
-            gpui::KeyBinding::new("cmd-shift-z", editor::actions::Redo, Some("Editor")),
-            gpui::KeyBinding::new("cmd-s", workspace::Save { save_intent: None }, None),
-            // Text manipulation
-            gpui::KeyBinding::new("cmd-/", editor::actions::ToggleComments { advance_downwards: true, ignore_indent: false }, Some("Editor")),
-            gpui::KeyBinding::new("cmd-l", editor::actions::SelectLine, Some("Editor")),
-            gpui::KeyBinding::new("cmd-d", editor::actions::SelectNext { replace_newest: false }, Some("Editor")),
-            gpui::KeyBinding::new("cmd-shift-l", editor::actions::SelectAllMatches, Some("Editor")),
-            gpui::KeyBinding::new("cmd-[", editor::actions::Outdent, Some("Editor")),
-            gpui::KeyBinding::new("cmd-]", editor::actions::Indent, Some("Editor")),
-            gpui::KeyBinding::new("cmd-shift-k", editor::actions::DeleteLine, Some("Editor")),
-            gpui::KeyBinding::new("alt-up", editor::actions::MoveLineUp, Some("Editor")),
-            gpui::KeyBinding::new("alt-down", editor::actions::MoveLineDown, Some("Editor")),
-            gpui::KeyBinding::new("alt-backspace", editor::actions::DeleteToPreviousWordStart { ignore_newlines: false, ignore_brackets: false }, Some("Editor")),
-            gpui::KeyBinding::new("cmd-backspace", editor::actions::DeleteToBeginningOfLine::default(), Some("Editor")),
-            // Code intelligence (LSP via remote)
-            gpui::KeyBinding::new("f12", editor::actions::GoToDefinition, Some("Editor")),
-            gpui::KeyBinding::new("f2", editor::actions::Rename, Some("Editor")),
-            gpui::KeyBinding::new("cmd-.", editor::actions::ToggleCodeActions { deployed_from: None, quick_launch: false }, Some("Editor")),
-            gpui::KeyBinding::new("f8", editor::actions::GoToDiagnostic::default(), Some("Editor")),
-            gpui::KeyBinding::new("shift-f8", editor::actions::GoToPreviousDiagnostic::default(), Some("Editor")),
-            // Code folding
-            gpui::KeyBinding::new("alt-cmd-[", editor::actions::Fold, Some("Editor")),
-            gpui::KeyBinding::new("alt-cmd-]", editor::actions::UnfoldLines, Some("Editor")),
-            gpui::KeyBinding::new("cmd-k cmd-l", editor::actions::ToggleFold, Some("Editor")),
-            // Editor cursor movement
-            gpui::KeyBinding::new("up", zed_actions::editor::MoveUp, Some("Editor")),
-            gpui::KeyBinding::new("down", zed_actions::editor::MoveDown, Some("Editor")),
-            gpui::KeyBinding::new("left", editor::actions::MoveLeft, Some("Editor")),
-            gpui::KeyBinding::new("right", editor::actions::MoveRight, Some("Editor")),
-            gpui::KeyBinding::new("shift-up", editor::actions::SelectUp, Some("Editor")),
-            gpui::KeyBinding::new("shift-down", editor::actions::SelectDown, Some("Editor")),
-            gpui::KeyBinding::new("shift-left", editor::actions::SelectLeft, Some("Editor")),
-            gpui::KeyBinding::new("shift-right", editor::actions::SelectRight, Some("Editor")),
-            gpui::KeyBinding::new("cmd-left", editor::actions::MoveToBeginningOfLine { stop_at_soft_wraps: true, stop_at_indent: false }, Some("Editor")),
-            gpui::KeyBinding::new("cmd-right", editor::actions::MoveToEndOfLine { stop_at_soft_wraps: true }, Some("Editor")),
-            gpui::KeyBinding::new("cmd-up", editor::actions::MoveToBeginning, Some("Editor")),
-            gpui::KeyBinding::new("cmd-down", editor::actions::MoveToEnd, Some("Editor")),
-            gpui::KeyBinding::new("alt-left", editor::actions::MoveToPreviousWordStart, Some("Editor")),
-            gpui::KeyBinding::new("alt-right", editor::actions::MoveToNextWordEnd, Some("Editor")),
-            // Navigation and search
-            gpui::KeyBinding::new("cmd-f", search::buffer_search::Deploy { focus: true, replace_enabled: false, selection_search_enabled: false }, Some("Editor")),
-            gpui::KeyBinding::new("cmd-shift-f", workspace::NewSearch, None),
-            gpui::KeyBinding::new("cmd-p", workspace::ToggleFileFinder { separate_history: false }, None),
-            gpui::KeyBinding::new("cmd-shift-p", zed_actions::command_palette::Toggle, None),
-            gpui::KeyBinding::new("cmd-k cmd-t", zed_actions::theme_selector::Toggle { themes_filter: None }, None),
-            gpui::KeyBinding::new("escape", editor::actions::Cancel, Some("Editor")),
-            gpui::KeyBinding::new("ctrl-g", editor::actions::ToggleGoToLine, None),
-            gpui::KeyBinding::new("enter", editor::actions::ConfirmRename, Some("Editor && renaming")),
-            // Menu navigation (pickers, command palette, completions)
-            gpui::KeyBinding::new("enter", menu::Confirm, None),
-            gpui::KeyBinding::new("escape", menu::Cancel, None),
-            gpui::KeyBinding::new("up", menu::SelectPrevious, None),
-            gpui::KeyBinding::new("down", menu::SelectNext, None),
-        ]);
 
         // HTTP client
         let http = Arc::new(
@@ -461,6 +393,7 @@ mod ios {
             let session_data = Session::new(session_id).await;
             cx.update(|cx| {
                 let session = cx.new(|cx| AppSession::new(session_data, cx));
+                let settings_fs = fs.clone();
                 let app_state = Arc::new(AppState {
                     client: client_for_state,
                     fs,
@@ -488,12 +421,62 @@ mod ios {
                 git_hosting_providers::init(cx);
                 git_ui::init(cx);
                 language_tools::init(cx);
+                vim::init(cx);
                 outline_panel::init(cx);
                 language_selector::init(cx);
                 theme_selector::init(cx);
                 workspace::init(app_state.clone(), cx);
                 project_panel::init(cx);
                 recent_projects::init(cx);
+
+                // Load user settings AFTER all init calls so that observers
+                // (e.g. vim's SettingsStore observer) are already registered.
+                let (mut user_settings_rx, user_settings_watcher) = watch_config_file(
+                    &cx.background_executor(),
+                    settings_fs,
+                    paths::settings_file().clone(),
+                );
+                if let Some(user_content) = cx
+                    .foreground_executor()
+                    .block_on(user_settings_rx.next())
+                {
+                    SettingsStore::update_global(cx, |store: &mut SettingsStore, cx: &mut gpui::App| {
+                        let _ = store.set_user_settings(&user_content, cx);
+                    });
+                }
+                cx.spawn(async move |cx| {
+                    let _watcher = user_settings_watcher;
+                    while let Some(content) = user_settings_rx.next().await {
+                        let _ = cx.update(|cx: &mut gpui::App| {
+                            SettingsStore::update_global(cx, |store: &mut SettingsStore, cx: &mut gpui::App| {
+                                let _ = store.set_user_settings(&content, cx);
+                            });
+                            cx.refresh_windows();
+                        });
+                    }
+                })
+                .detach();
+
+                load_default_keymap(cx);
+
+                // Reload keymaps when vim/helix mode toggles (the vim keymap is
+                // conditionally loaded, so we must re-run when the setting changes).
+                {
+                    use settings::Settings as _;
+                    let mut old_vim = vim_mode_setting::VimModeSetting::get_global(cx).0;
+                    let mut old_helix = vim_mode_setting::HelixModeSetting::get_global(cx).0;
+                    cx.observe_global::<settings::SettingsStore>(move |cx| {
+                        let new_vim = vim_mode_setting::VimModeSetting::get_global(cx).0;
+                        let new_helix = vim_mode_setting::HelixModeSetting::get_global(cx).0;
+                        if new_vim != old_vim || new_helix != old_helix {
+                            old_vim = new_vim;
+                            old_helix = new_helix;
+                            cx.clear_key_bindings();
+                            load_default_keymap(cx);
+                        }
+                    })
+                    .detach();
+                }
 
                 // Register no-op path prompts. The thin client doesn't open local
                 // projects — all file access goes through the remote host. Without
@@ -535,6 +518,9 @@ mod ios {
                     let cursor_position = cx.new(|_| {
                         go_to_line::cursor_position::CursorPosition::new(workspace)
                     });
+                    let vim_mode_indicator = cx.new(|cx| {
+                        vim::ModeIndicator::new(window, cx)
+                    });
 
                     workspace.status_bar().update(cx, |status_bar, cx| {
                         status_bar.add_left_item(search_button, window, cx);
@@ -542,6 +528,7 @@ mod ios {
                         status_bar.add_left_item(diagnostic_summary, window, cx);
                         status_bar.add_left_item(activity_indicator, window, cx);
                         status_bar.add_right_item(active_buffer_language, window, cx);
+                        status_bar.add_right_item(vim_mode_indicator, window, cx);
                         status_bar.add_right_item(cursor_position, window, cx);
                     });
 
@@ -609,6 +596,33 @@ mod ios {
 
     pub fn app_state() -> Option<Arc<workspace::AppState>> {
         APP_STATE.with(|cell| cell.borrow().clone())
+    }
+
+    fn load_default_keymap(cx: &mut gpui::App) {
+        use settings::{DEFAULT_KEYMAP_PATH, KeybindSource, KeymapFile, Settings as _, VIM_KEYMAP_PATH};
+        use vim_mode_setting::{HelixModeSetting, VimModeSetting};
+
+        match KeymapFile::load_asset_allow_partial_failure(DEFAULT_KEYMAP_PATH, cx) {
+            Ok(mut key_bindings) => {
+                for binding in &mut key_bindings {
+                    binding.set_meta(KeybindSource::Default.meta());
+                }
+                cx.bind_keys(key_bindings);
+            }
+            Err(error) => log::error!("Failed to load default keymap: {error}"),
+        }
+
+        if VimModeSetting::get_global(cx).0 || HelixModeSetting::get_global(cx).0 {
+            match KeymapFile::load_asset_allow_partial_failure(VIM_KEYMAP_PATH, cx) {
+                Ok(mut key_bindings) => {
+                    for binding in &mut key_bindings {
+                        binding.set_meta(KeybindSource::Vim.meta());
+                    }
+                    cx.bind_keys(key_bindings);
+                }
+                Err(error) => log::error!("Failed to load vim keymap: {error}"),
+            }
+        }
     }
 
     pub fn ios_open_window() {

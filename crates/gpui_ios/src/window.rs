@@ -749,6 +749,8 @@ const UI_KEY_MODIFIER_SHIFT: usize = 1 << 17;
 const UI_KEY_MODIFIER_CONTROL: usize = 1 << 18;
 const UI_KEY_MODIFIER_ALTERNATE: usize = 1 << 19;
 const UI_KEY_MODIFIER_COMMAND: usize = 1 << 20;
+const UI_KEY_MODIFIER_NUMERIC_PAD: usize = 1 << 21;
+const UI_KEY_MODIFIER_FUNCTION: usize = 1 << 23; // Globe key on iPad Magic Keyboard
 
 // UIKeyboardHIDUsage values — raw HID keyboard/keypad usage IDs (page 0x07).
 // UIKey.keyCode returns these without the usage-page prefix, so 0x2A not 0x0007002A.
@@ -779,15 +781,24 @@ const HID_MOD_RIGHT_CTRL: usize = 0xE4;
 const HID_MOD_RIGHT_SHIFT: usize = 0xE5;
 const HID_MOD_RIGHT_ALT: usize = 0xE6;
 const HID_MOD_RIGHT_GUI: usize = 0xE7;
+// Globe key (world key) on iPad Magic Keyboard — acts as the "fn" modifier.
+const HID_GLOBE: usize = 0x279;
 
 fn modifiers_from_ui_flags(flags: usize) -> (Modifiers, Capslock) {
+    // The globe key sets the function flag. However, function keys (F1–F12),
+    // arrow keys, and other non-printable keys also set it implicitly, so we
+    // only report `function: true` when the globe key is pressed without
+    // the numeric-pad flag (which accompanies physical function/arrow keys).
+    let raw_function = flags & UI_KEY_MODIFIER_FUNCTION != 0;
+    let numeric_pad = flags & UI_KEY_MODIFIER_NUMERIC_PAD != 0;
+    let function = raw_function && !numeric_pad;
     (
         Modifiers {
             shift: flags & UI_KEY_MODIFIER_SHIFT != 0,
             control: flags & UI_KEY_MODIFIER_CONTROL != 0,
             alt: flags & UI_KEY_MODIFIER_ALTERNATE != 0,
             platform: flags & UI_KEY_MODIFIER_COMMAND != 0,
-            function: false,
+            function,
         },
         Capslock { on: flags & UI_KEY_MODIFIER_ALPHA_SHIFT != 0 },
     )
@@ -805,6 +816,7 @@ fn is_modifier_key(hid_code: usize) -> bool {
             | HID_MOD_RIGHT_SHIFT
             | HID_MOD_RIGHT_ALT
             | HID_MOD_RIGHT_GUI
+            | HID_GLOBE
     )
 }
 

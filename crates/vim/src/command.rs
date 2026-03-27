@@ -1,11 +1,14 @@
 use anyhow::{Result, anyhow};
-use collections::{HashMap, HashSet};
+#[cfg(not(target_os = "ios"))]
+use collections::HashMap;
+use collections::HashSet;
 use command_palette_hooks::{CommandInterceptItem, CommandInterceptResult};
 use editor::{
     Bias, Editor, EditorSettings, SelectionEffects, ToPoint,
     actions::{SortLinesCaseInsensitive, SortLinesCaseSensitive},
     display_map::ToDisplayPoint,
 };
+#[cfg(not(target_os = "ios"))]
 use futures::AsyncWriteExt as _;
 use gpui::{
     Action, App, AppContext as _, Context, Global, Keystroke, Task, WeakEntity, Window, actions,
@@ -23,11 +26,13 @@ use std::{
     iter::Peekable,
     ops::{Deref, Range},
     path::{Path, PathBuf},
-    process::Stdio,
     str::Chars,
     sync::OnceLock,
     time::Instant,
 };
+#[cfg(not(target_os = "ios"))]
+use std::process::Stdio;
+#[cfg(not(target_os = "ios"))]
 use task::{HideStrategy, RevealStrategy, SaveStrategy, SpawnInTerminal, TaskId};
 use ui::ActiveTheme;
 use util::{
@@ -37,20 +42,23 @@ use util::{
 };
 use workspace::{Item, SaveIntent, Workspace, notifications::NotifyResultExt};
 use workspace::{SplitDirection, notifications::DetachAndPromptErr};
-use zed_actions::{OpenDocs, RevealTarget};
+use zed_actions::OpenDocs;
+#[cfg(not(target_os = "ios"))]
+use zed_actions::RevealTarget;
 
 use crate::{
     ToggleMarksView, ToggleRegistersView, Vim, VimSettings,
-    motion::{EndOfDocument, Motion, MotionKind, StartOfDocument},
+    motion::{EndOfDocument, MotionKind, StartOfDocument},
     normal::{
         JoinLines,
         search::{FindCommand, ReplaceCommand, Replacement},
     },
-    object::Object,
     rewrap::Rewrap,
     state::{Mark, Mode},
     visual::VisualDeleteLine,
 };
+#[cfg(not(target_os = "ios"))]
+use crate::{motion::Motion, object::Object};
 
 /// Goes to the specified line number in the editor.
 #[derive(Clone, Debug, PartialEq, Action)]
@@ -980,6 +988,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         action.run(vim, window, cx)
     });
 
+    #[cfg(not(target_os = "ios"))]
     Vim::action(editor, cx, |vim, action: &ShellExec, window, cx| {
         action.run(vim, window, cx)
     })
@@ -1779,7 +1788,9 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::str(("L", "explore"), "project_panel::ToggleFocus"),
         VimCommand::str(("S", "explore"), "project_panel::ToggleFocus"),
         VimCommand::str(("Ve", "xplore"), "project_panel::ToggleFocus"),
+        #[cfg(not(target_os = "ios"))]
         VimCommand::str(("te", "rm"), "terminal_panel::Toggle"),
+        #[cfg(not(target_os = "ios"))]
         VimCommand::str(("T", "erm"), "terminal_panel::Toggle"),
         VimCommand::str(("C", "ollab"), "collab_panel::ToggleFocus"),
         VimCommand::str(("No", "tifications"), "notification_panel::ToggleFocus"),
@@ -1914,7 +1925,10 @@ pub fn command_interceptor(
             None
         }
     } else if query.contains('!') {
-        ShellExec::parse(query, range.clone())
+        #[cfg(not(target_os = "ios"))]
+        { ShellExec::parse(query, range.clone()) }
+        #[cfg(target_os = "ios")]
+        { None }
     } else if on_matching_lines.is_some() {
         commands(cx)
             .iter()
@@ -2311,7 +2325,10 @@ impl Vim {
             });
         }
     }
+}
 
+#[cfg(not(target_os = "ios"))]
+impl Vim {
     fn prepare_shell_command(
         &mut self,
         command: &str,
@@ -2446,6 +2463,7 @@ impl Vim {
     }
 }
 
+#[cfg(not(target_os = "ios"))]
 impl ShellExec {
     pub fn parse(query: &str, range: Option<CommandRange>) -> Option<Box<dyn Action>> {
         let (before, after) = query.split_once('!')?;

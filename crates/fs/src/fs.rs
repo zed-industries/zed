@@ -1,9 +1,10 @@
 #[cfg(not(target_os = "ios"))]
 pub mod fs_watcher;
 #[cfg(target_os = "ios")]
-pub mod fs_watcher_stub;
+pub mod fs_watcher_ios;
 #[cfg(target_os = "ios")]
-pub use fs_watcher_stub as fs_watcher;
+pub use fs_watcher_ios as fs_watcher;
+pub mod fs_watcher_stub;
 
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};

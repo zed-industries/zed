@@ -21,12 +21,17 @@ impl ModeIndicator {
         .detach();
 
         let handle = cx.entity();
-        let window_handle = window.window_handle();
+        let window_id = window.window_handle().window_id();
         cx.observe_new::<Vim>(move |_, window, cx| {
             let Some(window) = window else {
                 return;
             };
-            if window.window_handle() != window_handle {
+            // Compare by WindowId only. AnyWindowHandle also carries the root
+            // view TypeId, which changes when replace_root is called (e.g. on
+            // iPad the landing window's root view changes from ConnectionLanding
+            // to MultiWorkspace). The physical window is still the same, so we
+            // only need the id to scope the indicator to the right window.
+            if window.window_handle().window_id() != window_id {
                 return;
             }
             let vim = cx.entity();

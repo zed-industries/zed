@@ -59,5 +59,7 @@ theme.workspace = true
 theme_selector.workspace = true
 ui.workspace = true
 util.workspace = true
+vim.workspace = true
+vim_mode_setting.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true

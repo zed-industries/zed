@@ -417,6 +417,7 @@ impl Vim {
                 window,
                 cx,
             ),
+            #[cfg(not(target_os = "ios"))]
             Some(Operator::ShellCommand) => {
                 self.shell_command_motion(motion, times, forced_motion, window, cx)
             }
@@ -501,6 +502,7 @@ impl Vim {
                 Some(Operator::AutoIndent) => {
                     self.indent_object(object, around, IndentDirection::Auto, times, window, cx)
                 }
+                #[cfg(not(target_os = "ios"))]
                 Some(Operator::ShellCommand) => {
                     self.shell_command_object(object, around, window, cx);
                 }
