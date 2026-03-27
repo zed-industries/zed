@@ -2608,10 +2608,6 @@ impl Sidebar {
         let mut subscriptions = Vec::new();
 
         subscriptions.push(cx.subscribe_in(&thread_switcher, window, {
-            let original_agent = original_agent.clone();
-            let original_session_info = original_session_info.clone();
-            let original_workspace = original_workspace.clone();
-            let weak_multi_workspace = weak_multi_workspace.clone();
             let thread_switcher = thread_switcher.clone();
             move |this, _emitter, event: &ThreadSwitcherEvent, window, cx| match event {
                 ThreadSwitcherEvent::Preview {
