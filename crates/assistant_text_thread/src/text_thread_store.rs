@@ -901,14 +901,16 @@ impl TextThreadStore {
                     cx,
                 );
             }
-            ContextServerStatus::Stopped | ContextServerStatus::Error(_) => {
+            ContextServerStatus::Stopped
+            | ContextServerStatus::Error(_)
+            | ContextServerStatus::AuthRequired => {
                 if let Some(slash_command_ids) =
                     self.context_server_slash_command_ids.remove(server_id)
                 {
                     self.slash_commands.remove(&slash_command_ids);
                 }
             }
-            _ => {}
+            ContextServerStatus::Starting | ContextServerStatus::Authenticating => {}
         }
     }
 

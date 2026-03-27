@@ -12,6 +12,7 @@ use fs::Fs;
 use gpui::{AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task};
 use http_client::{HttpClient, github::AssetKind};
 use node_runtime::NodeRuntime;
+use percent_encoding::percent_decode_str;
 use remote::RemoteClient;
 use rpc::{
     AnyProtoClient, TypedEnvelope,
@@ -22,10 +23,13 @@ use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, SettingsStore};
 use sha2::{Digest, Sha256};
 use task::Shell;
+use url::Url;
 use util::{ResultExt as _, debug_panic};
 
 use crate::ProjectEnvironment;
 use crate::agent_registry_store::{AgentRegistryStore, RegistryAgent, RegistryTargetConfig};
+
+use crate::worktree_store::WorktreeStore;
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
 pub struct AgentServerCommand {
@@ -61,28 +65,43 @@ impl std::fmt::Debug for AgentServerCommand {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct ExternalAgentServerName(pub SharedString);
+#[derive(
+    Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(transparent)]
+pub struct AgentId(pub SharedString);
 
-impl std::fmt::Display for ExternalAgentServerName {
+impl AgentId {
+    pub fn new(id: impl Into<SharedString>) -> Self {
+        AgentId(id.into())
+    }
+}
+
+impl std::fmt::Display for AgentId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }
 }
 
-impl From<&'static str> for ExternalAgentServerName {
+impl From<&'static str> for AgentId {
     fn from(value: &'static str) -> Self {
-        ExternalAgentServerName(value.into())
+        AgentId(value.into())
     }
 }
 
-impl From<ExternalAgentServerName> for SharedString {
-    fn from(value: ExternalAgentServerName) -> Self {
+impl From<AgentId> for SharedString {
+    fn from(value: AgentId) -> Self {
         value.0
     }
 }
 
-impl std::borrow::Borrow<str> for ExternalAgentServerName {
+impl AsRef<str> for AgentId {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::borrow::Borrow<str> for AgentId {
     fn borrow(&self) -> &str {
         &self.0
     }
@@ -134,6 +153,7 @@ enum AgentServerStoreState {
     Remote {
         project_id: u64,
         upstream_client: Entity<RemoteClient>,
+        worktree_store: Entity<WorktreeStore>,
     },
     Collab,
 }
@@ -163,7 +183,7 @@ impl ExternalAgentEntry {
 
 pub struct AgentServerStore {
     state: AgentServerStoreState,
-    pub external_agents: HashMap<ExternalAgentServerName, ExternalAgentEntry>,
+    pub external_agents: HashMap<AgentId, ExternalAgentEntry>,
 }
 
 pub struct AgentServersUpdated;
@@ -216,6 +236,7 @@ impl AgentServerStore {
             AgentServerStoreState::Remote {
                 project_id,
                 upstream_client,
+                worktree_store,
             } => {
                 let mut agents = vec![];
                 for (ext_id, manifest) in manifests {
@@ -228,7 +249,7 @@ impl AgentServerStore {
                             .as_ref()
                             .map(|path| SharedString::from(path.clone()));
                         let icon = icon_path;
-                        let agent_server_name = ExternalAgentServerName(agent_name.clone().into());
+                        let agent_server_name = AgentId(agent_name.clone().into());
                         self.external_agents
                             .entry(agent_server_name.clone())
                             .and_modify(|entry| {
@@ -241,6 +262,7 @@ impl AgentServerStore {
                                     Box::new(RemoteExternalAgentServer {
                                         project_id: *project_id,
                                         upstream_client: upstream_client.clone(),
+                                        worktree_store: worktree_store.clone(),
                                         name: agent_server_name.clone(),
                                         new_version_available_tx: None,
                                     })
@@ -285,13 +307,13 @@ impl AgentServerStore {
         cx.emit(AgentServersUpdated);
     }
 
-    pub fn agent_icon(&self, name: &ExternalAgentServerName) -> Option<SharedString> {
+    pub fn agent_icon(&self, name: &AgentId) -> Option<SharedString> {
         self.external_agents
             .get(name)
             .and_then(|entry| entry.icon.clone())
     }
 
-    pub fn agent_source(&self, name: &ExternalAgentServerName) -> Option<ExternalAgentSource> {
+    pub fn agent_source(&self, name: &AgentId) -> Option<ExternalAgentSource> {
         self.external_agents.get(name).map(|entry| entry.source)
     }
 }
@@ -337,7 +359,7 @@ pub fn resolve_extension_icon_path(
 }
 
 impl AgentServerStore {
-    pub fn agent_display_name(&self, name: &ExternalAgentServerName) -> Option<SharedString> {
+    pub fn agent_display_name(&self, name: &AgentId) -> Option<SharedString> {
         self.external_agents
             .get(name)
             .and_then(|entry| entry.display_name.clone())
@@ -424,7 +446,7 @@ impl AgentServerStore {
 
         // Insert extension agents before custom/registry so registry entries override extensions.
         for (agent_name, ext_id, targets, env, icon_path, display_name) in extension_agents.iter() {
-            let name = ExternalAgentServerName(agent_name.clone().into());
+            let name = AgentId(agent_name.clone().into());
             let mut env = env.clone();
             if let Some(settings_env) =
                 new_settings
@@ -463,7 +485,7 @@ impl AgentServerStore {
         for (name, settings) in new_settings.iter() {
             match settings {
                 CustomAgentServerSettings::Custom { command, .. } => {
-                    let agent_name = ExternalAgentServerName(name.clone().into());
+                    let agent_name = AgentId(name.clone().into());
                     self.external_agents.insert(
                         agent_name.clone(),
                         ExternalAgentEntry::new(
@@ -485,7 +507,7 @@ impl AgentServerStore {
                         continue;
                     };
 
-                    let agent_name = ExternalAgentServerName(name.clone().into());
+                    let agent_name = AgentId(name.clone().into());
                     match agent {
                         RegistryAgent::Binary(agent) => {
                             if !agent.supports_current_platform {
@@ -597,11 +619,16 @@ impl AgentServerStore {
         this
     }
 
-    pub(crate) fn remote(project_id: u64, upstream_client: Entity<RemoteClient>) -> Self {
+    pub(crate) fn remote(
+        project_id: u64,
+        upstream_client: Entity<RemoteClient>,
+        worktree_store: Entity<WorktreeStore>,
+    ) -> Self {
         Self {
             state: AgentServerStoreState::Remote {
                 project_id,
                 upstream_client,
+                worktree_store,
             },
             external_agents: HashMap::default(),
         }
@@ -650,7 +677,7 @@ impl AgentServerStore {
 
     pub fn get_external_agent(
         &mut self,
-        name: &ExternalAgentServerName,
+        name: &AgentId,
     ) -> Option<&mut (dyn ExternalAgentServer + 'static)> {
         self.external_agents
             .get_mut(name)
@@ -668,7 +695,7 @@ impl AgentServerStore {
         }
     }
 
-    pub fn external_agents(&self) -> impl Iterator<Item = &ExternalAgentServerName> {
+    pub fn external_agents(&self) -> impl Iterator<Item = &AgentId> {
         self.external_agents.keys()
     }
 
@@ -736,8 +763,10 @@ impl AgentServerStore {
                 .env
                 .map(|env| env.into_iter().collect())
                 .unwrap_or_default(),
-            // root_dir and login are no longer used, but returned for backwards compatibility
-            root_dir: paths::home_dir().to_string_lossy().to_string(),
+            root_dir: envelope
+                .payload
+                .root_dir
+                .unwrap_or_else(|| paths::home_dir().to_string_lossy().to_string()),
             login: None,
         })
     }
@@ -751,6 +780,7 @@ impl AgentServerStore {
             let AgentServerStoreState::Remote {
                 project_id,
                 upstream_client,
+                worktree_store,
             } = &this.state
             else {
                 debug_panic!(
@@ -777,12 +807,12 @@ impl AgentServerStore {
                 .names
                 .into_iter()
                 .map(|name| {
-                    let agent_name = ExternalAgentServerName(name.into());
+                    let agent_id = AgentId(name.into());
                     let (icon, display_name, source) = metadata
-                        .remove(&agent_name)
+                        .remove(&agent_id)
                         .or_else(|| {
                             AgentRegistryStore::try_global(cx)
-                                .and_then(|store| store.read(cx).agent(&agent_name.0))
+                                .and_then(|store| store.read(cx).agent(&agent_id))
                                 .map(|s| {
                                     (
                                         s.icon_path().cloned(),
@@ -795,13 +825,14 @@ impl AgentServerStore {
                     let agent = RemoteExternalAgentServer {
                         project_id: *project_id,
                         upstream_client: upstream_client.clone(),
-                        name: agent_name.clone(),
+                        worktree_store: worktree_store.clone(),
+                        name: agent_id.clone(),
                         new_version_available_tx: new_version_available_txs
-                            .remove(&agent_name)
+                            .remove(&agent_id)
                             .flatten(),
                     };
                     (
-                        agent_name,
+                        agent_id,
                         ExternalAgentEntry::new(
                             Box::new(agent) as Box<dyn ExternalAgentServer>,
                             source,
@@ -877,10 +908,7 @@ impl AgentServerStore {
         Ok(())
     }
 
-    pub fn get_extension_id_for_agent(
-        &mut self,
-        name: &ExternalAgentServerName,
-    ) -> Option<Arc<str>> {
+    pub fn get_extension_id_for_agent(&mut self, name: &AgentId) -> Option<Arc<str>> {
         self.external_agents.get_mut(name).and_then(|entry| {
             entry
                 .server
@@ -894,7 +922,8 @@ impl AgentServerStore {
 struct RemoteExternalAgentServer {
     project_id: u64,
     upstream_client: Entity<RemoteClient>,
-    name: ExternalAgentServerName,
+    worktree_store: Entity<WorktreeStore>,
+    name: AgentId,
     new_version_available_tx: Option<watch::Sender<Option<String>>>,
 }
 
@@ -908,8 +937,16 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
         let project_id = self.project_id;
         let name = self.name.to_string();
         let upstream_client = self.upstream_client.downgrade();
+        let worktree_store = self.worktree_store.clone();
         self.new_version_available_tx = new_version_available_tx;
         cx.spawn(async move |cx| {
+            let root_dir = worktree_store.read_with(cx, |worktree_store, cx| {
+                crate::Project::default_visible_worktree_paths(worktree_store, cx)
+                    .into_iter()
+                    .next()
+                    .map(|path| path.display().to_string())
+            });
+
             let mut response = upstream_client
                 .update(cx, |upstream_client, _| {
                     upstream_client
@@ -917,7 +954,7 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
                         .request(proto::GetAgentServerCommand {
                             project_id,
                             name,
-                            root_dir: None,
+                            root_dir,
                         })
                 })?
                 .await?;
@@ -944,6 +981,58 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
+}
+
+fn asset_kind_for_archive_url(archive_url: &str) -> Result<AssetKind> {
+    let archive_path = Url::parse(archive_url)
+        .ok()
+        .map(|url| url.path().to_string())
+        .unwrap_or_else(|| archive_url.to_string());
+
+    if archive_path.ends_with(".zip") {
+        Ok(AssetKind::Zip)
+    } else if archive_path.ends_with(".tar.gz") || archive_path.ends_with(".tgz") {
+        Ok(AssetKind::TarGz)
+    } else if archive_path.ends_with(".tar.bz2") || archive_path.ends_with(".tbz2") {
+        Ok(AssetKind::TarBz2)
+    } else {
+        bail!("unsupported archive type in URL: {archive_url}");
+    }
+}
+
+struct GithubReleaseArchive {
+    repo_name_with_owner: String,
+    tag: String,
+    asset_name: String,
+}
+
+fn github_release_archive_from_url(archive_url: &str) -> Option<GithubReleaseArchive> {
+    fn decode_path_segment(segment: &str) -> Option<String> {
+        percent_decode_str(segment)
+            .decode_utf8()
+            .ok()
+            .map(|segment| segment.into_owned())
+    }
+
+    let url = Url::parse(archive_url).ok()?;
+    if url.scheme() != "https" || url.host_str()? != "github.com" {
+        return None;
+    }
+
+    let segments = url.path_segments()?.collect::<Vec<_>>();
+    if segments.len() < 6 || segments[2] != "releases" || segments[3] != "download" {
+        return None;
+    }
+
+    Some(GithubReleaseArchive {
+        repo_name_with_owner: format!("{}/{}", segments[0], segments[1]),
+        tag: decode_path_segment(segments[4])?,
+        asset_name: segments[5..]
+            .iter()
+            .map(|segment| decode_path_segment(segment))
+            .collect::<Option<Vec<_>>>()?
+            .join("/"),
+    })
 }
 
 pub struct LocalExtensionArchiveAgent {
@@ -1040,41 +1129,27 @@ impl ExternalAgentServer for LocalExtensionArchiveAgent {
                 let sha256 = if let Some(provided_sha) = &target_config.sha256 {
                     // Use provided SHA256
                     Some(provided_sha.clone())
-                } else if archive_url.starts_with("https://github.com/") {
+                } else if let Some(github_archive) = github_release_archive_from_url(archive_url) {
                     // Try to fetch SHA256 from GitHub API
-                    // Parse URL to extract repo and tag/file info
-                    // Format: https://github.com/owner/repo/releases/download/tag/file.zip
-                    if let Some(caps) = archive_url.strip_prefix("https://github.com/") {
-                        let parts: Vec<&str> = caps.split('/').collect();
-                        if parts.len() >= 6 && parts[2] == "releases" && parts[3] == "download" {
-                            let repo = format!("{}/{}", parts[0], parts[1]);
-                            let tag = parts[4];
-                            let filename = parts[5..].join("/");
-
-                            // Try to get release info from GitHub
-                            if let Ok(release) = ::http_client::github::get_release_by_tag_name(
-                                &repo,
-                                tag,
-                                http_client.clone(),
-                            )
-                            .await
-                            {
-                                // Find matching asset
-                                if let Some(asset) =
-                                    release.assets.iter().find(|a| a.name == filename)
-                                {
-                                    // Strip "sha256:" prefix if present
-                                    asset.digest.as_ref().map(|d| {
-                                        d.strip_prefix("sha256:")
-                                            .map(|s| s.to_string())
-                                            .unwrap_or_else(|| d.clone())
-                                    })
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
+                    if let Ok(release) = ::http_client::github::get_release_by_tag_name(
+                        &github_archive.repo_name_with_owner,
+                        &github_archive.tag,
+                        http_client.clone(),
+                    )
+                    .await
+                    {
+                        // Find matching asset
+                        if let Some(asset) = release
+                            .assets
+                            .iter()
+                            .find(|a| a.name == github_archive.asset_name)
+                        {
+                            // Strip "sha256:" prefix if present
+                            asset.digest.as_ref().map(|d| {
+                                d.strip_prefix("sha256:")
+                                    .map(|s| s.to_string())
+                                    .unwrap_or_else(|| d.clone())
+                            })
                         } else {
                             None
                         }
@@ -1085,14 +1160,7 @@ impl ExternalAgentServer for LocalExtensionArchiveAgent {
                     None
                 };
 
-                // Determine archive type from URL
-                let asset_kind = if archive_url.ends_with(".zip") {
-                    AssetKind::Zip
-                } else if archive_url.ends_with(".tar.gz") || archive_url.ends_with(".tgz") {
-                    AssetKind::TarGz
-                } else {
-                    anyhow::bail!("unsupported archive type in URL: {}", archive_url);
-                };
+                let asset_kind = asset_kind_for_archive_url(archive_url)?;
 
                 // Download and extract
                 ::http_client::github_download::download_server_binary(
@@ -1233,35 +1301,24 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
             if !fs.is_dir(&version_dir).await {
                 let sha256 = if let Some(provided_sha) = &target_config.sha256 {
                     Some(provided_sha.clone())
-                } else if archive_url.starts_with("https://github.com/") {
-                    if let Some(caps) = archive_url.strip_prefix("https://github.com/") {
-                        let parts: Vec<&str> = caps.split('/').collect();
-                        if parts.len() >= 6 && parts[2] == "releases" && parts[3] == "download" {
-                            let repo = format!("{}/{}", parts[0], parts[1]);
-                            let tag = parts[4];
-                            let filename = parts[5..].join("/");
-
-                            if let Ok(release) = ::http_client::github::get_release_by_tag_name(
-                                &repo,
-                                tag,
-                                http_client.clone(),
-                            )
-                            .await
-                            {
-                                if let Some(asset) =
-                                    release.assets.iter().find(|a| a.name == filename)
-                                {
-                                    asset.digest.as_ref().and_then(|d| {
-                                        d.strip_prefix("sha256:")
-                                            .map(|s| s.to_string())
-                                            .or_else(|| Some(d.clone()))
-                                    })
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
+                } else if let Some(github_archive) = github_release_archive_from_url(archive_url) {
+                    if let Ok(release) = ::http_client::github::get_release_by_tag_name(
+                        &github_archive.repo_name_with_owner,
+                        &github_archive.tag,
+                        http_client.clone(),
+                    )
+                    .await
+                    {
+                        if let Some(asset) = release
+                            .assets
+                            .iter()
+                            .find(|a| a.name == github_archive.asset_name)
+                        {
+                            asset.digest.as_ref().and_then(|d| {
+                                d.strip_prefix("sha256:")
+                                    .map(|s| s.to_string())
+                                    .or_else(|| Some(d.clone()))
+                            })
                         } else {
                             None
                         }
@@ -1272,13 +1329,7 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
                     None
                 };
 
-                let asset_kind = if archive_url.ends_with(".zip") {
-                    AssetKind::Zip
-                } else if archive_url.ends_with(".tar.gz") || archive_url.ends_with(".tgz") {
-                    AssetKind::TarGz
-                } else {
-                    anyhow::bail!("unsupported archive type in URL: {}", archive_url);
-                };
+                let asset_kind = asset_kind_for_archive_url(archive_url)?;
 
                 ::http_client::github_download::download_server_binary(
                     &*http_client,
@@ -1362,13 +1413,8 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
                 .await
                 .unwrap_or_default();
 
-            let mut exec_args = Vec::new();
-            exec_args.push("--yes".to_string());
-            exec_args.push(package.to_string());
-            if !args.is_empty() {
-                exec_args.push("--".to_string());
-                exec_args.extend(args);
-            }
+            let mut exec_args = vec!["--yes".to_string(), "--".to_string(), package.to_string()];
+            exec_args.extend(args);
 
             let npm_command = node_runtime
                 .npm_command(
@@ -1433,10 +1479,6 @@ impl ExternalAgentServer for LocalCustomAgent {
         self
     }
 }
-
-pub const GEMINI_NAME: &str = "gemini";
-pub const CLAUDE_AGENT_NAME: &str = "claude-acp";
-pub const CODEX_NAME: &str = "codex-acp";
 
 #[derive(Default, Clone, JsonSchema, Debug, PartialEq, RegisterSetting)]
 pub struct AllAgentServersSettings(pub HashMap<String, CustomAgentServerSettings>);
@@ -1638,6 +1680,79 @@ impl CustomAgentServerSettings {
                 .get(config_id)
                 .map(|v| v.as_slice()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_supported_archive_suffixes() {
+        assert!(matches!(
+            asset_kind_for_archive_url("https://example.com/agent.zip"),
+            Ok(AssetKind::Zip)
+        ));
+        assert!(matches!(
+            asset_kind_for_archive_url("https://example.com/agent.zip?download=1"),
+            Ok(AssetKind::Zip)
+        ));
+        assert!(matches!(
+            asset_kind_for_archive_url("https://example.com/agent.tar.gz"),
+            Ok(AssetKind::TarGz)
+        ));
+        assert!(matches!(
+            asset_kind_for_archive_url("https://example.com/agent.tar.gz?download=1#latest"),
+            Ok(AssetKind::TarGz)
+        ));
+        assert!(matches!(
+            asset_kind_for_archive_url("https://example.com/agent.tgz"),
+            Ok(AssetKind::TarGz)
+        ));
+        assert!(matches!(
+            asset_kind_for_archive_url("https://example.com/agent.tgz#download"),
+            Ok(AssetKind::TarGz)
+        ));
+        assert!(matches!(
+            asset_kind_for_archive_url("https://example.com/agent.tar.bz2"),
+            Ok(AssetKind::TarBz2)
+        ));
+        assert!(matches!(
+            asset_kind_for_archive_url("https://example.com/agent.tar.bz2?download=1"),
+            Ok(AssetKind::TarBz2)
+        ));
+        assert!(matches!(
+            asset_kind_for_archive_url("https://example.com/agent.tbz2"),
+            Ok(AssetKind::TarBz2)
+        ));
+        assert!(matches!(
+            asset_kind_for_archive_url("https://example.com/agent.tbz2#download"),
+            Ok(AssetKind::TarBz2)
+        ));
+    }
+
+    #[test]
+    fn parses_github_release_archive_urls() {
+        let github_archive = github_release_archive_from_url(
+            "https://github.com/owner/repo/releases/download/release%2F2.3.5/agent.tar.bz2?download=1",
+        )
+        .unwrap();
+
+        assert_eq!(github_archive.repo_name_with_owner, "owner/repo");
+        assert_eq!(github_archive.tag, "release/2.3.5");
+        assert_eq!(github_archive.asset_name, "agent.tar.bz2");
+    }
+
+    #[test]
+    fn rejects_unsupported_archive_suffixes() {
+        let error = asset_kind_for_archive_url("https://example.com/agent.tar.xz")
+            .err()
+            .map(|error| error.to_string());
+
+        assert_eq!(
+            error,
+            Some("unsupported archive type in URL: https://example.com/agent.tar.xz".to_string())
+        );
     }
 }
 

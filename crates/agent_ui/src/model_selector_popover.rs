@@ -5,7 +5,7 @@ use acp_thread::{AgentModelIcon, AgentModelInfo, AgentModelSelector};
 use fs::Fs;
 use gpui::{Entity, FocusHandle};
 use picker::popover_menu::PickerPopoverMenu;
-use ui::{ButtonLike, PopoverMenuHandle, TintColor, Tooltip, prelude::*};
+use ui::{PopoverMenuHandle, Tooltip, prelude::*};
 
 use crate::ui::ModelSelectorTooltip;
 use crate::{ModelSelector, model_selector::acp_model_selector};
@@ -77,10 +77,11 @@ impl Render for ModelSelectorPopover {
 
         PickerPopoverMenu::new(
             self.selector.clone(),
-            ButtonLike::new("active-model")
-                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+            Button::new("active-model", model_name)
+                .label_size(LabelSize::Small)
+                .color(color)
                 .when_some(model_icon, |this, icon| {
-                    this.child(
+                    this.start_icon(
                         match icon {
                             AgentModelIcon::Path(path) => Icon::from_external_svg(path),
                             AgentModelIcon::Named(icon_name) => Icon::new(icon_name),
@@ -89,13 +90,7 @@ impl Render for ModelSelectorPopover {
                         .size(IconSize::XSmall),
                     )
                 })
-                .child(
-                    Label::new(model_name)
-                        .color(color)
-                        .size(LabelSize::Small)
-                        .ml_0p5(),
-                )
-                .child(Icon::new(icon).color(Color::Muted).size(IconSize::XSmall)),
+                .end_icon(Icon::new(icon).color(Color::Muted).size(IconSize::XSmall)),
             tooltip,
             gpui::Corner::BottomRight,
             cx,

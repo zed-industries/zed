@@ -1,6 +1,7 @@
 use std::rc::Rc;
 
 use crate::PlatformStyle;
+use crate::utils::capitalize;
 use crate::{Icon, IconName, IconSize, h_flex, prelude::*};
 use gpui::{
     Action, AnyElement, App, FocusHandle, Global, IntoElement, KeybindingKeystroke, Keystroke,
@@ -142,7 +143,7 @@ fn render_key(
     match key_icon {
         Some(icon) => KeyIcon::new(icon, color).size(size).into_any_element(),
         None => {
-            let key = util::capitalize(key);
+            let key = capitalize(key);
             Key::new(&key, color).size(size).into_any_element()
         }
     }
@@ -546,7 +547,7 @@ fn keystroke_text(
         let key = match key {
             "pageup" => "PageUp",
             "pagedown" => "PageDown",
-            key => &util::capitalize(key),
+            key => &capitalize(key),
         };
         text.push_str(key);
     }

@@ -62,3 +62,23 @@ impl FeatureFlag for StreamingEditFileToolFeatureFlag {
         true
     }
 }
+
+pub struct UpdatePlanToolFeatureFlag;
+
+impl FeatureFlag for UpdatePlanToolFeatureFlag {
+    const NAME: &'static str = "update-plan-tool";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}
+
+pub struct ProjectPanelUndoRedoFeatureFlag;
+
+impl FeatureFlag for ProjectPanelUndoRedoFeatureFlag {
+    const NAME: &'static str = "project-panel-undo-redo";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}

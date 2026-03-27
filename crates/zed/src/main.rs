@@ -14,7 +14,7 @@ use client::{Client, ProxySettings, UserStore, parse_zed_link};
 use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
 use crashes::InitCrashHandler;
-use db::kvp::{GLOBAL_KEY_VALUE_STORE, KEY_VALUE_STORE};
+use db::kvp::{GlobalKeyValueStore, KeyValueStore};
 use editor::Editor;
 use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
@@ -52,6 +52,7 @@ use std::{
     time::Instant,
 };
 use theme::{ActiveTheme, GlobalTheme, ThemeRegistry};
+use theme_settings::load_user_theme;
 use util::{ResultExt, TryFutureExt, maybe};
 use uuid::Uuid;
 use workspace::{
@@ -325,12 +326,16 @@ fn main() {
     let app =
         Application::with_platform(gpui_platform::current_platform(false)).with_assets(Assets);
 
+    let app_db = db::AppDatabase::new();
     let system_id = app.background_executor().spawn(system_id());
-    let installation_id = app.background_executor().spawn(installation_id());
-    let session_id = Uuid::new_v4().to_string();
-    let session = app
+    let installation_id = app
         .background_executor()
-        .spawn(Session::new(session_id.clone()));
+        .spawn(installation_id(KeyValueStore::from_app_db(&app_db)));
+    let session_id = Uuid::new_v4().to_string();
+    let session = app.background_executor().spawn(Session::new(
+        session_id.clone(),
+        KeyValueStore::from_app_db(&app_db),
+    ));
 
     crashes::init(
         InitCrashHandler {
@@ -451,7 +456,8 @@ fn main() {
     });
 
     app.run(move |cx| {
-        let db_trusted_paths = match workspace::WORKSPACE_DB.fetch_trusted_worktrees() {
+        cx.set_global(app_db);
+        let db_trusted_paths = match workspace::WorkspaceDb::global(cx).fetch_trusted_worktrees() {
             Ok(trusted_paths) => trusted_paths,
             Err(e) => {
                 log::error!("Failed to do initial trusted worktrees fetch: {e:#}");
@@ -634,7 +640,7 @@ fn main() {
             cx,
         );
 
-        theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
+        theme_settings::init(theme::LoadThemes::All(Box::new(Assets)), cx);
         eager_load_active_theme_and_icon_theme(fs.clone(), cx);
         theme_extension::init(
             extension_host_proxy,
@@ -806,6 +812,7 @@ fn main() {
         let fs = app_state.fs.clone();
         load_user_themes_in_background(fs.clone(), cx);
         watch_themes(fs.clone(), cx);
+        #[cfg(debug_assertions)]
         watch_languages(fs.clone(), app_state.languages.clone(), cx);
 
         let menus = app_menus(cx);
@@ -1300,42 +1307,37 @@ async fn authenticate(client: Arc<Client>, cx: &AsyncApp) -> Result<()> {
 
 async fn system_id() -> Result<IdType> {
     let key_name = "system_id".to_string();
+    let db = GlobalKeyValueStore::global();
 
-    if let Ok(Some(system_id)) = GLOBAL_KEY_VALUE_STORE.read_kvp(&key_name) {
+    if let Ok(Some(system_id)) = db.read_kvp(&key_name) {
         return Ok(IdType::Existing(system_id));
     }
 
     let system_id = Uuid::new_v4().to_string();
 
-    GLOBAL_KEY_VALUE_STORE
-        .write_kvp(key_name, system_id.clone())
-        .await?;
+    db.write_kvp(key_name, system_id.clone()).await?;
 
     Ok(IdType::New(system_id))
 }
 
-async fn installation_id() -> Result<IdType> {
+async fn installation_id(db: KeyValueStore) -> Result<IdType> {
     let legacy_key_name = "device_id".to_string();
     let key_name = "installation_id".to_string();
 
     // Migrate legacy key to new key
-    if let Ok(Some(installation_id)) = KEY_VALUE_STORE.read_kvp(&legacy_key_name) {
-        KEY_VALUE_STORE
-            .write_kvp(key_name, installation_id.clone())
-            .await?;
-        KEY_VALUE_STORE.delete_kvp(legacy_key_name).await?;
+    if let Ok(Some(installation_id)) = db.read_kvp(&legacy_key_name) {
+        db.write_kvp(key_name, installation_id.clone()).await?;
+        db.delete_kvp(legacy_key_name).await?;
         return Ok(IdType::Existing(installation_id));
     }
 
-    if let Ok(Some(installation_id)) = KEY_VALUE_STORE.read_kvp(&key_name) {
+    if let Ok(Some(installation_id)) = db.read_kvp(&key_name) {
         return Ok(IdType::Existing(installation_id));
     }
 
     let installation_id = Uuid::new_v4().to_string();
 
-    KEY_VALUE_STORE
-        .write_kvp(key_name, installation_id.clone())
-        .await?;
+    db.write_kvp(key_name, installation_id.clone()).await?;
 
     Ok(IdType::New(installation_id))
 }
@@ -1344,6 +1346,7 @@ pub(crate) async fn restore_or_create_workspace(
     app_state: Arc<AppState>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
+    let kvp = cx.update(|cx| KeyValueStore::global(cx));
     if let Some((multi_workspaces, remote_workspaces)) = restorable_workspaces(cx, &app_state).await
     {
         let mut results: Vec<Result<(), Error>> = Vec::new();
@@ -1452,7 +1455,7 @@ pub(crate) async fn restore_or_create_workspace(
                 .await?;
             }
         }
-    } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
+    } else if matches!(kvp.read_kvp(FIRST_OPEN), Ok(None)) {
         cx.update(|cx| show_onboarding_view(app_state, cx)).await?;
     } else {
         cx.update(|cx| {
@@ -1488,7 +1491,8 @@ async fn restorable_workspaces(
     let (remote_workspaces, local_workspaces) = locations
         .into_iter()
         .partition(|sw| matches!(sw.location, SerializedWorkspaceLocation::Remote(_)));
-    let multi_workspaces = workspace::read_serialized_multi_workspaces(local_workspaces);
+    let multi_workspaces =
+        cx.update(|cx| workspace::read_serialized_multi_workspaces(local_workspaces, cx));
     Some((multi_workspaces, remote_workspaces))
 }
 
@@ -1496,7 +1500,12 @@ pub(crate) async fn restorable_workspace_locations(
     cx: &mut AsyncApp,
     app_state: &Arc<AppState>,
 ) -> Option<Vec<SessionWorkspace>> {
-    let mut restore_behavior = cx.update(|cx| WorkspaceSettings::get(None, cx).restore_on_startup);
+    let (mut restore_behavior, db) = cx.update(|cx| {
+        (
+            WorkspaceSettings::get(None, cx).restore_on_startup,
+            workspace::WorkspaceDb::global(cx),
+        )
+    });
 
     let session_handle = app_state.session.clone();
     let (last_session_id, last_session_window_stack) = cx.update(|cx| {
@@ -1519,7 +1528,7 @@ pub(crate) async fn restorable_workspace_locations(
 
     match restore_behavior {
         workspace::RestoreOnStartupBehavior::LastWorkspace => {
-            workspace::last_opened_workspace_location(app_state.fs.as_ref())
+            workspace::last_opened_workspace_location(&db, app_state.fs.as_ref())
                 .await
                 .map(|(workspace_id, location, paths)| {
                     vec![SessionWorkspace {
@@ -1535,6 +1544,7 @@ pub(crate) async fn restorable_workspace_locations(
                 let ordered = last_session_window_stack.is_some();
 
                 let mut locations = workspace::last_session_workspace_locations(
+                    &db,
                     &last_session_id,
                     last_session_window_stack,
                     app_state.fs.as_ref(),
@@ -1773,8 +1783,24 @@ fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut App) {
                     })?;
                 }
             }
-            theme_registry.load_user_themes(themes_dir, fs).await?;
-            cx.update(GlobalTheme::reload_theme);
+
+            let mut theme_paths = fs
+                .read_dir(themes_dir)
+                .await
+                .with_context(|| format!("reading themes from {themes_dir:?}"))?;
+
+            while let Some(theme_path) = theme_paths.next().await {
+                let Some(theme_path) = theme_path.log_err() else {
+                    continue;
+                };
+                let Some(bytes) = fs.load_bytes(&theme_path).await.log_err() else {
+                    continue;
+                };
+
+                load_user_theme(&theme_registry, &bytes).log_err();
+            }
+
+            cx.update(theme_settings::reload_theme);
             anyhow::Ok(())
         }
     })
@@ -1793,13 +1819,10 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut App) {
             for event in paths {
                 if fs.metadata(&event.path).await.ok().flatten().is_some() {
                     let theme_registry = cx.update(|cx| ThemeRegistry::global(cx));
-                    if theme_registry
-                        .load_user_theme(&event.path, fs.clone())
-                        .await
-                        .log_err()
-                        .is_some()
+                    if let Some(bytes) = fs.load_bytes(&event.path).await.log_err()
+                        && load_user_theme(&theme_registry, &bytes).log_err().is_some()
                     {
-                        cx.update(GlobalTheme::reload_theme);
+                        cx.update(theme_settings::reload_theme);
                     }
                 }
             }
@@ -1813,7 +1836,7 @@ fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>, cx: &m
     use std::time::Duration;
 
     cx.background_spawn(async move {
-        let languages_src = Path::new("crates/languages/src");
+        let languages_src = Path::new("crates/grammars/src");
         let Some(languages_src) = fs.canonicalize(languages_src).await.log_err() else {
             return;
         };
@@ -1842,9 +1865,6 @@ fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>, cx: &m
     })
     .detach();
 }
-
-#[cfg(not(debug_assertions))]
-fn watch_languages(_fs: Arc<dyn fs::Fs>, _languages: Arc<LanguageRegistry>, _cx: &mut App) {}
 
 fn dump_all_gpui_actions() {
     #[derive(Debug, serde::Serialize)]

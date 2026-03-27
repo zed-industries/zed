@@ -34,7 +34,7 @@ agent_servers.workspace = true
 agent_settings.workspace = true
 ai_onboarding.workspace = true
 anyhow.workspace = true
-arrayvec.workspace = true
+heapless.workspace = true
 assistant_text_thread.workspace = true
 assistant_slash_command.workspace = true
 assistant_slash_commands.workspace = true
@@ -44,7 +44,6 @@ buffer_diff.workspace = true
 chrono.workspace = true
 client.workspace = true
 cloud_api_types.workspace = true
-cloud_llm_client.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
 component.workspace = true
@@ -102,6 +101,7 @@ terminal.workspace = true
 terminal_view.workspace = true
 text.workspace = true
 theme.workspace = true
+theme_settings.workspace = true
 time.workspace = true
 time_format.workspace = true
 ui.workspace = true
@@ -113,7 +113,6 @@ watch.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 image.workspace = true
-async-fs.workspace = true
 reqwest_client = { workspace = true, optional = true }
 
 [dev-dependencies]
@@ -132,6 +131,7 @@ languages = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, "features" = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
+
 semver.workspace = true
 reqwest_client.workspace = true
 

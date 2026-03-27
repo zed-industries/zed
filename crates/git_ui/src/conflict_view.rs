@@ -11,17 +11,14 @@ use gpui::{
 };
 use language::{Anchor, Buffer, BufferId};
 use project::{
-    ConflictRegion, ConflictSet, ConflictSetUpdate, ProjectItem as _,
+    ConflictRegion, ConflictSet, ConflictSetUpdate, Project, ProjectItem as _,
     git_store::{GitStoreEvent, RepositoryEvent},
 };
 use settings::Settings;
-use std::{ops::Range, sync::Arc};
+use std::{cell::RefCell, ops::Range, rc::Rc, sync::Arc};
 use ui::{ActiveTheme, Divider, Element as _, Styled, Window, prelude::*};
 use util::{ResultExt as _, debug_panic, maybe};
-use workspace::{
-    Workspace,
-    notifications::{NotificationId, simple_message_notification::MessageNotification},
-};
+use workspace::{Workspace, notifications::simple_message_notification::MessageNotification};
 use zed_actions::agent::{
     ConflictContent, ResolveConflictedFilesWithAgent, ResolveConflictsWithAgent,
 };
@@ -453,10 +450,11 @@ fn render_conflict_buttons(
             this.child(Divider::vertical()).child(
                 Button::new("resolve-with-agent", "Resolve with Agent")
                     .label_size(LabelSize::Small)
-                    .icon(IconName::ZedAssistant)
-                    .icon_position(IconPosition::Start)
-                    .icon_size(IconSize::Small)
-                    .icon_color(Color::Muted)
+                    .start_icon(
+                        Icon::new(IconName::ZedAssistant)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
                     .on_click({
                         let conflict = conflict.clone();
                         move |_, window, cx| {
@@ -499,14 +497,7 @@ fn render_conflict_buttons(
         .into_any()
 }
 
-struct MergeConflictNotification;
-
-fn merge_conflict_notification_id() -> NotificationId {
-    NotificationId::unique::<MergeConflictNotification>()
-}
-
-fn collect_conflicted_file_paths(workspace: &Workspace, cx: &App) -> Vec<String> {
-    let project = workspace.project().read(cx);
+fn collect_conflicted_file_paths(project: &Project, cx: &App) -> Vec<String> {
     let git_store = project.git_store().read(cx);
     let mut paths = Vec::new();
 
@@ -534,33 +525,47 @@ pub(crate) fn register_conflict_notification(
 ) {
     let git_store = workspace.project().read(cx).git_store().clone();
 
-    cx.subscribe(&git_store, |workspace, _git_store, event, cx| {
+    let last_shown_paths: Rc<RefCell<HashSet<String>>> = Rc::new(RefCell::new(HashSet::default()));
+
+    cx.subscribe(&git_store, move |workspace, _git_store, event, cx| {
         let conflicts_changed = matches!(
             event,
             GitStoreEvent::ConflictsUpdated
                 | GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::StatusesChanged, _)
         );
-        if !AgentSettings::get_global(cx).enabled || !conflicts_changed {
+        if !AgentSettings::get_global(cx).enabled(cx) || !conflicts_changed {
+            return;
+        }
+        let project = workspace.project().read(cx);
+        if project.is_via_collab() {
             return;
         }
 
-        let paths = collect_conflicted_file_paths(workspace, cx);
-        let notification_id = merge_conflict_notification_id();
+        if workspace.is_notification_suppressed(workspace::merge_conflict_notification_id()) {
+            return;
+        }
+
+        let paths = collect_conflicted_file_paths(project, cx);
+        let notification_id = workspace::merge_conflict_notification_id();
+        let current_paths_set: HashSet<String> = paths.iter().cloned().collect();
 
         if paths.is_empty() {
+            last_shown_paths.borrow_mut().clear();
             workspace.dismiss_notification(&notification_id, cx);
-        } else {
+        } else if *last_shown_paths.borrow() != current_paths_set {
+            // Only show the notification if the set of conflicted paths has changed.
+            // This prevents re-showing after the user dismisses it while working on the same conflicts.
+            *last_shown_paths.borrow_mut() = current_paths_set;
             let file_count = paths.len();
             workspace.show_notification(notification_id, cx, |cx| {
                 cx.new(|cx| {
-                    let message = if file_count == 1 {
-                        "1 file has unresolved merge conflicts".to_string()
-                    } else {
-                        format!("{file_count} files have unresolved merge conflicts")
-                    };
+                    let message = format!(
+                        "{file_count} file{} have unresolved merge conflicts",
+                        if file_count == 1 { "" } else { "s" }
+                    );
 
                     MessageNotification::new(message, cx)
-                        .primary_message("Resolve Conflicts with Agent")
+                        .primary_message("Resolve with Agent")
                         .primary_icon(IconName::ZedAssistant)
                         .primary_icon_color(Color::Muted)
                         .primary_on_click({

@@ -92,6 +92,10 @@ extend-ignore-re = [
     # AMD GPU Services
     "ags",
     # AMD GPU Services
-    "AGS"
+    "AGS",
+    # "noet" is a vim variable (ideally to ignore locally)
+    "noet",
+    # Yarn Plug'n'Play
+    "PnP"
 ]
 check-filename = true

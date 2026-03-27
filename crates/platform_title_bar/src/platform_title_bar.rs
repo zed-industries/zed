@@ -3,9 +3,9 @@ mod system_window_tabs;
 
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
 use gpui::{
-    AnyElement, App, Context, Decorations, Entity, Hsla, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, StatefulInteractiveElement, Styled, Window, WindowControlArea, div,
-    px,
+    Action, AnyElement, App, Context, Decorations, Entity, Hsla, InteractiveElement, IntoElement,
+    MouseButton, ParentElement, StatefulInteractiveElement, Styled, WeakEntity, Window,
+    WindowButtonLayout, WindowControlArea, div, px,
 };
 use project::DisableAiSettings;
 use settings::Settings;
@@ -15,6 +15,7 @@ use ui::{
     prelude::*,
     utils::{TRAFFIC_LIGHT_PADDING, platform_title_bar_height},
 };
+use workspace::{MultiWorkspace, SidebarRenderState, SidebarSide};
 
 use crate::{
     platforms::{platform_linux, platform_windows},
@@ -31,6 +32,8 @@ pub struct PlatformTitleBar {
     children: SmallVec<[AnyElement; 2]>,
     should_move: bool,
     system_window_tabs: Entity<SystemWindowTabs>,
+    button_layout: Option<WindowButtonLayout>,
+    multi_workspace: Option<WeakEntity<MultiWorkspace>>,
 }
 
 impl PlatformTitleBar {
@@ -44,7 +47,18 @@ impl PlatformTitleBar {
             children: SmallVec::new(),
             should_move: false,
             system_window_tabs,
+            button_layout: None,
+            multi_workspace: None,
         }
+    }
+
+    pub fn with_multi_workspace(mut self, multi_workspace: WeakEntity<MultiWorkspace>) -> Self {
+        self.multi_workspace = Some(multi_workspace);
+        self
+    }
+
+    pub fn set_multi_workspace(&mut self, multi_workspace: WeakEntity<MultiWorkspace>) {
+        self.multi_workspace = Some(multi_workspace);
     }
 
     pub fn title_bar_color(&self, window: &mut Window, cx: &mut Context<Self>) -> Hsla {
@@ -66,8 +80,34 @@ impl PlatformTitleBar {
         self.children = children.into_iter().collect();
     }
 
+    pub fn set_button_layout(&mut self, button_layout: Option<WindowButtonLayout>) {
+        self.button_layout = button_layout;
+    }
+
+    fn effective_button_layout(
+        &self,
+        decorations: &Decorations,
+        cx: &App,
+    ) -> Option<WindowButtonLayout> {
+        if self.platform_style == PlatformStyle::Linux
+            && matches!(decorations, Decorations::Client { .. })
+        {
+            self.button_layout.or_else(|| cx.button_layout())
+        } else {
+            None
+        }
+    }
+
     pub fn init(cx: &mut App) {
         SystemWindowTabs::init(cx);
+    }
+
+    fn sidebar_render_state(&self, cx: &App) -> SidebarRenderState {
+        self.multi_workspace
+            .as_ref()
+            .and_then(|mw| mw.upgrade())
+            .map(|mw| mw.read(cx).sidebar_render_state(cx))
+            .unwrap_or_default()
     }
 
     pub fn is_multi_workspace_enabled(cx: &App) -> bool {
@@ -83,6 +123,9 @@ impl Render for PlatformTitleBar {
         let titlebar_color = self.title_bar_color(window, cx);
         let close_action = Box::new(workspace::CloseWindow);
         let children = mem::take(&mut self.children);
+
+        let button_layout = self.effective_button_layout(&decorations, cx);
+        let sidebar = self.sidebar_render_state(cx);
 
         let title_bar = h_flex()
             .window_control_area(WindowControlArea::Drag)
@@ -132,8 +175,18 @@ impl Render for PlatformTitleBar {
             .map(|this| {
                 if window.is_fullscreen() {
                     this.pl_2()
-                } else if self.platform_style == PlatformStyle::Mac {
+                } else if self.platform_style == PlatformStyle::Mac
+                    && !(sidebar.open && sidebar.side == SidebarSide::Left)
+                {
                     this.pl(px(TRAFFIC_LIGHT_PADDING))
+                } else if let Some(button_layout) =
+                    button_layout.filter(|button_layout| button_layout.left[0].is_some())
+                {
+                    this.child(platform_linux::LinuxWindowControls::new(
+                        "left-window-controls",
+                        button_layout.left,
+                        close_action.as_ref().boxed_clone(),
+                    ))
                 } else {
                     this.pl_2()
                 }
@@ -141,12 +194,16 @@ impl Render for PlatformTitleBar {
             .map(|el| match decorations {
                 Decorations::Server => el,
                 Decorations::Client { tiling, .. } => el
-                    .when(!(tiling.top || tiling.right), |el| {
-                        el.rounded_tr(theme::CLIENT_SIDE_DECORATION_ROUNDING)
-                    })
-                    .when(!(tiling.top || tiling.left), |el| {
-                        el.rounded_tl(theme::CLIENT_SIDE_DECORATION_ROUNDING)
-                    })
+                    .when(
+                        !(tiling.top || tiling.right)
+                            && !(sidebar.open && sidebar.side == SidebarSide::Right),
+                        |el| el.rounded_tr(theme::CLIENT_SIDE_DECORATION_ROUNDING),
+                    )
+                    .when(
+                        !(tiling.top || tiling.left)
+                            && !(sidebar.open && sidebar.side == SidebarSide::Left),
+                        |el| el.rounded_tl(theme::CLIENT_SIDE_DECORATION_ROUNDING),
+                    )
                     // this border is to avoid a transparent gap in the rounded corners
                     .mt(px(-1.))
                     .mb(px(-1.))
@@ -171,14 +228,22 @@ impl Render for PlatformTitleBar {
                     PlatformStyle::Mac => title_bar,
                     PlatformStyle::Linux => {
                         if matches!(decorations, Decorations::Client { .. }) {
-                            title_bar
-                                .child(platform_linux::LinuxWindowControls::new(close_action))
-                                .when(supported_controls.window_menu, |titlebar| {
-                                    titlebar
-                                        .on_mouse_down(MouseButton::Right, move |ev, window, _| {
-                                            window.show_window_menu(ev.position)
-                                        })
+                            let mut result = title_bar;
+                            if let Some(button_layout) = button_layout
+                                .filter(|button_layout| button_layout.right[0].is_some())
+                            {
+                                result = result.child(platform_linux::LinuxWindowControls::new(
+                                    "right-window-controls",
+                                    button_layout.right,
+                                    close_action.as_ref().boxed_clone(),
+                                ));
+                            }
+
+                            result.when(supported_controls.window_menu, |titlebar| {
+                                titlebar.on_mouse_down(MouseButton::Right, move |ev, window, _| {
+                                    window.show_window_menu(ev.position)
                                 })
+                            })
                         } else {
                             title_bar
                         }
