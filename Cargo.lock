@@ -17636,6 +17636,7 @@ dependencies = [
  "simplelog",
  "strum 0.27.2",
  "theme",
+ "theme_settings",
  "vscode_theme",
 ]
 
