@@ -1206,7 +1206,11 @@ extern "C" fn metal_view_dismiss_keyboard(this: &Object, _sel: Sel) {
     unsafe {
         let this_mut = this as *const Object as *mut Object;
         (*this_mut).set_ivar("_keyboard_requested", false);
+        // Resign first responder to dismiss the software keyboard, then
+        // immediately reclaim it so hardware keyboard events (pressesBegan/
+        // pressesEnded) continue to be delivered to this view.
         let _: bool = msg_send![this, resignFirstResponder];
+        let _: bool = msg_send![this, becomeFirstResponder];
     }
 }
 
