@@ -713,7 +713,6 @@ impl Sidebar {
                 let mut seen_session_ids: HashSet<acp::SessionId> = HashSet::new();
                 let thread_store = SidebarThreadMetadataStore::global(cx);
 
-
                 // Load threads from each workspace in the group.
                 for workspace in &group.workspaces {
                     let ws_path_list = workspace_path_list(workspace, cx);
