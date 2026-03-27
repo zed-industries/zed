@@ -6860,7 +6860,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_middle_click_pinned_tab_does_not_close(cx: &mut TestAppContext) {
-        use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
+        use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseUpEvent};
 
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
