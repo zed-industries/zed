@@ -6270,4 +6270,72 @@ mod tests {
             "the new worktree workspace should use the same agent (Codex) that was selected in the original panel",
         );
     }
+
+    #[gpui::test]
+    async fn test_message_editor_mode_not_reset_on_every_render(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("Response".into()),
+        )]);
+        open_thread_with_connection(&panel, connection, &mut cx);
+
+        // Send a message so we transition out of v2_empty_state.
+        send_message(&panel, &mut cx);
+
+        let thread_view =
+            panel.read_with(&cx, |panel, cx| panel.active_thread_view(cx).unwrap());
+
+        // After sending, the editor should be in AutoHeight mode.
+        let mode_after_send = thread_view.read_with(&cx, |view, cx| {
+            let editor = view.message_editor.read(cx).editor().read(cx);
+            editor.mode().clone()
+        });
+        assert!(
+            matches!(mode_after_send, editor::EditorMode::AutoHeight { .. }),
+            "editor should be in AutoHeight mode after sending a message"
+        );
+
+        // Manually set the editor to Full mode (simulating the expand button).
+        thread_view.update_in(&mut cx, |view, _window, cx| {
+            view.message_editor.update(cx, |msg_editor, cx| {
+                msg_editor.editor().update(cx, |editor, _cx| {
+                    editor.set_mode(editor::EditorMode::Full {
+                        scale_ui_elements_with_buffer_font_size: false,
+                        show_active_line_background: false,
+                        sizing_behavior: editor::SizingBehavior::Default,
+                    });
+                });
+            });
+        });
+
+        // Verify the mode was set to Full.
+        let mode_before_render = thread_view.read_with(&cx, |view, cx| {
+            let editor = view.message_editor.read(cx).editor().read(cx);
+            editor.mode().clone()
+        });
+        assert!(
+            matches!(mode_before_render, editor::EditorMode::Full { .. }),
+            "editor should be in Full mode after manual set"
+        );
+
+        // Trigger a render cycle by notifying the thread view.
+        thread_view.update_in(&mut cx, |_view, _window, cx| {
+            cx.notify();
+        });
+        cx.run_until_parked();
+
+        // The editor mode should NOT have been reset back to AutoHeight,
+        // because was_v2_empty_state prevents set_mode from running every render.
+        let mode_after_render = thread_view.read_with(&cx, |view, cx| {
+            let editor = view.message_editor.read(cx).editor().read(cx);
+            editor.mode().clone()
+        });
+        assert!(
+            matches!(mode_after_render, editor::EditorMode::Full { .. }),
+            "editor mode should not be reset on render — was {:?}",
+            mode_after_render
+        );
+    }
 }

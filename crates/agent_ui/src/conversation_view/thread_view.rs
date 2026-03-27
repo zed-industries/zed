@@ -286,6 +286,7 @@ pub struct ThreadView {
     pub show_external_source_prompt_warning: bool,
     pub show_codex_windows_warning: bool,
     pub generating_indicator_in_list: bool,
+    was_v2_empty_state: bool,
     pub history: Option<Entity<ThreadHistory>>,
     pub _history_subscription: Option<Subscription>,
 }
@@ -527,6 +528,7 @@ impl ThreadView {
             _history_subscription: history_subscription,
             show_codex_windows_warning,
             generating_indicator_in_list: false,
+            was_v2_empty_state: false,
         };
 
         this.sync_generating_indicator(cx);
@@ -2924,29 +2926,32 @@ impl ThreadView {
             (IconName::Maximize, "Expand Message Editor")
         };
 
-        if v2_empty_state {
-            self.message_editor.update(cx, |editor, cx| {
-                editor.set_mode(
-                    EditorMode::Full {
-                        scale_ui_elements_with_buffer_font_size: false,
-                        show_active_line_background: false,
-                        sizing_behavior: SizingBehavior::Default,
-                    },
-                    cx,
-                );
-            });
-        } else {
-            self.message_editor.update(cx, |editor, cx| {
-                editor.set_mode(
-                    EditorMode::AutoHeight {
-                        min_lines: AgentSettings::get_global(cx).message_editor_min_lines,
-                        max_lines: Some(
-                            AgentSettings::get_global(cx).set_message_editor_max_lines(),
-                        ),
-                    },
-                    cx,
-                );
-            });
+        if v2_empty_state != self.was_v2_empty_state {
+            self.was_v2_empty_state = v2_empty_state;
+            if v2_empty_state {
+                self.message_editor.update(cx, |editor, cx| {
+                    editor.set_mode(
+                        EditorMode::Full {
+                            scale_ui_elements_with_buffer_font_size: false,
+                            show_active_line_background: false,
+                            sizing_behavior: SizingBehavior::Default,
+                        },
+                        cx,
+                    );
+                });
+            } else {
+                self.message_editor.update(cx, |editor, cx| {
+                    editor.set_mode(
+                        EditorMode::AutoHeight {
+                            min_lines: AgentSettings::get_global(cx).message_editor_min_lines,
+                            max_lines: Some(
+                                AgentSettings::get_global(cx).set_message_editor_max_lines(),
+                            ),
+                        },
+                        cx,
+                    );
+                });
+            }
         }
 
         v_flex()
