@@ -5,7 +5,7 @@ use futures::FutureExt;
 use futures::future::join_all;
 use gpui::{App, Context, HighlightStyle, Task};
 use itertools::Itertools as _;
-use language::language_settings::language_settings;
+use language::language_settings::LanguageSettings;
 use language::{Buffer, OutlineItem};
 use multi_buffer::{
     Anchor, AnchorRangeExt as _, MultiBufferOffset, MultiBufferRow, MultiBufferSnapshot,
@@ -239,7 +239,7 @@ impl Editor {
 }
 
 fn lsp_symbols_enabled(buffer: &Buffer, cx: &App) -> bool {
-    language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
+    LanguageSettings::for_buffer(buffer, cx)
         .document_symbols
         .lsp_enabled()
 }

@@ -27,45 +27,27 @@ impl From<PlanEntryStatus> for acp::PlanEntryStatus {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
-#[serde(rename_all = "snake_case")]
-#[schemars(inline)]
-pub enum PlanEntryPriority {
-    High,
-    #[default]
-    Medium,
-    Low,
-}
-
-impl From<PlanEntryPriority> for acp::PlanEntryPriority {
-    fn from(value: PlanEntryPriority) -> Self {
-        match value {
-            PlanEntryPriority::High => acp::PlanEntryPriority::High,
-            PlanEntryPriority::Medium => acp::PlanEntryPriority::Medium,
-            PlanEntryPriority::Low => acp::PlanEntryPriority::Low,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct PlanItem {
     /// Human-readable description of what this task aims to accomplish.
     pub step: String,
     /// The current status of this task.
     pub status: PlanEntryStatus,
-    /// The relative importance of this task. Defaults to medium when omitted.
-    #[serde(default)]
-    pub priority: PlanEntryPriority,
 }
 
 impl From<PlanItem> for acp::PlanEntry {
     fn from(value: PlanItem) -> Self {
-        acp::PlanEntry::new(value.step, value.priority.into(), value.status.into())
+        acp::PlanEntry::new(
+            value.step,
+            acp::PlanEntryPriority::Medium,
+            value.status.into(),
+        )
     }
 }
 
 /// Updates the task plan.
-/// Provide a list of plan entries, each with step, status, and optional priority.
+///
+/// Provide a list of plan entries, each with a step and status.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct UpdatePlanToolInput {
     /// The list of plan entries and their current statuses.
@@ -144,17 +126,14 @@ mod tests {
                 PlanItem {
                     step: "Inspect the existing tool wiring".to_string(),
                     status: PlanEntryStatus::Completed,
-                    priority: PlanEntryPriority::High,
                 },
                 PlanItem {
                     step: "Implement the update_plan tool".to_string(),
                     status: PlanEntryStatus::InProgress,
-                    priority: PlanEntryPriority::Medium,
                 },
                 PlanItem {
                     step: "Add tests".to_string(),
                     status: PlanEntryStatus::Pending,
-                    priority: PlanEntryPriority::Low,
                 },
             ],
         }
@@ -179,7 +158,7 @@ mod tests {
             acp::Plan::new(vec![
                 acp::PlanEntry::new(
                     "Inspect the existing tool wiring",
-                    acp::PlanEntryPriority::High,
+                    acp::PlanEntryPriority::Medium,
                     acp::PlanEntryStatus::Completed,
                 ),
                 acp::PlanEntry::new(
@@ -189,7 +168,7 @@ mod tests {
                 ),
                 acp::PlanEntry::new(
                     "Add tests",
-                    acp::PlanEntryPriority::Low,
+                    acp::PlanEntryPriority::Medium,
                     acp::PlanEntryStatus::Pending,
                 ),
             ])
@@ -214,7 +193,7 @@ mod tests {
             acp::Plan::new(vec![
                 acp::PlanEntry::new(
                     "Inspect the existing tool wiring",
-                    acp::PlanEntryPriority::High,
+                    acp::PlanEntryPriority::Medium,
                     acp::PlanEntryStatus::Completed,
                 ),
                 acp::PlanEntry::new(
@@ -224,53 +203,8 @@ mod tests {
                 ),
                 acp::PlanEntry::new(
                     "Add tests",
-                    acp::PlanEntryPriority::Low,
+                    acp::PlanEntryPriority::Medium,
                     acp::PlanEntryStatus::Pending,
-                ),
-            ])
-        );
-    }
-
-    #[gpui::test]
-    async fn test_run_defaults_priority_to_medium(cx: &mut TestAppContext) {
-        let tool = Arc::new(UpdatePlanTool);
-        let (event_stream, mut event_rx) = ToolCallEventStream::test();
-
-        let input = UpdatePlanToolInput {
-            plan: vec![
-                PlanItem {
-                    step: "First".to_string(),
-                    status: PlanEntryStatus::InProgress,
-                    priority: PlanEntryPriority::default(),
-                },
-                PlanItem {
-                    step: "Second".to_string(),
-                    status: PlanEntryStatus::InProgress,
-                    priority: PlanEntryPriority::default(),
-                },
-            ],
-        };
-
-        let result = cx
-            .update(|cx| tool.run(ToolInput::resolved(input), event_stream, cx))
-            .await
-            .expect("tool should succeed");
-
-        assert_eq!(result, "Plan updated".to_string());
-
-        let plan = event_rx.expect_plan().await;
-        assert_eq!(
-            plan,
-            acp::Plan::new(vec![
-                acp::PlanEntry::new(
-                    "First",
-                    acp::PlanEntryPriority::Medium,
-                    acp::PlanEntryStatus::InProgress,
-                ),
-                acp::PlanEntry::new(
-                    "Second",
-                    acp::PlanEntryPriority::Medium,
-                    acp::PlanEntryStatus::InProgress,
                 ),
             ])
         );

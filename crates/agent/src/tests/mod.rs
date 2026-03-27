@@ -7,7 +7,6 @@ use agent_client_protocol::{self as acp};
 use agent_settings::AgentProfileId;
 use anyhow::Result;
 use client::{Client, UserStore};
-use cloud_llm_client::CompletionIntent;
 use collections::IndexMap;
 use context_server::{ContextServer, ContextServerCommand, ContextServerId};
 use feature_flags::FeatureFlagAppExt as _;
@@ -26,8 +25,8 @@ use gpui::{
 };
 use indoc::indoc;
 use language_model::{
-    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
-    LanguageModelProviderName, LanguageModelRegistry, LanguageModelRequest,
+    CompletionIntent, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelId, LanguageModelProviderName, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelToolResult, LanguageModelToolSchemaFormat,
     LanguageModelToolUse, MessageContent, Role, StopReason, TokenUsage,
     fake_provider::FakeLanguageModel,
@@ -841,14 +840,20 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
     // Approve the first - send "allow" option_id (UI transforms "once" to "allow")
     tool_call_auth_1
         .response
-        .send(acp::PermissionOptionId::new("allow").into())
+        .send(acp_thread::SelectedPermissionOutcome::new(
+            acp::PermissionOptionId::new("allow"),
+            acp::PermissionOptionKind::AllowOnce,
+        ))
         .unwrap();
     cx.run_until_parked();
 
     // Reject the second - send "deny" option_id directly since Deny is now a button
     tool_call_auth_2
         .response
-        .send(acp::PermissionOptionId::new("deny").into())
+        .send(acp_thread::SelectedPermissionOutcome::new(
+            acp::PermissionOptionId::new("deny"),
+            acp::PermissionOptionKind::RejectOnce,
+        ))
         .unwrap();
     cx.run_until_parked();
 
@@ -892,7 +897,10 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
     let tool_call_auth_3 = next_tool_call_authorization(&mut events).await;
     tool_call_auth_3
         .response
-        .send(acp::PermissionOptionId::new("always_allow:tool_requiring_permission").into())
+        .send(acp_thread::SelectedPermissionOutcome::new(
+            acp::PermissionOptionId::new("always_allow:tool_requiring_permission"),
+            acp::PermissionOptionKind::AllowAlways,
+        ))
         .unwrap();
     cx.run_until_parked();
     let completion = fake_model.pending_completions().pop().unwrap();
@@ -3452,7 +3460,6 @@ async fn test_update_plan_tool_updates_thread_events(cx: &mut TestAppContext) {
             {
                 "step": "Inspect the code",
                 "status": "completed",
-                "priority": "high"
             },
             {
                 "step": "Implement the tool",
@@ -3461,7 +3468,6 @@ async fn test_update_plan_tool_updates_thread_events(cx: &mut TestAppContext) {
             {
                 "step": "Run tests",
                 "status": "pending",
-                "priority": "low"
             }
         ]
     });
@@ -3488,7 +3494,6 @@ async fn test_update_plan_tool_updates_thread_events(cx: &mut TestAppContext) {
                     {
                         "step": "Inspect the code",
                         "status": "completed",
-                        "priority": "high"
                     },
                     {
                         "step": "Implement the tool",
@@ -3497,7 +3502,6 @@ async fn test_update_plan_tool_updates_thread_events(cx: &mut TestAppContext) {
                     {
                         "step": "Run tests",
                         "status": "pending",
-                        "priority": "low"
                     }
                 ]
             }))
@@ -3522,7 +3526,7 @@ async fn test_update_plan_tool_updates_thread_events(cx: &mut TestAppContext) {
         acp::Plan::new(vec![
             acp::PlanEntry::new(
                 "Inspect the code",
-                acp::PlanEntryPriority::High,
+                acp::PlanEntryPriority::Medium,
                 acp::PlanEntryStatus::Completed,
             ),
             acp::PlanEntry::new(
@@ -3532,7 +3536,7 @@ async fn test_update_plan_tool_updates_thread_events(cx: &mut TestAppContext) {
             ),
             acp::PlanEntry::new(
                 "Run tests",
-                acp::PlanEntryPriority::Low,
+                acp::PlanEntryPriority::Medium,
                 acp::PlanEntryStatus::Pending,
             ),
         ])
@@ -5186,6 +5190,11 @@ async fn test_subagent_thread_inherits_parent_thread_properties(cx: &mut TestApp
             subagent_thread.parent_thread_id(),
             Some(parent_thread.read(cx).id().clone())
         );
+
+        let request = subagent_thread
+            .build_completion_request(CompletionIntent::UserPrompt, cx)
+            .unwrap();
+        assert_eq!(request.intent, Some(CompletionIntent::Subagent));
     });
 }
 

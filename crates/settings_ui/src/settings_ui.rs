@@ -545,6 +545,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::EditPredictionsMode>(render_dropdown)
         .add_basic_renderer::<settings::RelativeLineNumbers>(render_dropdown)
         .add_basic_renderer::<settings::WindowDecorations>(render_dropdown)
+        .add_basic_renderer::<settings::WindowButtonLayoutContentDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::FontSize>(render_editable_number_field)
         .add_basic_renderer::<settings::OllamaModelName>(render_ollama_model_picker)
         .add_basic_renderer::<settings::SemanticTokens>(render_dropdown)
@@ -1515,7 +1516,7 @@ impl SettingsWindow {
         })
         .detach();
 
-        cx.on_window_closed(|cx| {
+        cx.on_window_closed(|cx, _window_id| {
             if let Some(existing_window) = cx
                 .windows()
                 .into_iter()

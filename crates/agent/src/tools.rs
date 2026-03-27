@@ -4,6 +4,8 @@ mod create_directory_tool;
 mod delete_path_tool;
 mod diagnostics_tool;
 mod edit_file_tool;
+#[cfg(all(test, feature = "unit-eval"))]
+mod evals;
 mod fetch_tool;
 mod find_path_tool;
 mod grep_tool;

@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use base64::write::EncoderWriter;
-use cloud_llm_client::CompletionIntent;
 use gpui::{
     App, AppContext as _, DevicePixels, Image, ImageFormat, ObjectFit, SharedString, Size, Task,
     point, px, size,
@@ -441,6 +440,21 @@ pub enum LanguageModelToolChoice {
     Auto,
     Any,
     None,
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompletionIntent {
+    UserPrompt,
+    Subagent,
+    ToolResults,
+    ThreadSummarization,
+    ThreadContextSummarization,
+    CreateFile,
+    EditFile,
+    InlineAssist,
+    TerminalInlineAssist,
+    GenerateGitCommitMessage,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]

@@ -26,12 +26,12 @@ jobs:
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
-    - id: get-app-token
+    - id: generate-token
       name: steps::authenticate_as_zippy
-      uses: actions/create-github-app-token@bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1
+      uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
       with:
         app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
         private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
@@ -43,7 +43,7 @@ jobs:
         CHANNEL: ${{ inputs.channel }}
         GIT_COMMITTER_NAME: Zed Zippy
         GIT_COMMITTER_EMAIL: hi@zed.dev
-        GITHUB_TOKEN: ${{ steps.get-app-token.outputs.token }}
+        GITHUB_TOKEN: ${{ steps.generate-token.outputs.token }}
 defaults:
   run:
     shell: bash -euxo pipefail {0}

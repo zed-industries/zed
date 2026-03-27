@@ -874,7 +874,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         let project = workspace.read(cx).project().clone();
         let repo = project.read(cx).active_repository(cx)?;
 
-        let default_branch_receiver = repo.update(cx, |repo, _| repo.default_branch(false));
+        let default_branch_receiver = repo.update(cx, |repo, _| repo.default_branch(true));
 
         Some(cx.spawn(async move |_cx| {
             let base_ref = default_branch_receiver

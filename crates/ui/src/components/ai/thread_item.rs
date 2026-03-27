@@ -401,7 +401,7 @@ impl RenderOnce for ThreadItem {
                             this.child(
                                 h_flex()
                                     .id(format!("{}-worktree", self.id.clone()))
-                                    .gap_1()
+                                    .gap_0p5()
                                     .child(
                                         Icon::new(IconName::GitWorktree)
                                             .size(IconSize::XSmall)

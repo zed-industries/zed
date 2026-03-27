@@ -160,6 +160,7 @@ pub enum AgentThreadEntry {
     UserMessage(UserMessage),
     AssistantMessage(AssistantMessage),
     ToolCall(ToolCall),
+    CompletedPlan(Vec<PlanEntry>),
 }
 
 impl AgentThreadEntry {
@@ -168,6 +169,7 @@ impl AgentThreadEntry {
             Self::UserMessage(message) => message.indented,
             Self::AssistantMessage(message) => message.indented,
             Self::ToolCall(_) => false,
+            Self::CompletedPlan(_) => false,
         }
     }
 
@@ -176,6 +178,14 @@ impl AgentThreadEntry {
             Self::UserMessage(message) => message.to_markdown(cx),
             Self::AssistantMessage(message) => message.to_markdown(cx),
             Self::ToolCall(tool_call) => tool_call.to_markdown(cx),
+            Self::CompletedPlan(entries) => {
+                let mut md = String::from("## Plan\n\n");
+                for entry in entries {
+                    let source = entry.content.read(cx).source().to_string();
+                    md.push_str(&format!("- [x] {}\n", source));
+                }
+                md
+            }
         }
     }
 
@@ -502,13 +512,15 @@ pub enum SelectedPermissionParams {
 #[derive(Debug)]
 pub struct SelectedPermissionOutcome {
     pub option_id: acp::PermissionOptionId,
+    pub option_kind: acp::PermissionOptionKind,
     pub params: Option<SelectedPermissionParams>,
 }
 
 impl SelectedPermissionOutcome {
-    pub fn new(option_id: acp::PermissionOptionId) -> Self {
+    pub fn new(option_id: acp::PermissionOptionId, option_kind: acp::PermissionOptionKind) -> Self {
         Self {
             option_id,
+            option_kind,
             params: None,
         }
     }
@@ -516,12 +528,6 @@ impl SelectedPermissionOutcome {
     pub fn params(mut self, params: Option<SelectedPermissionParams>) -> Self {
         self.params = params;
         self
-    }
-}
-
-impl From<acp::PermissionOptionId> for SelectedPermissionOutcome {
-    fn from(option_id: acp::PermissionOptionId) -> Self {
-        Self::new(option_id)
     }
 }
 
@@ -1302,7 +1308,9 @@ impl AcpThread {
                     status: ToolCallStatus::WaitingForConfirmation { .. },
                     ..
                 }) => return true,
-                AgentThreadEntry::ToolCall(_) | AgentThreadEntry::AssistantMessage(_) => {}
+                AgentThreadEntry::ToolCall(_)
+                | AgentThreadEntry::AssistantMessage(_)
+                | AgentThreadEntry::CompletedPlan(_) => {}
             }
         }
         false
@@ -1324,7 +1332,9 @@ impl AcpThread {
                 ) if call.diffs().next().is_some() => {
                     return true;
                 }
-                AgentThreadEntry::ToolCall(_) | AgentThreadEntry::AssistantMessage(_) => {}
+                AgentThreadEntry::ToolCall(_)
+                | AgentThreadEntry::AssistantMessage(_)
+                | AgentThreadEntry::CompletedPlan(_) => {}
             }
         }
 
@@ -1341,7 +1351,9 @@ impl AcpThread {
                 }) => {
                     return true;
                 }
-                AgentThreadEntry::ToolCall(_) | AgentThreadEntry::AssistantMessage(_) => {}
+                AgentThreadEntry::ToolCall(_)
+                | AgentThreadEntry::AssistantMessage(_)
+                | AgentThreadEntry::CompletedPlan(_) => {}
             }
         }
 
@@ -1352,7 +1364,9 @@ impl AcpThread {
         for entry in self.entries.iter().rev() {
             match entry {
                 AgentThreadEntry::UserMessage(..) => return false,
-                AgentThreadEntry::AssistantMessage(..) => continue,
+                AgentThreadEntry::AssistantMessage(..) | AgentThreadEntry::CompletedPlan(..) => {
+                    continue;
+                }
                 AgentThreadEntry::ToolCall(..) => return true,
             }
         }
@@ -2013,14 +2027,13 @@ impl AcpThread {
         &mut self,
         id: acp::ToolCallId,
         outcome: SelectedPermissionOutcome,
-        option_kind: acp::PermissionOptionKind,
         cx: &mut Context<Self>,
     ) {
         let Some((ix, call)) = self.tool_call_mut(&id) else {
             return;
         };
 
-        let new_status = match option_kind {
+        let new_status = match outcome.option_kind {
             acp::PermissionOptionKind::RejectOnce | acp::PermissionOptionKind::RejectAlways => {
                 ToolCallStatus::Rejected
             }
@@ -2070,10 +2083,22 @@ impl AcpThread {
         cx.notify();
     }
 
+    pub fn snapshot_completed_plan(&mut self, cx: &mut Context<Self>) {
+        if !self.plan.is_empty() && self.plan.stats().pending == 0 {
+            let completed_entries = std::mem::take(&mut self.plan.entries);
+            self.push_entry(AgentThreadEntry::CompletedPlan(completed_entries), cx);
+        }
+    }
+
     fn clear_completed_plan_entries(&mut self, cx: &mut Context<Self>) {
         self.plan
             .entries
             .retain(|entry| !matches!(entry.status, acp::PlanEntryStatus::Completed));
+        cx.notify();
+    }
+
+    pub fn clear_plan(&mut self, cx: &mut Context<Self>) {
+        self.plan.entries.clear();
         cx.notify();
     }
 
@@ -2221,6 +2246,10 @@ impl AcpThread {
                         let canceled = matches!(r.stop_reason, acp::StopReason::Cancelled);
                         if canceled {
                             this.mark_pending_tools_as_canceled();
+                        }
+
+                        if !canceled {
+                            this.snapshot_completed_plan(cx);
                         }
 
                         // Handle refusal - distinguish between user prompt and tool call refusals
@@ -2593,11 +2622,8 @@ impl AcpThread {
                 let format_on_save = buffer.update(cx, |buffer, cx| {
                     buffer.edit(edits, None, cx);
 
-                    let settings = language::language_settings::language_settings(
-                        buffer.language().map(|l| l.name()),
-                        buffer.file(),
-                        cx,
-                    );
+                    let settings =
+                        language::language_settings::LanguageSettings::for_buffer(buffer, cx);
 
                     settings.format_on_save != FormatOnSave::Off
                 });
@@ -3185,9 +3211,27 @@ mod tests {
             );
         });
 
-        // Wait for the printf command to execute and produce output
-        // Use real time since parking is enabled
-        cx.executor().timer(Duration::from_millis(500)).await;
+        // Poll until the printf command produces output, rather than using a
+        // fixed sleep which is flaky on loaded machines.
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let has_output = thread.read_with(cx, |thread, cx| {
+                let term = thread
+                    .terminals
+                    .get(&terminal_id)
+                    .expect("terminal not found");
+                let content = term.read(cx).inner().read(cx).get_content();
+                content.contains("output_before_kill")
+            });
+            if has_output {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "Timed out waiting for printf output to appear in terminal",
+            );
+            cx.executor().timer(Duration::from_millis(50)).await;
+        }
 
         // Get the acp_thread Terminal and kill it
         let wait_for_exit = thread.update(cx, |thread, cx| {

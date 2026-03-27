@@ -1,9 +1,8 @@
 use acp_thread::{
     AcpThread, AcpThreadEvent, AgentSessionInfo, AgentThreadEntry, AssistantMessage,
     AssistantMessageChunk, AuthRequired, LoadError, MentionUri, PermissionOptionChoice,
-    PermissionOptions, PermissionPattern, RetryStatus, SelectedPermissionOutcome,
-    SelectedPermissionParams, ThreadStatus, ToolCall, ToolCallContent, ToolCallStatus,
-    UserMessageId,
+    PermissionOptions, PermissionPattern, RetryStatus, SelectedPermissionOutcome, ThreadStatus,
+    ToolCall, ToolCallContent, ToolCallStatus, UserMessageId,
 };
 use acp_thread::{AgentConnection, Plan};
 use action_log::{ActionLog, ActionLogTelemetry, DiffStats};
@@ -238,6 +237,20 @@ impl Conversation {
         ))
     }
 
+    pub fn subagents_awaiting_permission(&self, cx: &App) -> Vec<(acp::SessionId, usize)> {
+        self.permission_requests
+            .iter()
+            .filter_map(|(session_id, tool_call_ids)| {
+                let thread = self.threads.get(session_id)?;
+                if thread.read(cx).parent_session_id().is_some() && !tool_call_ids.is_empty() {
+                    Some((session_id.clone(), tool_call_ids.len()))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
     pub fn authorize_pending_tool_call(
         &mut self,
         session_id: &acp::SessionId,
@@ -249,8 +262,7 @@ impl Conversation {
         self.authorize_tool_call(
             session_id.clone(),
             tool_call_id,
-            option.option_id.clone().into(),
-            option.kind,
+            SelectedPermissionOutcome::new(option.option_id.clone(), option.kind),
             cx,
         );
         Some(())
@@ -261,7 +273,6 @@ impl Conversation {
         session_id: acp::SessionId,
         tool_call_id: acp::ToolCallId,
         outcome: SelectedPermissionOutcome,
-        option_kind: acp::PermissionOptionKind,
         cx: &mut Context<Self>,
     ) {
         let Some(thread) = self.threads.get(&session_id) else {
@@ -273,11 +284,11 @@ impl Conversation {
             "Agent Tool Call Authorized",
             agent = agent_telemetry_id,
             session = session_id,
-            option = option_kind
+            option = outcome.option_kind
         );
 
         thread.update(cx, |thread, cx| {
-            thread.authorize_tool_call(tool_call_id, outcome, option_kind, cx);
+            thread.authorize_tool_call(tool_call_id, outcome, cx);
         });
         cx.notify();
     }
@@ -798,7 +809,7 @@ impl ConversationView {
         });
 
         let count = thread.read(cx).entries().len();
-        let list_state = ListState::new(0, gpui::ListAlignment::Bottom, px(2048.0));
+        let list_state = ListState::new(0, gpui::ListAlignment::Top, px(2048.0));
         entry_view_state.update(cx, |view_state, cx| {
             for ix in 0..count {
                 view_state.sync_entry(ix, &thread, window, cx);
@@ -1176,12 +1187,19 @@ impl ConversationView {
         &mut self,
         index: usize,
         inserted_text: Option<&str>,
+        cursor_offset: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(active) = self.active_thread() {
             active.update(cx, |active, cx| {
-                active.move_queued_message_to_main_editor(index, inserted_text, window, cx);
+                active.move_queued_message_to_main_editor(
+                    index,
+                    inserted_text,
+                    cursor_offset,
+                    window,
+                    cx,
+                );
             });
         }
     }
@@ -1211,6 +1229,9 @@ impl ConversationView {
                                 .and_then(|entry| entry.focus_handle(cx))],
                         );
                     });
+                    active.update(cx, |active, cx| {
+                        active.sync_editor_mode_for_empty_state(cx);
+                    });
                 }
             }
             AcpThreadEvent::EntryUpdated(index) => {
@@ -1230,6 +1251,9 @@ impl ConversationView {
                     let list_state = active.read(cx).list_state.clone();
                     entry_view_state.update(cx, |view_state, _cx| view_state.remove(range.clone()));
                     list_state.splice(range.clone(), 0);
+                    active.update(cx, |active, cx| {
+                        active.sync_editor_mode_for_empty_state(cx);
+                    });
                 }
             }
             AcpThreadEvent::SubagentSpawned(session_id) => self.load_subagent_session(
@@ -1251,9 +1275,11 @@ impl ConversationView {
             }
             AcpThreadEvent::Stopped(stop_reason) => {
                 if let Some(active) = self.thread_view(&thread_id) {
-                    active.update(cx, |active, _cx| {
+                    active.update(cx, |active, cx| {
                         active.thread_retry_status.take();
                         active.clear_auto_expand_tracking();
+                        active.list_state.set_follow_tail(false);
+                        active.sync_generating_indicator(cx);
                     });
                 }
                 if is_subagent {
@@ -1321,8 +1347,10 @@ impl ConversationView {
             }
             AcpThreadEvent::Error => {
                 if let Some(active) = self.thread_view(&thread_id) {
-                    active.update(cx, |active, _cx| {
+                    active.update(cx, |active, cx| {
                         active.thread_retry_status.take();
+                        active.list_state.set_follow_tail(false);
+                        active.sync_generating_indicator(cx);
                     });
                 }
                 if !is_subagent {
@@ -2195,8 +2223,16 @@ impl ConversationView {
                 &editor,
                 window,
                 move |this, _editor, event, window, cx| match event {
-                    MessageEditorEvent::InputAttempted(text) => this
-                        .move_queued_message_to_main_editor(index, Some(text.as_ref()), window, cx),
+                    MessageEditorEvent::InputAttempted {
+                        text,
+                        cursor_offset,
+                    } => this.move_queued_message_to_main_editor(
+                        index,
+                        Some(text.as_ref()),
+                        Some(*cursor_offset),
+                        window,
+                        cx,
+                    ),
                     MessageEditorEvent::LostFocus => {
                         this.save_queued_message_at_index(index, cx);
                     }
@@ -2534,9 +2570,7 @@ impl ConversationView {
         task.detach_and_log_err(cx);
 
         if let Some(store) = SidebarThreadMetadataStore::try_global(cx) {
-            store
-                .update(cx, |store, cx| store.delete(session_id.clone(), cx))
-                .detach_and_log_err(cx);
+            store.update(cx, |store, cx| store.delete(session_id.clone(), cx));
         }
     }
 }
@@ -3615,7 +3649,7 @@ pub(crate) mod tests {
         C: 'static + AgentConnection + Send + Clone,
     {
         fn logo(&self) -> ui::IconName {
-            ui::IconName::Ai
+            ui::IconName::ZedAgent
         }
 
         fn agent_id(&self) -> AgentId {
@@ -6276,8 +6310,10 @@ pub(crate) mod tests {
                 conversation.authorize_tool_call(
                     acp::SessionId::new("session-1"),
                     acp::ToolCallId::new("tc-1"),
-                    acp::PermissionOptionId::new("allow-1").into(),
-                    acp::PermissionOptionKind::AllowOnce,
+                    SelectedPermissionOutcome::new(
+                        acp::PermissionOptionId::new("allow-1"),
+                        acp::PermissionOptionKind::AllowOnce,
+                    ),
                     cx,
                 );
             });
@@ -6299,8 +6335,10 @@ pub(crate) mod tests {
                 conversation.authorize_tool_call(
                     acp::SessionId::new("session-1"),
                     acp::ToolCallId::new("tc-2"),
-                    acp::PermissionOptionId::new("allow-2").into(),
-                    acp::PermissionOptionKind::AllowOnce,
+                    SelectedPermissionOutcome::new(
+                        acp::PermissionOptionId::new("allow-2"),
+                        acp::PermissionOptionKind::AllowOnce,
+                    ),
                     cx,
                 );
             });
@@ -6438,8 +6476,10 @@ pub(crate) mod tests {
                 conversation.authorize_tool_call(
                     acp::SessionId::new("thread-a"),
                     acp::ToolCallId::new("tc-a"),
-                    acp::PermissionOptionId::new("allow-a").into(),
-                    acp::PermissionOptionKind::AllowOnce,
+                    SelectedPermissionOutcome::new(
+                        acp::PermissionOptionId::new("allow-a"),
+                        acp::PermissionOptionKind::AllowOnce,
+                    ),
                     cx,
                 );
             });
@@ -6477,7 +6517,7 @@ pub(crate) mod tests {
             // Main editor must be empty for this path — it is by default, but
             // assert to make the precondition explicit.
             assert!(thread.message_editor.read(cx).is_empty(cx));
-            thread.move_queued_message_to_main_editor(0, None, window, cx);
+            thread.move_queued_message_to_main_editor(0, None, None, window, cx);
         });
 
         cx.run_until_parked();
@@ -6522,7 +6562,7 @@ pub(crate) mod tests {
                 vec![],
                 cx,
             );
-            thread.move_queued_message_to_main_editor(0, None, window, cx);
+            thread.move_queued_message_to_main_editor(0, None, None, window, cx);
         });
 
         cx.run_until_parked();

@@ -45,6 +45,7 @@
   - [Debugger](./debugger.md)
   - [REPL](./repl.md)
 - [Git](./git.md)
+- [Modelines](./modelines.md)
 
 # Collaboration
 

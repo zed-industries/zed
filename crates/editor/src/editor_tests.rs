@@ -23,7 +23,7 @@ use gpui::{
 };
 use indoc::indoc;
 use language::{
-    BracketPairConfig,
+    BracketPair, BracketPairConfig,
     Capability::ReadWrite,
     DiagnosticSourceKind, FakeLspAdapter, IndentGuideSettings, LanguageConfig,
     LanguageConfigOverride, LanguageMatcher, LanguageName, LanguageQueries, Override, Point,
@@ -1121,7 +1121,93 @@ fn test_cancel(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_fold_action(cx: &mut TestAppContext) {
+async fn test_fold_action(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+    cx.set_state(indoc! {"
+        impl Foo {
+            // Hello!
+
+            fn a() {
+                1
+            }
+
+            fn b() {
+                2
+            }
+
+            fn c() {
+                3
+            }
+        }ˇ
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(7), 0)..DisplayPoint::new(DisplayRow(12), 0)
+            ]);
+        });
+        editor.fold(&Fold, window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            "
+                impl Foo {
+                    // Hello!
+
+                    fn a() {
+                        1
+                    }
+
+                    fn b() {⋯}
+
+                    fn c() {⋯}
+                }
+            "
+            .unindent(),
+        );
+
+        editor.fold(&Fold, window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            "
+                impl Foo {⋯}
+            "
+            .unindent(),
+        );
+
+        editor.unfold_lines(&UnfoldLines, window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            "
+                impl Foo {
+                    // Hello!
+
+                    fn a() {
+                        1
+                    }
+
+                    fn b() {⋯}
+
+                    fn c() {⋯}
+                }
+            "
+            .unindent(),
+        );
+
+        editor.unfold_lines(&UnfoldLines, window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            editor.buffer.read(cx).read(cx).text()
+        );
+    });
+}
+
+#[gpui::test]
+fn test_fold_action_without_language(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|window, cx| {
@@ -1441,6 +1527,36 @@ async fn test_fold_with_unindented_multiline_raw_string(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
+async fn test_fold_with_unindented_multiline_raw_string_includes_closing_bracket(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+    cx.set_state(indoc! {"
+        ˇfn main() {
+            let s = r#\"
+        a
+        b
+        c
+        \"#;
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_level(&FoldAtLevel(1), window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            indoc! {"
+                fn main() {⋯}
+            "},
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_fold_with_unindented_multiline_block_comment(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -1484,6 +1600,35 @@ async fn test_fold_with_unindented_multiline_block_comment(cx: &mut TestAppConte
             indoc! {"
                 fn main() {⋯
                 }
+            "},
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_fold_with_unindented_multiline_block_comment_includes_closing_bracket(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+    cx.set_state(indoc! {"
+        ˇfn main() {
+            let x = 1;
+            /*
+        unindented comment line
+            */
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_level(&FoldAtLevel(1), window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            indoc! {"
+                fn main() {⋯}
             "},
         );
     });
@@ -9823,7 +9968,6 @@ async fn test_select_all_matches_does_not_scroll(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
-
     let large_body_1 = "\nd".repeat(200);
     let large_body_2 = "\ne".repeat(200);
 
@@ -9836,17 +9980,62 @@ async fn test_select_all_matches_does_not_scroll(cx: &mut TestAppContext) {
         scroll_position
     });
 
-    cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
+    cx.update_editor(|editor, window, cx| editor.select_all_matches(&SelectAllMatches, window, cx))
         .unwrap();
     cx.assert_editor_state(&format!(
         "«ˇa»bc\n«ˇa»bc{large_body_1} «ˇa»bc{large_body_2}\nef«ˇa»bc\n«ˇa»bc"
     ));
-    let scroll_position_after_selection =
-        cx.update_editor(|editor, _, cx| editor.scroll_position(cx));
-    assert_eq!(
-        initial_scroll_position, scroll_position_after_selection,
-        "Scroll position should not change after selecting all matches"
-    );
+    cx.update_editor(|editor, _, cx| {
+        assert_eq!(
+            editor.scroll_position(cx),
+            initial_scroll_position,
+            "Scroll position should not change after selecting all matches"
+        )
+    });
+
+    // Simulate typing while the selections are active, as that is where the
+    // editor would attempt to actually scroll to the newest selection, which
+    // should have been set as the original selection to avoid scrolling to the
+    // last match.
+    cx.simulate_keystroke("x");
+    cx.update_editor(|editor, _, cx| {
+        assert_eq!(
+            editor.scroll_position(cx),
+            initial_scroll_position,
+            "Scroll position should not change after editing all matches"
+        )
+    });
+
+    cx.set_state(&format!(
+        "abc\nabc{large_body_1} «aˇ»bc{large_body_2}\nefabc\nabc"
+    ));
+    let initial_scroll_position = cx.update_editor(|editor, _, cx| {
+        let scroll_position = editor.scroll_position(cx);
+        assert!(scroll_position.y > 0.0, "Initial selection is between two large bodies and should have the editor scrolled to it");
+        scroll_position
+    });
+
+    cx.update_editor(|editor, window, cx| editor.select_all_matches(&SelectAllMatches, window, cx))
+        .unwrap();
+    cx.assert_editor_state(&format!(
+        "«aˇ»bc\n«aˇ»bc{large_body_1} «aˇ»bc{large_body_2}\nef«aˇ»bc\n«aˇ»bc"
+    ));
+    cx.update_editor(|editor, _, cx| {
+        assert_eq!(
+            editor.scroll_position(cx),
+            initial_scroll_position,
+            "Scroll position should not change after selecting all matches"
+        )
+    });
+
+    cx.simulate_keystroke("x");
+    cx.update_editor(|editor, _, cx| {
+        assert_eq!(
+            editor.scroll_position(cx),
+            initial_scroll_position,
+            "Scroll position should not change after editing all matches"
+        )
+    });
 }
 
 #[gpui::test]
@@ -14646,6 +14835,107 @@ async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
         editor.update(cx, |editor, cx| editor.text(cx)),
         "import { a } from 'module';\nimport { b } from 'module';\n\nconst x = a;\n"
     );
+}
+
+#[gpui::test]
+async fn test_formatter_failure_does_not_abort_subsequent_formatters(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.formatter = Some(FormatterList::Vec(vec![
+            Formatter::LanguageServer(settings::LanguageServerFormatterSpecifier::Current),
+            Formatter::CodeAction("organize-imports".into()),
+        ]))
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(path!("/file.rs"), "fn main() {}\n".into())
+        .await;
+
+    let project = Project::test(fs, [path!("/").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), buffer, window, cx)
+    });
+
+    let fake_server = fake_servers.next().await.unwrap();
+
+    // Formatter #1 (LanguageServer) returns an error to simulate failure
+    fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
+        move |_params, _| async move { Err(anyhow::anyhow!("Simulated formatter failure")) },
+    );
+
+    // Formatter #2 (CodeAction) returns a successful edit
+    fake_server.set_request_handler::<lsp::request::CodeActionRequest, _, _>(
+        move |_params, _| async move {
+            let uri = lsp::Uri::from_file_path(path!("/file.rs")).unwrap();
+            Ok(Some(vec![lsp::CodeActionOrCommand::CodeAction(
+                lsp::CodeAction {
+                    kind: Some("organize-imports".into()),
+                    edit: Some(lsp::WorkspaceEdit::new(
+                        [(
+                            uri,
+                            vec![lsp::TextEdit::new(
+                                lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+                                "use std::io;\n".to_string(),
+                            )],
+                        )]
+                        .into_iter()
+                        .collect(),
+                    )),
+                    ..Default::default()
+                },
+            )]))
+        },
+    );
+
+    fake_server.set_request_handler::<lsp::request::CodeActionResolveRequest, _, _>({
+        move |params, _| async move { Ok(params) }
+    });
+
+    editor
+        .update_in(cx, |editor, window, cx| {
+            editor.perform_format(
+                project.clone(),
+                FormatTrigger::Manual,
+                FormatTarget::Buffers(editor.buffer().read(cx).all_buffers()),
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await;
+
+    // Formatter #1 (LanguageServer) failed, but formatter #2 (CodeAction) should have applied
+    editor.update(cx, |editor, cx| {
+        assert_eq!(editor.text(cx), "use std::io;\nfn main() {}\n");
+    });
+
+    // The entire format operation should undo as one transaction
+    editor.update_in(cx, |editor, window, cx| {
+        editor.undo(&Default::default(), window, cx);
+        assert_eq!(editor.text(cx), "fn main() {}\n");
+    });
 }
 
 #[gpui::test]
@@ -23660,8 +23950,7 @@ async fn test_indent_guide_with_folds(cx: &mut TestAppContext) {
             "
             fn main() {
                 if a {
-                    b(⋯
-                    )
+                    b(⋯)
                 } else {
                     e(
                         f
@@ -32480,10 +32769,12 @@ async fn test_local_worktree_trust(cx: &mut TestAppContext) {
     let fake_language_server = fake_language_servers.next();
 
     cx.read(|cx| {
-        let file = buffer_before_approval.read(cx).file();
         assert_eq!(
-            language::language_settings::language_settings(Some("Rust".into()), file, cx)
-                .language_servers,
+            language::language_settings::LanguageSettings::for_buffer(
+                buffer_before_approval.read(cx),
+                cx
+            )
+            .language_servers,
             ["...".to_string()],
             "local .zed/settings.json must not apply before trust approval"
         )
@@ -32511,10 +32802,12 @@ async fn test_local_worktree_trust(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     cx.read(|cx| {
-        let file = buffer_before_approval.read(cx).file();
         assert_eq!(
-            language::language_settings::language_settings(Some("Rust".into()), file, cx)
-                .language_servers,
+            language::language_settings::LanguageSettings::for_buffer(
+                buffer_before_approval.read(cx),
+                cx
+            )
+            .language_servers,
             ["override-rust-analyzer".to_string()],
             "local .zed/settings.json should apply after trust approval"
         )

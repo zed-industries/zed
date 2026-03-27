@@ -39,37 +39,43 @@ pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
     // Subscribe to extension store events to track LLM extension installations
     if let Some(extension_store) = extension_host::ExtensionStore::try_global(cx) {
         cx.subscribe(&extension_store, {
-            let registry = registry.clone();
-            move |extension_store, event, cx| match event {
-                extension_host::Event::ExtensionInstalled(extension_id) => {
-                    if let Some(manifest) = extension_store
-                        .read(cx)
-                        .extension_manifest_for_id(extension_id)
-                    {
-                        if !manifest.language_model_providers.is_empty() {
-                            registry.update(cx, |registry, cx| {
-                                registry.extension_installed(extension_id.clone(), cx);
-                            });
+            let registry = registry.downgrade();
+            move |extension_store, event, cx| {
+                let Some(registry) = registry.upgrade() else {
+                    return;
+                };
+                match event {
+                    extension_host::Event::ExtensionInstalled(extension_id) => {
+                        if let Some(manifest) = extension_store
+                            .read(cx)
+                            .extension_manifest_for_id(extension_id)
+                        {
+                            if !manifest.language_model_providers.is_empty() {
+                                registry.update(cx, |registry, cx| {
+                                    registry.extension_installed(extension_id.clone(), cx);
+                                });
+                            }
                         }
                     }
-                }
-                extension_host::Event::ExtensionUninstalled(extension_id) => {
-                    registry.update(cx, |registry, cx| {
-                        registry.extension_uninstalled(extension_id, cx);
-                    });
-                }
-                extension_host::Event::ExtensionsUpdated => {
-                    let mut new_ids = HashSet::default();
-                    for (extension_id, entry) in extension_store.read(cx).installed_extensions() {
-                        if !entry.manifest.language_model_providers.is_empty() {
-                            new_ids.insert(extension_id.clone());
-                        }
+                    extension_host::Event::ExtensionUninstalled(extension_id) => {
+                        registry.update(cx, |registry, cx| {
+                            registry.extension_uninstalled(extension_id, cx);
+                        });
                     }
-                    registry.update(cx, |registry, cx| {
-                        registry.sync_installed_llm_extensions(new_ids, cx);
-                    });
+                    extension_host::Event::ExtensionsUpdated => {
+                        let mut new_ids = HashSet::default();
+                        for (extension_id, entry) in extension_store.read(cx).installed_extensions()
+                        {
+                            if !entry.manifest.language_model_providers.is_empty() {
+                                new_ids.insert(extension_id.clone());
+                            }
+                        }
+                        registry.update(cx, |registry, cx| {
+                            registry.sync_installed_llm_extensions(new_ids, cx);
+                        });
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         })
         .detach();
@@ -101,7 +107,11 @@ pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
             cx,
         );
     });
+    let registry = registry.downgrade();
     cx.observe_global::<SettingsStore>(move |cx| {
+        let Some(registry) = registry.upgrade() else {
+            return;
+        };
         let openai_compatible_providers_new = AllLanguageModelSettings::get_global(cx)
             .openai_compatible
             .keys()

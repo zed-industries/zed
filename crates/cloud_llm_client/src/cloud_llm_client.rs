@@ -193,28 +193,12 @@ pub enum EditPredictionRejectReason {
     Rejected,
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CompletionIntent {
-    UserPrompt,
-    ToolResults,
-    ThreadSummarization,
-    ThreadContextSummarization,
-    CreateFile,
-    EditFile,
-    InlineAssist,
-    TerminalInlineAssist,
-    GenerateGitCommitMessage,
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CompletionBody {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub thread_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub prompt_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub intent: Option<CompletionIntent>,
     pub provider: LanguageModelProvider,
     pub model: String,
     pub provider_request: serde_json::Value,

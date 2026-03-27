@@ -120,6 +120,7 @@ use std::{
     borrow::Cow,
     collections::BTreeMap,
     ffi::OsString,
+    future::Future,
     ops::{Not as _, Range},
     path::{Path, PathBuf},
     pin::pin,
@@ -1185,7 +1186,6 @@ impl Project {
                     worktree_store.clone(),
                     environment.clone(),
                     manifest_tree.clone(),
-                    fs.clone(),
                     cx,
                 )
             });
@@ -1499,8 +1499,13 @@ impl Project {
                 )
             });
 
-            let agent_server_store =
-                cx.new(|_| AgentServerStore::remote(REMOTE_SERVER_PROJECT_ID, remote.clone()));
+            let agent_server_store = cx.new(|_| {
+                AgentServerStore::remote(
+                    REMOTE_SERVER_PROJECT_ID,
+                    remote.clone(),
+                    worktree_store.clone(),
+                )
+            });
 
             cx.subscribe(&remote, Self::on_remote_client_event).detach();
 
@@ -2078,6 +2083,12 @@ impl Project {
         self.worktree_store.clone()
     }
 
+    /// Returns a future that resolves when all visible worktrees have completed
+    /// their initial scan.
+    pub fn wait_for_initial_scan(&self, cx: &App) -> impl Future<Output = ()> + use<> {
+        self.worktree_store.read(cx).wait_for_initial_scan()
+    }
+
     #[inline]
     pub fn context_server_store(&self) -> Entity<ContextServerStore> {
         self.context_server_store.clone()
@@ -2287,8 +2298,11 @@ impl Project {
         self.worktree_store.read(cx).visible_worktrees(cx)
     }
 
-    pub fn default_path_list(&self, cx: &App) -> PathList {
-        let worktree_roots = self
+    pub(crate) fn default_visible_worktree_paths(
+        worktree_store: &WorktreeStore,
+        cx: &App,
+    ) -> Vec<PathBuf> {
+        worktree_store
             .visible_worktrees(cx)
             .sorted_by(|left, right| {
                 left.read(cx)
@@ -2304,7 +2318,12 @@ impl Project {
                     Some(path.to_path_buf())
                 }
             })
-            .collect::<Vec<_>>();
+            .collect()
+    }
+
+    pub fn default_path_list(&self, cx: &App) -> PathList {
+        let worktree_roots =
+            Self::default_visible_worktree_paths(&self.worktree_store.read(cx), cx);
 
         if worktree_roots.is_empty() {
             PathList::new(&[paths::home_dir().as_path()])

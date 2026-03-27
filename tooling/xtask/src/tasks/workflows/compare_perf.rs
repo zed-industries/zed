@@ -42,7 +42,11 @@ pub fn run_perf(
     }
 
     fn install_hyperfine() -> Step<Use> {
-        named::uses("taiki-e", "install-action", "hyperfine")
+        named::uses(
+            "taiki-e",
+            "install-action",
+            "b4f2d5cb8597b15997c8ede873eb6185efc5f0ad", // hyperfine
+        )
     }
 
     fn compare_runs(head: &WorkflowInput, base: &WorkflowInput) -> Step<Run> {

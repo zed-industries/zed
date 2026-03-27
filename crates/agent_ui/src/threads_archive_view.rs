@@ -7,6 +7,7 @@ use crate::{
 use acp_thread::AgentSessionInfo;
 use agent::ThreadStore;
 use agent_client_protocol as acp;
+use agent_settings::AgentSettings;
 use chrono::{DateTime, Datelike as _, Local, NaiveDate, TimeDelta, Utc};
 use editor::Editor;
 use fs::Fs;
@@ -17,6 +18,7 @@ use gpui::{
 use itertools::Itertools as _;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::{AgentId, AgentServerStore};
+use settings::Settings as _;
 use theme::ActiveTheme;
 use ui::{
     ButtonLike, CommonAnimationExt, ContextMenu, ContextMenuEntry, Divider, HighlightedLabel,
@@ -795,7 +797,12 @@ impl ThreadsArchiveView {
 
     fn render_header(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_query = !self.filter_editor.read(cx).text(cx).is_empty();
-        let traffic_lights = cfg!(target_os = "macos") && !window.is_fullscreen();
+        let sidebar_on_left = matches!(
+            AgentSettings::get_global(cx).sidebar_side(),
+            settings::SidebarSide::Left
+        );
+        let traffic_lights =
+            cfg!(target_os = "macos") && !window.is_fullscreen() && sidebar_on_left;
         let header_height = platform_title_bar_height(window);
         let show_focus_keybinding =
             self.selection.is_some() && !self.filter_editor.focus_handle(cx).is_focused(window);
@@ -804,15 +811,21 @@ impl ThreadsArchiveView {
             .h(header_height)
             .mt_px()
             .pb_px()
-            .when(traffic_lights, |this| {
-                this.pl(px(ui::utils::TRAFFIC_LIGHT_PADDING))
+            .map(|this| {
+                if traffic_lights {
+                    this.pl(px(ui::utils::TRAFFIC_LIGHT_PADDING))
+                } else {
+                    this.pl_1p5()
+                }
             })
             .pr_1p5()
             .gap_1()
             .justify_between()
             .border_b_1()
             .border_color(cx.theme().colors().border)
-            .child(Divider::vertical().color(ui::DividerColor::Border))
+            .when(traffic_lights, |this| {
+                this.child(Divider::vertical().color(ui::DividerColor::Border))
+            })
             .child(
                 h_flex()
                     .ml_1()

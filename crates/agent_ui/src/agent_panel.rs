@@ -131,7 +131,6 @@ fn read_legacy_serialized_panel(kvp: &KeyValueStore) -> Option<SerializedAgentPa
 
 #[derive(Serialize, Deserialize, Debug)]
 struct SerializedAgentPanel {
-    width: Option<Pixels>,
     selected_agent: Option<AgentType>,
     #[serde(default)]
     last_active_thread: Option<SerializedActiveThread>,
@@ -743,8 +742,6 @@ pub struct AgentPanel {
     agent_navigation_menu_handle: PopoverMenuHandle<ContextMenu>,
     agent_navigation_menu: Option<Entity<ContextMenu>>,
     _extension_subscription: Option<Subscription>,
-    width: Option<Pixels>,
-    height: Option<Pixels>,
     zoomed: bool,
     pending_serialization: Option<Task<Result<()>>>,
     onboarding: Entity<AgentPanelOnboarding>,
@@ -766,7 +763,6 @@ impl AgentPanel {
             return;
         };
 
-        let width = self.width;
         let selected_agent_type = self.selected_agent_type.clone();
         let start_thread_in = Some(self.start_thread_in);
 
@@ -787,7 +783,6 @@ impl AgentPanel {
             save_serialized_panel(
                 workspace_id,
                 SerializedAgentPanel {
-                    width,
                     selected_agent: Some(selected_agent_type),
                     last_active_thread,
                     start_thread_in,
@@ -876,7 +871,6 @@ impl AgentPanel {
 
                 if let Some(serialized_panel) = &serialized_panel {
                     panel.update(cx, |panel, cx| {
-                        panel.width = serialized_panel.width.map(|w| w.round());
                         if let Some(selected_agent) = serialized_panel.selected_agent.clone() {
                             panel.selected_agent_type = selected_agent;
                         }
@@ -1079,8 +1073,6 @@ impl AgentPanel {
             agent_navigation_menu_handle: PopoverMenuHandle::default(),
             agent_navigation_menu: None,
             _extension_subscription: extension_subscription,
-            width: None,
-            height: None,
             zoomed: false,
             pending_serialization: None,
             onboarding,
@@ -1187,7 +1179,8 @@ impl AgentPanel {
     }
 
     pub fn new_thread(&mut self, _action: &NewThread, window: &mut Window, cx: &mut Context<Self>) {
-        self.new_agent_thread(AgentType::NativeAgent, window, cx);
+        self.reset_start_thread_in_to_default(cx);
+        self.external_thread(None, None, None, None, None, true, window, cx);
     }
 
     fn new_native_agent_thread_from_summary(
@@ -1696,6 +1689,7 @@ impl AgentPanel {
             AgentConfiguration::new(
                 fs,
                 agent_server_store,
+                self.connection_store.clone(),
                 context_server_store,
                 self.context_server_registry.clone(),
                 self.language_registry.clone(),
@@ -2828,8 +2822,7 @@ impl AgentPanel {
                     None => {
                         this.update_in(cx, |this, window, cx| {
                             this.set_worktree_creation_error(
-                                "Failed to generate a branch name: all typewriter names are taken"
-                                    .into(),
+                                "Failed to generate a unique branch name".into(),
                                 window,
                                 cx,
                             );
@@ -2946,12 +2939,34 @@ impl AgentPanel {
             })?
             .await?;
 
-        let panels_task = new_window_handle.update(cx, |_, _, cx| {
-            new_workspace.update(cx, |workspace, _cx| workspace.take_panels_task())
-        })?;
+        let panels_task = new_workspace.update(cx, |workspace, _cx| workspace.take_panels_task());
+
         if let Some(task) = panels_task {
             task.await.log_err();
         }
+
+        new_workspace
+            .update(cx, |workspace, cx| {
+                workspace.project().read(cx).wait_for_initial_scan(cx)
+            })
+            .await;
+
+        new_workspace
+            .update(cx, |workspace, cx| {
+                let repos = workspace
+                    .project()
+                    .read(cx)
+                    .repositories(cx)
+                    .values()
+                    .cloned()
+                    .collect::<Vec<_>>();
+
+                let tasks = repos
+                    .into_iter()
+                    .map(|repo| repo.update(cx, |repo, _| repo.barrier()));
+                futures::future::join_all(tasks)
+            })
+            .await;
 
         let initial_content = AgentInitialContent::ContentBlock {
             blocks: content,
@@ -2973,8 +2988,7 @@ impl AgentPanel {
                 }
 
                 // If we had an active buffer, remap its path and reopen it.
-                let should_zoom_agent_panel = active_file_path.is_none();
-
+                let had_active_file = active_file_path.is_some();
                 let remapped_active_path = active_file_path.and_then(|original_path| {
                     let best_match = path_remapping
                         .iter()
@@ -2997,7 +3011,7 @@ impl AgentPanel {
                     None
                 });
 
-                if !should_zoom_agent_panel && remapped_active_path.is_none() {
+                if had_active_file && remapped_active_path.is_none() {
                     log::warn!(
                         "Active file could not be remapped to the new worktree; it will not be reopened"
                     );
@@ -3026,13 +3040,7 @@ impl AgentPanel {
                 // (equivalent to cmd-esc fullscreen behavior).
                 // This must happen after focus_panel, which activates
                 // and opens the panel in the dock.
-                if should_zoom_agent_panel {
-                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                        panel.update(cx, |_panel, cx| {
-                            cx.emit(PanelEvent::ZoomIn);
-                        });
-                    }
-                }
+
                 if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                     panel.update(cx, |panel, cx| {
                         panel.external_thread(
@@ -3136,23 +3144,16 @@ impl Panel for AgentPanel {
         });
     }
 
-    fn size(&self, window: &Window, cx: &App) -> Pixels {
+    fn default_size(&self, window: &Window, cx: &App) -> Pixels {
         let settings = AgentSettings::get_global(cx);
         match self.position(window, cx) {
-            DockPosition::Left | DockPosition::Right => {
-                self.width.unwrap_or(settings.default_width)
-            }
-            DockPosition::Bottom => self.height.unwrap_or(settings.default_height),
+            DockPosition::Left | DockPosition::Right => settings.default_width,
+            DockPosition::Bottom => settings.default_height,
         }
     }
 
-    fn set_size(&mut self, size: Option<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
-        match self.position(window, cx) {
-            DockPosition::Left | DockPosition::Right => self.width = size,
-            DockPosition::Bottom => self.height = size,
-        }
-        self.serialize(cx);
-        cx.notify();
+    fn supports_flexible_size(&self, _window: &Window, _cx: &App) -> bool {
+        true
     }
 
     fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -3185,11 +3186,15 @@ impl Panel for AgentPanel {
     }
 
     fn activation_priority(&self) -> u32 {
-        3
+        0
     }
 
     fn enabled(&self, cx: &App) -> bool {
         AgentSettings::get_global(cx).enabled(cx)
+    }
+
+    fn is_agent_panel(&self) -> bool {
+        true
     }
 
     fn is_zoomed(&self, _window: &Window, _cx: &App) -> bool {
@@ -3822,8 +3827,6 @@ impl AgentPanel {
                                     }
                                 }),
                         )
-                        .separator()
-                        .header("External Agents")
                         .map(|mut menu| {
                             let agent_server_store = agent_server_store.read(cx);
                             let registry_store = project::AgentRegistryStore::try_global(cx);
@@ -3854,6 +3857,9 @@ impl AgentPanel {
                                 .sorted_unstable_by_key(|e| e.display_name.to_lowercase())
                                 .collect::<Vec<_>>();
 
+                            if !agent_items.is_empty() {
+                                menu = menu.separator().header("External Agents");
+                            }
                             for item in &agent_items {
                                 let mut entry = ContextMenuEntry::new(item.display_name.clone());
 
@@ -3984,6 +3990,8 @@ impl AgentPanel {
 
         let is_text_thread = matches!(&self.active_view, ActiveView::TextThread { .. });
 
+        let is_full_screen = self.is_zoomed(window, cx);
+
         let use_v2_empty_toolbar =
             has_v2_flag && is_empty_state && !is_in_history_or_config && !is_text_thread;
 
@@ -4028,7 +4036,7 @@ impl AgentPanel {
                 .trigger_with_tooltip(agent_selector_button, {
                     move |_window, cx| {
                         Tooltip::for_action_in(
-                            "New Thread\u{2026}",
+                            "New Thread…",
                             &ToggleNewThreadMenu,
                             &focus_handle,
                             cx,
@@ -4071,6 +4079,20 @@ impl AgentPanel {
                                 Corner::TopRight,
                                 cx,
                             ))
+                        })
+                        .when(is_full_screen, |this| {
+                            this.child(
+                                IconButton::new("disable-full-screen", IconName::Minimize)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(move |_, cx| {
+                                        Tooltip::for_action("Disable Full Screen", &ToggleZoom, cx)
+                                    })
+                                    .on_click({
+                                        cx.listener(move |_, _, window, cx| {
+                                            window.dispatch_action(ToggleZoom.boxed_clone(), cx);
+                                        })
+                                    }),
+                            )
                         })
                         .child(self.render_panel_options_menu(window, cx)),
                 )
@@ -4123,6 +4145,20 @@ impl AgentPanel {
                                 Corner::TopRight,
                                 cx,
                             ))
+                        })
+                        .when(is_full_screen, |this| {
+                            this.child(
+                                IconButton::new("disable-full-screen", IconName::Minimize)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(move |_, cx| {
+                                        Tooltip::for_action("Disable Full Screen", &ToggleZoom, cx)
+                                    })
+                                    .on_click({
+                                        cx.listener(move |_, _, window, cx| {
+                                            window.dispatch_action(ToggleZoom.boxed_clone(), cx);
+                                        })
+                                    }),
+                            )
                         })
                         .child(self.render_panel_options_menu(window, cx)),
                 )
@@ -5011,14 +5047,10 @@ mod tests {
 
         let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
 
-        // --- Set up workspace A: width=300, with an active thread ---
+        // --- Set up workspace A: with an active thread ---
         let panel_a = workspace_a.update_in(cx, |workspace, window, cx| {
             let text_thread_store = cx.new(|cx| TextThreadStore::fake(project_a.clone(), cx));
             cx.new(|cx| AgentPanel::new(workspace, text_thread_store, None, window, cx))
-        });
-
-        panel_a.update(cx, |panel, _cx| {
-            panel.width = Some(px(300.0));
         });
 
         panel_a.update_in(cx, |panel, window, cx| {
@@ -5040,14 +5072,13 @@ mod tests {
 
         let agent_type_a = panel_a.read_with(cx, |panel, _cx| panel.selected_agent_type.clone());
 
-        // --- Set up workspace B: ClaudeCode, width=400, no active thread ---
+        // --- Set up workspace B: ClaudeCode, no active thread ---
         let panel_b = workspace_b.update_in(cx, |workspace, window, cx| {
             let text_thread_store = cx.new(|cx| TextThreadStore::fake(project_b.clone(), cx));
             cx.new(|cx| AgentPanel::new(workspace, text_thread_store, None, window, cx))
         });
 
         panel_b.update(cx, |panel, _cx| {
-            panel.width = Some(px(400.0));
             panel.selected_agent_type = AgentType::Custom {
                 id: "claude-acp".into(),
             };
@@ -5073,13 +5104,8 @@ mod tests {
             .expect("panel B load should succeed");
         cx.run_until_parked();
 
-        // Workspace A should restore its thread, width, and agent type
+        // Workspace A should restore its thread and agent type
         loaded_a.read_with(cx, |panel, _cx| {
-            assert_eq!(
-                panel.width,
-                Some(px(300.0)),
-                "workspace A width should be restored"
-            );
             assert_eq!(
                 panel.selected_agent_type, agent_type_a,
                 "workspace A agent type should be restored"
@@ -5090,13 +5116,8 @@ mod tests {
             );
         });
 
-        // Workspace B should restore its own width and agent type, with no thread
+        // Workspace B should restore its own agent type, with no thread
         loaded_b.read_with(cx, |panel, _cx| {
-            assert_eq!(
-                panel.width,
-                Some(px(400.0)),
-                "workspace B width should be restored"
-            );
             assert_eq!(
                 panel.selected_agent_type,
                 AgentType::Custom {

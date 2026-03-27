@@ -4,17 +4,15 @@ use std::{fmt::Debug, path::Path};
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
-use fs::Fs;
-use futures::StreamExt;
 use gpui::{App, AssetSource, Global, SharedString};
+use gpui_util::ResultExt;
 use parking_lot::RwLock;
 use thiserror::Error;
-use util::ResultExt;
 
 use crate::{
     Appearance, AppearanceContent, ChevronIcons, DEFAULT_ICON_THEME_NAME, DirectoryIcons,
-    IconDefinition, IconTheme, Theme, ThemeFamily, ThemeFamilyContent, default_icon_theme,
-    read_icon_theme, read_user_theme, refine_theme_family,
+    IconDefinition, IconTheme, IconThemeFamilyContent, Theme, ThemeFamily, ThemeFamilyContent,
+    default_icon_theme, deserialize_user_theme, refine_theme_family,
 };
 
 /// The metadata for a theme.
@@ -208,29 +206,9 @@ impl ThemeRegistry {
         }
     }
 
-    /// Loads the user themes from the specified directory and adds them to the registry.
-    pub async fn load_user_themes(&self, themes_path: &Path, fs: Arc<dyn Fs>) -> Result<()> {
-        let mut theme_paths = fs
-            .read_dir(themes_path)
-            .await
-            .with_context(|| format!("reading themes from {themes_path:?}"))?;
-
-        while let Some(theme_path) = theme_paths.next().await {
-            let Some(theme_path) = theme_path.log_err() else {
-                continue;
-            };
-
-            self.load_user_theme(&theme_path, fs.clone())
-                .await
-                .log_err();
-        }
-
-        Ok(())
-    }
-
-    /// Loads the user theme from the specified path and adds it to the registry.
-    pub async fn load_user_theme(&self, theme_path: &Path, fs: Arc<dyn Fs>) -> Result<()> {
-        let theme = read_user_theme(theme_path, fs).await?;
+    /// Loads the user theme from the specified data and adds it to the registry.
+    pub fn load_user_theme(&self, bytes: &[u8]) -> Result<()> {
+        let theme = deserialize_user_theme(bytes)?;
 
         self.insert_user_theme_families([theme]);
 
@@ -273,18 +251,15 @@ impl ThemeRegistry {
             .retain(|name, _| !icon_themes_to_remove.contains(name))
     }
 
-    /// Loads the icon theme from the specified path and adds it to the registry.
+    /// Loads the icon theme from the icon theme family and adds it to the registry.
     ///
     /// The `icons_root_dir` parameter indicates the root directory from which
     /// the relative paths to icons in the theme should be resolved against.
-    pub async fn load_icon_theme(
+    pub fn load_icon_theme(
         &self,
-        icon_theme_path: &Path,
+        icon_theme_family: IconThemeFamilyContent,
         icons_root_dir: &Path,
-        fs: Arc<dyn Fs>,
     ) -> Result<()> {
-        let icon_theme_family = read_icon_theme(icon_theme_path, fs).await?;
-
         let resolve_icon_path = |path: SharedString| {
             icons_root_dir
                 .join(path.as_ref())
