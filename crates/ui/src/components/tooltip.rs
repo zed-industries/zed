@@ -1,9 +1,9 @@
 use std::borrow::Borrow;
 use std::rc::Rc;
 
-use gpui::{Action, AnyElement, AnyView, AppContext, FocusHandle, IntoElement, Render};
 use crate::prelude::*;
 use crate::{Color, KeyBinding, Label, LabelSize, StyledExt, h_flex, v_flex};
+use gpui::{Action, AnyElement, AnyView, AppContext, FocusHandle, IntoElement, Render};
 
 #[derive(RegisterComponent)]
 pub struct Tooltip {
