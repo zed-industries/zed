@@ -9408,6 +9408,7 @@ dependencies = [
  "task",
  "text",
  "theme",
+ "theme_settings",
  "toml 0.8.23",
  "tracing",
  "tree-sitter",
