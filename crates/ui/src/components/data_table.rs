@@ -171,39 +171,32 @@ mod resize_handles {
                 {
                     let hovered = window.use_state(cx, |_window, _cx| false);
 
-                    resize_divider = resize_divider
-                        .when(*hovered.read(cx), |div: Stateful<Div>| {
-                            div.bg(cx.theme().colors().border_focused)
-                        });
+                    resize_divider = resize_divider.when(*hovered.read(cx), |div| {
+                        div.bg(cx.theme().colors().border_focused)
+                    });
 
                     resize_handle = resize_handle
                         .on_hover(move |&was_hovered, _, cx| hovered.write(cx, was_hovered))
                         .cursor_col_resize()
-                        .when_some(
-                            columns.clone(),
-                            |this: Stateful<Div>, columns: Entity<RedistributableColumnsState>| {
-                                this.on_click(
-                                    move |event: &ClickEvent, window: &mut Window, cx: &mut App| {
-                                        if event.click_count() >= 2 {
-                                            columns.update(cx, |columns, _| {
-                                                columns.on_double_click(
-                                                    column_ix,
-                                                    &initial_sizes,
-                                                    &resizable_columns,
-                                                    window,
-                                                );
-                                            })
-                                        }
+                        .when_some(columns.clone(), |this, columns| {
+                            this.on_click(move |event, window, cx| {
+                                if event.click_count() >= 2 {
+                                    columns.update(cx, |columns, _| {
+                                        columns.on_double_click(
+                                            column_ix,
+                                            &initial_sizes,
+                                            &resizable_columns,
+                                            window,
+                                        );
+                                    })
+                                }
 
-                                        cx.stop_propagation();
-                                    },
-                                )
-                            },
-                        )
-                        .on_drag(
-                            DraggedColumn(column_ix),
-                            |_, _offset, _window, cx: &mut App| cx.new(|_cx| gpui::Empty),
-                        )
+                                cx.stop_propagation();
+                            })
+                        })
+                        .on_drag(DraggedColumn(column_ix), |_, _offset, _window, cx| {
+                            cx.new(|_cx| gpui::Empty)
+                        })
                 }
 
                 column_ix += 1;
