@@ -148,5 +148,4 @@ impl PlayerColors {
         let len = self.0.len() - 1;
         self.0[(participant_index as usize % len) + 1]
     }
-
 }

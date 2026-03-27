@@ -100,9 +100,14 @@ pub fn init(themes_to_load: LoadThemes, cx: &mut App) {
     FontFamilyCache::init_global(cx);
 
     let themes = ThemeRegistry::default_global(cx);
-    let theme = themes
-        .get(DEFAULT_DARK_THEME)
-        .unwrap_or_else(|_| themes.list().into_iter().next().map(|m| themes.get(&m.name).unwrap()).unwrap());
+    let theme = themes.get(DEFAULT_DARK_THEME).unwrap_or_else(|_| {
+        themes
+            .list()
+            .into_iter()
+            .next()
+            .map(|m| themes.get(&m.name).unwrap())
+            .unwrap()
+    });
     let icon_theme = themes.default_icon_theme().unwrap();
     cx.set_global(GlobalTheme { theme, icon_theme });
 }

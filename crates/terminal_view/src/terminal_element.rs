@@ -914,7 +914,9 @@ impl Element for TerminalElement {
                     }
                     TerminalMode::Standalone => terminal_settings
                         .font_size
-                        .map_or(buffer_font_size, |size| theme_settings::adjusted_font_size(size, cx)),
+                        .map_or(buffer_font_size, |size| {
+                            theme_settings::adjusted_font_size(size, cx)
+                        }),
                 };
 
                 let theme = cx.theme().clone();

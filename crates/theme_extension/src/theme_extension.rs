@@ -31,7 +31,8 @@ impl ExtensionThemeProxy for ThemeRegistryProxy {
 
     fn list_theme_names(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<Vec<String>>> {
         self.executor.spawn(async move {
-            let themes = theme_settings::deserialize_user_theme(&fs.load_bytes(&theme_path).await?)?;
+            let themes =
+                theme_settings::deserialize_user_theme(&fs.load_bytes(&theme_path).await?)?;
             Ok(themes.themes.into_iter().map(|theme| theme.name).collect())
         })
     }

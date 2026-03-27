@@ -3,7 +3,9 @@ use std::sync::Arc;
 use gpui::Hsla;
 use serde::Deserialize;
 
-use crate::{amber, blue, cyan, gold, grass, indigo, iris, jade, lime, orange, pink, purple, tomato};
+use crate::{
+    amber, blue, cyan, gold, grass, indigo, iris, jade, lime, orange, pink, purple, tomato,
+};
 
 /// A collection of colors that are used to color indent aware lines in the editor.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -63,5 +65,4 @@ impl AccentColors {
     pub fn color_for_index(&self, index: u32) -> Hsla {
         self.0[index as usize % self.0.len()]
     }
-
 }

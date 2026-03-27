@@ -5,11 +5,11 @@ use palette::FromColor;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::IntoGpui;
-pub use settings::{FontWeightContent, WindowBackgroundContent};
 pub use settings::{
     FontStyleContent, HighlightStyleContent, StatusColorsContent, ThemeColorsContent,
     ThemeStyleContent,
 };
+pub use settings::{FontWeightContent, WindowBackgroundContent};
 
 use theme::{StatusColorsRefinement, ThemeColorsRefinement};
 
