@@ -189,10 +189,7 @@ fn test_entry_ref_or_insert_with_not_called_when_occupied() {
 fn test_entry_ref_or_insert_default() {
     let mut map: VecMap<String, i32> = VecMap::new();
     map.entry_ref(&"a".to_string()).or_insert_default();
-    assert_eq!(
-        map.iter().collect::<Vec<_>>(),
-        vec![(&"a".to_string(), &0)]
-    );
+    assert_eq!(map.iter().collect::<Vec<_>>(), vec![(&"a".to_string(), &0)]);
 }
 
 #[test]
