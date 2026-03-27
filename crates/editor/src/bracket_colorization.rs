@@ -226,7 +226,7 @@ mod tests {
     use serde_json::json;
     use settings::{AccentContent, SettingsStore};
     use text::{Bias, OffsetRangeExt, ToOffset};
-    use theme::ThemeStyleContent;
+    use theme_settings::ThemeStyleContent;
 
     use util::{path, post_inc};
 

@@ -883,7 +883,7 @@ impl Render for MultiWorkspace {
             (sidebar, None)
         };
 
-        let ui_font = theme::setup_ui_font(window, cx);
+        let ui_font = theme_settings::setup_ui_font(window, cx);
         let text_color = cx.theme().colors().text;
 
         let workspace = self.workspace().clone();

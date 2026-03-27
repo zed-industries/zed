@@ -9,7 +9,8 @@ use picker::{Picker, PickerDelegate};
 use project::{Project, Symbol, lsp_store::SymbolLocation};
 use settings::Settings;
 use std::{cmp::Reverse, sync::Arc};
-use theme::{ActiveTheme, ThemeSettings};
+use theme::ActiveTheme;
+use theme_settings::ThemeSettings;
 use util::ResultExt;
 use workspace::{
     Workspace,

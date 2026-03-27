@@ -33,7 +33,8 @@ use std::{
     sync::OnceLock,
     time::{Duration, Instant},
 };
-use theme::{AccentColors, ThemeSettings};
+use theme::AccentColors;
+use theme_settings::ThemeSettings;
 use time::{OffsetDateTime, UtcOffset, format_description::BorrowedFormatItem};
 use ui::{
     ButtonLike, Chip, CommonAnimationExt as _, ContextMenu, DiffStat, Divider, ScrollableHandle,

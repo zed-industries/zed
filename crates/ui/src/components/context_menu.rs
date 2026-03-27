@@ -15,7 +15,7 @@ use std::{
     rc::Rc,
     time::{Duration, Instant},
 };
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum SubmenuOpenTrigger {

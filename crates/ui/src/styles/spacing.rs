@@ -1,6 +1,6 @@
 use gpui::{App, Pixels, Rems, px, rems};
 use settings::Settings;
-use theme::{ThemeSettings, UiDensity};
+use theme_settings::{ThemeSettings, UiDensity};
 use ui_macros::derive_dynamic_spacing;
 
 // Derives [DynamicSpacing]. See [ui_macros::derive_dynamic_spacing].

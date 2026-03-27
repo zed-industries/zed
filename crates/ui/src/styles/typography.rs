@@ -4,7 +4,8 @@ use gpui::{
     div, rems,
 };
 use settings::Settings;
-use theme::{ActiveTheme, ThemeSettings};
+use theme::ActiveTheme;
+use theme_settings::ThemeSettings;
 
 use crate::{Color, rems_from_px};
 

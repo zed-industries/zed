@@ -204,8 +204,8 @@ use task::TaskVariables;
 use text::{BufferId, FromAnchor, OffsetUtf16, Rope, ToOffset as _, ToPoint as _};
 use theme::{
     AccentColors, ActiveTheme, GlobalTheme, PlayerColor, StatusColors, SyntaxTheme, Theme,
-    ThemeSettings, observe_buffer_font_size_adjustment,
 };
+use theme_settings::{ThemeSettings, observe_buffer_font_size_adjustment};
 use ui::{
     Avatar, ButtonSize, ButtonStyle, ContextMenu, Disclosure, IconButton, IconButtonShape,
     IconName, IconSize, Indicator, Key, Tooltip, h_flex, prelude::*, scrollbars::ScrollbarAutoHide,
@@ -9936,7 +9936,11 @@ impl Editor {
         h_flex()
             .px_0p5()
             .when(is_platform_style_mac, |parent| parent.gap_0p5())
-            .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+            .font(
+                theme_settings::ThemeSettings::get_global(cx)
+                    .buffer_font
+                    .clone(),
+            )
             .text_size(TextSize::XSmall.rems(cx))
             .child(h_flex().children(ui::render_modifiers(
                 keystroke.modifiers(),
@@ -9967,7 +9971,11 @@ impl Editor {
 
         if keystroke.modifiers().modified() {
             h_flex()
-                .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+                .font(
+                    theme_settings::ThemeSettings::get_global(cx)
+                        .buffer_font
+                        .clone(),
+                )
                 .when(is_platform_style_mac, |parent| parent.gap_1())
                 .child(h_flex().children(ui::render_modifiers(
                     keystroke.modifiers(),
@@ -10473,7 +10481,11 @@ impl Editor {
                         .gap_2()
                         .pr_1()
                         .overflow_x_hidden()
-                        .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+                        .font(
+                            theme_settings::ThemeSettings::get_global(cx)
+                                .buffer_font
+                                .clone(),
+                        )
                         .child(left)
                         .child(preview),
                 )
@@ -24437,7 +24449,7 @@ impl Editor {
             return None;
         }
 
-        let theme_settings = theme::ThemeSettings::get_global(cx);
+        let theme_settings = theme_settings::ThemeSettings::get_global(cx);
         let theme = cx.theme();
         let accent_colors = theme.accents().clone();
 

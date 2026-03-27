@@ -5,10 +5,8 @@ use fs::Fs;
 use gpui::{Action, App, IntoElement};
 use project::project_settings::ProjectSettings;
 use settings::{BaseKeymap, Settings, update_settings_file};
-use theme::{
-    Appearance, SystemAppearance, ThemeAppearanceMode, ThemeName, ThemeRegistry, ThemeSelection,
-    ThemeSettings,
-};
+use theme::{Appearance, SystemAppearance, ThemeRegistry};
+use theme_settings::{ThemeAppearanceMode, ThemeName, ThemeSelection, ThemeSettings};
 use ui::{
     Divider, StatefulInteractiveElement, SwitchField, TintColor, ToggleButtonGroup,
     ToggleButtonGroupSize, ToggleButtonSimple, ToggleButtonWithIcon, Tooltip, prelude::*,
@@ -197,7 +195,7 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
     fn write_mode_change(mode: ThemeAppearanceMode, cx: &mut App) {
         let fs = <dyn Fs>::global(cx);
         update_settings_file(fs, cx, move |settings, _cx| {
-            theme::set_mode(settings, mode);
+            theme_settings::set_mode(settings, mode);
         });
     }
 
@@ -219,13 +217,13 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
                     dark: ThemeName(dark_theme.into()),
                 });
             }
-            ThemeAppearanceMode::Light => theme::set_theme(
+            ThemeAppearanceMode::Light => theme_settings::set_theme(
                 settings,
                 theme,
                 Appearance::Light,
                 *SystemAppearance::global(cx),
             ),
-            ThemeAppearanceMode::Dark => theme::set_theme(
+            ThemeAppearanceMode::Dark => theme_settings::set_theme(
                 settings,
                 theme,
                 Appearance::Dark,

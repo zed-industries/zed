@@ -27,7 +27,7 @@ use language::Buffer;
 use settings::Settings as _;
 use terminal::terminal_settings::TerminalSettings;
 use terminal_view::terminal_element::TerminalElement;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{IntoElement, prelude::*};
 
 use crate::outputs::OutputContent;

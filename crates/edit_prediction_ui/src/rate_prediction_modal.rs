@@ -14,7 +14,7 @@ use project::{
 use settings::Settings as _;
 use std::rc::Rc;
 use std::{fmt::Write, sync::Arc};
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{
     ContextMenu, DropdownMenu, KeyBinding, List, ListItem, ListItemSpacing, PopoverMenuHandle,
     Tooltip, prelude::*,

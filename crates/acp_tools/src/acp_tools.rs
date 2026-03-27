@@ -16,7 +16,7 @@ use language::LanguageRegistry;
 use markdown::{CodeBlockRenderer, Markdown, MarkdownElement, MarkdownStyle};
 use project::{AgentId, Project};
 use settings::Settings;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{CopyButton, Tooltip, WithScrollbar, prelude::*};
 use util::ResultExt as _;
 use workspace::{

@@ -286,7 +286,7 @@ mod tests {
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::Settings;
-    use theme::{self, ThemeSettings};
+    use theme_settings::ThemeSettings;
     use workspace::{self, AppState, MultiWorkspace};
     use zed_actions::settings_profile_selector;
 

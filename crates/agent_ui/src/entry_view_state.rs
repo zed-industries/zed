@@ -16,7 +16,7 @@ use prompt_store::PromptStore;
 use rope::Point;
 use settings::Settings as _;
 use terminal_view::TerminalView;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{Context, TextSize};
 use workspace::Workspace;
 

@@ -81,7 +81,7 @@ fn main() {
             {
                 move |window, cx| {
                     let app_state = app_state;
-                    theme::setup_ui_font(window, cx);
+                    theme_settings::setup_ui_font(window, cx);
 
                     let project = Project::local(
                         app_state.client.clone(),

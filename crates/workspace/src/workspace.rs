@@ -130,7 +130,8 @@ use std::{
     time::Duration,
 };
 use task::{DebugScenario, SharedTaskContext, SpawnInTerminal};
-use theme::{ActiveTheme, GlobalTheme, SystemAppearance, ThemeSettings};
+use theme::{ActiveTheme, SystemAppearance};
+use theme_settings::ThemeSettings;
 pub use toolbar::{
     PaneSearchBarCallbacks, Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
 };
@@ -1682,8 +1683,8 @@ impl Workspace {
 
                 *SystemAppearance::global_mut(cx) = SystemAppearance(window_appearance.into());
 
-                GlobalTheme::reload_theme(cx);
-                GlobalTheme::reload_icon_theme(cx);
+                theme_settings::reload_theme(cx);
+                theme_settings::reload_icon_theme(cx);
             }),
             cx.on_release({
                 let weak_handle = weak_handle.clone();
@@ -7473,17 +7474,23 @@ impl Workspace {
     fn toggle_theme_mode(&mut self, _: &ToggleMode, _window: &mut Window, cx: &mut Context<Self>) {
         let current_mode = ThemeSettings::get_global(cx).theme.mode();
         let next_mode = match current_mode {
-            Some(theme::ThemeAppearanceMode::Light) => theme::ThemeAppearanceMode::Dark,
-            Some(theme::ThemeAppearanceMode::Dark) => theme::ThemeAppearanceMode::Light,
-            Some(theme::ThemeAppearanceMode::System) | None => match cx.theme().appearance() {
-                theme::Appearance::Light => theme::ThemeAppearanceMode::Dark,
-                theme::Appearance::Dark => theme::ThemeAppearanceMode::Light,
-            },
+            Some(theme_settings::ThemeAppearanceMode::Light) => {
+                theme_settings::ThemeAppearanceMode::Dark
+            }
+            Some(theme_settings::ThemeAppearanceMode::Dark) => {
+                theme_settings::ThemeAppearanceMode::Light
+            }
+            Some(theme_settings::ThemeAppearanceMode::System) | None => {
+                match cx.theme().appearance() {
+                    theme::Appearance::Light => theme_settings::ThemeAppearanceMode::Dark,
+                    theme::Appearance::Dark => theme_settings::ThemeAppearanceMode::Light,
+                }
+            }
         };
 
         let fs = self.project().read(cx).fs().clone();
         settings::update_settings_file(fs, cx, move |settings, _cx| {
-            theme::set_mode(settings, next_mode);
+            theme_settings::set_mode(settings, next_mode);
         });
     }
 
@@ -7912,7 +7919,7 @@ impl Render for Workspace {
         } else {
             (None, None)
         };
-        let ui_font = theme::setup_ui_font(window, cx);
+        let ui_font = theme_settings::setup_ui_font(window, cx);
 
         let theme = cx.theme().clone();
         let colors = theme.colors();

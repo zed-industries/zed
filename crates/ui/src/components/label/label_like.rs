@@ -2,7 +2,7 @@ use crate::prelude::*;
 use gpui::{FontWeight, Rems, StyleRefinement, UnderlineStyle};
 use settings::Settings;
 use smallvec::SmallVec;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 
 /// Sets the size of a label
 #[derive(Debug, PartialEq, Clone, Copy, Default)]
@@ -191,7 +191,7 @@ impl LabelCommon for LabelLike {
     }
 
     fn buffer_font(mut self, cx: &App) -> Self {
-        let font = theme::ThemeSettings::get_global(cx).buffer_font.clone();
+        let font = theme_settings::ThemeSettings::get_global(cx).buffer_font.clone();
         self.weight = Some(font.weight);
         self.base = self.base.font(font);
         self
@@ -200,7 +200,7 @@ impl LabelCommon for LabelLike {
     fn inline_code(mut self, cx: &App) -> Self {
         self.base = self
             .base
-            .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+            .font(theme_settings::ThemeSettings::get_global(cx).buffer_font.clone())
             .bg(cx.theme().colors().element_background)
             .rounded_sm()
             .px_0p5();

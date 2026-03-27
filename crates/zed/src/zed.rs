@@ -77,10 +77,8 @@ use std::{
     sync::atomic::{self, AtomicBool},
 };
 use terminal_view::terminal_panel::{self, TerminalPanel};
-use theme::{
-    ActiveTheme, GlobalTheme, SystemAppearance, ThemeRegistry, ThemeSettings,
-    deserialize_icon_theme,
-};
+use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, deserialize_icon_theme};
+use theme_settings::{ThemeSettings, load_user_theme};
 use ui::{PopoverMenuHandle, prelude::*};
 use util::markdown::MarkdownString;
 use util::rel_path::RelPath;
@@ -903,10 +901,10 @@ fn register_actions(
                         let _ = settings
                             .theme
                             .ui_font_size
-                            .insert(f32::from(theme::clamp_font_size(ui_font_size)).into());
+                            .insert(f32::from(theme_settings::clamp_font_size(ui_font_size)).into());
                     });
                 } else {
-                    theme::adjust_ui_font_size(cx, |size| size + px(1.0));
+                    theme_settings::adjust_ui_font_size(cx, |size| size + px(1.0));
                 }
             }
         })
@@ -919,10 +917,10 @@ fn register_actions(
                         let _ = settings
                             .theme
                             .ui_font_size
-                            .insert(f32::from(theme::clamp_font_size(ui_font_size)).into());
+                            .insert(f32::from(theme_settings::clamp_font_size(ui_font_size)).into());
                     });
                 } else {
-                    theme::adjust_ui_font_size(cx, |size| size - px(1.0));
+                    theme_settings::adjust_ui_font_size(cx, |size| size - px(1.0));
                 }
             }
         })
@@ -934,7 +932,7 @@ fn register_actions(
                         settings.theme.ui_font_size = None;
                     });
                 } else {
-                    theme::reset_ui_font_size(cx);
+                    theme_settings::reset_ui_font_size(cx);
                 }
             }
         })
@@ -948,10 +946,10 @@ fn register_actions(
                         let _ = settings
                             .theme
                             .buffer_font_size
-                            .insert(f32::from(theme::clamp_font_size(buffer_font_size)).into());
+                            .insert(f32::from(theme_settings::clamp_font_size(buffer_font_size)).into());
                     });
                 } else {
-                    theme::adjust_buffer_font_size(cx, |size| size + px(1.0));
+                    theme_settings::adjust_buffer_font_size(cx, |size| size + px(1.0));
                 }
             }
         })
@@ -965,10 +963,10 @@ fn register_actions(
                         let _ = settings
                             .theme
                             .buffer_font_size
-                            .insert(f32::from(theme::clamp_font_size(buffer_font_size)).into());
+                            .insert(f32::from(theme_settings::clamp_font_size(buffer_font_size)).into());
                     });
                 } else {
-                    theme::adjust_buffer_font_size(cx, |size| size - px(1.0));
+                    theme_settings::adjust_buffer_font_size(cx, |size| size - px(1.0));
                 }
             }
         })
@@ -980,7 +978,7 @@ fn register_actions(
                         settings.theme.buffer_font_size = None;
                     });
                 } else {
-                    theme::reset_buffer_font_size(cx);
+                    theme_settings::reset_buffer_font_size(cx);
                 }
             }
         })
@@ -995,10 +993,10 @@ fn register_actions(
                         settings.theme.agent_buffer_font_size = None;
                     });
                 } else {
-                    theme::reset_ui_font_size(cx);
-                    theme::reset_buffer_font_size(cx);
-                    theme::reset_agent_ui_font_size(cx);
-                    theme::reset_agent_buffer_font_size(cx);
+                    theme_settings::reset_ui_font_size(cx);
+                    theme_settings::reset_buffer_font_size(cx);
+                    theme_settings::reset_agent_ui_font_size(cx);
+                    theme_settings::reset_agent_buffer_font_size(cx);
                 }
             }
         })
@@ -2228,7 +2226,9 @@ pub(crate) fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &mut A
                 match load_target {
                     LoadTarget::Theme(theme_path) => {
                         if let Some(bytes) = fs.load_bytes(&theme_path).await.log_err()
-                            && theme_registry.load_user_theme(&bytes).log_err().is_some()
+                            && load_user_theme(&*theme_registry, &bytes)
+                                .log_err()
+                                .is_some()
                         {
                             reload_tasks.lock().push(ReloadTarget::Theme);
                         }
@@ -2252,8 +2252,8 @@ pub(crate) fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &mut A
 
     for reload_target in reload_tasks.into_inner() {
         match reload_target {
-            ReloadTarget::Theme => GlobalTheme::reload_theme(cx),
-            ReloadTarget::IconTheme => GlobalTheme::reload_icon_theme(cx),
+            ReloadTarget::Theme => theme_settings::reload_theme(cx),
+            ReloadTarget::IconTheme => theme_settings::reload_icon_theme(cx),
         };
     }
 }

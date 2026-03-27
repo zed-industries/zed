@@ -3431,7 +3431,7 @@ impl ActionArgumentsEditor {
 
 impl Render for ActionArgumentsEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let settings = theme::ThemeSettings::get_global(cx);
+        let settings = theme_settings::ThemeSettings::get_global(cx);
         let colors = cx.theme().colors();
 
         let border_color = if self.is_loading {

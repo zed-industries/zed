@@ -28,6 +28,7 @@ smallvec.workspace = true
 story = { workspace = true, optional = true }
 strum.workspace = true
 theme.workspace = true
+theme_settings.workspace = true
 ui_macros.workspace = true
 gpui_util.workspace = true
 

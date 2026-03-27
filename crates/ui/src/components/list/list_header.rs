@@ -4,7 +4,7 @@ use crate::{Disclosure, prelude::*};
 use component::{Component, ComponentScope, example_group_with_title, single_example};
 use gpui::{AnyElement, ClickEvent};
 use settings::Settings;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct ListHeader {
@@ -91,7 +91,7 @@ impl RenderOnce for ListHeader {
             .child(
                 div()
                     .map(|this| match ui_density {
-                        theme::UiDensity::Comfortable => this.h_5(),
+                        theme_settings::UiDensity::Comfortable => this.h_5(),
                         _ => this.h_7(),
                     })
                     .when(self.inset, |this| this.px_2())

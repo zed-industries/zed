@@ -1,18 +1,16 @@
 use std::sync::Arc;
 use std::{fmt::Debug, path::Path};
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
 use gpui::{App, AssetSource, Global, SharedString};
-use gpui_util::ResultExt;
 use parking_lot::RwLock;
 use thiserror::Error;
 
 use crate::{
     Appearance, AppearanceContent, ChevronIcons, DEFAULT_ICON_THEME_NAME, DirectoryIcons,
-    IconDefinition, IconTheme, IconThemeFamilyContent, Theme, ThemeFamily, ThemeFamilyContent,
-    default_icon_theme, deserialize_user_theme, refine_theme_family,
+    IconDefinition, IconTheme, IconThemeFamilyContent, Theme, ThemeFamily, default_icon_theme,
 };
 
 /// The metadata for a theme.
@@ -81,6 +79,11 @@ impl ThemeRegistry {
         cx.set_global(GlobalThemeRegistry(Arc::new(ThemeRegistry::new(assets))));
     }
 
+    /// Returns the asset source used by this registry.
+    pub fn assets(&self) -> &dyn AssetSource {
+        self.assets.as_ref()
+    }
+
     /// Creates a new [`ThemeRegistry`] with the given [`AssetSource`].
     pub fn new(assets: Box<dyn AssetSource>) -> Self {
         let registry = Self {
@@ -116,25 +119,18 @@ impl ThemeRegistry {
         self.state.write().extensions_loaded = true;
     }
 
-    fn insert_theme_families(&self, families: impl IntoIterator<Item = ThemeFamily>) {
+    /// Inserts the given theme families into the registry.
+    pub fn insert_theme_families(&self, families: impl IntoIterator<Item = ThemeFamily>) {
         for family in families.into_iter() {
             self.insert_themes(family.themes);
         }
     }
 
-    fn insert_themes(&self, themes: impl IntoIterator<Item = Theme>) {
+    /// Inserts the given themes into the registry.
+    pub fn insert_themes(&self, themes: impl IntoIterator<Item = Theme>) {
         let mut state = self.state.write();
         for theme in themes.into_iter() {
             state.themes.insert(theme.name.clone(), Arc::new(theme));
-        }
-    }
-
-    #[allow(unused)]
-    fn insert_user_theme_families(&self, families: impl IntoIterator<Item = ThemeFamilyContent>) {
-        for family in families.into_iter() {
-            let refined_family = refine_theme_family(family);
-
-            self.insert_themes(refined_family.themes);
         }
     }
 
@@ -179,40 +175,6 @@ impl ThemeRegistry {
             .get(name)
             .ok_or_else(|| ThemeNotFoundError(name.to_string().into()))
             .cloned()
-    }
-
-    /// Loads the themes bundled with the Zed binary and adds them to the registry.
-    pub fn load_bundled_themes(&self) {
-        let theme_paths = self
-            .assets
-            .list("themes/")
-            .expect("failed to list theme assets")
-            .into_iter()
-            .filter(|path| path.ends_with(".json"));
-
-        for path in theme_paths {
-            let Some(theme) = self.assets.load(&path).log_err().flatten() else {
-                continue;
-            };
-
-            let Some(theme_family) = serde_json::from_slice(&theme)
-                .with_context(|| format!("failed to parse theme at path \"{path}\""))
-                .log_err()
-            else {
-                continue;
-            };
-
-            self.insert_user_theme_families([theme_family]);
-        }
-    }
-
-    /// Loads the user theme from the specified data and adds it to the registry.
-    pub fn load_user_theme(&self, bytes: &[u8]) -> Result<()> {
-        let theme = deserialize_user_theme(bytes)?;
-
-        self.insert_user_theme_families([theme]);
-
-        Ok(())
     }
 
     /// Returns the default icon theme.
