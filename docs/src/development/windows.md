@@ -110,7 +110,7 @@ cargo run --release
 And to run the tests:
 
 ```sh
-cargo test --workspace
+cargo nextest run --workspace
 ```
 
 > **Note:** Visual regression tests are currently macOS-only and require Screen Recording permission. See [Building Zed for macOS](./macos.md#visual-regression-tests) for details.

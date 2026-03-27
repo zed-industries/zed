@@ -34,7 +34,7 @@ cargo run
 And to run the tests:
 
 ```sh
-cargo test --workspace
+cargo nextest run --workspace
 ```
 
 In release mode, the primary user interface is the `cli` crate. You can run it in development with:

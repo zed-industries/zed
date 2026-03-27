@@ -75,7 +75,7 @@ Create an `ANALYSIS.md` file (in the working directory root, or wherever instruc
 ## Reproduction
 <Describe what the test does and how it triggers the same crash.
 Include the exact command to run the test, e.g.:
-`cargo test -p <crate> <test_name>`>
+`cargo nextest run -p <crate> <test_name>`>
 
 ## Suggested Fix
 <Describe the fix approach. Be specific: which function, what check to add,

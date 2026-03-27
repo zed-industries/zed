@@ -118,6 +118,11 @@ When your changes affect UI, consult this checklist:
 - Are power features discoverable but not intrusive?
 - Is there a path from beginner → expert usage (progressive disclosure)?
 
+## Building and testing Zed
+
+Some tests in this tree will only pass under Nextest, not under `cargo test`. To run tests, use
+
+    cargo nextest run -p <PACKAGE>
 
 ## Things we will (probably) not merge
 

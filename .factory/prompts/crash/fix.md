@@ -18,7 +18,7 @@ If either is missing, ask the user to provide them or run the investigation phas
 Run the reproduction test and verify it fails with the expected crash:
 
 ```
-cargo test -p <crate> <test_name>
+cargo nextest run -p <crate> <test_name>
 ```
 
 Read the failure output. Confirm the panic message and stack trace match what ANALYSIS.md describes. If the test doesn't fail, or fails differently than expected, stop and reassess before proceeding.
@@ -45,13 +45,13 @@ Apply the minimal change needed to resolve the root cause. Guidelines:
 Run the reproduction test and confirm it passes:
 
 ```
-cargo test -p <crate> <test_name>
+cargo nextest run -p <crate> <test_name>
 ```
 
 Then run the full test suite for the affected crate to check for regressions:
 
 ```
-cargo test -p <crate>
+cargo nextest run -p <crate>
 ```
 
 If any tests fail, determine whether the fix introduced a regression. Fix regressions before proceeding.

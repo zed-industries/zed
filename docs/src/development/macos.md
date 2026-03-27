@@ -55,7 +55,7 @@ cargo run --release
 And to run the tests:
 
 ```sh
-cargo test --workspace
+cargo nextest run --workspace
 ```
 
 ## Visual Regression Tests
