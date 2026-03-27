@@ -6,9 +6,11 @@ use std::{
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use collections::HashMap;
 
-use gpui::{Action, AppContext as _, Entity, EventEmitter, Focusable, Subscription, WeakEntity};
+use gpui::{
+    Action, AppContext as _, Entity, EventEmitter, Focusable, Font, Subscription, WeakEntity,
+};
 use itertools::Itertools;
-use language::{Buffer, Capability};
+use language::{Buffer, Capability, HighlightedText};
 use multi_buffer::{
     Anchor, BufferOffset, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer,
     MultiBufferDiffHunk, MultiBufferPoint, MultiBufferSnapshot, PathKey,
@@ -29,7 +31,7 @@ use crate::{
 };
 use workspace::{
     ActivatePaneLeft, ActivatePaneRight, Item, ToolbarItemLocation, Workspace,
-    item::{BreadcrumbText, ItemBufferKind, ItemEvent, SaveOptions, TabContentParams},
+    item::{ItemBufferKind, ItemEvent, SaveOptions, TabContentParams},
     searchable::{SearchEvent, SearchToken, SearchableItem, SearchableItemHandle},
 };
 
@@ -446,6 +448,9 @@ impl SplittableEditor {
             let mut editor =
                 Editor::for_multibuffer(rhs_multibuffer.clone(), Some(project.clone()), window, cx);
             editor.set_expand_all_diff_hunks(cx);
+            editor.disable_runnables();
+            editor.disable_diagnostics(cx);
+            editor.set_minimap_visibility(crate::MinimapVisibility::Disabled, window, cx);
             editor
         });
         // TODO(split-diff) we might want to tag editor events with whether they came from rhs/lhs
@@ -1850,7 +1855,7 @@ impl Item for SplittableEditor {
         self.rhs_editor.read(cx).breadcrumb_location(cx)
     }
 
-    fn breadcrumbs(&self, cx: &App) -> Option<Vec<BreadcrumbText>> {
+    fn breadcrumbs(&self, cx: &App) -> Option<(Vec<HighlightedText>, Option<Font>)> {
         self.rhs_editor.read(cx).breadcrumbs(cx)
     }
 

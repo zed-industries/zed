@@ -22,7 +22,11 @@ use crate::STARTUP_TIME;
 const MAX_HANG_TRACES: usize = 3;
 
 pub fn init(client: Arc<Client>, cx: &mut App) {
-    monitor_hangs(cx);
+    if cfg!(debug_assertions) {
+        log::info!("Debug assertions enabled, skipping hang monitoring");
+    } else {
+        monitor_hangs(cx);
+    }
 
     cx.on_flags_ready({
         let client = client.clone();

@@ -21,6 +21,7 @@ clap = "4"
 client.workspace = true
 cloud_llm_client.workspace= true
 collections.workspace = true
+db.workspace = true
 debug_adapter_extension.workspace = true
 dirs.workspace = true
 extension.workspace = true
@@ -64,7 +65,7 @@ rand.workspace = true
 similar = "2.7.0"
 flate2 = "1.1.8"
 toml.workspace = true
-rust-embed = { workspace = true, features = ["debug-embed"] }
+rust-embed.workspace = true
 gaoya = "0.2.0"
 
 # Wasmtime is included as a dependency in order to enable the same

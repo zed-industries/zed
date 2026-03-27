@@ -9,6 +9,7 @@ use gpui::{
     Task, UniformListScrollHandle, WeakEntity, Window, actions, div, rems, uniform_list,
 };
 use language::ToOffset;
+
 use menu::{SelectNext, SelectPrevious};
 use std::{mem, ops::Range};
 use theme::ActiveTheme;
@@ -209,20 +210,32 @@ impl HighlightsTreeView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(editor) = active_item
-            .filter(|item| item.item_id() != cx.entity_id())
-            .and_then(|item| item.downcast::<Editor>())
-        else {
-            self.clear(cx);
-            return;
+        let active_editor = match active_item {
+            Some(active_item) => {
+                if active_item.item_id() == cx.entity_id() {
+                    return;
+                } else {
+                    match active_item.downcast::<Editor>() {
+                        Some(active_editor) => active_editor,
+                        None => {
+                            self.clear(cx);
+                            return;
+                        }
+                    }
+                }
+            }
+            None => {
+                self.clear(cx);
+                return;
+            }
         };
 
         let is_different_editor = self
             .editor
             .as_ref()
-            .is_none_or(|state| state.editor != editor);
+            .is_none_or(|state| state.editor != active_editor);
         if is_different_editor {
-            self.set_editor(editor, window, cx);
+            self.set_editor(active_editor, window, cx);
         }
     }
 
@@ -363,7 +376,9 @@ impl HighlightsTreeView {
                                             rule.style
                                                 .iter()
                                                 .find(|style_name| {
-                                                    semantic_theme.get_opt(style_name).is_some()
+                                                    semantic_theme
+                                                        .style_for_name(style_name)
+                                                        .is_some()
                                                 })
                                                 .map(|style_name| {
                                                     SharedString::from(style_name.clone())
@@ -405,12 +420,12 @@ impl HighlightsTreeView {
 
             for capture in captures {
                 let highlight_id = highlight_maps[capture.grammar_index].get(capture.index);
-                let Some(style) = highlight_id.style(&syntax_theme) else {
+                let Some(style) = syntax_theme.get(highlight_id).cloned() else {
                     continue;
                 };
 
-                let theme_key = highlight_id
-                    .name(&syntax_theme)
+                let theme_key = syntax_theme
+                    .get_capture_name(highlight_id)
                     .map(|theme_key| SharedString::from(theme_key.to_string()));
 
                 let capture_name = grammars[capture.grammar_index]

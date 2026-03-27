@@ -21,7 +21,6 @@ assistant_slash_command.workspace = true
 chrono.workspace = true
 client.workspace = true
 clock.workspace = true
-cloud_llm_client.workspace = true
 collections.workspace = true
 context_server.workspace = true
 fs.workspace = true

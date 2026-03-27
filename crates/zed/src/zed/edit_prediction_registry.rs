@@ -141,9 +141,7 @@ fn edit_prediction_provider_config_for_settings(cx: &App) -> Option<EditPredicti
                 ))
             }
         }
-        EditPredictionProvider::Sweep => Some(EditPredictionProviderConfig::Zed(
-            EditPredictionModel::Sweep,
-        )),
+
         EditPredictionProvider::Mercury => Some(EditPredictionProviderConfig::Zed(
             EditPredictionModel::Mercury,
         )),
@@ -183,7 +181,6 @@ impl EditPredictionProviderConfig {
             EditPredictionProviderConfig::Zed(model) => match model {
                 EditPredictionModel::Zeta => "Zeta",
                 EditPredictionModel::Fim { .. } => "FIM",
-                EditPredictionModel::Sweep => "Sweep",
                 EditPredictionModel::Mercury => "Mercury",
             },
         }

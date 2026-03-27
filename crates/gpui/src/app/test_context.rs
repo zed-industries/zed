@@ -22,7 +22,8 @@ pub struct TestAppContext {
     pub background_executor: BackgroundExecutor,
     #[doc(hidden)]
     pub foreground_executor: ForegroundExecutor,
-    dispatcher: TestDispatcher,
+    #[doc(hidden)]
+    pub dispatcher: TestDispatcher,
     test_platform: Rc<TestPlatform>,
     text_system: Arc<TextSystem>,
     fn_name: Option<&'static str>,
@@ -224,6 +225,33 @@ impl TestAppContext {
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
+                ..Default::default()
+            },
+            |window, cx| cx.new(|cx| build_window(window, cx)),
+        )
+        .unwrap()
+    }
+
+    /// Opens a new window with a specific size.
+    ///
+    /// Unlike `add_window` which uses maximized bounds, this allows controlling
+    /// the window dimensions, which is important for layout-sensitive tests.
+    pub fn open_window<F, V>(
+        &mut self,
+        window_size: Size<Pixels>,
+        build_window: F,
+    ) -> WindowHandle<V>
+    where
+        F: FnOnce(&mut Window, &mut Context<V>) -> V,
+        V: 'static + Render,
+    {
+        let mut cx = self.app.borrow_mut();
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(Bounds {
+                    origin: Point::default(),
+                    size: window_size,
+                })),
                 ..Default::default()
             },
             |window, cx| cx.new(|cx| build_window(window, cx)),

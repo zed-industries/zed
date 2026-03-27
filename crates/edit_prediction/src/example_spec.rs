@@ -26,6 +26,14 @@ pub fn encode_cursor_in_patch(patch: &str, cursor_offset: Option<usize>) -> Stri
     let mut line_start_offset = 0usize;
 
     for line in patch.lines() {
+        if matches!(
+            DiffLine::parse(line),
+            DiffLine::Garbage(content)
+                if content.starts_with('#') && content.contains(CURSOR_POSITION_MARKER)
+        ) {
+            continue;
+        }
+
         if !result.is_empty() {
             result.push('\n');
         }
@@ -844,6 +852,31 @@ mod tests {
 
         let results = spec.expected_patches_with_cursor_positions();
         assert_eq!(results, vec![(clean_patch, None)]);
+    }
+
+    #[test]
+    fn test_encode_cursor_in_patch_is_idempotent() {
+        let patch = indoc! {r#"
+            --- a/test.rs
+            +++ b/test.rs
+            @@ -1,2 +1,2 @@
+            -fn old() {}
+            +fn new_name() {}
+            #       ^[CURSOR_POSITION]
+        "#};
+
+        let cursor_offset = "fn new_name() {}".find("name").unwrap();
+        let encoded_once = encode_cursor_in_patch(patch, Some(cursor_offset));
+        let encoded_twice = encode_cursor_in_patch(&encoded_once, Some(cursor_offset));
+
+        assert_eq!(encoded_once, encoded_twice);
+        assert_eq!(
+            encoded_once
+                .lines()
+                .filter(|line| line.contains(CURSOR_POSITION_MARKER))
+                .count(),
+            1
+        );
     }
 
     #[test]
