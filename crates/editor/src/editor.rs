@@ -24895,6 +24895,10 @@ impl Editor {
             }
         }
 
+        if line.iter().any(|chunk| !chunk.text.is_empty()) {
+            lines.push(line);
+        }
+
         let Some(lines) = serde_json::to_string_pretty(&lines).log_err() else {
             return;
         };
