@@ -1,9 +1,9 @@
 use std::{ops::Range, rc::Rc};
 
 use gpui::{
-    AbsoluteLength, AppContext as _, ClickEvent, DefiniteLength, DragMoveEvent, Entity, EntityId,
-    FocusHandle, Length, ListHorizontalSizingBehavior, ListSizingBehavior, ListState, Point,
-    Stateful, UniformListScrollHandle, WeakEntity, list, transparent_black, uniform_list,
+    AbsoluteLength, AppContext as _, DefiniteLength, DragMoveEvent, Entity, EntityId, FocusHandle,
+    Length, ListHorizontalSizingBehavior, ListSizingBehavior, ListState, Point, Stateful,
+    UniformListScrollHandle, WeakEntity, list, transparent_black, uniform_list,
 };
 use itertools::intersperse_with;
 
