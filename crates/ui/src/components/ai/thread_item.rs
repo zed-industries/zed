@@ -19,7 +19,7 @@ pub enum AgentThreadStatus {
 }
 
 #[derive(Clone)]
-pub struct ThreadItemWorktree {
+pub struct ThreadItemWorktreeInfo {
     pub name: SharedString,
     pub full_path: SharedString,
     pub highlight_positions: Vec<usize>,
@@ -44,7 +44,7 @@ pub struct ThreadItem {
     hovered: bool,
     added: Option<usize>,
     removed: Option<usize>,
-    worktrees: Vec<ThreadItemWorktree>,
+    worktrees: Vec<ThreadItemWorktreeInfo>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_hover: Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>,
     action_slot: Option<AnyElement>,
@@ -149,7 +149,7 @@ impl ThreadItem {
         self
     }
 
-    pub fn worktrees(mut self, worktrees: Vec<ThreadItemWorktree>) -> Self {
+    pub fn worktrees(mut self, worktrees: Vec<ThreadItemWorktreeInfo>) -> Self {
         self.worktrees = worktrees;
         self
     }
@@ -538,7 +538,7 @@ impl Component for ThreadItem {
                         ThreadItem::new("ti-4", "Add line numbers option to FileEditBlock")
                             .icon(IconName::AiClaude)
                             .timestamp("2w")
-                            .worktrees(vec![ThreadItemWorktree {
+                            .worktrees(vec![ThreadItemWorktreeInfo {
                                 name: "link-agent-panel".into(),
                                 full_path: "link-agent-panel".into(),
                                 highlight_positions: Vec::new(),
@@ -564,7 +564,7 @@ impl Component for ThreadItem {
                     .child(
                         ThreadItem::new("ti-5b", "Full metadata example")
                             .icon(IconName::AiClaude)
-                            .worktrees(vec![ThreadItemWorktree {
+                            .worktrees(vec![ThreadItemWorktreeInfo {
                                 name: "my-project".into(),
                                 full_path: "my-project".into(),
                                 highlight_positions: Vec::new(),
@@ -643,7 +643,7 @@ impl Component for ThreadItem {
                         ThreadItem::new("ti-11", "Search in worktree name")
                             .icon(IconName::AiClaude)
                             .timestamp("3mo")
-                            .worktrees(vec![ThreadItemWorktree {
+                            .worktrees(vec![ThreadItemWorktreeInfo {
                                 name: "my-project-name".into(),
                                 full_path: "my-project-name".into(),
                                 highlight_positions: vec![3, 4, 5, 6, 7, 8, 9, 10, 11],
