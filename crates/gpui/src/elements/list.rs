@@ -1225,6 +1225,28 @@ impl Element for List {
             .last_layout_bounds
             .is_none_or(|last_bounds| last_bounds.size.width != bounds.size.width)
         {
+            // Save proportional scroll position before reset so layout_items()
+            // can restore it after items are re-measured at the new width.
+            // Mirrors the same logic in remeasure().
+            if let Some(scroll_top) = state.logical_scroll_top {
+                let mut cursor = state.items.cursor::<Count>(());
+                cursor.seek(&Count(scroll_top.item_ix), Bias::Right);
+
+                if let Some(item) = cursor.item() {
+                    if let Some(size) = item.size() {
+                        let fraction = if size.height.0 > 0.0 {
+                            (scroll_top.offset_in_item.0 / size.height.0).clamp(0.0, 1.0)
+                        } else {
+                            0.0
+                        };
+                        state.pending_scroll = Some(PendingScrollFraction {
+                            item_ix: scroll_top.item_ix,
+                            fraction,
+                        });
+                    }
+                }
+            }
+
             let new_items = SumTree::from_iter(
                 state.items.iter().map(|item| ListItem::Unmeasured {
                     focus_handle: item.focus_handle(),
