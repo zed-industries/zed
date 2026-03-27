@@ -16067,37 +16067,11 @@ impl Editor {
                     .copied()
                     .collect();
 
-                let to_byte = |target: Point| -> usize {
-                    let mut point = region_start;
-                    for (i, &b) in region_bytes.iter().enumerate() {
-                        if point == target {
-                            return i;
-                        }
-                        if b == b'\n' {
-                            point.row += 1;
-                            point.column = 0;
-                        } else {
-                            point.column += 1;
-                        }
-                    }
-                    region_bytes.len()
-                };
-
-                let to_point = |offset: usize| -> Point {
-                    let mut point = region_start;
-                    for &b in &region_bytes[..offset] {
-                        if b == b'\n' {
-                            point.row += 1;
-                            point.column = 0;
-                        } else {
-                            point.column += 1;
-                        }
-                    }
-                    point
-                };
-
-                let start_byte = to_byte(start_point);
-                let end_byte = to_byte(end_point);
+                let region_start_offset = snapshot.point_to_offset(region_start);
+                let start_byte =
+                    snapshot.point_to_offset(start_point) - region_start_offset;
+                let end_byte =
+                    snapshot.point_to_offset(end_point) - region_start_offset;
 
                 let mut is_commented = false;
                 let mut prefix_range = start_point..start_point;
@@ -16135,8 +16109,10 @@ impl Editor {
 
                         if markers_surround || selection_contains {
                             is_commented = true;
-                            let prefix_pt = to_point(prefix_pos);
-                            let suffix_pt = to_point(suffix_pos);
+                            let prefix_pt =
+                                snapshot.offset_to_point(region_start_offset + prefix_pos);
+                            let suffix_pt =
+                                snapshot.offset_to_point(region_start_offset + suffix_pos);
                             prefix_range = prefix_pt
                                 ..Point::new(
                                     prefix_pt.row,

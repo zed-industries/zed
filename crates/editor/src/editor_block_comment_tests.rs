@@ -238,3 +238,56 @@ async fn test_toggle_block_comments_empty_selection_roundtrip(cx: &mut TestAppCo
         }
     "});
 }
+
+// Multi-byte Unicode characters (√ is 3 bytes in UTF-8) must not cause
+// incorrect offset arithmetic or panics.
+#[gpui::test]
+async fn test_toggle_block_comments_unicode_before_selection(cx: &mut TestAppContext) {
+    let mut cx = setup_rust_context(cx).await;
+
+    cx.set_state("let √ = «42ˇ»;");
+
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_block_comments(&ToggleBlockComments, window, cx);
+    });
+
+    cx.assert_editor_state("let √ = «/* 42 */ˇ»;");
+
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_block_comments(&ToggleBlockComments, window, cx);
+    });
+
+    cx.assert_editor_state("let √ = «42ˇ»;");
+}
+
+#[gpui::test]
+async fn test_toggle_block_comments_unicode_in_selection(cx: &mut TestAppContext) {
+    let mut cx = setup_rust_context(cx).await;
+
+    cx.set_state("«√√√ˇ»");
+
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_block_comments(&ToggleBlockComments, window, cx);
+    });
+
+    cx.assert_editor_state("«/* √√√ */ˇ»");
+
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_block_comments(&ToggleBlockComments, window, cx);
+    });
+
+    cx.assert_editor_state("«√√√ˇ»");
+}
+
+#[gpui::test]
+async fn test_toggle_block_comments_cursor_inside_unicode_comment(cx: &mut TestAppContext) {
+    let mut cx = setup_rust_context(cx).await;
+
+    cx.set_state("/* √√√ˇ */");
+
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_block_comments(&ToggleBlockComments, window, cx);
+    });
+
+    cx.assert_editor_state("√√√ˇ");
+}
