@@ -7,7 +7,7 @@ license = "GPL-3.0-or-later"
 
 [features]
 test-support = [
-    "client/test-support",
+
     "editor/test-support",
     "gpui/test-support",
     "workspace/test-support",
@@ -31,6 +31,7 @@ futures.workspace = true
 gpui.workspace = true
 language.workspace = true
 menu.workspace = true
+multi_buffer.workspace = true
 project.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -47,7 +48,6 @@ ztracing.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-client = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }

@@ -808,7 +808,10 @@ impl LocalImageStore {
             let new_file = if let Some(entry) = snapshot_entry {
                 worktree::File {
                     disk_state: match entry.mtime {
-                        Some(mtime) => DiskState::Present { mtime },
+                        Some(mtime) => DiskState::Present {
+                            mtime,
+                            size: entry.size,
+                        },
                         None => old_file.disk_state,
                     },
                     is_local: true,

@@ -6,7 +6,7 @@ use gpui::{
     App, Context, FontStyle, FontWeight, HighlightStyle, StrikethroughStyle, Task, UnderlineStyle,
 };
 use itertools::Itertools;
-use language::language_settings::language_settings;
+use language::language_settings::LanguageSettings;
 use project::{
     lsp_store::{
         BufferSemanticToken, BufferSemanticTokens, RefreshForServer, SemanticTokenStylizer,
@@ -119,7 +119,7 @@ impl Editor {
         for_server: Option<RefreshForServer>,
         cx: &mut Context<Self>,
     ) {
-        if !self.mode().is_full() || !self.semantic_token_state.enabled() {
+        if !self.lsp_data_enabled() || !self.semantic_token_state.enabled() {
             self.invalidate_semantic_tokens(None);
             self.display_map.update(cx, |display_map, _| {
                 match Arc::get_mut(&mut display_map.semantic_token_highlights) {
@@ -155,13 +155,9 @@ impl Editor {
             .filter_map(|editor_buffer| {
                 let editor_buffer_id = editor_buffer.read(cx).remote_id();
                 if self.registered_buffers.contains_key(&editor_buffer_id)
-                    && language_settings(
-                        editor_buffer.read(cx).language().map(|l| l.name()),
-                        editor_buffer.read(cx).file(),
-                        cx,
-                    )
-                    .semantic_tokens
-                    .enabled()
+                    && LanguageSettings::for_buffer(editor_buffer.read(cx), cx)
+                        .semantic_tokens
+                        .enabled()
                 {
                     Some((editor_buffer_id, editor_buffer))
                 } else {
@@ -184,7 +180,7 @@ impl Editor {
                     .buffer(*buffer_id)
                     .is_some_and(|buffer| {
                         let buffer = buffer.read(cx);
-                        language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
+                        LanguageSettings::for_buffer(&buffer, cx)
                             .semantic_tokens
                             .enabled()
                     })
@@ -217,8 +213,9 @@ impl Editor {
                             }) {
                                 None
                             } else {
-                                let task = sema.semantic_tokens(buffer, for_server, cx);
-                                Some(async move { (buffer_id, query_version, task.await) })
+                                sema.semantic_tokens(buffer, for_server, cx).map(
+                                    |task| async move { (buffer_id, query_version, task.await) },
+                                )
                             }
                         })
                         .collect::<Vec<_>>()
@@ -380,7 +377,10 @@ fn convert_token(
     for rule in matching {
         empty = false;
 
-        let style = rule.style.iter().find_map(|style| theme.get_opt(style));
+        let style = rule
+            .style
+            .iter()
+            .find_map(|style| theme.style_for_name(style));
 
         macro_rules! overwrite {
             (

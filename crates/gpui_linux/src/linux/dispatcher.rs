@@ -44,11 +44,6 @@ impl LinuxDispatcher {
                     .name(format!("Worker-{i}"))
                     .spawn(move || {
                         for runnable in receiver.iter() {
-                            // Check if the executor that spawned this task was closed
-                            if runnable.metadata().is_closed() {
-                                continue;
-                            }
-
                             let start = Instant::now();
 
                             let location = runnable.metadata().location;
@@ -94,11 +89,6 @@ impl LinuxDispatcher {
                                     calloop::timer::Timer::from_duration(timer.duration),
                                     move |_, _, _| {
                                         if let Some(runnable) = runnable.take() {
-                                            // Check if the executor that spawned this task was closed
-                                            if runnable.metadata().is_closed() {
-                                                return TimeoutAction::Drop;
-                                            }
-
                                             let start = Instant::now();
                                             let location = runnable.metadata().location;
                                             let mut timing = TaskTiming {

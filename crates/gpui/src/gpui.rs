@@ -1,5 +1,5 @@
 #![doc = include_str!("../README.md")]
-#![deny(missing_docs)]
+#![warn(missing_docs)]
 #![allow(clippy::type_complexity)] // Not useful, GPUI makes heavy use of callbacks
 #![allow(clippy::collapsible_else_if)] // False positives in platform specific code
 #![allow(unused_mut)] // False positives in platform specific code
@@ -54,6 +54,9 @@ mod util;
 mod view;
 mod window;
 
+#[cfg(any(test, feature = "test-support"))]
+pub use proptest;
+
 #[cfg(doc)]
 pub mod _ownership_and_data_flow;
 
@@ -86,7 +89,9 @@ pub use elements::*;
 pub use executor::*;
 pub use geometry::*;
 pub use global::*;
-pub use gpui_macros::{AppContext, IntoElement, Render, VisualContext, register_action, test};
+pub use gpui_macros::{
+    AppContext, IntoElement, Render, VisualContext, property_test, register_action, test,
+};
 pub use gpui_util::arc_cow::ArcCow;
 pub use http_client;
 pub use input::*;

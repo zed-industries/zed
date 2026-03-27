@@ -34,7 +34,7 @@ agent_servers.workspace = true
 agent_settings.workspace = true
 ai_onboarding.workspace = true
 anyhow.workspace = true
-arrayvec.workspace = true
+heapless.workspace = true
 assistant_text_thread.workspace = true
 assistant_slash_command.workspace = true
 assistant_slash_commands.workspace = true
@@ -44,7 +44,6 @@ buffer_diff.workspace = true
 chrono.workspace = true
 client.workspace = true
 cloud_api_types.workspace = true
-cloud_llm_client.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
 component.workspace = true
@@ -58,6 +57,7 @@ feature_flags.workspace = true
 file_icons.workspace = true
 fs.workspace = true
 futures.workspace = true
+git.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 gpui_tokio.workspace = true
@@ -112,7 +112,6 @@ watch.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 image.workspace = true
-async-fs.workspace = true
 reqwest_client = { workspace = true, optional = true }
 
 [dev-dependencies]
@@ -120,7 +119,7 @@ acp_thread = { workspace = true, features = ["test-support"] }
 agent = { workspace = true, features = ["test-support"] }
 assistant_text_thread = { workspace = true, features = ["test-support"] }
 buffer_diff = { workspace = true, features = ["test-support"] }
-clock.workspace = true
+
 db = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 eval_utils.workspace = true
@@ -131,11 +130,9 @@ languages = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, "features" = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
-recent_projects = { workspace = true, features = ["test-support"] }
-remote_connection = { workspace = true, features = ["test-support"] }
-title_bar = { workspace = true, features = ["test-support"] }
+
 semver.workspace = true
 reqwest_client.workspace = true
-tempfile.workspace = true
+
 tree-sitter-md.workspace = true
 unindent.workspace = true

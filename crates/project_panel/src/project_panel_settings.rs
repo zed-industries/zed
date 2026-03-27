@@ -36,6 +36,7 @@ pub struct ProjectPanelSettings {
     pub auto_open: AutoOpenSettings,
     pub sort_mode: ProjectPanelSortMode,
     pub diagnostic_badges: bool,
+    pub git_status_indicator: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -49,6 +50,11 @@ pub struct ScrollbarSettings {
     ///
     /// Default: inherits editor scrollbar settings
     pub show: Option<ShowScrollbar>,
+    /// Whether to allow horizontal scrolling in the project panel.
+    /// When false, the view is locked to the leftmost position and long file names are clipped.
+    ///
+    /// Default: true
+    pub horizontal_scroll: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -111,8 +117,12 @@ impl Settings for ProjectPanelSettings {
             auto_fold_dirs: project_panel.auto_fold_dirs.unwrap(),
             bold_folder_labels: project_panel.bold_folder_labels.unwrap(),
             starts_open: project_panel.starts_open.unwrap(),
-            scrollbar: ScrollbarSettings {
-                show: project_panel.scrollbar.unwrap().show.map(Into::into),
+            scrollbar: {
+                let scrollbar = project_panel.scrollbar.unwrap();
+                ScrollbarSettings {
+                    show: scrollbar.show.map(Into::into),
+                    horizontal_scroll: scrollbar.horizontal_scroll.unwrap(),
+                }
             },
             show_diagnostics: project_panel.show_diagnostics.unwrap(),
             hide_root: project_panel.hide_root.unwrap(),
@@ -128,6 +138,7 @@ impl Settings for ProjectPanelSettings {
             },
             sort_mode: project_panel.sort_mode.unwrap(),
             diagnostic_badges: project_panel.diagnostic_badges.unwrap(),
+            git_status_indicator: project_panel.git_status_indicator.unwrap(),
         }
     }
 }

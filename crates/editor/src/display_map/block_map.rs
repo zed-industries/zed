@@ -78,6 +78,7 @@ pub struct BlockSnapshot {
     custom_blocks_by_id: TreeMap<CustomBlockId, Arc<CustomBlock>>,
     pub(super) buffer_header_height: u32,
     pub(super) excerpt_header_height: u32,
+    pub(super) buffers_with_disabled_headers: HashSet<BufferId>,
 }
 
 impl Deref for BlockSnapshot {
@@ -657,6 +658,7 @@ impl BlockMap {
                 custom_blocks_by_id: self.custom_blocks_by_id.clone(),
                 buffer_header_height: self.buffer_header_height,
                 excerpt_header_height: self.excerpt_header_height,
+                buffers_with_disabled_headers: self.buffers_with_disabled_headers.clone(),
             },
         }
     }
@@ -1089,23 +1091,29 @@ impl BlockMap {
                 };
 
                 let rows_before_block;
-                match block_placement {
-                    BlockPlacement::Above(position) => {
-                        rows_before_block = position - new_transforms.summary().input_rows;
+                let input_rows = new_transforms.summary().input_rows;
+                match &block_placement {
+                    &BlockPlacement::Above(position) => {
+                        let Some(delta) = position.checked_sub(input_rows) else {
+                            continue;
+                        };
+                        rows_before_block = delta;
                         just_processed_folded_buffer = false;
                     }
-                    BlockPlacement::Near(position) | BlockPlacement::Below(position) => {
+                    &BlockPlacement::Near(position) | &BlockPlacement::Below(position) => {
                         if just_processed_folded_buffer {
                             continue;
                         }
-                        if position + RowDelta(1) < new_transforms.summary().input_rows {
+                        let Some(delta) = (position + RowDelta(1)).checked_sub(input_rows) else {
                             continue;
-                        }
-                        rows_before_block =
-                            (position + RowDelta(1)) - new_transforms.summary().input_rows;
+                        };
+                        rows_before_block = delta;
                     }
-                    BlockPlacement::Replace(ref range) => {
-                        rows_before_block = *range.start() - new_transforms.summary().input_rows;
+                    BlockPlacement::Replace(range) => {
+                        let Some(delta) = range.start().checked_sub(input_rows) else {
+                            continue;
+                        };
+                        rows_before_block = delta;
                         summary.input_rows = WrapRow(1) + (*range.end() - *range.start());
                         just_processed_folded_buffer = matches!(block, Block::FoldedBuffer { .. });
                     }

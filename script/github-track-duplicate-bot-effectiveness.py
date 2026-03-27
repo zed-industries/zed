@@ -92,6 +92,7 @@ def fetch_issue(issue_number):
         "node_id": data["node_id"],
         "author": (data.get("user") or {}).get("login", ""),
         "type_name": (data.get("type") or {}).get("name"),
+        "created_at": data.get("created_at", ""),
     }
 
 
@@ -419,7 +420,8 @@ def classify_as_missed_opportunity(issue):
     """Issue closed as duplicate but the bot never commented."""
     print("  -> Missed opportunity")
     add_or_update_project_item(
-        issue["node_id"], outcome="Missed opportunity", closed_as="duplicate", status="Auto-classified")
+        issue["node_id"], outcome="Missed opportunity", closed_as="duplicate", status="Auto-classified",
+        bot_comment_time=issue["created_at"])
 
 
 def classify_open():

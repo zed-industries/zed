@@ -16,9 +16,9 @@ pub(crate) fn release() -> Workflow {
     let macos_tests = run_tests::run_platform_tests_no_filter(Platform::Mac);
     let linux_tests = run_tests::run_platform_tests_no_filter(Platform::Linux);
     let windows_tests = run_tests::run_platform_tests_no_filter(Platform::Windows);
-    let macos_clippy = run_tests::clippy(Platform::Mac);
-    let linux_clippy = run_tests::clippy(Platform::Linux);
-    let windows_clippy = run_tests::clippy(Platform::Windows);
+    let macos_clippy = run_tests::clippy(Platform::Mac, None);
+    let linux_clippy = run_tests::clippy(Platform::Linux, None);
+    let windows_clippy = run_tests::clippy(Platform::Windows, None);
     let check_scripts = run_tests::check_scripts();
 
     let create_draft_release = create_draft_release();
@@ -272,18 +272,55 @@ pub(crate) fn push_release_update_notification(
     test_jobs: &[&NamedJob],
     bundle_jobs: &ReleaseBundleJobs,
 ) -> NamedJob {
-    let all_job_names = test_jobs
-        .into_iter()
+    fn env_name(name: &str) -> String {
+        format!("RESULT_{}", name.to_uppercase())
+    }
+
+    let all_job_names: Vec<&str> = test_jobs
+        .iter()
         .map(|j| j.name.as_ref())
-        .chain(bundle_jobs.jobs().into_iter().map(|j| j.name.as_ref()));
+        .chain(bundle_jobs.jobs().into_iter().map(|j| j.name.as_ref()))
+        .collect();
+
+    let env_entries = [
+        (
+            "DRAFT_RESULT".into(),
+            format!("${{{{ needs.{}.result }}}}", create_draft_release_job.name),
+        ),
+        (
+            "UPLOAD_RESULT".into(),
+            format!("${{{{ needs.{}.result }}}}", upload_assets_job.name),
+        ),
+        (
+            "VALIDATE_RESULT".into(),
+            format!("${{{{ needs.{}.result }}}}", validate_assets_job.name),
+        ),
+        (
+            "AUTO_RELEASE_RESULT".into(),
+            format!("${{{{ needs.{}.result }}}}", auto_release_preview.name),
+        ),
+        ("RUN_URL".into(), CURRENT_ACTION_RUN_URL.to_string()),
+    ]
+    .into_iter()
+    .chain(
+        all_job_names
+            .iter()
+            .map(|name| (env_name(name), format!("${{{{ needs.{name}.result }}}}"))),
+    );
+
+    let failure_checks = all_job_names
+        .iter()
+        .map(|name| {
+            format!(
+                "if [ \"${env_name}\" == \"failure\" ];then FAILED_JOBS=\"$FAILED_JOBS {name}\"; fi",
+                    env_name = env_name(name)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n        ");
 
     let notification_script = formatdoc! {r#"
-        DRAFT_RESULT="${{{{ needs.{draft_job}.result }}}}"
-        UPLOAD_RESULT="${{{{ needs.{upload_job}.result }}}}"
-        VALIDATE_RESULT="${{{{ needs.{validate_job}.result }}}}"
-        AUTO_RELEASE_RESULT="${{{{ needs.{auto_release_job}.result }}}}"
         TAG="$GITHUB_REF_NAME"
-        RUN_URL="{run_url}"
 
         if [ "$DRAFT_RESULT" == "failure" ]; then
             echo "❌ Draft release creation failed for $TAG: $RUN_URL"
@@ -319,19 +356,6 @@ pub(crate) fn push_release_update_notification(
             fi
         fi
         "#,
-        draft_job = create_draft_release_job.name,
-        upload_job = upload_assets_job.name,
-        validate_job = validate_assets_job.name,
-        auto_release_job = auto_release_preview.name,
-        run_url = CURRENT_ACTION_RUN_URL,
-        failure_checks = all_job_names
-            .into_iter()
-            .map(|name: &str| format!(
-                "if [ \"${{{{ needs.{name}.result }}}}\" == \"failure\" ];\
-                then FAILED_JOBS=\"$FAILED_JOBS {name}\"; fi"
-            ))
-            .collect::<Vec<_>>()
-            .join("\n        "),
     };
 
     let mut all_deps: Vec<&NamedJob> = vec![
@@ -347,7 +371,10 @@ pub(crate) fn push_release_update_notification(
         .runs_on(runners::LINUX_SMALL)
         .cond(Expression::new("always()"));
 
-    for step in notify_slack(MessageType::Evaluated(notification_script)) {
+    for step in notify_slack(MessageType::Evaluated {
+        script: notification_script,
+        env: env_entries.collect(),
+    }) {
         job = job.add_step(step);
     }
     named::job(job)
@@ -368,14 +395,17 @@ pub(crate) fn notify_on_failure(deps: &[&NamedJob]) -> NamedJob {
 
 pub(crate) enum MessageType {
     Static(String),
-    Evaluated(String),
+    Evaluated {
+        script: String,
+        env: Vec<(String, String)>,
+    },
 }
 
 fn notify_slack(message: MessageType) -> Vec<Step<Run>> {
     match message {
         MessageType::Static(message) => vec![send_slack_message(message)],
-        MessageType::Evaluated(expression) => {
-            let (generate_step, generated_message) = generate_slack_message(expression);
+        MessageType::Evaluated { script, env } => {
+            let (generate_step, generated_message) = generate_slack_message(script, env);
 
             vec![
                 generate_step,
@@ -385,15 +415,22 @@ fn notify_slack(message: MessageType) -> Vec<Step<Run>> {
     }
 }
 
-fn generate_slack_message(expression: String) -> (Step<Run>, StepOutput) {
+fn generate_slack_message(
+    expression: String,
+    env: Vec<(String, String)>,
+) -> (Step<Run>, StepOutput) {
     let script = formatdoc! {r#"
         MESSAGE=$({expression})
         echo "message=$MESSAGE" >> "$GITHUB_OUTPUT"
         "#
     };
-    let generate_step = named::bash(&script)
+    let mut generate_step = named::bash(&script)
         .id("generate-webhook-message")
         .add_env(("GH_TOKEN", Context::github().token()));
+
+    for (name, value) in env {
+        generate_step = generate_step.add_env((name, value));
+    }
 
     let output = StepOutput::new(&generate_step, "message");
 
@@ -401,10 +438,9 @@ fn generate_slack_message(expression: String) -> (Step<Run>, StepOutput) {
 }
 
 fn send_slack_message(message: String) -> Step<Run> {
-    let script = formatdoc! {r#"
-        curl -X POST -H 'Content-type: application/json'\
-         --data '{{"text":"{message}"}}' "$SLACK_WEBHOOK"
-        "#
-    };
-    named::bash(&script).add_env(("SLACK_WEBHOOK", vars::SLACK_WEBHOOK_WORKFLOW_FAILURES))
+    named::bash(
+        r#"curl -X POST -H 'Content-type: application/json' --data "$(jq -n --arg text "$SLACK_MESSAGE" '{"text": $text}')" "$SLACK_WEBHOOK""#
+    )
+    .add_env(("SLACK_WEBHOOK", vars::SLACK_WEBHOOK_WORKFLOW_FAILURES))
+    .add_env(("SLACK_MESSAGE", message))
 }
