@@ -101,7 +101,7 @@ enum ThreadEntryWorkspace {
 #[derive(Clone)]
 struct WorktreeInfo {
     name: SharedString,
-    full_paths: Vec<SharedString>,
+    full_path: SharedString,
     highlight_positions: Vec<usize>,
 }
 
@@ -255,32 +255,27 @@ fn workspace_path_list(workspace: &Entity<Workspace>, cx: &App) -> PathList {
 ///
 /// For each path in the thread's `folder_paths` that canonicalizes to a
 /// different path (i.e. it's a git worktree), produces a [`WorktreeInfo`]
-/// with the short worktree name and full paths. Worktrees with the same
-/// short name are collapsed into a single chip (e.g. `olivetti/zed` and
-/// `olivetti/ex` both produce the name "olivetti" and share one chip).
+/// with the short worktree name and full path.
 fn worktree_info_from_thread_paths(
     folder_paths: &PathList,
     project_groups: &ProjectGroupBuilder,
 ) -> Vec<WorktreeInfo> {
-    let mut worktrees: Vec<WorktreeInfo> = Vec::new();
-    for path in folder_paths.paths() {
-        let canonical = project_groups.canonicalize_path(path);
-        if canonical == path.as_path() {
-            continue;
-        }
-        let name = linked_worktree_short_name(canonical, path).unwrap_or_default();
-        let full_path = SharedString::from(path.display().to_string());
-        if let Some(existing) = worktrees.iter_mut().find(|wt| wt.name == name) {
-            existing.full_paths.push(full_path);
-        } else {
-            worktrees.push(WorktreeInfo {
-                name,
-                full_paths: vec![full_path],
-                highlight_positions: Vec::new(),
-            });
-        }
-    }
-    worktrees
+    folder_paths
+        .paths()
+        .iter()
+        .filter_map(|path| {
+            let canonical = project_groups.canonicalize_path(path);
+            if canonical != path.as_path() {
+                Some(WorktreeInfo {
+                    name: linked_worktree_short_name(canonical, path).unwrap_or_default(),
+                    full_path: SharedString::from(path.display().to_string()),
+                    highlight_positions: Vec::new(),
+                })
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 /// The sidebar re-derives its entire entry list from scratch on every
@@ -2652,25 +2647,17 @@ impl Sidebar {
             .when_some(thread.icon_from_external_svg.clone(), |this, svg| {
                 this.custom_icon_from_external_svg(svg)
             })
-            .worktrees({
-                let all_full_paths: SharedString = thread
-                    .worktrees
-                    .iter()
-                    .flat_map(|wt| wt.full_paths.iter())
-                    .map(|p| p.as_ref())
-                    .collect::<Vec<_>>()
-                    .join("\n")
-                    .into();
+            .worktrees(
                 thread
                     .worktrees
                     .iter()
                     .map(|wt| ThreadItemWorktreeInfo {
                         name: wt.name.clone(),
-                        full_path: all_full_paths.clone(),
+                        full_path: wt.full_path.clone(),
                         highlight_positions: wt.highlight_positions.clone(),
                     })
-                    .collect()
-            })
+                    .collect(),
+            )
             .timestamp(timestamp)
             .highlight_positions(thread.highlight_positions.to_vec())
             .title_generating(thread.is_title_generating)
@@ -3627,11 +3614,14 @@ mod tests {
                             let worktree = if thread.worktrees.is_empty() {
                                 String::new()
                             } else {
-                                let chips: Vec<_> = thread
-                                    .worktrees
-                                    .iter()
-                                    .map(|wt| format!("{{{}}}", wt.name))
-                                    .collect();
+                                let mut seen = Vec::new();
+                                let mut chips = Vec::new();
+                                for wt in &thread.worktrees {
+                                    if !seen.contains(&wt.name) {
+                                        seen.push(wt.name.clone());
+                                        chips.push(format!("{{{}}}", wt.name));
+                                    }
+                                }
                                 format!(" {}", chips.join(", "))
                             };
                             format!(

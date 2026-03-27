@@ -370,11 +370,14 @@ impl RenderOnce for ThreadItem {
                     }),
             )
             .when(has_worktree || has_diff_stats || has_timestamp, |this| {
+                // Collect all full paths for the shared tooltip.
                 let worktree_tooltip: SharedString = self
                     .worktrees
-                    .first()
-                    .map(|wt| wt.full_path.clone())
-                    .unwrap_or_default();
+                    .iter()
+                    .map(|wt| wt.full_path.as_ref())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    .into();
                 let worktree_tooltip_title = if self.worktrees.len() > 1 {
                     "Thread Running in Local Git Worktrees"
                 } else {
