@@ -14,7 +14,6 @@ path = "src/miniprofiler_ui.rs"
 [dependencies]
 gpui.workspace = true
 rpc.workspace = true
-theme.workspace = true
 theme_settings.workspace = true
 zed_actions.workspace = true
 workspace.workspace = true

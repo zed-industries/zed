@@ -21,8 +21,6 @@ anyhow.workspace = true
 collections.workspace = true
 derive_more.workspace = true
 gpui.workspace = true
-gpui_util.workspace = true
-log.workspace = true
 palette = { workspace = true, default-features = false, features = ["std"] }
 parking_lot.workspace = true
 refineable.workspace = true

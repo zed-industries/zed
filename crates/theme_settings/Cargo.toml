@@ -19,7 +19,6 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 collections.workspace = true
-derive_more.workspace = true
 gpui.workspace = true
 gpui_util.workspace = true
 log.workspace = true
