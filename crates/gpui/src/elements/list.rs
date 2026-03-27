@@ -555,6 +555,81 @@ impl ListState {
     pub fn viewport_bounds(&self) -> Bounds<Pixels> {
         self.0.borrow().last_layout_bounds.unwrap_or_default()
     }
+
+    /// Scroll to the maximum offset (bottom of content).
+    /// Unlike setting `logical_scroll_top = None` (which is a sentinel for
+    /// `ListAlignment::Bottom`), this computes the actual scroll position
+    /// and works with any `ListAlignment`.
+    pub fn scroll_to_max(&self) {
+        let state = &mut *self.0.borrow_mut();
+        let bounds = state.last_layout_bounds.unwrap_or_default();
+        let padding = state.last_padding.unwrap_or_default();
+        let total_height = state.items.summary().height;
+        let scroll_max =
+            (total_height + padding.top + padding.bottom - bounds.size.height).max(px(0.));
+
+        let (start, ..) =
+            state
+                .items
+                .find::<ListItemSummary, _>((), &Height(scroll_max), Bias::Right);
+        state.logical_scroll_top = Some(ListOffset {
+            item_ix: start.count,
+            offset_in_item: scroll_max - start.height,
+        });
+    }
+
+    /// Returns true if the list is scrolled to (or very near) the bottom.
+    /// Works with any alignment by comparing current scroll position to max.
+    pub fn is_at_bottom(&self) -> bool {
+        let state = self.0.borrow();
+        let bounds = state.last_layout_bounds.unwrap_or_default();
+        let padding = state.last_padding.unwrap_or_default();
+        let total_height = state.items.summary().height;
+        let scroll_max =
+            (total_height + padding.top + padding.bottom - bounds.size.height).max(px(0.));
+
+        if scroll_max == px(0.) {
+            return true; // Content fits in viewport
+        }
+
+        let scroll_top = state.logical_scroll_top();
+        let mut cursor = state.items.cursor::<ListItemSummary>(());
+        let summary: ListItemSummary =
+            cursor.summary(&Count(scroll_top.item_ix), Bias::Right);
+        let current_pos = summary.height + scroll_top.offset_in_item;
+
+        (scroll_max - current_pos) < px(1.0)
+    }
+
+    /// Returns true if the list is within `tolerance` pixels of the bottom.
+    /// Useful when height estimation makes the strict 1px `is_at_bottom()`
+    /// threshold unreliable (e.g., variable-height items being measured lazily).
+    pub fn is_near_bottom(&self, tolerance: Pixels) -> bool {
+        let state = self.0.borrow();
+        let bounds = state.last_layout_bounds.unwrap_or_default();
+        let padding = state.last_padding.unwrap_or_default();
+        let total_height = state.items.summary().height;
+        let scroll_max =
+            (total_height + padding.top + padding.bottom - bounds.size.height).max(px(0.));
+
+        if scroll_max == px(0.) {
+            return true;
+        }
+
+        let scroll_top = state.logical_scroll_top();
+        let mut cursor = state.items.cursor::<ListItemSummary>(());
+        let summary: ListItemSummary =
+            cursor.summary(&Count(scroll_top.item_ix), Bias::Right);
+        let current_pos = summary.height + scroll_top.offset_in_item;
+
+        (scroll_max - current_pos) < tolerance
+    }
+
+    /// Returns true if the scrollbar is currently being dragged.
+    /// Set by [`scrollbar_drag_started`] / [`scrollbar_drag_ended`].
+    pub fn is_scrollbar_dragging(&self) -> bool {
+        self.0.borrow().scrollbar_drag_start_height.is_some()
+    }
 }
 
 impl StateInner {
