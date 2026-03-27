@@ -2574,7 +2574,7 @@ mod tests {
     use smol::channel::Receiver;
     use task::{Shell, ShellBuilder};
 
-    #[cfg(target_os = "macos")]
+    #[cfg(not(target_os = "windows"))]
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = settings::SettingsStore::test(cx);
@@ -2812,6 +2812,8 @@ mod tests {
     #[cfg(not(target_os = "windows"))]
     #[gpui::test(iterations = 10)]
     async fn test_terminal_closes_after_nonzero_exit(cx: &mut TestAppContext) {
+        init_test(cx);
+
         cx.executor().allow_parking();
 
         let builder = cx
