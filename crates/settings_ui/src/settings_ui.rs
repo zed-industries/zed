@@ -4412,7 +4412,7 @@ pub mod test {
 
     pub fn register_settings(cx: &mut App) {
         settings::init(cx);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
         editor::init(cx);
         menu::init();
     }
@@ -5077,7 +5077,7 @@ mod project_settings_update_tests {
         cx.update(|cx| {
             let store = settings::SettingsStore::test(cx);
             cx.set_global(store);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
             menu::init();
             let queue = ProjectSettingsUpdateQueue::new(cx);

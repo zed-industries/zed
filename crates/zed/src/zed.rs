@@ -4455,7 +4455,7 @@ mod tests {
         cx.update(|cx| {
             let app_state = AppState::test(cx);
 
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             client::init(&app_state.client, cx);
             workspace::init(app_state.clone(), cx);
             onboarding::init(cx);
@@ -4873,7 +4873,7 @@ mod tests {
             .unwrap();
         let themes = ThemeRegistry::default();
         settings::init(cx);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
 
         let mut has_default_theme = false;
         for theme_name in themes.list().into_iter().map(|meta| meta.name) {
@@ -5011,7 +5011,7 @@ mod tests {
             app_state.languages.add(markdown_lang());
 
             gpui_tokio::init(cx);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             audio::init(cx);
             channel::init(&app_state.client, app_state.user_store.clone(), cx);
             call::init(app_state.client.clone(), app_state.user_store.clone(), cx);

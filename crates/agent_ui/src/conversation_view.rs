@@ -4257,7 +4257,7 @@ pub(crate) mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             SidebarThreadMetadataStore::init_global(cx);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
             agent_panel::init(cx);
             release_channel::init(semver::Version::new(0, 0, 0), cx);

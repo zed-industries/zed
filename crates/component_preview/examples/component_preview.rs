@@ -39,7 +39,7 @@ fn main() {
         <dyn fs::Fs>::set_global(fs.clone(), cx);
 
         settings::init(cx);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
 
         let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
         let client = Client::production(cx);

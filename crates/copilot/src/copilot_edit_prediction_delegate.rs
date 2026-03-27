@@ -1120,7 +1120,7 @@ mod tests {
         cx.update(|cx| {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             SettingsStore::update_global(cx, |store: &mut SettingsStore, cx| {
                 store.update_user_settings(cx, |settings| f(&mut settings.project.all_languages));
             });

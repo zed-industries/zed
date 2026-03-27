@@ -76,7 +76,7 @@ fn main() {
             cx.set_http_client(Arc::new(http_client));
 
             settings::init(cx);
-            theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
+            theme_settings::init(theme::LoadThemes::All(Box::new(Assets)), cx);
 
             let selector = story_selector;
 

@@ -3247,7 +3247,7 @@ fn test_undo_after_merge_into_base(cx: &mut TestAppContext) {
 async fn test_preview_edits(cx: &mut TestAppContext) {
     cx.update(|cx| {
         init_settings(cx, |_| {});
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
     });
 
     let insertion_style = HighlightStyle {

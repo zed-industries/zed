@@ -10428,7 +10428,7 @@ pub(crate) fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
         crate::init(cx);
 
         cx.update_global::<SettingsStore, _>(|store, cx| {
@@ -10446,7 +10446,7 @@ pub(crate) fn init_test(cx: &mut TestAppContext) {
 fn init_test_with_editor(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let app_state = AppState::test(cx);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
         editor::init(cx);
         crate::init(cx);
         workspace::init(app_state, cx);
