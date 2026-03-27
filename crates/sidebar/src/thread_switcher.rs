@@ -201,6 +201,8 @@ impl Render for ThreadSwitcher {
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::toggle))
             .children(self.entries.iter().enumerate().map(|(ix, entry)| {
+                let is_first = ix == 0;
+                let is_last = ix == self.entries.len() - 1;
                 let selected = ix == selected_index;
                 let base_bg = if selected {
                     color.element_active
@@ -303,6 +305,8 @@ impl Render for ThreadSwitcher {
                     .border_1()
                     .border_color(gpui::transparent_black())
                     .when(selected, |s| s.bg(color.element_active))
+                    .when(is_first, |s| s.rounded_t_lg())
+                    .when(is_last, |s| s.rounded_b_lg())
                     .child(
                         h_flex()
                             .min_w_0()
