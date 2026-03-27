@@ -1,13 +1,16 @@
 use acp_thread;
+use action_log::DiffStats;
 use agent_client_protocol as acp;
 use agent_ui::Agent;
 use gpui::{
-    Action as _, AnyElement, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Modifiers,
-    ModifiersChangedEvent, Render, SharedString, prelude::*,
+    Action as _, AnyElement, Animation, AnimationExt, DismissEvent, Entity, EventEmitter,
+    FocusHandle, Focusable, Hsla, Modifiers, ModifiersChangedEvent, Render, SharedString,
+    pulsating_between, prelude::*,
 };
+use std::time::Duration;
 use ui::{
-    AgentThreadStatus, Color, Icon, IconName, IconSize, Label, ListItem, ListItemSpacing,
-    prelude::*,
+    AgentThreadStatus, Color, CommonAnimationExt, DecoratedIcon, DiffStat, Icon, IconDecoration,
+    IconDecorationKind, IconName, IconSize, Label, LabelSize, prelude::*,
 };
 use workspace::{ModalView, Workspace};
 use zed_actions::agents_sidebar::ToggleThreadSwitcher;
@@ -23,6 +26,11 @@ pub(crate) struct ThreadSwitcherEntry {
     pub agent: Agent,
     pub session_info: acp_thread::AgentSessionInfo,
     pub workspace: Entity<Workspace>,
+    pub worktree_name: Option<SharedString>,
+    pub diff_stats: DiffStats,
+    pub is_title_generating: bool,
+    pub notified: bool,
+    pub timestamp: SharedString,
 }
 
 pub(crate) enum ThreadSwitcherEvent {
@@ -171,6 +179,10 @@ impl Focusable for ThreadSwitcher {
 impl Render for ThreadSwitcher {
     fn render(&mut self, _window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
         let selected_index = self.selected_index;
+        let color = cx.theme().colors();
+        let panel_bg = color
+            .title_bar_background
+            .blend(color.panel_background.opacity(0.2));
 
         v_flex()
             .key_context("ThreadSwitcher")
@@ -182,35 +194,183 @@ impl Render for ThreadSwitcher {
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::toggle))
             .children(self.entries.iter().enumerate().map(|(ix, entry)| {
-                let is_running = matches!(
-                    entry.status,
-                    AgentThreadStatus::Running | AgentThreadStatus::WaitingForConfirmation
-                );
+                let selected = ix == selected_index;
+                let base_bg = if selected {
+                    color.element_active
+                } else {
+                    panel_bg
+                };
 
-                let icon_element: AnyElement =
-                    if let Some(ref svg_path) = entry.icon_from_external_svg {
-                        gpui::img(svg_path.clone())
-                            .size(IconSize::Small.rems())
-                            .into_any_element()
+                let dot_separator = || {
+                    Label::new("\u{2022}")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted)
+                        .alpha(0.5)
+                };
+
+                let icon_container = || {
+                    h_flex()
+                        .size_4()
+                        .flex_none()
+                        .justify_center()
+                };
+
+                let agent_icon = || {
+                    if let Some(ref svg) = entry.icon_from_external_svg {
+                        Icon::from_external_svg(svg.clone())
+                            .color(Color::Muted)
+                            .size(IconSize::Small)
                     } else {
                         Icon::new(entry.icon)
+                            .color(Color::Muted)
                             .size(IconSize::Small)
+                    }
+                };
+
+                let decoration = |kind: IconDecorationKind, deco_color: Hsla| {
+                    IconDecoration::new(kind, base_bg, cx)
+                        .color(deco_color)
+                        .position(gpui::Point {
+                            x: px(-2.),
+                            y: px(-2.),
+                        })
+                };
+
+                let icon_element: AnyElement =
+                    if entry.status == AgentThreadStatus::Running {
+                        icon_container()
+                            .child(
+                                Icon::new(IconName::LoadCircle)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted)
+                                    .with_rotate_animation(2),
+                            )
+                            .into_any_element()
+                    } else if entry.status == AgentThreadStatus::Error {
+                        icon_container()
+                            .child(DecoratedIcon::new(
+                                agent_icon(),
+                                Some(decoration(
+                                    IconDecorationKind::X,
+                                    cx.theme().status().error,
+                                )),
+                            ))
+                            .into_any_element()
+                    } else if entry.status == AgentThreadStatus::WaitingForConfirmation {
+                        icon_container()
+                            .child(DecoratedIcon::new(
+                                agent_icon(),
+                                Some(decoration(
+                                    IconDecorationKind::Triangle,
+                                    cx.theme().status().warning,
+                                )),
+                            ))
+                            .into_any_element()
+                    } else if entry.notified {
+                        icon_container()
+                            .child(DecoratedIcon::new(
+                                agent_icon(),
+                                Some(decoration(
+                                    IconDecorationKind::Dot,
+                                    color.text_accent,
+                                )),
+                            ))
+                            .into_any_element()
+                    } else {
+                        icon_container()
+                            .child(agent_icon())
                             .into_any_element()
                     };
 
-                ListItem::new(ix)
-                    .spacing(ListItemSpacing::Sparse)
-                    .inset(true)
-                    .toggle_state(ix == selected_index)
-                    .start_slot(icon_element)
-                    .child(h_flex().w_full().child(Label::new(entry.title.clone())))
-                    .when(is_running, |item| {
-                        item.end_slot(
-                            Icon::new(IconName::ArrowCircle)
-                                .size(IconSize::Small)
-                                .color(Color::Info),
+                let title_label: AnyElement = if entry.is_title_generating {
+                    Label::new(entry.title.clone())
+                        .color(Color::Muted)
+                        .with_animation(
+                            "generating-title",
+                            Animation::new(Duration::from_secs(2))
+                                .repeat()
+                                .with_easing(pulsating_between(0.4, 0.8)),
+                            |label, delta| label.alpha(delta),
                         )
-                    })
+                        .into_any_element()
+                } else {
+                    Label::new(entry.title.clone()).into_any_element()
+                };
+
+                let has_diff_stats =
+                    entry.diff_stats.lines_added > 0 || entry.diff_stats.lines_removed > 0;
+                let has_worktree = entry.worktree_name.is_some();
+                let has_timestamp = !entry.timestamp.is_empty();
+
+                v_flex()
+                    .id(ix)
+                    .w_full()
+                    .py_1()
+                    .px_1p5()
+                    .border_1()
+                    .border_color(gpui::transparent_black())
+                    .when(selected, |s| s.bg(color.element_active))
+                    .child(
+                        h_flex()
+                            .min_w_0()
+                            .w_full()
+                            .gap_1p5()
+                            .child(icon_element)
+                            .child(title_label),
+                    )
+                    .when(
+                        has_worktree || has_diff_stats || has_timestamp,
+                        |this| {
+                            this.child(
+                                h_flex()
+                                    .min_w_0()
+                                    .gap_1p5()
+                                    .child(icon_container())
+                                    .when_some(
+                                        entry.worktree_name.clone(),
+                                        |this, worktree| {
+                                            this.child(
+                                                h_flex()
+                                                    .gap_1()
+                                                    .child(
+                                                        Icon::new(IconName::GitWorktree)
+                                                            .size(IconSize::XSmall)
+                                                            .color(Color::Muted),
+                                                    )
+                                                    .child(
+                                                        Label::new(worktree)
+                                                            .size(LabelSize::Small)
+                                                            .color(Color::Muted),
+                                                    ),
+                                            )
+                                        },
+                                    )
+                                    .when(
+                                        has_worktree
+                                            && (has_diff_stats || has_timestamp),
+                                        |this| this.child(dot_separator()),
+                                    )
+                                    .when(has_diff_stats, |this| {
+                                        this.child(DiffStat::new(
+                                            ix,
+                                            entry.diff_stats.lines_added as usize,
+                                            entry.diff_stats.lines_removed as usize,
+                                        ))
+                                    })
+                                    .when(
+                                        has_diff_stats && has_timestamp,
+                                        |this| this.child(dot_separator()),
+                                    )
+                                    .when(has_timestamp, |this| {
+                                        this.child(
+                                            Label::new(entry.timestamp.clone())
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                        )
+                                    }),
+                            )
+                        },
+                    )
             }))
     }
 }

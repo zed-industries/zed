@@ -2543,6 +2543,16 @@ impl Sidebar {
                         ThreadEntryWorkspace::Open(workspace) => workspace.clone(),
                         ThreadEntryWorkspace::Closed(_) => return None,
                     };
+                    let notified = self
+                        .contents
+                        .is_thread_notified(&thread.session_info.session_id);
+                    let timestamp: SharedString = thread
+                        .last_message_sent_or_queued
+                        .or(thread.session_info.created_at)
+                        .or(thread.session_info.updated_at)
+                        .map(format_history_entry_timestamp)
+                        .unwrap_or_default()
+                        .into();
                     Some(ThreadSwitcherEntry {
                         session_id: thread.session_info.session_id.clone(),
                         title: thread
@@ -2556,6 +2566,11 @@ impl Sidebar {
                         agent: thread.agent.clone(),
                         session_info: thread.session_info.clone(),
                         workspace,
+                        worktree_name: thread.worktree_name.clone(),
+                        diff_stats: thread.diff_stats,
+                        is_title_generating: thread.is_title_generating,
+                        notified,
+                        timestamp,
                     })
                 }
                 _ => None,
@@ -2792,8 +2807,8 @@ impl Sidebar {
         let id = SharedString::from(format!("thread-entry-{}", ix));
 
         let timestamp = thread
-            .session_info
-            .created_at
+            .last_message_sent_or_queued
+            .or(thread.session_info.created_at)
             .or(thread.session_info.updated_at)
             .map(format_history_entry_timestamp);
 
