@@ -124,7 +124,7 @@ use std::{
     process::ExitStatus,
     rc::Rc,
     sync::{
-        Arc, LazyLock, Weak,
+        Arc, LazyLock,
         atomic::{AtomicBool, AtomicUsize},
     },
     time::Duration,
@@ -732,40 +732,32 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
 
     cx.on_action(|_: &CloseWindow, cx| Workspace::close_global(cx))
         .on_action(|_: &Reload, cx| reload(cx))
-        .on_action({
-            let app_state = Arc::downgrade(&app_state);
-            move |_: &Open, cx: &mut App| {
-                if let Some(app_state) = app_state.upgrade() {
-                    prompt_and_open_paths(
-                        app_state,
-                        PathPromptOptions {
-                            files: true,
-                            directories: true,
-                            multiple: true,
-                            prompt: None,
-                        },
-                        cx,
-                    );
-                }
-            }
+        .on_action(|_: &Open, cx: &mut App| {
+            let app_state = AppState::global(cx);
+            prompt_and_open_paths(
+                app_state,
+                PathPromptOptions {
+                    files: true,
+                    directories: true,
+                    multiple: true,
+                    prompt: None,
+                },
+                cx,
+            );
         })
-        .on_action({
-            let app_state = Arc::downgrade(&app_state);
-            move |_: &OpenFiles, cx: &mut App| {
-                let directories = cx.can_select_mixed_files_and_dirs();
-                if let Some(app_state) = app_state.upgrade() {
-                    prompt_and_open_paths(
-                        app_state,
-                        PathPromptOptions {
-                            files: true,
-                            directories,
-                            multiple: true,
-                            prompt: None,
-                        },
-                        cx,
-                    );
-                }
-            }
+        .on_action(|_: &OpenFiles, cx: &mut App| {
+            let directories = cx.can_select_mixed_files_and_dirs();
+            let app_state = AppState::global(cx);
+            prompt_and_open_paths(
+                app_state,
+                PathPromptOptions {
+                    files: true,
+                    directories,
+                    multiple: true,
+                    prompt: None,
+                },
+                cx,
+            );
         });
 }
 
@@ -1074,7 +1066,7 @@ pub struct AppState {
     pub session: Entity<AppSession>,
 }
 
-struct GlobalAppState(Weak<AppState>);
+struct GlobalAppState(Arc<AppState>);
 
 impl Global for GlobalAppState {}
 
@@ -1110,14 +1102,14 @@ struct Follower {
 
 impl AppState {
     #[track_caller]
-    pub fn global(cx: &App) -> Weak<Self> {
+    pub fn global(cx: &App) -> Arc<Self> {
         cx.global::<GlobalAppState>().0.clone()
     }
-    pub fn try_global(cx: &App) -> Option<Weak<Self>> {
+    pub fn try_global(cx: &App) -> Option<Arc<Self>> {
         cx.try_global::<GlobalAppState>()
             .map(|state| state.0.clone())
     }
-    pub fn set_global(state: Weak<AppState>, cx: &mut App) {
+    pub fn set_global(state: Arc<AppState>, cx: &mut App) {
         cx.set_global(GlobalAppState(state));
     }
 
@@ -10320,15 +10312,13 @@ pub fn with_active_or_new_workspace(
         }
         None => {
             let app_state = AppState::global(cx);
-            if let Some(app_state) = app_state.upgrade() {
-                open_new(
-                    OpenOptions::default(),
-                    app_state,
-                    cx,
-                    move |workspace, window, cx| f(workspace, window, cx),
-                )
-                .detach_and_log_err(cx);
-            }
+            open_new(
+                OpenOptions::default(),
+                app_state,
+                cx,
+                move |workspace, window, cx| f(workspace, window, cx),
+            )
+            .detach_and_log_err(cx);
         }
     }
 }
