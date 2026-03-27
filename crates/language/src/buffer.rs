@@ -950,6 +950,12 @@ impl EditPreview {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum EditDirection {
+    TopDown,
+    BottomUp,
+}
+
 impl Buffer {
     /// Create a new buffer with the given base text.
     pub fn local<T: Into<String>>(base_text: T, cx: &Context<Self>) -> Self {
@@ -2732,7 +2738,35 @@ impl Buffer {
         S: ToOffset,
         T: Into<Arc<str>>,
     {
-        self.edit_internal(edits_iter, autoindent_mode, true, cx)
+        self.edit_internal(
+            edits_iter,
+            autoindent_mode,
+            true,
+            EditDirection::TopDown,
+            cx,
+        )
+    }
+
+    /// Like [`edit`](Self::edit), but for edits made before the cursor. Used for Vim actions like
+    /// `InsertLineAbove`
+    pub fn edit_bottom_up<I, S, T>(
+        &mut self,
+        edits_iter: I,
+        autoindent_mode: Option<AutoindentMode>,
+        cx: &mut Context<Self>,
+    ) -> Option<clock::Lamport>
+    where
+        I: IntoIterator<Item = (Range<S>, T)>,
+        S: ToOffset,
+        T: Into<Arc<str>>,
+    {
+        self.edit_internal(
+            edits_iter,
+            autoindent_mode,
+            true,
+            EditDirection::BottomUp,
+            cx,
+        )
     }
 
     /// Like [`edit`](Self::edit), but does not coalesce adjacent edits.
@@ -2747,7 +2781,13 @@ impl Buffer {
         S: ToOffset,
         T: Into<Arc<str>>,
     {
-        self.edit_internal(edits_iter, autoindent_mode, false, cx)
+        self.edit_internal(
+            edits_iter,
+            autoindent_mode,
+            false,
+            EditDirection::TopDown,
+            cx,
+        )
     }
 
     fn edit_internal<I, S, T>(
@@ -2755,6 +2795,7 @@ impl Buffer {
         edits_iter: I,
         autoindent_mode: Option<AutoindentMode>,
         coalesce_adjacent: bool,
+        edit_direction: EditDirection,
         cx: &mut Context<Self>,
     ) -> Option<clock::Lamport>
     where
@@ -2861,8 +2902,12 @@ impl Buffer {
 
                     // When inserting text starting with a newline, avoid auto-indenting the
                     // previous line.
-                    if new_text.starts_with('\n') {
+                    if edit_direction == EditDirection::TopDown && new_text.starts_with('\n') {
                         range_of_insertion_to_indent.start += 1;
+                        first_line_is_new = true;
+                    } else if edit_direction == EditDirection::BottomUp && new_text.ends_with('\n')
+                    {
+                        range_of_insertion_to_indent.end -= 1;
                         first_line_is_new = true;
                     }
 

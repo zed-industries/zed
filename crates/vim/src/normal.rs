@@ -778,7 +778,7 @@ impl Vim {
                     editor.edit(plain_edits, cx);
                 }
                 if !auto_indent_edits.is_empty() {
-                    editor.edit_with_autoindent(auto_indent_edits, cx);
+                    editor.edit_bottom_up_with_autoindent(auto_indent_edits, cx);
                 }
 
                 editor.change_selections(Default::default(), window, cx, |s| {
