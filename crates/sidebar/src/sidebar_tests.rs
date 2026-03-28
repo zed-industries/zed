@@ -580,6 +580,8 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 highlight_positions: Vec::new(),
                 worktrees: Vec::new(),
                 diff_stats: DiffStats::default(),
+                last_accessed_at: None,
+                last_message_sent_or_queued: None,
             }),
             // Active thread with Running status
             ListEntry::Thread(ThreadEntry {
@@ -602,6 +604,8 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 highlight_positions: Vec::new(),
                 worktrees: Vec::new(),
                 diff_stats: DiffStats::default(),
+                last_accessed_at: None,
+                last_message_sent_or_queued: None,
             }),
             // Active thread with Error status
             ListEntry::Thread(ThreadEntry {
@@ -624,6 +628,8 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 highlight_positions: Vec::new(),
                 worktrees: Vec::new(),
                 diff_stats: DiffStats::default(),
+                last_accessed_at: None,
+                last_message_sent_or_queued: None,
             }),
             // Thread with WaitingForConfirmation status, not active
             ListEntry::Thread(ThreadEntry {
@@ -646,6 +652,8 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 highlight_positions: Vec::new(),
                 worktrees: Vec::new(),
                 diff_stats: DiffStats::default(),
+                last_accessed_at: None,
+                last_message_sent_or_queued: None,
             }),
             // Background thread that completed (should show notification)
             ListEntry::Thread(ThreadEntry {
@@ -668,6 +676,8 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 highlight_positions: Vec::new(),
                 worktrees: Vec::new(),
                 diff_stats: DiffStats::default(),
+                last_accessed_at: None,
+                last_message_sent_or_queued: None,
             }),
             // View More entry
             ListEntry::ViewMore {
