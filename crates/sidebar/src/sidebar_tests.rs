@@ -4428,7 +4428,7 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
             session_id_c.clone(),
             session_id_a.clone(),
             session_id_b.clone(),
-            session_id_hist.clone(),
+            session_id_hist,
             session_id_old_hist,
         ],
     );
