@@ -40,9 +40,10 @@ To completely remove all Zed configuration files and data:
 2. Press `Cmd + Shift + G` to open "Go to Folder"
 3. Delete the following directories if they exist:
    - `~/Library/Application Support/Zed`
-   - `~/Library/Saved Application State/dev.zed.Zed.savedState`
    - `~/Library/Logs/Zed`
-   - `~/Library/Caches/dev.zed.Zed`
+   - `~/Library/Caches/Zed`
+   - `~/.config/zed`
+   - `~/.local/state/Zed`
 
 ## Linux
 
