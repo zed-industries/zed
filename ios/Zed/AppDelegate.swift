@@ -20,4 +20,17 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     ) -> UISceneConfiguration {
         UISceneConfiguration(name: "Default Configuration", sessionRole: connectingSceneSession.role)
     }
+
+    // MARK: iPadOS Menu Bar (Stage Manager / external keyboard)
+
+    /// Populate the iPadOS menu bar with Zed's menu structure.
+    /// UIKit calls this at launch and whenever `UIMenuSystem.main.setNeedsRebuildMenu()`
+    /// is invoked (which happens after `cx.set_menus()` completes in Rust).
+    override func buildMenu(with builder: UIMenuBuilder) {
+        super.buildMenu(with: builder)
+        // Only the main menu system hosts the menu bar; ignore the context menu system.
+        guard builder.system == .main else { return }
+        let ptr = Unmanaged.passUnretained(builder as AnyObject).toOpaque()
+        zed_ios_build_menus(ptr)
+    }
 }

@@ -28,6 +28,7 @@ use std::{
     ptr::NonNull,
     rc::{Rc, Weak},
     sync::Arc,
+    time::Instant,
 };
 
 // ─── CGRect / UIKit geometry ──────────────────────────────────────────────────
@@ -84,6 +85,35 @@ unsafe impl objc::Encode for CGRect {
     }
 }
 
+// ─── Momentum scrolling ───────────────────────────────────────────────────────
+
+/// Physics state for software-driven post-gesture scroll deceleration.
+///
+/// UIKit's `UIPanGestureRecognizer` stops firing after `ENDED`, so for
+/// two-finger touch scroll we must drive momentum ourselves via the
+/// `CADisplayLink` tick. Trackpad pan is excluded — iPadOS delivers its own
+/// deceleration through continued `CHANGED` events.
+struct MomentumState {
+    /// Current velocity in logical pixels/second.
+    velocity: Point<f32>,
+    /// Scroll event position (cursor location, held constant through coast).
+    position: Point<Pixels>,
+    /// Time of the previous tick, for computing frame-rate-independent dt.
+    last_tick: Instant,
+    /// When momentum was started. Used to ignore spurious hover events that
+    /// arrive immediately after the pan gesture ends.
+    started_at: Instant,
+}
+
+/// Per-frame decay factor applied to velocity, calibrated for 60 fps.
+/// `0.967^(dt*60)` gives frame-rate-independent deceleration matching the
+/// iOS standard scroll feel (roughly 600 ms from 1000 px/s to stop).
+const MOMENTUM_FRICTION: f32 = 0.967;
+/// Stop momentum once speed drops below this threshold (logical px/s).
+const MOMENTUM_STOP_THRESHOLD: f32 = 5.0;
+/// Minimum gesture-end speed required to trigger momentum (logical px/s).
+const MOMENTUM_MIN_START_SPEED: f32 = 100.0;
+
 // ─── Window state ─────────────────────────────────────────────────────────────
 
 /// All mutable window state shared between `IosWindow` and the `layoutSubviews`
@@ -118,6 +148,9 @@ struct IosWindowState {
     safe_area_insets: gpui::Edges<Pixels>,
     renderer: MetalRenderer,
     callbacks: IosWindowCallbacks,
+    /// Active momentum scroll state, set when a two-finger touch pan ends with
+    /// enough velocity. Cleared when momentum decays or a new gesture begins.
+    momentum: Option<MomentumState>,
 }
 
 impl IosWindowState {
@@ -225,6 +258,7 @@ impl IosWindow {
             safe_area_insets: gpui::Edges::default(),
             renderer,
             callbacks: IosWindowCallbacks::default(),
+            momentum: None,
         }));
 
         // Store a Weak in the view's ivar. The view calls back into us via
@@ -364,11 +398,16 @@ impl IosWindow {
 
             // Trackpad secondary click (right-click). UITapGestureRecognizer with
             // buttonMaskRequired = UIEventButtonMaskSecondary (1 << 1 = 2) fires on
-            // two-finger trackpad click or Control+click.
+            // two-finger trackpad click or Control+click. We restrict
+            // allowedTouchTypes to indirectPointer only (UITouchType.indirectPointer = 3)
+            // so that direct finger taps on the screen never trigger this recognizer.
             let secondary_tap: *mut Object = msg_send![class!(UITapGestureRecognizer), alloc];
             let secondary_tap: *mut Object =
                 msg_send![secondary_tap, initWithTarget: view action: sel!(handleSecondaryClick:)];
             let _: () = msg_send![secondary_tap, setButtonMaskRequired: 2usize];
+            let indirect_pointer: *mut Object = msg_send![class!(NSNumber), numberWithInteger: 3isize];
+            let touch_types: *mut Object = msg_send![class!(NSArray), arrayWithObject: indirect_pointer];
+            let _: () = msg_send![secondary_tap, setAllowedTouchTypes: touch_types];
             let _: () = msg_send![view, addGestureRecognizer: secondary_tap];
             let _: () = msg_send![secondary_tap, release];
 
@@ -731,9 +770,92 @@ thread_local! {
     /// GPUI window callbacks execute on the main thread.
     static FRAME_CALLBACK: RefCell<Option<Box<dyn FnMut(RequestFrameOptions)>>> =
         RefCell::new(None);
+
+    /// Weak handle to the window whose momentum scroll is currently active.
+    /// Set when a two-finger pan ends with sufficient velocity; cleared when
+    /// the velocity decays to zero or a new gesture starts.
+    static MOMENTUM_WINDOW: RefCell<Option<Weak<RefCell<IosWindowState>>>> =
+        RefCell::new(None);
+}
+
+/// Called every CADisplayLink tick to advance in-flight momentum scroll.
+fn tick_momentum() {
+    let weak = MOMENTUM_WINDOW.with(|slot| slot.borrow().clone());
+    let weak = match weak {
+        Some(w) => w,
+        None => return,
+    };
+    let state_rc = match weak.upgrade() {
+        Some(rc) => rc,
+        None => {
+            MOMENTUM_WINDOW.with(|slot| *slot.borrow_mut() = None);
+            return;
+        }
+    };
+
+    // Compute the next scroll event from the momentum state. We must release
+    // the borrow before calling `dispatch_input_event`, which also borrows.
+    let event = {
+        let mut state = state_rc.borrow_mut();
+        // Read modifiers before the mutable borrow of momentum.
+        let modifiers = state.current_modifiers;
+        let Some(momentum) = state.momentum.as_mut() else {
+            MOMENTUM_WINDOW.with(|slot| *slot.borrow_mut() = None);
+            return;
+        };
+
+        let now = Instant::now();
+        // Cap dt so a stall (e.g. suspend/resume) doesn't cause a huge jump.
+        let dt = now.duration_since(momentum.last_tick).as_secs_f32().min(0.05);
+        momentum.last_tick = now;
+
+        // Frame-rate-independent exponential decay.
+        let decay = MOMENTUM_FRICTION.powf(dt * 60.0);
+        momentum.velocity.x *= decay;
+        momentum.velocity.y *= decay;
+
+        let speed =
+            (momentum.velocity.x * momentum.velocity.x + momentum.velocity.y * momentum.velocity.y)
+                .sqrt();
+        let position = momentum.position;
+        let delta_x = momentum.velocity.x * dt;
+        let delta_y = momentum.velocity.y * dt;
+
+        if speed < MOMENTUM_STOP_THRESHOLD {
+            state.momentum = None;
+            PlatformInput::ScrollWheel(ScrollWheelEvent {
+                position,
+                delta: ScrollDelta::Pixels(Point::default()),
+                modifiers,
+                touch_phase: TouchPhase::Ended,
+            })
+        } else {
+            PlatformInput::ScrollWheel(ScrollWheelEvent {
+                position,
+                delta: ScrollDelta::Pixels(Point {
+                    x: gpui::px(delta_x),
+                    y: gpui::px(delta_y),
+                }),
+                modifiers,
+                touch_phase: TouchPhase::Moved,
+            })
+        }
+    };
+
+    let is_ended = matches!(
+        event,
+        PlatformInput::ScrollWheel(ScrollWheelEvent { touch_phase: TouchPhase::Ended, .. })
+    );
+
+    dispatch_input_event(&state_rc, event);
+
+    if is_ended {
+        MOMENTUM_WINDOW.with(|slot| *slot.borrow_mut() = None);
+    }
 }
 
 extern "C" fn display_link_fired(_data: *mut c_void) {
+    tick_momentum();
     FRAME_CALLBACK.with(|slot| {
         if let Some(callback) = slot.borrow_mut().as_mut() {
             callback(RequestFrameOptions::default());
@@ -1032,12 +1154,16 @@ fn register_metal_view_class() -> &'static Class {
                 toggle_software_keyboard as extern "C" fn(&Object, Sel, *mut Object),
             );
 
-            // ── Responder actions (long-press context menu) ───────────────────
-            // Return false for all edit actions until clipboard is wired up.
-            // This prevents the system from showing a context menu with broken actions.
+            // ── Responder actions ─────────────────────────────────────────────
+            // Suppress standard context-menu actions (clipboard not yet wired).
+            // Allow our own `zedMenuAction:` which handles iPadOS menu-bar taps.
             decl.add_method(
                 sel!(canPerformAction:withSender:),
                 can_perform_action as extern "C" fn(&Object, Sel, Sel, *mut Object) -> bool,
+            );
+            decl.add_method(
+                sel!(zedMenuAction:),
+                handle_menu_action as extern "C" fn(&Object, Sel, *mut Object),
             );
 
             // ── UIKeyInput methods ────────────────────────────────────────────
@@ -1456,9 +1582,22 @@ extern "C" fn traits_smart_dashes_type(_this: &Object, _sel: Sel) -> isize {
 
 // ── Responder actions ─────────────────────────────────────────────────────────
 
-extern "C" fn can_perform_action(_this: &Object, _sel: Sel, _action: Sel, _sender: *mut Object) -> bool {
-    // Suppress the long-press context menu entirely until clipboard is integrated.
-    false
+extern "C" fn can_perform_action(
+    _this: &Object,
+    _sel: Sel,
+    action: Sel,
+    _sender: *mut Object,
+) -> bool {
+    // Allow our menu-bar action selector so UIKit enables Zed's menu items.
+    // Everything else is suppressed to prevent the long-press context menu from
+    // showing broken clipboard actions until clipboard integration is complete.
+    action == sel!(zedMenuAction:)
+}
+
+/// Handles a tap on a Zed menu-bar item. The `sender` is a `UICommand` whose
+/// `propertyList` dictionary contains `{"action": "<gpui_action_name>"}`.
+extern "C" fn handle_menu_action(_this: &Object, _sel: Sel, sender: *mut Object) {
+    unsafe { crate::dispatch_menu_action(sender) }
 }
 
 // ─── Touch input (single-finger → left mouse button) ─────────────────────────
@@ -1686,6 +1825,28 @@ fn handle_touches(this: &Object, touches: *mut Object, event: *mut Object, kind:
 
     match kind {
         TouchKind::Began => {
+            // Cancel any in-flight momentum scroll the instant a finger
+            // touches the screen, matching macOS "catch" behavior.
+            let had_momentum = state_rc.borrow().momentum.is_some();
+            if had_momentum {
+                let momentum_pos = {
+                    let mut state = state_rc.borrow_mut();
+                    let pos = state.momentum.as_ref().map(|m| m.position).unwrap_or(position);
+                    state.momentum = None;
+                    pos
+                };
+                MOMENTUM_WINDOW.with(|slot| *slot.borrow_mut() = None);
+                dispatch_input_event(
+                    &state_rc,
+                    PlatformInput::ScrollWheel(ScrollWheelEvent {
+                        position: momentum_pos,
+                        delta: ScrollDelta::Pixels(Point::default()),
+                        modifiers,
+                        touch_phase: TouchPhase::Ended,
+                    }),
+                );
+            }
+
             // Record the start position; defer MouseDown until we know whether
             // this is a tap or the beginning of a drag (or a cancelled touch
             // because a second finger landed and the pan gesture took over).
@@ -1869,6 +2030,43 @@ extern "C" fn handle_hover_gesture(this: &Object, _sel: Sel, recognizer: *mut Ob
 
         match gesture_state {
             GESTURE_STATE_BEGAN | GESTURE_STATE_CHANGED => {
+                // Cancel momentum only if the pointer moved while no scroll
+                // gesture is active. During an active scroll, hover fires as a
+                // side-effect of the pointer moving with the fingers — we must
+                // not kill momentum from those events. Once momentum is coasting
+                // (no active pan), a hover event means the user moved the
+                // pointer intentionally, so stop the scroll.
+                let should_cancel_momentum = {
+                    let state = state_rc.borrow();
+                    // Only cancel momentum if it's been coasting long enough
+                    // that this hover event can't be residual from the scroll
+                    // gesture itself. Without this grace period, hover events
+                    // arrive immediately after the pan ENDED fires and would
+                    // kill momentum before it visibly starts.
+                    state.momentum.as_ref().map_or(false, |m| {
+                        m.started_at.elapsed().as_millis() > 150
+                    })
+                };
+                if should_cancel_momentum {
+                    let momentum_pos = {
+                        let mut state = state_rc.borrow_mut();
+                        let pos =
+                            state.momentum.as_ref().map(|m| m.position).unwrap_or(position);
+                        state.momentum = None;
+                        pos
+                    };
+                    MOMENTUM_WINDOW.with(|slot| *slot.borrow_mut() = None);
+                    dispatch_input_event(
+                        &state_rc,
+                        PlatformInput::ScrollWheel(ScrollWheelEvent {
+                            position: momentum_pos,
+                            delta: ScrollDelta::Pixels(Point::default()),
+                            modifiers,
+                            touch_phase: TouchPhase::Ended,
+                        }),
+                    );
+                }
+
                 dispatch_input_event(
                     &state_rc,
                     PlatformInput::MouseMove(MouseMoveEvent {
@@ -1934,13 +2132,6 @@ extern "C" fn handle_pan_gesture(this: &Object, _sel: Sel, recognizer: *mut Obje
     unsafe {
         let gesture_state: isize = msg_send![recognizer, state];
 
-        let touch_phase = match gesture_state {
-            GESTURE_STATE_BEGAN => TouchPhase::Started,
-            GESTURE_STATE_CHANGED => TouchPhase::Moved,
-            GESTURE_STATE_ENDED | GESTURE_STATE_CANCELLED => TouchPhase::Ended,
-            _ => return,
-        };
-
         let view = this as *const Object as *mut Object;
 
         // Accumulate incremental deltas by resetting the recognizer's translation
@@ -1954,18 +2145,115 @@ extern "C" fn handle_pan_gesture(this: &Object, _sel: Sel, recognizer: *mut Obje
             x: gpui::px(location.x as f32),
             y: gpui::px(location.y as f32),
         };
-
         let modifiers = state_rc.borrow().current_modifiers;
-        let event = PlatformInput::ScrollWheel(ScrollWheelEvent {
-            position,
-            delta: ScrollDelta::Pixels(Point {
-                x: gpui::px(translation.x as f32),
-                y: gpui::px(translation.y as f32),
-            }),
-            modifiers,
-            touch_phase,
-        });
-        dispatch_input_event(&state_rc, event);
+
+        match gesture_state {
+            GESTURE_STATE_BEGAN => {
+                // Cancel any in-flight momentum before starting a new scroll.
+                let had_momentum = state_rc.borrow().momentum.is_some();
+                if had_momentum {
+                    let (momentum_pos, momentum_mods) = {
+                        let mut state = state_rc.borrow_mut();
+                        let pos = state.momentum.as_ref().map(|m| m.position).unwrap_or(position);
+                        let mods = state.current_modifiers;
+                        state.momentum = None;
+                        (pos, mods)
+                    };
+                    MOMENTUM_WINDOW.with(|slot| *slot.borrow_mut() = None);
+                    dispatch_input_event(
+                        &state_rc,
+                        PlatformInput::ScrollWheel(ScrollWheelEvent {
+                            position: momentum_pos,
+                            delta: ScrollDelta::Pixels(Point::default()),
+                            modifiers: momentum_mods,
+                            touch_phase: TouchPhase::Ended,
+                        }),
+                    );
+                }
+                dispatch_input_event(
+                    &state_rc,
+                    PlatformInput::ScrollWheel(ScrollWheelEvent {
+                        position,
+                        delta: ScrollDelta::Pixels(Point::default()),
+                        modifiers,
+                        touch_phase: TouchPhase::Started,
+                    }),
+                );
+            }
+            GESTURE_STATE_CHANGED => {
+                dispatch_input_event(
+                    &state_rc,
+                    PlatformInput::ScrollWheel(ScrollWheelEvent {
+                        position,
+                        delta: ScrollDelta::Pixels(Point {
+                            x: gpui::px(translation.x as f32),
+                            y: gpui::px(translation.y as f32),
+                        }),
+                        modifiers,
+                        touch_phase: TouchPhase::Moved,
+                    }),
+                );
+            }
+            GESTURE_STATE_ENDED => {
+                // Emit final incremental delta as Moved (not Ended) so it's
+                // included in the scroll session. Then start momentum if the
+                // gesture ended with enough velocity; otherwise close with Ended.
+                if translation.x != 0.0 || translation.y != 0.0 {
+                    dispatch_input_event(
+                        &state_rc,
+                        PlatformInput::ScrollWheel(ScrollWheelEvent {
+                            position,
+                            delta: ScrollDelta::Pixels(Point {
+                                x: gpui::px(translation.x as f32),
+                                y: gpui::px(translation.y as f32),
+                            }),
+                            modifiers,
+                            touch_phase: TouchPhase::Moved,
+                        }),
+                    );
+                }
+
+                let velocity: CGPoint = msg_send![recognizer, velocityInView: view];
+                let speed = ((velocity.x * velocity.x + velocity.y * velocity.y).sqrt()) as f32;
+                if speed >= MOMENTUM_MIN_START_SPEED {
+                    let now = Instant::now();
+                    state_rc.borrow_mut().momentum = Some(MomentumState {
+                        velocity: Point { x: velocity.x as f32, y: velocity.y as f32 },
+                        position,
+                        last_tick: now,
+                        started_at: now,
+                    });
+                    let weak = Rc::downgrade(&state_rc);
+                    MOMENTUM_WINDOW.with(|slot| *slot.borrow_mut() = Some(weak));
+                    // Momentum loop will emit Ended when velocity decays.
+                } else {
+                    dispatch_input_event(
+                        &state_rc,
+                        PlatformInput::ScrollWheel(ScrollWheelEvent {
+                            position,
+                            delta: ScrollDelta::Pixels(Point::default()),
+                            modifiers,
+                            touch_phase: TouchPhase::Ended,
+                        }),
+                    );
+                }
+            }
+            GESTURE_STATE_CANCELLED => {
+                dispatch_input_event(
+                    &state_rc,
+                    PlatformInput::ScrollWheel(ScrollWheelEvent {
+                        position,
+                        delta: ScrollDelta::Pixels(Point {
+                            x: gpui::px(translation.x as f32),
+                            y: gpui::px(translation.y as f32),
+                        }),
+                        modifiers,
+                        touch_phase: TouchPhase::Ended,
+                    }),
+                );
+            }
+            _ => {}
+        }
     }
 }
 

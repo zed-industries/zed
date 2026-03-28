@@ -25,4 +25,7 @@ pub(crate) use keyboard::*;
 pub(crate) use text_system::IosTextSystem;
 pub(crate) use window::IosWindow;
 
-pub use platform::{IosPlatform, start_rendering};
+pub use platform::{
+    IosPlatform, build_ios_menus, dispatch_menu_action, set_menu_action_dispatcher,
+    start_rendering,
+};

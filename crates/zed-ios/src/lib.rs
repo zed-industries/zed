@@ -23,6 +23,8 @@ mod ios {
     use gpui_ios::IosPlatform;
     use std::{cell::RefCell, ops::Range, rc::Rc, sync::Arc};
     use util::ResultExt as _;
+    #[allow(unused_imports)]
+    use gpui::AppContext as _;
 
     thread_local! {
         /// Keeps the GPUI application alive for the process lifetime.
@@ -580,6 +582,25 @@ mod ios {
                 APP_STATE.with(|cell| *cell.borrow_mut() = Some(app_state));
                 log::info!("[zed-ios] Zed initialized successfully");
 
+                // Register Zed's menu structure with the iPadOS menu bar.
+                cx.set_menus(ios_app_menus());
+                // Wire up the dispatcher so UIKit menu taps reach GPUI.
+                {
+                    let async_cx = cx.to_async();
+                    gpui_ios::set_menu_action_dispatcher(Box::new(move |action_name: &str| {
+                        let name = action_name.to_owned();
+                        async_cx.update(|cx: &mut gpui::App| {
+                            match cx.build_action(&name, None) {
+                                Ok(action) => cx.dispatch_action(action.as_ref()),
+                                Err(err) => log::warn!(
+                                    "[zed-ios] Unknown menu action `{}`: {err:?}",
+                                    name
+                                ),
+                            }
+                        });
+                    }));
+                }
+
                 // Initialize connection tracking and show the landing screen.
                 crate::connection_landing::init_active_connections(cx);
                 if let Err(err) = crate::connection_landing::ConnectionLanding::open(cx) {
@@ -588,6 +609,177 @@ mod ios {
             });
         })
         .detach();
+    }
+
+    /// Returns the subset of Zed's menu structure supported on iPad.
+    ///
+    /// Only includes crates that are actually initialized in `init_zed()` and
+    /// actions that are meaningful on a remote thin client (no local terminals,
+    /// debugger, auto-update, collab panel, etc.).
+    fn ios_app_menus() -> Vec<gpui::Menu> {
+        use gpui::{Menu, MenuItem};
+
+        vec![
+            Menu {
+                name: "File".into(),
+                items: vec![
+                    MenuItem::action("New", workspace::NewFile),
+                    MenuItem::separator(),
+                    MenuItem::action("Save", workspace::Save { save_intent: None }),
+                    MenuItem::action("Save As…", workspace::SaveAs),
+                    MenuItem::action("Save All", workspace::SaveAll { save_intent: None }),
+                    MenuItem::separator(),
+                    MenuItem::action(
+                        "Close Editor",
+                        workspace::CloseActiveItem {
+                            save_intent: None,
+                            close_pinned: true,
+                        },
+                    ),
+                ],
+            },
+            Menu {
+                name: "Edit".into(),
+                items: vec![
+                    MenuItem::os_action("Undo", editor::actions::Undo, gpui::OsAction::Undo),
+                    MenuItem::os_action("Redo", editor::actions::Redo, gpui::OsAction::Redo),
+                    MenuItem::separator(),
+                    MenuItem::os_action("Cut", editor::actions::Cut, gpui::OsAction::Cut),
+                    MenuItem::os_action("Copy", editor::actions::Copy, gpui::OsAction::Copy),
+                    MenuItem::os_action("Paste", editor::actions::Paste, gpui::OsAction::Paste),
+                    MenuItem::separator(),
+                    MenuItem::action("Find", search::buffer_search::Deploy::find()),
+                    MenuItem::action("Find in Project", workspace::DeploySearch::find()),
+                    MenuItem::separator(),
+                    MenuItem::action(
+                        "Toggle Line Comment",
+                        editor::actions::ToggleComments::default(),
+                    ),
+                ],
+            },
+            Menu {
+                name: "Selection".into(),
+                items: vec![
+                    MenuItem::os_action(
+                        "Select All",
+                        editor::actions::SelectAll,
+                        gpui::OsAction::SelectAll,
+                    ),
+                    MenuItem::action(
+                        "Expand Selection",
+                        editor::actions::SelectLargerSyntaxNode,
+                    ),
+                    MenuItem::action(
+                        "Shrink Selection",
+                        editor::actions::SelectSmallerSyntaxNode,
+                    ),
+                    MenuItem::separator(),
+                    MenuItem::action(
+                        "Add Cursor Above",
+                        editor::actions::AddSelectionAbove { skip_soft_wrap: true },
+                    ),
+                    MenuItem::action(
+                        "Add Cursor Below",
+                        editor::actions::AddSelectionBelow { skip_soft_wrap: true },
+                    ),
+                    MenuItem::action(
+                        "Select Next Occurrence",
+                        editor::actions::SelectNext { replace_newest: false },
+                    ),
+                    MenuItem::action(
+                        "Select All Occurrences",
+                        editor::actions::SelectAllMatches,
+                    ),
+                    MenuItem::separator(),
+                    MenuItem::action("Move Line Up", editor::actions::MoveLineUp),
+                    MenuItem::action("Move Line Down", editor::actions::MoveLineDown),
+                    MenuItem::action("Duplicate Selection", editor::actions::DuplicateLineDown),
+                ],
+            },
+            Menu {
+                name: "View".into(),
+                items: vec![
+                    MenuItem::action(
+                        "Zoom In",
+                        zed_actions::IncreaseBufferFontSize { persist: false },
+                    ),
+                    MenuItem::action(
+                        "Zoom Out",
+                        zed_actions::DecreaseBufferFontSize { persist: false },
+                    ),
+                    MenuItem::action(
+                        "Reset Zoom",
+                        zed_actions::ResetBufferFontSize { persist: false },
+                    ),
+                    MenuItem::separator(),
+                    MenuItem::action("Toggle Left Dock", workspace::ToggleLeftDock),
+                    MenuItem::action("Toggle Right Dock", workspace::ToggleRightDock),
+                    MenuItem::separator(),
+                    MenuItem::action("Project Panel", zed_actions::project_panel::ToggleFocus),
+                    MenuItem::action("Outline Panel", outline_panel::ToggleFocus),
+                    MenuItem::action("Git Panel", git_ui::git_panel::ToggleFocus),
+                    MenuItem::separator(),
+                    MenuItem::action("Diagnostics", diagnostics::Deploy),
+                ],
+            },
+            Menu {
+                name: "Go".into(),
+                items: vec![
+                    MenuItem::action("Back", workspace::GoBack),
+                    MenuItem::action("Forward", workspace::GoForward),
+                    MenuItem::separator(),
+                    MenuItem::action(
+                        "Command Palette…",
+                        zed_actions::command_palette::Toggle,
+                    ),
+                    MenuItem::separator(),
+                    MenuItem::action(
+                        "Go to File…",
+                        workspace::ToggleFileFinder::default(),
+                    ),
+                    MenuItem::action(
+                        "Go to Symbol in Editor…",
+                        zed_actions::outline::ToggleOutline,
+                    ),
+                    MenuItem::action(
+                        "Go to Line/Column…",
+                        editor::actions::ToggleGoToLine,
+                    ),
+                    MenuItem::separator(),
+                    MenuItem::action("Go to Definition", editor::actions::GoToDefinition),
+                    MenuItem::action("Go to Type Definition", editor::actions::GoToTypeDefinition),
+                    MenuItem::action(
+                        "Find All References",
+                        editor::actions::FindAllReferences::default(),
+                    ),
+                    MenuItem::separator(),
+                    MenuItem::action(
+                        "Next Problem",
+                        editor::actions::GoToDiagnostic::default(),
+                    ),
+                    MenuItem::action(
+                        "Previous Problem",
+                        editor::actions::GoToPreviousDiagnostic::default(),
+                    ),
+                ],
+            },
+            Menu {
+                name: "Settings".into(),
+                items: vec![
+                    MenuItem::action("Open Settings", zed_actions::OpenSettings),
+                    MenuItem::action(
+                        "Select Theme…",
+                        zed_actions::theme_selector::Toggle::default(),
+                    ),
+                    MenuItem::action(
+                        "Select Language…",
+                        language_selector::Toggle,
+                    ),
+                    MenuItem::separator(),
+                    MenuItem::action("Open Keymap", zed_actions::OpenKeymap),
+                ],
+            },
+        ]
     }
 
     thread_local! {
@@ -660,6 +852,18 @@ pub unsafe extern "C" fn zed_ios_open_window(_scene_id: *const std::ffi::c_char)
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zed_ios_close_window(_scene_id: *const std::ffi::c_char) {
     // TODO: Clean up the GPUI window, disconnect if last window.
+}
+
+/// Called by `AppDelegate.buildMenu(with:)` to install Zed's menus into the
+/// iPadOS menu bar. `builder` is a `UIMenuBuilder*` passed as an opaque pointer.
+///
+/// # Safety
+/// Must be called on the UIKit main thread inside `buildMenuWithBuilder:`.
+/// The `builder` pointer must be a valid `UIMenuBuilder` instance.
+#[cfg(target_os = "ios")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn zed_ios_build_menus(builder: *mut std::ffi::c_void) {
+    unsafe { gpui_ios::build_ios_menus(builder) }
 }
 
 // Submodules — uncomment as implemented:

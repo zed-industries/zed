@@ -16,12 +16,218 @@ use objc::{class, msg_send, runtime::Object, sel, sel_impl};
 use parking_lot::Mutex;
 use std::{
     cell::RefCell,
-    ffi::c_void,
+    ffi::{CStr, c_void},
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
 };
 use crate::metal_renderer::Context as RendererContext;
+
+// ─── iPadOS menu bar support ──────────────────────────────────────────────────
+
+/// A single leaf entry in the Zed menu hierarchy, flattened for storage.
+#[derive(Clone)]
+enum IosMenuRow {
+    Separator { identifier: String },
+    Action { title: String, action_name: &'static str, identifier: String },
+    SubmenuStart { title: String, identifier: String },
+    SubmenuEnd,
+}
+
+/// A top-level menu stored for reconstruction when UIKit requests a menu rebuild.
+#[derive(Clone)]
+struct IosTopMenu {
+    title: String,
+    identifier: String,
+    rows: Vec<IosMenuRow>,
+}
+
+/// Stores the current menu structure for UIKit to read when `buildMenuWithBuilder:` fires.
+static IOS_MENUS: Mutex<Vec<IosTopMenu>> = Mutex::new(Vec::new());
+
+thread_local! {
+    /// Callback that dispatches a GPUI action by its type name string.
+    /// Set from `zed-ios` init so it captures an `AsyncApp` without requiring `Send`.
+    static MENU_ACTION_DISPATCHER: RefCell<Option<Box<dyn Fn(&str)>>> = RefCell::new(None);
+}
+
+/// Register a closure that will be called with a GPUI action name whenever the
+/// user selects a menu item. Called once during app initialization.
+pub fn set_menu_action_dispatcher(dispatcher: Box<dyn Fn(&str) + 'static>) {
+    MENU_ACTION_DISPATCHER.with(|cell| *cell.borrow_mut() = Some(dispatcher));
+}
+
+/// Flatten a `Menu` and its nested items into `IosMenuRow`s, appending to `out`.
+fn flatten_menu_items(menu: &Menu, parent_id: &str, out: &mut Vec<IosMenuRow>) {
+    for item in &menu.items {
+        match item {
+            MenuItem::Separator => {
+                let identifier = format!("{}.sep.{}", parent_id, out.len());
+                out.push(IosMenuRow::Separator { identifier });
+            }
+            MenuItem::Action { name, action, .. } => {
+                let title = name.to_string();
+                let slug = title.to_lowercase().replace(' ', "-").replace("…", "");
+                let identifier = format!("{}.{}", parent_id, slug);
+                out.push(IosMenuRow::Action {
+                    title,
+                    action_name: action.name(),
+                    identifier,
+                });
+            }
+            MenuItem::Submenu(submenu) => {
+                let slug = submenu.name.to_lowercase().replace(' ', "-");
+                let sub_id = format!("{}.{}", parent_id, slug);
+                out.push(IosMenuRow::SubmenuStart {
+                    title: submenu.name.to_string(),
+                    identifier: sub_id.clone(),
+                });
+                flatten_menu_items(submenu, &sub_id, out);
+                out.push(IosMenuRow::SubmenuEnd);
+            }
+            MenuItem::SystemMenu(_) => {
+                // No iPadOS equivalent; skip.
+            }
+        }
+    }
+}
+
+/// Create an `NSString` from a Rust `str`. The returned pointer is autoreleased.
+#[allow(unsafe_op_in_unsafe_fn)]
+unsafe fn menu_ns_string(s: &str) -> *mut Object {
+    let ns: *mut Object = msg_send![class!(NSString), alloc];
+    msg_send![ns, initWithBytes: s.as_ptr() length: s.len() encoding: 4usize]
+}
+
+/// Build a `UIMenu` for `rows` (a flat slice within the flat representation).
+/// Returns `(UIMenu *, rows_consumed)`.
+#[allow(unsafe_op_in_unsafe_fn)]
+unsafe fn build_ui_menu(
+    title: &str,
+    identifier: &str,
+    rows: &[IosMenuRow],
+) -> (*mut Object, usize) {
+    let children: *mut Object = msg_send![class!(NSMutableArray), array];
+    let zed_action_sel: objc::runtime::Sel = sel!(zedMenuAction:);
+    let mut i = 0;
+    while i < rows.len() {
+        match &rows[i] {
+            IosMenuRow::Separator { identifier: sep_id } => {
+                let sep_id_ns = menu_ns_string(sep_id);
+                let nil_image: *mut Object = std::ptr::null_mut();
+                let empty: *mut Object = msg_send![class!(NSMutableArray), array];
+                let sep: *mut Object =
+                    msg_send![class!(UIMenu), menuWithTitle: menu_ns_string("")
+                                                      image: nil_image
+                                                 identifier: sep_id_ns
+                                                    options: 1usize  // UIMenuOptionsDisplayInline
+                                                   children: empty];
+                let _: () = msg_send![children, addObject: sep];
+                i += 1;
+            }
+            IosMenuRow::Action { title, action_name, identifier } => {
+                let title_ns = menu_ns_string(title);
+                let id_ns = menu_ns_string(identifier);
+                // NSDictionary @{@"action": action_name_ns}
+                let key_ns = menu_ns_string("action");
+                let val_ns = menu_ns_string(action_name);
+                let prop: *mut Object = msg_send![class!(NSDictionary),
+                    dictionaryWithObject: val_ns
+                               forKey: key_ns];
+                let cmd: *mut Object = msg_send![class!(UICommand),
+                    commandWithTitle: title_ns
+                             image: std::ptr::null::<Object>()
+                            action: zed_action_sel
+                      propertyList: prop];
+                // Assign a stable UICommand identifier so iPadOS can track it.
+                let _: () = msg_send![cmd, setDiscoverabilityTitle: id_ns];
+                let _: () = msg_send![children, addObject: cmd];
+                i += 1;
+            }
+            IosMenuRow::SubmenuStart { title, identifier } => {
+                let (submenu, consumed) =
+                    build_ui_menu(title, identifier, &rows[i + 1..]);
+                let _: () = msg_send![children, addObject: submenu];
+                i += 1 + consumed;
+            }
+            IosMenuRow::SubmenuEnd => {
+                // Consumed by the SubmenuStart handler above; stop here.
+                i += 1;
+                break;
+            }
+        }
+    }
+
+    let title_ns = menu_ns_string(title);
+    let id_ns = menu_ns_string(identifier);
+    let nil_image: *mut Object = std::ptr::null_mut();
+    let menu: *mut Object = msg_send![class!(UIMenu),
+        menuWithTitle: title_ns
+        image: nil_image
+        identifier: id_ns
+        options: 0usize
+        children: children];
+    (menu, i)
+}
+
+/// Build and install Zed's menus into the given `UIMenuBuilder*`.
+///
+/// # Safety
+/// Must be called from the UIKit main thread inside `buildMenu(with:)`.
+/// Build and install Zed's menus into a `UIMenuBuilder*` passed from Swift.
+/// Accepts a `*mut c_void` so callers don't need to import the `objc` crate.
+///
+/// # Safety
+/// Must be called on the UIKit main thread inside `buildMenu(with:)`.
+/// `builder_ptr` must be a valid, non-null `UIMenuBuilder` instance.
+#[allow(unsafe_op_in_unsafe_fn)]
+pub unsafe fn build_ios_menus(builder_ptr: *mut c_void) {
+    unsafe {
+        let builder = builder_ptr as *mut Object;
+        let menus = IOS_MENUS.lock().clone();
+        let app_menu_id = menu_ns_string("com.apple.menu.application");
+        let mut after_id: *mut Object = app_menu_id;
+        for top in &menus {
+            let (ui_menu, _) = build_ui_menu(&top.title, &top.identifier, &top.rows);
+            let _: () =
+                msg_send![builder, insertSiblingMenu: ui_menu afterMenuForIdentifier: after_id];
+            after_id = menu_ns_string(&top.identifier);
+        }
+    }
+}
+
+/// Called by `zedMenuAction:` on `ZedMetalView` to dispatch a menu-bar action.
+/// `sender` is the `UICommand` whose `propertyList` contains `{"action": "<name>"}`.
+///
+/// # Safety
+/// Must be called on the UIKit main thread.
+#[allow(unsafe_op_in_unsafe_fn)]
+pub unsafe fn dispatch_menu_action(sender: *mut Object) {
+    unsafe {
+        let prop: *mut Object = msg_send![sender, propertyList];
+        if prop.is_null() {
+            return;
+        }
+        let key = menu_ns_string("action");
+        let val: *mut Object = msg_send![prop, objectForKey: key];
+        if val.is_null() {
+            return;
+        }
+        let ptr: *const i8 = msg_send![val, UTF8String];
+        if ptr.is_null() {
+            return;
+        }
+        let action_name = match CStr::from_ptr(ptr).to_str() {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        MENU_ACTION_DISPATCHER.with(|cell| {
+            if let Some(dispatcher) = cell.borrow().as_ref() {
+                dispatcher(action_name);
+            }
+        });
+    }
+}
 
 #[derive(Default)]
 struct IosPlatformCallbacks {
@@ -238,7 +444,23 @@ impl Platform for IosPlatform {
         self.callbacks.lock().reopen = Some(callback);
     }
 
-    fn set_menus(&self, _menus: Vec<Menu>, _keymap: &Keymap) {}
+    fn set_menus(&self, menus: Vec<Menu>, _keymap: &Keymap) {
+        let top_menus: Vec<IosTopMenu> = menus
+            .iter()
+            .map(|menu| {
+                let slug = menu.name.to_lowercase().replace(' ', "-");
+                let identifier = format!("dev.zed.menu.{}", slug);
+                let mut rows = Vec::new();
+                flatten_menu_items(menu, &identifier, &mut rows);
+                IosTopMenu { title: menu.name.to_string(), identifier, rows }
+            })
+            .collect();
+        *IOS_MENUS.lock() = top_menus;
+        unsafe {
+            let system: *mut Object = msg_send![class!(UIMenuSystem), mainSystem];
+            let _: () = msg_send![system, setNeedsRebuild];
+        }
+    }
 
     fn set_dock_menu(&self, _menu: Vec<MenuItem>, _keymap: &Keymap) {}
 
