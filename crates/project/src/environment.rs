@@ -194,6 +194,34 @@ impl ProjectEnvironment {
         .unwrap_or_else(|| Task::ready(None).shared())
     }
 
+    /// Returns the project environment using the default worktree path.
+    /// This ensures that project-specific environment variables (e.g. from `.envrc`)
+    /// are loaded from the project directory rather than the home directory.
+    pub fn default_environment(
+        &mut self,
+        cx: &mut App,
+    ) -> Shared<Task<Option<HashMap<String, String>>>> {
+        let abs_path = self
+            .worktree_store
+            .read_with(cx, |worktree_store, cx| {
+                let mut worktrees: Vec<Entity<Worktree>> =
+                    worktree_store.visible_worktrees(cx).collect();
+                worktrees.sort_by(|left, right| {
+                    left.read(cx)
+                        .is_single_file()
+                        .cmp(&right.read(cx).is_single_file())
+                });
+                worktrees
+                    .first()
+                    .map(|worktree| worktree.read(cx).abs_path())
+            })
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| paths::home_dir().as_path().into());
+
+        self.local_directory_environment(&Shell::System, abs_path, cx)
+    }
+
     /// Returns the project environment, if possible.
     /// If the project was opened from the CLI, then the inherited CLI environment is returned.
     /// If it wasn't opened from the CLI, and an absolute path is given, then a shell is spawned in
