@@ -108,7 +108,7 @@ const MIN_KEYCODE: u32 = 8;
 
 const UNKNOWN_KEYBOARD_LAYOUT_NAME: SharedString = SharedString::new_static("unknown");
 
-const TOUCH_SCROLL_SENSITIVITY: f32 = 0.1;
+const TOUCH_SCROLL_SENSITIVITY: f32 = 0.5;
 
 /// Minimum distance change (in pixels) to trigger a zoom level change
 const PINCH_ZOOM_STEP_THRESHOLD: f32 = 50.0;
@@ -264,6 +264,7 @@ pub(crate) struct WaylandClientState {
     second_touch_id: Option<i32>,
     second_touch_location: Option<Point<Pixels>>,
     scroll_start_position: Option<Point<Pixels>>,
+    last_scroll_center: Option<Point<Pixels>>,
     is_scrolling: bool,
     pinch_start_distance: Option<f32>,
     last_pinch_distance: Option<f32>,
@@ -684,6 +685,7 @@ impl WaylandClient {
             second_touch_id: None,
             second_touch_location: None,
             scroll_start_position: None,
+            last_scroll_center: None,
             is_scrolling: false,
             pinch_start_distance: None,
             last_pinch_distance: None,
@@ -2550,6 +2552,7 @@ impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
                             px((first_pos.y.as_f32() + position.y.as_f32()) / 2.0),
                         );
                         state.scroll_start_position = Some(center);
+                        state.last_scroll_center = Some(center);
                         state.mouse_location = Some(center);
 
                         // Initialize pinch distance tracking
@@ -2667,25 +2670,24 @@ impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
                                 // This is a scroll gesture - handle scroll
                                 state.last_pinch_distance = Some(current_distance);
 
-                                if let Some(scroll_start) = state.scroll_start_position {
+                                if let Some(last_center) = state.last_scroll_center {
                                     let scroll_delta = point(
-                                        px((current_center.x.as_f32() - scroll_start.x.as_f32())
-                                            * TOUCH_SCROLL_SENSITIVITY),
-                                        px((current_center.y.as_f32() - scroll_start.y.as_f32())
-                                            * TOUCH_SCROLL_SENSITIVITY),
+                                        px(current_center.x.as_f32() - last_center.x.as_f32()),
+                                        px(current_center.y.as_f32() - last_center.y.as_f32()),
                                     );
+                                    state.last_scroll_center = Some(current_center);
 
                                     // Only send scroll events if there's meaningful movement
-                                    if scroll_delta.x.as_f32().abs() > 1.0
-                                        || scroll_delta.y.as_f32().abs() > 1.0
+                                    if scroll_delta.x.as_f32().abs() > TOUCH_SCROLL_SENSITIVITY
+                                        || scroll_delta.y.as_f32().abs() > TOUCH_SCROLL_SENSITIVITY
                                     {
                                         if let Some(window) = state.mouse_focused_window.clone() {
                                             let input =
                                                 PlatformInput::ScrollWheel(ScrollWheelEvent {
                                                     position: current_center,
                                                     delta: ScrollDelta::Pixels(point(
-                                                        px(-scroll_delta.x.as_f32()),
-                                                        px(-scroll_delta.y.as_f32()),
+                                                        px(scroll_delta.x.as_f32()),
+                                                        px(scroll_delta.y.as_f32()),
                                                     )),
                                                     modifiers: state.modifiers,
                                                     touch_phase: TouchPhase::Moved,
@@ -2722,6 +2724,7 @@ impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
                         state.touch_location = state.second_touch_location.take();
                         state.is_scrolling = false;
                         state.scroll_start_position = None;
+                        state.last_scroll_center = None;
                         state.pinch_start_distance = None;
                         state.last_pinch_distance = None;
                         state.pinch_zoom_threshold = 0.0;
@@ -2763,6 +2766,7 @@ impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
                     state.second_touch_location = None;
                     state.is_scrolling = false;
                     state.scroll_start_position = None;
+                    state.last_scroll_center = None;
                     state.pinch_start_distance = None;
                     state.last_pinch_distance = None;
                     state.pinch_zoom_threshold = 0.0;
@@ -2792,6 +2796,7 @@ impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
                 state.second_touch_location = None;
                 state.is_scrolling = false;
                 state.scroll_start_position = None;
+                state.last_scroll_center = None;
                 state.button_pressed = None;
                 state.pinch_start_distance = None;
                 state.last_pinch_distance = None;
