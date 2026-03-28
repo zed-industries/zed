@@ -5157,6 +5157,91 @@ pub mod tests {
             .unwrap();
     }
 
+    #[gpui::test]
+    async fn test_deploy_search_with_options(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "one.rs": "const ONE: usize = 1;",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        let search_bar = window.build_entity(cx, |_, _| ProjectSearchBar::new());
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.panes()[0].update(cx, |pane, cx| {
+                pane.toolbar()
+                    .update(cx, |toolbar, cx| toolbar.add_item(search_bar, window, cx))
+            });
+
+            ProjectSearchView::deploy_search(
+                workspace,
+                &workspace::DeploySearch {
+                    regex: true,
+                    case_sensitive: true,
+                    whole_word: true,
+                    include_ignored: true,
+                    query: Some("test_query".into()),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            )
+        });
+
+        let search_view = cx
+            .read(|cx| {
+                workspace
+                    .read(cx)
+                    .active_pane()
+                    .read(cx)
+                    .active_item()
+                    .and_then(|item| item.downcast::<ProjectSearchView>())
+            })
+            .expect("Search view should be active after deploy");
+
+        search_view.update_in(cx, |search_view, _window, cx| {
+            assert!(
+                search_view
+                    .search_options
+                    .contains(SearchOptions::REGEX),
+                "Regex option should be enabled"
+            );
+            assert!(
+                search_view
+                    .search_options
+                    .contains(SearchOptions::CASE_SENSITIVE),
+                "Case sensitive option should be enabled"
+            );
+            assert!(
+                search_view
+                    .search_options
+                    .contains(SearchOptions::WHOLE_WORD),
+                "Whole word option should be enabled"
+            );
+            assert!(
+                search_view
+                    .search_options
+                    .contains(SearchOptions::INCLUDE_IGNORED),
+                "Include ignored option should be enabled"
+            );
+            let query_text = search_view.query_editor.read(cx).text(cx);
+            assert_eq!(
+                query_text, "test_query",
+                "Query should be set from the action"
+            );
+        });
+    }
+
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings = SettingsStore::test(cx);
