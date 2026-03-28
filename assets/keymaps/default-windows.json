@@ -266,6 +266,8 @@
       "shift-alt-a": "agent::AllowOnce",
       "ctrl-alt-a": "agent::OpenPermissionDropdown",
       "shift-alt-z": "agent::RejectOnce",
+      "ctrl-tab": "agents_sidebar::ToggleThreadSwitcher",
+      "ctrl-shift-tab": ["agents_sidebar::ToggleThreadSwitcher", { "select_last": true }],
     },
   },
   {
@@ -703,6 +705,8 @@
       "ctrl-f": "agents_sidebar::FocusSidebarFilter",
       "ctrl-g": "agents_sidebar::ToggleArchive",
       "shift-backspace": "agent::RemoveSelectedThread",
+      "ctrl-tab": "agents_sidebar::ToggleThreadSwitcher",
+      "ctrl-shift-tab": ["agents_sidebar::ToggleThreadSwitcher", { "select_last": true }],
     },
   },
   {
@@ -711,6 +715,13 @@
     "bindings": {
       "space": "menu::Confirm",
     },
+  },
+  {
+    "context": "ThreadSwitcher",
+    "bindings": {
+      "ctrl-tab": "agents_sidebar::ToggleThreadSwitcher",
+      "ctrl-shift-tab": ["agents_sidebar::ToggleThreadSwitcher", { "select_last": true }]
+    }
   },
   {
     "context": "ApplicationMenu",

@@ -73,6 +73,16 @@ impl ProjectGroup {
             .first()
             .expect("groups always have at least one workspace")
     }
+
+    pub fn main_workspace(&self, cx: &App) -> &Entity<Workspace> {
+        self.workspaces
+            .iter()
+            .find(|ws| {
+                !crate::root_repository_snapshots(ws, cx)
+                    .any(|snapshot| snapshot.is_linked_worktree())
+            })
+            .unwrap_or_else(|| self.first_workspace())
+    }
 }
 
 pub struct ProjectGroupBuilder {
@@ -91,7 +101,6 @@ impl ProjectGroupBuilder {
 
     pub fn from_multiworkspace(mw: &MultiWorkspace, cx: &App) -> Self {
         let mut builder = Self::new();
-
         // First pass: collect all directory mappings from every workspace
         // so we know how to canonicalize any path (including linked
         // worktree paths discovered by the main repo's workspace).
@@ -111,7 +120,7 @@ impl ProjectGroupBuilder {
     }
 
     fn project_group_entry(&mut self, name: &ProjectGroupName) -> &mut ProjectGroup {
-        self.project_groups.entry(name.clone()).or_insert_default()
+        self.project_groups.entry_ref(name).or_insert_default()
     }
 
     fn add_mapping(&mut self, work_directory: &Path, original_repo: &Path) {
@@ -148,9 +157,8 @@ impl ProjectGroupBuilder {
         workspace: &Entity<Workspace>,
         cx: &App,
     ) -> ProjectGroupName {
-        let paths: Vec<_> = workspace
-            .read(cx)
-            .root_paths(cx)
+        let root_paths = workspace.read(cx).root_paths(cx);
+        let paths: Vec<_> = root_paths
             .iter()
             .map(|p| self.canonicalize_path(p).to_path_buf())
             .collect();
