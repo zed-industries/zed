@@ -10,6 +10,8 @@ rm -f "$HOME/.cargo/bin/zed" && \
 ln -s "/Applications/Zed Dev.app/Contents/MacOS/cli" "$HOME/.cargo/bin/zed"
 ```
 
+In `crates/crashes/src/crashes.rs`, I changed it so crashes in Dev builds (like above) will produce a `.dmp` + `.json` file in `~/Library/Logs/Zed/`.
+
 ## Development note
 
 To have easier Zed's `main` branch merges, I am not really adding or modifying existing unit tests to my own functionality, so some are failing. I try to satisfy `./script/clippy`, though.

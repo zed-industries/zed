@@ -47,7 +47,7 @@ pub async fn init(crash_init: InitCrashHandler) {
     };
 
     match (gen_var, *RELEASE_CHANNEL) {
-        (Some(false), _) | (None, ReleaseChannel::Dev) => {
+        (Some(false), _) => {
             let old_hook = panic::take_hook();
             panic::set_hook(Box::new(move |info| {
                 unsafe { env::set_var("RUST_BACKTRACE", "1") };
