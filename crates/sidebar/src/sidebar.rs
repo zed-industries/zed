@@ -131,8 +131,6 @@ struct ThreadEntry {
     highlight_positions: Vec<usize>,
     worktrees: Vec<WorktreeInfo>,
     diff_stats: DiffStats,
-    last_accessed_at: Option<DateTime<Utc>>,
-    last_message_sent_or_queued: Option<DateTime<Utc>>,
 }
 
 impl ThreadEntry {
@@ -325,7 +323,7 @@ pub struct Sidebar {
     /// Updated when the user presses a key to send or queue a message.
     /// Used for sorting threads in the sidebar and as a secondary sort
     /// key in the thread switcher.
-    thread_last_message_sent: HashMap<acp::SessionId, DateTime<Utc>>,
+    thread_last_message_sent_or_queued: HashMap<acp::SessionId, DateTime<Utc>>,
     thread_switcher: Option<Entity<ThreadSwitcher>>,
     _thread_switcher_subscriptions: Vec<gpui::Subscription>,
     view: SidebarView,
@@ -421,7 +419,7 @@ impl Sidebar {
             collapsed_groups: HashSet::new(),
             expanded_groups: HashMap::new(),
             thread_last_accessed: HashMap::new(),
-            thread_last_message_sent: HashMap::new(),
+            thread_last_message_sent_or_queued: HashMap::new(),
             thread_switcher: None,
             _thread_switcher_subscriptions: Vec::new(),
             view: SidebarView::default(),
@@ -799,13 +797,11 @@ impl Sidebar {
                             highlight_positions: Vec::new(),
                             worktrees,
                             diff_stats: DiffStats::default(),
-                            last_accessed_at: None,
-                            last_message_sent_or_queued: None,
                         });
                     }
                 }
 
-                // Load threads from linked git worktrees whose
+                // Load threads from linked git worktrees
                 // canonical paths belong to this group.
                 let linked_worktree_queries = group
                     .workspaces
@@ -851,8 +847,6 @@ impl Sidebar {
                             highlight_positions: Vec::new(),
                             worktrees,
                             diff_stats: DiffStats::default(),
-                            last_accessed_at: None,
-                            last_message_sent_or_queued: None,
                         });
                     }
                 }
@@ -899,20 +893,17 @@ impl Sidebar {
                     }
                 }
 
-                for thread in &mut threads {
-                    let sid = &thread.session_info.session_id;
-                    thread.last_accessed_at = self.thread_last_accessed.get(sid).copied();
-                    thread.last_message_sent_or_queued =
-                        self.thread_last_message_sent.get(sid).copied();
-                }
-
                 threads.sort_by(|a, b| {
-                    let a_time = a
-                        .last_message_sent_or_queued
+                    let a_time = self
+                        .thread_last_message_sent_or_queued
+                        .get(&a.session_info.session_id)
+                        .copied()
                         .or(a.session_info.created_at)
                         .or(a.session_info.updated_at);
-                    let b_time = b
-                        .last_message_sent_or_queued
+                    let b_time = self
+                        .thread_last_message_sent_or_queued
+                        .get(&b.session_info.session_id)
+                        .copied()
                         .or(b.session_info.created_at)
                         .or(b.session_info.updated_at);
                     b_time.cmp(&a_time)
@@ -1065,7 +1056,7 @@ impl Sidebar {
 
         self.thread_last_accessed
             .retain(|id, _| current_session_ids.contains(id));
-        self.thread_last_message_sent
+        self.thread_last_message_sent_or_queued
             .retain(|id, _| current_session_ids.contains(id));
 
         self.contents = SidebarContents {
@@ -2415,7 +2406,7 @@ impl Sidebar {
     }
 
     fn record_thread_message_sent(&mut self, session_id: &acp::SessionId) {
-        self.thread_last_message_sent
+        self.thread_last_message_sent_or_queued
             .insert(session_id.clone(), Utc::now());
     }
 
@@ -2440,8 +2431,10 @@ impl Sidebar {
                     let notified = self
                         .contents
                         .is_thread_notified(&thread.session_info.session_id);
-                    let timestamp: SharedString = thread
-                        .last_message_sent_or_queued
+                    let timestamp: SharedString = self
+                        .thread_last_message_sent_or_queued
+                        .get(&thread.session_info.session_id)
+                        .copied()
                         .or(thread.session_info.created_at)
                         .or(thread.session_info.updated_at)
                         .map(format_history_entry_timestamp)
@@ -2481,8 +2474,8 @@ impl Sidebar {
                 (Some(_), None) => std::cmp::Ordering::Less,
                 (None, Some(_)) => std::cmp::Ordering::Greater,
                 (None, None) => {
-                    let a_sent = self.thread_last_message_sent.get(&a.session_id);
-                    let b_sent = self.thread_last_message_sent.get(&b.session_id);
+                    let a_sent = self.thread_last_message_sent_or_queued.get(&a.session_id);
+                    let b_sent = self.thread_last_message_sent_or_queued.get(&b.session_id);
 
                     match (a_sent, b_sent) {
                         (Some(a_time), Some(b_time)) => b_time.cmp(a_time),
@@ -2725,8 +2718,10 @@ impl Sidebar {
 
         let id = SharedString::from(format!("thread-entry-{}", ix));
 
-        let timestamp = thread
-            .last_message_sent_or_queued
+        let timestamp = self
+            .thread_last_message_sent_or_queued
+            .get(&thread.session_info.session_id)
+            .copied()
             .or(thread.session_info.created_at)
             .or(thread.session_info.updated_at)
             .map(format_history_entry_timestamp);
