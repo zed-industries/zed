@@ -19173,22 +19173,14 @@ async fn test_copy_highlight_json(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
-    let syntax = setup_highlight_test(&mut cx);
     cx.set_state(indoc! {"
         fn main() {
             let x = 1;ˇ
         }
     "});
-    cx.executor().run_until_parked();
+    setup_rust_syntax_highlighting(&mut cx);
+
     cx.update_editor(|editor, window, cx| {
-        editor.set_style(
-            EditorStyle {
-                syntax: Arc::new(syntax),
-                ..Default::default()
-            },
-            window,
-            cx,
-        );
         editor.copy_highlight_json(&CopyHighlightJson, window, cx);
     });
 
@@ -19228,23 +19220,15 @@ async fn test_copy_highlight_json_selected_range(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
-    let syntax = setup_highlight_test(&mut cx);
     cx.set_state(indoc! {"
         fn main() {
             «let x = 1;
             let yˇ» = 2;
         }
     "});
-    cx.executor().run_until_parked();
+    setup_rust_syntax_highlighting(&mut cx);
+
     cx.update_editor(|editor, window, cx| {
-        editor.set_style(
-            EditorStyle {
-                syntax: Arc::new(syntax),
-                ..Default::default()
-            },
-            window,
-            cx,
-        );
         editor.copy_highlight_json(&CopyHighlightJson, window, cx);
     });
 
@@ -19278,24 +19262,17 @@ async fn test_copy_highlight_json_selected_line_range(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
-    let syntax = setup_highlight_test(&mut cx);
+
+    cx.update_editor(|editor, _window, _cx| editor.selections.set_line_mode(true));
     cx.set_state(indoc! {"
         fn main() {
             «let x = 1;
             let y = 2;ˇ»
         }
     "});
-    cx.executor().run_until_parked();
-    cx.update_editor(|editor, _window, _cx| editor.selections.set_line_mode(true));
+    setup_rust_syntax_highlighting(&mut cx);
+
     cx.update_editor(|editor, window, cx| {
-        editor.set_style(
-            EditorStyle {
-                syntax: Arc::new(syntax),
-                ..Default::default()
-            },
-            window,
-            cx,
-        );
         editor.copy_highlight_json(&CopyHighlightJson, window, cx);
     });
 
@@ -19330,7 +19307,7 @@ async fn test_copy_highlight_json_selected_line_range(cx: &mut TestAppContext) {
     );
 }
 
-fn setup_highlight_test(cx: &mut EditorTestContext) -> SyntaxTheme {
+fn setup_rust_syntax_highlighting(cx: &mut EditorTestContext) {
     let syntax = SyntaxTheme::new_test(vec![
         ("keyword", Hsla::red()),
         ("function", Hsla::blue()),
@@ -19340,11 +19317,22 @@ fn setup_highlight_test(cx: &mut EditorTestContext) -> SyntaxTheme {
         ("punctuation.bracket", Hsla::default()),
         ("punctuation.delimiter", Hsla::default()),
     ]);
+
     let language = rust_lang();
     language.set_theme(&syntax);
+
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
     cx.executor().run_until_parked();
-    syntax
+    cx.update_editor(|editor, window, cx| {
+        editor.set_style(
+            EditorStyle {
+                syntax: Arc::new(syntax),
+                ..Default::default()
+            },
+            window,
+            cx,
+        );
+    });
 }
 
 #[gpui::test]
