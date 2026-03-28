@@ -7,7 +7,7 @@
 # Or use the helper script:
 #   crates/eval_cli/script/build-linux
 
-FROM rust:1.93.1-bookworm AS builder
+FROM rust:1.93.1-bullseye AS builder
 
 WORKDIR /app
 
@@ -30,7 +30,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install wild linker for faster linking (built from source to match bookworm's glibc).
+# Install wild linker for faster linking (built from source to match bullseye's glibc).
 RUN cargo install --locked wild-linker --version 0.8.0 --root /usr/local
 
 # Download WASI SDK (needed by some dependencies).

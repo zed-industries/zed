@@ -22,7 +22,7 @@ import os
 import shlex
 from pathlib import Path
 
-from harbor.agents.installed.base import BaseInstalledAgent, ExecInput
+from harbor.agents.installed.base import BaseInstalledAgent, with_prompt_template
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 
@@ -51,12 +51,71 @@ class ZedAgent(BaseInstalledAgent):
     def name() -> str:
         return "zed"
 
-    @property
-    def _install_agent_template_path(self) -> Path:
-        return Path(__file__).parent / "install.sh.j2"
+    async def install(self, environment: BaseEnvironment) -> None:
+        await self.exec_as_root(
+            environment,
+            command=(
+                "apt-get update && "
+                "apt-get install -y --no-install-recommends "
+                "ca-certificates "
+                "curl "
+                "git "
+                "libasound2 "
+                "libfontconfig1 "
+                "libglib2.0-0 "
+                "libsqlite3-0 "
+                "libssl1.1 "
+                "libwayland-client0 "
+                "libx11-xcb1 "
+                "libxkbcommon-x11-0 "
+                "libzstd1"
+            ),
+            env={"DEBIAN_FRONTEND": "noninteractive"},
+        )
 
-    async def setup(self, environment: BaseEnvironment) -> None:
-        await environment.exec(command="mkdir -p /installed-agent")
+        await self.exec_as_root(
+            environment,
+            command=(
+                "curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && "
+                "apt-get install -y --no-install-recommends nodejs"
+            ),
+            env={"DEBIAN_FRONTEND": "noninteractive"},
+        )
+
+        await self.exec_as_agent(
+            environment,
+            command=(
+                "set -euo pipefail; "
+                'ZED_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/zed"; '
+                'BASEDPYRIGHT_DIR="$ZED_DATA_DIR/languages/basedpyright"; '
+                'mkdir -p "$BASEDPYRIGHT_DIR"; '
+                'npm install --prefix "$BASEDPYRIGHT_DIR" --save-exact basedpyright'
+            ),
+        )
+
+        await self.exec_as_agent(
+            environment,
+            command=(
+                "curl -LsSf https://astral.sh/uv/install.sh | sh && "
+                '. "$HOME/.local/bin/env"'
+            ),
+        )
+
+        agent_home_result = await self.exec_as_agent(
+            environment,
+            command='printf %s "$HOME"',
+        )
+        agent_home = agent_home_result.stdout.strip()
+        if not agent_home:
+            raise RuntimeError("Could not determine agent home directory")
+
+        await self.exec_as_root(
+            environment,
+            command=(
+                f"ln -sf {shlex.quote(agent_home + '/.local/bin/uv')} /usr/local/bin/uv && "
+                f"ln -sf {shlex.quote(agent_home + '/.local/bin/uvx')} /usr/local/bin/uvx"
+            ),
+        )
 
         if self._binary_path:
             binary = Path(self._binary_path)
@@ -69,18 +128,29 @@ class ZedAgent(BaseInstalledAgent):
                 source_path=binary,
                 target_path="/usr/local/bin/eval-cli",
             )
-            await environment.exec(command="chmod +x /usr/local/bin/eval-cli")
+            await self.exec_as_root(
+                environment,
+                command="chmod +x /usr/local/bin/eval-cli && eval-cli --help",
+            )
+            return
 
-        await super().setup(environment)
-
-    @property
-    def _template_variables(self) -> dict[str, str]:
-        variables = super()._template_variables
-        if self._binary_path:
-            variables["binary_uploaded"] = "true"
         if self._download_url:
-            variables["download_url"] = self._download_url
-        return variables
+            await self.exec_as_root(
+                environment,
+                command=(
+                    f"curl -fsSL {shlex.quote(self._download_url)} "
+                    "-o /usr/local/bin/eval-cli && "
+                    "chmod +x /usr/local/bin/eval-cli && "
+                    "eval-cli --help"
+                ),
+            )
+            return
+
+        raise ValueError(
+            "No eval-cli binary provided. "
+            "Either pass binary_path=/path/to/target/release/eval-cli "
+            "or set download_url=/EVAL_CLI_DOWNLOAD_URL."
+        )
 
     def populate_context_post_run(self, context: AgentContext) -> None:
         result_data = None
@@ -131,18 +201,21 @@ class ZedAgent(BaseInstalledAgent):
 
         return env
 
-    def create_run_agent_commands(self, instruction: str) -> list[ExecInput]:
+    @with_prompt_template
+    async def run(
+        self, instruction: str, environment: BaseEnvironment, context: AgentContext
+    ) -> None:
         escaped_instruction = shlex.quote(instruction)
         env = self._get_api_env()
 
         parts = ["eval-cli", "--workdir /testbed", "--output-dir /logs/agent"]
 
         if self.model_name:
-            parts.append(f"--model {self.model_name}")
+            parts.append(f"--model {shlex.quote(self.model_name)}")
 
         timeout = self._extra_env.get("EVAL_CLI_TIMEOUT")
         if timeout:
-            parts.append(f"--timeout {timeout}")
+            parts.append(f"--timeout {shlex.quote(timeout)}")
 
         staff = self._extra_env.get("EVAL_CLI_STAFF")
         if staff and staff.lower() == "false":
@@ -161,18 +234,20 @@ class ZedAgent(BaseInstalledAgent):
 
         parts.append(f"--instruction {escaped_instruction}")
 
-        eval_cli_command = (
-            " ".join(parts) + " 2>&1 | stdbuf -oL tee /logs/agent/eval-cli.txt"
+        await self.exec_as_agent(
+            environment,
+            command=(
+                " ".join(parts) + " 2>&1 | stdbuf -oL tee /logs/agent/eval-cli.txt"
+            ),
+            env=env,
         )
 
-        patch_command = (
-            "cd /testbed && "
-            "git add -A && "
-            "git diff --cached HEAD > /logs/agent/patch.diff && "
-            'echo "Patch size: $(wc -c < /logs/agent/patch.diff) bytes"'
+        await self.exec_as_agent(
+            environment,
+            command=(
+                "git add -A && "
+                "git diff --cached HEAD > /logs/agent/patch.diff && "
+                'echo "Patch size: $(wc -c < /logs/agent/patch.diff) bytes"'
+            ),
+            cwd="/testbed",
         )
-
-        return [
-            ExecInput(command=eval_cli_command, env=env),
-            ExecInput(command=patch_command),
-        ]
