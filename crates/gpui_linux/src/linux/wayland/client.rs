@@ -2668,7 +2668,7 @@ impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
                                 state.last_pinch_distance = Some(current_distance);
 
                                 if let Some(scroll_start) = state.scroll_start_position {
-                                        let scroll_delta = point(
+                                    let scroll_delta = point(
                                         px((current_center.x.as_f32() - scroll_start.x.as_f32())
                                             * TOUCH_SCROLL_SENSITIVITY),
                                         px((current_center.y.as_f32() - scroll_start.y.as_f32())
