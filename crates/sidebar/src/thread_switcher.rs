@@ -97,6 +97,14 @@ impl ThreadSwitcher {
         self.entries.get(self.selected_index)
     }
 
+    pub fn entries(&self) -> &[ThreadSwitcherEntry] {
+        &self.entries
+    }
+
+    pub fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
     pub fn cycle_selection(&mut self, cx: &mut Context<Self>) {
         if self.entries.is_empty() {
             return;
