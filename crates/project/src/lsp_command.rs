@@ -16,7 +16,7 @@ use collections::HashMap;
 use futures::future;
 use gpui::{App, AsyncApp, Entity, SharedString, Task, prelude::FluentBuilder};
 use language::{
-    Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind, CharScopeContext,
+    Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind, CharScopeContext, Node,
     OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
     language_settings::{InlayHintKind, LanguageSettings},
     point_from_lsp, point_to_lsp,
@@ -1547,7 +1547,12 @@ impl LspCommand for GetDocumentHighlights {
         cx: AsyncApp,
     ) -> Result<Vec<DocumentHighlight>> {
         Ok(buffer.read_with(&cx, |buffer, _| {
-            let mut lsp_highlights = lsp_highlights.unwrap_or_default();
+            let snapshot = buffer.snapshot();
+            let mut lsp_highlights = normalize_css_document_highlights(
+                &snapshot,
+                self.position,
+                lsp_highlights.unwrap_or_default(),
+            );
             lsp_highlights.sort_unstable_by_key(|h| (h.range.start, Reverse(h.range.end)));
             lsp_highlights
                 .into_iter()
@@ -1657,6 +1662,95 @@ impl LspCommand for GetDocumentHighlights {
 
     fn buffer_id_from_proto(message: &proto::GetDocumentHighlights) -> Result<BufferId> {
         BufferId::new(message.buffer_id)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CssTagHighlightContext {
+    rule_set_range: Range<usize>,
+    text: String,
+}
+
+fn normalize_css_document_highlights(
+    snapshot: &BufferSnapshot,
+    position: PointUtf16,
+    lsp_highlights: Vec<lsp::DocumentHighlight>,
+) -> Vec<lsp::DocumentHighlight> {
+    let Some(cursor_context) = css_tag_highlight_context_for_position(snapshot, position) else {
+        return lsp_highlights;
+    };
+
+    let filtered: Vec<_> = lsp_highlights
+        .iter()
+        .filter(|highlight| {
+            css_tag_highlight_context_for_lsp_range(snapshot, highlight.range)
+                .is_some_and(|highlight_context| highlight_context == cursor_context)
+        })
+        .cloned()
+        .collect();
+
+    if filtered.is_empty() {
+        lsp_highlights
+    } else {
+        filtered
+    }
+}
+
+fn css_tag_highlight_context_for_position(
+    snapshot: &BufferSnapshot,
+    position: PointUtf16,
+) -> Option<CssTagHighlightContext> {
+    let (word_range, _) = snapshot.surrounding_word(position, None);
+    let word_range = word_range.start.to_offset(snapshot)..word_range.end.to_offset(snapshot);
+    css_tag_highlight_context_for_range(snapshot, word_range)
+}
+
+fn css_tag_highlight_context_for_lsp_range(
+    snapshot: &BufferSnapshot,
+    range: lsp::Range,
+) -> Option<CssTagHighlightContext> {
+    let start = snapshot.clip_point_utf16(point_from_lsp(range.start), Bias::Left);
+    let end = snapshot.clip_point_utf16(point_from_lsp(range.end), Bias::Left);
+    css_tag_highlight_context_for_range(
+        snapshot,
+        start.to_offset(snapshot)..end.to_offset(snapshot),
+    )
+}
+
+fn css_tag_highlight_context_for_range(
+    snapshot: &BufferSnapshot,
+    range: Range<usize>,
+) -> Option<CssTagHighlightContext> {
+    if range.is_empty() {
+        return None;
+    }
+
+    let layer = snapshot.smallest_syntax_layer_containing(range.clone())?;
+    let language_name = layer.language.name().lsp_id();
+    if !matches!(language_name.as_str(), "css" | "scss" | "less") {
+        return None;
+    }
+
+    let node = layer
+        .node()
+        .named_descendant_for_byte_range(range.start, range.end)?;
+    if node.kind() != "tag_name" || node.byte_range() != range {
+        return None;
+    }
+
+    let rule_set_range = syntax_ancestor_with_kind(node, "rule_set")?.byte_range();
+    Some(CssTagHighlightContext {
+        rule_set_range,
+        text: snapshot.text_for_range(range).collect(),
+    })
+}
+
+fn syntax_ancestor_with_kind<'a>(mut node: Node<'a>, kind: &str) -> Option<Node<'a>> {
+    loop {
+        if node.kind() == kind {
+            return Some(node);
+        }
+        node = node.parent()?;
     }
 }
 

@@ -129,6 +129,7 @@ tree-sitter-rust.workspace = true
 tree-sitter-typescript.workspace = true
 tree-sitter-yaml.workspace = true
 tree-sitter-bash.workspace = true
+tree-sitter-css.workspace = true
 tree-sitter-md.workspace = true
 unicode-width.workspace = true
 unindent.workspace = true

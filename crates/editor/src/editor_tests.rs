@@ -30474,6 +30474,66 @@ async fn test_select_next_prev_syntax_node(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_css_document_highlights_ignore_parent_rule_selector(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let capabilities = lsp::ServerCapabilities {
+        document_highlight_provider: Some(lsp::OneOf::Left(true)),
+        ..Default::default()
+    };
+    let language =
+        std::sync::Arc::try_unwrap(languages::language("css", tree_sitter_css::LANGUAGE.into()))
+            .unwrap();
+    let mut cx = EditorLspTestContext::new(language, capabilities, cx).await;
+
+    cx.set_state("div {\n  dˇiv p {\n    color: red;\n  }\n}\n");
+
+    let outer_range = cx.lsp_range("«div» {\n  div p {\n    color: red;\n  }\n}\n");
+    let inner_range = cx.lsp_range("div {\n  «div» p {\n    color: red;\n  }\n}\n");
+    let mut requests =
+        cx.set_request_handler::<lsp::request::DocumentHighlightRequest, _, _>(move |_, _, _| {
+            let highlights = vec![
+                lsp::DocumentHighlight {
+                    range: outer_range,
+                    kind: Some(lsp::DocumentHighlightKind::READ),
+                },
+                lsp::DocumentHighlight {
+                    range: inner_range,
+                    kind: Some(lsp::DocumentHighlightKind::READ),
+                },
+            ];
+            async move { Ok(Some(highlights)) }
+        });
+
+    cx.update_editor(|editor, _, cx| {
+        editor.refresh_document_highlights(cx);
+    });
+    cx.run_until_parked();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(100));
+    requests.next().await.unwrap();
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+        let full_range =
+            (Point::new(0, 0)..buffer_snapshot.max_point()).to_anchors(&buffer_snapshot);
+
+        let highlighted_ranges =
+            editor.sorted_background_highlights_in_range(full_range, &snapshot, cx.theme());
+
+        assert_eq!(
+            highlighted_ranges
+                .into_iter()
+                .map(|(range, _)| range)
+                .collect::<Vec<_>>(),
+            vec![DisplayPoint::new(DisplayRow(1), 2)..DisplayPoint::new(DisplayRow(1), 5)]
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_next_prev_document_highlight(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
