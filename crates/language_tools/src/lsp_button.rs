@@ -851,9 +851,6 @@ impl LspButton {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.lsp_menu.is_none() {
-            return;
-        };
         let mut updated = false;
 
         // TODO `LspStore` is global and reports status from all language servers, even from the other windows.
@@ -950,7 +947,7 @@ impl LspButton {
             _ => {}
         };
 
-        if updated {
+        if updated && self.lsp_menu.is_some() {
             self.refresh_lsp_menu(false, window, cx);
         }
     }

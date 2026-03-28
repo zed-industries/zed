@@ -775,7 +775,7 @@ where
                         delegate.update_status(
                             self.name(),
                             BinaryStatus::Failed {
-                                error: format!("{error:?}"),
+                                error: format!("{error:#}"),
                             },
                         );
                     }
