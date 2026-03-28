@@ -2118,7 +2118,7 @@ mod tests {
         cx.update(|cx| {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             crate::init(cx);
         });
         let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;

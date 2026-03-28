@@ -161,6 +161,14 @@ impl Oid {
     }
 }
 
+impl TryFrom<&str> for Oid {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &str) -> std::prelude::v1::Result<Self, Self::Error> {
+        Oid::from_str(value)
+    }
+}
+
 impl FromStr for Oid {
     type Err = anyhow::Error;
 

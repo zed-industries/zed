@@ -13,7 +13,7 @@ use settings::Settings;
 use std::ops::Range;
 use std::time::Duration;
 use text::Rope;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{
     ActiveTheme, AnyElement, ButtonCommon, ButtonStyle, Clickable, FluentBuilder, IconButton,
     IconButtonShape, IconName, IconSize, InteractiveElement, IntoElement, Label, LabelCommon,

@@ -83,7 +83,8 @@ use std::{
 };
 use sum_tree::Bias;
 use text::{BufferId, SelectionGoal};
-use theme::{ActiveTheme, Appearance, BufferLineHeight, PlayerColor};
+use theme::{ActiveTheme, Appearance, PlayerColor};
+use theme_settings::BufferLineHeight;
 use ui::utils::ensure_minimum_contrast;
 use ui::{
     ButtonLike, ContextMenu, Indicator, KeyBinding, POPOVER_Y_PADDING, Tooltip, prelude::*,
@@ -8448,7 +8449,7 @@ pub(crate) fn render_buffer_header(
                                         el.child(Icon::new(IconName::FileLock).color(Color::Muted))
                                     })
                                     .when_some(breadcrumbs, |then, breadcrumbs| {
-                                        let font = theme::ThemeSettings::get_global(cx)
+                                        let font = theme_settings::ThemeSettings::get_global(cx)
                                             .buffer_font
                                             .clone();
                                         then.child(render_breadcrumb_text(

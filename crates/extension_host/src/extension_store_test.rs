@@ -1007,7 +1007,7 @@ fn init_test(cx: &mut TestAppContext) {
         cx.set_global(store);
         release_channel::init(semver::Version::new(0, 0, 0), cx);
         extension::init(cx);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
         gpui_tokio::init(cx);
     });
 }

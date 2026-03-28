@@ -4036,7 +4036,7 @@ pub mod tests {
         let settings = SettingsStore::test(cx);
         cx.set_global(settings);
         crate::init(cx);
-        theme::init(LoadThemes::JustBase, cx);
+        theme_settings::init(LoadThemes::JustBase, cx);
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, f);
         });

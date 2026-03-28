@@ -533,6 +533,7 @@ impl ThreadView {
         };
 
         this.sync_generating_indicator(cx);
+        this.sync_editor_mode_for_empty_state(cx);
         let list_state_for_scroll = this.list_state.clone();
         let thread_view = cx.entity().downgrade();
 
@@ -3125,42 +3126,6 @@ impl ThreadView {
             (IconName::Maximize, "Expand Message Editor")
         };
 
-        if v2_empty_state {
-            self.message_editor.update(cx, |editor, cx| {
-                editor.set_mode(
-                    EditorMode::Full {
-                        scale_ui_elements_with_buffer_font_size: false,
-                        show_active_line_background: false,
-                        sizing_behavior: SizingBehavior::Default,
-                    },
-                    cx,
-                );
-            });
-        } else if editor_expanded {
-            self.message_editor.update(cx, |editor, cx| {
-                editor.set_mode(
-                    EditorMode::Full {
-                        scale_ui_elements_with_buffer_font_size: false,
-                        show_active_line_background: false,
-                        sizing_behavior: SizingBehavior::ExcludeOverscrollMargin,
-                    },
-                    cx,
-                );
-            });
-        } else {
-            self.message_editor.update(cx, |editor, cx| {
-                editor.set_mode(
-                    EditorMode::AutoHeight {
-                        min_lines: AgentSettings::get_global(cx).message_editor_min_lines,
-                        max_lines: Some(
-                            AgentSettings::get_global(cx).set_message_editor_max_lines(),
-                        ),
-                    },
-                    cx,
-                );
-            });
-        }
-
         v_flex()
             .on_action(cx.listener(Self::expand_message_editor))
             .p_2()
@@ -3437,29 +3402,14 @@ impl ThreadView {
     fn render_token_usage(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let thread = self.thread.read(cx);
         let usage = thread.token_usage()?;
-        let is_generating = thread.status() != ThreadStatus::Idle;
         let show_split = self.supports_split_token_display(cx);
 
-        let separator_color = Color::Custom(cx.theme().colors().text_muted.opacity(0.5));
-        let token_label = |text: String, animation_id: &'static str| {
-            Label::new(text)
-                .size(LabelSize::Small)
-                .color(Color::Muted)
-                .map(|label| {
-                    if is_generating {
-                        label
-                            .with_animation(
-                                animation_id,
-                                Animation::new(Duration::from_secs(2))
-                                    .repeat()
-                                    .with_easing(pulsating_between(0.3, 0.8)),
-                                |label, delta| label.alpha(delta),
-                            )
-                            .into_any()
-                    } else {
-                        label.into_any_element()
-                    }
-                })
+        let progress_color = |ratio: f32| -> Hsla {
+            if ratio >= 0.85 {
+                cx.theme().status().warning
+            } else {
+                cx.theme().colors().text_muted
+            }
         };
 
         let used = crate::text_thread_editor::humanize_token_count(usage.used_tokens);
@@ -3474,6 +3424,10 @@ impl ThreadView {
         } else {
             0.0
         };
+
+        let ring_size = px(16.0);
+        let stroke_width = px(2.);
+
         let percentage = format!("{}%", (progress_ratio * 100.0).round() as u32);
 
         let tooltip_separator_color = Color::Custom(cx.theme().colors().text_disabled.opacity(0.6));
@@ -3513,8 +3467,6 @@ impl ThreadView {
         let output_max_label = crate::text_thread_editor::humanize_token_count(max_output_tokens);
 
         let build_tooltip = {
-            let input_max_label = input_max_label.clone();
-            let output_max_label = output_max_label.clone();
             move |_window: &mut Window, cx: &mut App| {
                 let percentage = percentage.clone();
                 let used = used.clone();
@@ -3546,17 +3498,26 @@ impl ThreadView {
         };
 
         if show_split {
-            let input = crate::text_thread_editor::humanize_token_count(usage.input_tokens);
-            let input_max = input_max_label;
-            let output = crate::text_thread_editor::humanize_token_count(usage.output_tokens);
-            let output_max = output_max_label;
+            let input_max_raw = usage.max_tokens.saturating_sub(max_output_tokens);
+            let output_max_raw = max_output_tokens;
+
+            let input_ratio = if input_max_raw > 0 {
+                usage.input_tokens as f32 / input_max_raw as f32
+            } else {
+                0.0
+            };
+            let output_ratio = if output_max_raw > 0 {
+                usage.output_tokens as f32 / output_max_raw as f32
+            } else {
+                0.0
+            };
 
             Some(
                 h_flex()
                     .id("split_token_usage")
                     .flex_shrink_0()
-                    .gap_1()
-                    .mr_1p5()
+                    .gap_1p5()
+                    .mr_1()
                     .child(
                         h_flex()
                             .gap_0p5()
@@ -3565,16 +3526,15 @@ impl ThreadView {
                                     .size(IconSize::XSmall)
                                     .color(Color::Muted),
                             )
-                            .child(token_label(input, "input-tokens-label"))
                             .child(
-                                Label::new("/")
-                                    .size(LabelSize::Small)
-                                    .color(separator_color),
-                            )
-                            .child(
-                                Label::new(input_max)
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
+                                CircularProgress::new(
+                                    usage.input_tokens as f32,
+                                    input_max_raw as f32,
+                                    ring_size,
+                                    cx,
+                                )
+                                .stroke_width(stroke_width)
+                                .progress_color(progress_color(input_ratio)),
                             ),
                     )
                     .child(
@@ -3585,28 +3545,21 @@ impl ThreadView {
                                     .size(IconSize::XSmall)
                                     .color(Color::Muted),
                             )
-                            .child(token_label(output, "output-tokens-label"))
                             .child(
-                                Label::new("/")
-                                    .size(LabelSize::Small)
-                                    .color(separator_color),
-                            )
-                            .child(
-                                Label::new(output_max)
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
+                                CircularProgress::new(
+                                    usage.output_tokens as f32,
+                                    output_max_raw as f32,
+                                    ring_size,
+                                    cx,
+                                )
+                                .stroke_width(stroke_width)
+                                .progress_color(progress_color(output_ratio)),
                             ),
                     )
                     .hoverable_tooltip(build_tooltip)
                     .into_any_element(),
             )
         } else {
-            let progress_color = if progress_ratio >= 0.85 {
-                cx.theme().status().warning
-            } else {
-                cx.theme().colors().text_muted
-            };
-
             Some(
                 h_flex()
                     .id("circular_progress_tokens")
@@ -3616,11 +3569,11 @@ impl ThreadView {
                         CircularProgress::new(
                             usage.used_tokens as f32,
                             usage.max_tokens as f32,
-                            px(16.0),
+                            ring_size,
                             cx,
                         )
-                        .stroke_width(px(2.))
-                        .progress_color(progress_color),
+                        .stroke_width(stroke_width)
+                        .progress_color(progress_color(progress_ratio)),
                     )
                     .hoverable_tooltip(build_tooltip)
                     .into_any_element(),
@@ -4208,13 +4161,13 @@ impl Render for TokenUsageTooltip {
         ui::tooltip_container(cx, move |container, cx| {
             container
                 .min_w_40()
+                .child(
+                    Label::new("Context")
+                        .color(Color::Muted)
+                        .size(LabelSize::Small),
+                )
                 .when(!show_split, |this| {
                     this.child(
-                        Label::new("Context")
-                            .color(Color::Muted)
-                            .size(LabelSize::Small),
-                    )
-                    .child(
                         h_flex()
                             .gap_0p5()
                             .child(Label::new(percentage.clone()))
@@ -5077,6 +5030,27 @@ impl ThreadView {
             })?;
             anyhow::Ok(())
         })
+    }
+
+    pub(crate) fn sync_editor_mode_for_empty_state(&mut self, cx: &mut Context<Self>) {
+        let has_messages = self.list_state.item_count() > 0;
+        let v2_empty_state = cx.has_flag::<AgentV2FeatureFlag>() && !has_messages;
+
+        let mode = if v2_empty_state {
+            EditorMode::Full {
+                scale_ui_elements_with_buffer_font_size: false,
+                show_active_line_background: false,
+                sizing_behavior: SizingBehavior::Default,
+            }
+        } else {
+            EditorMode::AutoHeight {
+                min_lines: AgentSettings::get_global(cx).message_editor_min_lines,
+                max_lines: Some(AgentSettings::get_global(cx).set_message_editor_max_lines()),
+            }
+        };
+        self.message_editor.update(cx, |editor, cx| {
+            editor.set_mode(mode, cx);
+        });
     }
 
     /// Ensures the list item count includes (or excludes) an extra item for the generating indicator
