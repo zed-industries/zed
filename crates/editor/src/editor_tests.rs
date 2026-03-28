@@ -31655,6 +31655,91 @@ async fn test_scroll_by_clicking_sticky_header(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_clicking_sticky_header_sets_character_select_mode(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.editor.sticky_scroll = Some(settings::StickyScrollContent {
+                    enabled: Some(true),
+                })
+            });
+        });
+    });
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let line_height = cx.update_editor(|editor, window, cx| {
+        editor
+            .style(cx)
+            .text
+            .line_height_in_pixels(window.rem_size())
+    });
+
+    let buffer = indoc! {"
+            fn foo() {
+                let abc = 123;
+            }
+            ˇstruct Bar;
+        "};
+    cx.set_state(&buffer);
+
+    cx.update_editor(|editor, _, cx| {
+        editor
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .unwrap()
+            .update(cx, |buffer, cx| {
+                buffer.set_language(Some(rust_lang()), cx);
+            })
+    });
+
+    let text_origin_x = cx.update_editor(|editor, _, _| {
+        editor
+            .last_position_map
+            .as_ref()
+            .unwrap()
+            .text_hitbox
+            .bounds
+            .origin
+            .x
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        // Double click on `struct` to select it
+        editor.begin_selection(DisplayPoint::new(DisplayRow(3), 1), false, 2, window, cx);
+        editor.end_selection(window, cx);
+
+        // Scroll down one row to make `fn foo() {` a sticky header
+        editor.scroll(gpui::Point { x: 0., y: 1. }, None, window, cx);
+    });
+    cx.run_until_parked();
+
+    // Click at the start of the `fn foo() {` sticky header
+    cx.simulate_click(
+        gpui::Point {
+            x: text_origin_x,
+            y: 0.5 * line_height,
+        },
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+
+    // Shift-click at the end of `fn foo() {` to select the whole row
+    cx.update_editor(|editor, window, cx| {
+        editor.extend_selection(DisplayPoint::new(DisplayRow(0), 10), 1, window, cx);
+        editor.end_selection(window, cx);
+    });
+    cx.run_until_parked();
+
+    let selections = cx.update_editor(|editor, _, cx| display_ranges(editor, cx));
+    assert_eq!(
+        selections,
+        vec![DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 10)]
+    );
+}
+
+#[gpui::test]
 async fn test_next_prev_reference(cx: &mut TestAppContext) {
     const CYCLE_POSITIONS: &[&'static str] = &[
         indoc! {"
