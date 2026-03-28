@@ -936,6 +936,7 @@ impl ProjectSearchView {
         let query_editor = cx.new(|cx| {
             let mut editor = Editor::auto_height(1, 4, window, cx);
             editor.set_placeholder_text("Search all files…", window, cx);
+            editor.set_use_autoclose(false);
             editor.set_text(query_text, window, cx);
             editor
         });
@@ -5143,7 +5144,7 @@ pub mod tests {
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
 
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
 
             editor::init(cx);
             crate::init(cx);

@@ -1030,7 +1030,11 @@ impl TextThreadEditor {
         h_flex()
             .items_center()
             .gap_1()
-            .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+            .font(
+                theme_settings::ThemeSettings::get_global(cx)
+                    .buffer_font
+                    .clone(),
+            )
             .text_size(TextSize::XSmall.rems(cx))
             .text_color(colors.text_muted)
             .child("Press")
@@ -3440,7 +3444,7 @@ mod tests {
         LanguageModelRegistry::test(cx);
         cx.set_global(settings_store);
 
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
     }
 
     #[gpui::test]

@@ -325,8 +325,14 @@ impl SidebarThreadMetadataStore {
                 let weak_store = weak_store.clone();
                 move |thread, cx| {
                     weak_store
-                        .update(cx, |store, _cx| {
-                            store.session_subscriptions.remove(thread.session_id());
+                        .update(cx, |store, cx| {
+                            let session_id = thread.session_id().clone();
+                            store.session_subscriptions.remove(&session_id);
+                            if thread.entries().is_empty() {
+                                // Empty threads can be unloaded without ever being
+                                // durably persisted by the underlying agent.
+                                store.delete(session_id, cx);
+                            }
                         })
                         .ok();
                 }
@@ -996,6 +1002,114 @@ mod tests {
         });
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].session_id.0.as_ref(), "existing-session");
+    }
+
+    #[gpui::test]
+    async fn test_empty_thread_metadata_deleted_when_thread_released(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            ThreadStore::init_global(cx);
+            SidebarThreadMetadataStore::init_global(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None::<&Path>, cx).await;
+        let connection = Rc::new(StubAgentConnection::new());
+
+        let thread = cx
+            .update(|cx| {
+                connection
+                    .clone()
+                    .new_session(project.clone(), PathList::default(), cx)
+            })
+            .await
+            .unwrap();
+        let session_id = cx.read(|cx| thread.read(cx).session_id().clone());
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_title("Draft Thread".into(), cx).detach();
+            });
+        });
+        cx.run_until_parked();
+
+        let metadata_ids = cx.update(|cx| {
+            SidebarThreadMetadataStore::global(cx)
+                .read(cx)
+                .entry_ids()
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(metadata_ids, vec![session_id]);
+
+        drop(thread);
+        cx.update(|_| {});
+        cx.run_until_parked();
+        cx.run_until_parked();
+
+        let metadata_ids = cx.update(|cx| {
+            SidebarThreadMetadataStore::global(cx)
+                .read(cx)
+                .entry_ids()
+                .collect::<Vec<_>>()
+        });
+        assert!(
+            metadata_ids.is_empty(),
+            "expected empty draft thread metadata to be deleted on release"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_nonempty_thread_metadata_preserved_when_thread_released(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            ThreadStore::init_global(cx);
+            SidebarThreadMetadataStore::init_global(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None::<&Path>, cx).await;
+        let connection = Rc::new(StubAgentConnection::new());
+
+        let thread = cx
+            .update(|cx| {
+                connection
+                    .clone()
+                    .new_session(project.clone(), PathList::default(), cx)
+            })
+            .await
+            .unwrap();
+        let session_id = cx.read(|cx| thread.read(cx).session_id().clone());
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.push_user_content_block(None, "Hello".into(), cx);
+            });
+        });
+        cx.run_until_parked();
+
+        let metadata_ids = cx.update(|cx| {
+            SidebarThreadMetadataStore::global(cx)
+                .read(cx)
+                .entry_ids()
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(metadata_ids, vec![session_id.clone()]);
+
+        drop(thread);
+        cx.update(|_| {});
+        cx.run_until_parked();
+
+        let metadata_ids = cx.update(|cx| {
+            SidebarThreadMetadataStore::global(cx)
+                .read(cx)
+                .entry_ids()
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(metadata_ids, vec![session_id]);
     }
 
     #[gpui::test]

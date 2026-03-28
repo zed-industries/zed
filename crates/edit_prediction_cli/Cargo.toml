@@ -65,7 +65,7 @@ rand.workspace = true
 similar = "2.7.0"
 flate2 = "1.1.8"
 toml.workspace = true
-rust-embed = { workspace = true, features = ["debug-embed"] }
+rust-embed.workspace = true
 gaoya = "0.2.0"
 
 # Wasmtime is included as a dependency in order to enable the same

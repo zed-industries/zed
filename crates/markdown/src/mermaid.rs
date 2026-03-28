@@ -278,7 +278,7 @@ mod tests {
                 settings::init(cx);
             }
             if !cx.has_global::<theme::GlobalTheme>() {
-                theme::init(theme::LoadThemes::JustBase, cx);
+                theme_settings::init(theme::LoadThemes::JustBase, cx);
             }
         });
     }
