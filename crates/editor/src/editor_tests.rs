@@ -49,7 +49,8 @@ use serde_json::{self, json};
 use settings::{
     AllLanguageSettingsContent, DelayMs, EditorSettingsContent, GlobalLspSettingsContent,
     IndentGuideBackgroundColoring, IndentGuideColoring, InlayHintSettingsContent,
-    ProjectSettingsContent, SearchSettingsContent, SettingsContent, SettingsStore,
+    ProjectSettingsContent, ScrollBeyondLastLine, SearchSettingsContent, SettingsContent,
+    SettingsStore,
 };
 use std::borrow::Cow;
 use std::{cell::RefCell, future::Future, rc::Rc, sync::atomic::AtomicBool, time::Instant};
@@ -2780,6 +2781,59 @@ async fn test_autoscroll(cx: &mut TestAppContext) {
         assert_eq!(
             editor.snapshot(window, cx).scroll_position(),
             gpui::Point::new(0., 1.0)
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_exclude_overscroll_margin_clamps_scroll_position(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    update_test_editor_settings(cx, &|settings| {
+        settings.scroll_beyond_last_line = Some(ScrollBeyondLastLine::OnePage);
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let line_height = cx.update_editor(|editor, window, cx| {
+        editor.set_mode(EditorMode::Full {
+            scale_ui_elements_with_buffer_font_size: false,
+            show_active_line_background: false,
+            sizing_behavior: SizingBehavior::ExcludeOverscrollMargin,
+        });
+        editor
+            .style(cx)
+            .text
+            .line_height_in_pixels(window.rem_size())
+    });
+    let window = cx.window;
+    cx.simulate_window_resize(window, size(px(1000.), 6. * line_height));
+    cx.set_state(
+        &r#"
+        ˇone
+        two
+        three
+        four
+        five
+        six
+        seven
+        eight
+        nine
+        ten
+        eleven
+        "#.unindent(),
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let max_scroll_top =
+            (snapshot.max_point().row().as_f64() - editor.visible_line_count().unwrap() + 1.)
+                .max(0.);
+
+        editor.set_scroll_position(gpui::Point::new(0., max_scroll_top + 10.), window, cx);
+
+        assert_eq!(
+            editor.snapshot(window, cx).scroll_position(),
+            gpui::Point::new(0., max_scroll_top)
         );
     });
 }

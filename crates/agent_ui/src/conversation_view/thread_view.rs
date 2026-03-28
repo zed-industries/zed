@@ -3136,6 +3136,17 @@ impl ThreadView {
                     cx,
                 );
             });
+        } else if editor_expanded {
+            self.message_editor.update(cx, |editor, cx| {
+                editor.set_mode(
+                    EditorMode::Full {
+                        scale_ui_elements_with_buffer_font_size: false,
+                        show_active_line_background: false,
+                        sizing_behavior: SizingBehavior::ExcludeOverscrollMargin,
+                    },
+                    cx,
+                );
+            });
         } else {
             self.message_editor.update(cx, |editor, cx| {
                 editor.set_mode(
