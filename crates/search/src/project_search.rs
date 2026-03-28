@@ -1219,7 +1219,11 @@ impl ProjectSearchView {
             {
                 search.toggle_search_option(SearchOptions::INCLUDE_IGNORED, cx);
             }
-            let query = action.query.as_deref().or(query.as_deref());
+            let query = action
+                .query
+                .as_deref()
+                .filter(|q| !q.is_empty())
+                .or(query.as_deref());
             if let Some(query) = query {
                 search.set_query(query, window, cx);
             }

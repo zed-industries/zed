@@ -318,16 +318,7 @@ actions!(
 
 impl DeploySearch {
     pub fn find() -> Self {
-        Self {
-            replace_enabled: false,
-            included_files: None,
-            excluded_files: None,
-            query: None,
-            regex: false,
-            case_sensitive: false,
-            whole_word: false,
-            include_ignored: false,
-        }
+        Self::default()
     }
 }
 
