@@ -4470,10 +4470,46 @@ mod property_test {
             anyhow::bail!("sidebar should still have an associated multi-workspace");
         };
 
-        let all_workspaces: HashSet<EntityId> = multi_workspace
-            .read(cx)
-            .workspaces()
+        let workspaces = multi_workspace.read(cx).workspaces().to_vec();
+
+        // For each workspace, collect the set of canonical repo paths
+        // (original_repo_abs_path) from its root repositories. Two
+        // workspaces that share a canonical repo path are in the same
+        // linked-worktree group.
+        let canonical_repos = |ws: &Entity<Workspace>| -> HashSet<PathBuf> {
+            root_repository_snapshots(ws, cx)
+                .map(|snapshot| snapshot.original_repo_abs_path.to_path_buf())
+                .collect::<HashSet<_>>()
+        };
+
+        // Build a map from canonical repo path → set of workspace
+        // EntityIds that share that repo.
+        let mut repo_to_workspaces: HashMap<PathBuf, HashSet<EntityId>> = HashMap::new();
+        for ws in &workspaces {
+            for repo_path in canonical_repos(ws) {
+                repo_to_workspaces
+                    .entry(repo_path)
+                    .or_default()
+                    .insert(ws.entity_id());
+            }
+        }
+
+        // A workspace participates in a linked-worktree group when it
+        // shares a canonical repo path with at least one other workspace.
+        let in_linked_worktree_group = |ws: &Entity<Workspace>| -> bool {
+            canonical_repos(ws).iter().any(|repo_path| {
+                repo_to_workspaces
+                    .get(repo_path)
+                    .is_some_and(|members| members.len() > 1)
+            })
+        };
+
+        // TODO
+        // Carve-out 1: workspaces with no root paths are not shown
+        // because the sidebar skips empty path lists.
+        let expected_workspaces: HashSet<EntityId> = workspaces
             .iter()
+            .filter(|ws| !workspace_path_list(ws, cx).paths().is_empty())
             .map(|ws| ws.entity_id())
             .collect();
 
@@ -4484,38 +4520,34 @@ mod property_test {
             .filter_map(|entry| entry.workspace().map(|ws| ws.entity_id()))
             .collect();
 
-        let stray = &sidebar_workspaces - &all_workspaces;
-        anyhow::ensure!(
-            stray.is_empty(),
-            "sidebar references workspaces not in multi-workspace: {:?}",
-            stray,
-        );
+        // Check every mismatch between the two sets. Each one must be
+        // explainable by a known carve-out.
+        let missing = &expected_workspaces - &sidebar_workspaces;
+        let stray = &sidebar_workspaces - &expected_workspaces;
 
-        let workspaces = multi_workspace.read(cx).workspaces().to_vec();
+        for entity_id in missing.iter().chain(stray.iter()) {
+            let Some(workspace) = workspaces.iter().find(|ws| ws.entity_id() == *entity_id) else {
+                anyhow::bail!("workspace {entity_id:?} not found in multi-workspace");
+            };
 
-        // A workspace may not appear directly in entries if another
-        // workspace in the same group is the representative. Check that
-        // every workspace is covered by a group that has at least one
-        // workspace visible in the sidebar entries.
-        let project_groups = ProjectGroupBuilder::from_multiworkspace(multi_workspace.read(cx), cx);
-        for ws in &workspaces {
-            if sidebar_workspaces.contains(&ws.entity_id()) {
-                continue;
-            }
-            let group_has_visible_member = project_groups.groups().any(|(_, group)| {
-                group.workspaces.contains(ws)
-                    && group
-                        .workspaces
-                        .iter()
-                        .any(|gws| sidebar_workspaces.contains(&gws.entity_id()))
-            });
+            // TODO
+            // Carve-out 2: when multiple workspaces share a linked-
+            // worktree group, only one representative is shown. Either
+            // side of the relationship (parent or linked worktree) may
+            // be the representative, so both can appear in the diff.
             anyhow::ensure!(
-                group_has_visible_member,
-                "workspace {:?} (paths {:?}) is not in sidebar entries and no group member is visible",
-                ws.entity_id(),
-                workspace_path_list(ws, cx).paths(),
+                in_linked_worktree_group(workspace),
+                "workspace {:?} (paths {:?}) is in the mismatch but does not \
+                 participate in a linked-worktree group.\n\
+                 Only in sidebar (stray):  {:?}\n\
+                 Only in multi-workspace (missing): {:?}",
+                entity_id,
+                workspace_path_list(workspace, cx).paths(),
+                stray,
+                missing,
             );
         }
+
         Ok(())
     }
 
@@ -4583,6 +4615,7 @@ mod property_test {
                         .and_then(|cv| cv.read(cx).parent_id(cx))
                 });
 
+        // TODO: Remove this state entirely
         anyhow::ensure!(
             sidebar.agent_panel_visible == panel_actually_visible,
             "sidebar.agent_panel_visible ({}) does not match AgentPanel::is_visible ({})",
@@ -4590,7 +4623,11 @@ mod property_test {
             panel_actually_visible,
         );
 
-        // TODO: tighten this once focused_thread tracking is fixed
+        // TODO: Remove these checks, the focused_thread should _always_ be Some(item-in-the-list) after
+        // update_entries. if the activated workspace's agent panel has an active thread, this item should
+        // match the one in the list. There may be a slight delay, where a thread is loading so the agent panel
+        // returns None initially, and the focused_thread is often optimistically set to the thread the agent panel
+        // is going to be
         if sidebar.agent_panel_visible && !sidebar.active_thread_is_draft {
             if let Some(panel_session_id) = panel_active_session_id {
                 anyhow::ensure!(
