@@ -97,10 +97,12 @@ impl ThreadSwitcher {
         self.entries.get(self.selected_index)
     }
 
+    #[cfg(test)]
     pub fn entries(&self) -> &[ThreadSwitcherEntry] {
         &self.entries
     }
 
+    #[cfg(test)]
     pub fn selected_index(&self) -> usize {
         self.selected_index
     }
