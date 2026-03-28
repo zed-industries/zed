@@ -4136,25 +4136,36 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
 
     let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
 
-    let switcher_ids = |sidebar: &Entity<Sidebar>, cx: &mut gpui::VisualTestContext| -> Vec<acp::SessionId> {
-        sidebar.read_with(cx, |sidebar, cx| {
-            let switcher = sidebar.thread_switcher.as_ref().expect("switcher should be open");
-            switcher
-                .read(cx)
-                .entries()
-                .iter()
-                .map(|e| e.session_id.clone())
-                .collect()
-        })
-    };
+    let switcher_ids =
+        |sidebar: &Entity<Sidebar>, cx: &mut gpui::VisualTestContext| -> Vec<acp::SessionId> {
+            sidebar.read_with(cx, |sidebar, cx| {
+                let switcher = sidebar
+                    .thread_switcher
+                    .as_ref()
+                    .expect("switcher should be open");
+                switcher
+                    .read(cx)
+                    .entries()
+                    .iter()
+                    .map(|e| e.session_id.clone())
+                    .collect()
+            })
+        };
 
-    let switcher_selected_id = |sidebar: &Entity<Sidebar>, cx: &mut gpui::VisualTestContext| -> acp::SessionId {
-        sidebar.read_with(cx, |sidebar, cx| {
-            let switcher = sidebar.thread_switcher.as_ref().expect("switcher should be open");
-            let s = switcher.read(cx);
-            s.selected_entry().expect("should have selection").session_id.clone()
-        })
-    };
+    let switcher_selected_id =
+        |sidebar: &Entity<Sidebar>, cx: &mut gpui::VisualTestContext| -> acp::SessionId {
+            sidebar.read_with(cx, |sidebar, cx| {
+                let switcher = sidebar
+                    .thread_switcher
+                    .as_ref()
+                    .expect("switcher should be open");
+                let s = switcher.read(cx);
+                s.selected_entry()
+                    .expect("should have selection")
+                    .session_id
+                    .clone()
+            })
+        };
 
     // ── Setup: create three threads with distinct created_at times ──────
     // Thread C (oldest), Thread B, Thread A (newest) — by created_at.
@@ -4248,11 +4259,7 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     // ── 1. Open switcher: threads sorted by last_accessed_at ───────────
     open_and_focus_sidebar(&sidebar, cx);
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.on_toggle_thread_switcher(
-            &ToggleThreadSwitcher::default(),
-            window,
-            cx,
-        );
+        sidebar.on_toggle_thread_switcher(&ToggleThreadSwitcher::default(), window, cx);
     });
     cx.run_until_parked();
 
@@ -4261,7 +4268,11 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     // then B, then C.
     assert_eq!(
         switcher_ids(&sidebar, cx),
-        vec![session_id_a.clone(), session_id_b.clone(), session_id_c.clone()],
+        vec![
+            session_id_a.clone(),
+            session_id_b.clone(),
+            session_id_c.clone()
+        ],
     );
     // First ctrl-tab selects the second entry (B).
     assert_eq!(switcher_selected_id(&sidebar, cx), session_id_b);
@@ -4274,11 +4285,7 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
 
     // ── 2. Confirm on Thread C: it becomes most-recently-accessed ──────
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.on_toggle_thread_switcher(
-            &ToggleThreadSwitcher::default(),
-            window,
-            cx,
-        );
+        sidebar.on_toggle_thread_switcher(&ToggleThreadSwitcher::default(), window, cx);
     });
     cx.run_until_parked();
 
@@ -4307,22 +4314,25 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
 
     // Switcher should be dismissed after confirm.
     sidebar.read_with(cx, |sidebar, _cx| {
-        assert!(sidebar.thread_switcher.is_none(), "switcher should be dismissed");
+        assert!(
+            sidebar.thread_switcher.is_none(),
+            "switcher should be dismissed"
+        );
     });
 
     // Re-open switcher: Thread C is now most-recently-accessed.
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.on_toggle_thread_switcher(
-            &ToggleThreadSwitcher::default(),
-            window,
-            cx,
-        );
+        sidebar.on_toggle_thread_switcher(&ToggleThreadSwitcher::default(), window, cx);
     });
     cx.run_until_parked();
 
     assert_eq!(
         switcher_ids(&sidebar, cx),
-        vec![session_id_c.clone(), session_id_a.clone(), session_id_b.clone()],
+        vec![
+            session_id_c.clone(),
+            session_id_a.clone(),
+            session_id_b.clone()
+        ],
     );
 
     sidebar.update_in(cx, |sidebar, _window, cx| {
@@ -4353,11 +4363,7 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.on_toggle_thread_switcher(
-            &ToggleThreadSwitcher::default(),
-            window,
-            cx,
-        );
+        sidebar.on_toggle_thread_switcher(&ToggleThreadSwitcher::default(), window, cx);
     });
     cx.run_until_parked();
 
@@ -4373,7 +4379,12 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     let ids = switcher_ids(&sidebar, cx);
     assert_eq!(
         ids,
-        vec![session_id_c.clone(), session_id_a.clone(), session_id_b.clone(), session_id_hist.clone()],
+        vec![
+            session_id_c.clone(),
+            session_id_a.clone(),
+            session_id_b.clone(),
+            session_id_hist.clone()
+        ],
     );
 
     sidebar.update_in(cx, |sidebar, _window, cx| {
@@ -4403,11 +4414,7 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.on_toggle_thread_switcher(
-            &ToggleThreadSwitcher::default(),
-            window,
-            cx,
-        );
+        sidebar.on_toggle_thread_switcher(&ToggleThreadSwitcher::default(), window, cx);
     });
     cx.run_until_parked();
 
