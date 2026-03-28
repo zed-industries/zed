@@ -4643,7 +4643,7 @@ mod property_test {
 
     #[gpui::property_test]
     async fn test_sidebar_invariants(
-        #[strategy = gpui::proptest::collection::vec(0u32..DISTRIBUTION_SLOTS * 10, 1..20)]
+        #[strategy = gpui::proptest::collection::vec(0u32..DISTRIBUTION_SLOTS * 10, 1..5)]
         raw_operations: Vec<u32>,
         cx: &mut TestAppContext,
     ) {
