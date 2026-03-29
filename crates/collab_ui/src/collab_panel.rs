@@ -306,6 +306,7 @@ enum ListEntry {
         channel: Arc<Channel>,
         depth: usize,
         has_children: bool,
+        is_favorite: bool,
         // `None` when the channel is a parent of a matched channel.
         string_match: Option<StringMatch>,
     },
@@ -727,6 +728,7 @@ impl CollabPanel {
                         channel: (*channel).clone(),
                         depth: 0,
                         has_children: false,
+                        is_favorite: true,
                         string_match: matches_by_candidate.get(&ix).cloned().cloned(),
                     });
                 }
@@ -827,6 +829,7 @@ impl CollabPanel {
                             channel: channel.clone(),
                             depth,
                             has_children: false,
+                            is_favorite: false,
                             string_match: matches_by_id.get(&channel.id).map(|mat| (*mat).clone()),
                         });
                         self.entries
@@ -843,6 +846,7 @@ impl CollabPanel {
                             channel: channel.clone(),
                             depth,
                             has_children,
+                            is_favorite: false,
                             string_match: matches_by_id.get(&channel.id).map(|mat| (*mat).clone()),
                         });
                     }
@@ -1923,10 +1927,25 @@ impl CollabPanel {
     }
 
     fn toggle_favorite_channel(&mut self, channel_id: ChannelId, cx: &mut Context<Self>) {
+        let was_selected_favorite = self.selected_entry_is_favorite()
+            && self
+                .selected_channel()
+                .is_some_and(|channel| channel.id == channel_id);
+
         self.channel_store.update(cx, |store, cx| {
             store.toggle_favorite_channel(channel_id, cx);
         });
         self.persist_favorites(cx);
+
+        if was_selected_favorite && self.selection.is_none() {
+            self.selection = self.entries.iter().position(|entry| {
+                matches!(
+                    entry,
+                    ListEntry::Channel { channel, is_favorite: false, .. }
+                    if channel.id == channel_id
+                )
+            });
+        }
     }
 
     fn is_channel_favorited(&self, channel_id: ChannelId, cx: &App) -> bool {
@@ -2161,12 +2180,21 @@ impl CollabPanel {
     }
 
     fn move_channel_up(&mut self, _: &MoveChannelUp, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(channel) = self.selected_channel() {
-            self.channel_store.update(cx, |store, cx| {
-                store
-                    .reorder_channel(channel.id, proto::reorder_channel::Direction::Up, cx)
-                    .detach_and_prompt_err("Failed to move channel up", window, cx, |_, _, _| None)
-            });
+        if let Some(channel) = self.selected_channel().cloned() {
+            if self.selected_entry_is_favorite() {
+                self.reorder_favorite(channel.id, proto::reorder_channel::Direction::Up, cx);
+            } else {
+                self.channel_store.update(cx, |store, cx| {
+                    store
+                        .reorder_channel(channel.id, proto::reorder_channel::Direction::Up, cx)
+                        .detach_and_prompt_err(
+                            "Failed to move channel up",
+                            window,
+                            cx,
+                            |_, _, _| None,
+                        )
+                });
+            }
         }
     }
 
@@ -2176,15 +2204,49 @@ impl CollabPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(channel) = self.selected_channel() {
-            self.channel_store.update(cx, |store, cx| {
-                store
-                    .reorder_channel(channel.id, proto::reorder_channel::Direction::Down, cx)
-                    .detach_and_prompt_err("Failed to move channel down", window, cx, |_, _, _| {
-                        None
-                    })
-            });
+        if let Some(channel) = self.selected_channel().cloned() {
+            if self.selected_entry_is_favorite() {
+                self.reorder_favorite(channel.id, proto::reorder_channel::Direction::Down, cx);
+            } else {
+                self.channel_store.update(cx, |store, cx| {
+                    store
+                        .reorder_channel(channel.id, proto::reorder_channel::Direction::Down, cx)
+                        .detach_and_prompt_err(
+                            "Failed to move channel down",
+                            window,
+                            cx,
+                            |_, _, _| None,
+                        )
+                });
+            }
         }
+    }
+
+    fn reorder_favorite(
+        &mut self,
+        channel_id: ChannelId,
+        direction: proto::reorder_channel::Direction,
+        cx: &mut Context<Self>,
+    ) {
+        self.channel_store.update(cx, |store, cx| {
+            let favorite_ids = store.favorite_channel_ids();
+            let Some(channel_index) = favorite_ids.iter().position(|id| *id == channel_id) else {
+                return;
+            };
+            let target_channel_index = match direction {
+                proto::reorder_channel::Direction::Up => channel_index.checked_sub(1),
+                proto::reorder_channel::Direction::Down => {
+                    let next = channel_index + 1;
+                    (next < favorite_ids.len()).then_some(next)
+                }
+            };
+            if let Some(target_channel_index) = target_channel_index {
+                let mut new_ids = favorite_ids.to_vec();
+                new_ids.swap(channel_index, target_channel_index);
+                store.set_favorite_channel_ids(new_ids, cx);
+            }
+        });
+        self.persist_favorites(cx);
     }
 
     fn open_channel_notes(
@@ -2252,6 +2314,20 @@ impl CollabPanel {
             .and_then(|entry| match entry {
                 ListEntry::Channel { channel, .. } => Some(channel),
                 _ => None,
+            })
+    }
+
+    fn selected_entry_is_favorite(&self) -> bool {
+        self.selection
+            .and_then(|ix| self.entries.get(ix))
+            .is_some_and(|entry| {
+                matches!(
+                    entry,
+                    ListEntry::Channel {
+                        is_favorite: true,
+                        ..
+                    }
+                )
             })
     }
 
@@ -2552,6 +2628,7 @@ impl CollabPanel {
                 depth,
                 has_children,
                 string_match,
+                ..
             } => self
                 .render_channel(
                     channel,
@@ -3445,13 +3522,17 @@ impl PartialEq for ListEntry {
                 }
             }
             ListEntry::Channel {
-                channel: channel_1, ..
+                channel: channel_1,
+                is_favorite: is_favorite_1,
+                ..
             } => {
                 if let ListEntry::Channel {
-                    channel: channel_2, ..
+                    channel: channel_2,
+                    is_favorite: is_favorite_2,
+                    ..
                 } = other
                 {
-                    return channel_1.id == channel_2.id;
+                    return channel_1.id == channel_2.id && is_favorite_1 == is_favorite_2;
                 }
             }
             ListEntry::ChannelNotes { channel_id } => {
