@@ -2703,6 +2703,64 @@ async fn test_scroll_page_up_page_down(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_scroll_line_up_down_cursor_margin(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    let line_height = cx.update_editor(|editor, window, cx| {
+        editor.set_vertical_scroll_margin(2, cx);
+        editor
+            .style(cx)
+            .text
+            .line_height_in_pixels(window.rem_size())
+    });
+    let window = cx.window;
+    // 5 visible lines with margin=2: valid cursor rows are [top+2 .. top+2] (only the middle row)
+    cx.simulate_window_resize(window, size(px(1000.), 5. * line_height));
+
+    // Cursor at row 0 — autoscroll leaves viewport at y=0.
+    cx.set_state(indoc! {"
+        ˇone
+        two
+        three
+        four
+        five
+        six
+        seven
+        eight
+        nine
+        ten
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        assert_eq!(editor.snapshot(window, cx).scroll_position().y, 0.);
+
+        // Scroll down 1: top=1, visible rows 1-5, margin=2 → min_row=3, max_row=3.
+        // Cursor at row 0 < min_row=3 → clamped to row 3.
+        editor.scroll_screen_with_cursor_margin(&ScrollAmount::Line(1.), window, cx);
+        assert_eq!(editor.snapshot(window, cx).scroll_position().y, 1.);
+        let snapshot = editor.display_snapshot(cx);
+        assert_eq!(
+            editor.selections.newest_display(&snapshot).head().row().0,
+            3,
+            "cursor clamped to min_row after scrolling down"
+        );
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        // Scroll up 1: top=0, visible rows 0-4, margin=2 (top==0 special case) → min_row=0, max_row=2.
+        // Cursor at row 3 > max_row=2 → clamped to row 2.
+        editor.scroll_screen_with_cursor_margin(&ScrollAmount::Line(-1.), window, cx);
+        assert_eq!(editor.snapshot(window, cx).scroll_position().y, 0.);
+        let snapshot = editor.display_snapshot(cx);
+        assert_eq!(
+            editor.selections.newest_display(&snapshot).head().row().0,
+            2,
+            "cursor clamped to max_row after scrolling up"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_autoscroll(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;

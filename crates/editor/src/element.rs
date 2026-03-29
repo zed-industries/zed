@@ -313,10 +313,10 @@ impl EditorElement {
         register_action(editor, window, Editor::scroll_cursor_bottom);
         register_action(editor, window, Editor::scroll_cursor_center_top_bottom);
         register_action(editor, window, |editor, _: &LineDown, window, cx| {
-            editor.scroll_screen(&ScrollAmount::Line(1.), window, cx)
+            editor.scroll_screen_with_cursor_margin(&ScrollAmount::Line(1.), window, cx)
         });
         register_action(editor, window, |editor, _: &LineUp, window, cx| {
-            editor.scroll_screen(&ScrollAmount::Line(-1.), window, cx)
+            editor.scroll_screen_with_cursor_margin(&ScrollAmount::Line(-1.), window, cx)
         });
         register_action(editor, window, |editor, _: &HalfPageDown, window, cx| {
             editor.scroll_screen(&ScrollAmount::Page(0.5), window, cx)
