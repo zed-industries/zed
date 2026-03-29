@@ -51,6 +51,38 @@ class ZedAgent(BaseInstalledAgent):
     def name() -> str:
         return "zed"
 
+    async def _detect_workdir(self, environment: BaseEnvironment) -> str:
+        """Detect the repo working directory inside the container.
+
+        Checks, in order:
+          1. Explicit ``EVAL_CLI_WORKDIR`` extra-env override
+          2. ``/app``      (SWE-bench Pro)
+          3. ``/testbed``  (SWE-bench Verified)
+          4. ``/repo``
+          5. First git repo found under ``/`` (max depth 3)
+        """
+        override = self._extra_env.get("EVAL_CLI_WORKDIR")
+        if override:
+            return override
+
+        result = await self.exec_as_agent(
+            environment,
+            command=(
+                "for d in /app /testbed /repo; do "
+                '  if [ -d "$d/.git" ]; then echo "$d"; exit 0; fi; '
+                "done; "
+                "find / -maxdepth 3 -name .git -type d 2>/dev/null "
+                '| head -1 | sed "s|/.git$||"'
+            ),
+        )
+        workdir = result.stdout.strip()
+        if not workdir:
+            raise RuntimeError(
+                "Could not find a git repository in the container. "
+                "Set EVAL_CLI_WORKDIR explicitly via --ae EVAL_CLI_WORKDIR=/path/to/repo"
+            )
+        return workdir
+
     async def install(self, environment: BaseEnvironment) -> None:
         await self.exec_as_root(
             environment,
@@ -87,7 +119,31 @@ class ZedAgent(BaseInstalledAgent):
                 # typescript-language-server (TypeScript/JS - default LSP)
                 'TSSERVER_DIR="$ZED_DATA_DIR/languages/typescript-language-server"; '
                 'mkdir -p "$TSSERVER_DIR"; '
-                'npm install --prefix "$TSSERVER_DIR" --save-exact typescript typescript-language-server'
+                'npm install --prefix "$TSSERVER_DIR" --save-exact typescript typescript-language-server; '
+                # vtsls (VS Code TypeScript language features)
+                'VTSLS_DIR="$ZED_DATA_DIR/languages/vtsls"; '
+                'mkdir -p "$VTSLS_DIR"; '
+                'npm install --prefix "$VTSLS_DIR" --save-exact @vtsls/language-server typescript; '
+                # tailwindcss-language-server
+                'TAILWIND_DIR="$ZED_DATA_DIR/languages/tailwindcss-language-server"; '
+                'mkdir -p "$TAILWIND_DIR"; '
+                'npm install --prefix "$TAILWIND_DIR" --save-exact @tailwindcss/language-server'
+            ),
+        )
+
+        # eslint LSP (downloaded from zed-industries/vscode-eslint GitHub release,
+        # then compiled — this mirrors what Zed does at runtime).
+        await self.exec_as_agent(
+            environment,
+            command=(
+                "set -euo pipefail; "
+                'ZED_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/zed"; '
+                'ESLINT_DIR="$ZED_DATA_DIR/languages/eslint/vscode-eslint-2.4.4"; '
+                'mkdir -p "$ESLINT_DIR"; '
+                'curl -fsSL "https://github.com/zed-industries/vscode-eslint/archive/refs/tags/release/2.4.4.tar.gz" '
+                '| tar -xz -C "$ESLINT_DIR"; '
+                'mv "$ESLINT_DIR"/vscode-eslint-release-2.4.4 "$ESLINT_DIR/vscode-eslint"; '
+                'cd "$ESLINT_DIR/vscode-eslint" && npm install && npm run compile'
             ),
         )
 
@@ -124,6 +180,13 @@ class ZedAgent(BaseInstalledAgent):
                 f"ln -sf {shlex.quote(agent_home + '/.local/bin/uv')} /usr/local/bin/uv && "
                 f"ln -sf {shlex.quote(agent_home + '/.local/bin/uvx')} /usr/local/bin/uvx"
             ),
+        )
+
+        # Install a modern ruff so `ruff server` works without --preview.
+        # This also makes it available as a CLI tool for the agent.
+        await self.exec_as_agent(
+            environment,
+            command=('export PATH="$HOME/.local/bin:$PATH" && uv tool install ruff'),
         )
 
         if self._binary_path:
@@ -217,7 +280,13 @@ class ZedAgent(BaseInstalledAgent):
         escaped_instruction = shlex.quote(instruction)
         env = self._get_api_env()
 
-        parts = ["eval-cli", "--workdir /testbed", "--output-dir /logs/agent"]
+        workdir = await self._detect_workdir(environment)
+
+        parts = [
+            "eval-cli",
+            f"--workdir {shlex.quote(workdir)}",
+            "--output-dir /logs/agent",
+        ]
 
         if self.model_name:
             parts.append(f"--model {shlex.quote(self.model_name)}")
@@ -258,5 +327,5 @@ class ZedAgent(BaseInstalledAgent):
                 "git diff --cached HEAD > /logs/agent/patch.diff && "
                 'echo "Patch size: $(wc -c < /logs/agent/patch.diff) bytes"'
             ),
-            cwd="/testbed",
+            cwd=workdir,
         )
