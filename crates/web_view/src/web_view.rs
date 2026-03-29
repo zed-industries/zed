@@ -16,6 +16,7 @@ use gdkx11::{
     X11Display,
     glib::{Cast, ObjectType},
 };
+
 #[cfg(not(target_arch = "wasm32"))]
 use std::cell::RefCell;
 #[cfg(not(target_arch = "wasm32"))]
@@ -85,7 +86,7 @@ pub struct WebView {
     #[cfg(not(target_arch = "wasm32"))]
     callback_state: Option<Rc<RefCell<WebViewCallbackState>>>,
     #[cfg(target_os = "linux")]
-    x11_parent_window: Option<XWindow>,
+    linux_backend: Option<LinuxBackend>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -93,6 +94,11 @@ pub struct WebView {
 struct WebViewCallbackState {
     pending_url: Option<String>,
     is_loading: bool,
+}
+
+#[cfg(target_os = "linux")]
+enum LinuxBackend {
+    X11 { parent_xid: XWindow },
 }
 
 #[cfg(target_os = "linux")]
@@ -120,10 +126,7 @@ impl LinuxX11WindowHandle {
                 window: handle.window,
                 visual_id: handle.visual_id,
             }),
-            RawWindowHandle::Wayland(_) => {
-                Err("Web views are not yet supported on Wayland. Please use X11.".to_string())
-            }
-            _ => Err("Web views are not supported for this Linux window backend.".to_string()),
+            _ => Err("Unsupported Linux window backend for X11 web view.".to_string()),
         }
     }
 }
@@ -136,6 +139,14 @@ impl HasWindowHandle for LinuxX11WindowHandle {
 
         Ok(unsafe { WindowHandle::borrow_raw(RawWindowHandle::Xlib(handle)) })
     }
+}
+
+#[cfg(target_os = "linux")]
+fn is_wayland(window: &Window) -> bool {
+    matches!(
+        HasWindowHandle::window_handle(window).map(|h| h.as_raw()),
+        Ok(RawWindowHandle::Wayland(_))
+    )
 }
 
 impl WebView {
@@ -209,7 +220,7 @@ impl WebView {
             #[cfg(not(target_arch = "wasm32"))]
             callback_state: None,
             #[cfg(target_os = "linux")]
-            x11_parent_window: None,
+            linux_backend: None,
         }
     }
 
@@ -334,15 +345,24 @@ impl WebView {
         self.callback_state = Some(callback_state);
 
         #[cfg(target_os = "linux")]
-        let webview_result = match LinuxX11WindowHandle::from_window(window) {
-            Ok(x11_window_handle) => {
-                self.x11_parent_window = Some(x11_window_handle.window);
-                webview_builder.build_as_child(&x11_window_handle)
-            }
-            Err(message) => {
-                self.error = Some(message.into());
-                cx.notify();
-                return;
+        let webview_result = if is_wayland(window) {
+            open_url_in_system_browser(self.url.as_ref());
+            self.error = Some("Web view is not yet supported on Wayland. The URL has been opened in your default browser.".into());
+            cx.notify();
+            return;
+        } else {
+            match LinuxX11WindowHandle::from_window(window) {
+                Ok(x11_window_handle) => {
+                    self.linux_backend = Some(LinuxBackend::X11 {
+                        parent_xid: x11_window_handle.window,
+                    });
+                    webview_builder.build_as_child(&x11_window_handle)
+                }
+                Err(message) => {
+                    self.error = Some(message.into());
+                    cx.notify();
+                    return;
+                }
             }
         };
 
@@ -433,9 +453,12 @@ impl WebView {
                     )
                     .into(),
                 };
-                webview.set_bounds(rect).log_err();
+
                 #[cfg(target_os = "linux")]
-                self.lower_x11_children();
+                self.sync_linux_bounds(&rect);
+
+                #[cfg(not(target_os = "linux"))]
+                webview.set_bounds(rect).log_err();
             }
             self.set_visible(true);
         }
@@ -453,11 +476,20 @@ impl WebView {
     }
 
     #[cfg(target_os = "linux")]
-    pub fn lower_x11_children(&self) {
-        let Some(parent_xid) = self.x11_parent_window else {
-            return;
-        };
+    fn sync_linux_bounds(&self, rect: &wry::Rect) {
+        match &self.linux_backend {
+            Some(LinuxBackend::X11 { parent_xid }) => {
+                if let Some(webview) = &self.wry_webview {
+                    webview.set_bounds(*rect).log_err();
+                }
+                self.lower_x11_children(*parent_xid);
+            }
+            None => {}
+        }
+    }
 
+    #[cfg(target_os = "linux")]
+    fn lower_x11_children(&self, parent_xid: XWindow) {
         let Some(gdk_display) = gtk::gdk::Display::default() else {
             return;
         };
