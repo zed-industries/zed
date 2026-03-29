@@ -106,7 +106,7 @@ impl CachedMermaidDiagram {
                     let svg_string = mermaid_rs_renderer::render(&contents.contents)?;
                     let scale = contents.scale as f32 / 100.0;
                     svg_renderer
-                        .render_single_frame(svg_string.as_bytes(), scale, true)
+                        .render_single_frame(svg_string.as_bytes(), scale)
                         .map_err(|error| anyhow::anyhow!("{error}"))
                 })
                 .await;
@@ -325,7 +325,6 @@ mod tests {
                 .render_single_frame(
                     br#"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>"#,
                     1.0,
-                    true,
                 )
                 .unwrap()
         })

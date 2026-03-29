@@ -2108,7 +2108,7 @@ impl Image {
             ImageFormat::Ico => frames_for_image(&self.bytes, image::ImageFormat::Ico)?,
             ImageFormat::Svg => {
                 return svg_renderer
-                    .render_single_frame(&self.bytes, 1.0, true)
+                    .render_single_frame(&self.bytes, 1.0)
                     .map_err(Into::into);
             }
         };
@@ -2205,9 +2205,7 @@ mod image_tests {
                 .to_vec(),
         );
 
-        let render_image = image
-            .to_image_data(SvgRenderer::new(Arc::new(())))
-            .unwrap();
+        let render_image = image.to_image_data(SvgRenderer::new(Arc::new(()))).unwrap();
         let bytes = render_image.as_bytes(0).unwrap();
 
         for pixel in bytes.chunks_exact(4) {
