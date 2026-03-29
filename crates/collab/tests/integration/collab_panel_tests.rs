@@ -182,6 +182,7 @@ async fn test_reorder_favorite_channels_independently_of_channels(cx: &mut TestA
     );
 
     // Unfavorite channel-b via action.
+    // Selection should move to channel-b in the Channels section.
     panel.update_in(cx, |panel, window, cx| {
         panel.toggle_selected_channel_favorite(&ToggleSelectedChannelFavorite, window, cx);
     });
@@ -193,7 +194,7 @@ async fn test_reorder_favorite_channels_independently_of_channels(cx: &mut TestA
             "[Channels]",
             "  v root",
             "    #️⃣ channel-a",
-            "    #️⃣ channel-b",
+            "    #️⃣ channel-b  <== selected",
             "    #️⃣ channel-c",
             "[Contacts]",
         ]
