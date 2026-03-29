@@ -7207,23 +7207,29 @@ impl Editor {
         // avoid opening a new editor to display them.
 
         if let [(buffer, transaction)] = &*entries {
-            let multibuffer_snapshot =
-                editor.update(cx, |editor, cx| editor.buffer().read(cx).snapshot(cx))?;
-            let all_edits_within_excerpt = buffer.read_with(cx, |buffer, _| {
-                let buffer_snapshot = buffer.snapshot();
-                buffer
-                    .edited_ranges_for_transaction::<usize>(transaction)
-                    .all(|range| {
-                        multibuffer_snapshot
-                            .buffer_anchor_range_to_anchor_range(
-                                buffer_snapshot.anchor_range_inside(range),
-                            )
-                            .is_some()
-                    })
-            });
+            let cursor_excerpt = editor.update(cx, |editor, cx| {
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                let head = editor.selections.newest_anchor().head();
+                let (buffer_snapshot, excerpt_range) = snapshot.excerpt_containing(head..head)?;
+                if buffer_snapshot.remote_id() != buffer.read(cx).remote_id() {
+                    return None;
+                }
+                Some(excerpt_range)
+            })?;
 
-            if all_edits_within_excerpt {
-                return Ok(());
+            if let Some(excerpt_range) = cursor_excerpt {
+                let all_edits_within_excerpt = buffer.read_with(cx, |buffer, _| {
+                    let excerpt_range = excerpt_range.context.to_offset(buffer);
+                    buffer
+                        .edited_ranges_for_transaction::<usize>(transaction)
+                        .all(|range| {
+                            excerpt_range.start <= range.start && excerpt_range.end >= range.end
+                        })
+                });
+
+                if all_edits_within_excerpt {
+                    return Ok(());
+                }
             }
         }
 
@@ -17101,7 +17107,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let old_selections: Box<[_]> = self.selections.disjoint_anchors().into();
+        let old_selections: Arc<[_]> = self.selections.all_anchors(&self.display_snapshot(cx));
 
         self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
 
@@ -24243,8 +24249,6 @@ impl Editor {
                     )
                     .detach();
                 }
-                self.semantic_token_state
-                    .invalidate_buffer(&buffer.read(cx).remote_id());
                 self.update_lsp_data(Some(buffer_id), window, cx);
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                 self.refresh_runnables(None, window, cx);

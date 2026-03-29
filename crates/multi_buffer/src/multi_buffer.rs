@@ -2820,9 +2820,6 @@ impl MultiBuffer {
                             log::trace!("skipping hunk that starts before excerpt");
                             continue;
                         }
-                        hunk_buffer_range
-                            .end
-                            .to_point(&excerpt.buffer_snapshot(&snapshot));
                         let hunk_excerpt_start = excerpt_start
                             + hunk_buffer_range.start.saturating_sub(excerpt_buffer_start);
                         let hunk_excerpt_end = excerpt_end

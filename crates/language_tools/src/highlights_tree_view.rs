@@ -8,7 +8,7 @@ use gpui::{
     MouseDownEvent, MouseMoveEvent, ParentElement, Render, ScrollStrategy, SharedString, Styled,
     Task, UniformListScrollHandle, WeakEntity, Window, actions, div, rems, uniform_list,
 };
-use language::{Point, ToOffset};
+use language::{BufferId, Point, ToOffset};
 use menu::{SelectNext, SelectPrevious};
 use std::{mem, ops::Range};
 use theme::ActiveTheme;
@@ -114,6 +114,7 @@ impl HighlightCategory {
 #[derive(Debug, Clone)]
 struct HighlightEntry {
     range: Range<Anchor>,
+    buffer_id: BufferId,
     buffer_point_range: Range<Point>,
     range_display: SharedString,
     style: HighlightStyle,
@@ -317,10 +318,14 @@ impl HighlightsTreeView {
         display_map.update(cx, |display_map, cx| {
             for (key, text_highlights) in display_map.all_text_highlights() {
                 for range in &text_highlights.1 {
-                    let (range_display, buffer_point_range) =
-                        format_anchor_range(range, &multi_buffer_snapshot);
+                    let Some((range_display, buffer_id, buffer_point_range)) =
+                        format_anchor_range(range, &multi_buffer_snapshot)
+                    else {
+                        continue;
+                    };
                     entries.push(HighlightEntry {
                         range: range.clone(),
+                        buffer_id,
                         range_display,
                         style: text_highlights.0,
                         category: HighlightCategory::Text(*key),
@@ -337,8 +342,11 @@ impl HighlightsTreeView {
                         .and_then(|buf| buf.read(cx).language().map(|l| l.name()));
                     for token in tokens.iter() {
                         let range = token.range.start..token.range.end;
-                        let (range_display, buffer_point_range) =
-                            format_anchor_range(&range, &multi_buffer_snapshot);
+                        let Some((range_display, entry_buffer_id, buffer_point_range)) =
+                            format_anchor_range(&range, &multi_buffer_snapshot)
+                        else {
+                            continue;
+                        };
                         let Some(stylizer) = lsp_store.get_or_create_token_stylizer(
                             token.server_id,
                             language_name.as_ref(),
@@ -376,6 +384,7 @@ impl HighlightsTreeView {
 
                         entries.push(HighlightEntry {
                             range,
+                            buffer_id: entry_buffer_id,
                             range_display,
                             style: interner[token.style],
                             category: HighlightCategory::SemanticToken {
@@ -439,11 +448,15 @@ impl HighlightsTreeView {
                 };
 
                 let range = start..end;
-                let (range_display, buffer_point_range) =
-                    format_anchor_range(&range, &multi_buffer_snapshot);
+                let Some((range_display, buffer_id, buffer_point_range)) =
+                    format_anchor_range(&range, &multi_buffer_snapshot)
+                else {
+                    continue;
+                };
 
                 entries.push(HighlightEntry {
                     range,
+                    buffer_id,
                     range_display,
                     style,
                     category: HighlightCategory::SyntaxToken {
@@ -456,14 +469,16 @@ impl HighlightsTreeView {
         }
 
         entries.sort_by(|a, b| {
-            a.buffer_point_range
-                .start
-                .cmp(&b.buffer_point_range.start)
+            a.buffer_id
+                .cmp(&b.buffer_id)
+                .then_with(|| a.buffer_point_range.start.cmp(&b.buffer_point_range.start))
                 .then_with(|| a.buffer_point_range.end.cmp(&b.buffer_point_range.end))
                 .then_with(|| a.category.cmp(&b.category))
         });
         entries.dedup_by(|a, b| {
-            a.buffer_point_range == b.buffer_point_range && a.category == b.category
+            a.buffer_id == b.buffer_id
+                && a.buffer_point_range == b.buffer_point_range
+                && a.category == b.category
         });
 
         self.cached_entries = entries;
@@ -480,7 +495,7 @@ impl HighlightsTreeView {
     fn rebuild_display_items(&mut self, snapshot: &MultiBufferSnapshot, cx: &App) {
         self.display_items.clear();
 
-        let mut last_range_end: Option<Point> = None;
+        let mut last_range_end: Option<Anchor> = None;
 
         for (entry_ix, entry) in self.cached_entries.iter().enumerate() {
             if !self.should_show_entry(entry) {
@@ -488,13 +503,13 @@ impl HighlightsTreeView {
             }
 
             if !self.is_singleton {
-                let excerpt_changed = last_range_end.is_none_or(|point| {
+                let excerpt_changed = last_range_end.is_none_or(|anchor| {
                     snapshot
-                        .excerpt_containing(point..entry.buffer_point_range.start)
+                        .excerpt_containing(anchor..entry.range.start)
                         .is_none()
                 });
                 if excerpt_changed {
-                    last_range_end = Some(entry.buffer_point_range.end);
+                    last_range_end = Some(entry.range.end);
                     let label = excerpt_label_for(entry, snapshot, cx);
                     self.display_items
                         .push(DisplayItem::ExcerptSeparator { label });
@@ -1090,15 +1105,12 @@ fn excerpt_label_for(
 fn format_anchor_range(
     range: &Range<Anchor>,
     snapshot: &MultiBufferSnapshot,
-) -> (SharedString, Range<Point>) {
+) -> Option<(SharedString, BufferId, Range<Point>)> {
     let start = range.start.to_point(snapshot);
     let end = range.end.to_point(snapshot);
-    let Some(((_, start), (_, end))) = snapshot
+    let ((start_buffer, start), (_, end)) = snapshot
         .point_to_buffer_point(start)
-        .zip(snapshot.point_to_buffer_point(end))
-    else {
-        return ("[]".into(), Point::zero()..Point::zero());
-    };
+        .zip(snapshot.point_to_buffer_point(end))?;
     let display = SharedString::from(format!(
         "[{}:{} - {}:{}]",
         start.row + 1,
@@ -1106,7 +1118,7 @@ fn format_anchor_range(
         end.row + 1,
         end.column + 1,
     ));
-    (display, start..end)
+    Some((display, start_buffer.remote_id(), start..end))
 }
 
 fn render_style_preview(style: HighlightStyle, selected: bool, cx: &App) -> Div {
