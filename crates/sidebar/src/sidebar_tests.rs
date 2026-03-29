@@ -4127,6 +4127,318 @@ async fn test_linked_worktree_threads_not_duplicated_across_groups(cx: &mut Test
     );
 }
 
+#[gpui::test]
+async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, &project, cx);
+
+    let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
+
+    let switcher_ids =
+        |sidebar: &Entity<Sidebar>, cx: &mut gpui::VisualTestContext| -> Vec<acp::SessionId> {
+            sidebar.read_with(cx, |sidebar, cx| {
+                let switcher = sidebar
+                    .thread_switcher
+                    .as_ref()
+                    .expect("switcher should be open");
+                switcher
+                    .read(cx)
+                    .entries()
+                    .iter()
+                    .map(|e| e.session_id.clone())
+                    .collect()
+            })
+        };
+
+    let switcher_selected_id =
+        |sidebar: &Entity<Sidebar>, cx: &mut gpui::VisualTestContext| -> acp::SessionId {
+            sidebar.read_with(cx, |sidebar, cx| {
+                let switcher = sidebar
+                    .thread_switcher
+                    .as_ref()
+                    .expect("switcher should be open");
+                let s = switcher.read(cx);
+                s.selected_entry()
+                    .expect("should have selection")
+                    .session_id
+                    .clone()
+            })
+        };
+
+    // ── Setup: create three threads with distinct created_at times ──────
+    // Thread C (oldest), Thread B, Thread A (newest) — by created_at.
+    // We send messages in each so they also get last_message_sent_or_queued timestamps.
+    let connection_c = StubAgentConnection::new();
+    connection_c.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+        acp::ContentChunk::new("Done C".into()),
+    )]);
+    open_thread_with_connection(&panel, connection_c, cx);
+    send_message(&panel, cx);
+    let session_id_c = active_session_id(&panel, cx);
+    cx.update(|_, cx| {
+        SidebarThreadMetadataStore::global(cx).update(cx, |store, cx| {
+            store.save(
+                ThreadMetadata {
+                    session_id: session_id_c.clone(),
+                    agent_id: None,
+                    title: "Thread C".into(),
+                    updated_at: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0)
+                        .unwrap(),
+                    created_at: Some(
+                        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+                    ),
+                    folder_paths: path_list.clone(),
+                },
+                cx,
+            )
+        })
+    });
+    cx.run_until_parked();
+
+    let connection_b = StubAgentConnection::new();
+    connection_b.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+        acp::ContentChunk::new("Done B".into()),
+    )]);
+    open_thread_with_connection(&panel, connection_b, cx);
+    send_message(&panel, cx);
+    let session_id_b = active_session_id(&panel, cx);
+    cx.update(|_, cx| {
+        SidebarThreadMetadataStore::global(cx).update(cx, |store, cx| {
+            store.save(
+                ThreadMetadata {
+                    session_id: session_id_b.clone(),
+                    agent_id: None,
+                    title: "Thread B".into(),
+                    updated_at: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0)
+                        .unwrap(),
+                    created_at: Some(
+                        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
+                    ),
+                    folder_paths: path_list.clone(),
+                },
+                cx,
+            )
+        })
+    });
+    cx.run_until_parked();
+
+    let connection_a = StubAgentConnection::new();
+    connection_a.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+        acp::ContentChunk::new("Done A".into()),
+    )]);
+    open_thread_with_connection(&panel, connection_a, cx);
+    send_message(&panel, cx);
+    let session_id_a = active_session_id(&panel, cx);
+    cx.update(|_, cx| {
+        SidebarThreadMetadataStore::global(cx).update(cx, |store, cx| {
+            store.save(
+                ThreadMetadata {
+                    session_id: session_id_a.clone(),
+                    agent_id: None,
+                    title: "Thread A".into(),
+                    updated_at: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 3, 0, 0, 0)
+                        .unwrap(),
+                    created_at: Some(
+                        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 3, 0, 0, 0).unwrap(),
+                    ),
+                    folder_paths: path_list.clone(),
+                },
+                cx,
+            )
+        })
+    });
+    cx.run_until_parked();
+
+    // All three threads are now live. Thread A was opened last, so it's
+    // the one being viewed. Opening each thread called record_thread_access,
+    // so all three have last_accessed_at set.
+    // Access order is: A (most recent), B, C (oldest).
+
+    // ── 1. Open switcher: threads sorted by last_accessed_at ───────────
+    open_and_focus_sidebar(&sidebar, cx);
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.on_toggle_thread_switcher(&ToggleThreadSwitcher::default(), window, cx);
+    });
+    cx.run_until_parked();
+
+    // All three have last_accessed_at, so they sort by access time.
+    // A was accessed most recently (it's the currently viewed thread),
+    // then B, then C.
+    assert_eq!(
+        switcher_ids(&sidebar, cx),
+        vec![
+            session_id_a.clone(),
+            session_id_b.clone(),
+            session_id_c.clone()
+        ],
+    );
+    // First ctrl-tab selects the second entry (B).
+    assert_eq!(switcher_selected_id(&sidebar, cx), session_id_b);
+
+    // Dismiss the switcher without confirming.
+    sidebar.update_in(cx, |sidebar, _window, cx| {
+        sidebar.dismiss_thread_switcher(cx);
+    });
+    cx.run_until_parked();
+
+    // ── 2. Confirm on Thread C: it becomes most-recently-accessed ──────
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.on_toggle_thread_switcher(&ToggleThreadSwitcher::default(), window, cx);
+    });
+    cx.run_until_parked();
+
+    // Cycle twice to land on Thread C (index 2).
+    sidebar.read_with(cx, |sidebar, cx| {
+        let switcher = sidebar.thread_switcher.as_ref().unwrap();
+        assert_eq!(switcher.read(cx).selected_index(), 1);
+    });
+    sidebar.update_in(cx, |sidebar, _window, cx| {
+        sidebar
+            .thread_switcher
+            .as_ref()
+            .unwrap()
+            .update(cx, |s, cx| s.cycle_selection(cx));
+    });
+    cx.run_until_parked();
+    assert_eq!(switcher_selected_id(&sidebar, cx), session_id_c);
+
+    // Confirm on Thread C.
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        let switcher = sidebar.thread_switcher.as_ref().unwrap();
+        let focus = switcher.focus_handle(cx);
+        focus.dispatch_action(&menu::Confirm, window, cx);
+    });
+    cx.run_until_parked();
+
+    // Switcher should be dismissed after confirm.
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert!(
+            sidebar.thread_switcher.is_none(),
+            "switcher should be dismissed"
+        );
+    });
+
+    // Re-open switcher: Thread C is now most-recently-accessed.
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.on_toggle_thread_switcher(&ToggleThreadSwitcher::default(), window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        switcher_ids(&sidebar, cx),
+        vec![
+            session_id_c.clone(),
+            session_id_a.clone(),
+            session_id_b.clone()
+        ],
+    );
+
+    sidebar.update_in(cx, |sidebar, _window, cx| {
+        sidebar.dismiss_thread_switcher(cx);
+    });
+    cx.run_until_parked();
+
+    // ── 3. Add a historical thread (no last_accessed_at, no message sent) ──
+    // This thread was never opened in a panel — it only exists in metadata.
+    cx.update(|_, cx| {
+        SidebarThreadMetadataStore::global(cx).update(cx, |store, cx| {
+            store.save(
+                ThreadMetadata {
+                    session_id: acp::SessionId::new(Arc::from("thread-historical")),
+                    agent_id: None,
+                    title: "Historical Thread".into(),
+                    updated_at: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 6, 1, 0, 0, 0)
+                        .unwrap(),
+                    created_at: Some(
+                        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 6, 1, 0, 0, 0).unwrap(),
+                    ),
+                    folder_paths: path_list.clone(),
+                },
+                cx,
+            )
+        })
+    });
+    cx.run_until_parked();
+
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.on_toggle_thread_switcher(&ToggleThreadSwitcher::default(), window, cx);
+    });
+    cx.run_until_parked();
+
+    // Historical Thread has no last_accessed_at and no last_message_sent_or_queued,
+    // so it falls to tier 3 (sorted by created_at). It should appear after all
+    // accessed threads, even though its created_at (June 2024) is much later
+    // than the others.
+    //
+    // But the live threads (A, B, C) each had send_message called which sets
+    // last_message_sent_or_queued. So for the accessed threads (tier 1) the
+    // sort key is last_accessed_at; for Historical Thread (tier 3) it's created_at.
+    let session_id_hist = acp::SessionId::new(Arc::from("thread-historical"));
+    let ids = switcher_ids(&sidebar, cx);
+    assert_eq!(
+        ids,
+        vec![
+            session_id_c.clone(),
+            session_id_a.clone(),
+            session_id_b.clone(),
+            session_id_hist.clone()
+        ],
+    );
+
+    sidebar.update_in(cx, |sidebar, _window, cx| {
+        sidebar.dismiss_thread_switcher(cx);
+    });
+    cx.run_until_parked();
+
+    // ── 4. Add another historical thread with older created_at ─────────
+    cx.update(|_, cx| {
+        SidebarThreadMetadataStore::global(cx).update(cx, |store, cx| {
+            store.save(
+                ThreadMetadata {
+                    session_id: acp::SessionId::new(Arc::from("thread-old-historical")),
+                    agent_id: None,
+                    title: "Old Historical Thread".into(),
+                    updated_at: chrono::TimeZone::with_ymd_and_hms(&Utc, 2023, 6, 1, 0, 0, 0)
+                        .unwrap(),
+                    created_at: Some(
+                        chrono::TimeZone::with_ymd_and_hms(&Utc, 2023, 6, 1, 0, 0, 0).unwrap(),
+                    ),
+                    folder_paths: path_list.clone(),
+                },
+                cx,
+            )
+        })
+    });
+    cx.run_until_parked();
+
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.on_toggle_thread_switcher(&ToggleThreadSwitcher::default(), window, cx);
+    });
+    cx.run_until_parked();
+
+    // Both historical threads have no access or message times. They should
+    // appear after accessed threads, sorted by created_at (newest first).
+    let session_id_old_hist = acp::SessionId::new(Arc::from("thread-old-historical"));
+    let ids = switcher_ids(&sidebar, cx);
+    assert_eq!(
+        ids,
+        vec![
+            session_id_c.clone(),
+            session_id_a.clone(),
+            session_id_b.clone(),
+            session_id_hist,
+            session_id_old_hist,
+        ],
+    );
+
+    sidebar.update_in(cx, |sidebar, _window, cx| {
+        sidebar.dismiss_thread_switcher(cx);
+    });
+    cx.run_until_parked();
+}
+
 mod property_test {
     use super::*;
     use gpui::EntityId;

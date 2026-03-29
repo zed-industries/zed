@@ -150,7 +150,6 @@ impl SvgRenderer {
         &self,
         bytes: &[u8],
         scale_factor: f32,
-        to_brga: bool,
     ) -> Result<Arc<RenderImage>, usvg::Error> {
         self.render_pixmap(
             bytes,
@@ -161,10 +160,8 @@ impl SvgRenderer {
                 image::ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take())
                     .unwrap();
 
-            if to_brga {
-                for pixel in buffer.chunks_exact_mut(4) {
-                    swap_rgba_pa_to_bgra(pixel);
-                }
+            for pixel in buffer.chunks_exact_mut(4) {
+                swap_rgba_pa_to_bgra(pixel);
             }
 
             let mut image = RenderImage::new(SmallVec::from_const([Frame::new(buffer)]));
