@@ -331,15 +331,25 @@ pub fn into_deepseek(
     for message in request.messages {
         for content in message.content {
             match content {
-                MessageContent::Text(text) => messages.push(match message.role {
-                    Role::User => deepseek::RequestMessage::User { content: text },
-                    Role::Assistant => deepseek::RequestMessage::Assistant {
-                        content: Some(text),
-                        tool_calls: Vec::new(),
-                        reasoning_content: current_reasoning.take(),
-                    },
-                    Role::System => deepseek::RequestMessage::System { content: text },
-                }),
+                MessageContent::Text(text) => {
+                    let should_add = if message.role == Role::User {
+                        !text.trim().is_empty()
+                    } else {
+                        !text.is_empty()
+                    };
+
+                    if should_add {
+                        messages.push(match message.role {
+                            Role::User => deepseek::RequestMessage::User { content: text },
+                            Role::Assistant => deepseek::RequestMessage::Assistant {
+                                content: Some(text),
+                                tool_calls: Vec::new(),
+                                reasoning_content: current_reasoning.take(),
+                            },
+                            Role::System => deepseek::RequestMessage::System { content: text },
+                        });
+                    }
+                }
                 MessageContent::Thinking { text, .. } => {
                     // Accumulate reasoning content for next assistant message
                     current_reasoning.get_or_insert_default().push_str(&text);
@@ -445,7 +455,9 @@ impl DeepSeekEventMapper {
         };
 
         let mut events = Vec::new();
-        if let Some(content) = choice.delta.content.clone() {
+        if let Some(content) = choice.delta.content.clone()
+            && !content.is_empty()
+        {
             events.push(Ok(LanguageModelCompletionEvent::Text(content)));
         }
 

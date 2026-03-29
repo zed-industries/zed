@@ -23,14 +23,6 @@ Search across all files with {#kb pane::DeploySearch}. Start typing in the searc
 
 Results appear in a [multibuffer](./multibuffers.md), letting you edit matches in place.
 
-To disable automatic search and require pressing Enter instead, open the Settings Editor ({#kb zed::OpenSettings}), search for "search on input", and toggle the setting off. Or add this to your settings.json:
-
-```json
-{
-  "search_on_input": false
-}
-```
-
 ## Go to Definition
 
 Jump to where a symbol is defined with {#kb editor::GoToDefinition} (or `Cmd+Click` / `Ctrl+Click`). If there are multiple definitions, they open in a multibuffer.

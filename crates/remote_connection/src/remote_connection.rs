@@ -13,10 +13,10 @@ use release_channel::ReleaseChannel;
 use remote::{ConnectionIdentifier, RemoteClient, RemoteConnectionOptions, RemotePlatform};
 use semver::Version;
 use settings::Settings;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{
-    ActiveTheme, Color, CommonAnimationExt, Context, InteractiveElement, IntoElement, KeyBinding,
-    LabelCommon, ListItem, Styled, Window, prelude::*,
+    ActiveTheme, CommonAnimationExt, Context, InteractiveElement, KeyBinding, ListItem, Tooltip,
+    prelude::*,
 };
 use ui_input::{ERASED_EDITOR_FACTORY, ErasedEditor};
 use workspace::{DismissDecision, ModalView};
@@ -30,6 +30,8 @@ pub struct RemoteConnectionPrompt {
     prompt: Option<(Entity<Markdown>, oneshot::Sender<EncryptedPassword>)>,
     cancellation: Option<oneshot::Sender<()>>,
     editor: Arc<dyn ErasedEditor>,
+    is_password_prompt: bool,
+    is_masked: bool,
 }
 
 impl Drop for RemoteConnectionPrompt {
@@ -70,6 +72,8 @@ impl RemoteConnectionPrompt {
             status_message: None,
             cancellation: None,
             prompt: None,
+            is_password_prompt: false,
+            is_masked: true,
         }
     }
 
@@ -85,7 +89,9 @@ impl RemoteConnectionPrompt {
         cx: &mut Context<Self>,
     ) {
         let is_yes_no = prompt.contains("yes/no");
-        self.editor.set_masked(!is_yes_no, window, cx);
+        self.is_password_prompt = !is_yes_no;
+        self.is_masked = !is_yes_no;
+        self.editor.set_masked(self.is_masked, window, cx);
 
         let markdown = cx.new(|cx| Markdown::new_text(prompt.into(), cx));
         self.prompt = Some((markdown, tx));
@@ -133,39 +139,86 @@ impl Render for RemoteConnectionPrompt {
             ..Default::default()
         };
 
+        let is_password_prompt = self.is_password_prompt;
+        let is_masked = self.is_masked;
+        let (masked_password_icon, masked_password_tooltip) = if is_masked {
+            (IconName::Eye, "Toggle to Unmask Password")
+        } else {
+            (IconName::EyeOff, "Toggle to Mask Password")
+        };
+
         v_flex()
             .key_context("PasswordPrompt")
             .p_2()
             .size_full()
-            .text_buffer(cx)
-            .when_some(self.status_message.clone(), |el, status_message| {
-                el.child(
-                    h_flex()
-                        .gap_2()
+            .when_some(self.prompt.as_ref(), |this, prompt| {
+                this.child(
+                    v_flex()
+                        .text_sm()
+                        .size_full()
+                        .overflow_hidden()
                         .child(
-                            Icon::new(IconName::ArrowCircle)
+                            h_flex()
+                                .w_full()
+                                .justify_between()
+                                .child(MarkdownElement::new(prompt.0.clone(), markdown_style))
+                                .when(is_password_prompt, |this| {
+                                    this.child(
+                                        IconButton::new("toggle_mask", masked_password_icon)
+                                            .icon_size(IconSize::Small)
+                                            .tooltip(Tooltip::text(masked_password_tooltip))
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.is_masked = !this.is_masked;
+                                                this.editor.set_masked(this.is_masked, window, cx);
+                                                window.focus(&this.editor.focus_handle(cx), cx);
+                                                cx.notify();
+                                            })),
+                                    )
+                                }),
+                        )
+                        .child(div().flex_1().child(self.editor.render(window, cx))),
+                )
+                .when(window.capslock().on, |this| {
+                    this.child(
+                        h_flex()
+                            .py_0p5()
+                            .min_w_0()
+                            .w_full()
+                            .gap_1()
+                            .child(
+                                Icon::new(IconName::Warning)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new("Caps lock is on.")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            ),
+                    )
+                })
+            })
+            .when_some(self.status_message.clone(), |this, status_message| {
+                this.child(
+                    h_flex()
+                        .min_w_0()
+                        .w_full()
+                        .mt_1()
+                        .gap_1()
+                        .child(
+                            Icon::new(IconName::LoadCircle)
+                                .size(IconSize::Small)
                                 .color(Color::Muted)
                                 .with_rotate_animation(2),
                         )
                         .child(
-                            div()
-                                .text_ellipsis()
-                                .overflow_x_hidden()
-                                .child(format!("{}…", status_message)),
+                            Label::new(format!("{}…", status_message))
+                                .size(LabelSize::Small)
+                                .color(Color::Muted)
+                                .truncate()
+                                .flex_1(),
                         ),
                 )
-            })
-            .when_some(self.prompt.as_ref(), |el, prompt| {
-                el.child(
-                    div()
-                        .size_full()
-                        .overflow_hidden()
-                        .child(MarkdownElement::new(prompt.0.clone(), markdown_style))
-                        .child(self.editor.render(window, cx)),
-                )
-                .when(window.capslock().on, |el| {
-                    el.child(Label::new("⚠️ ⇪ is on"))
-                })
             })
     }
 }

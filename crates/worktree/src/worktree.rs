@@ -7,7 +7,9 @@ use chardetng::EncodingDetector;
 use clock::ReplicaId;
 use collections::{HashMap, HashSet, VecDeque};
 use encoding_rs::Encoding;
-use fs::{Fs, MTime, PathEvent, RemoveOptions, Watcher, copy_recursive, read_dir_items};
+use fs::{
+    Fs, MTime, PathEvent, PathEventKind, RemoveOptions, Watcher, copy_recursive, read_dir_items,
+};
 use futures::{
     FutureExt as _, Stream, StreamExt,
     channel::{
@@ -128,6 +130,7 @@ pub struct LocalWorktree {
     scan_requests_tx: channel::Sender<ScanRequest>,
     path_prefixes_to_scan_tx: channel::Sender<PathPrefixScanRequest>,
     is_scanning: (watch::Sender<bool>, watch::Receiver<bool>),
+    snapshot_subscriptions: VecDeque<(usize, oneshot::Sender<()>)>,
     _background_scanner_tasks: Vec<Task<()>>,
     update_observer: Option<UpdateObservationState>,
     fs: Arc<dyn Fs>,
@@ -470,6 +473,7 @@ impl Worktree {
                 next_entry_id,
                 snapshot,
                 is_scanning: watch::channel_with(true),
+                snapshot_subscriptions: Default::default(),
                 update_observer: None,
                 scan_requests_tx,
                 path_prefixes_to_scan_tx,
@@ -711,6 +715,16 @@ impl Worktree {
             Worktree::Remote(this) => {
                 this.update_observer.take();
             }
+        }
+    }
+
+    pub fn wait_for_snapshot(
+        &mut self,
+        scan_id: usize,
+    ) -> impl Future<Output = Result<()>> + use<> {
+        match self {
+            Worktree::Local(this) => this.wait_for_snapshot(scan_id).boxed(),
+            Worktree::Remote(this) => this.wait_for_snapshot(scan_id).boxed(),
         }
     }
 
@@ -1170,6 +1184,15 @@ impl LocalWorktree {
         if !repo_changes.is_empty() {
             cx.emit(Event::UpdatedGitRepositories(repo_changes));
         }
+
+        while let Some((scan_id, _)) = self.snapshot_subscriptions.front() {
+            if self.snapshot.completed_scan_id >= *scan_id {
+                let (_, tx) = self.snapshot_subscriptions.pop_front().unwrap();
+                tx.send(()).ok();
+            } else {
+                break;
+            }
+        }
     }
 
     fn changed_repos(
@@ -1283,6 +1306,28 @@ impl LocalWorktree {
                     break;
                 }
             }
+        }
+    }
+
+    pub fn wait_for_snapshot(
+        &mut self,
+        scan_id: usize,
+    ) -> impl Future<Output = Result<()>> + use<> {
+        let (tx, rx) = oneshot::channel();
+        if self.snapshot.completed_scan_id >= scan_id {
+            tx.send(()).ok();
+        } else {
+            match self
+                .snapshot_subscriptions
+                .binary_search_by_key(&scan_id, |probe| probe.0)
+            {
+                Ok(ix) | Err(ix) => self.snapshot_subscriptions.insert(ix, (scan_id, tx)),
+            }
+        }
+
+        async move {
+            rx.await?;
+            Ok(())
         }
     }
 
@@ -4094,7 +4139,7 @@ impl BackgroundScanner {
             }
 
             for (ix, event) in events.iter().enumerate() {
-                let abs_path = &SanitizedPath::new(&event.path);
+                let abs_path = SanitizedPath::new(&event.path);
 
                 let mut is_git_related = false;
                 let mut dot_git_paths = None;
@@ -4111,13 +4156,33 @@ impl BackgroundScanner {
                 }
 
                 if let Some((dot_git_abs_path, path_in_git_dir)) = dot_git_paths {
-                    if skipped_files_in_dot_git
+                    // We ignore `""` as well, as that is going to be the
+                    // `.git` folder itself. WE do not care about it, if
+                    // there are changes within we will see them, we need
+                    // this ignore to prevent us from accidentally observing
+                    // the ignored created file due to the events not being
+                    // empty after filtering.
+
+                    let is_dot_git_changed = {
+                        path_in_git_dir == Path::new("")
+                            && event.kind == Some(PathEventKind::Changed)
+                            && abs_path
+                                .strip_prefix(root_canonical_path)
+                                .ok()
+                                .and_then(|it| RelPath::new(it, PathStyle::local()).ok())
+                                .is_some_and(|it| {
+                                    snapshot
+                                        .entry_for_path(&it)
+                                        .is_some_and(|entry| entry.kind == EntryKind::Dir)
+                                })
+                    };
+                    let condition = skipped_files_in_dot_git.iter().any(|skipped| {
+                        OsStr::new(skipped) == path_in_git_dir.as_path().as_os_str()
+                    }) || skipped_dirs_in_dot_git
                         .iter()
-                        .any(|skipped| OsStr::new(skipped) == path_in_git_dir.as_path().as_os_str())
-                        || skipped_dirs_in_dot_git.iter().any(|skipped_git_subdir| {
-                            path_in_git_dir.starts_with(skipped_git_subdir)
-                        })
-                    {
+                        .any(|skipped_git_subdir| path_in_git_dir.starts_with(skipped_git_subdir))
+                        || is_dot_git_changed;
+                    if condition {
                         log::debug!(
                             "ignoring event {abs_path:?} as it's in the .git directory among skipped files or directories"
                         );

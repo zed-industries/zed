@@ -5,9 +5,12 @@ use anyhow::{Context as _, Result};
 use collections::HashSet;
 use credentials_provider::CredentialsProvider;
 use fs::Fs;
-use gpui::{App, AppContext as _, Task};
+use gpui::{App, AppContext as _, Entity, Task};
 use language_model::{ApiKey, EnvVar};
-use project::agent_server_store::{AgentId, AllAgentServersSettings};
+use project::{
+    Project,
+    agent_server_store::{AgentId, AllAgentServersSettings},
+};
 use settings::{SettingsStore, update_settings_file};
 use std::{rc::Rc, sync::Arc};
 use ui::IconName;
@@ -289,14 +292,10 @@ impl AgentServer for CustomAgentServer {
     fn connect(
         &self,
         delegate: AgentServerDelegate,
+        project: Entity<Project>,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn AgentConnection>>> {
         let agent_id = self.agent_id();
-        let display_name = delegate
-            .store
-            .read(cx)
-            .agent_display_name(&agent_id)
-            .unwrap_or_else(|| agent_id.0.clone());
         let default_mode = self.default_mode(cx);
         let default_model = self.default_model(cx);
         let is_registry_agent = is_registry_agent(agent_id.clone(), cx);
@@ -371,7 +370,7 @@ impl AgentServer for CustomAgentServer {
                 .await?;
             let connection = crate::acp::connect(
                 agent_id,
-                display_name,
+                project,
                 command,
                 default_mode,
                 default_model,
@@ -479,6 +478,7 @@ mod tests {
                         description: SharedString::from(""),
                         version: SharedString::from("1.0.0"),
                         repository: None,
+                        website: None,
                         icon_path: None,
                     },
                     package: id,

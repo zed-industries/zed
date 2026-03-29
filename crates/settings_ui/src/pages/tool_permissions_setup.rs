@@ -7,7 +7,7 @@ use gpui::{
 use settings::{Settings as _, SettingsStore, ToolPermissionMode};
 use shell_command_parser::extract_commands;
 use std::sync::Arc;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{Banner, ContextMenu, Divider, PopoverMenu, Severity, Tooltip, prelude::*};
 use util::ResultExt as _;
 use util::shell::ShellKind;
@@ -1421,6 +1421,9 @@ mod tests {
             // Subagent permission checks happen at the level of individual
             // tool calls within the subagent, not at the spawning level.
             "spawn_agent",
+            // update_plan updates UI-visible planning state but does not use
+            // tool permission rules.
+            "update_plan",
         ];
 
         let tool_info_ids: Vec<&str> = TOOLS.iter().map(|t| t.id).collect();

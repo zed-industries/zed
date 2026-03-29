@@ -144,15 +144,32 @@ class ZedAgent(BaseInstalledAgent):
         if timeout:
             parts.append(f"--timeout {timeout}")
 
+        staff = self._extra_env.get("EVAL_CLI_STAFF")
+        if staff and staff.lower() == "false":
+            parts.append("--no-staff")
+
+        reasoning_effort = self._extra_env.get("EVAL_CLI_REASONING_EFFORT")
+        if reasoning_effort:
+            parts.append(f"--reasoning-effort {shlex.quote(reasoning_effort)}")
+
+        enable_thinking = self._extra_env.get("EVAL_CLI_ENABLE_THINKING")
+        if enable_thinking:
+            if enable_thinking.lower() == "true":
+                parts.append("--enable-thinking")
+            elif enable_thinking.lower() == "false":
+                parts.append("--disable-thinking")
+
         parts.append(f"--instruction {escaped_instruction}")
 
-        eval_cli_command = " ".join(parts) + " 2>&1 | stdbuf -oL tee /logs/agent/eval-cli.txt"
+        eval_cli_command = (
+            " ".join(parts) + " 2>&1 | stdbuf -oL tee /logs/agent/eval-cli.txt"
+        )
 
         patch_command = (
             "cd /testbed && "
             "git add -A && "
             "git diff --cached HEAD > /logs/agent/patch.diff && "
-            "echo \"Patch size: $(wc -c < /logs/agent/patch.diff) bytes\""
+            'echo "Patch size: $(wc -c < /logs/agent/patch.diff) bytes"'
         )
 
         return [

@@ -410,7 +410,7 @@ async fn test_open_path_prompt_with_show_hidden(cx: &mut TestAppContext) {
 fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
     cx.update(|cx| {
         let state = AppState::test(cx);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
 
         editor::init(cx);
         state
