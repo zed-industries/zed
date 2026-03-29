@@ -78,7 +78,7 @@ impl ToolEditParser {
                 if partial.new_text.is_some() {
                     // new_text appeared, so old_text is done — emit everything.
                     let start = state.old_text_emitted_len.min(old_text.len());
-                    let chunk = old_text[start..].to_string();
+                    let chunk = normalize_done_chunk(old_text[start..].to_string());
                     state.old_text_done = true;
                     state.old_text_emitted_len = old_text.len();
                     events.push(ToolEditEvent::OldTextChunk {
@@ -87,7 +87,8 @@ impl ToolEditParser {
                         done: true,
                     });
                 } else {
-                    let safe_end = safe_emit_end(old_text);
+                    let safe_end = safe_emit_end_for_edit_text(old_text);
+
                     if safe_end > state.old_text_emitted_len {
                         let chunk = old_text[state.old_text_emitted_len..safe_end].to_string();
                         state.old_text_emitted_len = safe_end;
@@ -104,7 +105,8 @@ impl ToolEditParser {
             if let Some(new_text) = &partial.new_text
                 && !state.new_text_done
             {
-                let safe_end = safe_emit_end(new_text);
+                let safe_end = safe_emit_end_for_edit_text(new_text);
+
                 if safe_end > state.new_text_emitted_len {
                     let chunk = new_text[state.new_text_emitted_len..safe_end].to_string();
                     state.new_text_emitted_len = safe_end;
@@ -160,7 +162,7 @@ impl ToolEditParser {
 
             if !state.old_text_done {
                 let start = state.old_text_emitted_len.min(edit.old_text.len());
-                let chunk = edit.old_text[start..].to_string();
+                let chunk = normalize_done_chunk(edit.old_text[start..].to_string());
                 state.old_text_done = true;
                 state.old_text_emitted_len = edit.old_text.len();
                 events.push(ToolEditEvent::OldTextChunk {
@@ -172,7 +174,7 @@ impl ToolEditParser {
 
             if !state.new_text_done {
                 let start = state.new_text_emitted_len.min(edit.new_text.len());
-                let chunk = edit.new_text[start..].to_string();
+                let chunk = normalize_done_chunk(edit.new_text[start..].to_string());
                 state.new_text_done = true;
                 state.new_text_emitted_len = edit.new_text.len();
                 events.push(ToolEditEvent::NewTextChunk {
@@ -252,6 +254,22 @@ fn safe_emit_end(text: &str) -> usize {
     }
 }
 
+fn safe_emit_end_for_edit_text(text: &str) -> usize {
+    let safe_end = safe_emit_end(text);
+    if safe_end > 0 && text.as_bytes()[safe_end - 1] == b'\n' {
+        safe_end - 1
+    } else {
+        safe_end
+    }
+}
+
+fn normalize_done_chunk(mut chunk: String) -> String {
+    if chunk.ends_with('\n') {
+        chunk.pop();
+    }
+    chunk
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -326,6 +344,69 @@ mod tests {
         let events = parser.finalize_edits(&[Edit {
             old_text: "hello world".into(),
             new_text: "goodbye world".into(),
+        }]);
+        assert_eq!(
+            events.as_slice(),
+            &[ToolEditEvent::NewTextChunk {
+                edit_index: 0,
+                chunk: "".into(),
+                done: true,
+            }]
+        );
+    }
+
+    #[test]
+    fn test_done_chunks_strip_trailing_newline() {
+        let mut parser = ToolEditParser::default();
+
+        let events = parser.finalize_edits(&[Edit {
+            old_text: "before\n".into(),
+            new_text: "after\n".into(),
+        }]);
+        assert_eq!(
+            events.as_slice(),
+            &[
+                ToolEditEvent::OldTextChunk {
+                    edit_index: 0,
+                    chunk: "before".into(),
+                    done: true,
+                },
+                ToolEditEvent::NewTextChunk {
+                    edit_index: 0,
+                    chunk: "after".into(),
+                    done: true,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_partial_edit_chunks_hold_back_trailing_newline() {
+        let mut parser = ToolEditParser::default();
+
+        let events = parser.push_edits(&[PartialEdit {
+            old_text: Some("before\n".into()),
+            new_text: Some("after\n".into()),
+        }]);
+        assert_eq!(
+            events.as_slice(),
+            &[
+                ToolEditEvent::OldTextChunk {
+                    edit_index: 0,
+                    chunk: "before".into(),
+                    done: true,
+                },
+                ToolEditEvent::NewTextChunk {
+                    edit_index: 0,
+                    chunk: "after".into(),
+                    done: false,
+                },
+            ]
+        );
+
+        let events = parser.finalize_edits(&[Edit {
+            old_text: "before\n".into(),
+            new_text: "after\n".into(),
         }]);
         assert_eq!(
             events.as_slice(),
