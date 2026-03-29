@@ -25,6 +25,7 @@ use tree_sitter::{
 };
 
 pub const MAX_BYTES_TO_QUERY: usize = 16 * 1024;
+const CAPTURE_CONTAINING_CONTEXT_BYTES: usize = 3 * 1024;
 
 pub struct SyntaxMap {
     snapshot: SyntaxSnapshot,
@@ -1117,6 +1118,7 @@ impl<'a> SyntaxMapCaptures<'a> {
             };
 
             cursor.set_byte_range(range.clone());
+            cursor.set_containing_byte_range(containing_byte_range_for_captures(&range));
             let captures = cursor.captures(query, layer.node(), TextProvider(text));
             let grammar_index = result
                 .grammars
@@ -1206,6 +1208,19 @@ impl<'a> SyntaxMapCaptures<'a> {
             .position(|layer| layer.next_capture.is_none())
             .unwrap_or(self.layers.len());
     }
+}
+
+fn containing_byte_range_for_captures(query_range: &Range<usize>) -> Range<usize> {
+    let desired_window = query_range
+        .len()
+        .saturating_add(CAPTURE_CONTAINING_CONTEXT_BYTES.saturating_mul(2));
+    let containing_window_len = desired_window.min(MAX_BYTES_TO_QUERY);
+    let midpoint = query_range
+        .start
+        .saturating_add(query_range.len().saturating_div(2));
+    let containing_start = midpoint.saturating_sub(containing_window_len / 2);
+    let containing_end = containing_start.saturating_add(containing_window_len);
+    containing_start..containing_end
 }
 
 #[derive(Default)]
