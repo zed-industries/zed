@@ -4115,14 +4115,14 @@ impl ThreadView {
 
         match current_mode {
             settings::ToolPermissionMode::Confirm => menu.trigger_with_tooltip(
-                IconButton::new("tool-permissions", IconName::Settings)
+                IconButton::new("tool-permissions", IconName::Shield)
                     .icon_size(IconSize::Small)
                     .icon_color(Color::Muted),
                 {
                     let focus_handle = focus_handle.clone();
                     move |_window, cx| {
                         Tooltip::for_action_in(
-                            "Tool Permissions",
+                            "Tool permissions Selector",
                             &crate::OpenToolPermissionsMenu,
                             &focus_handle,
                             cx,
@@ -4143,22 +4143,26 @@ impl ThreadView {
                             h_flex()
                                 .gap_1()
                                 .child(
-                                    Icon::new(IconName::Settings)
+                                    Icon::new(IconName::Shield)
                                         .size(IconSize::Small)
-                                        .color(Color::Muted),
+                                        .color(Color::Warning),
                                 )
-                                .child(Label::new(label).size(LabelSize::Small).color(Color::Muted))
+                                .child(
+                                    Label::new(label)
+                                        .size(LabelSize::Small)
+                                        .color(Color::Warning),
+                                )
                                 .child(
                                     Icon::new(IconName::ChevronDown)
                                         .size(IconSize::XSmall)
-                                        .color(Color::Muted),
+                                        .color(Color::Warning),
                                 ),
                         ),
                     {
                         let focus_handle = focus_handle.clone();
                         move |_window, cx| {
                             Tooltip::for_action_in(
-                                "Tool Permissions",
+                                "Tool permissions Selector",
                                 &crate::OpenToolPermissionsMenu,
                                 &focus_handle,
                                 cx,
@@ -4186,7 +4190,7 @@ impl ThreadView {
             let deny_selected = matches!(current_mode, settings::ToolPermissionMode::Deny);
 
             menu.key_context("ToolPermissionsMenu")
-                .header("Tool Permissions")
+                .header("Tool permissions Selector")
                 .item(
                     ContextMenuEntry::new("Allow")
                         .toggleable(IconPosition::End, allow_selected)
