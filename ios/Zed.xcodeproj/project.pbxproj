@@ -17,7 +17,7 @@
 		AA0000000000000000000011 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
 		AA0000000000000000000012 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		AA0000000000000000000013 /* Zed-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Zed-Bridging-Header.h"; sourceTree = "<group>"; };
-		AA0000000000000000000014 /* Zed.Entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.Entitlements; path = Zed.Entitlements; sourceTree = "<group>"; };
+		AA0000000000000000000014 /* Zed.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.Entitlements; path = Zed.entitlements; sourceTree = "<group>"; };
 		AA0000000000000000000015 /* Zed.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Zed.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA0000000000000000000016 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -73,7 +73,7 @@
 		AA0000000000000000000006 /* Entitlements */ = {
 			isa = PBXGroup;
 			children = (
-				AA0000000000000000000014 /* Zed.Entitlements */,
+				AA0000000000000000000014 /* Zed.entitlements */,
 			);
 			path = Entitlements;
 			sourceTree = "<group>";
@@ -303,7 +303,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIconDev;
-				CODE_SIGN_ENTITLEMENTS = Zed/Entitlements/Zed.Entitlements;
+				CODE_SIGN_ENTITLEMENTS = Zed/Entitlements/Zed.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				EAGER_LINKING = NO;
@@ -375,7 +375,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = Zed/Entitlements/Zed.Entitlements;
+				CODE_SIGN_ENTITLEMENTS = Zed/Entitlements/Zed.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				EAGER_LINKING = NO;
