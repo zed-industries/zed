@@ -13,6 +13,7 @@ use agent_servers::AgentServerDelegate;
 use agent_servers::{AgentServer, GEMINI_TERMINAL_AUTH_METHOD_ID};
 use agent_settings::{AgentProfileId, AgentSettings};
 use anyhow::{Result, anyhow};
+#[cfg(feature = "audio")]
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
 use client::zed_urls;
@@ -2315,6 +2316,7 @@ impl ConversationView {
                     .upgrade()
                     .is_some_and(|workspace| AgentPanel::is_visible(&workspace, cx))
             };
+        #[cfg(feature = "audio")]
         if settings.play_sound_when_agent_done && !visible {
             Audio::play_sound(Sound::AgentDone, cx);
         }

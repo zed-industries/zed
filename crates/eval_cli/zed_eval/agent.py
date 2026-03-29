@@ -59,16 +59,7 @@ class ZedAgent(BaseInstalledAgent):
                 "apt-get install -y --no-install-recommends "
                 "ca-certificates "
                 "curl "
-                "git "
-                "libasound2 "
-                "libfontconfig1 "
-                "libglib2.0-0 "
-                "libsqlite3-0 "
-                "libssl1.1 "
-                "libwayland-client0 "
-                "libx11-xcb1 "
-                "libxkbcommon-x11-0 "
-                "libzstd1"
+                "git"
             ),
             env={"DEBIAN_FRONTEND": "noninteractive"},
         )
@@ -82,14 +73,32 @@ class ZedAgent(BaseInstalledAgent):
             env={"DEBIAN_FRONTEND": "noninteractive"},
         )
 
+        # Pre-install default LSPs so Zed doesn't have to download them at
+        # runtime.  Each gets its own subdirectory under $ZED_DATA_DIR/languages.
         await self.exec_as_agent(
             environment,
             command=(
                 "set -euo pipefail; "
                 'ZED_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/zed"; '
+                # basedpyright (Python - default type checker)
                 'BASEDPYRIGHT_DIR="$ZED_DATA_DIR/languages/basedpyright"; '
                 'mkdir -p "$BASEDPYRIGHT_DIR"; '
-                'npm install --prefix "$BASEDPYRIGHT_DIR" --save-exact basedpyright'
+                'npm install --prefix "$BASEDPYRIGHT_DIR" --save-exact basedpyright; '
+                # typescript-language-server (TypeScript/JS - default LSP)
+                'TSSERVER_DIR="$ZED_DATA_DIR/languages/typescript-language-server"; '
+                'mkdir -p "$TSSERVER_DIR"; '
+                'npm install --prefix "$TSSERVER_DIR" --save-exact typescript typescript-language-server'
+            ),
+        )
+
+        # gopls (Go - default LSP).  Only install when Go is present in the
+        # container (i.e. Go-related SWE-bench tasks).
+        await self.exec_as_agent(
+            environment,
+            command=(
+                "if command -v go >/dev/null 2>&1; then "
+                "go install golang.org/x/tools/gopls@latest; "
+                "fi"
             ),
         )
 

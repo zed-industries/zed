@@ -23,6 +23,7 @@ test-support = [
     "workspace/test-support",
     "agent/test-support",
 ]
+audio = ["dep:audio"]
 unit-eval = []
 
 [dependencies]
@@ -38,7 +39,7 @@ heapless.workspace = true
 assistant_text_thread.workspace = true
 assistant_slash_command.workspace = true
 assistant_slash_commands.workspace = true
-audio.workspace = true
+audio = { workspace = true, optional = true }
 base64.workspace = true
 buffer_diff.workspace = true
 chrono.workspace = true
