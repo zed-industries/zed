@@ -2533,10 +2533,15 @@ mod tests {
 
         // Ensure workspace exists in DB
         let editor_db = cx.update(|_, cx| EditorDb::global(cx));
-        editor_db.write(move |conn| {
-            conn.exec_bound("INSERT INTO workspaces (workspace_id, window_state) VALUES (?1, ?2)")
+        editor_db
+            .write(move |conn| {
+                conn.exec_bound(
+                    "INSERT INTO workspaces (workspace_id, window_state) VALUES (?1, ?2)",
+                )
                 .unwrap()((workspace_id, "test".to_string()))
-        }).await.unwrap();
+            })
+            .await
+            .unwrap();
 
         // 1. Create a buffer, make edits, and serialize its history
         let buffer = project
@@ -2623,27 +2628,36 @@ mod tests {
             buffer.edit([(0..0, "persistent edit")], None, cx);
         });
 
-        let (editor, cx) = cx.add_window_view(|window, cx| {
-            Editor::for_buffer(buffer, Some(project), window, cx)
-        });
+        let (editor, cx) =
+            cx.add_window_view(|window, cx| Editor::for_buffer(buffer, Some(project), window, cx));
 
         // Trigger serialization (simulating quit/close)
         // We need to ensure the workspace exists in DB for foreign keys
         let editor_db = cx.update(|_, cx| EditorDb::global(cx));
-        editor_db.write(move |conn| {
-            conn.exec_bound("INSERT INTO workspaces (workspace_id, window_state) VALUES (?1, ?2)")
+        editor_db
+            .write(move |conn| {
+                conn.exec_bound(
+                    "INSERT INTO workspaces (workspace_id, window_state) VALUES (?1, ?2)",
+                )
                 .unwrap()((workspace_id, "test".to_string()))
-        }).await.unwrap();
+            })
+            .await
+            .unwrap();
 
         let task = workspace.update_in(cx, |workspace, window, cx| {
             editor.update(cx, |editor, cx| {
-                editor.serialize(workspace, item_id, true, window, cx).unwrap()
+                editor
+                    .serialize(workspace, item_id, true, window, cx)
+                    .unwrap()
             })
         });
         task.await.unwrap();
 
         // Verify the DB contains the undo history
-        let saved = editor_db.get_serialized_editor(item_id, workspace_id).unwrap().unwrap();
+        let saved = editor_db
+            .get_serialized_editor(item_id, workspace_id)
+            .unwrap()
+            .unwrap();
         assert!(saved.undo_history.is_some());
         assert!(saved.undo_history.unwrap().len() > 0);
     }

@@ -74,8 +74,7 @@ fn test_history_serialization() {
 
     // Test with remote operations
     let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "abc\n");
-    let mut remote_buffer =
-        Buffer::new(ReplicaId::new(1), BufferId::new(1).unwrap(), "abc\n");
+    let mut remote_buffer = Buffer::new(ReplicaId::new(1), BufferId::new(1).unwrap(), "abc\n");
 
     buffer.set_group_interval(Duration::ZERO);
     remote_buffer.set_group_interval(Duration::ZERO);
@@ -84,7 +83,13 @@ fn test_history_serialization() {
     let local_op = buffer.history.operations.values().last().unwrap().clone();
 
     remote_buffer.edit([(4..4, "remote\n")]);
-    let remote_op = remote_buffer.history.operations.values().last().unwrap().clone();
+    let remote_op = remote_buffer
+        .history
+        .operations
+        .values()
+        .last()
+        .unwrap()
+        .clone();
 
     buffer.apply_ops(vec![remote_op]);
     remote_buffer.apply_ops(vec![local_op]);
