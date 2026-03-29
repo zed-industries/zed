@@ -2532,7 +2532,8 @@ mod tests {
         let item_id = 1234 as ItemId;
 
         // Ensure workspace exists in DB
-        DB.write(move |conn| {
+        let editor_db = cx.update(|_, cx| EditorDb::global(cx));
+        editor_db.write(move |conn| {
             conn.exec_bound("INSERT INTO workspaces (workspace_id, window_state) VALUES (?1, ?2)")
                 .unwrap()((workspace_id, "test".to_string()))
         }).await.unwrap();
@@ -2566,7 +2567,7 @@ mod tests {
         };
 
         // We use a low-level DB call here to simulate a previously saved state
-        DB.write(move |conn| {
+        editor_db.write(move |conn| {
             conn.exec_bound("INSERT INTO editors (item_id, workspace_id, contents, undo_history) VALUES (?1, ?2, ?3, ?4)")
                 .unwrap()((item_id, workspace_id, serialized_editor.contents, serialized_editor.undo_history))
         }).await.unwrap();
@@ -2628,7 +2629,8 @@ mod tests {
 
         // Trigger serialization (simulating quit/close)
         // We need to ensure the workspace exists in DB for foreign keys
-        DB.write(move |conn| {
+        let editor_db = cx.update(|_, cx| EditorDb::global(cx));
+        editor_db.write(move |conn| {
             conn.exec_bound("INSERT INTO workspaces (workspace_id, window_state) VALUES (?1, ?2)")
                 .unwrap()((workspace_id, "test".to_string()))
         }).await.unwrap();
@@ -2641,7 +2643,7 @@ mod tests {
         task.await.unwrap();
 
         // Verify the DB contains the undo history
-        let saved = DB.get_serialized_editor(item_id, workspace_id).unwrap().unwrap();
+        let saved = editor_db.get_serialized_editor(item_id, workspace_id).unwrap().unwrap();
         assert!(saved.undo_history.is_some());
         assert!(saved.undo_history.unwrap().len() > 0);
     }
