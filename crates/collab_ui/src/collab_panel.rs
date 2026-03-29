@@ -23,7 +23,7 @@ use menu::{Cancel, Confirm, SecondaryConfirm, SelectNext, SelectPrevious};
 use project::{Fs, Project};
 use rpc::{
     ErrorCode, ErrorExt,
-    proto::{self, ChannelVisibility, PeerId},
+    proto::{self, ChannelVisibility, PeerId, reorder_channel::Direction},
 };
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -2185,22 +2185,7 @@ impl CollabPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(channel) = self.selected_channel().cloned() {
-            if self.selected_entry_is_favorite() {
-                self.reorder_favorite(channel.id, proto::reorder_channel::Direction::Up, cx);
-            } else {
-                self.channel_store.update(cx, |store, cx| {
-                    store
-                        .reorder_channel(channel.id, proto::reorder_channel::Direction::Up, cx)
-                        .detach_and_prompt_err(
-                            "Failed to move channel up",
-                            window,
-                            cx,
-                            |_, _, _| None,
-                        )
-                });
-            }
-        }
+        self.reorder_selected_channel(Direction::Up, window, cx);
     }
 
     pub fn move_channel_down(
@@ -2209,28 +2194,41 @@ impl CollabPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.reorder_selected_channel(Direction::Down, window, cx);
+    }
+
+    fn reorder_selected_channel(
+        &mut self,
+        direction: Direction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(channel) = self.selected_channel().cloned() {
             if self.selected_entry_is_favorite() {
-                self.reorder_favorite(channel.id, proto::reorder_channel::Direction::Down, cx);
-            } else {
-                self.channel_store.update(cx, |store, cx| {
-                    store
-                        .reorder_channel(channel.id, proto::reorder_channel::Direction::Down, cx)
-                        .detach_and_prompt_err(
-                            "Failed to move channel down",
-                            window,
-                            cx,
-                            |_, _, _| None,
-                        )
-                });
+                self.reorder_favorite(channel.id, direction, cx);
+                return;
             }
+
+            self.channel_store.update(cx, |store, cx| {
+                store
+                    .reorder_channel(channel.id, direction, cx)
+                    .detach_and_prompt_err(
+                        match direction {
+                            Direction::Up => "Failed to move channel up",
+                            Direction::Down => "Failed to move channel down",
+                        },
+                        window,
+                        cx,
+                        |_, _, _| None,
+                    )
+            });
         }
     }
 
     pub fn reorder_favorite(
         &mut self,
         channel_id: ChannelId,
-        direction: proto::reorder_channel::Direction,
+        direction: Direction,
         cx: &mut Context<Self>,
     ) {
         self.channel_store.update(cx, |store, cx| {
@@ -2239,8 +2237,8 @@ impl CollabPanel {
                 return;
             };
             let target_channel_index = match direction {
-                proto::reorder_channel::Direction::Up => channel_index.checked_sub(1),
-                proto::reorder_channel::Direction::Down => {
+                Direction::Up => channel_index.checked_sub(1),
+                Direction::Down => {
                     let next = channel_index + 1;
                     (next < favorite_ids.len()).then_some(next)
                 }
