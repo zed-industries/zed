@@ -2547,10 +2547,19 @@
   //       "ui_font_size": 20.0
   //     }
   //   },
-  //   "Clean Slate": {
+  //   "Presenting (on Defaults)": {
   //     "base": "default",
   //     "settings": {
   //       "theme": "Ayu Dark"
+  //     }
+  //   },
+  //   "Python (ty)": {
+  //     "settings": {
+  //       "languages": {
+  //         "Python": {
+  //           "language_servers": ["ty"]
+  //         }
+  //       }
   //     }
   //   }
   // }
