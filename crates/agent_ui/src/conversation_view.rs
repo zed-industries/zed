@@ -3432,6 +3432,34 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_open_tool_permissions_menu(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let thread_view = active_thread(&conversation_view, cx);
+
+        thread_view.update_in(cx, |view, window, cx| {
+            assert!(!view.tool_permissions_menu_handle.is_deployed());
+            view.focus_handle(cx).focus(window, cx);
+        });
+
+        cx.run_until_parked();
+
+        thread_view.update_in(cx, |_, window, cx| {
+            window.dispatch_action(Box::new(crate::OpenToolPermissionsMenu), cx);
+        });
+
+        cx.run_until_parked();
+
+        thread_view.update_in(cx, |view, _window, _cx| {
+            assert!(view.tool_permissions_menu_handle.is_deployed());
+        });
+    }
+
+    #[gpui::test]
     async fn test_notification_closed_when_thread_view_dropped(cx: &mut TestAppContext) {
         init_test(cx);
 
