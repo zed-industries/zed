@@ -1926,7 +1926,7 @@ impl CollabPanel {
         self.collapsed_channels.binary_search(&channel_id).is_ok()
     }
 
-    fn toggle_favorite_channel(&mut self, channel_id: ChannelId, cx: &mut Context<Self>) {
+    pub fn toggle_favorite_channel(&mut self, channel_id: ChannelId, cx: &mut Context<Self>) {
         let was_selected_favorite = self.selected_entry_is_favorite()
             && self
                 .selected_channel()
@@ -2222,7 +2222,7 @@ impl CollabPanel {
         }
     }
 
-    fn reorder_favorite(
+    pub fn reorder_favorite(
         &mut self,
         channel_id: ChannelId,
         direction: proto::reorder_channel::Direction,
@@ -3636,5 +3636,83 @@ impl Render for JoinChannelTooltip {
                         .child(render_participant_name_and_handle(participant))
                 }))
         })
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl CollabPanel {
+    pub fn entries_as_strings(&self) -> Vec<String> {
+        let mut result = Vec::new();
+        for (ix, entry) in self.entries.iter().enumerate() {
+            let selected = if self.selection == Some(ix) {
+                "  <== selected"
+            } else {
+                ""
+            };
+            match entry {
+                ListEntry::Header(section) => {
+                    let name = match section {
+                        Section::ActiveCall => "Active Call",
+                        Section::FavoriteChannels => "Favorites",
+                        Section::Channels => "Channels",
+                        Section::ChannelInvites => "Channel Invites",
+                        Section::ContactRequests => "Contact Requests",
+                        Section::Contacts => "Contacts",
+                        Section::Online => "Online",
+                        Section::Offline => "Offline",
+                    };
+                    result.push(format!("[{name}]"));
+                }
+                ListEntry::Channel {
+                    channel,
+                    depth,
+                    has_children,
+                    ..
+                } => {
+                    let indent = "  ".repeat(*depth + 1);
+                    let icon = if *has_children {
+                        "v "
+                    } else if channel.visibility == proto::ChannelVisibility::Public {
+                        "🛜 "
+                    } else {
+                        "#️⃣ "
+                    };
+                    result.push(format!("{indent}{icon}{}{selected}", channel.name));
+                }
+                ListEntry::ChannelNotes { .. } => {
+                    result.push(format!("  (notes){selected}"));
+                }
+                ListEntry::ChannelEditor { depth } => {
+                    let indent = "  ".repeat(*depth + 1);
+                    result.push(format!("{indent}[editor]{selected}"));
+                }
+                ListEntry::ChannelInvite(channel) => {
+                    result.push(format!("  (invite) #{}{selected}", channel.name));
+                }
+                ListEntry::CallParticipant { user, .. } => {
+                    result.push(format!("  {}{selected}", user.github_login));
+                }
+                ListEntry::ParticipantProject {
+                    worktree_root_names,
+                    ..
+                } => {
+                    result.push(format!("    {}{selected}", worktree_root_names.join(", ")));
+                }
+                ListEntry::ParticipantScreen { .. } => {
+                    result.push(format!("    (screen){selected}"));
+                }
+                ListEntry::IncomingRequest(user) => {
+                    result.push(format!("  (incoming) {}{selected}", user.github_login));
+                }
+                ListEntry::OutgoingRequest(user) => {
+                    result.push(format!("  (outgoing) {}{selected}", user.github_login));
+                }
+                ListEntry::Contact { contact, .. } => {
+                    result.push(format!("  {}{selected}", contact.user.github_login));
+                }
+                ListEntry::ContactPlaceholder => {}
+            }
+        }
+        result
     }
 }
