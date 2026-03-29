@@ -939,22 +939,16 @@ mod tests {
         );
 
         // Next partial: the fixer corrects the escape to \n.
-        // The held-back byte was wrong, but we never emitted it. Now the
-        // correct newline at that position is emitted normally.
+        // Because edit text also holds back a trailing newline, nothing new
+        // is emitted yet.
         let events = parser.push_edits(&[PartialEdit {
             old_text: Some("hello,\n".into()),
             new_text: None,
         }]);
-        assert_eq!(
-            events.as_slice(),
-            &[ToolEditEvent::OldTextChunk {
-                edit_index: 0,
-                chunk: "\n".into(),
-                done: false,
-            }]
-        );
+        assert!(events.is_empty());
 
-        // Continue normally.
+        // Continue normally. The held-back newline is emitted together with the
+        // next content once it is no longer trailing.
         let events = parser.push_edits(&[PartialEdit {
             old_text: Some("hello,\nworld".into()),
             new_text: None,
@@ -963,7 +957,7 @@ mod tests {
             events.as_slice(),
             &[ToolEditEvent::OldTextChunk {
                 edit_index: 0,
-                chunk: "world".into(),
+                chunk: "\nworld".into(),
                 done: false,
             }]
         );
@@ -1000,7 +994,7 @@ mod tests {
                 },
                 ToolEditEvent::NewTextChunk {
                     edit_index: 0,
-                    chunk: "LINE1\n".into(),
+                    chunk: "LINE1".into(),
                     done: false,
                 },
             ]
@@ -1014,7 +1008,7 @@ mod tests {
             events.as_slice(),
             &[ToolEditEvent::NewTextChunk {
                 edit_index: 0,
-                chunk: "LINE2\nLINE3".into(),
+                chunk: "\nLINE2\nLINE3".into(),
                 done: false,
             }]
         );
