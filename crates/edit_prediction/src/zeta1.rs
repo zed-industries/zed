@@ -323,12 +323,33 @@ pub(crate) fn parse_edits(
 
     let content_start = start_markers
         .first()
-        .map(|e| e.0 + EDITABLE_REGION_START_MARKER.len() + 1) // +1 to skip \n after marker
+        .map(|e| {
+            let after_marker = e.0 + EDITABLE_REGION_START_MARKER.len();
+            // Skip the newline after the marker if present
+            if content[after_marker..].starts_with('\n') {
+                after_marker + 1
+            } else {
+                after_marker
+            }
+        })
         .unwrap_or(0);
     let content_end = end_markers
         .first()
-        .map(|e| e.0.saturating_sub(1)) // -1 to exclude \n before marker
-        .unwrap_or(content.strip_suffix("\n").unwrap_or(&content).len());
+        .map(|e| {
+            if content[..e.0].ends_with('\n') {
+                e.0 - 1
+            } else {
+                e.0
+            }
+        })
+        .unwrap_or_else(|| content.strip_suffix('\n').unwrap_or(&content).len());
+
+    anyhow::ensure!(
+        content_start <= content_end,
+        "start marker occurs after end marker (start: {}, end: {})",
+        content_start,
+        content_end
+    );
 
     let new_text = &content[content_start..content_end];
 
