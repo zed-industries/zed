@@ -145,6 +145,25 @@ async fn test_reorder_favorite_channels_independently_of_channels(cx: &mut TestA
         ]
     );
 
+    // Move favorite channel-b down again when it's already last (should be no-op).
+    panel.update_in(cx, |panel, window, cx| {
+        panel.move_channel_down(&MoveChannelDown, window, cx);
+    });
+    assert_eq!(
+        panel.read_with(cx, |panel, _| panel.entries_as_strings()),
+        &[
+            "[Favorites]",
+            "  #️⃣ channel-c",
+            "  #️⃣ channel-b  <== selected",
+            "[Channels]",
+            "  v root",
+            "    #️⃣ channel-a",
+            "    #️⃣ channel-b",
+            "    #️⃣ channel-c",
+            "[Contacts]",
+        ]
+    );
+
     // Move favorite channel-b back up.
     // The Channels section should remain unchanged.
     panel.update_in(cx, |panel, window, cx| {
