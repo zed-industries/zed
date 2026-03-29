@@ -778,6 +778,16 @@ thread_local! {
         RefCell::new(None);
 }
 
+/// Cancel any in-flight momentum scroll. Returns true if momentum was active.
+fn cancel_momentum(state_rc: &Rc<RefCell<IosWindowState>>) -> bool {
+    let had = state_rc.borrow().momentum.is_some();
+    if had {
+        state_rc.borrow_mut().momentum = None;
+        MOMENTUM_WINDOW.with(|slot| *slot.borrow_mut() = None);
+    }
+    had
+}
+
 /// Called every CADisplayLink tick to advance in-flight momentum scroll.
 fn tick_momentum() {
     let weak = MOMENTUM_WINDOW.with(|slot| slot.borrow().clone());
@@ -793,11 +803,10 @@ fn tick_momentum() {
         }
     };
 
-    // Compute the next scroll event from the momentum state. We must release
+    // Compute the next scroll delta from momentum state. We must release
     // the borrow before calling `dispatch_input_event`, which also borrows.
     let event = {
         let mut state = state_rc.borrow_mut();
-        // Read modifiers before the mutable borrow of momentum.
         let modifiers = state.current_modifiers;
         let Some(momentum) = state.momentum.as_mut() else {
             MOMENTUM_WINDOW.with(|slot| *slot.borrow_mut() = None);
@@ -817,41 +826,27 @@ fn tick_momentum() {
         let speed =
             (momentum.velocity.x * momentum.velocity.x + momentum.velocity.y * momentum.velocity.y)
                 .sqrt();
-        let position = momentum.position;
-        let delta_x = momentum.velocity.x * dt;
-        let delta_y = momentum.velocity.y * dt;
 
         if speed < MOMENTUM_STOP_THRESHOLD {
+            // Velocity decayed to zero — stop silently.
             state.momentum = None;
-            PlatformInput::ScrollWheel(ScrollWheelEvent {
-                position,
-                delta: ScrollDelta::Pixels(Point::default()),
-                modifiers,
-                touch_phase: TouchPhase::Ended,
-            })
-        } else {
-            PlatformInput::ScrollWheel(ScrollWheelEvent {
-                position,
-                delta: ScrollDelta::Pixels(Point {
-                    x: gpui::px(delta_x),
-                    y: gpui::px(delta_y),
-                }),
-                modifiers,
-                touch_phase: TouchPhase::Moved,
-            })
+            MOMENTUM_WINDOW.with(|slot| *slot.borrow_mut() = None);
+            return;
         }
+
+        let position = momentum.position;
+        PlatformInput::ScrollWheel(ScrollWheelEvent {
+            position,
+            delta: ScrollDelta::Pixels(Point {
+                x: gpui::px(momentum.velocity.x * dt),
+                y: gpui::px(momentum.velocity.y * dt),
+            }),
+            modifiers,
+            touch_phase: TouchPhase::Moved,
+        })
     };
 
-    let is_ended = matches!(
-        event,
-        PlatformInput::ScrollWheel(ScrollWheelEvent { touch_phase: TouchPhase::Ended, .. })
-    );
-
     dispatch_input_event(&state_rc, event);
-
-    if is_ended {
-        MOMENTUM_WINDOW.with(|slot| *slot.borrow_mut() = None);
-    }
 }
 
 extern "C" fn display_link_fired(_data: *mut c_void) {
@@ -1827,25 +1822,7 @@ fn handle_touches(this: &Object, touches: *mut Object, event: *mut Object, kind:
         TouchKind::Began => {
             // Cancel any in-flight momentum scroll the instant a finger
             // touches the screen, matching macOS "catch" behavior.
-            let had_momentum = state_rc.borrow().momentum.is_some();
-            if had_momentum {
-                let momentum_pos = {
-                    let mut state = state_rc.borrow_mut();
-                    let pos = state.momentum.as_ref().map(|m| m.position).unwrap_or(position);
-                    state.momentum = None;
-                    pos
-                };
-                MOMENTUM_WINDOW.with(|slot| *slot.borrow_mut() = None);
-                dispatch_input_event(
-                    &state_rc,
-                    PlatformInput::ScrollWheel(ScrollWheelEvent {
-                        position: momentum_pos,
-                        delta: ScrollDelta::Pixels(Point::default()),
-                        modifiers,
-                        touch_phase: TouchPhase::Ended,
-                    }),
-                );
-            }
+            cancel_momentum(&state_rc);
 
             // Record the start position; defer MouseDown until we know whether
             // this is a tap or the beginning of a drag (or a cancelled touch
@@ -2036,35 +2013,19 @@ extern "C" fn handle_hover_gesture(this: &Object, _sel: Sel, recognizer: *mut Ob
                 // not kill momentum from those events. Once momentum is coasting
                 // (no active pan), a hover event means the user moved the
                 // pointer intentionally, so stop the scroll.
-                let should_cancel_momentum = {
+                // Only cancel momentum if it's been coasting long enough
+                // that this hover event can't be residual from the scroll
+                // gesture itself. Without this grace period, hover events
+                // arrive immediately after the pan ENDED fires and would
+                // kill momentum before it visibly starts.
+                let should_cancel = {
                     let state = state_rc.borrow();
-                    // Only cancel momentum if it's been coasting long enough
-                    // that this hover event can't be residual from the scroll
-                    // gesture itself. Without this grace period, hover events
-                    // arrive immediately after the pan ENDED fires and would
-                    // kill momentum before it visibly starts.
                     state.momentum.as_ref().map_or(false, |m| {
                         m.started_at.elapsed().as_millis() > 150
                     })
                 };
-                if should_cancel_momentum {
-                    let momentum_pos = {
-                        let mut state = state_rc.borrow_mut();
-                        let pos =
-                            state.momentum.as_ref().map(|m| m.position).unwrap_or(position);
-                        state.momentum = None;
-                        pos
-                    };
-                    MOMENTUM_WINDOW.with(|slot| *slot.borrow_mut() = None);
-                    dispatch_input_event(
-                        &state_rc,
-                        PlatformInput::ScrollWheel(ScrollWheelEvent {
-                            position: momentum_pos,
-                            delta: ScrollDelta::Pixels(Point::default()),
-                            modifiers,
-                            touch_phase: TouchPhase::Ended,
-                        }),
-                    );
+                if should_cancel {
+                    cancel_momentum(&state_rc);
                 }
 
                 dispatch_input_event(
@@ -2148,39 +2109,11 @@ extern "C" fn handle_pan_gesture(this: &Object, _sel: Sel, recognizer: *mut Obje
         let modifiers = state_rc.borrow().current_modifiers;
 
         match gesture_state {
-            GESTURE_STATE_BEGAN => {
-                // Cancel any in-flight momentum before starting a new scroll.
-                let had_momentum = state_rc.borrow().momentum.is_some();
-                if had_momentum {
-                    let (momentum_pos, momentum_mods) = {
-                        let mut state = state_rc.borrow_mut();
-                        let pos = state.momentum.as_ref().map(|m| m.position).unwrap_or(position);
-                        let mods = state.current_modifiers;
-                        state.momentum = None;
-                        (pos, mods)
-                    };
-                    MOMENTUM_WINDOW.with(|slot| *slot.borrow_mut() = None);
-                    dispatch_input_event(
-                        &state_rc,
-                        PlatformInput::ScrollWheel(ScrollWheelEvent {
-                            position: momentum_pos,
-                            delta: ScrollDelta::Pixels(Point::default()),
-                            modifiers: momentum_mods,
-                            touch_phase: TouchPhase::Ended,
-                        }),
-                    );
+            GESTURE_STATE_BEGAN | GESTURE_STATE_CHANGED => {
+                if gesture_state == GESTURE_STATE_BEGAN {
+                    // Cancel any in-flight momentum before starting a new scroll.
+                    cancel_momentum(&state_rc);
                 }
-                dispatch_input_event(
-                    &state_rc,
-                    PlatformInput::ScrollWheel(ScrollWheelEvent {
-                        position,
-                        delta: ScrollDelta::Pixels(Point::default()),
-                        modifiers,
-                        touch_phase: TouchPhase::Started,
-                    }),
-                );
-            }
-            GESTURE_STATE_CHANGED => {
                 dispatch_input_event(
                     &state_rc,
                     PlatformInput::ScrollWheel(ScrollWheelEvent {
@@ -2225,32 +2158,26 @@ extern "C" fn handle_pan_gesture(this: &Object, _sel: Sel, recognizer: *mut Obje
                     });
                     let weak = Rc::downgrade(&state_rc);
                     MOMENTUM_WINDOW.with(|slot| *slot.borrow_mut() = Some(weak));
-                    // Momentum loop will emit Ended when velocity decays.
-                } else {
+                }
+            }
+            GESTURE_STATE_CANCELLED => {
+                // Gesture was cancelled (e.g. another recognizer took over).
+                // Emit the final delta if any, then ensure momentum is cleared.
+                if translation.x != 0.0 || translation.y != 0.0 {
                     dispatch_input_event(
                         &state_rc,
                         PlatformInput::ScrollWheel(ScrollWheelEvent {
                             position,
-                            delta: ScrollDelta::Pixels(Point::default()),
+                            delta: ScrollDelta::Pixels(Point {
+                                x: gpui::px(translation.x as f32),
+                                y: gpui::px(translation.y as f32),
+                            }),
                             modifiers,
-                            touch_phase: TouchPhase::Ended,
+                            touch_phase: TouchPhase::Moved,
                         }),
                     );
                 }
-            }
-            GESTURE_STATE_CANCELLED => {
-                dispatch_input_event(
-                    &state_rc,
-                    PlatformInput::ScrollWheel(ScrollWheelEvent {
-                        position,
-                        delta: ScrollDelta::Pixels(Point {
-                            x: gpui::px(translation.x as f32),
-                            y: gpui::px(translation.y as f32),
-                        }),
-                        modifiers,
-                        touch_phase: TouchPhase::Ended,
-                    }),
-                );
+                cancel_momentum(&state_rc);
             }
             _ => {}
         }
