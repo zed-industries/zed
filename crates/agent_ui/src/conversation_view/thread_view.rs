@@ -283,6 +283,7 @@ pub struct ThreadView {
     pub _subscriptions: Vec<Subscription>,
     pub message_editor: Entity<MessageEditor>,
     pub add_context_menu_handle: PopoverMenuHandle<ContextMenu>,
+    pub tool_permissions_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub thinking_effort_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub project: WeakEntity<Project>,
     pub recent_history_entries: Vec<AgentSessionInfo>,
@@ -522,6 +523,7 @@ impl ThreadView {
             in_flight_prompt: None,
             message_editor,
             add_context_menu_handle: PopoverMenuHandle::default(),
+            tool_permissions_menu_handle: PopoverMenuHandle::default(),
             thinking_effort_menu_handle: PopoverMenuHandle::default(),
             project,
             recent_history_entries,
@@ -3193,6 +3195,7 @@ impl ThreadView {
                         h_flex()
                             .gap_0p5()
                             .child(self.render_add_context_button(cx))
+                            .child(self.render_tool_permissions_button(cx))
                             .child(self.render_follow_toggle(cx))
                             .children(self.render_fast_mode_control(cx))
                             .children(self.render_thinking_control(cx)),
@@ -4083,6 +4086,158 @@ impl ThreadView {
                                 message_editor.update(cx, |editor, cx| {
                                     editor.insert_branch_diff_crease(window, cx);
                                 });
+                            }
+                        }),
+                )
+        })
+    }
+
+    fn render_tool_permissions_button(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let focus_handle = self.message_editor.focus_handle(cx);
+        let weak_self = cx.weak_entity();
+
+        let current_mode = agent_settings::AgentSettings::get_global(cx)
+            .tool_permissions
+            .default;
+
+        let menu = PopoverMenu::new("tool-permissions-menu")
+            .anchor(Corner::BottomLeft)
+            .with_handle(self.tool_permissions_menu_handle.clone())
+            .offset(gpui::Point {
+                x: px(0.0),
+                y: px(-2.0),
+            })
+            .menu(move |window, cx| {
+                weak_self
+                    .update(cx, |this, cx| this.build_tool_permissions_menu(window, cx))
+                    .ok()
+            });
+
+        match current_mode {
+            settings::ToolPermissionMode::Confirm => menu.trigger_with_tooltip(
+                IconButton::new("tool-permissions", IconName::Settings)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted),
+                {
+                    let focus_handle = focus_handle.clone();
+                    move |_window, cx| {
+                        Tooltip::for_action_in(
+                            "Tool Permissions",
+                            &crate::OpenToolPermissionsMenu,
+                            &focus_handle,
+                            cx,
+                        )
+                    }
+                },
+            ),
+            settings::ToolPermissionMode::Allow | settings::ToolPermissionMode::Deny => {
+                let label = if matches!(current_mode, settings::ToolPermissionMode::Allow) {
+                    "Allow"
+                } else {
+                    "Deny"
+                };
+                menu.trigger_with_tooltip(
+                    ButtonLike::new("tool-permissions")
+                        .style(ButtonStyle::Subtle)
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Icon::new(IconName::Settings)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
+                                .child(Label::new(label).size(LabelSize::Small).color(Color::Muted))
+                                .child(
+                                    Icon::new(IconName::ChevronDown)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Muted),
+                                ),
+                        ),
+                    {
+                        let focus_handle = focus_handle.clone();
+                        move |_window, cx| {
+                            Tooltip::for_action_in(
+                                "Tool Permissions",
+                                &crate::OpenToolPermissionsMenu,
+                                &focus_handle,
+                                cx,
+                            )
+                        }
+                    },
+                )
+            }
+        }
+    }
+
+    fn build_tool_permissions_menu(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<ContextMenu> {
+        let workspace = self.workspace.clone();
+        let current_mode = agent_settings::AgentSettings::get_global(cx)
+            .tool_permissions
+            .default;
+
+        ContextMenu::build(window, cx, move |menu, _window, _cx| {
+            let allow_selected = matches!(current_mode, settings::ToolPermissionMode::Allow);
+            let confirm_selected = matches!(current_mode, settings::ToolPermissionMode::Confirm);
+            let deny_selected = matches!(current_mode, settings::ToolPermissionMode::Deny);
+
+            menu.key_context("ToolPermissionsMenu")
+                .header("Tool Permissions")
+                .item(
+                    ContextMenuEntry::new("Allow")
+                        .toggleable(IconPosition::End, allow_selected)
+                        .disabled(allow_selected)
+                        .handler({
+                            let workspace = workspace.clone();
+                            move |_window, cx| {
+                                if let Some(workspace) = workspace.upgrade() {
+                                    let fs = workspace.read(cx).app_state().fs.clone();
+                                    settings::update_settings_file(fs, cx, move |settings, _cx| {
+                                        let agent = settings.agent.get_or_insert_default();
+                                        agent.tool_permissions.get_or_insert_default().default =
+                                            Some(settings::ToolPermissionMode::Allow);
+                                    });
+                                }
+                            }
+                        }),
+                )
+                .item(
+                    ContextMenuEntry::new("Needs Confirmation")
+                        .toggleable(IconPosition::End, confirm_selected)
+                        .disabled(confirm_selected)
+                        .handler({
+                            let workspace = workspace.clone();
+                            move |_window, cx| {
+                                if let Some(workspace) = workspace.upgrade() {
+                                    let fs = workspace.read(cx).app_state().fs.clone();
+                                    settings::update_settings_file(fs, cx, move |settings, _cx| {
+                                        let agent = settings.agent.get_or_insert_default();
+                                        agent.tool_permissions.get_or_insert_default().default =
+                                            Some(settings::ToolPermissionMode::Confirm);
+                                    });
+                                }
+                            }
+                        }),
+                )
+                .item(
+                    ContextMenuEntry::new("Deny")
+                        .toggleable(IconPosition::End, deny_selected)
+                        .disabled(deny_selected)
+                        .handler({
+                            let workspace = workspace.clone();
+                            move |_window, cx| {
+                                if let Some(workspace) = workspace.upgrade() {
+                                    let fs = workspace.read(cx).app_state().fs.clone();
+                                    settings::update_settings_file(fs, cx, move |settings, _cx| {
+                                        let agent = settings.agent.get_or_insert_default();
+                                        agent.tool_permissions.get_or_insert_default().default =
+                                            Some(settings::ToolPermissionMode::Deny);
+                                    });
+                                }
                             }
                         }),
                 )
@@ -8325,6 +8480,18 @@ impl ThreadView {
         });
     }
 
+    fn open_tool_permissions_menu(
+        &mut self,
+        _action: &crate::OpenToolPermissionsMenu,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let menu_handle = self.tool_permissions_menu_handle.clone();
+        window.defer(cx, move |window, cx| {
+            menu_handle.toggle(window, cx);
+        });
+    }
+
     fn toggle_fast_mode(&mut self, cx: &mut Context<Self>) {
         if !self.fast_mode_available(cx) {
             return;
@@ -8453,6 +8620,7 @@ impl Render for ThreadView {
             .on_action(cx.listener(Self::handle_toggle_command_pattern))
             .on_action(cx.listener(Self::open_permission_dropdown))
             .on_action(cx.listener(Self::open_add_context_menu))
+            .on_action(cx.listener(Self::open_tool_permissions_menu))
             .on_action(cx.listener(|this, _: &ToggleFastMode, _window, cx| {
                 this.toggle_fast_mode(cx);
             }))

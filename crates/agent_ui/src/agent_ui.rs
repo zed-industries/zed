@@ -157,6 +157,8 @@ actions!(
         ResetTrialEndUpsell,
         /// Opens the "Add Context" menu in the message editor.
         OpenAddContextMenu,
+        /// Opens the tool permissions menu in the message editor.
+        OpenToolPermissionsMenu,
         /// Continues the current thread.
         ContinueThread,
         /// Interrupts the current generation and sends the message immediately.
