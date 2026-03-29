@@ -3195,8 +3195,8 @@ impl ThreadView {
                         h_flex()
                             .gap_0p5()
                             .child(self.render_add_context_button(cx))
-                            .child(self.render_tool_permissions_button(cx))
                             .child(self.render_follow_toggle(cx))
+                            .child(self.render_tool_permissions_button(cx))
                             .children(self.render_fast_mode_control(cx))
                             .children(self.render_thinking_control(cx)),
                     )
