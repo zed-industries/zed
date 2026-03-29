@@ -61,7 +61,7 @@ actions!(
 
 pub struct TabSwitcher {
     picker: Entity<Picker<TabSwitcherDelegate>>,
-    anchor_modifier: Option<AnchorModifier>,
+    anchor_modifiers: Vec<AnchorModifier>,
 }
 
 impl ModalView for TabSwitcher {}
@@ -172,19 +172,15 @@ impl TabSwitcher {
         is_global: bool,
         cx: &mut Context<Self>,
     ) -> Self {
-        let anchor_modifier = if is_global {
-            None
+        let anchor_modifiers = if is_global {
+            Vec::new()
         } else {
             let mods = window.modifiers();
-            if mods.platform {
-                Some(AnchorModifier::Platform)
-            } else if mods.control {
-                Some(AnchorModifier::Control)
-            } else if mods.alt {
-                Some(AnchorModifier::Alt)
-            } else {
-                None
-            }
+            let mut anchors = Vec::new();
+            if mods.platform { anchors.push(AnchorModifier::Platform); }
+            if mods.control { anchors.push(AnchorModifier::Control); }
+            if mods.alt { anchors.push(AnchorModifier::Alt); }
+            anchors
         };
         Self {
             picker: cx.new(|cx| {
@@ -194,7 +190,7 @@ impl TabSwitcher {
                     Picker::nonsearchable_list(delegate, window, cx)
                 }
             }),
-            anchor_modifier,
+            anchor_modifiers,
         }
     }
 
@@ -204,18 +200,18 @@ impl TabSwitcher {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(anchor) = self.anchor_modifier else {
+        if self.anchor_modifiers.is_empty() {
             return;
-        };
+        }
 
-        let released = match anchor {
+        let any_released = self.anchor_modifiers.iter().any(|anchor| match anchor {
             AnchorModifier::Platform => !event.platform,
-            AnchorModifier::Alt => !event.alt,
-            AnchorModifier::Control => !event.control,
-        };
+            AnchorModifier::Control  => !event.control,
+            AnchorModifier::Alt      => !event.alt,
+        });
 
-        if released {
-            self.anchor_modifier = None;
+        if any_released {
+            self.anchor_modifiers.clear();
             if self.picker.read(cx).delegate.matches.is_empty() {
                 cx.emit(DismissEvent)
             } else {
