@@ -67,6 +67,7 @@ pub fn adapt_schema_to_format(
     if let Value::Object(obj) = json {
         obj.remove("$schema");
         obj.remove("title");
+        obj.remove("description");
     }
 
     match format {
