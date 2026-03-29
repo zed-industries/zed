@@ -14,7 +14,7 @@ use settings::{
     merge_from::MergeFrom,
 };
 use task::Shell;
-use theme::FontFamilyName;
+use theme_settings::FontFamilyName;
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct Toolbar {

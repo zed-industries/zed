@@ -337,6 +337,8 @@
       "shift-j": "vim::JoinLines",
       "i": "vim::InsertBefore",
       "a": "vim::InsertAfter",
+      "o": "vim::InsertLineBelow",
+      "shift-o": "vim::InsertLineAbove",
       "p": "vim::Paste",
       "u": "vim::Undo",
       "r": "vim::PushReplace",

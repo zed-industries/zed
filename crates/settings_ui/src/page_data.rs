@@ -411,9 +411,9 @@ fn appearance_page() -> SettingsPage {
                                         settings::ThemeSelection::Static(_) => return,
                                         settings::ThemeSelection::Dynamic { mode, light, dark } => {
                                             match mode {
-                                                theme::ThemeAppearanceMode::Light => light.clone(),
-                                                theme::ThemeAppearanceMode::Dark => dark.clone(),
-                                                theme::ThemeAppearanceMode::System => dark.clone(), // no cx, can't determine correct choice
+                                                theme_settings::ThemeAppearanceMode::Light => light.clone(),
+                                                theme_settings::ThemeAppearanceMode::Dark => dark.clone(),
+                                                theme_settings::ThemeAppearanceMode::System => dark.clone(), // no cx, can't determine correct choice
                                             }
                                         },
                                     };
@@ -581,9 +581,9 @@ fn appearance_page() -> SettingsPage {
                                         settings::IconThemeSelection::Static(_) => return,
                                         settings::IconThemeSelection::Dynamic { mode, light, dark } => {
                                             match mode {
-                                                theme::ThemeAppearanceMode::Light => light.clone(),
-                                                theme::ThemeAppearanceMode::Dark => dark.clone(),
-                                                theme::ThemeAppearanceMode::System => dark.clone(), // no cx, can't determine correct choice
+                                                theme_settings::ThemeAppearanceMode::Light => light.clone(),
+                                                theme_settings::ThemeAppearanceMode::Dark => dark.clone(),
+                                                theme_settings::ThemeAppearanceMode::System => dark.clone(), // no cx, can't determine correct choice
                                             }
                                         },
                                     };
@@ -802,7 +802,8 @@ fn appearance_page() -> SettingsPage {
                                 }
                                 settings::BufferLineHeightDiscriminants::Custom => {
                                     let custom_value =
-                                        theme::BufferLineHeight::from(*settings_value).value();
+                                        theme_settings::BufferLineHeight::from(*settings_value)
+                                            .value();
                                     settings::BufferLineHeight::Custom(custom_value)
                                 }
                             };
@@ -3327,7 +3328,7 @@ fn search_and_files_page() -> SettingsPage {
 }
 
 fn window_and_layout_page() -> SettingsPage {
-    fn status_bar_section() -> [SettingsPageItem; 9] {
+    fn status_bar_section() -> [SettingsPageItem; 10] {
         [
             SettingsPageItem::SectionHeader("Status Bar"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -3467,6 +3468,28 @@ fn window_and_layout_page() -> SettingsPage {
                     pick: |settings_content| settings_content.debugger.as_ref()?.button.as_ref(),
                     write: |settings_content, value| {
                         settings_content.debugger.get_or_insert_default().button = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Active File Name",
+                description: "Show the name of the active file in the status bar.",
+                field: Box::new(SettingField {
+                    json_path: Some("status_bar.show_active_file"),
+                    pick: |settings_content| {
+                        settings_content
+                            .status_bar
+                            .as_ref()?
+                            .show_active_file
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .status_bar
+                            .get_or_insert_default()
+                            .show_active_file = value;
                     },
                 }),
                 metadata: None,

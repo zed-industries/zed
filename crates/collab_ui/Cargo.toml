@@ -54,6 +54,7 @@ settings.workspace = true
 smallvec.workspace = true
 telemetry.workspace = true
 theme.workspace = true
+theme_settings.workspace = true
 time.workspace = true
 time_format.workspace = true
 title_bar.workspace = true

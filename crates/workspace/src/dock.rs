@@ -776,17 +776,9 @@ impl Dock {
         }
     }
 
-    pub fn panel_size(&self, panel: &dyn PanelHandle, window: &Window, cx: &App) -> Option<Pixels> {
-        self.panel_entries
-            .iter()
-            .find(|entry| entry.panel.panel_id() == panel.panel_id())
-            .map(|entry| self.resolved_panel_size(entry, window, cx))
-    }
-
-    pub fn active_panel_size(&self, window: &Window, cx: &App) -> Option<Pixels> {
+    pub fn active_panel_size(&self) -> Option<PanelSizeState> {
         if self.is_open {
-            self.active_panel_entry()
-                .map(|entry| self.resolved_panel_size(entry, window, cx))
+            self.active_panel_entry().map(|entry| entry.size_state)
         } else {
             None
         }
@@ -947,28 +939,6 @@ impl Dock {
         }
     }
 
-    fn resolved_panel_size(&self, entry: &PanelEntry, window: &Window, cx: &App) -> Pixels {
-        if self.position.axis() == Axis::Horizontal
-            && entry.panel.supports_flexible_size(window, cx)
-        {
-            if let Some(workspace) = self.workspace.upgrade() {
-                let workspace = workspace.read(cx);
-                return resolve_panel_size(
-                    entry.size_state,
-                    entry.panel.as_ref(),
-                    self.position,
-                    workspace,
-                    window,
-                    cx,
-                );
-            }
-        }
-        entry
-            .size_state
-            .size
-            .unwrap_or_else(|| entry.panel.default_size(window, cx))
-    }
-
     pub(crate) fn load_persisted_size_state(
         workspace: &Workspace,
         panel_key: &'static str,
@@ -988,41 +958,10 @@ impl Dock {
     }
 }
 
-pub(crate) fn resolve_panel_size(
-    size_state: PanelSizeState,
-    panel: &dyn PanelHandle,
-    position: DockPosition,
-    workspace: &Workspace,
-    window: &Window,
-    cx: &App,
-) -> Pixels {
-    if position.axis() == Axis::Horizontal && panel.supports_flexible_size(window, cx) {
-        let ratio = size_state
-            .flexible_size_ratio
-            .or_else(|| workspace.default_flexible_dock_ratio(position));
-
-        if let Some(ratio) = ratio {
-            return workspace
-                .flexible_dock_size(position, ratio, window, cx)
-                .unwrap_or_else(|| {
-                    size_state
-                        .size
-                        .unwrap_or_else(|| panel.default_size(window, cx))
-                });
-        }
-    }
-
-    size_state
-        .size
-        .unwrap_or_else(|| panel.default_size(window, cx))
-}
-
 impl Render for Dock {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let dispatch_context = Self::dispatch_context();
         if let Some(entry) = self.visible_entry() {
-            let size = self.resolved_panel_size(entry, window, cx);
-
             let position = self.position;
             let create_resize_handle = || {
                 let handle = div()
@@ -1091,8 +1030,10 @@ impl Render for Dock {
                 .border_color(cx.theme().colors().border)
                 .overflow_hidden()
                 .map(|this| match self.position().axis() {
-                    Axis::Horizontal => this.w(size).h_full().flex_row(),
-                    Axis::Vertical => this.h(size).w_full().flex_col(),
+                    // Width and height are always set on the workspace wrapper in
+                    // render_dock, so fill whatever space the wrapper provides.
+                    Axis::Horizontal => this.w_full().h_full().flex_row(),
+                    Axis::Vertical => this.h_full().w_full().flex_col(),
                 })
                 .map(|this| match self.position() {
                     DockPosition::Left => this.border_r_1(),
@@ -1102,8 +1043,8 @@ impl Render for Dock {
                 .child(
                     div()
                         .map(|this| match self.position().axis() {
-                            Axis::Horizontal => this.min_w(size).h_full(),
-                            Axis::Vertical => this.min_h(size).w_full(),
+                            Axis::Horizontal => this.w_full().h_full(),
+                            Axis::Vertical => this.h_full().w_full(),
                         })
                         .child(
                             entry
