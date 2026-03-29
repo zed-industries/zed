@@ -1,4 +1,3 @@
-use anyhow::Context as _;
 use editor::Editor;
 use fuzzy::StringMatchCandidate;
 
@@ -11,7 +10,7 @@ use gpui::{
     SharedString, Styled, Subscription, Task, WeakEntity, Window, actions, rems,
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
-use project::git_store::Repository;
+use project::git_store::{GitStoreEvent, Repository};
 use project::project_settings::ProjectSettings;
 use settings::Settings;
 use std::sync::Arc;
@@ -111,9 +110,11 @@ enum BranchListStyle {
 
 pub struct BranchList {
     width: Rems,
+    workspace: WeakEntity<Workspace>,
+    tracks_active_repository: bool,
     pub picker: Entity<Picker<BranchListDelegate>>,
     picker_focus_handle: FocusHandle,
-    _subscription: Option<Subscription>,
+    _subscriptions: Vec<Subscription>,
     embedded: bool,
 }
 
@@ -127,9 +128,10 @@ impl BranchList {
         cx: &mut Context<Self>,
     ) -> Self {
         let mut this = Self::new_inner(workspace, repository, style, width, false, window, cx);
-        this._subscription = Some(cx.subscribe(&this.picker, |_, _, _, cx| {
-            cx.emit(DismissEvent);
-        }));
+        this._subscriptions
+            .push(cx.subscribe(&this.picker, |_, _, _, cx| {
+                cx.emit(DismissEvent);
+            }));
         this
     }
 
@@ -142,20 +144,142 @@ impl BranchList {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let all_branches_request = repository
-            .clone()
-            .map(|repository| repository.update(cx, |repository, _| repository.branches()));
+        let delegate = BranchListDelegate::new(workspace.clone(), repository.clone(), style, cx);
+        let picker = cx.new(|cx| {
+            Picker::uniform_list(delegate, window, cx)
+                .show_scrollbar(true)
+                .modal(!embedded)
+        });
+        let picker_focus_handle = picker.focus_handle(cx);
 
-        let default_branch_request = repository.clone().map(|repository| {
-            repository.update(cx, |repository, _| repository.default_branch(false))
+        picker.update(cx, |picker, _| {
+            picker.delegate.focus_handle = picker_focus_handle.clone();
         });
 
+        let tracks_active_repository = repository.is_none();
+        let mut this = Self {
+            workspace: workspace.clone(),
+            tracks_active_repository,
+            picker,
+            picker_focus_handle,
+            width,
+            _subscriptions: Vec::new(),
+            embedded,
+        };
+
+        if tracks_active_repository
+            && let Some(git_store) = workspace.upgrade().map(|workspace| {
+                workspace.read_with(cx, |workspace, cx| {
+                    workspace.project().read(cx).git_store().clone()
+                })
+            })
+        {
+            this._subscriptions.push(cx.subscribe_in(
+                &git_store,
+                window,
+                |this, _, event, window, cx| {
+                    if matches!(
+                        event,
+                        GitStoreEvent::RepositoryAdded
+                            | GitStoreEvent::RepositoryRemoved(_)
+                            | GitStoreEvent::ActiveRepositoryChanged(_)
+                    ) {
+                        this.follow_workspace_repository(window, cx);
+                    }
+                },
+            ));
+        }
+
+        if let Some(repository) = repository {
+            this.set_repository(Some(repository), window, cx);
+        } else {
+            this.follow_workspace_repository(window, cx);
+        }
+
+        this
+    }
+
+    fn new_embedded(
+        workspace: WeakEntity<Workspace>,
+        repository: Option<Entity<Repository>>,
+        width: Rems,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut this = Self::new_inner(
+            workspace,
+            repository,
+            BranchListStyle::Modal,
+            width,
+            true,
+            window,
+            cx,
+        );
+        this._subscriptions
+            .push(cx.subscribe(&this.picker, |_, _, _, cx| {
+                cx.emit(DismissEvent);
+            }));
+        this
+    }
+
+    fn follow_workspace_repository(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.tracks_active_repository {
+            return;
+        }
+
+        let resolved_repository = self.workspace.upgrade().and_then(|workspace| {
+            workspace.read_with(cx, |workspace, cx| resolve_active_repository(workspace, cx))
+        });
+
+        let (current_repository, has_branch_data) = self.picker.read_with(cx, |picker, _| {
+            (
+                picker.delegate.repo.clone(),
+                picker.delegate.all_branches.is_some(),
+            )
+        });
+
+        let should_reload = resolved_repository != current_repository
+            || (resolved_repository.is_some() && !has_branch_data);
+        if should_reload {
+            self.set_repository(resolved_repository, window, cx);
+        }
+    }
+
+    fn set_repository(
+        &mut self,
+        repository: Option<Entity<Repository>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.picker.update(cx, |picker, cx| {
+            picker.delegate.repo = repository.clone();
+            picker.delegate.default_branch = None;
+            picker.delegate.all_branches = None;
+            picker.delegate.matches.clear();
+            picker.delegate.selected_index = 0;
+            picker.refresh(window, cx);
+            cx.notify();
+        });
+
+        if let Some(repository) = repository {
+            self.load_repository_branches(repository, window, cx);
+        }
+    }
+
+    fn load_repository_branches(
+        &mut self,
+        repository: Entity<Repository>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let requested_repository = repository.clone();
+        let all_branches_request = repository.update(cx, |repository, _| repository.branches());
+        let default_branch_request =
+            repository.update(cx, |repository, _| repository.default_branch(false));
+
         cx.spawn_in(window, async move |this, cx| {
-            let mut all_branches = all_branches_request
-                .context("No active repository")?
-                .await??;
+            let mut all_branches = all_branches_request.await??;
             let default_branch = default_branch_request
-                .context("No active repository")?
                 .await
                 .map(Result::ok)
                 .ok()
@@ -193,6 +317,10 @@ impl BranchList {
 
             let _ = this.update_in(cx, |this, window, cx| {
                 this.picker.update(cx, |picker, cx| {
+                    if picker.delegate.repo != Some(requested_repository.clone()) {
+                        return;
+                    }
+
                     picker.delegate.default_branch = default_branch;
                     picker.delegate.all_branches = Some(all_branches);
                     picker.refresh(window, cx);
@@ -202,48 +330,6 @@ impl BranchList {
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
-
-        let delegate = BranchListDelegate::new(workspace, repository, style, cx);
-        let picker = cx.new(|cx| {
-            Picker::uniform_list(delegate, window, cx)
-                .show_scrollbar(true)
-                .modal(!embedded)
-        });
-        let picker_focus_handle = picker.focus_handle(cx);
-
-        picker.update(cx, |picker, _| {
-            picker.delegate.focus_handle = picker_focus_handle.clone();
-        });
-
-        Self {
-            picker,
-            picker_focus_handle,
-            width,
-            _subscription: None,
-            embedded,
-        }
-    }
-
-    fn new_embedded(
-        workspace: WeakEntity<Workspace>,
-        repository: Option<Entity<Repository>>,
-        width: Rems,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let mut this = Self::new_inner(
-            workspace,
-            repository,
-            BranchListStyle::Modal,
-            width,
-            true,
-            window,
-            cx,
-        );
-        this._subscription = Some(cx.subscribe(&this.picker, |_, _, _, cx| {
-            cx.emit(DismissEvent);
-        }));
-        this
     }
 
     pub fn handle_modifiers_changed(
@@ -1399,10 +1485,12 @@ mod tests {
                     });
 
                     BranchList {
+                        workspace: workspace.downgrade(),
+                        tracks_active_repository: false,
                         picker,
                         picker_focus_handle,
                         width: rems(34.),
-                        _subscription: Some(_subscription),
+                        _subscriptions: vec![_subscription],
                         embedded: false,
                     }
                 })
@@ -1440,6 +1528,37 @@ mod tests {
         let repository = cx.read(|cx| project.read(cx).active_repository(cx));
 
         (project, repository.unwrap())
+    }
+
+    async fn init_branch_list_with_constructor(
+        project: Entity<Project>,
+        repository: Option<Entity<Repository>>,
+        cx: &mut TestAppContext,
+    ) -> (Entity<BranchList>, VisualTestContext) {
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+
+        let branch_list = window_handle
+            .update(cx, |_multi_workspace, window, cx| {
+                cx.new(|cx| {
+                    BranchList::new(
+                        workspace.downgrade(),
+                        repository,
+                        BranchListStyle::Modal,
+                        rems(34.),
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .unwrap();
+
+        let cx = VisualTestContext::from_window(window_handle.into(), cx);
+
+        (branch_list, cx)
     }
 
     #[gpui::test]
@@ -1481,6 +1600,59 @@ mod tests {
                 // Verify the last entry is the "create new branch" option
                 let last_match = picker.delegate.matches.last().unwrap();
                 assert!(last_match.is_new_branch());
+            })
+        });
+    }
+
+    #[gpui::test]
+    async fn test_branch_list_recovers_when_initial_repository_is_missing(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (project, repository) = init_fake_repository(cx).await;
+
+        let branch_names = ["feature-auth", "feature-ui"];
+        let repository_for_setup = repository.clone();
+        cx.spawn(async move |mut cx| {
+            for branch in branch_names {
+                repository_for_setup.update(&mut cx, |repo, _| {
+                    repo.create_branch(branch.to_string(), None)
+                })
+                .await
+                .unwrap()
+                .unwrap();
+            }
+        })
+        .await;
+        cx.run_until_parked();
+
+        let expected_branch_names = repository
+            .update(cx, |repo, _cx| repo.branches())
+            .await
+            .unwrap()
+            .unwrap()
+            .into_iter()
+            .map(|branch| branch.name().to_string())
+            .collect::<HashSet<_>>();
+
+        let (branch_list, mut ctx) = init_branch_list_with_constructor(project, None, cx).await;
+        let cx = &mut ctx;
+
+        cx.run_until_parked();
+        update_branch_list_matches_with_empty_query(&branch_list, cx).await;
+
+        branch_list.update(cx, |branch_list, cx| {
+            branch_list.picker.update(cx, |picker, _cx| {
+                assert!(
+                    picker.delegate.repo.is_some(),
+                    "BranchList should recover the active repository from the workspace"
+                );
+
+                let branch_names = picker
+                    .delegate
+                    .matches
+                    .iter()
+                    .map(|entry| entry.name().to_string())
+                    .collect::<HashSet<_>>();
+                assert_eq!(branch_names, expected_branch_names);
             })
         });
     }
