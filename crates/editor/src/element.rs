@@ -2197,7 +2197,7 @@ impl EditorElement {
         let rem_size = self.rem_size(cx).unwrap_or(window.rem_size());
         let mut text_style = self.style.text.clone();
         text_style.font_size = font_size;
-        rounded_line_height(window, text_style.line_height_in_pixels(rem_size))
+        text_style.line_height_in_pixels(rem_size)
     }
 
     fn get_minimap_width(
@@ -2240,7 +2240,8 @@ impl EditorElement {
         line_height: Pixels,
         gutter_dimensions: &GutterDimensions,
         gutter_settings: crate::editor_settings::Gutter,
-        scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
+        scroll_position: gpui::Point<ScrollOffset>,
+        start_row: DisplayRow,
         gutter_hitbox: &Hitbox,
         window: &mut Window,
         cx: &mut App,
@@ -2254,10 +2255,10 @@ impl EditorElement {
                 );
                 let crease_toggle_size = crease_toggle.layout_as_root(available_space, window, cx);
 
+                let display_row = DisplayRow(start_row.0 + ix as u32);
                 let position = point(
                     gutter_dimensions.width - gutter_dimensions.right_padding,
-                    ix as f32 * line_height
-                        - (scroll_pixel_position.y % ScrollPixelOffset::from(line_height)).into(),
+                    line_height * (display_row.as_f64() - scroll_position.y) as f32,
                 );
                 let centering_offset = point(
                     (gutter_dimensions.fold_area_width() - crease_toggle_size.width) / 2.,
@@ -2289,6 +2290,8 @@ impl EditorElement {
         line_height: Pixels,
         content_origin: gpui::Point<Pixels>,
         scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
+        scroll_position: gpui::Point<ScrollOffset>,
+        start_row: DisplayRow,
         em_width: Pixels,
         window: &mut Window,
         cx: &mut App,
@@ -2312,8 +2315,8 @@ impl EditorElement {
                 };
                 let position = point(
                     Pixels::from(scroll_pixel_position.x) + line.width + padding,
-                    ix as f32 * line_height
-                        - (scroll_pixel_position.y % ScrollPixelOffset::from(line_height)).into(),
+                    line_height
+                        * (DisplayRow(start_row.0 + ix as u32).as_f64() - scroll_position.y) as f32,
                 );
                 let centering_offset = point(px(0.), (line_height - size.height) / 2.);
                 let origin = content_origin + position + centering_offset;
@@ -2876,6 +2879,7 @@ impl EditorElement {
         buffer_rows: &[RowInfo],
         em_width: Pixels,
         scroll_position: gpui::Point<ScrollOffset>,
+        start_row: DisplayRow,
         line_height: Pixels,
         gutter_hitbox: &Hitbox,
         max_width: Option<Pixels>,
@@ -2900,7 +2904,6 @@ impl EditorElement {
         } else {
             AvailableSpace::MaxContent
         };
-        let scroll_top = scroll_position.y * ScrollPixelOffset::from(line_height);
         let start_x = em_width;
 
         let mut last_used_color: Option<(Hsla, Oid)> = None;
@@ -2925,8 +2928,8 @@ impl EditorElement {
                     cx,
                 )?;
 
-                let start_y = ix as f32 * line_height
-                    - Pixels::from(scroll_top % ScrollPixelOffset::from(line_height));
+                let start_y = line_height
+                    * (DisplayRow(start_row.0 + ix as u32).as_f64() - scroll_position.y) as f32;
                 let absolute_offset = gutter_hitbox.origin + point(start_x, start_y);
 
                 element.prepaint_as_root(
@@ -3354,6 +3357,7 @@ impl EditorElement {
         em_width: Pixels,
         line_height: Pixels,
         scroll_position: gpui::Point<ScrollOffset>,
+        start_row: DisplayRow,
         buffer_rows: &[RowInfo],
         window: &mut Window,
         cx: &mut App,
@@ -3363,8 +3367,6 @@ impl EditorElement {
         }
 
         let editor_font_size = self.style.text.font_size.to_pixels(window.rem_size()) * 1.2;
-
-        let scroll_top = scroll_position.y * ScrollPixelOffset::from(line_height);
 
         let max_line_number_length = self
             .editor
@@ -3428,8 +3430,8 @@ impl EditorElement {
 
                 let position = point(
                     git_gutter_width + px(1.),
-                    ix as f32 * line_height
-                        - Pixels::from(scroll_top % ScrollPixelOffset::from(line_height))
+                    line_height
+                        * (DisplayRow(start_row.0 + ix as u32).as_f64() - scroll_position.y) as f32
                         + px(1.),
                 );
                 let origin = gutter_hitbox.origin + position;
@@ -3509,13 +3511,11 @@ impl EditorElement {
                 .unwrap_or_else(|| cx.theme().colors().editor_line_number);
             let shaped_line =
                 self.shape_line_number(SharedString::from(&line_number), color, window);
-            let scroll_top = scroll_position.y * ScrollPixelOffset::from(line_height);
             let line_origin = gutter_hitbox.map(|hitbox| {
                 hitbox.origin
                     + point(
                         hitbox.size.width - shaped_line.width - gutter_dimensions.right_padding,
-                        ix as f32 * line_height
-                            - Pixels::from(scroll_top % ScrollPixelOffset::from(line_height)),
+                        line_height * (display_row.as_f64() - scroll_position.y) as f32,
                     )
             });
 
@@ -8844,10 +8844,7 @@ impl LineWithInvisibles {
                             window,
                             max_width: text_width,
                         });
-                        let line_height = rounded_line_height(
-                            window,
-                            text_style.line_height_in_pixels(window.rem_size()),
-                        );
+                        let line_height = text_style.line_height_in_pixels(window.rem_size());
                         let size = element.layout_as_root(
                             size(available_width, AvailableSpace::Definite(line_height)),
                             window,
@@ -9578,10 +9575,7 @@ impl Element for EditorElement {
                 let layout_id = match editor.mode {
                     EditorMode::SingleLine => {
                         let rem_size = window.rem_size();
-                        let height = rounded_line_height(
-                            window,
-                            self.style.text.line_height_in_pixels(rem_size),
-                        );
+                        let height = self.style.text.line_height_in_pixels(rem_size);
                         let mut style = Style::default();
                         style.size.height = height.into();
                         style.size.width = relative(1.).into();
@@ -9624,10 +9618,8 @@ impl Element for EditorElement {
                         style.size.width = relative(1.).into();
                         if sizing_behavior == SizingBehavior::SizeByContent {
                             let snapshot = editor.snapshot(window, cx);
-                            let line_height = rounded_line_height(
-                                window,
-                                self.style.text.line_height_in_pixels(window.rem_size()),
-                            );
+                            let line_height =
+                                self.style.text.line_height_in_pixels(window.rem_size());
                             let scroll_height =
                                 (snapshot.max_point().row().next_row().0 as f32) * line_height;
                             style.size.height = scroll_height.into();
@@ -9680,8 +9672,7 @@ impl Element for EditorElement {
                     let rem_size = window.rem_size();
                     let font_id = window.text_system().resolve_font(&style.text.font());
                     let font_size = style.text.font_size.to_pixels(rem_size);
-                    let line_height =
-                        rounded_line_height(window, style.text.line_height_in_pixels(rem_size));
+                    let line_height = style.text.line_height_in_pixels(rem_size);
                     let em_width = window.text_system().em_width(font_id, font_size).unwrap();
                     let em_advance = window.text_system().em_advance(font_id, font_size).unwrap();
                     let em_layout_width = window.text_system().em_layout_width(font_id, font_size);
@@ -10170,6 +10161,7 @@ impl Element for EditorElement {
                                 em_width,
                                 line_height,
                                 scroll_position,
+                                start_row,
                                 &row_infos,
                                 window,
                                 cx,
@@ -10530,6 +10522,8 @@ impl Element for EditorElement {
                                 line_height,
                                 content_origin,
                                 scroll_pixel_position,
+                                scroll_position,
+                                start_row,
                                 em_width,
                                 window,
                                 cx,
@@ -10637,6 +10631,7 @@ impl Element for EditorElement {
                         &row_infos,
                         em_width,
                         scroll_position,
+                        start_row,
                         line_height,
                         &gutter_hitbox,
                         gutter_dimensions.git_blame_entries_width,
@@ -10894,7 +10889,8 @@ impl Element for EditorElement {
                             line_height,
                             &gutter_dimensions,
                             gutter_settings,
-                            scroll_pixel_position,
+                            scroll_position,
+                            start_row,
                             &gutter_hitbox,
                             window,
                             cx,
@@ -11989,7 +11985,7 @@ impl PositionMap {
         line: &LineWithInvisibles,
     ) -> PointForPosition {
         let text_bounds = self.text_hitbox.bounds;
-        let scroll_position = self.snapshot.scroll_position();
+        let scroll_position = self.scroll_position;
         let position = position - text_bounds.origin;
         let x = position.x + (scroll_position.x as f32 * self.em_layout_width);
 
@@ -12389,11 +12385,6 @@ pub fn register_action<T: Action>(
 /// Shared between `prepaint` and `compute_auto_height_layout` to ensure
 /// both full and auto-height editors compute wrap widths consistently.
 #[inline]
-fn rounded_line_height(window: &Window, line_height: Pixels) -> Pixels {
-    window.round_to_nearest_device_pixel(line_height)
-}
-
-#[inline]
 fn rounded_scroll_pixel_position(
     window: &Window,
     scroll_position: gpui::Point<ScrollOffset>,
@@ -12465,8 +12456,7 @@ fn compute_auto_height_layout(
     let style = editor.style.as_ref().unwrap();
     let font_id = window.text_system().resolve_font(&style.text.font());
     let font_size = style.text.font_size.to_pixels(window.rem_size());
-    let line_height =
-        rounded_line_height(window, style.text.line_height_in_pixels(window.rem_size()));
+    let line_height = style.text.line_height_in_pixels(window.rem_size());
     let em_width = window.text_system().em_width(font_id, font_size).unwrap();
 
     let mut snapshot = editor.snapshot(window, cx);
@@ -12587,7 +12577,7 @@ mod tests {
         let style = editor.update(cx, |editor, cx| editor.style(cx).clone());
         let line_height = window
             .update(cx, |_, window, _| {
-                rounded_line_height(window, style.text.line_height_in_pixels(window.rem_size()))
+                style.text.line_height_in_pixels(window.rem_size())
             })
             .unwrap();
         let element = EditorElement::new(&editor, style);
@@ -12748,7 +12738,7 @@ mod tests {
         let style = editor.update(cx, |editor, cx| editor.style(cx).clone());
         let line_height = window
             .update(cx, |_, window, _| {
-                rounded_line_height(window, style.text.line_height_in_pixels(window.rem_size()))
+                style.text.line_height_in_pixels(window.rem_size())
             })
             .unwrap();
         let element = EditorElement::new(&editor, style);
@@ -12825,7 +12815,7 @@ mod tests {
         let style = editor.update(cx, |editor, cx| editor.style(cx).clone());
         let line_height = window
             .update(cx, |_, window, _| {
-                rounded_line_height(window, style.text.line_height_in_pixels(window.rem_size()))
+                style.text.line_height_in_pixels(window.rem_size())
             })
             .unwrap();
         let element = EditorElement::new(&editor, style);
