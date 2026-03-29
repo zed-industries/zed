@@ -557,19 +557,13 @@ impl Vim {
                 let display_map = editor.display_snapshot(cx);
                 let selections = editor.selections.all_adjusted_display(&display_map);
                 // For now, only primary selection is used to select the bracket/quote pair. It might be weird
-                // if multi-select resulted in different quote kinds being replaced for different selections
-                let Some(selection) = selections.first().cloned() else {
-                    return None;
-                };
-                let Some(range) = object.range(&display_map, selection, true, None) else {
-                    return None;
-                };
-
+                // if multi-select resulted in different quote kinds being replaced for different selections.
+                // any_pair uses the same logic, so this should be consistent across {Any,Mini}{Quotes,Brackets}
+                let selection = selections.first()?.clone();
+                let range = object.range(&display_map, selection, true, None)?;
                 let start_offset = range.start.to_offset(&display_map, Bias::Left);
-                display_map
-                    .buffer_chars_at(start_offset)
-                    .next()
-                    .and_then(|(ch, _)| literal_surround_pair(ch))
+                let (pair_char, _) = display_map.buffer_chars_at(start_offset).next()?;
+                literal_surround_pair(pair_char)
             })
             .ok()
             .flatten()
@@ -1410,29 +1404,25 @@ mod test {
         cx.simulate_keystrokes("c s b [");
         cx.assert_state(indoc! {"ˇ[ bracketed ]"}, Mode::Normal);
 
-        // NOTE: minibrackets in Rust doesn't seem to handle <> as expected; this matches
-        // the current behavior for e.g. `cib` but not `cab`, maybe something to do with
-        // the fact that `close = false` in language config...
-        //
-        // cx.set_state(indoc! {"(< name: ˇ'Zed' >)"}, Mode::Normal);
-        // cx.simulate_keystrokes("c s b }");
-        // cx.assert_state(indoc! {"(ˇ{ name: 'Zed' })"}, Mode::Normal);
+        cx.set_state(indoc! {"(<ˇZed>)"}, Mode::Normal);
+        cx.simulate_keystrokes("c s b )");
+        cx.assert_state(indoc! {"(ˇ(Zed))"}, Mode::Normal);
 
-        // cx.set_state(
-        //     indoc! {"
-        //         (< name: ˇ'Zed' >)
-        //         (< nˇame: 'DeltaDB' >)
-        //     "},
-        //     Mode::Normal,
-        // );
-        // cx.simulate_keystrokes("c s b {");
-        // cx.assert_state(
-        //     indoc! {"
-        //         (ˇ{ name: 'Zed' })
-        //         (ˇ{ name: 'DeltaDB' })
-        //     "},
-        //     Mode::Normal,
-        // );
+        cx.set_state(
+            indoc! {"
+                (<ˇZed>)
+                (<ˇDeltaDB>)
+            "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("c s b (");
+        cx.assert_state(
+            indoc! {"
+                (ˇ( Zed ))
+                (ˇ( DeltaDB ))
+            "},
+            Mode::Normal,
+        );
     }
 
     #[gpui::test]
