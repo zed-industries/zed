@@ -796,7 +796,6 @@ impl EditSession {
                     let anchor_range = self
                         .buffer
                         .read_with(cx, |buffer, _cx| buffer.anchor_range_between(range.clone()));
-
                     self.diff
                         .update(cx, |diff, cx| diff.reveal_range(anchor_range, cx));
 
