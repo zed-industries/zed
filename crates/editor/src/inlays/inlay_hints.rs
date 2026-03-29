@@ -316,7 +316,7 @@ impl Editor {
         };
 
         let mut visible_excerpts = self.visible_buffer_ranges(cx);
-        visible_excerpts.retain(|(snapshot, _, _)| self.is_lsp_relevant(snapshot.file(), cx));
+        visible_excerpts.retain(|(snapshot, _, _)| self.is_lsp_relevant(snapshot, cx));
 
         let mut invalidate_hints_for_buffers = HashSet::default();
         let ignore_previous_fetches = match reason {
