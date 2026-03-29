@@ -33,11 +33,20 @@ where
     F: Fn(&Language) -> bool,
 {
     let project = editor.project.clone()?;
+    let singleton_buffer_id = editor
+        .buffer()
+        .read(cx)
+        .as_singleton()
+        .map(|buffer| buffer.read(cx).remote_id());
     editor
         .selections
         .disjoint_anchors_arc()
         .iter()
-        .filter_map(|selection| Some((selection.head(), selection.head().text_anchor.buffer_id?)))
+        .filter_map(|selection| {
+            let head = selection.head();
+            let buffer_id = head.text_anchor.buffer_id.or(singleton_buffer_id);
+            Some((head, buffer_id?))
+        })
         .unique_by(|(_, buffer_id)| *buffer_id)
         .find_map(|(trigger_anchor, buffer_id)| {
             let buffer = editor.buffer().read(cx).buffer(buffer_id)?;
@@ -172,4 +181,91 @@ pub fn lsp_tasks(
         })
         .await
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use futures::StreamExt as _;
+    use gpui::{AppContext as _, TestAppContext};
+    use language::FakeLspAdapter;
+    use languages::rust_lang;
+    use lsp::LanguageServerName;
+    use multi_buffer::{MultiBuffer, MultiBufferOffset};
+    use project::{FakeFs, Project};
+    use util::path;
+
+    use crate::{SelectionEffects, editor_tests::init_test, test::build_editor_with_project};
+
+    use super::find_specific_language_server_in_selection;
+
+    #[gpui::test]
+    async fn test_find_language_server_at_end_of_file(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_file(path!("/file.rs"), "fn main() {}".into())
+            .await;
+
+        let project = Project::test(fs, [path!("/file.rs").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_lang());
+        let mut fake_servers =
+            language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/file.rs"), cx)
+            })
+            .await
+            .unwrap();
+
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let (editor, cx) = cx.add_window_view(|window, cx| {
+            build_editor_with_project(project.clone(), buffer, window, cx)
+        });
+
+        let _fake_server = fake_servers.next().await.unwrap();
+        cx.executor().run_until_parked();
+
+        let language_server_name = LanguageServerName::new_static("the-fake-language-server");
+        let filter = |language: &language::Language| language.name().as_ref() == "Rust";
+
+        // Cursor at beginning of file (default position) — should find server.
+        editor.update(cx, |editor, cx| {
+            let result = find_specific_language_server_in_selection(
+                editor,
+                cx,
+                filter,
+                language_server_name.clone(),
+            );
+            assert!(
+                result.is_some(),
+                "should find language server at beginning of file"
+            );
+        });
+
+        // Move cursor to end of file.
+        editor.update_in(cx, |editor, window, cx| {
+            let text_len = editor.text(cx).len();
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_ranges([
+                    MultiBufferOffset(text_len)..MultiBufferOffset(text_len),
+                ])
+            });
+        });
+
+        // Cursor at end of file — should still find server.
+        editor.update(cx, |editor, cx| {
+            let result = find_specific_language_server_in_selection(
+                editor,
+                cx,
+                filter,
+                language_server_name.clone(),
+            );
+            assert!(
+                result.is_some(),
+                "should find language server at end of file"
+            );
+        });
+    }
 }
