@@ -11,8 +11,7 @@ use language::LanguageName;
 use lsp::LanguageServerName;
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use util::paths::PathStyle;
-use util::rel_path::{RelPath, RelPathBuf};
+use util::rel_path::{PathExt, RelPathBuf};
 
 use crate::ExtensionCapability;
 
@@ -199,14 +198,10 @@ pub fn build_debug_adapter_schema_path(
     meta: &DebugAdapterManifestEntry,
 ) -> RelPathBuf {
     meta.schema_path.clone().unwrap_or_else(|| {
-        RelPath::new(
-            Path::new("debug_adapter_schemas")
-                .join(Path::new(adapter_name.as_ref()).with_extension("json"))
-                .as_path(),
-            PathStyle::Posix,
-        )
-        .expect("debug adapter schema path should be a valid relative path")
-        .into_owned()
+        Path::new("debug_adapter_schemas")
+            .join(Path::new(adapter_name.as_ref()).with_extension("json"))
+            .to_rel_path_buf()
+            .expect("debug adapter schema path should be a valid relative path")
     })
 }
 
@@ -450,7 +445,9 @@ fn manifest_from_old_manifest(
 
 #[cfg(test)]
 mod tests {
+    use indoc::indoc;
     use pretty_assertions::assert_eq;
+    use util::rel_path::rel_path_buf;
 
     use crate::ProcessExecCapability;
 
@@ -486,11 +483,11 @@ mod tests {
     fn test_build_adapter_schema_path_with_schema_path() {
         let adapter_name = Arc::from("my_adapter");
         let entry = DebugAdapterManifestEntry {
-            schema_path: Some("foo/bar".into()),
+            schema_path: Some(rel_path_buf("foo/bar")),
         };
 
         let path = build_debug_adapter_schema_path(&adapter_name, &entry);
-        assert_eq!(path, "foo/bar".into());
+        assert_eq!(path, rel_path_buf("foo/bar"));
     }
 
     #[test]
@@ -499,7 +496,7 @@ mod tests {
         let entry = DebugAdapterManifestEntry { schema_path: None };
 
         let path = build_debug_adapter_schema_path(&adapter_name, &entry);
-        assert_eq!(path, "debug_adapter_schemas/my_adapter.json".into());
+        assert_eq!(path, rel_path_buf("debug_adapter_schemas/my_adapter.json"));
     }
 
     #[test]
@@ -579,37 +576,35 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "windows")]
     fn test_deserialize_manifest_with_windows_separators() {
-        let manifest: ExtensionManifest = toml::from_str(
-            r#"
-id = "test-manifest"
-name = "Test Manifest"
-version = "0.0.1"
-schema_version = 0
-languages = ["foo\\bar"]
-"#,
-        )
-        .unwrap();
-
-        assert_eq!(manifest.languages, vec!["foo/bar".into()]);
+        let content = indoc! {r#"
+            id = "test-manifest"
+            name = "Test Manifest"
+            version = "0.0.1"
+            schema_version = 0
+            languages = ["foo\\bar"]
+        "#};
+        let manifest: ExtensionManifest = toml::from_str(&content).expect("manifest should parse");
+        assert_eq!(manifest.languages, vec![rel_path_buf("foo/bar")]);
     }
 
     #[test]
     fn parse_manifest_with_agent_server_archive_launcher() {
-        let toml_src = r#"
-id = "example.agent-server-ext"
-name = "Agent Server Example"
-version = "1.0.0"
-schema_version = 0
+        let toml_src = indoc! {r#"
+            id = "example.agent-server-ext"
+            name = "Agent Server Example"
+            version = "1.0.0"
+            schema_version = 0
 
-[agent_servers.foo]
-name = "Foo Agent"
+            [agent_servers.foo]
+            name = "Foo Agent"
 
-[agent_servers.foo.targets.linux-x86_64]
-archive = "https://example.com/agent-linux-x64.tar.gz"
-cmd = "./agent"
-args = ["--serve"]
-"#;
+            [agent_servers.foo.targets.linux-x86_64]
+            archive = "https://example.com/agent-linux-x64.tar.gz"
+            cmd = "./agent"
+            args = ["--serve"]
+        "#};
 
         let manifest: ExtensionManifest = toml::from_str(toml_src).expect("manifest should parse");
         assert_eq!(manifest.id.as_ref(), "example.agent-server-ext");

@@ -57,11 +57,7 @@ use std::{
 };
 use task::TaskTemplates;
 use url::Url;
-use util::{
-    ResultExt,
-    paths::{PathStyle, RemotePathBuf},
-    rel_path::RelPath,
-};
+use util::{ResultExt, paths::RemotePathBuf, rel_path::PathExt};
 use wasm_host::{
     WasmExtension, WasmHost,
     wit::{is_supported_wasm_api_version, wasm_api_version_range},
@@ -1586,7 +1582,7 @@ impl ExtensionStore {
                 })?;
                 let config = ::toml::from_str::<LanguageConfig>(&config)?;
 
-                let relative_path = RelPath::new(relative_path, PathStyle::local())?.into_owned();
+                let relative_path = relative_path.to_rel_path_buf()?;
                 if !extension_manifest.languages.contains(&relative_path) {
                     extension_manifest.languages.push(relative_path.clone());
                 }
@@ -1619,7 +1615,7 @@ impl ExtensionStore {
                     continue;
                 };
 
-                let relative_path = RelPath::new(relative_path, PathStyle::local())?.into_owned();
+                let relative_path = relative_path.to_rel_path_buf()?;
                 if !extension_manifest.themes.contains(&relative_path) {
                     extension_manifest.themes.push(relative_path.clone());
                 }
@@ -1651,7 +1647,7 @@ impl ExtensionStore {
                     continue;
                 };
 
-                let relative_path = RelPath::new(relative_path, PathStyle::local())?.into_owned();
+                let relative_path = relative_path.to_rel_path_buf()?;
                 if !extension_manifest.icon_themes.contains(&relative_path) {
                     extension_manifest.icon_themes.push(relative_path.clone());
                 }

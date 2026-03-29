@@ -340,7 +340,7 @@ impl<'de> Deserialize<'de> for RelPathBuf {
     {
         let path = String::deserialize(deserializer)?;
         let rel_path =
-            RelPath::new(Path::new(&path), PathStyle::Windows).map_err(serde::de::Error::custom)?;
+            RelPath::new(Path::new(&path), PathStyle::local()).map_err(serde::de::Error::custom)?;
         Ok(rel_path.into_owned())
     }
 }
@@ -348,14 +348,6 @@ impl<'de> Deserialize<'de> for RelPathBuf {
 impl Into<Arc<RelPath>> for RelPathBuf {
     fn into(self) -> Arc<RelPath> {
         Arc::from(self.as_rel_path())
-    }
-}
-
-impl From<&str> for RelPathBuf {
-    fn from(value: &str) -> Self {
-        RelPath::unix(&value)
-            .expect("RelPathBuf::from(&str) requires a normalized relative POSIX path")
-            .to_rel_path_buf()
     }
 }
 
@@ -410,9 +402,25 @@ pub fn rel_path(path: &str) -> &RelPath {
     RelPath::unix(path).unwrap()
 }
 
+#[cfg(any(test, feature = "test-support"))]
+#[track_caller]
+pub fn rel_path_buf(path: &str) -> RelPathBuf {
+    RelPath::unix(path).unwrap().to_rel_path_buf()
+}
+
 impl PartialEq<str> for RelPath {
     fn eq(&self, other: &str) -> bool {
         self.0 == *other
+    }
+}
+
+pub trait PathExt {
+    fn to_rel_path_buf(&self) -> Result<RelPathBuf>;
+}
+
+impl<T: AsRef<Path> + ?Sized> PathExt for T {
+    fn to_rel_path_buf(&self) -> Result<RelPathBuf> {
+        Ok(RelPath::new(self.as_ref(), PathStyle::local())?.into_owned())
     }
 }
 
