@@ -7,14 +7,17 @@ use menu::{SelectNext, SelectPrevious};
 #[gpui::test]
 async fn test_reorder_favorite_channels_independently_of_channels(cx: &mut TestAppContext) {
     let (server, client) = TestServer::start1(cx).await;
-    let _ = server
-        .make_channel("channel-a", None, (&client, cx), &mut [])
+    let root = server
+        .make_channel("root", None, (&client, cx), &mut [])
         .await;
     let _ = server
-        .make_channel("channel-b", None, (&client, cx), &mut [])
+        .make_channel("channel-a", Some(root), (&client, cx), &mut [])
         .await;
     let _ = server
-        .make_channel("channel-c", None, (&client, cx), &mut [])
+        .make_channel("channel-b", Some(root), (&client, cx), &mut [])
+        .await;
+    let _ = server
+        .make_channel("channel-c", Some(root), (&client, cx), &mut [])
         .await;
 
     let (workspace, cx) = client.build_test_workspace(cx).await;
@@ -25,14 +28,15 @@ async fn test_reorder_favorite_channels_independently_of_channels(cx: &mut TestA
     });
     cx.run_until_parked();
 
-    // Verify initial state: just channels, no favorites.
+    // Verify initial state.
     assert_eq!(
         panel.read_with(cx, |panel, _| panel.entries_as_strings()),
         &[
             "[Channels]",
-            "  #️⃣ channel-a",
-            "  #️⃣ channel-b",
-            "  #️⃣ channel-c",
+            "  v root",
+            "    #️⃣ channel-a",
+            "    #️⃣ channel-b",
+            "    #️⃣ channel-c",
             "[Contacts]",
         ]
     );
@@ -42,14 +46,16 @@ async fn test_reorder_favorite_channels_independently_of_channels(cx: &mut TestA
         panel.select_next(&SelectNext, window, cx);
         panel.select_next(&SelectNext, window, cx);
         panel.select_next(&SelectNext, window, cx);
+        panel.select_next(&SelectNext, window, cx);
     });
     assert_eq!(
         panel.read_with(cx, |panel, _| panel.entries_as_strings()),
         &[
             "[Channels]",
-            "  #️⃣ channel-a",
-            "  #️⃣ channel-b  <== selected",
-            "  #️⃣ channel-c",
+            "  v root",
+            "    #️⃣ channel-a",
+            "    #️⃣ channel-b  <== selected",
+            "    #️⃣ channel-c",
             "[Contacts]",
         ]
     );
@@ -63,9 +69,10 @@ async fn test_reorder_favorite_channels_independently_of_channels(cx: &mut TestA
             "[Favorites]",
             "  #️⃣ channel-b",
             "[Channels]",
-            "  #️⃣ channel-a",
-            "  #️⃣ channel-b  <== selected",
-            "  #️⃣ channel-c",
+            "  v root",
+            "    #️⃣ channel-a",
+            "    #️⃣ channel-b  <== selected",
+            "    #️⃣ channel-c",
             "[Contacts]",
         ]
     );
@@ -84,9 +91,10 @@ async fn test_reorder_favorite_channels_independently_of_channels(cx: &mut TestA
             "  #️⃣ channel-b",
             "  #️⃣ channel-c",
             "[Channels]",
-            "  #️⃣ channel-a",
-            "  #️⃣ channel-b",
-            "  #️⃣ channel-c  <== selected",
+            "  v root",
+            "    #️⃣ channel-a",
+            "    #️⃣ channel-b",
+            "    #️⃣ channel-c  <== selected",
             "[Contacts]",
         ]
     );
@@ -94,6 +102,7 @@ async fn test_reorder_favorite_channels_independently_of_channels(cx: &mut TestA
     // Navigate up to favorite channel-b and move it down.
     // The Channels section should remain unchanged.
     panel.update_in(cx, |panel, window, cx| {
+        panel.select_previous(&SelectPrevious, window, cx);
         panel.select_previous(&SelectPrevious, window, cx);
         panel.select_previous(&SelectPrevious, window, cx);
         panel.select_previous(&SelectPrevious, window, cx);
@@ -107,9 +116,10 @@ async fn test_reorder_favorite_channels_independently_of_channels(cx: &mut TestA
             "  #️⃣ channel-b  <== selected",
             "  #️⃣ channel-c",
             "[Channels]",
-            "  #️⃣ channel-a",
-            "  #️⃣ channel-b",
-            "  #️⃣ channel-c",
+            "  v root",
+            "    #️⃣ channel-a",
+            "    #️⃣ channel-b",
+            "    #️⃣ channel-c",
             "[Contacts]",
         ]
     );
@@ -124,9 +134,10 @@ async fn test_reorder_favorite_channels_independently_of_channels(cx: &mut TestA
             "  #️⃣ channel-c",
             "  #️⃣ channel-b  <== selected",
             "[Channels]",
-            "  #️⃣ channel-a",
-            "  #️⃣ channel-b",
-            "  #️⃣ channel-c",
+            "  v root",
+            "    #️⃣ channel-a",
+            "    #️⃣ channel-b",
+            "    #️⃣ channel-c",
             "[Contacts]",
         ]
     );
@@ -143,9 +154,10 @@ async fn test_reorder_favorite_channels_independently_of_channels(cx: &mut TestA
             "  #️⃣ channel-b  <== selected",
             "  #️⃣ channel-c",
             "[Channels]",
-            "  #️⃣ channel-a",
-            "  #️⃣ channel-b",
-            "  #️⃣ channel-c",
+            "  v root",
+            "    #️⃣ channel-a",
+            "    #️⃣ channel-b",
+            "    #️⃣ channel-c",
             "[Contacts]",
         ]
     );
@@ -161,9 +173,10 @@ async fn test_reorder_favorite_channels_independently_of_channels(cx: &mut TestA
             "  #️⃣ channel-b  <== selected",
             "  #️⃣ channel-c",
             "[Channels]",
-            "  #️⃣ channel-a",
-            "  #️⃣ channel-b",
-            "  #️⃣ channel-c",
+            "  v root",
+            "    #️⃣ channel-a",
+            "    #️⃣ channel-b",
+            "    #️⃣ channel-c",
             "[Contacts]",
         ]
     );
@@ -178,9 +191,10 @@ async fn test_reorder_favorite_channels_independently_of_channels(cx: &mut TestA
             "[Favorites]",
             "  #️⃣ channel-c",
             "[Channels]",
-            "  #️⃣ channel-a",
-            "  #️⃣ channel-b",
-            "  #️⃣ channel-c",
+            "  v root",
+            "    #️⃣ channel-a",
+            "    #️⃣ channel-b",
+            "    #️⃣ channel-c",
             "[Contacts]",
         ]
     );
