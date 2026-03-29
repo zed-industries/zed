@@ -3020,14 +3020,14 @@ Examples:
 ```json [settings]
 {
   "profiles": {
-    "presentation": {
+    "Presentation": {
       "settings": {
         "buffer_font_size": 20,
         "ui_font_size": 18,
         "theme": "One Light"
       }
     },
-    "clean_slate": {
+    "Clean Slate": {
       "base": "default",
       "settings": {
         "theme": "Ayu Dark"
