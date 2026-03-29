@@ -413,14 +413,20 @@ impl MultiBuffer {
             && &excerpt.path_key == &path_key
             && excerpt.buffer_id != buffer_id
         {
-            self.buffers.remove(&excerpt.buffer_id);
-            snapshot.buffers.remove(&excerpt.buffer_id);
+            let old_buffer_id = excerpt.buffer_id;
+            self.buffers.remove(&old_buffer_id);
+            snapshot.buffers.remove(&old_buffer_id);
+            snapshot.diffs.remove(&old_buffer_id);
+            self.diffs.remove(&old_buffer_id);
             let before = cursor.position.1;
             cursor.seek_forward(&path_key, Bias::Right);
             let after = cursor.position.1;
             patch.push(Edit {
                 old: before..after,
                 new: new_excerpts.summary().len()..new_excerpts.summary().len(),
+            });
+            cx.emit(Event::BuffersRemoved {
+                removed_buffer_ids: vec![old_buffer_id],
             });
         }
 

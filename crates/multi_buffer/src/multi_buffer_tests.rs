@@ -2269,6 +2269,19 @@ fn test_set_excerpts_for_path_replaces_previous_buffer(cx: &mut TestAppContext) 
     let path: PathKey = PathKey::with_sort_prefix(0, rel_path("shared/path").into_arc());
 
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+    let removed_buffer_ids: Arc<RwLock<Vec<BufferId>>> = Default::default();
+    multibuffer.update(cx, |_, cx| {
+        let removed_buffer_ids = removed_buffer_ids.clone();
+        cx.subscribe(&multibuffer, move |_, _, event, _| {
+            if let Event::BuffersRemoved {
+                removed_buffer_ids: ids,
+            } = event
+            {
+                removed_buffer_ids.write().extend(ids.iter().copied());
+            }
+        })
+        .detach();
+    });
 
     let ranges_a = vec![Point::row_range(0..1), Point::row_range(3..4)];
     multibuffer.update(cx, |multibuffer, cx| {
@@ -2345,7 +2358,19 @@ fn test_set_excerpts_for_path_replaces_previous_buffer(cx: &mut TestAppContext) 
                 .excerpts()
                 .any(|excerpt| excerpt.context.start.buffer_id == buffer_b_id),
         );
+        assert!(
+            multibuffer.buffer(buffer_a_id).is_none(),
+            "old buffer should be fully removed from the multibuffer"
+        );
+        assert!(
+            multibuffer.buffer(buffer_b_id).is_some(),
+            "new buffer should be present in the multibuffer"
+        );
     });
+    assert!(
+        removed_buffer_ids.read().contains(&buffer_a_id),
+        "BuffersRemoved event should have been emitted for the old buffer"
+    );
 
     assert_excerpts_match(
         &multibuffer,
