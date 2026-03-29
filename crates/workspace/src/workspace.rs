@@ -3079,19 +3079,17 @@ impl Workspace {
             #[cfg(target_os = "ios")]
             {
                 if let Some(app_state) = cx.try_global::<GlobalAppState>() {
-                    if let Some(app_state) = app_state.0.upgrade() {
-                        let workspace_store = app_state.workspace_store.clone();
-                        let projects: Vec<_> = workspace_store.read(cx)
-                            .workspaces()
-                            .filter_map(|w| w.upgrade())
-                            .map(|w| w.read(cx).project.clone())
-                            .collect();
-                        cx.defer(move |cx| {
-                            for project in projects {
-                                project.update(cx, |project, cx| project.close(cx));
-                            }
-                        });
-                    }
+                    let workspace_store = app_state.0.workspace_store.clone();
+                    let projects: Vec<Entity<project::Project>> = workspace_store.read(cx)
+                        .workspaces()
+                        .filter_map(|w: &WeakEntity<Workspace>| w.upgrade())
+                        .map(|w: Entity<Workspace>| w.read(cx).project.clone())
+                        .collect();
+                    cx.defer(move |cx| {
+                        for project in projects {
+                            project.update(cx, |project: &mut project::Project, cx| project.close(cx));
+                        }
+                    });
                 }
             }
         });

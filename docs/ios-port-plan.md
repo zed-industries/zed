@@ -788,6 +788,14 @@ current form) — replace with the `russh`-based `IosSshTransport`.
 - Release Metal texture caches and non-visible buffers when entering background
 - Use `CADisplayLink` with `preferredFrameRateRange` for ProMotion frame timing
 
+**Developer tooling TODO:**
+- Settings profiles (`profiles` key) currently only work in user settings
+  (`~/.config/zed/settings.json`), not in project settings (`.zed/settings.json`).
+  We should extend `SettingsStore` to read profiles from project settings so that an
+  "iOS" profile with the correct rust-analyzer target/check config can live in the
+  repo's `.zed/settings.json` and be available to all contributors without requiring
+  per-user setup.
+
 ---
 
 ## Build Commands

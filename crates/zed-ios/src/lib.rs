@@ -337,6 +337,10 @@ mod ios {
 
         release_channel::init(semver::Version::new(0, 1, 0), cx);
 
+        // Database (must be set before anything that uses KeyValueStore)
+        let app_db = db::AppDatabase::new();
+        cx.set_global(app_db);
+
         // Tokio runtime for russh SSH transport
         gpui_tokio::init(cx);
 
@@ -350,7 +354,7 @@ mod ios {
         cx.set_http_client(http);
 
         // Theme and fonts
-        theme::init(theme::LoadThemes::All(Box::new(assets::Assets)), cx);
+        theme_settings::init(theme::LoadThemes::All(Box::new(assets::Assets)), cx);
         assets::Assets.load_fonts(cx).log_err();
 
         // Filesystem
@@ -392,7 +396,8 @@ mod ios {
         let client_for_state = client.clone();
         cx.spawn(async move |cx| {
             let session_id = format!("ios-{}", std::process::id());
-            let session_data = Session::new(session_id).await;
+            let kvp = cx.update(|cx| db::kvp::KeyValueStore::global(cx));
+            let session_data = Session::new(session_id, kvp).await;
             cx.update(|cx| {
                 let session = cx.new(|cx| AppSession::new(session_data, cx));
                 let settings_fs = fs.clone();
@@ -407,7 +412,7 @@ mod ios {
                     session,
                 });
 
-                AppState::set_global(Arc::downgrade(&app_state), cx);
+                AppState::set_global(app_state.clone(), cx);
 
                 git::GitHostingProviderRegistry::set_global(
                     git::GitHostingProviderRegistry::default_global(cx),
@@ -554,7 +559,12 @@ mod ios {
                         ).await.log_err() {
                             workspace_handle.update_in(
                                 &mut cx.clone(),
-                                |workspace, window, cx| workspace.add_panel(panel, window, cx),
+                                |workspace, window, cx| {
+                                    workspace.add_panel(panel, window, cx);
+                                    workspace.left_dock().update(cx, |dock, cx| {
+                                        dock.set_open(true, window, cx);
+                                    });
+                                },
                             ).log_err();
                         }
                         if let Some(panel) = outline_panel::OutlinePanel::load(
@@ -622,6 +632,7 @@ mod ios {
         vec![
             Menu {
                 name: "File".into(),
+                disabled: false,
                 items: vec![
                     MenuItem::action("New", workspace::NewFile),
                     MenuItem::separator(),
@@ -640,6 +651,7 @@ mod ios {
             },
             Menu {
                 name: "Edit".into(),
+                disabled: false,
                 items: vec![
                     MenuItem::os_action("Undo", editor::actions::Undo, gpui::OsAction::Undo),
                     MenuItem::os_action("Redo", editor::actions::Redo, gpui::OsAction::Redo),
@@ -659,6 +671,7 @@ mod ios {
             },
             Menu {
                 name: "Selection".into(),
+                disabled: false,
                 items: vec![
                     MenuItem::os_action(
                         "Select All",
@@ -698,6 +711,7 @@ mod ios {
             },
             Menu {
                 name: "View".into(),
+                disabled: false,
                 items: vec![
                     MenuItem::action(
                         "Zoom In",
@@ -724,6 +738,7 @@ mod ios {
             },
             Menu {
                 name: "Go".into(),
+                disabled: false,
                 items: vec![
                     MenuItem::action("Back", workspace::GoBack),
                     MenuItem::action("Forward", workspace::GoForward),
@@ -765,6 +780,7 @@ mod ios {
             },
             Menu {
                 name: "Settings".into(),
+                disabled: false,
                 items: vec![
                     MenuItem::action("Open Settings", zed_actions::OpenSettings),
                     MenuItem::action(

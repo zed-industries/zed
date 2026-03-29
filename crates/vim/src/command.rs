@@ -34,6 +34,7 @@ use std::{
 use std::process::Stdio;
 #[cfg(not(target_os = "ios"))]
 use task::{HideStrategy, RevealStrategy, SaveStrategy, SpawnInTerminal, TaskId};
+#[cfg(not(target_os = "ios"))]
 use ui::ActiveTheme;
 use util::{
     ResultExt,

@@ -84,7 +84,7 @@ pub use toolchain::{
     LanguageToolchainStore, LocalLanguageToolchainStore, Toolchain, ToolchainList, ToolchainLister,
     ToolchainMetadata, ToolchainScope,
 };
-use tree_sitter::{self, Query, QueryCursor};
+use tree_sitter::{self, QueryCursor};
 #[cfg(not(target_os = "ios"))]
 use tree_sitter::{WasmStore, wasmtime};
 use util::rel_path::RelPath;
@@ -151,8 +151,6 @@ where
     func(cursor.deref_mut())
 }
 
-static NEXT_LANGUAGE_ID: AtomicUsize = AtomicUsize::new(0);
-static NEXT_GRAMMAR_ID: AtomicUsize = AtomicUsize::new(0);
 #[cfg(not(target_os = "ios"))]
 static WASM_ENGINE: LazyLock<wasmtime::Engine> = LazyLock::new(|| {
     wasmtime::Engine::new(&wasmtime::Config::new()).expect("Failed to create Wasmtime engine")

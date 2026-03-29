@@ -24,14 +24,12 @@ else
     RUST_TARGET="aarch64-apple-ios"
 fi
 
-# Map Xcode configuration to cargo profile.
-if [ "$CONFIGURATION" = "Release" ]; then
-    CARGO_FLAGS="--release"
-    CARGO_PROFILE_DIR="release"
-else
-    CARGO_FLAGS=""
-    CARGO_PROFILE_DIR="debug"
-fi
+# Always build with --release. In debug builds, rust-embed loads assets from
+# the filesystem at the compile-time path, which doesn't exist inside the iOS
+# app sandbox. Release mode embeds assets into the binary at compile time.
+# This also avoids shipping multi-gigabyte debug binaries to devices.
+CARGO_FLAGS="--release"
+CARGO_PROFILE_DIR="release"
 
 echo "Building zed-ios for $RUST_TARGET ($CONFIGURATION)..."
 
