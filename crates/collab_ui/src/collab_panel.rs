@@ -3645,9 +3645,9 @@ impl Render for JoinChannelTooltip {
 #[cfg(any(test, feature = "test-support"))]
 impl CollabPanel {
     pub fn entries_as_strings(&self) -> Vec<String> {
-        let mut result = Vec::new();
-        for (ix, entry) in self.entries.iter().enumerate() {
-            let selected = if self.selection == Some(ix) {
+        let mut string_entries = Vec::new();
+        for (index, entry) in self.entries.iter().enumerate() {
+            let selected_marker = if self.selection == Some(index) {
                 "  <== selected"
             } else {
                 ""
@@ -3664,7 +3664,7 @@ impl CollabPanel {
                         Section::Online => "Online",
                         Section::Offline => "Offline",
                     };
-                    result.push(format!("[{name}]"));
+                    string_entries.push(format!("[{name}]"));
                 }
                 ListEntry::Channel {
                     channel,
@@ -3680,42 +3680,52 @@ impl CollabPanel {
                     } else {
                         "#️⃣ "
                     };
-                    result.push(format!("{indent}{icon}{}{selected}", channel.name));
+                    string_entries.push(format!("{indent}{icon}{}{selected_marker}", channel.name));
                 }
                 ListEntry::ChannelNotes { .. } => {
-                    result.push(format!("  (notes){selected}"));
+                    string_entries.push(format!("  (notes){selected_marker}"));
                 }
                 ListEntry::ChannelEditor { depth } => {
                     let indent = "  ".repeat(*depth + 1);
-                    result.push(format!("{indent}[editor]{selected}"));
+                    string_entries.push(format!("{indent}[editor]{selected_marker}"));
                 }
                 ListEntry::ChannelInvite(channel) => {
-                    result.push(format!("  (invite) #{}{selected}", channel.name));
+                    string_entries.push(format!("  (invite) #{}{selected_marker}", channel.name));
                 }
                 ListEntry::CallParticipant { user, .. } => {
-                    result.push(format!("  {}{selected}", user.github_login));
+                    string_entries.push(format!("  {}{selected_marker}", user.github_login));
                 }
                 ListEntry::ParticipantProject {
                     worktree_root_names,
                     ..
                 } => {
-                    result.push(format!("    {}{selected}", worktree_root_names.join(", ")));
+                    string_entries.push(format!(
+                        "    {}{selected_marker}",
+                        worktree_root_names.join(", ")
+                    ));
                 }
                 ListEntry::ParticipantScreen { .. } => {
-                    result.push(format!("    (screen){selected}"));
+                    string_entries.push(format!("    (screen){selected_marker}"));
                 }
                 ListEntry::IncomingRequest(user) => {
-                    result.push(format!("  (incoming) {}{selected}", user.github_login));
+                    string_entries.push(format!(
+                        "  (incoming) {}{selected_marker}",
+                        user.github_login
+                    ));
                 }
                 ListEntry::OutgoingRequest(user) => {
-                    result.push(format!("  (outgoing) {}{selected}", user.github_login));
+                    string_entries.push(format!(
+                        "  (outgoing) {}{selected_marker}",
+                        user.github_login
+                    ));
                 }
                 ListEntry::Contact { contact, .. } => {
-                    result.push(format!("  {}{selected}", contact.user.github_login));
+                    string_entries
+                        .push(format!("  {}{selected_marker}", contact.user.github_login));
                 }
                 ListEntry::ContactPlaceholder => {}
             }
         }
-        result
+        string_entries
     }
 }
