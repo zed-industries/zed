@@ -7,7 +7,7 @@ use gpui::{
 };
 use settings::Settings;
 use std::collections::HashMap;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{
     Divider, DividerColor, DynamicSpacing, LabelSize, WithScrollbar, prelude::*,
     text_for_keystrokes,

@@ -216,6 +216,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                     matcher: LanguageMatcher {
                         path_suffixes: vec!["erb".into()],
                         first_line_pattern: None,
+                        ..LanguageMatcher::default()
                     },
                 },
             ),
@@ -229,6 +230,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                     matcher: LanguageMatcher {
                         path_suffixes: vec!["rb".into()],
                         first_line_pattern: None,
+                        ..LanguageMatcher::default()
                     },
                 },
             ),
@@ -1005,7 +1007,7 @@ fn init_test(cx: &mut TestAppContext) {
         cx.set_global(store);
         release_channel::init(semver::Version::new(0, 0, 0), cx);
         extension::init(cx);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
         gpui_tokio::init(cx);
     });
 }

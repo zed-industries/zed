@@ -1,10 +1,13 @@
-Closes #ISSUE
+Self-Review Checklist:
 
-Before you mark this PR as ready for review, make sure that you have:
-- [ ] Added a solid test coverage and/or screenshots from doing manual testing
-- [ ] Done a self-review taking into account security and performance aspects
-- [ ] Aligned any UI changes with the [UI checklist](https://github.com/zed-industries/zed/blob/main/CONTRIBUTING.md#uiux-checklist)
+- [ ] I've reviewed my own diff for quality, security, and reliability
+- [ ] Unsafe blocks (if any) have justifying comments
+- [ ] The content is consistent with the [UI/UX checklist](https://github.com/zed-industries/zed/blob/main/CONTRIBUTING.md#uiux-checklist)
+- [ ] Tests cover the new/changed behavior
+- [ ] Performance impact has been considered and is acceptable
+
+Closes #ISSUE
 
 Release Notes:
 
-- N/A *or* Added/Fixed/Improved ...
+- N/A or Added/Fixed/Improved ...

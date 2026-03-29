@@ -162,7 +162,7 @@ impl RenderOnce for ModalHeader {
             children.insert(
                 0,
                 Headline::new(headline)
-                    .size(HeadlineSize::XSmall)
+                    .size(HeadlineSize::Small)
                     .color(Color::Muted)
                     .into_any_element(),
             );

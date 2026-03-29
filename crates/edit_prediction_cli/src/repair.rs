@@ -10,12 +10,12 @@ use crate::{
     BatchProvider, PredictionProvider,
     anthropic_client::AnthropicClient,
     example::{ActualCursor, Example, ExamplePrediction},
-    format_prompt::{TeacherPrompt, extract_last_codeblock},
+    format_prompt::TeacherPrompt,
     metrics::count_patch_token_changes,
     openai_client::OpenAiClient,
     parse_output::run_parse_output,
     paths::LLM_CACHE_DB,
-    progress::{ExampleProgress, Step},
+    progress::{ExampleProgress, Progress, Step},
     word_diff::unified_to_word_diff,
 };
 use anyhow::{Context as _, Result};
@@ -75,6 +75,9 @@ pub struct RepairArgs {
     /// Which LLM provider to use (anthropic or openai)
     #[clap(long, default_value = "anthropic")]
     pub backend: BatchProvider,
+    /// Wait for all batches to complete before exiting
+    #[clap(long)]
+    pub wait: bool,
 }
 
 fn model_for_backend(backend: BatchProvider) -> &'static str {
@@ -227,10 +230,7 @@ pub fn needs_repair(example: &Example, confidence_threshold: u8) -> bool {
 /// Handles the `KEEP_PREVIOUS` sentinel by copying the teacher's prediction,
 /// and delegates normal output to `TeacherPrompt::parse`.
 pub fn parse(example: &Example, actual_output: &str) -> Result<(String, Option<ActualCursor>)> {
-    let last_codeblock =
-        extract_last_codeblock(actual_output).unwrap_or_else(|| actual_output.to_string());
-
-    if last_codeblock.contains(KEEP_PREVIOUS) {
+    if actual_output.contains(KEEP_PREVIOUS) {
         let original = example
             .predictions
             .first()
@@ -426,6 +426,8 @@ pub async fn run_repair(
         actual_cursor,
         error: err,
         provider: PredictionProvider::Repair,
+        cumulative_logprob: None,
+        avg_logprob: None,
     });
 
     Ok(())
@@ -453,4 +455,134 @@ pub async fn sync_batches(args: &RepairArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+pub async fn reprocess_after_batch_wait(examples: &mut [Example], args: &RepairArgs) -> Result<()> {
+    let mut reprocessed = 0;
+    for example in examples.iter_mut() {
+        if has_successful_repair(example) || !needs_repair(example, args.confidence_threshold) {
+            continue;
+        }
+
+        let example_progress = Progress::global().start_group(&example.spec.name);
+        run_repair(example, args, &example_progress).await?;
+        reprocessed += 1;
+    }
+
+    if reprocessed > 0 {
+        eprintln!("Reprocessed {} example(s) with batch results", reprocessed);
+    }
+
+    Ok(())
+}
+
+pub async fn wait_for_batches(args: &RepairArgs) -> Result<()> {
+    if args.no_batch {
+        return Ok(());
+    }
+
+    let poll_interval = std::time::Duration::from_secs(30);
+
+    loop {
+        let pending = pending_batch_count(args)?;
+        if pending == 0 {
+            break;
+        }
+
+        eprintln!(
+            "Waiting for {} pending repair batch request(s) to complete... (polling every {}s)",
+            pending,
+            poll_interval.as_secs()
+        );
+        std::thread::sleep(poll_interval);
+
+        sync_batches(args).await?;
+    }
+
+    Ok(())
+}
+
+fn pending_batch_count(args: &RepairArgs) -> Result<usize> {
+    match args.backend {
+        BatchProvider::Anthropic => {
+            let client = ANTHROPIC_CLIENT_BATCH.get_or_init(|| {
+                AnthropicClient::batch(&LLM_CACHE_DB).expect("Failed to create Anthropic client")
+            });
+            client.pending_batch_count()
+        }
+        BatchProvider::Openai => {
+            let client = OPENAI_CLIENT_BATCH.get_or_init(|| {
+                OpenAiClient::batch(&LLM_CACHE_DB).expect("Failed to create OpenAI client")
+            });
+            client.pending_batch_count()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{PredictionProvider, TeacherBackend};
+    use edit_prediction::example_spec::ExampleSpec;
+    use std::{path::Path, sync::Arc};
+
+    fn example_with_previous_prediction() -> Example {
+        Example {
+            spec: ExampleSpec {
+                name: "example".to_string(),
+                repository_url: "https://github.com/zed-industries/zed.git".to_string(),
+                revision: "HEAD".to_string(),
+                tags: Vec::new(),
+                reasoning: None,
+                uncommitted_diff: String::new(),
+                cursor_path: Arc::from(Path::new("src/main.rs")),
+                cursor_position: "0:0".to_string(),
+                edit_history: String::new(),
+                expected_patches: Vec::new(),
+                rejected_patch: None,
+                telemetry: None,
+                human_feedback: Vec::new(),
+                rating: None,
+            },
+            prompt_inputs: None,
+            prompt: None,
+            predictions: vec![ExamplePrediction {
+                actual_patch: Some("previous patch".to_string()),
+                actual_output: String::new(),
+                actual_cursor: Some(ActualCursor {
+                    path: "src/main.rs".to_string(),
+                    row: 1,
+                    column: 2,
+                    offset: 3,
+                    editable_region_offset: Some(4),
+                }),
+                error: None,
+                provider: PredictionProvider::Teacher(TeacherBackend::Sonnet45),
+                cumulative_logprob: None,
+                avg_logprob: None,
+            }],
+            score: Vec::new(),
+            qa: Vec::new(),
+            zed_version: None,
+            state: None,
+        }
+    }
+
+    #[test]
+    fn test_parse_keeps_previous_when_sentinel_appears_outside_last_codeblock() {
+        let example = example_with_previous_prediction();
+        let actual_output = indoc::indoc! {"
+            After reviewing the feedback, the previous prediction is still correct.
+            Use `KEEP_PREVIOUS`.
+
+            ```
+            unrelated trailing code block
+            ```
+        "};
+
+        let (patch, cursor) = parse(&example, actual_output).unwrap();
+
+        assert_eq!(patch, "previous patch");
+        assert_eq!(cursor.unwrap().offset, 3);
+    }
 }

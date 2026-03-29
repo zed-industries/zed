@@ -246,7 +246,12 @@ impl StyledText {
     pub fn with_runs(mut self, runs: Vec<TextRun>) -> Self {
         let mut text = &**self.text;
         for run in &runs {
-            text = text.get(run.len..).expect("invalid text run");
+            text = text.get(run.len..).unwrap_or_else(|| {
+                #[cfg(debug_assertions)]
+                panic!("invalid text run. Text: '{text}', run: {run:?}");
+                #[cfg(not(debug_assertions))]
+                panic!("invalid text run");
+            });
         }
         assert!(text.is_empty(), "invalid text run");
         self.runs = Some(runs);

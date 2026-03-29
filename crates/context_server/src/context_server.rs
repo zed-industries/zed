@@ -1,5 +1,6 @@
 pub mod client;
 pub mod listener;
+pub mod oauth;
 pub mod protocol;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;

@@ -138,7 +138,9 @@ impl HeadlessExtensionStore {
 
         for language_path in &manifest.languages {
             let language_path = extension_dir.join(language_path);
-            let config = fs.load(&language_path.join("config.toml")).await?;
+            let config = fs
+                .load(&language_path.join(LanguageConfig::FILE_NAME))
+                .await?;
             let mut config = ::toml::from_str::<LanguageConfig>(&config)?;
 
             this.update(cx, |this, _cx| {
@@ -279,7 +281,7 @@ impl HeadlessExtensionStore {
 
             fs.rename(&tmp_path, &path, RenameOptions::default())
                 .await
-                .context("Failed to rename {tmp_path:?} to {path:?}")?;
+                .with_context(|| format!("Failed to rename {tmp_path:?} to {path:?}"))?;
 
             Self::load_extension(this, extension, cx).await
         })
