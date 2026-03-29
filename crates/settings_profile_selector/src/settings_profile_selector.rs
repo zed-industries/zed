@@ -581,13 +581,13 @@ mod tests {
         let user_settings_json = json!({
             "buffer_font_size": 10.0,
             "profiles": {
-                "explicit_user": {
+                "Explicit User": {
                     "base": "user",
                     "settings": {
                         "buffer_font_size": 20.0
                     }
                 },
-                "implicit_user": {
+                "Implicit User": {
                     "settings": {
                         "buffer_font_size": 20.0
                     }
@@ -596,7 +596,7 @@ mod tests {
         });
         let (workspace, cx) = init_test(user_settings_json, cx).await;
 
-        // Select "explicit_user" (index 1) — profile applies on top of user settings.
+        // Select "Explicit User" (index 1) — profile applies on top of user settings.
         cx.dispatch_action(settings_profile_selector::Toggle);
         let picker = active_settings_profile_picker(&workspace, cx);
         cx.dispatch_action(SelectNext);
@@ -604,14 +604,14 @@ mod tests {
         picker.read_with(cx, |picker, cx| {
             assert_eq!(
                 picker.delegate.selected_profile_name.as_deref(),
-                Some("explicit_user")
+                Some("Explicit User")
             );
             assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(20.0));
         });
 
         cx.dispatch_action(Confirm);
 
-        // Select "implicit_user" (index 2) — no base specified, same behavior.
+        // Select "Implicit User" (index 2) — no base specified, same behavior.
         cx.dispatch_action(settings_profile_selector::Toggle);
         let picker = active_settings_profile_picker(&workspace, cx);
         cx.dispatch_action(SelectNext);
@@ -619,7 +619,7 @@ mod tests {
         picker.read_with(cx, |picker, cx| {
             assert_eq!(
                 picker.delegate.selected_profile_name.as_deref(),
-                Some("implicit_user")
+                Some("Implicit User")
             );
             assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(20.0));
         });
@@ -632,10 +632,10 @@ mod tests {
         let user_settings_json = json!({
             "buffer_font_size": 10.0,
             "profiles": {
-                "clean_slate": {
+                "Clean Slate": {
                     "base": "default"
                 },
-                "custom_on_default": {
+                "Custom on Defaults": {
                     "base": "default",
                     "settings": {
                         "buffer_font_size": 30.0
@@ -650,7 +650,7 @@ mod tests {
             assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(10.0));
         });
 
-        // "clean_slate" has base: "default" with no settings overrides,
+        // "Clean Slate" has base: "default" with no settings overrides,
         // so we get the factory default (15), not the user's value (10).
         cx.dispatch_action(settings_profile_selector::Toggle);
         let picker = active_settings_profile_picker(&workspace, cx);
@@ -659,12 +659,12 @@ mod tests {
         picker.read_with(cx, |picker, cx| {
             assert_eq!(
                 picker.delegate.selected_profile_name.as_deref(),
-                Some("clean_slate")
+                Some("Clean Slate")
             );
             assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(15.0));
         });
 
-        // "custom_on_default" has base: "default" with buffer_font_size: 30,
+        // "Custom on Defaults" has base: "default" with buffer_font_size: 30,
         // so the profile's override (30) applies on top of the factory default,
         // not on top of the user's value (10).
         cx.dispatch_action(SelectNext);
@@ -672,7 +672,7 @@ mod tests {
         picker.read_with(cx, |picker, cx| {
             assert_eq!(
                 picker.delegate.selected_profile_name.as_deref(),
-                Some("custom_on_default")
+                Some("Custom on Defaults")
             );
             assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(30.0));
         });
