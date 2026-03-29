@@ -1,0 +1,23 @@
+[package]
+name = "syntax_theme"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+test-support = ["gpui/test-support"]
+
+[lib]
+path = "src/syntax_theme.rs"
+doctest = false
+
+[dependencies]
+gpui.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }

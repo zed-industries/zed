@@ -17108,6 +17108,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "syntax_theme"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+]
+
+[[package]]
 name = "sys-locale"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -17566,6 +17573,7 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "strum 0.27.2",
+ "syntax_theme",
  "thiserror 2.0.17",
  "uuid",
 ]

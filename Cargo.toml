@@ -187,6 +187,7 @@ members = [
     "crates/sum_tree",
     "crates/svg_preview",
     "crates/system_specs",
+    "crates/syntax_theme",
     "crates/tab_switcher",
     "crates/task",
     "crates/tasks_ui",
@@ -435,6 +436,7 @@ streaming_diff = { path = "crates/streaming_diff" }
 sum_tree = { path = "crates/sum_tree" }
 codestral = { path = "crates/codestral" }
 system_specs = { path = "crates/system_specs" }
+syntax_theme = { path = "crates/syntax_theme" }
 tab_switcher = { path = "crates/tab_switcher" }
 task = { path = "crates/task" }
 tasks_ui = { path = "crates/tasks_ui" }
