@@ -201,8 +201,15 @@ impl ProjectEnvironment {
         &mut self,
         cx: &mut App,
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
-        let abs_path = self
-            .worktree_store
+        let abs_path = self.default_worktree_path(cx);
+        self.local_directory_environment(&Shell::System, abs_path, cx)
+    }
+
+    /// Resolves the path used for default environment loading.
+    /// Prefers visible directory worktrees over single-file worktrees,
+    /// falling back to the home directory if no worktrees are present.
+    pub fn default_worktree_path(&self, cx: &App) -> Arc<Path> {
+        self.worktree_store
             .read_with(cx, |worktree_store, cx| {
                 let mut worktrees: Vec<Entity<Worktree>> =
                     worktree_store.visible_worktrees(cx).collect();
@@ -217,9 +224,7 @@ impl ProjectEnvironment {
             })
             .ok()
             .flatten()
-            .unwrap_or_else(|| paths::home_dir().as_path().into());
-
-        self.local_directory_environment(&Shell::System, abs_path, cx)
+            .unwrap_or_else(|| paths::home_dir().as_path().into())
     }
 
     /// Returns the project environment, if possible.
