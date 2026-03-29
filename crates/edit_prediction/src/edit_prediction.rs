@@ -1992,7 +1992,7 @@ impl EditPredictionStore {
 }
 
 fn currently_following(project: &Entity<Project>, cx: &App) -> bool {
-    let Some(app_state) = AppState::try_global(cx).and_then(|app_state| app_state.upgrade()) else {
+    let Some(app_state) = AppState::try_global(cx) else {
         return false;
     };
 

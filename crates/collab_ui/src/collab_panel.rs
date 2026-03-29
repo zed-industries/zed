@@ -29,7 +29,8 @@ use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smallvec::SmallVec;
 use std::{mem, sync::Arc};
-use theme::{ActiveTheme, ThemeSettings};
+use theme::ActiveTheme;
+use theme_settings::ThemeSettings;
 use ui::{
     Avatar, AvatarAvailabilityIndicator, ContextMenu, CopyButton, Facepile, HighlightedLabel,
     IconButtonShape, Indicator, ListHeader, ListItem, Tab, Tooltip, prelude::*, tooltip_container,
@@ -61,6 +62,8 @@ actions!(
         ///
         /// Use `collab::OpenChannelNotes` to open the channel notes for the current call.
         OpenSelectedChannelNotes,
+        /// Toggles whether the selected channel is in the Favorites section.
+        ToggleSelectedChannelFavorite,
         /// Starts moving a channel to a new location.
         StartMoveChannel,
         /// Moves the selected item to the current location.
@@ -256,6 +259,7 @@ pub struct CollabPanel {
     subscriptions: Vec<Subscription>,
     collapsed_sections: Vec<Section>,
     collapsed_channels: Vec<ChannelId>,
+    favorite_channels: Vec<ChannelId>,
     filter_active_channels: bool,
     workspace: WeakEntity<Workspace>,
 }
@@ -263,11 +267,14 @@ pub struct CollabPanel {
 #[derive(Serialize, Deserialize)]
 struct SerializedCollabPanel {
     collapsed_channels: Option<Vec<u64>>,
+    #[serde(default)]
+    favorite_channels: Option<Vec<u64>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
 enum Section {
     ActiveCall,
+    FavoriteChannels,
     Channels,
     ChannelInvites,
     ContactRequests,
@@ -387,6 +394,7 @@ impl CollabPanel {
                 match_candidates: Vec::default(),
                 collapsed_sections: vec![Section::Offline],
                 collapsed_channels: Vec::default(),
+                favorite_channels: Vec::default(),
                 filter_active_channels: false,
                 workspace: workspace.weak_handle(),
                 client: workspace.app_state().client.clone(),
@@ -460,7 +468,13 @@ impl CollabPanel {
                 panel.update(cx, |panel, cx| {
                     panel.collapsed_channels = serialized_panel
                         .collapsed_channels
-                        .unwrap_or_else(Vec::new)
+                        .unwrap_or_default()
+                        .iter()
+                        .map(|cid| ChannelId(*cid))
+                        .collect();
+                    panel.favorite_channels = serialized_panel
+                        .favorite_channels
+                        .unwrap_or_default()
                         .iter()
                         .map(|cid| ChannelId(*cid))
                         .collect();
@@ -493,12 +507,22 @@ impl CollabPanel {
         } else {
             Some(self.collapsed_channels.iter().map(|id| id.0).collect())
         };
+
+        let favorite_channels = if self.favorite_channels.is_empty() {
+            None
+        } else {
+            Some(self.favorite_channels.iter().map(|id| id.0).collect())
+        };
+
         let kvp = KeyValueStore::global(cx);
         self.pending_serialization = cx.background_spawn(
             async move {
                 kvp.write_kvp(
                     serialization_key,
-                    serde_json::to_string(&SerializedCollabPanel { collapsed_channels })?,
+                    serde_json::to_string(&SerializedCollabPanel {
+                        collapsed_channels,
+                        favorite_channels,
+                    })?,
                 )
                 .await?;
                 anyhow::Ok(())
@@ -512,10 +536,8 @@ impl CollabPanel {
     }
 
     fn update_entries(&mut self, select_same_item: bool, cx: &mut Context<Self>) {
-        let channel_store = self.channel_store.read(cx);
-        let user_store = self.user_store.read(cx);
         let query = self.filter_editor.read(cx).text(cx);
-        let fg_executor = cx.foreground_executor();
+        let fg_executor = cx.foreground_executor().clone();
         let executor = cx.background_executor().clone();
 
         let prev_selected_entry = self.selection.and_then(|ix| self.entries.get(ix).cloned());
@@ -541,7 +563,7 @@ impl CollabPanel {
                 }
 
                 // Populate the active user.
-                if let Some(user) = user_store.current_user() {
+                if let Some(user) = self.user_store.read(cx).current_user() {
                     self.match_candidates.clear();
                     self.match_candidates
                         .push(StringMatchCandidate::new(0, &user.github_login));
@@ -661,6 +683,64 @@ impl CollabPanel {
         }
 
         let mut request_entries = Vec::new();
+
+        if self.channel_store.read(cx).channel_count() > 0 {
+            let previous_len = self.favorite_channels.len();
+            self.favorite_channels
+                .retain(|id| self.channel_store.read(cx).channel_for_id(*id).is_some());
+            if self.favorite_channels.len() != previous_len {
+                self.serialize(cx);
+            }
+        }
+
+        let channel_store = self.channel_store.read(cx);
+        let user_store = self.user_store.read(cx);
+
+        if !self.favorite_channels.is_empty() {
+            let favorite_channels: Vec<_> = self
+                .favorite_channels
+                .iter()
+                .filter_map(|id| channel_store.channel_for_id(*id))
+                .collect();
+
+            self.match_candidates.clear();
+            self.match_candidates.extend(
+                favorite_channels
+                    .iter()
+                    .enumerate()
+                    .map(|(ix, channel)| StringMatchCandidate::new(ix, &channel.name)),
+            );
+
+            let matches = fg_executor.block_on(match_strings(
+                &self.match_candidates,
+                &query,
+                true,
+                true,
+                usize::MAX,
+                &Default::default(),
+                executor.clone(),
+            ));
+
+            if !matches.is_empty() || query.is_empty() {
+                self.entries
+                    .push(ListEntry::Header(Section::FavoriteChannels));
+
+                let matches_by_candidate: HashMap<usize, &StringMatch> =
+                    matches.iter().map(|mat| (mat.candidate_id, mat)).collect();
+
+                for (ix, channel) in favorite_channels.iter().enumerate() {
+                    if !query.is_empty() && !matches_by_candidate.contains_key(&ix) {
+                        continue;
+                    }
+                    self.entries.push(ListEntry::Channel {
+                        channel: (*channel).clone(),
+                        depth: 0,
+                        has_children: false,
+                        string_match: matches_by_candidate.get(&ix).cloned().cloned(),
+                    });
+                }
+            }
+        }
 
         self.entries.push(ListEntry::Header(Section::Channels));
 
@@ -1359,6 +1439,18 @@ impl CollabPanel {
                     window.handler_for(&this, move |this, _, cx| {
                         this.copy_channel_notes_link(channel_id, cx)
                     }),
+                )
+                .separator()
+                .entry(
+                    if self.is_channel_favorited(channel_id) {
+                        "Remove from Favorites"
+                    } else {
+                        "Add to Favorites"
+                    },
+                    None,
+                    window.handler_for(&this, move |this, _window, cx| {
+                        this.toggle_favorite_channel(channel_id, cx)
+                    }),
                 );
 
             let mut has_destructive_actions = false;
@@ -1608,7 +1700,8 @@ impl CollabPanel {
                     Section::ActiveCall => Self::leave_call(window, cx),
                     Section::Channels => self.new_root_channel(window, cx),
                     Section::Contacts => self.toggle_contact_finder(window, cx),
-                    Section::ContactRequests
+                    Section::FavoriteChannels
+                    | Section::ContactRequests
                     | Section::Online
                     | Section::Offline
                     | Section::ChannelInvites => {
@@ -1838,6 +1931,24 @@ impl CollabPanel {
         self.collapsed_channels.binary_search(&channel_id).is_ok()
     }
 
+    fn toggle_favorite_channel(&mut self, channel_id: ChannelId, cx: &mut Context<Self>) {
+        match self.favorite_channels.binary_search(&channel_id) {
+            Ok(ix) => {
+                self.favorite_channels.remove(ix);
+            }
+            Err(ix) => {
+                self.favorite_channels.insert(ix, channel_id);
+            }
+        };
+        self.serialize(cx);
+        self.update_entries(true, cx);
+        cx.notify();
+    }
+
+    fn is_channel_favorited(&self, channel_id: ChannelId) -> bool {
+        self.favorite_channels.binary_search(&channel_id).is_ok()
+    }
+
     fn leave_call(window: &mut Window, cx: &mut App) {
         ActiveCall::global(cx)
             .update(cx, |call, cx| call.hang_up(cx))
@@ -1951,6 +2062,17 @@ impl CollabPanel {
     ) {
         if let Some(channel) = self.selected_channel() {
             self.open_channel_notes(channel.id, window, cx);
+        }
+    }
+
+    fn toggle_selected_channel_favorite(
+        &mut self,
+        _: &ToggleSelectedChannelFavorite,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(channel) = self.selected_channel() {
+            self.toggle_favorite_channel(channel.id, cx);
         }
     }
 
@@ -2340,46 +2462,57 @@ impl CollabPanel {
 
     fn render_signed_out(&mut self, cx: &mut Context<Self>) -> Div {
         let collab_blurb = "Work with your team in realtime with collaborative editing, voice, shared notes and more.";
-        let is_signing_in = self.client.status().borrow().is_signing_in();
-        let button_label = if is_signing_in {
-            "Signing in…"
+
+        // Two distinct "not connected" states:
+        //   - Authenticated (has credentials): user just needs to connect.
+        //   - Unauthenticated (no credentials): user needs to sign in via GitHub.
+        let is_authenticated = self.client.user_id().is_some();
+        let status = *self.client.status().borrow();
+        let is_busy = status.is_signing_in();
+
+        let (button_id, button_label, button_icon) = if is_authenticated {
+            (
+                "connect",
+                if is_busy { "Connecting…" } else { "Connect" },
+                IconName::Public,
+            )
         } else {
-            "Sign in"
+            (
+                "sign_in",
+                if is_busy {
+                    "Signing in…"
+                } else {
+                    "Sign In with GitHub"
+                },
+                IconName::Github,
+            )
         };
 
         v_flex()
-            .gap_6()
             .p_4()
+            .gap_4()
+            .size_full()
+            .text_center()
+            .justify_center()
             .child(Label::new(collab_blurb))
             .child(
-                v_flex()
-                    .gap_2()
-                    .child(
-                        Button::new("sign_in", button_label)
-                            .start_icon(Icon::new(IconName::Github).color(Color::Muted))
-                            .style(ButtonStyle::Filled)
-                            .full_width()
-                            .disabled(is_signing_in)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                let client = this.client.clone();
-                                let workspace = this.workspace.clone();
-                                cx.spawn_in(window, async move |_, mut cx| {
-                                    client
-                                        .connect(true, &mut cx)
-                                        .await
-                                        .into_response()
-                                        .notify_workspace_async_err(workspace, &mut cx);
-                                })
-                                .detach()
-                            })),
-                    )
-                    .child(
-                        v_flex().w_full().items_center().child(
-                            Label::new("Sign in to enable collaboration.")
-                                .color(Color::Muted)
-                                .size(LabelSize::Small),
-                        ),
-                    ),
+                Button::new(button_id, button_label)
+                    .full_width()
+                    .start_icon(Icon::new(button_icon).color(Color::Muted))
+                    .style(ButtonStyle::Outlined)
+                    .disabled(is_busy)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        let client = this.client.clone();
+                        let workspace = this.workspace.clone();
+                        cx.spawn_in(window, async move |_, mut cx| {
+                            client
+                                .connect(true, &mut cx)
+                                .await
+                                .into_response()
+                                .notify_workspace_async_err(workspace, &mut cx);
+                        })
+                        .detach()
+                    })),
             )
     }
 
@@ -2578,6 +2711,7 @@ impl CollabPanel {
                     SharedString::from("Current Call")
                 }
             }
+            Section::FavoriteChannels => SharedString::from("Favorites"),
             Section::ContactRequests => SharedString::from("Requests"),
             Section::Contacts => SharedString::from("Contacts"),
             Section::Channels => SharedString::from("Channels"),
@@ -2595,6 +2729,7 @@ impl CollabPanel {
             }),
             Section::Contacts => Some(
                 IconButton::new("add-contact", IconName::Plus)
+                    .icon_size(IconSize::Small)
                     .on_click(
                         cx.listener(|this, _, window, cx| this.toggle_contact_finder(window, cx)),
                     )
@@ -2608,9 +2743,6 @@ impl CollabPanel {
                             IconButton::new("filter-active-channels", IconName::ListFilter)
                                 .icon_size(IconSize::Small)
                                 .toggle_state(self.filter_active_channels)
-                                .when(!self.filter_active_channels, |button| {
-                                    button.visible_on_hover("section-header")
-                                })
                                 .on_click(cx.listener(|this, _, _window, cx| {
                                     this.filter_active_channels = !this.filter_active_channels;
                                     this.update_entries(true, cx);
@@ -2618,15 +2750,16 @@ impl CollabPanel {
                                 .tooltip(Tooltip::text(if self.filter_active_channels {
                                     "Show All Channels"
                                 } else {
-                                    "Show Active Channels"
+                                    "Show Occupied Channels"
                                 })),
                         )
                         .child(
                             IconButton::new("add-channel", IconName::Plus)
+                                .icon_size(IconSize::Small)
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.new_root_channel(window, cx)
                                 }))
-                                .tooltip(Tooltip::text("Create a channel")),
+                                .tooltip(Tooltip::text("Create Channel")),
                         )
                         .into_any_element(),
                 )
@@ -2635,7 +2768,11 @@ impl CollabPanel {
         };
 
         let can_collapse = match section {
-            Section::ActiveCall | Section::Channels | Section::Contacts => false,
+            Section::ActiveCall
+            | Section::Channels
+            | Section::Contacts
+            | Section::FavoriteChannels => false,
+
             Section::ChannelInvites
             | Section::ContactRequests
             | Section::Online
@@ -2921,11 +3058,17 @@ impl CollabPanel {
             .unwrap_or(px(240.));
         let root_id = channel.root_id();
 
-        div()
-            .h_6()
+        let is_favorited = self.is_channel_favorited(channel_id);
+        let (favorite_icon, favorite_color, favorite_tooltip) = if is_favorited {
+            (IconName::StarFilled, Color::Accent, "Remove from Favorites")
+        } else {
+            (IconName::Star, Color::Muted, "Add to Favorites")
+        };
+
+        h_flex()
             .id(channel_id.0 as usize)
             .group("")
-            .flex()
+            .h_6()
             .w_full()
             .when(!channel.is_root_channel(), |el| {
                 el.on_drag(channel.clone(), move |channel, _, _, cx| {
@@ -2955,6 +3098,7 @@ impl CollabPanel {
             .child(
                 ListItem::new(channel_id.0 as usize)
                     // Add one level of depth for the disclosure arrow.
+                    .height(px(26.))
                     .indent_level(depth + 1)
                     .indent_step_size(px(20.))
                     .toggle_state(is_selected || is_active)
@@ -2980,78 +3124,105 @@ impl CollabPanel {
                             )
                         },
                     ))
-                    .start_slot(
-                        div()
-                            .relative()
-                            .child(
-                                Icon::new(if is_public {
-                                    IconName::Public
-                                } else {
-                                    IconName::Hash
-                                })
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
-                            )
-                            .children(has_notes_notification.then(|| {
-                                div()
-                                    .w_1p5()
-                                    .absolute()
-                                    .right(px(-1.))
-                                    .top(px(-1.))
-                                    .child(Indicator::dot().color(Color::Info))
-                            })),
-                    )
                     .child(
                         h_flex()
-                            .id(channel_id.0 as usize)
-                            .child(match string_match {
-                                None => Label::new(channel.name.clone()).into_any_element(),
-                                Some(string_match) => HighlightedLabel::new(
-                                    channel.name.clone(),
-                                    string_match.positions.clone(),
-                                )
-                                .into_any_element(),
-                            })
-                            .children(face_pile.map(|face_pile| face_pile.p_1())),
+                            .id(format!("inside-{}", channel_id.0))
+                            .w_full()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .relative()
+                                    .child(
+                                        Icon::new(if is_public {
+                                            IconName::Public
+                                        } else {
+                                            IconName::Hash
+                                        })
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                    )
+                                    .children(has_notes_notification.then(|| {
+                                        div()
+                                            .w_1p5()
+                                            .absolute()
+                                            .right(px(-1.))
+                                            .top(px(-1.))
+                                            .child(Indicator::dot().color(Color::Info))
+                                    })),
+                            )
+                            .child(
+                                h_flex()
+                                    .id(channel_id.0 as usize)
+                                    .child(match string_match {
+                                        None => Label::new(channel.name.clone()).into_any_element(),
+                                        Some(string_match) => HighlightedLabel::new(
+                                            channel.name.clone(),
+                                            string_match.positions.clone(),
+                                        )
+                                        .into_any_element(),
+                                    })
+                                    .children(face_pile.map(|face_pile| face_pile.p_1())),
+                            )
+                            .tooltip({
+                                let channel_store = self.channel_store.clone();
+                                move |_window, cx| {
+                                    cx.new(|_| JoinChannelTooltip {
+                                        channel_store: channel_store.clone(),
+                                        channel_id,
+                                        has_notes_notification,
+                                    })
+                                    .into()
+                                }
+                            }),
                     ),
             )
             .child(
-                h_flex().absolute().right(rems(0.)).h_full().child(
-                    h_flex()
-                        .h_full()
-                        .bg(cx.theme().colors().background)
-                        .rounded_l_sm()
-                        .gap_1()
-                        .px_1()
-                        .child(
-                            IconButton::new("channel_notes", IconName::Reader)
-                                .style(ButtonStyle::Filled)
-                                .shape(ui::IconButtonShape::Square)
-                                .icon_size(IconSize::Small)
-                                .icon_color(if has_notes_notification {
-                                    Color::Default
-                                } else {
-                                    Color::Muted
-                                })
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.open_channel_notes(channel_id, window, cx)
-                                }))
-                                .tooltip(Tooltip::text("Open channel notes")),
-                        )
-                        .visible_on_hover(""),
-                ),
-            )
-            .tooltip({
-                let channel_store = self.channel_store.clone();
-                move |_window, cx| {
-                    cx.new(|_| JoinChannelTooltip {
-                        channel_store: channel_store.clone(),
-                        channel_id,
-                        has_notes_notification,
+                h_flex()
+                    .absolute()
+                    .right_0()
+                    .visible_on_hover("")
+                    .h_full()
+                    .pl_1()
+                    .pr_1p5()
+                    .gap_0p5()
+                    .bg(cx.theme().colors().background.opacity(0.5))
+                    .child({
+                        let focus_handle = self.focus_handle.clone();
+                        IconButton::new("channel_favorite", favorite_icon)
+                            .icon_size(IconSize::Small)
+                            .icon_color(favorite_color)
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                this.toggle_favorite_channel(channel_id, cx)
+                            }))
+                            .tooltip(move |_window, cx| {
+                                Tooltip::for_action_in(
+                                    favorite_tooltip,
+                                    &ToggleSelectedChannelFavorite,
+                                    &focus_handle,
+                                    cx,
+                                )
+                            })
                     })
-                    .into()
-                }
-            })
+                    .child({
+                        let focus_handle = self.focus_handle.clone();
+                        IconButton::new("channel_notes", IconName::Reader)
+                            .icon_size(IconSize::Small)
+                            .when(!has_notes_notification, |this| {
+                                this.icon_color(Color::Muted)
+                            })
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.open_channel_notes(channel_id, window, cx)
+                            }))
+                            .tooltip(move |_window, cx| {
+                                Tooltip::for_action_in(
+                                    "Open Channel Notes",
+                                    &OpenSelectedChannelNotes,
+                                    &focus_handle,
+                                    cx,
+                                )
+                            })
+                    }),
+            )
     }
 
     fn render_channel_editor(
@@ -3150,6 +3321,7 @@ impl Render for CollabPanel {
             .on_action(cx.listener(CollabPanel::show_inline_context_menu))
             .on_action(cx.listener(CollabPanel::rename_selected_channel))
             .on_action(cx.listener(CollabPanel::open_selected_channel_notes))
+            .on_action(cx.listener(CollabPanel::toggle_selected_channel_favorite))
             .on_action(cx.listener(CollabPanel::collapse_selected_channel))
             .on_action(cx.listener(CollabPanel::expand_selected_channel))
             .on_action(cx.listener(CollabPanel::start_move_selected_channel))
@@ -3371,7 +3543,7 @@ impl Render for JoinChannelTooltip {
                 .channel_participants(self.channel_id);
 
             container
-                .child(Label::new("Join channel"))
+                .child(Label::new("Join Channel"))
                 .children(participants.iter().map(|participant| {
                     h_flex()
                         .gap_2()

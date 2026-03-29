@@ -779,7 +779,18 @@ pub mod preview {
 }
 
 pub mod agents_sidebar {
-    use gpui::actions;
+    use gpui::{Action, actions};
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+
+    /// Toggles the thread switcher popup when the sidebar is focused.
+    #[derive(PartialEq, Clone, Deserialize, JsonSchema, Default, Action)]
+    #[action(namespace = agents_sidebar)]
+    #[serde(deny_unknown_fields)]
+    pub struct ToggleThreadSwitcher {
+        #[serde(default)]
+        pub select_last: bool,
+    }
 
     actions!(
         agents_sidebar,
