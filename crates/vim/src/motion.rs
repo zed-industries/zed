@@ -7,7 +7,7 @@ use editor::{
     },
 };
 use gpui::{Action, Context, Window, actions, px};
-use language::{CharKind, Point, Selection, SelectionGoal};
+use language::{CharKind, Point, Selection, SelectionGoal, TextObject, TreeSitterOptions};
 use multi_buffer::MultiBufferRow;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -2609,6 +2609,36 @@ fn matching(
             continue;
         }
 
+        let comment_destination = snapshot
+            .text_object_ranges(offset..offset, TreeSitterOptions::default())
+            .find_map(|(range, obj)| {
+                if !matches!(obj, TextObject::InsideComment | TextObject::AroundComment)
+                    || !range.contains(&offset)
+                {
+                    return None;
+                }
+
+                let mut chars = map.buffer_snapshot().chars_at(range.start);
+                if (Some('/'), Some('*')) != (chars.next(), chars.next()) {
+                    return None;
+                }
+
+                let start = range.start;
+                let end = range.end;
+
+                if offset <= start + 2usize {
+                    Some(end - 2)
+                } else if end <= offset + 2usize {
+                    Some(start)
+                } else {
+                    None
+                }
+            });
+
+        if let Some(destination) = comment_destination {
+            closest_pair_destination = Some(destination);
+        }
+
         closest_pair_destination
             .map(|destination| destination.to_display_point(map))
             .unwrap_or_else(|| {
@@ -3362,6 +3392,36 @@ mod test {
         let mut shared_state = cx.shared_state().await;
         shared_state.assert_eq("ˇfirst\n    \nstill first\n\nsecond");
         shared_state.assert_matches();
+    }
+
+    #[gpui::test]
+    async fn test_matching_comments(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {r"ˇ/*
+  this is a comment
+*/"})
+            .await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq(indoc! {r"/*
+  this is a comment
+ˇ*/"});
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq(indoc! {r"ˇ/*
+  this is a comment
+*/"});
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq(indoc! {r"/*
+  this is a comment
+ˇ*/"});
+
+        cx.set_shared_state("ˇ// comment").await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq("ˇ// comment");
+
+        cx.set_shared_state("ˇ/* comment */").await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq("/* comment ˇ*/");
     }
 
     #[gpui::test]
