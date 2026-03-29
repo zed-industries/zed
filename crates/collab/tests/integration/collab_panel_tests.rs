@@ -199,6 +199,43 @@ async fn test_reorder_favorite_channels_independently_of_channels(cx: &mut TestA
             "[Contacts]",
         ]
     );
+
+    // Navigate to favorite channel-c and unfavorite it.
+    // Favorites section should disappear entirely.
+    panel.update_in(cx, |panel, window, cx| {
+        panel.select_previous(&SelectPrevious, window, cx);
+        panel.select_previous(&SelectPrevious, window, cx);
+        panel.select_previous(&SelectPrevious, window, cx);
+        panel.select_previous(&SelectPrevious, window, cx);
+    });
+    assert_eq!(
+        panel.read_with(cx, |panel, _| panel.entries_as_strings()),
+        &[
+            "[Favorites]",
+            "  #️⃣ channel-c  <== selected",
+            "[Channels]",
+            "  v root",
+            "    #️⃣ channel-a",
+            "    #️⃣ channel-b",
+            "    #️⃣ channel-c",
+            "[Contacts]",
+        ]
+    );
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.toggle_selected_channel_favorite(&ToggleSelectedChannelFavorite, window, cx);
+    });
+    assert_eq!(
+        panel.read_with(cx, |panel, _| panel.entries_as_strings()),
+        &[
+            "[Channels]",
+            "  v root",
+            "    #️⃣ channel-a",
+            "    #️⃣ channel-b",
+            "    #️⃣ channel-c  <== selected",
+            "[Contacts]",
+        ]
+    );
 }
 
 #[gpui::test]
