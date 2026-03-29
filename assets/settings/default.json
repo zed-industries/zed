@@ -2540,17 +2540,12 @@
   // Examples:
   // "profiles": {
   //   "Presenting": {
+  //     "base": "default",
   //     "settings": {
   //       "agent_ui_font_size": 20.0,
   //       "buffer_font_size": 20.0,
   //       "theme": "One Light",
   //       "ui_font_size": 20.0
-  //     }
-  //   },
-  //   "Presenting (on Defaults)": {
-  //     "base": "default",
-  //     "settings": {
-  //       "theme": "Ayu Dark"
   //     }
   //   },
   //   "Python (ty)": {
