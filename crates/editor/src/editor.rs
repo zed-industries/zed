@@ -1349,7 +1349,7 @@ pub struct Editor {
     suppress_selection_callback: bool,
     applicable_language_settings: HashMap<Option<LanguageName>, LanguageSettings>,
     accent_data: Option<AccentData>,
-    bracket_fetched_tree_sitter_chunks: HashMap<BufferId, HashSet<Range<BufferRow>>>,
+    bracket_fetched_tree_sitter_chunks: HashMap<Range<text::Anchor>, HashSet<Range<BufferRow>>>,
     semantic_token_state: SemanticTokenState,
     pub(crate) refresh_matching_bracket_highlights_task: Task<()>,
     refresh_document_symbols_task: Shared<Task<()>>,
@@ -24248,7 +24248,8 @@ impl Editor {
                 self.update_lsp_data(Some(buffer_id), window, cx);
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                 self.refresh_runnables(None, window, cx);
-                self.bracket_fetched_tree_sitter_chunks.remove(&buffer_id);
+                self.bracket_fetched_tree_sitter_chunks
+                    .retain(|range, _| range.start.buffer_id != buffer_id);
                 self.colorize_brackets(false, cx);
                 self.refresh_selected_text_highlights(&self.display_snapshot(cx), true, window, cx);
                 self.semantic_token_state.invalidate_buffer(&buffer_id);

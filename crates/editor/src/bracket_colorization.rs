@@ -9,7 +9,7 @@ use collections::{HashMap, HashSet};
 use gpui::{AppContext as _, Context, HighlightStyle};
 use language::{BufferRow, BufferSnapshot, language_settings::LanguageSettings};
 use multi_buffer::{Anchor, BufferOffset, ExcerptRange, MultiBufferSnapshot};
-use text::{BufferId, OffsetRangeExt as _};
+use text::OffsetRangeExt as _;
 use ui::{ActiveTheme, utils::ensure_minimum_contrast};
 
 impl Editor {
@@ -43,15 +43,14 @@ impl Editor {
 
         let mut fetched_tree_sitter_chunks = excerpt_data
             .iter()
-            .filter_map(|(buffer_snapshot, _, _)| {
+            .filter_map(|(_, _, excerpt_range)| {
+                let key = excerpt_range.context.clone();
                 Some((
-                    buffer_snapshot.remote_id(),
-                    self.bracket_fetched_tree_sitter_chunks
-                        .get(&buffer_snapshot.remote_id())
-                        .cloned()?,
+                    key.clone(),
+                    self.bracket_fetched_tree_sitter_chunks.get(&key).cloned()?,
                 ))
             })
-            .collect::<HashMap<BufferId, HashSet<Range<BufferRow>>>>();
+            .collect::<HashMap<Range<text::Anchor>, HashSet<Range<BufferRow>>>>();
 
         let bracket_matches_by_accent = cx.background_spawn(async move {
             let bracket_matches_by_accent: HashMap<usize, Vec<Range<Anchor>>> =
@@ -59,7 +58,7 @@ impl Editor {
                     HashMap::default(),
                     |mut acc, (buffer_snapshot, buffer_range, excerpt_range)| {
                         let fetched_chunks = fetched_tree_sitter_chunks
-                            .entry(buffer_snapshot.remote_id())
+                            .entry(excerpt_range.context.clone())
                             .or_default();
 
                         let brackets_by_accent = compute_bracket_ranges(
@@ -1449,6 +1448,101 @@ mod foo «1{
 "#,},
             &editor_bracket_colors_markup(&editor_snapshot),
             "After updating theme accents, the editor should update the bracket coloring"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_multi_buffer_close_excerpts(cx: &mut gpui::TestAppContext) {
+        let comment_lines = 5;
+
+        init_test(cx, |language_settings| {
+            language_settings.defaults.colorize_brackets = Some(true);
+        });
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/a"),
+            json!({
+                "lib.rs": separate_with_comment_lines(
+                    indoc! {r#"
+    fn process_data_1() {
+        let map: Option<Vec<()>> = None;
+    }
+    "#},
+                    indoc! {r#"
+    fn process_data_2() {
+        let other_map: Option<Vec<()>> = None;
+    }
+    "#},
+                    comment_lines,
+                )
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_lang());
+
+        let buffer_1 = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/a/lib.rs"), cx)
+            })
+            .await
+            .unwrap();
+
+        let second_excerpt_start = buffer_1.read_with(cx, |buffer, _| {
+            let text = buffer.text();
+            text.lines()
+                .enumerate()
+                .find(|(_, line)| line.contains("process_data_2"))
+                .map(|(row, _)| row as u32)
+                .unwrap()
+        });
+
+        let multi_buffer = cx.new(|cx| {
+            let mut multi_buffer = MultiBuffer::new(Capability::ReadWrite);
+            multi_buffer.set_excerpts_for_path(
+                PathKey::sorted(0),
+                buffer_1.clone(),
+                [
+                    Point::new(0, 0)..Point::new(3, 0),
+                    Point::new(second_excerpt_start, 0)..Point::new(second_excerpt_start + 3, 0),
+                ],
+                0,
+                cx,
+            );
+            multi_buffer
+        });
+
+        let editor = cx.add_window(|window, cx| {
+            Editor::for_multibuffer(multi_buffer, Some(project.clone()), window, cx)
+        });
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.executor().run_until_parked();
+
+        let editor_snapshot = editor
+            .update(cx, |editor, window, cx| editor.snapshot(window, cx))
+            .unwrap();
+        assert_eq!(
+            concat!(
+                "\n",
+                "\n",
+                "fn process_data_1\u{00ab}1()1\u{00bb} \u{00ab}1{\n",
+                "    let map: Option\u{00ab}2<Vec\u{00ab}3<\u{00ab}4()4\u{00bb}>3\u{00bb}>2\u{00bb} = None;\n",
+                "}1\u{00bb}\n",
+                "\n",
+                "\n",
+                "fn process_data_2\u{00ab}1()1\u{00bb} \u{00ab}1{\n",
+                "    let other_map: Option\u{00ab}2<Vec\u{00ab}3<\u{00ab}4()4\u{00bb}>3\u{00bb}>2\u{00bb} = None;\n",
+                "}1\u{00bb}\n",
+                "\n",
+                "1 hsla(207.80, 16.20%, 69.19%, 1.00)\n",
+                "2 hsla(29.00, 54.00%, 65.88%, 1.00)\n",
+                "3 hsla(286.00, 51.00%, 75.25%, 1.00)\n",
+                "4 hsla(187.00, 47.00%, 59.22%, 1.00)\n",
+            ),
+            &editor_bracket_colors_markup(&editor_snapshot),
+            "Two close excerpts from the same buffer (within same tree-sitter chunk) should both have bracket colors"
         );
     }
 
