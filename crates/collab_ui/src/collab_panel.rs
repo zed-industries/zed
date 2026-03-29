@@ -1658,7 +1658,7 @@ impl CollabPanel {
         self.update_entries(false, cx);
     }
 
-    fn select_next(&mut self, _: &SelectNext, _: &mut Window, cx: &mut Context<Self>) {
+    pub fn select_next(&mut self, _: &SelectNext, _: &mut Window, cx: &mut Context<Self>) {
         let ix = self.selection.map_or(0, |ix| ix + 1);
         if ix < self.entries.len() {
             self.selection = Some(ix);
@@ -1670,7 +1670,7 @@ impl CollabPanel {
         cx.notify();
     }
 
-    fn select_previous(&mut self, _: &SelectPrevious, _: &mut Window, cx: &mut Context<Self>) {
+    pub fn select_previous(&mut self, _: &SelectPrevious, _: &mut Window, cx: &mut Context<Self>) {
         let ix = self.selection.take().unwrap_or(0);
         if ix > 0 {
             self.selection = Some(ix - 1);
@@ -2088,7 +2088,7 @@ impl CollabPanel {
         }
     }
 
-    fn toggle_selected_channel_favorite(
+    pub fn toggle_selected_channel_favorite(
         &mut self,
         _: &ToggleSelectedChannelFavorite,
         _window: &mut Window,
@@ -2179,7 +2179,12 @@ impl CollabPanel {
             })
     }
 
-    fn move_channel_up(&mut self, _: &MoveChannelUp, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn move_channel_up(
+        &mut self,
+        _: &MoveChannelUp,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(channel) = self.selected_channel().cloned() {
             if self.selected_entry_is_favorite() {
                 self.reorder_favorite(channel.id, proto::reorder_channel::Direction::Up, cx);
@@ -2198,7 +2203,7 @@ impl CollabPanel {
         }
     }
 
-    fn move_channel_down(
+    pub fn move_channel_down(
         &mut self,
         _: &MoveChannelDown,
         window: &mut Window,

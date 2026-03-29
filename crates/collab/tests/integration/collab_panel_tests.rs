@@ -1,19 +1,19 @@
 use crate::TestServer;
-use channel::ChannelStore;
 use collab_ui::CollabPanel;
+use collab_ui::collab_panel::{MoveChannelDown, MoveChannelUp, ToggleSelectedChannelFavorite};
 use gpui::TestAppContext;
-use rpc::proto;
+use menu::{SelectNext, SelectPrevious};
 
 #[gpui::test]
 async fn test_reorder_favorite_channels_independently_of_channels(cx: &mut TestAppContext) {
     let (server, client) = TestServer::start1(cx).await;
-    let _channel_a = server
+    let _ = server
         .make_channel("channel-a", None, (&client, cx), &mut [])
         .await;
-    let channel_b = server
+    let _ = server
         .make_channel("channel-b", None, (&client, cx), &mut [])
         .await;
-    let channel_c = server
+    let _ = server
         .make_channel("channel-c", None, (&client, cx), &mut [])
         .await;
 
@@ -37,10 +37,45 @@ async fn test_reorder_favorite_channels_independently_of_channels(cx: &mut TestA
         ]
     );
 
-    // Favorite channel-b and channel-c.
-    panel.update(cx, |panel, cx| {
-        panel.toggle_favorite_channel(channel_b, cx);
-        panel.toggle_favorite_channel(channel_c, cx);
+    // Select channel-b and favorite it.
+    panel.update_in(cx, |panel, window, cx| {
+        panel.select_next(&SelectNext, window, cx);
+        panel.select_next(&SelectNext, window, cx);
+        panel.select_next(&SelectNext, window, cx);
+    });
+    assert_eq!(
+        panel.read_with(cx, |panel, _| panel.entries_as_strings()),
+        &[
+            "[Channels]",
+            "  #️⃣ channel-a",
+            "  #️⃣ channel-b  <== selected",
+            "  #️⃣ channel-c",
+            "[Contacts]",
+        ]
+    );
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.toggle_selected_channel_favorite(&ToggleSelectedChannelFavorite, window, cx);
+    });
+    assert_eq!(
+        panel.read_with(cx, |panel, _| panel.entries_as_strings()),
+        &[
+            "[Favorites]",
+            "  #️⃣ channel-b",
+            "[Channels]",
+            "  #️⃣ channel-a",
+            "  #️⃣ channel-b  <== selected",
+            "  #️⃣ channel-c",
+            "[Contacts]",
+        ]
+    );
+
+    // Select channel-c and favorite it.
+    panel.update_in(cx, |panel, window, cx| {
+        panel.select_next(&SelectNext, window, cx);
+    });
+    panel.update_in(cx, |panel, window, cx| {
+        panel.toggle_selected_channel_favorite(&ToggleSelectedChannelFavorite, window, cx);
     });
     assert_eq!(
         panel.read_with(cx, |panel, _| panel.entries_as_strings()),
@@ -51,22 +86,26 @@ async fn test_reorder_favorite_channels_independently_of_channels(cx: &mut TestA
             "[Channels]",
             "  #️⃣ channel-a",
             "  #️⃣ channel-b",
-            "  #️⃣ channel-c",
+            "  #️⃣ channel-c  <== selected",
             "[Contacts]",
         ]
     );
 
-    // Reorder favorites: move channel-b down (should swap with channel-c).
+    // Navigate up to favorite channel-b and move it down.
     // The Channels section should remain unchanged.
-    panel.update(cx, |panel, cx| {
-        panel.reorder_favorite(channel_b, proto::reorder_channel::Direction::Down, cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.select_previous(&SelectPrevious, window, cx);
+        panel.select_previous(&SelectPrevious, window, cx);
+        panel.select_previous(&SelectPrevious, window, cx);
+        panel.select_previous(&SelectPrevious, window, cx);
+        panel.select_previous(&SelectPrevious, window, cx);
     });
     assert_eq!(
         panel.read_with(cx, |panel, _| panel.entries_as_strings()),
         &[
             "[Favorites]",
+            "  #️⃣ channel-b  <== selected",
             "  #️⃣ channel-c",
-            "  #️⃣ channel-b",
             "[Channels]",
             "  #️⃣ channel-a",
             "  #️⃣ channel-b",
@@ -75,16 +114,33 @@ async fn test_reorder_favorite_channels_independently_of_channels(cx: &mut TestA
         ]
     );
 
-    // Reorder favorites: move channel-b up (should swap back with channel-c).
+    panel.update_in(cx, |panel, window, cx| {
+        panel.move_channel_down(&MoveChannelDown, window, cx);
+    });
+    assert_eq!(
+        panel.read_with(cx, |panel, _| panel.entries_as_strings()),
+        &[
+            "[Favorites]",
+            "  #️⃣ channel-c",
+            "  #️⃣ channel-b  <== selected",
+            "[Channels]",
+            "  #️⃣ channel-a",
+            "  #️⃣ channel-b",
+            "  #️⃣ channel-c",
+            "[Contacts]",
+        ]
+    );
+
+    // Move favorite channel-b back up.
     // The Channels section should remain unchanged.
-    panel.update(cx, |panel, cx| {
-        panel.reorder_favorite(channel_b, proto::reorder_channel::Direction::Up, cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.move_channel_up(&MoveChannelUp, window, cx);
     });
     assert_eq!(
         panel.read_with(cx, |panel, _| panel.entries_as_strings()),
         &[
             "[Favorites]",
-            "  #️⃣ channel-b",
+            "  #️⃣ channel-b  <== selected",
             "  #️⃣ channel-c",
             "[Channels]",
             "  #️⃣ channel-a",
@@ -94,15 +150,15 @@ async fn test_reorder_favorite_channels_independently_of_channels(cx: &mut TestA
         ]
     );
 
-    // Reorder favorites: move channel-b up when it's already first (should be no-op).
-    panel.update(cx, |panel, cx| {
-        panel.reorder_favorite(channel_b, proto::reorder_channel::Direction::Up, cx);
+    // Move favorite channel-b up when it's already first (should be no-op).
+    panel.update_in(cx, |panel, window, cx| {
+        panel.move_channel_up(&MoveChannelUp, window, cx);
     });
     assert_eq!(
         panel.read_with(cx, |panel, _| panel.entries_as_strings()),
         &[
             "[Favorites]",
-            "  #️⃣ channel-b",
+            "  #️⃣ channel-b  <== selected",
             "  #️⃣ channel-c",
             "[Channels]",
             "  #️⃣ channel-a",
@@ -112,30 +168,15 @@ async fn test_reorder_favorite_channels_independently_of_channels(cx: &mut TestA
         ]
     );
 
-    // Unfavorite channel-b.
-    panel.update(cx, |panel, cx| {
-        panel.toggle_favorite_channel(channel_b, cx);
+    // Unfavorite channel-b via action.
+    panel.update_in(cx, |panel, window, cx| {
+        panel.toggle_selected_channel_favorite(&ToggleSelectedChannelFavorite, window, cx);
     });
     assert_eq!(
         panel.read_with(cx, |panel, _| panel.entries_as_strings()),
         &[
             "[Favorites]",
             "  #️⃣ channel-c",
-            "[Channels]",
-            "  #️⃣ channel-a",
-            "  #️⃣ channel-b",
-            "  #️⃣ channel-c",
-            "[Contacts]",
-        ]
-    );
-
-    // Unfavorite channel-c: favorites section should disappear.
-    panel.update(cx, |panel, cx| {
-        panel.toggle_favorite_channel(channel_c, cx);
-    });
-    assert_eq!(
-        panel.read_with(cx, |panel, _| panel.entries_as_strings()),
-        &[
             "[Channels]",
             "  #️⃣ channel-a",
             "  #️⃣ channel-b",
@@ -151,13 +192,13 @@ async fn test_reorder_channels_independently_of_favorites(cx: &mut TestAppContex
     let root = server
         .make_channel("root", None, (&client, cx), &mut [])
         .await;
-    let channel_a = server
+    let _ = server
         .make_channel("channel-a", Some(root), (&client, cx), &mut [])
         .await;
-    let channel_b = server
+    let _ = server
         .make_channel("channel-b", Some(root), (&client, cx), &mut [])
         .await;
-    let _channel_c = server
+    let _ = server
         .make_channel("channel-c", Some(root), (&client, cx), &mut [])
         .await;
 
@@ -169,10 +210,52 @@ async fn test_reorder_channels_independently_of_favorites(cx: &mut TestAppContex
     });
     cx.run_until_parked();
 
-    // Favorite channel-a and channel-b (in that order).
-    panel.update(cx, |panel, cx| {
-        panel.toggle_favorite_channel(channel_a, cx);
-        panel.toggle_favorite_channel(channel_b, cx);
+    // Select channel-a and channel-b, favorite them via action.
+    panel.update_in(cx, |panel, window, cx| {
+        panel.select_next(&SelectNext, window, cx);
+        panel.select_next(&SelectNext, window, cx);
+        panel.select_next(&SelectNext, window, cx);
+    });
+    assert_eq!(
+        panel.read_with(cx, |panel, _| panel.entries_as_strings()),
+        &[
+            "[Channels]",
+            "  v root",
+            "    #️⃣ channel-a  <== selected",
+            "    #️⃣ channel-b",
+            "    #️⃣ channel-c",
+            "[Contacts]",
+        ]
+    );
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.toggle_selected_channel_favorite(&ToggleSelectedChannelFavorite, window, cx);
+    });
+    panel.update_in(cx, |panel, window, cx| {
+        panel.select_next(&SelectNext, window, cx);
+        panel.toggle_selected_channel_favorite(&ToggleSelectedChannelFavorite, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        panel.read_with(cx, |panel, _| panel.entries_as_strings()),
+        &[
+            "[Favorites]",
+            "  #️⃣ channel-a",
+            "  #️⃣ channel-b",
+            "[Channels]",
+            "  v root",
+            "    #️⃣ channel-a",
+            "    #️⃣ channel-b  <== selected",
+            "    #️⃣ channel-c",
+            "[Contacts]",
+        ]
+    );
+
+    // Select channel-a in the Channels section and move it down.
+    // The Favorites section should remain unchanged.
+    panel.update_in(cx, |panel, window, cx| {
+        panel.select_previous(&SelectPrevious, window, cx);
     });
     assert_eq!(
         panel.read_with(cx, |panel, _| panel.entries_as_strings()),
@@ -182,23 +265,21 @@ async fn test_reorder_channels_independently_of_favorites(cx: &mut TestAppContex
             "  #️⃣ channel-b",
             "[Channels]",
             "  v root",
-            "    #️⃣ channel-a",
+            "    #️⃣ channel-a  <== selected",
             "    #️⃣ channel-b",
             "    #️⃣ channel-c",
             "[Contacts]",
         ]
     );
 
-    // Reorder the real channels: move channel-a down (swaps with channel-b).
-    cx.read(ChannelStore::global)
-        .update(cx, |store, cx| {
-            store.reorder_channel(channel_a, proto::reorder_channel::Direction::Down, cx)
-        })
-        .await
-        .unwrap();
+    panel.update_in(cx, |panel, window, cx| {
+        panel.move_channel_down(&MoveChannelDown, window, cx);
+    });
     cx.run_until_parked();
 
-    // Channels section should reflect the reorder, but favorites stay the same.
+    // Channels section reflects the reorder; favorites stay the same.
+    // Selection should remain on channel-a in the Channels section,
+    // not jump to channel-a in Favorites.
     assert_eq!(
         panel.read_with(cx, |panel, _| panel.entries_as_strings()),
         &[
@@ -208,7 +289,7 @@ async fn test_reorder_channels_independently_of_favorites(cx: &mut TestAppContex
             "[Channels]",
             "  v root",
             "    #️⃣ channel-b",
-            "    #️⃣ channel-a",
+            "    #️⃣ channel-a  <== selected",
             "    #️⃣ channel-c",
             "[Contacts]",
         ]
