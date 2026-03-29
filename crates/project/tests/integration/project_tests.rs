@@ -6197,11 +6197,12 @@ async fn test_save_file_spawns_language_server(cx: &mut gpui::TestAppContext) {
         .update(cx, |this, cx| this.create_buffer(None, false, cx))
         .unwrap()
         .await;
-    project.update(cx, |this, cx| {
-        this.register_buffer_with_language_servers(&buffer, cx);
+    let _handle = project.update(cx, |this, cx| {
+        let handle = this.register_buffer_with_language_servers(&buffer, cx);
         buffer.update(cx, |buffer, cx| {
             assert!(!this.has_language_servers_for(buffer, cx));
-        })
+        });
+        handle
     });
 
     project
@@ -6238,6 +6239,315 @@ async fn test_save_file_spawns_language_server(cx: &mut gpui::TestAppContext) {
             assert!(this.has_language_servers_for(buffer, cx));
         })
     });
+}
+
+#[gpui::test]
+async fn test_lsp_register_untitled_buffer(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({})).await;
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
+
+    let buffer = project
+        .update(cx, |p, cx| p.create_buffer(Some(rust_lang()), false, cx))
+        .await
+        .unwrap();
+    let _handle = project.update(cx, |p, cx| {
+        p.register_buffer_with_language_servers(&buffer, cx)
+    });
+
+    let mut fake_server = fake_servers.next().await.unwrap();
+    let open_notification = fake_server
+        .receive_notification::<lsp::notification::DidOpenTextDocument>()
+        .await;
+
+    let uri_str = open_notification.text_document.uri.to_string();
+    assert!(
+        uri_str.starts_with("untitled:Untitled-"),
+        "expected untitled URI, got {uri_str}"
+    );
+    assert_eq!(open_notification.text_document.language_id, "rust");
+    assert_eq!(open_notification.text_document.version, 0);
+}
+
+#[gpui::test]
+async fn test_lsp_did_change_untitled_buffer(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({})).await;
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
+
+    let buffer = project
+        .update(cx, |p, cx| p.create_buffer(Some(rust_lang()), false, cx))
+        .await
+        .unwrap();
+    let _handle = project.update(cx, |p, cx| {
+        p.register_buffer_with_language_servers(&buffer, cx)
+    });
+
+    let mut fake_server = fake_servers.next().await.unwrap();
+    let open_notification = fake_server
+        .receive_notification::<lsp::notification::DidOpenTextDocument>()
+        .await;
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "let x = 1;")], None, cx)
+    });
+
+    let change_notification = fake_server
+        .receive_notification::<lsp::notification::DidChangeTextDocument>()
+        .await;
+    assert_eq!(
+        change_notification.text_document.uri,
+        open_notification.text_document.uri
+    );
+    assert!(change_notification.text_document.version > open_notification.text_document.version);
+}
+
+#[gpui::test]
+async fn test_lsp_save_untitled_buffer(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({})).await;
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
+
+    let buffer = project
+        .update(cx, |p, cx| p.create_buffer(Some(rust_lang()), false, cx))
+        .await
+        .unwrap();
+    let _handle = project.update(cx, |p, cx| {
+        p.register_buffer_with_language_servers(&buffer, cx)
+    });
+
+    let mut fake_server = fake_servers.next().await.unwrap();
+    let initial_open = fake_server
+        .receive_notification::<lsp::notification::DidOpenTextDocument>()
+        .await;
+    let untitled_uri = initial_open.text_document.uri.clone();
+    assert!(
+        untitled_uri.to_string().starts_with("untitled:"),
+        "expected untitled URI, got {untitled_uri:?}"
+    );
+
+    project
+        .update(cx, |project, cx| {
+            let worktree_id = project.worktrees(cx).next().unwrap().read(cx).id();
+            project.save_buffer_as(
+                buffer.clone(),
+                ProjectPath {
+                    worktree_id,
+                    path: rel_path("main.rs").into(),
+                },
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    let close_notification = fake_server
+        .receive_notification::<lsp::notification::DidCloseTextDocument>()
+        .await;
+    assert_eq!(close_notification.text_document.uri, untitled_uri);
+
+    let reopen_notification = fake_server
+        .receive_notification::<lsp::notification::DidOpenTextDocument>()
+        .await;
+    assert_eq!(
+        reopen_notification.text_document.uri,
+        lsp::Uri::from_file_path(path!("/dir/main.rs")).unwrap()
+    );
+}
+
+#[gpui::test]
+async fn test_buffer_uris_only_tracks_untitled(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": "fn main() {}" }))
+        .await;
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let _fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
+
+    // File-backed buffer must NOT be tracked in `buffer_uris` (its URI is derivable
+    // from `file.abs_path()`, so storing it would be a leak).
+    let (file_buffer, _file_handle) = project
+        .update(cx, |p, cx| {
+            p.open_local_buffer_with_lsp(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+    let file_id = file_buffer.read_with(cx, |b, _| b.remote_id());
+    let file_tracked =
+        project.read_with(cx, |p, cx| p.lsp_store().read(cx).has_buffer_uri(file_id));
+    assert!(
+        !file_tracked,
+        "buffer_uris should not contain file-backed buffer"
+    );
+
+    // Untitled buffer must be tracked while open and removed on release.
+    let untitled_buffer = project
+        .update(cx, |p, cx| p.create_buffer(Some(rust_lang()), false, cx))
+        .await
+        .unwrap();
+    let untitled_handle = project.update(cx, |p, cx| {
+        p.register_buffer_with_language_servers(&untitled_buffer, cx)
+    });
+    cx.executor().run_until_parked();
+    let untitled_id = untitled_buffer.read_with(cx, |b, _| b.remote_id());
+    let tracked_while_open = project.read_with(cx, |p, cx| {
+        p.lsp_store().read(cx).has_buffer_uri(untitled_id)
+    });
+    assert!(
+        tracked_while_open,
+        "buffer_uris should track open untitled buffer"
+    );
+
+    cx.update(|_| {
+        drop(untitled_handle);
+        drop(untitled_buffer);
+    });
+    cx.executor().run_until_parked();
+    let tracked_after_release = project.read_with(cx, |p, cx| {
+        p.lsp_store().read(cx).has_buffer_uri(untitled_id)
+    });
+    assert!(
+        !tracked_after_release,
+        "buffer_uris entry should be removed when untitled buffer is released"
+    );
+}
+
+#[gpui::test]
+async fn test_untitled_buffer_no_visible_worktree(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, Vec::<&Path>::new(), cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let _fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
+
+    let buffer = project
+        .update(cx, |p, cx| p.create_buffer(Some(rust_lang()), false, cx))
+        .await
+        .unwrap();
+    let _handle = project.update(cx, |p, cx| {
+        p.register_buffer_with_language_servers(&buffer, cx)
+    });
+    cx.executor().run_until_parked();
+
+    let buffer_id = buffer.read_with(cx, |b, _| b.remote_id());
+    let tracked = project.read_with(cx, |p, cx| p.lsp_store().read(cx).has_buffer_uri(buffer_id));
+    assert!(
+        !tracked,
+        "untitled buffer should not be tracked when there is no visible worktree"
+    );
+}
+
+#[gpui::test]
+async fn test_untitled_buffer_cleanup_on_worktree_removal(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({})).await;
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let _fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
+
+    let buffer = project
+        .update(cx, |p, cx| p.create_buffer(Some(rust_lang()), false, cx))
+        .await
+        .unwrap();
+    let _handle = project.update(cx, |p, cx| {
+        p.register_buffer_with_language_servers(&buffer, cx)
+    });
+    cx.executor().run_until_parked();
+    let buffer_id = buffer.read_with(cx, |b, _| b.remote_id());
+    assert!(
+        project.read_with(cx, |p, cx| p.lsp_store().read(cx).has_buffer_uri(buffer_id)),
+        "untitled buffer should be tracked while host worktree exists"
+    );
+
+    project.update(cx, |project, cx| {
+        let worktree_id = project.worktrees(cx).next().unwrap().read(cx).id();
+        project.remove_worktree(worktree_id, cx);
+    });
+    cx.executor().run_until_parked();
+
+    assert!(
+        !project.read_with(cx, |p, cx| p.lsp_store().read(cx).has_buffer_uri(buffer_id)),
+        "buffer_uris entry should be cleaned up when host worktree is removed"
+    );
+}
+
+#[gpui::test]
+async fn test_untitled_buffer_late_registration_on_worktree_add(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({})).await;
+
+    // Start with no worktrees.
+    let project = Project::test(fs.clone(), Vec::<&Path>::new(), cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
+
+    // Register an untitled buffer; registration bails because there's no
+    // visible worktree to host it.
+    let buffer = project
+        .update(cx, |p, cx| p.create_buffer(Some(rust_lang()), false, cx))
+        .await
+        .unwrap();
+    let _handle = project.update(cx, |p, cx| {
+        p.register_buffer_with_language_servers(&buffer, cx)
+    });
+    cx.executor().run_until_parked();
+    let buffer_id = buffer.read_with(cx, |b, _| b.remote_id());
+    assert!(
+        !project.read_with(cx, |p, cx| p.lsp_store().read(cx).has_buffer_uri(buffer_id)),
+        "untitled buffer should not be tracked before any visible worktree exists"
+    );
+
+    // Add a worktree; the pending untitled buffer should be retroactively
+    // registered.
+    project
+        .update(cx, |project, cx| {
+            project.create_worktree(path!("/dir"), true, cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    assert!(
+        project.read_with(cx, |p, cx| p.lsp_store().read(cx).has_buffer_uri(buffer_id)),
+        "buffer should be retroactively registered once a worktree is added"
+    );
+
+    let mut fake_server = fake_servers.next().await.unwrap();
+    let open = fake_server
+        .receive_notification::<lsp::notification::DidOpenTextDocument>()
+        .await;
+    assert!(
+        open.text_document.uri.to_string().starts_with("untitled:"),
+        "did_open URI should use untitled scheme, got {:?}",
+        open.text_document.uri
+    );
 }
 
 #[gpui::test(iterations = 30)]

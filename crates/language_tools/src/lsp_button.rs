@@ -981,11 +981,18 @@ impl LspButton {
                 ..
             } => {
                 self.server_state.update(cx, |state, cx| {
+                    // For unsaved buffers `buffer_abs_path` carries an LSP URI
+                    // (e.g. "untitled:Untitled-1") instead of a filesystem path.
+                    // They have no real worktree, so skip them from this map.
+                    if update.buffer_abs_path.starts_with("untitled:") {
+                        return;
+                    }
+                    let path = Path::new(&update.buffer_abs_path);
                     let Ok(worktree) = state.workspace.update(cx, |workspace, cx| {
                         workspace
                             .project()
                             .read(cx)
-                            .find_worktree(Path::new(&update.buffer_abs_path), cx)
+                            .find_worktree(path, cx)
                             .map(|(worktree, _)| worktree.downgrade())
                     }) else {
                         return;

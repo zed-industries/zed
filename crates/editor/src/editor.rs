@@ -10865,7 +10865,7 @@ impl Editor {
         let visible_buffers: Vec<_> = self
             .visible_buffers(cx)
             .into_iter()
-            .filter(|buffer| self.is_lsp_relevant(buffer.read(cx).file(), cx))
+            .filter(|buffer| self.is_lsp_relevant(buffer.read(cx), cx))
             .collect();
         for visible_buffer in visible_buffers {
             self.register_buffer(visible_buffer.read(cx).remote_id(), cx);
@@ -11227,6 +11227,35 @@ impl CollaborationHub for Entity<Project> {
         let this = self.read(cx);
         let user_ids = this.collaborators().values().map(|c| c.user_id);
         this.user_store().read(cx).participant_names(user_ids, cx)
+    }
+}
+
+/// Abstracts over `Buffer` and `BufferSnapshot` so `is_lsp_relevant` can be
+/// called with either without forcing every caller to destructure manually.
+pub(crate) trait LspBufferContext {
+    fn remote_id(&self) -> BufferId;
+    fn file(&self) -> Option<&Arc<dyn language::File>>;
+}
+
+impl LspBufferContext for Buffer {
+    fn remote_id(&self) -> BufferId {
+        // `language::Buffer` and `language::BufferSnapshot` expose `remote_id`
+        // via `Deref` to `text::Buffer` / `text::BufferSnapshot`; calling the
+        // method via the `language` type names would resolve back to this
+        // trait impl and recurse. Use the deref target type explicitly.
+        text::Buffer::remote_id(self)
+    }
+    fn file(&self) -> Option<&Arc<dyn language::File>> {
+        Buffer::file(self)
+    }
+}
+
+impl LspBufferContext for BufferSnapshot {
+    fn remote_id(&self) -> BufferId {
+        text::BufferSnapshot::remote_id(self)
+    }
+    fn file(&self) -> Option<&Arc<dyn language::File>> {
+        BufferSnapshot::file(self)
     }
 }
 
