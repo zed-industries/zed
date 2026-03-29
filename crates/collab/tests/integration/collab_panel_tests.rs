@@ -41,7 +41,7 @@ async fn test_reorder_favorite_channels_independently_of_channels(cx: &mut TestA
         ]
     );
 
-    // Select channel-b and favorite it.
+    // Select channel-b.
     panel.update_in(cx, |panel, window, cx| {
         panel.select_next(&SelectNext, window, cx);
         panel.select_next(&SelectNext, window, cx);
@@ -60,6 +60,7 @@ async fn test_reorder_favorite_channels_independently_of_channels(cx: &mut TestA
         ]
     );
 
+    // Favorite channel-b.
     panel.update_in(cx, |panel, window, cx| {
         panel.toggle_selected_channel_favorite(&ToggleSelectedChannelFavorite, window, cx);
     });
@@ -77,10 +78,11 @@ async fn test_reorder_favorite_channels_independently_of_channels(cx: &mut TestA
         ]
     );
 
-    // Select channel-c and favorite it.
+    // Select channel-c.
     panel.update_in(cx, |panel, window, cx| {
         panel.select_next(&SelectNext, window, cx);
     });
+    // Favorite channel-c.
     panel.update_in(cx, |panel, window, cx| {
         panel.toggle_selected_channel_favorite(&ToggleSelectedChannelFavorite, window, cx);
     });
@@ -99,8 +101,7 @@ async fn test_reorder_favorite_channels_independently_of_channels(cx: &mut TestA
         ]
     );
 
-    // Navigate up to favorite channel-b and move it down.
-    // The Channels section should remain unchanged.
+    // Navigate up to favorite channel-b .
     panel.update_in(cx, |panel, window, cx| {
         panel.select_previous(&SelectPrevious, window, cx);
         panel.select_previous(&SelectPrevious, window, cx);
@@ -124,6 +125,8 @@ async fn test_reorder_favorite_channels_independently_of_channels(cx: &mut TestA
         ]
     );
 
+    // Move favorite channel-b down.
+    // The Channels section should remain unchanged
     panel.update_in(cx, |panel, window, cx| {
         panel.move_channel_down(&MoveChannelDown, window, cx);
     });
@@ -162,7 +165,7 @@ async fn test_reorder_favorite_channels_independently_of_channels(cx: &mut TestA
         ]
     );
 
-    // Move favorite channel-b up when it's already first (should be no-op).
+    // Move favorite channel-b up again when it's already first (should be no-op).
     panel.update_in(cx, |panel, window, cx| {
         panel.move_channel_up(&MoveChannelUp, window, cx);
     });
@@ -181,7 +184,7 @@ async fn test_reorder_favorite_channels_independently_of_channels(cx: &mut TestA
         ]
     );
 
-    // Unfavorite channel-b via action.
+    // Unfavorite channel-b.
     // Selection should move to channel-b in the Channels section.
     panel.update_in(cx, |panel, window, cx| {
         panel.toggle_selected_channel_favorite(&ToggleSelectedChannelFavorite, window, cx);
@@ -200,8 +203,7 @@ async fn test_reorder_favorite_channels_independently_of_channels(cx: &mut TestA
         ]
     );
 
-    // Navigate to favorite channel-c and unfavorite it.
-    // Favorites section should disappear entirely.
+    // Navigate to favorite channel-c.
     panel.update_in(cx, |panel, window, cx| {
         panel.select_previous(&SelectPrevious, window, cx);
         panel.select_previous(&SelectPrevious, window, cx);
@@ -222,6 +224,8 @@ async fn test_reorder_favorite_channels_independently_of_channels(cx: &mut TestA
         ]
     );
 
+    // Unfavorite channel-c.
+    // Favorites section should disappear entirely.
     panel.update_in(cx, |panel, window, cx| {
         panel.toggle_selected_channel_favorite(&ToggleSelectedChannelFavorite, window, cx);
     });
@@ -262,7 +266,7 @@ async fn test_reorder_channels_independently_of_favorites(cx: &mut TestAppContex
     });
     cx.run_until_parked();
 
-    // Select channel-a and channel-b, favorite them via action.
+    // Select channel-a.
     panel.update_in(cx, |panel, window, cx| {
         panel.select_next(&SelectNext, window, cx);
         panel.select_next(&SelectNext, window, cx);
@@ -280,9 +284,13 @@ async fn test_reorder_channels_independently_of_favorites(cx: &mut TestAppContex
         ]
     );
 
+    // Favorite channel-a.
     panel.update_in(cx, |panel, window, cx| {
         panel.toggle_selected_channel_favorite(&ToggleSelectedChannelFavorite, window, cx);
     });
+
+    // Select channel-b.
+    // Favorite channel-b.
     panel.update_in(cx, |panel, window, cx| {
         panel.select_next(&SelectNext, window, cx);
         panel.toggle_selected_channel_favorite(&ToggleSelectedChannelFavorite, window, cx);
@@ -304,8 +312,7 @@ async fn test_reorder_channels_independently_of_favorites(cx: &mut TestAppContex
         ]
     );
 
-    // Select channel-a in the Channels section and move it down.
-    // The Favorites section should remain unchanged.
+    // Select channel-a in the Channels section.
     panel.update_in(cx, |panel, window, cx| {
         panel.select_previous(&SelectPrevious, window, cx);
     });
@@ -324,14 +331,15 @@ async fn test_reorder_channels_independently_of_favorites(cx: &mut TestAppContex
         ]
     );
 
+    // Move channel-a down.
+    // The Favorites section should remain unchanged.
+    // Selection should remain on channel-a in the Channels section,
+    // not jump to channel-a in Favorites.
     panel.update_in(cx, |panel, window, cx| {
         panel.move_channel_down(&MoveChannelDown, window, cx);
     });
     cx.run_until_parked();
 
-    // Channels section reflects the reorder; favorites stay the same.
-    // Selection should remain on channel-a in the Channels section,
-    // not jump to channel-a in Favorites.
     assert_eq!(
         panel.read_with(cx, |panel, _| panel.entries_as_strings()),
         &[
