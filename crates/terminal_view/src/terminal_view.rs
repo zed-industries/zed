@@ -2208,7 +2208,7 @@ mod tests {
     ) {
         let params = cx.update(AppState::test);
         cx.update(|cx| {
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
         });
 
         let project = Project::test(params.fs.clone(), [], cx).await;

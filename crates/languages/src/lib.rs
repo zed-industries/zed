@@ -362,7 +362,7 @@ fn register_language(
         Arc::new(move || {
             Ok(LoadedLanguage {
                 config: config.clone(),
-                queries: load_queries(name),
+                queries: grammars::load_queries(name),
                 context_provider: context.clone(),
                 toolchain_provider: toolchain.clone(),
                 manifest_name: manifest_name.clone(),
@@ -383,8 +383,4 @@ pub fn language(name: &str, grammar: tree_sitter::Language) -> Arc<Language> {
 fn load_config(name: &str) -> LanguageConfig {
     let grammars_loaded = cfg!(any(feature = "load-grammars", test));
     grammars::load_config_for_feature(name, grammars_loaded)
-}
-
-fn load_queries(name: &str) -> LanguageQueries {
-    grammars::load_queries(name)
 }

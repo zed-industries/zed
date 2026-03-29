@@ -808,6 +808,8 @@ fn eval_extract_handle_command_output() {
         include_str!("fixtures/extract_handle_command_output/possible-05.diff"),
         include_str!("fixtures/extract_handle_command_output/possible-06.diff"),
         include_str!("fixtures/extract_handle_command_output/possible-07.diff"),
+        include_str!("fixtures/extract_handle_command_output/possible-08.diff"),
+        include_str!("fixtures/extract_handle_command_output/possible-09.diff"),
     ];
 
     eval_utils::eval(100, 0.95, eval_utils::NoProcessor, move || {

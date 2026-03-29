@@ -942,6 +942,9 @@ impl NativeAgent {
                 NativeAgentConnection::handle_thread_events(events, acp_thread.downgrade(), cx)
             })
             .await?;
+            acp_thread.update(cx, |thread, cx| {
+                thread.snapshot_completed_plan(cx);
+            });
             Ok(acp_thread)
         })
     }

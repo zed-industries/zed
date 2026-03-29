@@ -235,9 +235,6 @@ impl WslOpenModal {
         cx: &mut Context<Self>,
     ) {
         let app_state = workspace::AppState::global(cx);
-        let Some(app_state) = app_state.upgrade() else {
-            return;
-        };
 
         let connection_options = RemoteConnectionOptions::Wsl(WslConnectionOptions {
             distro_name: distro.to_string(),

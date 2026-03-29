@@ -434,6 +434,10 @@ pub struct StatusBarSettingsContent {
     /// Default: true
     #[serde(rename = "experimental.show")]
     pub show: Option<bool>,
+    /// Whether to show the name of the active file in the status bar.
+    ///
+    /// Default: false
+    pub show_active_file: Option<bool>,
     /// Whether to display the active language button in the status bar.
     ///
     /// Default: true
