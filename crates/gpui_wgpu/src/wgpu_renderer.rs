@@ -1,9 +1,9 @@
-use crate::{CompositorGpuHint, WgpuAtlas, WgpuContext};
+use crate::{CompositorGpuHint, WgpuAtlas, WgpuContext, WgpuDeviceRequirements};
 use bytemuck::{Pod, Zeroable};
 use gpui::{
-    AtlasTextureId, Background, Bounds, DevicePixels, GpuSpecs, MonochromeSprite, Path, Point,
-    PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, SubpixelSprite,
-    Underline, get_gamma_correction_ratios,
+    AtlasTextureId, Background, Bounds, DevicePixels, GpuSpecs, MonochromeSprite, PaintSurface,
+    Path, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
+    SubpixelSprite, Underline, get_gamma_correction_ratios,
 };
 use log::warn;
 #[cfg(not(target_family = "wasm"))]
@@ -82,7 +82,6 @@ struct WgpuPipelines {
     mono_sprites: wgpu::RenderPipeline,
     subpixel_sprites: Option<wgpu::RenderPipeline>,
     poly_sprites: wgpu::RenderPipeline,
-    #[allow(dead_code)]
     surfaces: wgpu::RenderPipeline,
 }
 
@@ -104,6 +103,8 @@ struct WgpuResources {
     pipelines: WgpuPipelines,
     bind_group_layouts: WgpuBindGroupLayouts,
     atlas_sampler: wgpu::Sampler,
+    surface_sampler: wgpu::Sampler,
+    surface_uniform_buffer: wgpu::Buffer,
     globals_buffer: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
     path_globals_bind_group: wgpu::BindGroup,
@@ -121,6 +122,9 @@ pub struct WgpuRenderer {
     /// Compositor GPU hint for adapter selection (unused on WASM).
     #[allow(dead_code)]
     compositor_gpu: Option<CompositorGpuHint>,
+    /// Application-requested extra wgpu features/limits, stored for device recovery.
+    #[allow(dead_code)]
+    extra_requirements: Option<WgpuDeviceRequirements>,
     resources: Option<WgpuResources>,
     surface_config: wgpu::SurfaceConfiguration,
     atlas: Arc<WgpuAtlas>,
@@ -168,6 +172,7 @@ impl WgpuRenderer {
         window: &W,
         config: WgpuSurfaceConfig,
         compositor_gpu: Option<CompositorGpuHint>,
+        extra_requirements: Option<WgpuDeviceRequirements>,
     ) -> anyhow::Result<Self>
     where
         W: HasWindowHandle + HasDisplayHandle + std::fmt::Debug + Send + Sync + Clone + 'static,
@@ -206,7 +211,12 @@ impl WgpuRenderer {
                 context.check_compatible_with_surface(&surface)?;
                 context
             }
-            None => ctx_ref.insert(WgpuContext::new(instance, &surface, compositor_gpu)?),
+            None => ctx_ref.insert(WgpuContext::new(
+                instance,
+                &surface,
+                compositor_gpu,
+                extra_requirements.as_ref(),
+            )?),
         };
 
         let atlas = Arc::new(WgpuAtlas::new(
@@ -220,6 +230,7 @@ impl WgpuRenderer {
             surface,
             config,
             compositor_gpu,
+            extra_requirements,
             atlas,
         )
     }
@@ -240,7 +251,7 @@ impl WgpuRenderer {
             Arc::clone(&context.queue),
         ));
 
-        Self::new_internal(None, context, surface, config, None, atlas)
+        Self::new_internal(None, context, surface, config, None, None, atlas)
     }
 
     fn new_internal(
@@ -249,6 +260,7 @@ impl WgpuRenderer {
         surface: wgpu::Surface<'static>,
         config: WgpuSurfaceConfig,
         compositor_gpu: Option<CompositorGpuHint>,
+        extra_requirements: Option<WgpuDeviceRequirements>,
         atlas: Arc<WgpuAtlas>,
     ) -> anyhow::Result<Self> {
         let surface_caps = surface.get_capabilities(&context.adapter);
@@ -351,6 +363,20 @@ impl WgpuRenderer {
             ..Default::default()
         });
 
+        let surface_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("surface_sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
+        let surface_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("surface_uniform_buffer"),
+            size: std::mem::size_of::<SurfaceParams>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         let uniform_alignment = device.limits().min_uniform_buffer_offset_alignment as u64;
         let globals_size = std::mem::size_of::<GlobalParams>() as u64;
         let gamma_size = std::mem::size_of::<GammaParams>() as u64;
@@ -436,6 +462,8 @@ impl WgpuRenderer {
             pipelines,
             bind_group_layouts,
             atlas_sampler,
+            surface_sampler,
+            surface_uniform_buffer,
             globals_buffer,
             globals_bind_group,
             path_globals_bind_group,
@@ -451,6 +479,7 @@ impl WgpuRenderer {
         Ok(Self {
             context: gpu_context,
             compositor_gpu,
+            extra_requirements,
             resources: Some(resources),
             surface_config,
             atlas,
@@ -570,16 +599,6 @@ impl WgpuRenderer {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
@@ -1023,6 +1042,11 @@ impl WgpuRenderer {
         self.dual_source_blending
     }
 
+    pub fn gpu_context(&self) -> (Arc<wgpu::Device>, Arc<wgpu::Queue>) {
+        let resources = self.resources();
+        (resources.device.clone(), resources.queue.clone())
+    }
+
     pub fn gpu_specs(&self) -> GpuSpecs {
         GpuSpecs {
             is_software_emulated: self.adapter_info.device_type == wgpu::DeviceType::Cpu,
@@ -1238,10 +1262,8 @@ impl WgpuRenderer {
                                 &mut instance_offset,
                                 &mut pass,
                             ),
-                        PrimitiveBatch::Surfaces(_surfaces) => {
-                            // Surfaces are macOS-only for video playback
-                            // Not implemented for Linux/wgpu
-                            true
+                        PrimitiveBatch::Surfaces(range) => {
+                            self.draw_surfaces(&scene.surfaces[range], &mut pass)
                         }
                     };
                     if !ok {
@@ -1363,6 +1385,55 @@ impl WgpuRenderer {
             instance_offset,
             pass,
         )
+    }
+
+    fn draw_surfaces(&self, surfaces: &[PaintSurface], pass: &mut wgpu::RenderPass<'_>) -> bool {
+        let resources = self.resources();
+        for surface in surfaces {
+            let Some(wgpu_texture) = surface.texture.downcast_ref::<wgpu::Texture>() else {
+                continue;
+            };
+
+            let texture_view = wgpu_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+            let params = SurfaceParams {
+                bounds: surface.bounds.into(),
+                content_mask: surface.content_mask.bounds.into(),
+            };
+
+            resources.queue.write_buffer(
+                &resources.surface_uniform_buffer,
+                0,
+                bytemuck::bytes_of(&params),
+            );
+
+            let bind_group = resources
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("surface_bind_group"),
+                    layout: &resources.bind_group_layouts.surfaces,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: resources.surface_uniform_buffer.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(&texture_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::Sampler(&resources.surface_sampler),
+                        },
+                    ],
+                });
+
+            pass.set_pipeline(&resources.pipelines.surfaces);
+            pass.set_bind_group(0, &resources.globals_bind_group, &[]);
+            pass.set_bind_group(1, &bind_group, &[]);
+            pass.draw(0..4, 0..1);
+        }
+        true
     }
 
     fn draw_polychrome_sprites(
@@ -1668,7 +1739,12 @@ impl WgpuRenderer {
 
             let instance = WgpuContext::instance(Box::new(window.clone()));
             let surface = create_surface(&instance, window_handle.as_raw())?;
-            let new_context = WgpuContext::new(instance, &surface, self.compositor_gpu)?;
+            let new_context = WgpuContext::new(
+                instance,
+                &surface,
+                self.compositor_gpu,
+                self.extra_requirements.as_ref(),
+            )?;
             *gpu_context.borrow_mut() = Some(new_context);
             surface
         } else {
@@ -1692,12 +1768,14 @@ impl WgpuRenderer {
         self.atlas
             .handle_device_lost(Arc::clone(&context.device), Arc::clone(&context.queue));
 
+        let extra_reqs = self.extra_requirements.clone();
         *self = Self::new_internal(
             Some(gpu_context.clone()),
             context,
             surface,
             config,
             self.compositor_gpu,
+            extra_reqs,
             self.atlas.clone(),
         )?;
 

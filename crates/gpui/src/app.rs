@@ -1058,6 +1058,14 @@ impl App {
         self.platform.window_stack()
     }
 
+    /// Register additional GPU device requirements (extra features and/or
+    /// limits) before opening any windows.  The `Box` must contain a
+    /// `gpui_wgpu::WgpuDeviceRequirements`.
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    pub fn set_gpu_requirements(&self, requirements: Box<dyn std::any::Any>) {
+        self.platform.set_gpu_requirements(requirements);
+    }
+
     /// Returns a handle to the window that is currently focused at the platform level, if one exists.
     pub fn active_window(&self) -> Option<AnyWindowHandle> {
         self.platform.active_window()

@@ -412,6 +412,7 @@ impl X11WindowState {
         executor: ForegroundExecutor,
         gpu_context: gpui_wgpu::GpuContext,
         compositor_gpu: Option<CompositorGpuHint>,
+        gpu_requirements: Option<gpui_wgpu::WgpuDeviceRequirements>,
         params: WindowParams,
         xcb: &Rc<XCBConnection>,
         client_side_decorations_supported: bool,
@@ -709,7 +710,13 @@ impl X11WindowState {
                     // too
                     transparent: false,
                 };
-                WgpuRenderer::new(gpu_context, &raw_window, config, compositor_gpu)?
+                WgpuRenderer::new(
+                    gpu_context,
+                    &raw_window,
+                    config,
+                    compositor_gpu,
+                    gpu_requirements,
+                )?
             };
 
             // Set max window size hints based on the GPU's maximum texture dimension.
@@ -836,6 +843,7 @@ impl X11Window {
         executor: ForegroundExecutor,
         gpu_context: gpui_wgpu::GpuContext,
         compositor_gpu: Option<CompositorGpuHint>,
+        gpu_requirements: Option<gpui_wgpu::WgpuDeviceRequirements>,
         params: WindowParams,
         xcb: &Rc<XCBConnection>,
         client_side_decorations_supported: bool,
@@ -853,6 +861,7 @@ impl X11Window {
                 executor,
                 gpu_context,
                 compositor_gpu,
+                gpu_requirements,
                 params,
                 xcb,
                 client_side_decorations_supported,
@@ -1822,5 +1831,10 @@ impl PlatformWindow for X11Window {
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
         self.0.state.borrow().renderer.gpu_specs().into()
+    }
+
+    fn gpu_context(&self) -> Option<Box<dyn std::any::Any>> {
+        let (device, queue) = self.0.state.borrow().renderer.gpu_context();
+        Some(Box::new((device, queue)))
     }
 }

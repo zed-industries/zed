@@ -179,6 +179,7 @@ pub struct X11ClientState {
 
     pub(crate) gpu_context: GpuContext,
     pub(crate) compositor_gpu: Option<CompositorGpuHint>,
+    pub(crate) gpu_requirements: Option<gpui_wgpu::WgpuDeviceRequirements>,
 
     pub(crate) scale_factor: f32,
 
@@ -495,6 +496,7 @@ impl X11Client {
             current_count: 0,
             gpu_context: Rc::new(RefCell::new(None)),
             compositor_gpu,
+            gpu_requirements: None,
             scale_factor,
 
             xkb_context,
@@ -1501,6 +1503,14 @@ impl LinuxClient for X11Client {
         gpui::scap_screen_capture::scap_screen_sources(&self.0.borrow().common.foreground_executor)
     }
 
+    fn set_gpu_requirements(&self, requirements: Box<dyn std::any::Any>) {
+        if let Ok(reqs) = requirements.downcast::<gpui_wgpu::WgpuDeviceRequirements>() {
+            self.0.borrow_mut().gpu_requirements = Some(*reqs);
+        } else {
+            log::warn!("set_gpu_requirements: unexpected type, expected WgpuDeviceRequirements");
+        }
+    }
+
     fn open_window(
         &self,
         handle: AnyWindowHandle,
@@ -1523,12 +1533,14 @@ impl LinuxClient for X11Client {
         let scale_factor = state.scale_factor;
         let appearance = state.common.appearance;
         let compositor_gpu = state.compositor_gpu.take();
+        let gpu_requirements = state.gpu_requirements.clone();
         let window = X11Window::new(
             handle,
             X11ClientStatePtr(Rc::downgrade(&self.0)),
             state.common.foreground_executor.clone(),
             state.gpu_context.clone(),
             compositor_gpu,
+            gpu_requirements,
             params,
             &xcb_connection,
             client_side_decorations_supported,

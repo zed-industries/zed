@@ -324,6 +324,7 @@ impl WaylandWindowState {
         globals: Globals,
         gpu_context: gpui_wgpu::GpuContext,
         compositor_gpu: Option<CompositorGpuHint>,
+        gpu_requirements: Option<gpui_wgpu::WgpuDeviceRequirements>,
         options: WindowParams,
         parent: Option<WaylandWindowStatePtr>,
     ) -> anyhow::Result<Self> {
@@ -344,7 +345,13 @@ impl WaylandWindowState {
                 },
                 transparent: true,
             };
-            WgpuRenderer::new(gpu_context, &raw_window, config, compositor_gpu)?
+            WgpuRenderer::new(
+                gpu_context,
+                &raw_window,
+                config,
+                compositor_gpu,
+                gpu_requirements,
+            )?
         };
 
         if let WaylandSurfaceState::Xdg(ref xdg_state) = surface_state {
@@ -495,6 +502,7 @@ impl WaylandWindow {
         globals: Globals,
         gpu_context: gpui_wgpu::GpuContext,
         compositor_gpu: Option<CompositorGpuHint>,
+        gpu_requirements: Option<gpui_wgpu::WgpuDeviceRequirements>,
         client: WaylandClientStatePtr,
         params: WindowParams,
         appearance: WindowAppearance,
@@ -525,6 +533,7 @@ impl WaylandWindow {
                 globals,
                 gpu_context,
                 compositor_gpu,
+                gpu_requirements,
                 params,
                 parent,
             )?)),
@@ -1456,6 +1465,11 @@ impl PlatformWindow for WaylandWindow {
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
         self.borrow().renderer.gpu_specs().into()
+    }
+
+    fn gpu_context(&self) -> Option<Box<dyn std::any::Any>> {
+        let (device, queue) = self.borrow().renderer.gpu_context();
+        Some(Box::new((device, queue)))
     }
 }
 

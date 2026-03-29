@@ -227,6 +227,12 @@ pub trait Platform: 'static {
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout>;
     fn keyboard_mapper(&self) -> Rc<dyn PlatformKeyboardMapper>;
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>);
+
+    /// Register additional GPU device requirements (features, limits) before
+    /// the first window is opened.  The concrete type inside the `Box` must be
+    /// `gpui_wgpu::WgpuDeviceRequirements`.
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    fn set_gpu_requirements(&self, _requirements: Box<dyn std::any::Any>) {}
 }
 
 /// A handle to a platform's display, e.g. a monitor or laptop screen.
@@ -539,6 +545,13 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     }
     fn set_client_inset(&self, _inset: Pixels) {}
     fn gpu_specs(&self) -> Option<GpuSpecs>;
+
+    /// Returns the GPU context for this window's renderer.
+    /// The returned `Box` contains `(Arc<wgpu::Device>, Arc<wgpu::Queue>)`.
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    fn gpu_context(&self) -> Option<Box<dyn std::any::Any>> {
+        None
+    }
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>);
 

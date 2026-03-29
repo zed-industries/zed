@@ -20,12 +20,27 @@ pub struct CompositorGpuHint {
     pub device_id: u32,
 }
 
+/// Extra wgpu features and limits that an application can request on top of
+/// gpui's baseline.  Pass an instance to the platform via
+/// [`gpui::App::set_gpu_requirements`] *before* opening any windows.
+#[derive(Clone, Debug, Default)]
+pub struct WgpuDeviceRequirements {
+    /// Additional [`wgpu::Features`] to enable.  These are OR-ed with gpui's
+    /// own required features.
+    pub features: wgpu::Features,
+    /// Additional [`wgpu::Limits`] to request.  Each field is merged by taking
+    /// `max(gpui_limit, app_limit)` for upper-bound limits and
+    /// `min(gpui_limit, app_limit)` for alignment/lower-bound limits.
+    pub limits: wgpu::Limits,
+}
+
 impl WgpuContext {
     #[cfg(not(target_family = "wasm"))]
     pub fn new(
         instance: wgpu::Instance,
         surface: &wgpu::Surface<'_>,
         compositor_gpu: Option<CompositorGpuHint>,
+        extra_requirements: Option<&WgpuDeviceRequirements>,
     ) -> anyhow::Result<Self> {
         let device_id_filter = match std::env::var("ZED_DEVICE_ID") {
             Ok(val) => parse_pci_id(&val)
@@ -47,6 +62,7 @@ impl WgpuContext {
                 device_id_filter,
                 surface,
                 compositor_gpu.as_ref(),
+                extra_requirements,
             ))?;
 
         let device_lost = Arc::new(AtomicBool::new(false));
@@ -102,7 +118,7 @@ impl WgpuContext {
         );
 
         let device_lost = Arc::new(AtomicBool::new(false));
-        let (device, queue, dual_source_blending) = Self::create_device(&adapter).await?;
+        let (device, queue, dual_source_blending) = Self::create_device(&adapter, None).await?;
 
         Ok(Self {
             instance,
@@ -116,6 +132,7 @@ impl WgpuContext {
 
     async fn create_device(
         adapter: &wgpu::Adapter,
+        extra_requirements: Option<&WgpuDeviceRequirements>,
     ) -> anyhow::Result<(wgpu::Device, wgpu::Queue, bool)> {
         let dual_source_blending = adapter
             .features()
@@ -131,13 +148,21 @@ impl WgpuContext {
             );
         }
 
+        let mut required_limits = wgpu::Limits::downlevel_defaults()
+            .using_resolution(adapter.limits())
+            .using_alignment(adapter.limits());
+
+        // Merge application-requested requirements.
+        if let Some(reqs) = extra_requirements {
+            required_features |= reqs.features;
+            required_limits = required_limits.or_better_values_from(&reqs.limits);
+        }
+
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("gpui_device"),
                 required_features,
-                required_limits: wgpu::Limits::downlevel_defaults()
-                    .using_resolution(adapter.limits())
-                    .using_alignment(adapter.limits()),
+                required_limits,
                 memory_hints: wgpu::MemoryHints::MemoryUsage,
                 trace: wgpu::Trace::Off,
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
@@ -185,6 +210,7 @@ impl WgpuContext {
         device_id_filter: Option<u32>,
         surface: &wgpu::Surface<'_>,
         compositor_gpu: Option<&CompositorGpuHint>,
+        extra_requirements: Option<&WgpuDeviceRequirements>,
     ) -> anyhow::Result<(wgpu::Adapter, wgpu::Device, wgpu::Queue, bool)> {
         let mut adapters: Vec<_> = instance.enumerate_adapters(wgpu::Backends::all()).await;
 
@@ -268,7 +294,7 @@ impl WgpuContext {
             let info = adapter.get_info();
             log::info!("Testing adapter: {} ({:?})...", info.name, info.backend);
 
-            match Self::try_adapter_with_surface(&adapter, surface).await {
+            match Self::try_adapter_with_surface(&adapter, surface, extra_requirements).await {
                 Ok((device, queue, dual_source_blending)) => {
                     log::info!(
                         "Selected GPU (passed configuration test): {} ({:?})",
@@ -297,6 +323,7 @@ impl WgpuContext {
     async fn try_adapter_with_surface(
         adapter: &wgpu::Adapter,
         surface: &wgpu::Surface<'_>,
+        extra_requirements: Option<&WgpuDeviceRequirements>,
     ) -> anyhow::Result<(wgpu::Device, wgpu::Queue, bool)> {
         let caps = surface.get_capabilities(adapter);
         if caps.formats.is_empty() {
@@ -306,7 +333,8 @@ impl WgpuContext {
             anyhow::bail!("no compatible alpha modes");
         }
 
-        let (device, queue, dual_source_blending) = Self::create_device(adapter).await?;
+        let (device, queue, dual_source_blending) =
+            Self::create_device(adapter, extra_requirements).await?;
         let error_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
 
         let test_config = wgpu::SurfaceConfiguration {

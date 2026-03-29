@@ -2,16 +2,55 @@ use crate::{
     App, Bounds, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement, LayoutId,
     ObjectFit, Pixels, Style, StyleRefinement, Styled, Window,
 };
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+use crate::{DevicePixels, Size};
 #[cfg(target_os = "macos")]
 use core_video::pixel_buffer::CVPixelBuffer;
 use refineable::Refineable;
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+use std::sync::Arc;
 
 /// A source of a surface's content.
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SurfaceSource {
     /// A macOS image buffer from CoreVideo
     #[cfg(target_os = "macos")]
     Surface(CVPixelBuffer),
+    /// A GPU texture handle (type-erased to avoid depending on wgpu)
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    Texture {
+        /// The GPU texture, type-erased (expected to be `Arc<wgpu::Texture>`)
+        texture: Arc<dyn std::any::Any + Send + Sync>,
+        /// Dimensions of the texture in device pixels
+        size: Size<DevicePixels>,
+    },
+}
+
+impl Clone for SurfaceSource {
+    fn clone(&self) -> Self {
+        match self {
+            #[cfg(target_os = "macos")]
+            SurfaceSource::Surface(buf) => SurfaceSource::Surface(buf.clone()),
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            SurfaceSource::Texture { texture, size } => SurfaceSource::Texture {
+                texture: Arc::clone(texture),
+                size: *size,
+            },
+        }
+    }
+}
+
+impl std::fmt::Debug for SurfaceSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            #[cfg(target_os = "macos")]
+            SurfaceSource::Surface(buf) => f.debug_tuple("Surface").field(buf).finish(),
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            SurfaceSource::Texture { size, .. } => f
+                .debug_struct("Texture")
+                .field("size", size)
+                .finish_non_exhaustive(),
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -29,7 +68,6 @@ pub struct Surface {
 }
 
 /// Create a new surface element.
-#[cfg(target_os = "macos")]
 pub fn surface(source: impl Into<SurfaceSource>) -> Surface {
     Surface {
         source: source.into(),
@@ -86,10 +124,10 @@ impl Element for Surface {
         &mut self,
         _global_id: Option<&GlobalElementId>,
         _inspector_id: Option<&InspectorElementId>,
-        #[cfg_attr(not(target_os = "macos"), allow(unused_variables))] bounds: Bounds<Pixels>,
+        bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,
-        #[cfg_attr(not(target_os = "macos"), allow(unused_variables))] window: &mut Window,
+        window: &mut Window,
         _: &mut App,
     ) {
         match &self.source {
@@ -100,8 +138,11 @@ impl Element for Surface {
                 // TODO: Add support for corner_radii
                 window.paint_surface(new_bounds, surface.clone());
             }
-            #[allow(unreachable_patterns)]
-            _ => {}
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            SurfaceSource::Texture { texture, size } => {
+                let new_bounds = self.object_fit.get_bounds(bounds, *size);
+                window.paint_surface(new_bounds, Arc::clone(texture), *size);
+            }
         }
     }
 }

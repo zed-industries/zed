@@ -211,6 +211,7 @@ pub(crate) struct WaylandClientState {
     globals: Globals,
     pub gpu_context: GpuContext,
     pub compositor_gpu: Option<CompositorGpuHint>,
+    pub gpu_requirements: Option<gpui_wgpu::WgpuDeviceRequirements>,
     wl_seat: wl_seat::WlSeat, // TODO: Multi seat support
     wl_pointer: Option<wl_pointer::WlPointer>,
     pinch_gesture: Option<zwp_pointer_gesture_pinch_v1::ZwpPointerGesturePinchV1>,
@@ -588,6 +589,7 @@ impl WaylandClient {
             globals,
             gpu_context,
             compositor_gpu,
+            gpu_requirements: None,
             wl_seat: seat,
             wl_pointer: None,
             wl_keyboard: None,
@@ -720,6 +722,14 @@ impl LinuxClient for WaylandClient {
         sources_rx
     }
 
+    fn set_gpu_requirements(&self, requirements: Box<dyn std::any::Any>) {
+        if let Ok(reqs) = requirements.downcast::<gpui_wgpu::WgpuDeviceRequirements>() {
+            self.0.borrow_mut().gpu_requirements = Some(*reqs);
+        } else {
+            log::warn!("set_gpu_requirements: unexpected type, expected WgpuDeviceRequirements");
+        }
+    }
+
     fn open_window(
         &self,
         handle: AnyWindowHandle,
@@ -740,11 +750,13 @@ impl LinuxClient for WaylandClient {
 
         let appearance = state.common.appearance;
         let compositor_gpu = state.compositor_gpu.take();
+        let gpu_requirements = state.gpu_requirements.clone();
         let (window, surface_id) = WaylandWindow::new(
             handle,
             state.globals.clone(),
             state.gpu_context.clone(),
             compositor_gpu,
+            gpu_requirements,
             WaylandClientStatePtr(Rc::downgrade(&self.0)),
             params,
             appearance,

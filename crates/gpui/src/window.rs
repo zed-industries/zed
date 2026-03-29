@@ -3677,6 +3677,32 @@ impl Window {
         });
     }
 
+    /// Paint a surface into the scene for the next frame at the current z-index.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    pub fn paint_surface(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        texture: std::sync::Arc<dyn std::any::Any + Send + Sync>,
+        texture_size: Size<DevicePixels>,
+    ) {
+        use crate::PaintSurface;
+
+        self.invalidator.debug_assert_paint();
+
+        let scale_factor = self.scale_factor();
+        let bounds = bounds.scale(scale_factor);
+        let content_mask = self.content_mask().scale(scale_factor);
+        self.next_frame.scene.insert_primitive(PaintSurface {
+            order: 0,
+            bounds,
+            content_mask,
+            texture,
+            texture_size,
+        });
+    }
+
     /// Removes an image from the sprite atlas.
     pub fn drop_image(&mut self, data: Arc<RenderImage>) -> Result<()> {
         for frame_index in 0..data.frame_count() {
@@ -4942,6 +4968,13 @@ impl Window {
     /// Currently returns None on Mac and Windows.
     pub fn gpu_specs(&self) -> Option<GpuSpecs> {
         self.platform_window.gpu_specs()
+    }
+
+    /// Returns the GPU context (device + queue) if available.
+    /// The returned `Box` contains `(Arc<wgpu::Device>, Arc<wgpu::Queue>)`.
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    pub fn gpu_context(&self) -> Option<Box<dyn std::any::Any>> {
+        self.platform_window.gpu_context()
     }
 
     /// Perform titlebar double-click action.

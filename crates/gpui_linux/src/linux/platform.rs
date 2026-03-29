@@ -87,6 +87,7 @@ pub(crate) trait LinuxClient {
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
     fn active_window(&self) -> Option<AnyWindowHandle>;
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>>;
+    fn set_gpu_requirements(&self, _requirements: Box<dyn std::any::Any>) {}
     fn run(&self);
 
     #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -307,6 +308,10 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         options: WindowParams,
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
         self.inner.open_window(handle, options)
+    }
+
+    fn set_gpu_requirements(&self, requirements: Box<dyn std::any::Any>) {
+        self.inner.set_gpu_requirements(requirements);
     }
 
     fn open_url(&self, url: &str) {
