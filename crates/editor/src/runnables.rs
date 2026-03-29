@@ -563,7 +563,7 @@ impl Editor {
         let buffers = if visible_only {
             self.visible_buffers(cx)
                 .into_iter()
-                .filter(|buffer| self.is_lsp_relevant(buffer.read(cx).file(), cx))
+                .filter(|buffer| self.is_lsp_relevant(buffer.read(cx), cx))
                 .collect()
         } else {
             self.buffer().read(cx).all_buffers()
