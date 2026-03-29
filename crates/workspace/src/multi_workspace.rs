@@ -429,9 +429,7 @@ impl MultiWorkspace {
                 // On iOS, remove_window() is a no-op.  Close the project so
                 // that project::Event::Closed triggers navigation back to the
                 // connection landing screen.
-                for workspace in this
-                    .update(cx, |mw, _| mw.workspaces().to_vec())?
-                {
+                for workspace in this.update(cx, |mw, _| mw.workspaces().to_vec())? {
                     workspace.update(cx, |workspace, cx| {
                         workspace.project().update(cx, |project, cx| {
                             project.close(cx);
@@ -965,9 +963,6 @@ impl MultiWorkspace {
 
 impl Render for MultiWorkspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        #[cfg(target_os = "ios")]
-        log::info!("[multi_workspace] render called, workspaces: {}", self.workspaces.len());
-
         let multi_workspace_enabled = self.multi_workspace_enabled(cx);
         let sidebar_side = self.sidebar_side(cx);
         let sidebar_on_right = sidebar_side == SidebarSide::Right;

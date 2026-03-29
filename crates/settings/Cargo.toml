@@ -14,6 +14,7 @@ doctest = false
 
 [features]
 test-support = ["gpui/test-support", "fs/test-support"]
+force-embed-assets = ["rust-embed/debug-embed"]
 
 [dependencies]
 anyhow.workspace = true

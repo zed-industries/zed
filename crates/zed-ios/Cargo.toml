@@ -14,7 +14,7 @@ crate-type = ["staticlib"]
 activity_indicator.workspace = true
 anyhow.workspace = true
 askpass.workspace = true
-assets.workspace = true
+assets = { workspace = true, features = ["force-embed-assets"] }
 breadcrumbs.workspace = true
 client.workspace = true
 command_palette.workspace = true
@@ -55,7 +55,7 @@ reqwest_client.workspace = true
 search.workspace = true
 semver.workspace = true
 session.workspace = true
-settings.workspace = true
+settings = { workspace = true, features = ["force-embed-assets"] }
 theme.workspace = true
 theme_selector.workspace = true
 theme_settings.workspace = true
