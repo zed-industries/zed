@@ -5,7 +5,7 @@ use gpui::TestAppContext;
 use rpc::proto;
 
 #[gpui::test]
-async fn test_favorite_channels(cx: &mut TestAppContext) {
+async fn test_reorder_favorite_channels_independently_of_channels(cx: &mut TestAppContext) {
     let (server, client) = TestServer::start1(cx).await;
     let _channel_a = server
         .make_channel("channel-a", None, (&client, cx), &mut [])
@@ -146,7 +146,7 @@ async fn test_favorite_channels(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_reorder_channels_does_not_affect_favorites(cx: &mut TestAppContext) {
+async fn test_reorder_channels_independently_of_favorites(cx: &mut TestAppContext) {
     let (server, client) = TestServer::start1(cx).await;
     let root = server
         .make_channel("root", None, (&client, cx), &mut [])
@@ -190,7 +190,6 @@ async fn test_reorder_channels_does_not_affect_favorites(cx: &mut TestAppContext
     );
 
     // Reorder the real channels: move channel-a down (swaps with channel-b).
-    // The Favorites section should remain unchanged.
     cx.read(ChannelStore::global)
         .update(cx, |store, cx| {
             store.reorder_channel(channel_a, proto::reorder_channel::Direction::Down, cx)
