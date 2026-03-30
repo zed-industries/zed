@@ -4799,12 +4799,36 @@ impl Workspace {
             .as_ref()
             .map(|h| Target::Sidebar(h.clone()));
 
+        let sidebar_on_left = self
+            .multi_workspace
+            .as_ref()
+            .and_then(|mw| mw.upgrade())
+            .map_or(true, |mw| mw.read(cx).sidebar_side(cx) == SidebarSide::Left);
+
+        let sidebar_on_side = |side: SplitDirection| -> Option<ActivateInDirectionTarget> {
+            if (side == SplitDirection::Left) == sidebar_on_left {
+                sidebar_target.clone()
+            } else {
+                None
+            }
+        };
+
         let target = match (origin, direction) {
-            // From the sidebar, only Right navigates into the workspace.
-            (Origin::Sidebar, SplitDirection::Right) => try_dock(&self.left_dock)
-                .or_else(|| get_last_active_pane().map(Target::Pane))
-                .or_else(|| try_dock(&self.bottom_dock))
-                .or_else(|| try_dock(&self.right_dock)),
+            // From the sidebar, only the inward direction navigates into
+            // the workspace. Which direction is "inward" depends on which
+            // side the sidebar is on.
+            (Origin::Sidebar, SplitDirection::Right) if sidebar_on_left => {
+                try_dock(&self.left_dock)
+                    .or_else(|| get_last_active_pane().map(Target::Pane))
+                    .or_else(|| try_dock(&self.bottom_dock))
+                    .or_else(|| try_dock(&self.right_dock))
+            }
+            (Origin::Sidebar, SplitDirection::Left) if !sidebar_on_left => {
+                try_dock(&self.right_dock)
+                    .or_else(|| get_last_active_pane().map(Target::Pane))
+                    .or_else(|| try_dock(&self.bottom_dock))
+                    .or_else(|| try_dock(&self.left_dock))
+            }
 
             (Origin::Sidebar, _) => None,
 
@@ -4817,8 +4841,12 @@ impl Workspace {
                     match direction {
                         SplitDirection::Up => None,
                         SplitDirection::Down => try_dock(&self.bottom_dock),
-                        SplitDirection::Left => try_dock(&self.left_dock).or(sidebar_target),
-                        SplitDirection::Right => try_dock(&self.right_dock),
+                        SplitDirection::Left => {
+                            try_dock(&self.left_dock).or_else(|| sidebar_on_side(direction))
+                        }
+                        SplitDirection::Right => {
+                            try_dock(&self.right_dock).or_else(|| sidebar_on_side(direction))
+                        }
                     }
                 }
             }
@@ -4831,26 +4859,28 @@ impl Workspace {
                 }
             }
 
-            (Origin::LeftDock, SplitDirection::Left) => sidebar_target,
+            (Origin::LeftDock, SplitDirection::Left) => sidebar_on_side(SplitDirection::Left),
 
             (Origin::LeftDock, SplitDirection::Down)
             | (Origin::RightDock, SplitDirection::Down) => try_dock(&self.bottom_dock),
 
             (Origin::BottomDock, SplitDirection::Up) => get_last_active_pane().map(Target::Pane),
             (Origin::BottomDock, SplitDirection::Left) => {
-                try_dock(&self.left_dock).or(sidebar_target)
+                try_dock(&self.left_dock).or_else(|| sidebar_on_side(SplitDirection::Left))
             }
-            (Origin::BottomDock, SplitDirection::Right) => try_dock(&self.right_dock),
+            (Origin::BottomDock, SplitDirection::Right) => {
+                try_dock(&self.right_dock).or_else(|| sidebar_on_side(SplitDirection::Right))
+            }
 
             (Origin::RightDock, SplitDirection::Left) => {
                 if let Some(last_active_pane) = get_last_active_pane() {
                     Some(Target::Pane(last_active_pane))
                 } else {
-                    try_dock(&self.bottom_dock)
-                        .or_else(|| try_dock(&self.left_dock))
-                        .or(sidebar_target)
+                    try_dock(&self.bottom_dock).or_else(|| try_dock(&self.left_dock))
                 }
             }
+
+            (Origin::RightDock, SplitDirection::Right) => sidebar_on_side(SplitDirection::Right),
 
             _ => None,
         };

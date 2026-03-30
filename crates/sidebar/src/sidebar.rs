@@ -47,7 +47,11 @@ use workspace::{
 use zed_actions::OpenRecent;
 use zed_actions::editor::{MoveDown, MoveUp};
 
-use zed_actions::agents_sidebar::{FocusSidebarFilter, ToggleThreadSwitcher};
+use zed_actions::agents_sidebar::{
+    ActivateSelectedWorkspace, FocusSidebarFilter, NewThreadInGroup, RemoveSelected,
+    RemoveSelectedWorkspace, ShowFewerThreads, ShowMoreThreads, StopSelectedThread, ToggleArchive,
+    ToggleThreadSwitcher,
+};
 
 use crate::thread_switcher::{ThreadSwitcher, ThreadSwitcherEntry, ThreadSwitcherEvent};
 
@@ -57,16 +61,6 @@ mod project_group_builder;
 
 #[cfg(test)]
 mod sidebar_tests;
-
-gpui::actions!(
-    agents_sidebar,
-    [
-        /// Creates a new thread in the currently selected or active project group.
-        NewThreadInGroup,
-        /// Toggles between the thread list and the archive view.
-        ToggleArchive,
-    ]
-);
 
 const DEFAULT_WIDTH: Pixels = px(300.0);
 const MIN_WIDTH: Pixels = px(200.0);
@@ -2350,6 +2344,165 @@ impl Sidebar {
         self.archive_thread(&session_id, window, cx)
     }
 
+    fn remove_selected_workspace(
+        &mut self,
+        _: &RemoveSelectedWorkspace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ix) = self.selection else {
+            return;
+        };
+        let Some(ListEntry::ProjectHeader { workspace, .. }) = self.contents.entries.get(ix) else {
+            return;
+        };
+        let workspace = workspace.clone();
+        if let Some(multi_workspace) = self.multi_workspace.upgrade() {
+            multi_workspace.update(cx, |multi_workspace, cx| {
+                if let Some(index) = multi_workspace
+                    .workspaces()
+                    .iter()
+                    .position(|w| *w == workspace)
+                {
+                    multi_workspace.remove_workspace(index, window, cx);
+                }
+            });
+        }
+    }
+
+    fn remove_selected(&mut self, _: &RemoveSelected, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(ix) = self.selection else {
+            return;
+        };
+        match self.contents.entries.get(ix) {
+            Some(ListEntry::Thread(_)) => {
+                self.remove_selected_thread(&RemoveSelectedThread, window, cx);
+            }
+            Some(ListEntry::ProjectHeader { .. }) => {
+                self.remove_selected_workspace(&RemoveSelectedWorkspace, window, cx);
+            }
+            _ => {}
+        }
+    }
+
+    fn stop_selected_thread(
+        &mut self,
+        _: &StopSelectedThread,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ix) = self.selection else {
+            return;
+        };
+        let Some(ListEntry::Thread(thread)) = self.contents.entries.get(ix) else {
+            return;
+        };
+        let session_id = thread.session_info.session_id.clone();
+        self.stop_thread(&session_id, cx);
+    }
+
+    fn activate_selected_workspace(
+        &mut self,
+        _: &ActivateSelectedWorkspace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ix) = self.selection else {
+            return;
+        };
+
+        let workspace = match self.contents.entries.get(ix) {
+            Some(ListEntry::ProjectHeader { workspace, .. }) => Some(workspace.clone()),
+            Some(
+                ListEntry::Thread(_) | ListEntry::ViewMore { .. } | ListEntry::NewThread { .. },
+            ) => self.contents.entries[..ix]
+                .iter()
+                .rev()
+                .find_map(|entry| match entry {
+                    ListEntry::ProjectHeader { workspace, .. } => Some(workspace.clone()),
+                    _ => None,
+                }),
+            _ => None,
+        };
+
+        let Some(workspace) = workspace else {
+            return;
+        };
+
+        self.focused_thread = None;
+        if let Some(multi_workspace) = self.multi_workspace.upgrade() {
+            multi_workspace.update(cx, |multi_workspace, cx| {
+                multi_workspace.activate(workspace.clone(), cx);
+            });
+        }
+        if AgentPanel::is_visible(&workspace, cx) {
+            workspace.update(cx, |workspace, cx| {
+                workspace.focus_panel::<AgentPanel>(window, cx);
+            });
+        }
+    }
+
+    fn show_more_threads(
+        &mut self,
+        _: &ShowMoreThreads,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ix) = self.selection else {
+            return;
+        };
+
+        let path_list = match self.contents.entries.get(ix) {
+            Some(ListEntry::ProjectHeader { path_list, .. }) => Some(path_list.clone()),
+            Some(
+                ListEntry::Thread(_) | ListEntry::ViewMore { .. } | ListEntry::NewThread { .. },
+            ) => self.contents.entries[..ix]
+                .iter()
+                .rev()
+                .find_map(|entry| match entry {
+                    ListEntry::ProjectHeader { path_list, .. } => Some(path_list.clone()),
+                    _ => None,
+                }),
+            _ => None,
+        };
+
+        if let Some(path_list) = path_list {
+            let current = self.expanded_groups.get(&path_list).copied().unwrap_or(0);
+            self.expanded_groups.insert(path_list, current + 1);
+            self.update_entries(cx);
+        }
+    }
+
+    fn show_fewer_threads(
+        &mut self,
+        _: &ShowFewerThreads,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ix) = self.selection else {
+            return;
+        };
+
+        let path_list = match self.contents.entries.get(ix) {
+            Some(ListEntry::ProjectHeader { path_list, .. }) => Some(path_list.clone()),
+            Some(
+                ListEntry::Thread(_) | ListEntry::ViewMore { .. } | ListEntry::NewThread { .. },
+            ) => self.contents.entries[..ix]
+                .iter()
+                .rev()
+                .find_map(|entry| match entry {
+                    ListEntry::ProjectHeader { path_list, .. } => Some(path_list.clone()),
+                    _ => None,
+                }),
+            _ => None,
+        };
+
+        if let Some(path_list) = path_list {
+            self.expanded_groups.remove(&path_list);
+            self.update_entries(cx);
+        }
+    }
+
     fn record_thread_access(&mut self, session_id: &acp::SessionId) {
         self.thread_last_accessed
             .insert(session_id.clone(), Utc::now());
@@ -3304,6 +3457,12 @@ impl Render for Sidebar {
             .on_action(cx.listener(Self::unfold_all))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::remove_selected_thread))
+            .on_action(cx.listener(Self::remove_selected_workspace))
+            .on_action(cx.listener(Self::remove_selected))
+            .on_action(cx.listener(Self::stop_selected_thread))
+            .on_action(cx.listener(Self::activate_selected_workspace))
+            .on_action(cx.listener(Self::show_more_threads))
+            .on_action(cx.listener(Self::show_fewer_threads))
             .on_action(cx.listener(Self::new_thread_in_group))
             .on_action(cx.listener(Self::toggle_archive))
             .on_action(cx.listener(Self::focus_sidebar_filter))

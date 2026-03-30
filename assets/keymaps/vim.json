@@ -1125,6 +1125,8 @@
       "g g": "menu::SelectFirst",
       "shift-g": "menu::SelectLast",
       "/": "agents_sidebar::FocusSidebarFilter",
+      "d d": "agents_sidebar::RemoveSelected",
+      "o": "agents_sidebar::NewThreadInGroup",
       "z a": "editor::ToggleFold",
       "z c": "menu::SelectParent",
       "z o": "menu::SelectChild",

@@ -799,6 +799,22 @@ pub mod agents_sidebar {
             FocusSidebarFilter,
             /// Moves the active workspace to a new window.
             MoveWorkspaceToNewWindow,
+            /// Creates a new thread in the currently selected or active project group.
+            NewThreadInGroup,
+            /// Toggles between the thread list and the archive view.
+            ToggleArchive,
+            /// Closes the currently selected workspace.
+            RemoveSelectedWorkspace,
+            /// Removes the selected entry: archives a thread or closes a workspace.
+            RemoveSelected,
+            /// Stops the currently selected running thread.
+            StopSelectedThread,
+            /// Activates the workspace that owns the currently selected entry.
+            ActivateSelectedWorkspace,
+            /// Expands the selected group to show more threads.
+            ShowMoreThreads,
+            /// Collapses expanded threads in the selected group back to the default count.
+            ShowFewerThreads,
         ]
     );
 }
