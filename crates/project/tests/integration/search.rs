@@ -148,7 +148,7 @@ async fn test_multiline_regex(cx: &mut gpui::TestAppContext) {
     use language::Buffer;
     let text = Rope::from("hello\nworld\nhello\nworld");
     let snapshot = cx
-        .update(|app| Buffer::build_snapshot(text, None, None, app))
+        .update(|app| Buffer::build_snapshot(text, None, None, None, app))
         .await;
 
     let results = search_query.search(&snapshot, None).await;

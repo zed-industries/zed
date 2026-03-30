@@ -5,7 +5,7 @@ use anyhow::{Context as _, Result, anyhow};
 use cli::{CliRequest, CliResponse, ipc::IpcSender};
 use cli::{IpcHandshake, ipc};
 use client::{ZedLink, parse_zed_link};
-use db::kvp::KEY_VALUE_STORE;
+use db::kvp::KeyValueStore;
 use editor::Editor;
 use fs::Fs;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -29,7 +29,7 @@ use util::ResultExt;
 use util::paths::PathWithPosition;
 use workspace::PathList;
 use workspace::item::ItemHandle;
-use workspace::{AppState, MultiWorkspace, OpenOptions, SerializedWorkspaceLocation};
+use workspace::{AppState, MultiWorkspace, OpenOptions, OpenResult, SerializedWorkspaceLocation};
 
 #[derive(Default, Debug)]
 pub struct OpenRequest {
@@ -345,7 +345,11 @@ pub async fn open_paths_with_positions(
         .map(|path_with_position| path_with_position.path.clone())
         .collect::<Vec<_>>();
 
-    let (multi_workspace, mut items) = cx
+    let OpenResult {
+        window: multi_workspace,
+        opened_items: mut items,
+        ..
+    } = cx
         .update(|cx| workspace::open_paths(&paths, app_state, open_options, cx))
         .await?;
 
@@ -487,7 +491,8 @@ async fn open_workspaces(
 
     if grouped_locations.is_empty() {
         // If we have no paths to open, show the welcome screen if this is the first launch
-        if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
+        let kvp = cx.update(|cx| KeyValueStore::global(cx));
+        if matches!(kvp.read_kvp(FIRST_OPEN), Ok(None)) {
             cx.update(|cx| show_onboarding_view(app_state, cx).detach());
         }
         // If not the first launch, show an empty window with empty editor

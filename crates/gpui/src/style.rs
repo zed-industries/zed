@@ -138,6 +138,42 @@ impl ObjectFit {
     }
 }
 
+/// The minimum size of a column or row in a grid layout
+#[derive(
+    Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default, JsonSchema, Serialize, Deserialize,
+)]
+pub enum TemplateColumnMinSize {
+    /// The column size may be 0
+    #[default]
+    Zero,
+    /// The column size can be determined by the min content
+    MinContent,
+    /// The column size can be determined by the max content
+    MaxContent,
+}
+
+/// A simplified representation of the grid-template-* value
+#[derive(
+    Copy,
+    Clone,
+    Refineable,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Debug,
+    Default,
+    JsonSchema,
+    Serialize,
+    Deserialize,
+)]
+pub struct GridTemplate {
+    /// How this template directive should be repeated
+    pub repeat: u16,
+    /// The minimum size in the repeat(<>, minmax(_, 1fr)) equation
+    pub min_size: TemplateColumnMinSize,
+}
+
 /// The CSS styling that can be applied to an element via the `Styled` trait
 #[derive(Clone, Refineable, Debug)]
 #[refineable(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -262,16 +298,12 @@ pub struct Style {
     pub opacity: Option<f32>,
 
     /// The grid columns of this element
-    /// Equivalent to the Tailwind `grid-cols-<number>`
-    pub grid_cols: Option<u16>,
-
-    /// The grid columns with min-content minimum sizing.
-    /// Unlike grid_cols, it won't shrink to width 0 in AvailableSpace::MinContent constraints.
-    pub grid_cols_min_content: Option<u16>,
+    /// Roughly equivalent to the Tailwind `grid-cols-<number>`
+    pub grid_cols: Option<GridTemplate>,
 
     /// The row span of this element
     /// Equivalent to the Tailwind `grid-rows-<number>`
-    pub grid_rows: Option<u16>,
+    pub grid_rows: Option<GridTemplate>,
 
     /// The grid location of this element
     pub grid_location: Option<GridLocation>,
@@ -790,7 +822,6 @@ impl Default for Style {
             opacity: None,
             grid_rows: None,
             grid_cols: None,
-            grid_cols_min_content: None,
             grid_location: None,
 
             #[cfg(debug_assertions)]

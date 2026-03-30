@@ -209,7 +209,7 @@ impl ActionLog {
         cx: &mut Context<Self>,
     ) {
         match event {
-            BufferEvent::Edited => {
+            BufferEvent::Edited { .. } => {
                 let Some(tracked_buffer) = self.tracked_buffers.get_mut(&buffer) else {
                     return;
                 };
@@ -1028,6 +1028,11 @@ impl ActionLog {
             .collect()
     }
 
+    /// Returns the total number of lines added and removed across all unreviewed buffers.
+    pub fn diff_stats(&self, cx: &App) -> DiffStats {
+        DiffStats::all_files(&self.changed_buffers(cx), cx)
+    }
+
     /// Iterate over buffers changed since last read or edited by the model
     pub fn stale_buffers<'a>(&'a self, cx: &'a App) -> impl Iterator<Item = &'a Entity<Buffer>> {
         self.tracked_buffers
@@ -1041,6 +1046,46 @@ impl ActionLog {
                         .is_some_and(|file| !file.disk_state().is_deleted())
             })
             .map(|(buffer, _)| buffer)
+    }
+}
+
+#[derive(Default, Debug, Clone, Copy)]
+pub struct DiffStats {
+    pub lines_added: u32,
+    pub lines_removed: u32,
+}
+
+impl DiffStats {
+    pub fn single_file(buffer: &Buffer, diff: &BufferDiff, cx: &App) -> Self {
+        let mut stats = DiffStats::default();
+        let diff_snapshot = diff.snapshot(cx);
+        let buffer_snapshot = buffer.snapshot();
+        let base_text = diff_snapshot.base_text();
+
+        for hunk in diff_snapshot.hunks(&buffer_snapshot) {
+            let added_rows = hunk.range.end.row.saturating_sub(hunk.range.start.row);
+            stats.lines_added += added_rows;
+
+            let base_start = hunk.diff_base_byte_range.start.to_point(base_text).row;
+            let base_end = hunk.diff_base_byte_range.end.to_point(base_text).row;
+            let removed_rows = base_end.saturating_sub(base_start);
+            stats.lines_removed += removed_rows;
+        }
+
+        stats
+    }
+
+    pub fn all_files(
+        changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>,
+        cx: &App,
+    ) -> Self {
+        let mut total = DiffStats::default();
+        for (buffer, diff) in changed_buffers {
+            let stats = DiffStats::single_file(buffer.read(cx), diff.read(cx), cx);
+            total.lines_added += stats.lines_added;
+            total.lines_removed += stats.lines_removed;
+        }
+        total
     }
 }
 
