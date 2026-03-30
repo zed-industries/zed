@@ -473,7 +473,7 @@ impl CollabPanel {
                 });
             }
 
-            let favorites: Vec<ChannelId> = GlobalKeyValueStore::global()
+            let favorites: Vec<ChannelId> = KeyValueStore::global(cx)
                 .read_kvp("favorite_channels")
                 .ok()
                 .flatten()
@@ -1947,12 +1947,6 @@ impl CollabPanel {
     }
 
     fn persist_favorites(&mut self, cx: &mut Context<Self>) {
-        // GlobalKeyValueStore uses a sqlez worker thread that the test
-        // scheduler can't control, causing non-determinism failures.
-        if cfg!(any(test, feature = "test-support")) {
-            return;
-        }
-
         let favorite_ids: Vec<u64> = self
             .channel_store
             .read(cx)
@@ -1960,10 +1954,11 @@ impl CollabPanel {
             .iter()
             .map(|id| id.0)
             .collect();
+        let kvp_store = KeyValueStore::global(cx);
         self.pending_serialization = cx.background_spawn(
             async move {
                 let json = serde_json::to_string(&favorite_ids)?;
-                GlobalKeyValueStore::global()
+                kvp_store
                     .write_kvp("favorite_channels".to_string(), json)
                     .await?;
                 anyhow::Ok(())
