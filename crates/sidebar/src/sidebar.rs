@@ -5,7 +5,7 @@ use action_log::DiffStats;
 use agent_client_protocol::{self as acp};
 use agent_settings::AgentSettings;
 use agent_ui::ThreadImportModal;
-use agent_ui::thread_metadata_store::ThreadMetadataStore;
+use agent_ui::thread_metadata_store::{ThreadMetadata, ThreadMetadataStore};
 use agent_ui::threads_archive_view::{
     ThreadsArchiveView, ThreadsArchiveViewEvent, format_history_entry_timestamp,
 };
@@ -93,19 +93,6 @@ struct ActiveThreadInfo {
     diff_stats: DiffStats,
 }
 
-impl From<&ActiveThreadInfo> for acp_thread::AgentSessionInfo {
-    fn from(info: &ActiveThreadInfo) -> Self {
-        Self {
-            session_id: info.session_id.clone(),
-            work_dirs: None,
-            title: Some(info.title.clone()),
-            updated_at: Some(Utc::now()),
-            created_at: Some(Utc::now()),
-            meta: None,
-        }
-    }
-}
-
 #[derive(Clone)]
 enum ThreadEntryWorkspace {
     Open(Entity<Workspace>),
@@ -121,8 +108,7 @@ struct WorktreeInfo {
 
 #[derive(Clone)]
 struct ThreadEntry {
-    agent: Agent,
-    session_info: acp_thread::AgentSessionInfo,
+    metadata: ThreadMetadata,
     icon: IconName,
     icon_from_external_svg: Option<SharedString>,
     status: AgentThreadStatus,
@@ -142,7 +128,7 @@ impl ThreadEntry {
     /// but if we have a correspond thread already loaded we want to apply the
     /// live information.
     fn apply_active_info(&mut self, info: &ActiveThreadInfo) {
-        self.session_info.title = Some(info.title.clone());
+        self.metadata.title = info.title.clone();
         self.status = info.status;
         self.icon = info.icon;
         self.icon_from_external_svg = info.icon_from_external_svg.clone();
@@ -192,7 +178,7 @@ impl ListEntry {
 
     fn session_id(&self) -> Option<&acp::SessionId> {
         match self {
-            ListEntry::Thread(thread_entry) => Some(&thread_entry.session_info.session_id),
+            ListEntry::Thread(thread_entry) => Some(&thread_entry.metadata.session_id),
             _ => None,
         }
     }
@@ -691,7 +677,7 @@ impl Sidebar {
             .iter()
             .filter_map(|entry| match entry {
                 ListEntry::Thread(thread) if thread.is_live => {
-                    Some((thread.session_info.session_id.clone(), thread.status))
+                    Some((thread.metadata.session_id.clone(), thread.status))
                 }
                 _ => None,
             })
@@ -711,7 +697,7 @@ impl Sidebar {
             .iter()
             .any(|ws| !workspace_path_list(ws, cx).paths().is_empty());
 
-        let resolve_agent = |agent_id: &AgentId| -> (Agent, IconName, Option<SharedString>) {
+        let resolve_agent_icon = |agent_id: &AgentId| -> (IconName, Option<SharedString>) {
             let agent = Agent::from(agent_id.clone());
             let icon = match agent {
                 Agent::NativeAgent => IconName::ZedAgent,
@@ -720,7 +706,7 @@ impl Sidebar {
             let icon_from_external_svg = agent_server_store
                 .as_ref()
                 .and_then(|store| store.read(cx).agent_icon(&agent_id));
-            (agent, icon, icon_from_external_svg)
+            (icon, icon_from_external_svg)
         };
 
         for (group_name, group) in project_groups.groups() {
@@ -769,19 +755,11 @@ impl Sidebar {
                         if !seen_session_ids.insert(row.session_id.clone()) {
                             continue;
                         }
-                        let (agent, icon, icon_from_external_svg) = resolve_agent(&row.agent_id);
+                        let (icon, icon_from_external_svg) = resolve_agent_icon(&row.agent_id);
                         let worktrees =
                             worktree_info_from_thread_paths(&row.folder_paths, &project_groups);
                         threads.push(ThreadEntry {
-                            agent,
-                            session_info: acp_thread::AgentSessionInfo {
-                                session_id: row.session_id.clone(),
-                                work_dirs: None,
-                                title: Some(row.title.clone()),
-                                updated_at: Some(row.updated_at),
-                                created_at: row.created_at,
-                                meta: None,
-                            },
+                            metadata: row,
                             icon,
                             icon_from_external_svg,
                             status: AgentThreadStatus::default(),
@@ -819,19 +797,11 @@ impl Sidebar {
                         if !seen_session_ids.insert(row.session_id.clone()) {
                             continue;
                         }
-                        let (agent, icon, icon_from_external_svg) = resolve_agent(&row.agent_id);
+                        let (icon, icon_from_external_svg) = resolve_agent_icon(&row.agent_id);
                         let worktrees =
                             worktree_info_from_thread_paths(&row.folder_paths, &project_groups);
                         threads.push(ThreadEntry {
-                            agent,
-                            session_info: acp_thread::AgentSessionInfo {
-                                session_id: row.session_id.clone(),
-                                work_dirs: None,
-                                title: Some(row.title.clone()),
-                                updated_at: Some(row.updated_at),
-                                created_at: row.created_at,
-                                meta: None,
-                            },
+                            metadata: row,
                             icon,
                             icon_from_external_svg,
                             status: AgentThreadStatus::default(),
@@ -863,11 +833,11 @@ impl Sidebar {
                 // Merge live info into threads and update notification state
                 // in a single pass.
                 for thread in &mut threads {
-                    if let Some(info) = live_info_by_session.get(&thread.session_info.session_id) {
+                    if let Some(info) = live_info_by_session.get(&thread.metadata.session_id) {
                         thread.apply_active_info(info);
                     }
 
-                    let session_id = &thread.session_info.session_id;
+                    let session_id = &thread.metadata.session_id;
 
                     let is_thread_workspace_active = match &thread.workspace {
                         ThreadEntryWorkspace::Open(thread_workspace) => active_workspace
@@ -891,16 +861,16 @@ impl Sidebar {
                 threads.sort_by(|a, b| {
                     let a_time = self
                         .thread_last_message_sent_or_queued
-                        .get(&a.session_info.session_id)
+                        .get(&a.metadata.session_id)
                         .copied()
-                        .or(a.session_info.created_at)
-                        .or(a.session_info.updated_at);
+                        .or(a.metadata.created_at)
+                        .or(Some(a.metadata.updated_at));
                     let b_time = self
                         .thread_last_message_sent_or_queued
-                        .get(&b.session_info.session_id)
+                        .get(&b.metadata.session_id)
                         .copied()
-                        .or(b.session_info.created_at)
-                        .or(b.session_info.updated_at);
+                        .or(b.metadata.created_at)
+                        .or(Some(b.metadata.updated_at));
                     b_time.cmp(&a_time)
                 });
             } else {
@@ -921,12 +891,7 @@ impl Sidebar {
 
                 let mut matched_threads: Vec<ThreadEntry> = Vec::new();
                 for mut thread in threads {
-                    let title = thread
-                        .session_info
-                        .title
-                        .as_ref()
-                        .map(|s| s.as_ref())
-                        .unwrap_or("");
+                    let title: &str = &thread.metadata.title;
                     if let Some(positions) = fuzzy_match_positions(&query, title) {
                         thread.highlight_positions = positions;
                     }
@@ -961,7 +926,7 @@ impl Sidebar {
                 });
 
                 for thread in matched_threads {
-                    current_session_ids.insert(thread.session_info.session_id.clone());
+                    current_session_ids.insert(thread.metadata.session_id.clone());
                     entries.push(thread.into());
                 }
             } else {
@@ -1012,7 +977,7 @@ impl Sidebar {
                 for (index, thread) in threads.into_iter().enumerate() {
                     let is_hidden = index >= count;
 
-                    let session_id = &thread.session_info.session_id;
+                    let session_id = &thread.metadata.session_id;
                     if is_hidden {
                         let is_promoted = thread.status == AgentThreadStatus::Running
                             || thread.status == AgentThreadStatus::WaitingForConfirmation
@@ -1862,22 +1827,15 @@ impl Sidebar {
                 self.toggle_collapse(&path_list, window, cx);
             }
             ListEntry::Thread(thread) => {
-                let session_info = thread.session_info.clone();
+                let metadata = thread.metadata.clone();
                 match &thread.workspace {
                     ThreadEntryWorkspace::Open(workspace) => {
                         let workspace = workspace.clone();
-                        self.activate_thread(
-                            thread.agent.clone(),
-                            session_info,
-                            &workspace,
-                            window,
-                            cx,
-                        );
+                        self.activate_thread(metadata, &workspace, window, cx);
                     }
                     ThreadEntryWorkspace::Closed(path_list) => {
                         self.open_workspace_and_activate_thread(
-                            thread.agent.clone(),
-                            session_info,
+                            metadata,
                             path_list.clone(),
                             window,
                             cx,
@@ -1943,8 +1901,7 @@ impl Sidebar {
 
     fn load_agent_thread_in_workspace(
         workspace: &Entity<Workspace>,
-        agent: Agent,
-        session_info: acp_thread::AgentSessionInfo,
+        metadata: &ThreadMetadata,
         focus: bool,
         window: &mut Window,
         cx: &mut App,
@@ -1956,10 +1913,10 @@ impl Sidebar {
         if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
             agent_panel.update(cx, |panel, cx| {
                 panel.load_agent_thread(
-                    agent,
-                    session_info.session_id,
-                    session_info.work_dirs,
-                    session_info.title,
+                    Agent::from(metadata.agent_id.clone()),
+                    metadata.session_id.clone(),
+                    Some(metadata.folder_paths.clone()),
+                    Some(metadata.title.clone()),
                     focus,
                     window,
                     cx,
@@ -1970,8 +1927,7 @@ impl Sidebar {
 
     fn activate_thread_locally(
         &mut self,
-        agent: Agent,
-        session_info: acp_thread::AgentSessionInfo,
+        metadata: &ThreadMetadata,
         workspace: &Entity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1983,40 +1939,32 @@ impl Sidebar {
         // Set focused_thread eagerly so the sidebar highlight updates
         // immediately, rather than waiting for a deferred AgentPanel
         // event which can race with ActiveWorkspaceChanged clearing it.
-        self.focused_thread = Some(session_info.session_id.clone());
-        self.record_thread_access(&session_info.session_id);
+        self.focused_thread = Some(metadata.session_id.clone());
+        self.record_thread_access(&metadata.session_id);
 
         multi_workspace.update(cx, |multi_workspace, cx| {
             multi_workspace.activate(workspace.clone(), cx);
         });
 
-        Self::load_agent_thread_in_workspace(workspace, agent, session_info, true, window, cx);
+        Self::load_agent_thread_in_workspace(workspace, metadata, true, window, cx);
 
         self.update_entries(cx);
     }
 
     fn activate_thread_in_other_window(
         &self,
-        agent: Agent,
-        session_info: acp_thread::AgentSessionInfo,
+        metadata: ThreadMetadata,
         workspace: Entity<Workspace>,
         target_window: WindowHandle<MultiWorkspace>,
         cx: &mut Context<Self>,
     ) {
-        let target_session_id = session_info.session_id.clone();
+        let target_session_id = metadata.session_id.clone();
 
         let activated = target_window
             .update(cx, |multi_workspace, window, cx| {
                 window.activate_window();
                 multi_workspace.activate(workspace.clone(), cx);
-                Self::load_agent_thread_in_workspace(
-                    &workspace,
-                    agent,
-                    session_info,
-                    true,
-                    window,
-                    cx,
-                );
+                Self::load_agent_thread_in_workspace(&workspace, &metadata, true, window, cx);
             })
             .log_err()
             .is_some();
@@ -2041,8 +1989,7 @@ impl Sidebar {
 
     fn activate_thread(
         &mut self,
-        agent: Agent,
-        session_info: acp_thread::AgentSessionInfo,
+        metadata: ThreadMetadata,
         workspace: &Entity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -2051,7 +1998,7 @@ impl Sidebar {
             .find_workspace_in_current_window(cx, |candidate, _| candidate == workspace)
             .is_some()
         {
-            self.activate_thread_locally(agent, session_info, &workspace, window, cx);
+            self.activate_thread_locally(&metadata, &workspace, window, cx);
             return;
         }
 
@@ -2061,13 +2008,12 @@ impl Sidebar {
             return;
         };
 
-        self.activate_thread_in_other_window(agent, session_info, workspace, target_window, cx);
+        self.activate_thread_in_other_window(metadata, workspace, target_window, cx);
     }
 
     fn open_workspace_and_activate_thread(
         &mut self,
-        agent: Agent,
-        session_info: acp_thread::AgentSessionInfo,
+        metadata: ThreadMetadata,
         path_list: PathList,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -2085,7 +2031,7 @@ impl Sidebar {
             let workspace = open_task.await?;
 
             this.update_in(cx, |this, window, cx| {
-                this.activate_thread(agent, session_info, &workspace, window, cx);
+                this.activate_thread(metadata, &workspace, window, cx);
             })?;
             anyhow::Ok(())
         })
@@ -2114,31 +2060,23 @@ impl Sidebar {
 
     fn activate_archived_thread(
         &mut self,
-        agent: Agent,
-        session_info: acp_thread::AgentSessionInfo,
+        metadata: ThreadMetadata,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        ThreadMetadataStore::global(cx).update(cx, |store, cx| {
-            store.unarchive(&session_info.session_id, cx)
-        });
+        ThreadMetadataStore::global(cx)
+            .update(cx, |store, cx| store.unarchive(&metadata.session_id, cx));
 
-        if let Some(path_list) = &session_info.work_dirs {
-            if let Some(workspace) = self.find_current_workspace_for_path_list(path_list, cx) {
-                self.activate_thread_locally(agent, session_info, &workspace, window, cx);
+        if !metadata.folder_paths.paths().is_empty() {
+            let path_list = metadata.folder_paths.clone();
+            if let Some(workspace) = self.find_current_workspace_for_path_list(&path_list, cx) {
+                self.activate_thread_locally(&metadata, &workspace, window, cx);
             } else if let Some((target_window, workspace)) =
-                self.find_open_workspace_for_path_list(path_list, cx)
+                self.find_open_workspace_for_path_list(&path_list, cx)
             {
-                self.activate_thread_in_other_window(
-                    agent,
-                    session_info,
-                    workspace,
-                    target_window,
-                    cx,
-                );
+                self.activate_thread_in_other_window(metadata, workspace, target_window, cx);
             } else {
-                let path_list = path_list.clone();
-                self.open_workspace_and_activate_thread(agent, session_info, path_list, window, cx);
+                self.open_workspace_and_activate_thread(metadata, path_list, window, cx);
             }
             return;
         }
@@ -2151,7 +2089,7 @@ impl Sidebar {
         });
 
         if let Some(workspace) = active_workspace {
-            self.activate_thread_locally(agent, session_info, &workspace, window, cx);
+            self.activate_thread_locally(&metadata, &workspace, window, cx);
         }
     }
 
@@ -2307,7 +2245,7 @@ impl Sidebar {
         // a blank new thread in the panel instead.
         if self.focused_thread.as_ref() == Some(session_id) {
             let current_pos = self.contents.entries.iter().position(|entry| {
-                matches!(entry, ListEntry::Thread(t) if &t.session_info.session_id == session_id)
+                matches!(entry, ListEntry::Thread(t) if &t.metadata.session_id == session_id)
             });
 
             // Find the workspace that owns this thread's project group by
@@ -2359,10 +2297,7 @@ impl Sidebar {
             });
 
             if let Some(next) = next_thread {
-                let next_session_id = next.session_info.session_id.clone();
-                let next_agent = next.agent.clone();
-                let next_work_dirs = next.session_info.work_dirs.clone();
-                let next_title = next.session_info.title.clone();
+                let next_metadata = next.metadata.clone();
                 // Use the thread's own workspace when it has one open (e.g. an absorbed
                 // linked worktree thread that appears under the main workspace's header
                 // but belongs to its own workspace). Loading into the wrong panel binds
@@ -2372,17 +2307,17 @@ impl Sidebar {
                     ThreadEntryWorkspace::Open(ws) => Some(ws.clone()),
                     ThreadEntryWorkspace::Closed(_) => group_workspace,
                 };
-                self.focused_thread = Some(next_session_id.clone());
-                self.record_thread_access(&next_session_id);
+                self.focused_thread = Some(next_metadata.session_id.clone());
+                self.record_thread_access(&next_metadata.session_id);
 
                 if let Some(workspace) = target_workspace {
                     if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
                         agent_panel.update(cx, |panel, cx| {
                             panel.load_agent_thread(
-                                next_agent,
-                                next_session_id,
-                                next_work_dirs,
-                                next_title,
+                                Agent::from(next_metadata.agent_id.clone()),
+                                next_metadata.session_id.clone(),
+                                Some(next_metadata.folder_paths.clone()),
+                                Some(next_metadata.title.clone()),
                                 true,
                                 window,
                                 cx,
@@ -2420,7 +2355,7 @@ impl Sidebar {
             AgentThreadStatus::Completed | AgentThreadStatus::Error => {}
         }
 
-        let session_id = thread.session_info.session_id.clone();
+        let session_id = thread.metadata.session_id.clone();
         self.archive_thread(&session_id, window, cx)
     }
 
@@ -2454,28 +2389,22 @@ impl Sidebar {
                     };
                     let notified = self
                         .contents
-                        .is_thread_notified(&thread.session_info.session_id);
-                    let timestamp: SharedString = self
-                        .thread_last_message_sent_or_queued
-                        .get(&thread.session_info.session_id)
-                        .copied()
-                        .or(thread.session_info.created_at)
-                        .or(thread.session_info.updated_at)
-                        .map(format_history_entry_timestamp)
-                        .unwrap_or_default()
-                        .into();
+                        .is_thread_notified(&thread.metadata.session_id);
+                    let timestamp: SharedString = format_history_entry_timestamp(
+                        self.thread_last_message_sent_or_queued
+                            .get(&thread.metadata.session_id)
+                            .copied()
+                            .or(thread.metadata.created_at)
+                            .unwrap_or(thread.metadata.updated_at),
+                    )
+                    .into();
                     Some(ThreadSwitcherEntry {
-                        session_id: thread.session_info.session_id.clone(),
-                        title: thread
-                            .session_info
-                            .title
-                            .clone()
-                            .unwrap_or_else(|| "Untitled".into()),
+                        session_id: thread.metadata.session_id.clone(),
+                        title: thread.metadata.title.clone(),
                         icon: thread.icon,
                         icon_from_external_svg: thread.icon_from_external_svg.clone(),
                         status: thread.status,
-                        agent: thread.agent.clone(),
-                        session_info: thread.session_info.clone(),
+                        metadata: thread.metadata.clone(),
                         workspace,
                         worktree_name: thread.worktrees.first().map(|wt| wt.name.clone()),
 
@@ -2506,8 +2435,8 @@ impl Sidebar {
                         (Some(_), None) => std::cmp::Ordering::Less,
                         (None, Some(_)) => std::cmp::Ordering::Greater,
                         (None, None) => {
-                            let a_time = a.session_info.created_at.or(a.session_info.updated_at);
-                            let b_time = b.session_info.created_at.or(b.session_info.updated_at);
+                            let a_time = a.metadata.created_at.or(Some(a.metadata.updated_at));
+                            let b_time = b.metadata.created_at.or(Some(b.metadata.updated_at));
                             b_time.cmp(&a_time)
                         }
                     }
@@ -2561,16 +2490,11 @@ impl Sidebar {
 
         let weak_multi_workspace = self.multi_workspace.clone();
 
-        let original_agent = self
+        let original_metadata = self
             .focused_thread
             .as_ref()
             .and_then(|focused_id| entries.iter().find(|e| &e.session_id == focused_id))
-            .map(|e| e.agent.clone());
-        let original_session_info = self
-            .focused_thread
-            .as_ref()
-            .and_then(|focused_id| entries.iter().find(|e| &e.session_id == focused_id))
-            .map(|e| e.session_info.clone());
+            .map(|e| e.metadata.clone());
         let original_workspace = self
             .multi_workspace
             .upgrade()
@@ -2584,8 +2508,7 @@ impl Sidebar {
             let thread_switcher = thread_switcher.clone();
             move |this, _emitter, event: &ThreadSwitcherEvent, window, cx| match event {
                 ThreadSwitcherEvent::Preview {
-                    agent,
-                    session_info,
+                    metadata,
                     workspace,
                 } => {
                     if let Some(mw) = weak_multi_workspace.upgrade() {
@@ -2593,22 +2516,14 @@ impl Sidebar {
                             mw.activate(workspace.clone(), cx);
                         });
                     }
-                    this.focused_thread = Some(session_info.session_id.clone());
+                    this.focused_thread = Some(metadata.session_id.clone());
                     this.update_entries(cx);
-                    Self::load_agent_thread_in_workspace(
-                        workspace,
-                        agent.clone(),
-                        session_info.clone(),
-                        false,
-                        window,
-                        cx,
-                    );
+                    Self::load_agent_thread_in_workspace(workspace, metadata, false, window, cx);
                     let focus = thread_switcher.focus_handle(cx);
                     window.focus(&focus, cx);
                 }
                 ThreadSwitcherEvent::Confirmed {
-                    agent,
-                    session_info,
+                    metadata,
                     workspace,
                 } => {
                     if let Some(mw) = weak_multi_workspace.upgrade() {
@@ -2616,17 +2531,10 @@ impl Sidebar {
                             mw.activate(workspace.clone(), cx);
                         });
                     }
-                    this.record_thread_access(&session_info.session_id);
-                    this.focused_thread = Some(session_info.session_id.clone());
+                    this.record_thread_access(&metadata.session_id);
+                    this.focused_thread = Some(metadata.session_id.clone());
                     this.update_entries(cx);
-                    Self::load_agent_thread_in_workspace(
-                        workspace,
-                        agent.clone(),
-                        session_info.clone(),
-                        false,
-                        window,
-                        cx,
-                    );
+                    Self::load_agent_thread_in_workspace(workspace, metadata, false, window, cx);
                     this.dismiss_thread_switcher(cx);
                     workspace.update(cx, |workspace, cx| {
                         workspace.focus_panel::<AgentPanel>(window, cx);
@@ -2640,15 +2548,13 @@ impl Sidebar {
                             });
                         }
                     }
-                    if let Some(session_info) = &original_session_info {
-                        this.focused_thread = Some(session_info.session_id.clone());
+                    if let Some(metadata) = &original_metadata {
+                        this.focused_thread = Some(metadata.session_id.clone());
                         this.update_entries(cx);
-                        let agent = original_agent.clone().unwrap_or(Agent::NativeAgent);
                         if let Some(original_ws) = &original_workspace {
                             Self::load_agent_thread_in_workspace(
                                 original_ws,
-                                agent,
-                                session_info.clone(),
+                                metadata,
                                 false,
                                 window,
                                 cx,
@@ -2673,13 +2579,10 @@ impl Sidebar {
 
         // Replay the initial preview that was emitted during construction
         // before subscriptions were wired up.
-        let initial_preview = thread_switcher.read(cx).selected_entry().map(|entry| {
-            (
-                entry.agent.clone(),
-                entry.session_info.clone(),
-                entry.workspace.clone(),
-            )
-        });
+        let initial_preview = thread_switcher
+            .read(cx)
+            .selected_entry()
+            .map(|entry| (entry.metadata.clone(), entry.workspace.clone()));
 
         self.thread_switcher = Some(thread_switcher);
         self._thread_switcher_subscriptions = subscriptions;
@@ -2689,22 +2592,15 @@ impl Sidebar {
             });
         }
 
-        if let Some((agent, session_info, workspace)) = initial_preview {
+        if let Some((metadata, workspace)) = initial_preview {
             if let Some(mw) = self.multi_workspace.upgrade() {
                 mw.update(cx, |mw, cx| {
                     mw.activate(workspace.clone(), cx);
                 });
             }
-            self.focused_thread = Some(session_info.session_id.clone());
+            self.focused_thread = Some(metadata.session_id.clone());
             self.update_entries(cx);
-            Self::load_agent_thread_in_workspace(
-                &workspace,
-                agent,
-                session_info,
-                false,
-                window,
-                cx,
-            );
+            Self::load_agent_thread_in_workspace(&workspace, &metadata, false, window, cx);
         }
 
         window.focus(&focus, cx);
@@ -2719,36 +2615,32 @@ impl Sidebar {
     ) -> AnyElement {
         let has_notification = self
             .contents
-            .is_thread_notified(&thread.session_info.session_id);
+            .is_thread_notified(&thread.metadata.session_id);
 
-        let title: SharedString = thread
-            .session_info
-            .title
-            .clone()
-            .unwrap_or_else(|| "Untitled".into());
-        let session_info = thread.session_info.clone();
+        let title: SharedString = thread.metadata.title.clone();
+        let metadata = thread.metadata.clone();
         let thread_workspace = thread.workspace.clone();
 
         let is_hovered = self.hovered_thread_index == Some(ix);
-        let is_selected = self.agent_panel_visible
-            && self.focused_thread.as_ref() == Some(&session_info.session_id);
+        let is_selected =
+            self.agent_panel_visible && self.focused_thread.as_ref() == Some(&metadata.session_id);
         let is_running = matches!(
             thread.status,
             AgentThreadStatus::Running | AgentThreadStatus::WaitingForConfirmation
         );
 
-        let session_id_for_delete = thread.session_info.session_id.clone();
+        let session_id_for_delete = thread.metadata.session_id.clone();
         let focus_handle = self.focus_handle.clone();
 
         let id = SharedString::from(format!("thread-entry-{}", ix));
 
-        let timestamp = self
-            .thread_last_message_sent_or_queued
-            .get(&thread.session_info.session_id)
-            .copied()
-            .or(thread.session_info.created_at)
-            .or(thread.session_info.updated_at)
-            .map(format_history_entry_timestamp);
+        let timestamp = format_history_entry_timestamp(
+            self.thread_last_message_sent_or_queued
+                .get(&thread.metadata.session_id)
+                .copied()
+                .or(thread.metadata.created_at)
+                .unwrap_or(thread.metadata.updated_at),
+        );
 
         ThreadItem::new(id, title)
             .icon(thread.icon)
@@ -2767,7 +2659,7 @@ impl Sidebar {
                     })
                     .collect(),
             )
-            .when_some(timestamp, |this, ts| this.timestamp(ts))
+            .timestamp(timestamp)
             .highlight_positions(thread.highlight_positions.to_vec())
             .title_generating(thread.is_title_generating)
             .notified(has_notification)
@@ -2828,23 +2720,15 @@ impl Sidebar {
                 )
             })
             .on_click({
-                let agent = thread.agent.clone();
                 cx.listener(move |this, _, window, cx| {
                     this.selection = None;
                     match &thread_workspace {
                         ThreadEntryWorkspace::Open(workspace) => {
-                            this.activate_thread(
-                                agent.clone(),
-                                session_info.clone(),
-                                workspace,
-                                window,
-                                cx,
-                            );
+                            this.activate_thread(metadata.clone(), workspace, window, cx);
                         }
                         ThreadEntryWorkspace::Closed(path_list) => {
                             this.open_workspace_and_activate_thread(
-                                agent.clone(),
-                                session_info.clone(),
+                                metadata.clone(),
                                 path_list.clone(),
                                 window,
                                 cx,
@@ -3402,18 +3286,7 @@ impl Sidebar {
                 }
                 ThreadsArchiveViewEvent::Unarchive { thread } => {
                     this.show_thread_list(window, cx);
-
-                    let agent = Agent::from(thread.agent_id.clone());
-                    let session_info = acp_thread::AgentSessionInfo {
-                        session_id: thread.session_id.clone(),
-                        work_dirs: Some(thread.folder_paths.clone()),
-                        title: Some(thread.title.clone()),
-                        updated_at: Some(thread.updated_at),
-                        created_at: thread.created_at,
-                        meta: None,
-                    };
-
-                    this.activate_archived_thread(agent, session_info, window, cx);
+                    this.activate_archived_thread(thread.clone(), window, cx);
                 }
             },
         );
