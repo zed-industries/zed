@@ -2240,12 +2240,20 @@ impl AcpThread {
                             this.had_error = true;
                             cx.emit(AcpThreadEvent::Error);
                             log::error!("Max tokens reached. Usage: {:?}", this.token_usage);
-                            let message = if let Some(token_usage) = this.token_usage.as_ref()
-                                && let Some(max_output_tokens) = token_usage.max_output_tokens
-                                && token_usage.output_tokens >= max_output_tokens
-                            {
+
+                            let exceeded_max_output_tokens = this
+                                .token_usage
+                                .as_ref()
+                                .is_some_and(|u| {
+                                    u.max_output_tokens
+                                        .is_some_and(|max| u.output_tokens >= max)
+                                });
+
+                            let message = if exceeded_max_output_tokens {
+                                log::error!("Max output tokens reached. Usage: {:?}", this.token_usage);
                                 "Maximum output tokens reached"
                             } else {
+                                log::error!("Max tokens reached. Usage: {:?}", this.token_usage);
                                 "Maximum tokens reached"
                             };
                             return Err(anyhow!(message));
