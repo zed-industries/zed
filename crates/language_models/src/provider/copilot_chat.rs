@@ -296,9 +296,10 @@ impl LanguageModel for CopilotChatLanguageModel {
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
-            LanguageModelToolChoice::Auto
-            | LanguageModelToolChoice::Any
-            | LanguageModelToolChoice::None => self.supports_tools(),
+            LanguageModelToolChoice::Auto | LanguageModelToolChoice::None => {
+                self.supports_tools()
+            }
+            LanguageModelToolChoice::Any => false,
         }
     }
 
