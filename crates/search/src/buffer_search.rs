@@ -17,7 +17,6 @@ use editor::{
     Editor, EditorSettings, MultiBufferOffset, SplittableEditor, ToggleSplitDiff,
     actions::{Backtab, FoldAll, Tab, ToggleFoldAll, UnfoldAll},
     scroll::Autoscroll,
-    set_diff_view_style_override,
 };
 use futures::channel::oneshot;
 use gpui::{
@@ -36,10 +35,7 @@ use settings::{DiffViewStyle, Settings, update_settings_file};
 use std::{any::TypeId, sync::Arc};
 use zed_actions::{outline::ToggleOutline, workspace::CopyPath, workspace::CopyRelativePath};
 
-use ui::{
-    BASE_REM_SIZE_IN_PX, IconButtonShape, PlatformStyle, TextSize, Tooltip, prelude::*,
-    render_modifiers, utils::SearchInputWidth,
-};
+use ui::{BASE_REM_SIZE_IN_PX, IconButtonShape, Tooltip, prelude::*, utils::SearchInputWidth};
 use util::{ResultExt, paths::PathMatcher};
 use workspace::{
     ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
@@ -118,43 +114,18 @@ impl Render for BufferSearchBar {
                             IconButton::new("diff-unified", IconName::DiffUnified)
                                 .shape(IconButtonShape::Square)
                                 .toggle_state(!is_split)
-                                .tooltip(Tooltip::element(move |_, cx| {
-                                    v_flex()
-                                        .child("Unified")
-                                        .child(
-                                            h_flex()
-                                                .gap_0p5()
-                                                .text_ui_sm(cx)
-                                                .text_color(Color::Muted.color(cx))
-                                                .children(render_modifiers(
-                                                    &gpui::Modifiers::secondary_key(),
-                                                    PlatformStyle::platform(),
-                                                    None,
-                                                    Some(TextSize::Small.rems(cx).into()),
-                                                    false,
-                                                ))
-                                                .child("click to set as default"),
-                                        )
-                                        .into_any()
-                                }))
+                                .tooltip(Tooltip::text("Unified"))
                                 .on_click({
                                     let splittable_editor = splittable_editor.downgrade();
                                     move |_, window, cx| {
-                                        if window.modifiers().secondary() {
-                                            update_settings_file(
-                                                <dyn Fs>::global(cx),
-                                                cx,
-                                                |settings, _| {
-                                                    settings.editor.diff_view_style =
-                                                        Some(DiffViewStyle::Unified);
-                                                },
-                                            );
-                                        } else {
-                                            set_diff_view_style_override(
-                                                DiffViewStyle::Unified,
-                                                cx,
-                                            );
-                                        }
+                                        update_settings_file(
+                                            <dyn Fs>::global(cx),
+                                            cx,
+                                            |settings, _| {
+                                                settings.editor.diff_view_style =
+                                                    Some(DiffViewStyle::Unified);
+                                            },
+                                        );
                                         if is_split {
                                             splittable_editor
                                                 .update(cx, |editor, cx| {
@@ -173,40 +144,18 @@ impl Render for BufferSearchBar {
                             IconButton::new("diff-split", IconName::DiffSplit)
                                 .shape(IconButtonShape::Square)
                                 .toggle_state(is_split)
-                                .tooltip(Tooltip::element(move |_, cx| {
-                                    v_flex()
-                                        .child("Split")
-                                        .child(
-                                            h_flex()
-                                                .gap_0p5()
-                                                .text_ui_sm(cx)
-                                                .text_color(Color::Muted.color(cx))
-                                                .children(render_modifiers(
-                                                    &gpui::Modifiers::secondary_key(),
-                                                    PlatformStyle::platform(),
-                                                    None,
-                                                    Some(TextSize::Small.rems(cx).into()),
-                                                    false,
-                                                ))
-                                                .child("click to set as default"),
-                                        )
-                                        .into_any()
-                                }))
+                                .tooltip(Tooltip::text("Split"))
                                 .on_click({
                                     let splittable_editor = splittable_editor.downgrade();
                                     move |_, window, cx| {
-                                        if window.modifiers().secondary() {
-                                            update_settings_file(
-                                                <dyn Fs>::global(cx),
-                                                cx,
-                                                |settings, _| {
-                                                    settings.editor.diff_view_style =
-                                                        Some(DiffViewStyle::Split);
-                                                },
-                                            );
-                                        } else {
-                                            set_diff_view_style_override(DiffViewStyle::Split, cx);
-                                        }
+                                        update_settings_file(
+                                            <dyn Fs>::global(cx),
+                                            cx,
+                                            |settings, _| {
+                                                settings.editor.diff_view_style =
+                                                    Some(DiffViewStyle::Split);
+                                            },
+                                        );
                                         if !is_split {
                                             splittable_editor
                                                 .update(cx, |editor, cx| {

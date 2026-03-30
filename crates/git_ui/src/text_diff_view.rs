@@ -3,8 +3,8 @@
 use anyhow::Result;
 use buffer_diff::BufferDiff;
 use editor::{
-    Editor, EditorEvent, MultiBuffer, SplittableEditor, ToPoint,
-    actions::DiffClipboardWithSelectionData, effective_diff_view_style,
+    Editor, EditorEvent, EditorSettings, MultiBuffer, SplittableEditor, ToPoint,
+    actions::DiffClipboardWithSelectionData,
 };
 use futures::{FutureExt, select_biased};
 use gpui::{
@@ -13,7 +13,7 @@ use gpui::{
 };
 use language::{self, Buffer, Point};
 use project::Project;
-
+use settings::Settings;
 use std::{
     any::{Any, TypeId},
     cmp,
@@ -181,7 +181,7 @@ impl TextDiffView {
         });
         let diff_editor = cx.new(|cx| {
             let splittable = SplittableEditor::new(
-                effective_diff_view_style(cx),
+                EditorSettings::get_global(cx).diff_view_style,
                 multibuffer,
                 project,
                 workspace,

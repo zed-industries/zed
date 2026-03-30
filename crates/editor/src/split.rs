@@ -7,8 +7,7 @@ use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use collections::HashMap;
 
 use gpui::{
-    Action, AppContext as _, Entity, EventEmitter, Focusable, Font, Global, Subscription,
-    WeakEntity,
+    Action, AppContext as _, Entity, EventEmitter, Focusable, Font, Subscription, WeakEntity,
 };
 use itertools::Itertools;
 use language::{Buffer, Capability, HighlightedText};
@@ -18,7 +17,7 @@ use multi_buffer::{
 };
 use project::Project;
 use rope::Point;
-use settings::{DiffViewStyle, Settings};
+use settings::DiffViewStyle;
 use text::{Bias, BufferId, OffsetRangeExt as _, Patch, ToPoint as _};
 use ui::{
     App, Context, InteractiveElement as _, IntoElement as _, ParentElement as _, Render,
@@ -37,32 +36,11 @@ use workspace::{
 };
 
 use crate::{
-    Autoscroll, Editor, EditorEvent, EditorSettings, RenderDiffHunkControlsFn, ToggleSoftWrap,
+    Autoscroll, Editor, EditorEvent, RenderDiffHunkControlsFn, ToggleSoftWrap,
     actions::{DisableBreakpoint, EditLogBreakpoint, EnableBreakpoint, ToggleBreakpoint},
     display_map::Companion,
 };
 use zed_actions::assistant::InlineAssist;
-
-/// Stores a temporary in-memory diff view style preference that overrides the
-/// persisted setting. Set when the user toggles split/unified without holding
-/// the command key.
-struct DiffViewStyleOverride(DiffViewStyle);
-
-impl Global for DiffViewStyleOverride {}
-
-/// Returns the effective diff view style, checking the in-memory override first,
-/// then falling back to the persisted setting.
-pub fn effective_diff_view_style(cx: &App) -> DiffViewStyle {
-    if let Some(override_style) = cx.try_global::<DiffViewStyleOverride>() {
-        override_style.0
-    } else {
-        EditorSettings::get_global(cx).diff_view_style
-    }
-}
-
-pub fn set_diff_view_style_override(style: DiffViewStyle, cx: &mut App) {
-    cx.set_global(DiffViewStyleOverride(style));
-}
 
 pub(crate) fn convert_lhs_rows_to_rhs(
     lhs_excerpt_to_rhs_excerpt: &HashMap<ExcerptId, ExcerptId>,
