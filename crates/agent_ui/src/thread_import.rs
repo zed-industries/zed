@@ -187,18 +187,23 @@ impl ThreadImportModal {
     }
 
     fn show_imported_threads_toast(&self, imported_count: usize, cx: &mut App) {
-        let message = if imported_count == 1 {
-            "Imported 1 thread.".to_string()
+        let status_toast = if imported_count == 0 {
+            StatusToast::new("No threads found to import.", cx, |this, _cx| {
+                this.icon(ToastIcon::new(IconName::Info).color(Color::Info))
+            })
         } else {
-            format!("Imported {imported_count} threads.")
+            let message = if imported_count == 1 {
+                "Imported 1 thread.".to_string()
+            } else {
+                format!("Imported {imported_count} threads.")
+            };
+            StatusToast::new(message, cx, |this, _cx| {
+                this.icon(ToastIcon::new(IconName::Check).color(Color::Success))
+            })
         };
 
         self.workspace
             .update(cx, |workspace, cx| {
-                let status_toast = StatusToast::new(message, cx, |this, _cx| {
-                    this.icon(ToastIcon::new(IconName::Check).color(Color::Success))
-                });
-
                 workspace.toggle_status_toast(status_toast, cx);
             })
             .log_err();
