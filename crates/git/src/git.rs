@@ -54,6 +54,8 @@ actions!(
         /// Unstages the current file.
         UnstageFile,
         // repo-wide
+        /// Shows the commit log for the current repository.
+        CommitLog,
         /// Stages all changes in the repository.
         StageAll,
         /// Unstages all changes in the repository.

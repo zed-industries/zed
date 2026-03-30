@@ -192,6 +192,7 @@ fn git_panel_context_menu(
             .action("View Stash", zed_actions::git::ViewStash.boxed_clone())
             .separator()
             .action("Open Diff", project_diff::Diff.boxed_clone())
+            .action("Commit Log", git::CommitLog.boxed_clone())
             .separator()
             .action_disabled_when(
                 !state.has_tracked_changes,

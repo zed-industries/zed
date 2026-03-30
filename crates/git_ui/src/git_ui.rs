@@ -10,6 +10,7 @@ use ui::{
 
 mod blame_ui;
 pub mod clone;
+pub mod commit_log_view;
 
 use git::{
     repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
@@ -213,6 +214,20 @@ pub fn init(cx: &mut App) {
                 };
             },
         );
+        workspace.register_action(|workspace, _: &git::CommitLog, window, cx| {
+            let project = workspace.project();
+            let git_store = project.read(cx).git_store();
+            let Some(repo) = project.read(cx).active_repository(cx) else {
+                return;
+            };
+            commit_log_view::CommitLogView::open(
+                git_store.downgrade(),
+                repo.downgrade(),
+                workspace.weak_handle(),
+                window,
+                cx,
+            );
+        });
         workspace.register_action(|workspace, _: &git::FileHistory, window, cx| {
             let Some(active_item) = workspace.active_item(cx) else {
                 return;
