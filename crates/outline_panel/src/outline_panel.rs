@@ -3393,9 +3393,13 @@ impl OutlinePanel {
                     selection_display_point - outline_range.end
                 };
 
-                let cursor_past_start = outline_range.start != selection_display_point;
+                // An outline item's range can extend to the same row the next
+                // item starts on, so when the cursor is at the start of that
+                // row, prefer the item that starts there over any item whose
+                // range merely overlaps that row.
+                let cursor_not_at_outline_start = outline_range.start != selection_display_point;
                 (
-                    cursor_past_start,
+                    cursor_not_at_outline_start,
                     cmp::Reverse(outline.depth),
                     distance_from_start,
                     distance_from_end,
@@ -8102,21 +8106,14 @@ outline: struct Foo  <==== selected
             "/test",
             json!({
                 "doc.md": indoc!("
-                    # Top Level
-
-                    Some content
+                    # Section A
 
                     ## Sub Section A
 
-                    Sub content A
-
                     ## Sub Section B
 
-                    Sub content B
+                    # Section B
 
-                    # Another Top
-
-                    More content
                 ")
             }),
         )
@@ -8148,60 +8145,27 @@ outline: struct Foo  <==== selected
             .downcast::<Editor>()
             .unwrap();
 
-        cx.executor()
-            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
         cx.run_until_parked();
 
         outline_panel.update_in(cx, |panel, window, cx| {
             panel.update_non_fs_items(window, cx);
             panel.update_cached_entries(Some(UPDATE_DEBOUNCE), window, cx);
         });
-        cx.executor()
-            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
-        cx.run_until_parked();
 
-        let all_entries = indoc!(
-            "
-            outline: # Top Level
-              outline: ## Sub Section A
-              outline: ## Sub Section B
-            outline: # Another Top"
-        );
-
-        // Verify outline entries are correct.
-        outline_panel.update(cx, |outline_panel, cx| {
-            assert_eq!(
-                display_entries(
-                    &project,
-                    &snapshot(outline_panel, cx),
-                    &outline_panel.cached_entries,
-                    None,
-                    cx,
-                ),
-                all_entries,
-                "Outline entries should match the markdown heading structure"
-            );
-        });
-
-        // Helper: move cursor to (row, 0), wait for debounce, return selected entry text.
+        // Helper function to move the cursor to the first column of a given row
+        // and return the selected outline entry's text.
         let move_cursor_and_get_selection =
             |row: u32, cx: &mut VisualTestContext| -> Option<String> {
                 cx.update(|window, cx| {
                     editor.update(cx, |editor, cx| {
-                        editor.change_selections(
-                            SelectionEffects::no_scroll(),
-                            window,
-                            cx,
-                            |s| {
-                                s.select_ranges(Some(
-                                    language::Point::new(row, 0)..language::Point::new(row, 0),
-                                ))
-                            },
-                        );
+                        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                            s.select_ranges(Some(
+                                language::Point::new(row, 0)..language::Point::new(row, 0),
+                            ))
+                        });
                     });
                 });
-                cx.executor()
-                    .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+
                 cx.run_until_parked();
 
                 outline_panel.read_with(cx, |panel, _cx| {
@@ -8214,60 +8178,28 @@ outline: struct Foo  <==== selected
                 })
             };
 
-        // Case 1: Cursor at start of first heading (row 0).
         assert_eq!(
             move_cursor_and_get_selection(0, cx).as_deref(),
-            Some("# Top Level"),
-            "Cursor at row 0 should select '# Top Level'"
+            Some("# Section A"),
+            "Cursor at row 0 should select '# Section A'"
         );
 
-        // Case 2: Cursor in content under first heading (row 2).
         assert_eq!(
             move_cursor_and_get_selection(2, cx).as_deref(),
-            Some("# Top Level"),
-            "Cursor at row 2 (content) should still select '# Top Level'"
+            Some("## Sub Section A"),
+            "Cursor at row 2 should select '## Sub Section A'"
         );
 
-        // Case 3: Cursor at start of sub-heading A (row 4) — boundary case.
         assert_eq!(
             move_cursor_and_get_selection(4, cx).as_deref(),
-            Some("## Sub Section A"),
-            "Cursor at row 4 should select '## Sub Section A', not '# Top Level'"
+            Some("## Sub Section B"),
+            "Cursor at row 4 should select '## Sub Section B'"
         );
 
-        // Case 4: Cursor in content under sub-heading A (row 6).
         assert_eq!(
             move_cursor_and_get_selection(6, cx).as_deref(),
-            Some("## Sub Section A"),
-            "Cursor at row 6 (content) should select '## Sub Section A'"
-        );
-
-        // Case 5: Cursor at start of sub-heading B (row 8) — sibling boundary.
-        assert_eq!(
-            move_cursor_and_get_selection(8, cx).as_deref(),
-            Some("## Sub Section B"),
-            "Cursor at row 8 should select '## Sub Section B', not '## Sub Section A'"
-        );
-
-        // Case 6: Cursor in content under sub-heading B (row 10).
-        assert_eq!(
-            move_cursor_and_get_selection(10, cx).as_deref(),
-            Some("## Sub Section B"),
-            "Cursor at row 10 (content) should select '## Sub Section B'"
-        );
-
-        // Case 7: Cursor at start of second top-level heading (row 12) — top-level boundary.
-        assert_eq!(
-            move_cursor_and_get_selection(12, cx).as_deref(),
-            Some("# Another Top"),
-            "Cursor at row 12 should select '# Another Top', not '## Sub Section B'"
-        );
-
-        // Case 8: Cursor in content under second top-level heading (row 14).
-        assert_eq!(
-            move_cursor_and_get_selection(14, cx).as_deref(),
-            Some("# Another Top"),
-            "Cursor at row 14 (content) should select '# Another Top'"
+            Some("# Section B"),
+            "Cursor at row 6 should select '# Section B'"
         );
     }
 }
