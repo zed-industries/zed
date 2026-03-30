@@ -830,13 +830,13 @@ mod tests {
 
     #[test]
     fn test_source_precedence_sorting() {
-        // KeybindSource precedence: User (0) > Vim (1) > Base (2) > Default (3)
+        // KeybindSource precedence: User (0) > Vimrc (1) > Vim (2) > Base (3) > Default (4)
         // Test that user keymaps take precedence over default keymaps at the same context depth
         let mut keymap = Keymap::default();
 
         // Add a default keymap binding first
         let mut default_binding = KeyBinding::new("cmd-r", ActionAlpha {}, Some("Editor"));
-        default_binding.set_meta(KeyBindingMetaIndex(3)); // Default source
+        default_binding.set_meta(KeyBindingMetaIndex(4)); // Default source
         keymap.add_bindings([default_binding]);
 
         // Add a user keymap binding

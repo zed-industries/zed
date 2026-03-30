@@ -254,6 +254,18 @@ pub fn keymap_file() -> &'static PathBuf {
     KEYMAP_FILE.get_or_init(|| config_dir().join("keymap.json"))
 }
 
+/// Returns the path to the Zed-specific vimrc file (`~/.config/zed/vimrc`).
+pub fn zed_vimrc_file() -> &'static PathBuf {
+    static VIMRC_FILE: OnceLock<PathBuf> = OnceLock::new();
+    VIMRC_FILE.get_or_init(|| config_dir().join("vimrc"))
+}
+
+/// Returns the path to the user's home `~/.vimrc` file.
+pub fn home_vimrc_file() -> &'static PathBuf {
+    static HOME_VIMRC_FILE: OnceLock<PathBuf> = OnceLock::new();
+    HOME_VIMRC_FILE.get_or_init(|| home_dir().join(".vimrc"))
+}
+
 /// Returns the path to the `keymap_backup.json` file.
 pub fn keymap_backup_file() -> &'static PathBuf {
     static KEYMAP_FILE: OnceLock<PathBuf> = OnceLock::new();

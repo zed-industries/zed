@@ -240,7 +240,7 @@ impl SourceFilters {
     fn allows(&self, source: Option<KeybindSource>) -> bool {
         match source {
             Some(KeybindSource::User) => self.user,
-            Some(KeybindSource::Vim) => self.vim_defaults,
+            Some(KeybindSource::Vim | KeybindSource::Vimrc) => self.vim_defaults,
             Some(KeybindSource::Base | KeybindSource::Default | KeybindSource::Unknown) | None => {
                 self.zed_defaults
             }
@@ -2312,6 +2312,7 @@ impl Render for KeymapEditor {
                                                     match conflict.override_source {
                                                         KeybindSource::User  => Some("your keymap"),
                                                         KeybindSource::Vim => Some("the vim keymap"),
+                                                        KeybindSource::Vimrc => Some("your vimrc"),
                                                         KeybindSource::Base => Some("your base keymap"),
                                                         _ => {
                                                             log::error!("Unexpected override from the {} keymap", conflict.override_source.name());
