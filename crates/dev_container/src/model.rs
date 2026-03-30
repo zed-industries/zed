@@ -29,15 +29,6 @@ use crate::{
     safe_id_lower,
 };
 
-/**
- * What's needed next:
- * - Load the features up front (and put them in that manifest)
- * - Move merged stuff into that struct
- * - Move variable expansion into that struct
- * - Continue on with lifecycle scripts
- *
- */
-
 enum ConfigStatus {
     Deserialized(DevContainer),
     VariableParsed(DevContainer),
@@ -309,8 +300,6 @@ impl DevContainerManifest {
             return Ok(());
         }
 
-        // --- Phase 1: Create directories and initialize build info ---
-
         let temp_base = std::env::temp_dir().join("devcontainer-zed");
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -369,8 +358,6 @@ impl DevContainerManifest {
                 log::error!("Failed to write builtin env file: {e}");
                 DevContainerError::FilesystemError
             })?;
-
-        // --- Phase 2: Download features and inflate FeatureManifest structs ---
 
         let ordered_features =
             resolve_feature_order(features, &dev_container.override_feature_install_order);
@@ -481,7 +468,7 @@ impl DevContainerManifest {
                 .write_feature_env(&self.fs, options)
                 .await?;
 
-            let wrapper_content = generate_install_wrapper(feature_ref, feature_id, &env_content);
+            let wrapper_content = generate_install_wrapper(feature_ref, feature_id, &env_content)?;
 
             self.fs
                 .write(
@@ -1912,14 +1899,6 @@ fn find_primary_service(
 /// Mirrors the CLI's `FEATURES_CONTAINER_TEMP_DEST_FOLDER`.
 const FEATURES_CONTAINER_TEMP_DEST_FOLDER: &str = "/tmp/dev-container-features";
 
-/// Escapes single quotes for use inside shell single-quoted strings.
-///
-/// Ends the current single-quoted string, inserts an escaped single quote,
-/// and reopens the string: `'` → `'\''`.
-fn escape_single_quotes(input: &str) -> String {
-    input.replace('\'', "'\\''")
-}
-
 /// Escapes regex special characters in a string.
 fn escape_regex_chars(input: &str) -> String {
     let mut result = String::with_capacity(input.len() * 2);
@@ -2004,59 +1983,59 @@ fn resolve_feature_order<'a>(
 ///
 /// Mirrors the CLI's `getFeatureInstallWrapperScript` in
 /// `containerFeaturesConfiguration.ts`.
-fn generate_install_wrapper(feature_ref: &str, feature_id: &str, env_variables: &str) -> String {
-    let escaped_id = escape_single_quotes(feature_ref);
-    let escaped_name = escape_single_quotes(feature_id);
+fn generate_install_wrapper(
+    feature_ref: &str,
+    feature_id: &str,
+    env_variables: &str,
+) -> Result<String, DevContainerError> {
+    let escaped_id = shlex::try_quote(feature_ref).map_err(|e| {
+        log::error!("Error escaping feature ref {feature_ref}: {e}");
+        DevContainerError::DevContainerParseFailed
+    })?;
+    let escaped_name = shlex::try_quote(feature_id).map_err(|e| {
+        log::error!("Error escaping feature {feature_id}: {e}");
+        DevContainerError::DevContainerParseFailed
+    })?;
     let options_indented: String = env_variables
         .lines()
         .filter(|l| !l.is_empty())
         .map(|l| format!("    {}", l))
         .collect::<Vec<_>>()
         .join("\n");
-    // TODO there is a "shlex"-thing we can use
-    // shlex::try_quote
-    let escaped_options = escape_single_quotes(&options_indented);
+    let escaped_options = shlex::try_quote(&options_indented).map_err(|e| {
+        log::error!("Error escaping options {options_indented}: {e}");
+        DevContainerError::DevContainerParseFailed
+    })?;
 
-    let mut script = String::new();
-    script.push_str("#!/bin/sh\n");
-    script.push_str("set -e\n");
-    script.push_str("\n");
-    script.push_str("on_exit () {\n");
-    script.push_str("    [ $? -eq 0 ] && exit\n");
-    script.push_str("    echo 'ERROR: Feature \"");
-    script.push_str(&escaped_name);
-    script.push_str("\" (");
-    script.push_str(&escaped_id);
-    script.push_str(") failed to install!'\n");
-    script.push_str("}\n");
-    script.push_str("\n");
-    script.push_str("trap on_exit EXIT\n");
-    script.push_str("\n");
-    script.push_str(
-        "echo ===========================================================================\n",
+    let script = format!(
+        r#"#!/bin/sh
+set -e
+
+on_exit () {{
+    [ $? -eq 0 ] && exit
+    echo 'ERROR: Feature "{escaped_name}" ({escaped_id}) failed to install!'
+}}
+
+trap on_exit EXIT
+
+echo ===========================================================================
+echo 'Feature       : {escaped_name}'
+echo 'Id            : {escaped_id}'
+echo 'Options       :'
+echo {escaped_options}
+echo ===========================================================================
+
+set -a
+. ../devcontainer-features.builtin.env
+. ./devcontainer-features.env
+set +a
+
+chmod +x ./install.sh
+./install.sh
+"#
     );
-    script.push_str("echo 'Feature       : ");
-    script.push_str(&escaped_name);
-    script.push_str("'\n");
-    script.push_str("echo 'Id            : ");
-    script.push_str(&escaped_id);
-    script.push_str("'\n");
-    script.push_str("echo 'Options       :'\n");
-    script.push_str("echo '");
-    script.push_str(&escaped_options);
-    script.push_str("'\n");
-    script.push_str(
-        "echo ===========================================================================\n",
-    );
-    script.push_str("\n");
-    script.push_str("set -a\n");
-    script.push_str(". ../devcontainer-features.builtin.env\n");
-    script.push_str(". ./devcontainer-features.env\n");
-    script.push_str("set +a\n");
-    script.push_str("\n");
-    script.push_str("chmod +x ./install.sh\n");
-    script.push_str("./install.sh\n");
-    script
+
+    Ok(script)
 }
 
 // Dockerfile actions need to be moved to their own file
@@ -3848,6 +3827,49 @@ ENV PATH=/usr/local/go/bin:/go/bin:${PATH}
 ENV VARIABLE_VALUE=value
 "#
         );
+
+        let golang_install_wrapper = files
+            .iter()
+            .find(|f| {
+                f.file_name().is_some_and(|s| {
+                    s.display().to_string() == "devcontainer-features-install.sh".to_string()
+                }) && f.to_str().is_some_and(|s| s.contains("/go_"))
+            })
+            .expect("to be found");
+        let golang_install_wrapper = test_dependencies
+            .fs
+            .load(golang_install_wrapper)
+            .await
+            .unwrap();
+        assert_eq!(
+            &golang_install_wrapper,
+            r#"#!/bin/sh
+set -e
+
+on_exit () {
+    [ $? -eq 0 ] && exit
+    echo 'ERROR: Feature "go" (ghcr.io/devcontainers/features/go:1) failed to install!'
+}
+
+trap on_exit EXIT
+
+echo ===========================================================================
+echo 'Feature       : go'
+echo 'Id            : ghcr.io/devcontainers/features/go:1'
+echo 'Options       :'
+echo '    GOLANGCILINTVERSION=latest
+    VERSION=latest'
+echo ===========================================================================
+
+set -a
+. ../devcontainer-features.builtin.env
+. ./devcontainer-features.env
+set +a
+
+chmod +x ./install.sh
+./install.sh
+"#
+        )
     }
 
     #[gpui::test]

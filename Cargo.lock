@@ -4840,6 +4840,7 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "settings",
+ "shlex",
  "smol",
  "tempfile",
  "ui",

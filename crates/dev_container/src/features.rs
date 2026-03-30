@@ -164,12 +164,12 @@ RUN chmod -R 0755 {full_dest} \
     ) -> Result<String, DevContainerError> {
         let merged_env = self.generate_merged_env(options);
 
-        let env_vars: Vec<String> = merged_env
-            .iter()
-            .map(|(k, v)| format!("{}={}", k, v))
-            .collect();
+        let mut env_vars: Vec<(&String, &String)> = merged_env.iter().collect();
+        env_vars.sort();
 
-        let env_file_content = env_vars.join("\n");
+        let env_file_content = env_vars
+            .iter()
+            .fold("".to_string(), |acc, (k, v)| format!("{acc}{}={}\n", k, v));
 
         fs.write(
             &self.file_path.join("devcontainer-features.env"),
