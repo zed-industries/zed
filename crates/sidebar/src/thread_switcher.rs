@@ -1,7 +1,6 @@
-use acp_thread;
 use action_log::DiffStats;
 use agent_client_protocol as acp;
-use agent_ui::Agent;
+use agent_ui::thread_metadata_store::ThreadMetadata;
 use gpui::{
     Action as _, Animation, AnimationExt, AnyElement, DismissEvent, Entity, EventEmitter,
     FocusHandle, Focusable, Hsla, Modifiers, ModifiersChangedEvent, Render, SharedString,
@@ -23,8 +22,7 @@ pub(crate) struct ThreadSwitcherEntry {
     pub icon: IconName,
     pub icon_from_external_svg: Option<SharedString>,
     pub status: AgentThreadStatus,
-    pub agent: Agent,
-    pub session_info: acp_thread::AgentSessionInfo,
+    pub metadata: ThreadMetadata,
     pub workspace: Entity<Workspace>,
     pub worktree_name: Option<SharedString>,
     pub diff_stats: DiffStats,
@@ -35,13 +33,11 @@ pub(crate) struct ThreadSwitcherEntry {
 
 pub(crate) enum ThreadSwitcherEvent {
     Preview {
-        agent: Agent,
-        session_info: acp_thread::AgentSessionInfo,
+        metadata: ThreadMetadata,
         workspace: Entity<Workspace>,
     },
     Confirmed {
-        agent: Agent,
-        session_info: acp_thread::AgentSessionInfo,
+        metadata: ThreadMetadata,
         workspace: Entity<Workspace>,
     },
     Dismissed,
@@ -72,8 +68,7 @@ impl ThreadSwitcher {
 
         if let Some(entry) = entries.get(selected_index) {
             cx.emit(ThreadSwitcherEvent::Preview {
-                agent: entry.agent.clone(),
-                session_info: entry.session_info.clone(),
+                metadata: entry.metadata.clone(),
                 workspace: entry.workspace.clone(),
             });
         }
@@ -130,8 +125,7 @@ impl ThreadSwitcher {
     fn emit_preview(&mut self, cx: &mut Context<Self>) {
         if let Some(entry) = self.entries.get(self.selected_index) {
             cx.emit(ThreadSwitcherEvent::Preview {
-                agent: entry.agent.clone(),
-                session_info: entry.session_info.clone(),
+                metadata: entry.metadata.clone(),
                 workspace: entry.workspace.clone(),
             });
         }
@@ -140,8 +134,7 @@ impl ThreadSwitcher {
     fn confirm(&mut self, _: &menu::Confirm, _window: &mut gpui::Window, cx: &mut Context<Self>) {
         if let Some(entry) = self.entries.get(self.selected_index) {
             cx.emit(ThreadSwitcherEvent::Confirmed {
-                agent: entry.agent.clone(),
-                session_info: entry.session_info.clone(),
+                metadata: entry.metadata.clone(),
                 workspace: entry.workspace.clone(),
             });
         }

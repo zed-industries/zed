@@ -563,7 +563,6 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 is_active: true,
             },
             ListEntry::Thread(ThreadEntry {
-                agent: Agent::NativeAgent,
                 metadata: ThreadMetadata {
                     session_id: acp::SessionId::new(Arc::from("t-1")),
                     agent_id: AgentId::new("zed-agent"),
@@ -586,7 +585,6 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
             }),
             // Active thread with Running status
             ListEntry::Thread(ThreadEntry {
-                agent: Agent::NativeAgent,
                 metadata: ThreadMetadata {
                     session_id: acp::SessionId::new(Arc::from("t-2")),
                     agent_id: AgentId::new("zed-agent"),
@@ -609,7 +607,6 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
             }),
             // Active thread with Error status
             ListEntry::Thread(ThreadEntry {
-                agent: Agent::NativeAgent,
                 metadata: ThreadMetadata {
                     session_id: acp::SessionId::new(Arc::from("t-3")),
                     agent_id: AgentId::new("zed-agent"),
@@ -632,7 +629,6 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
             }),
             // Thread with WaitingForConfirmation status, not active
             ListEntry::Thread(ThreadEntry {
-                agent: Agent::NativeAgent,
                 metadata: ThreadMetadata {
                     session_id: acp::SessionId::new(Arc::from("t-4")),
                     agent_id: AgentId::new("zed-agent"),
@@ -655,7 +651,6 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
             }),
             // Background thread that completed (should show notification)
             ListEntry::Thread(ThreadEntry {
-                agent: Agent::NativeAgent,
                 metadata: ThreadMetadata {
                     session_id: acp::SessionId::new(Arc::from("t-5")),
                     agent_id: AgentId::new("zed-agent"),
@@ -1922,14 +1917,14 @@ async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
 
     sidebar.update_in(cx, |sidebar, window, cx| {
         sidebar.activate_thread(
-            Agent::NativeAgent,
-            acp_thread::AgentSessionInfo {
+            ThreadMetadata {
                 session_id: session_id_a.clone(),
-                work_dirs: None,
-                title: Some("Test".into()),
-                updated_at: None,
+                agent_id: agent::ZED_AGENT_ID.clone(),
+                title: "Test".into(),
+                updated_at: Utc::now(),
                 created_at: None,
-                meta: None,
+                folder_paths: PathList::default(),
+                archived: false,
             },
             &workspace_a,
             window,
@@ -1977,14 +1972,14 @@ async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
     // which also triggers a workspace switch.
     sidebar.update_in(cx, |sidebar, window, cx| {
         sidebar.activate_thread(
-            Agent::NativeAgent,
-            acp_thread::AgentSessionInfo {
+            ThreadMetadata {
                 session_id: session_id_b.clone(),
-                work_dirs: None,
-                title: Some("Thread B".into()),
-                updated_at: None,
+                agent_id: agent::ZED_AGENT_ID.clone(),
+                title: "Thread B".into(),
+                updated_at: Utc::now(),
                 created_at: None,
-                meta: None,
+                folder_paths: PathList::default(),
+                archived: false,
             },
             &workspace_b,
             window,
@@ -3439,14 +3434,14 @@ async fn test_activate_archived_thread_with_saved_paths_activates_matching_works
     // switch to the workspace for project-b.
     sidebar.update_in(cx, |sidebar, window, cx| {
         sidebar.activate_archived_thread(
-            Agent::NativeAgent,
-            acp_thread::AgentSessionInfo {
+            ThreadMetadata {
                 session_id: session_id.clone(),
-                work_dirs: Some(PathList::new(&[PathBuf::from("/project-b")])),
-                title: Some("Archived Thread".into()),
-                updated_at: None,
+                agent_id: agent::ZED_AGENT_ID.clone(),
+                title: "Archived Thread".into(),
+                updated_at: Utc::now(),
                 created_at: None,
-                meta: None,
+                folder_paths: PathList::new(&[PathBuf::from("/project-b")]),
+                archived: false,
             },
             window,
             cx,
@@ -3500,14 +3495,14 @@ async fn test_activate_archived_thread_cwd_fallback_with_matching_workspace(
     // No thread saved to the store – cwd is the only path hint.
     sidebar.update_in(cx, |sidebar, window, cx| {
         sidebar.activate_archived_thread(
-            Agent::NativeAgent,
-            acp_thread::AgentSessionInfo {
+            ThreadMetadata {
                 session_id: acp::SessionId::new(Arc::from("unknown-session")),
-                work_dirs: Some(PathList::new(&[std::path::PathBuf::from("/project-b")])),
-                title: Some("CWD Thread".into()),
-                updated_at: None,
+                agent_id: agent::ZED_AGENT_ID.clone(),
+                title: "CWD Thread".into(),
+                updated_at: Utc::now(),
                 created_at: None,
-                meta: None,
+                folder_paths: PathList::new(&[std::path::PathBuf::from("/project-b")]),
+                archived: false,
             },
             window,
             cx,
@@ -3561,14 +3556,14 @@ async fn test_activate_archived_thread_no_paths_no_cwd_uses_active_workspace(
     // No saved thread, no cwd – should fall back to the active workspace.
     sidebar.update_in(cx, |sidebar, window, cx| {
         sidebar.activate_archived_thread(
-            Agent::NativeAgent,
-            acp_thread::AgentSessionInfo {
+            ThreadMetadata {
                 session_id: acp::SessionId::new(Arc::from("no-context-session")),
-                work_dirs: None,
-                title: Some("Contextless Thread".into()),
-                updated_at: None,
+                agent_id: agent::ZED_AGENT_ID.clone(),
+                title: "Contextless Thread".into(),
+                updated_at: Utc::now(),
                 created_at: None,
-                meta: None,
+                folder_paths: PathList::default(),
+                archived: false,
             },
             window,
             cx,
@@ -3615,14 +3610,14 @@ async fn test_activate_archived_thread_saved_paths_opens_new_workspace(cx: &mut 
 
     sidebar.update_in(cx, |sidebar, window, cx| {
         sidebar.activate_archived_thread(
-            Agent::NativeAgent,
-            acp_thread::AgentSessionInfo {
+            ThreadMetadata {
                 session_id: session_id.clone(),
-                work_dirs: Some(path_list_b),
-                title: Some("New WS Thread".into()),
-                updated_at: None,
+                agent_id: agent::ZED_AGENT_ID.clone(),
+                title: "New WS Thread".into(),
+                updated_at: Utc::now(),
                 created_at: None,
-                meta: None,
+                folder_paths: path_list_b,
+                archived: false,
             },
             window,
             cx,
@@ -3664,14 +3659,14 @@ async fn test_activate_archived_thread_reuses_workspace_in_another_window(cx: &m
 
     sidebar.update_in(cx_a, |sidebar, window, cx| {
         sidebar.activate_archived_thread(
-            Agent::NativeAgent,
-            acp_thread::AgentSessionInfo {
+            ThreadMetadata {
                 session_id: session_id.clone(),
-                work_dirs: Some(PathList::new(&[PathBuf::from("/project-b")])),
-                title: Some("Cross Window Thread".into()),
-                updated_at: None,
+                agent_id: agent::ZED_AGENT_ID.clone(),
+                title: "Cross Window Thread".into(),
+                updated_at: Utc::now(),
                 created_at: None,
-                meta: None,
+                folder_paths: PathList::new(&[PathBuf::from("/project-b")]),
+                archived: false,
             },
             window,
             cx,
@@ -3740,14 +3735,14 @@ async fn test_activate_archived_thread_reuses_workspace_in_another_window_with_t
 
     sidebar_a.update_in(cx_a, |sidebar, window, cx| {
         sidebar.activate_archived_thread(
-            Agent::NativeAgent,
-            acp_thread::AgentSessionInfo {
+            ThreadMetadata {
                 session_id: session_id.clone(),
-                work_dirs: Some(PathList::new(&[PathBuf::from("/project-b")])),
-                title: Some("Cross Window Thread".into()),
-                updated_at: None,
+                agent_id: agent::ZED_AGENT_ID.clone(),
+                title: "Cross Window Thread".into(),
+                updated_at: Utc::now(),
                 created_at: None,
-                meta: None,
+                folder_paths: PathList::new(&[PathBuf::from("/project-b")]),
+                archived: false,
             },
             window,
             cx,
@@ -3815,14 +3810,14 @@ async fn test_activate_archived_thread_prefers_current_window_for_matching_paths
 
     sidebar_a.update_in(cx_a, |sidebar, window, cx| {
         sidebar.activate_archived_thread(
-            Agent::NativeAgent,
-            acp_thread::AgentSessionInfo {
+            ThreadMetadata {
                 session_id: session_id.clone(),
-                work_dirs: Some(PathList::new(&[PathBuf::from("/project-a")])),
-                title: Some("Current Window Thread".into()),
-                updated_at: None,
+                agent_id: agent::ZED_AGENT_ID.clone(),
+                title: "Current Window Thread".into(),
+                updated_at: Utc::now(),
                 created_at: None,
-                meta: None,
+                folder_paths: PathList::new(&[PathBuf::from("/project-a")]),
+                archived: false,
             },
             window,
             cx,
