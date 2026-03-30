@@ -1897,7 +1897,7 @@ mod tests {
     use super::*;
 
     #[gpui::test]
-    async fn test_dirty_workspace_survives_when_opening_recent_project(cx: &mut TestAppContext) {
+    async fn test_dirty_workspace_replaced_when_opening_recent_project(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
 
         cx.update(|cx| {
@@ -2006,6 +2006,15 @@ mod tests {
         cx.dispatch_action(*multi_workspace, menu::Confirm);
         cx.run_until_parked();
 
+        // prepare_to_close triggers a save prompt for the dirty buffer.
+        // Choose "Don't Save" (index 2) to discard and continue replacing.
+        assert!(
+            cx.has_pending_prompt(),
+            "Should prompt to save dirty buffer before replacing workspace"
+        );
+        cx.simulate_prompt_answer("Don't Save");
+        cx.run_until_parked();
+
         multi_workspace
             .update(cx, |multi_workspace, _, cx| {
                 assert!(
@@ -2018,26 +2027,16 @@ mod tests {
                 );
 
                 assert!(
-                    multi_workspace.workspaces().len() >= 2,
-                    "Should have at least 2 workspaces: the dirty one and the newly opened one"
+                    !multi_workspace.workspaces().contains(&dirty_workspace),
+                    "The original dirty workspace should have been replaced"
                 );
 
                 assert!(
-                    multi_workspace.workspaces().contains(&dirty_workspace),
-                    "The original dirty workspace should still be present"
-                );
-
-                assert!(
-                    dirty_workspace.read(cx).is_edited(),
-                    "The original workspace should still be dirty"
+                    !multi_workspace.workspace().read(cx).is_edited(),
+                    "The active workspace should be the freshly opened one, not dirty"
                 );
             })
             .unwrap();
-
-        assert!(
-            !cx.has_pending_prompt(),
-            "No save prompt in multi-workspace mode — dirty workspace survives in background"
-        );
     }
 
     fn open_recent_projects(

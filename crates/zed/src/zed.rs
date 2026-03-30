@@ -5835,7 +5835,7 @@ mod tests {
 
         window_a
             .update(cx, |multi_workspace, window, cx| {
-                multi_workspace.open_project(vec![dir2.into()], OpenMode::Replace, window, cx)
+                multi_workspace.open_project(vec![dir2.into()], OpenMode::Activate, window, cx)
             })
             .unwrap()
             .await

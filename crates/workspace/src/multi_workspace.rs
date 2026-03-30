@@ -870,11 +870,15 @@ impl MultiWorkspace {
     ) -> Task<Result<Entity<Workspace>>> {
         let workspace = self.workspace().clone();
 
-        if self.multi_workspace_enabled(cx) {
-            workspace.update(cx, |workspace, cx| {
-                workspace.open_workspace_for_paths(open_mode, paths, window, cx)
-            })
+        let needs_close_prompt =
+            open_mode == OpenMode::Replace || !self.multi_workspace_enabled(cx);
+        let open_mode = if self.multi_workspace_enabled(cx) {
+            open_mode
         } else {
+            OpenMode::Replace
+        };
+
+        if needs_close_prompt {
             cx.spawn_in(window, async move |_this, cx| {
                 let should_continue = workspace
                     .update_in(cx, |workspace, window, cx| {
@@ -884,12 +888,16 @@ impl MultiWorkspace {
                 if should_continue {
                     workspace
                         .update_in(cx, |workspace, window, cx| {
-                            workspace.open_workspace_for_paths(OpenMode::Replace, paths, window, cx)
+                            workspace.open_workspace_for_paths(open_mode, paths, window, cx)
                         })?
                         .await
                 } else {
                     Ok(workspace)
                 }
+            })
+        } else {
+            workspace.update(cx, |workspace, cx| {
+                workspace.open_workspace_for_paths(open_mode, paths, window, cx)
             })
         }
     }
