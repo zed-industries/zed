@@ -204,30 +204,9 @@ async fn test_reorder_favorite_channels_independently_of_channels(cx: &mut TestA
     );
 
     // Unfavorite channel-b.
-    // Selection should move to channel-b in the Channels section.
+    // Selection should move to the next favorite (channel-c).
     panel.update_in(cx, |panel, window, cx| {
         panel.toggle_selected_channel_favorite(&ToggleSelectedChannelFavorite, window, cx);
-    });
-    assert_eq!(
-        panel.read_with(cx, |panel, _| panel.entries_as_strings()),
-        &[
-            "[Favorites]",
-            "  #️⃣ channel-c",
-            "[Channels]",
-            "  v root",
-            "    #️⃣ channel-a",
-            "    #️⃣ channel-b  <== selected",
-            "    #️⃣ channel-c",
-            "[Contacts]",
-        ]
-    );
-
-    // Navigate to favorite channel-c.
-    panel.update_in(cx, |panel, window, cx| {
-        panel.select_previous(&SelectPrevious, window, cx);
-        panel.select_previous(&SelectPrevious, window, cx);
-        panel.select_previous(&SelectPrevious, window, cx);
-        panel.select_previous(&SelectPrevious, window, cx);
     });
     assert_eq!(
         panel.read_with(cx, |panel, _| panel.entries_as_strings()),
@@ -245,6 +224,7 @@ async fn test_reorder_favorite_channels_independently_of_channels(cx: &mut TestA
 
     // Unfavorite channel-c.
     // Favorites section should disappear entirely.
+    // Selection should move to the next available item.
     panel.update_in(cx, |panel, window, cx| {
         panel.toggle_selected_channel_favorite(&ToggleSelectedChannelFavorite, window, cx);
     });
@@ -252,10 +232,10 @@ async fn test_reorder_favorite_channels_independently_of_channels(cx: &mut TestA
         panel.read_with(cx, |panel, _| panel.entries_as_strings()),
         &[
             "[Channels]",
-            "  v root",
+            "  v root  <== selected",
             "    #️⃣ channel-a",
             "    #️⃣ channel-b",
-            "    #️⃣ channel-c  <== selected",
+            "    #️⃣ channel-c",
             "[Contacts]",
         ]
     );

@@ -1927,10 +1927,15 @@ impl CollabPanel {
     }
 
     pub fn toggle_favorite_channel(&mut self, channel_id: ChannelId, cx: &mut Context<Self>) {
-        let was_selected_favorite = self.selected_entry_is_favorite()
+        let old_selection = if self.selected_entry_is_favorite()
             && self
                 .selected_channel()
-                .is_some_and(|channel| channel.id == channel_id);
+                .is_some_and(|channel| channel.id == channel_id)
+        {
+            self.selection
+        } else {
+            None
+        };
 
         self.channel_store.update(cx, |store, cx| {
             store.toggle_favorite_channel(channel_id, cx);
@@ -1938,14 +1943,14 @@ impl CollabPanel {
         self.persist_favorites(cx);
         self.update_entries(true, cx);
 
-        if was_selected_favorite && self.selection.is_none() {
-            self.selection = self.entries.iter().position(|entry| {
-                matches!(
-                    entry,
-                    ListEntry::Channel { channel, is_favorite: false, .. }
-                    if channel.id == channel_id
-                )
-            });
+        if let Some(old_ix) = old_selection {
+            if self.selection.is_none() {
+                self.selection = if self.entries.is_empty() {
+                    None
+                } else {
+                    Some(old_ix.min(self.entries.len() - 1))
+                };
+            }
         }
     }
 
