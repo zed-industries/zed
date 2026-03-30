@@ -1622,15 +1622,16 @@ impl GitGraph {
                                             "view-on-provider",
                                             format!("View on {}", provider_name),
                                         )
-                                        .icon(icon)
-                                        .icon_size(IconSize::Small)
-                                        .icon_color(Color::Muted)
-                                        .icon_position(IconPosition::Start)
+                                        .start_icon(
+                                            Icon::new(icon)
+                                                .size(IconSize::Small)
+                                                .color(Color::Muted),
+                                        )
                                         .label_size(LabelSize::Small)
                                         .truncate(true)
                                         .color(Color::Muted)
                                         .on_click(
-                                            move |_, _, cx| {
+                                            move |_, _window, cx| {
                                                 cx.open_url(&url);
                                             },
                                         ),
