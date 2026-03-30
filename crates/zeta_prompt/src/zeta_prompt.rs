@@ -213,7 +213,15 @@ pub struct RelatedExcerpt {
 pub fn prompt_input_contains_special_tokens(input: &ZetaPromptInput, format: ZetaFormat) -> bool {
     special_tokens_for_format(format)
         .iter()
-        .any(|token| text_contains_line_start_token(&input.cursor_excerpt, token))
+        .any(|token| {
+            if let Some(line_token) = token.strip_suffix('\n') {
+                // Token ends with \n - check if any line in the excerpt equals this token
+                input.cursor_excerpt.lines().any(|line| line == line_token)
+            } else {
+                // Token doesn't end with \n - use original substring check
+                input.cursor_excerpt.contains(token)            
+            }
+        })
 }
 
 /// Checks if `text` contains `token` at the start of a line.
