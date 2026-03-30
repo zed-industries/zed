@@ -2067,11 +2067,11 @@ impl SplittableEditor {
         let style = self.rhs_editor.read(cx).create_style(cx);
         let font_id = window.text_system().resolve_font(&style.text.font());
         let font_size = style.text.font_size.to_pixels(window.rem_size());
-        let em_width = window
+        let em_advance = window
             .text_system()
-            .em_width(font_id, font_size)
+            .em_advance(font_id, font_size)
             .unwrap_or(font_size);
-        let min_width = em_width * min_ems;
+        let min_width = em_advance * min_ems;
         let is_split = self.lhs.is_some();
 
         if is_split && width < min_width {
