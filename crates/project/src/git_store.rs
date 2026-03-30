@@ -34,7 +34,7 @@ use git::{
     repository::{
         Branch, CommitDetails, CommitDiff, CommitFile, CommitOptions, DiffType, FetchOptions,
         GitRepository, GitRepositoryCheckpoint, GraphCommitData, InitialGraphCommitData, LogOrder,
-        LogSource, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
+        LogSource, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode, SearchCommitArgs,
         UpstreamTrackingStatus, Worktree as GitWorktree,
     },
     stash::{GitStash, StashEntry},
@@ -3706,6 +3706,23 @@ impl RepositorySnapshot {
         }
     }
 
+    /// The main worktree is the original checkout that other worktrees were
+    /// created from.
+    ///
+    /// For example, if you had both `~/code/zed` and `~/code/worktrees/zed-2`,
+    /// then `~/code/zed` is the main worktree and `~/code/worktrees/zed-2` is a linked worktree.
+    pub fn is_main_worktree(&self) -> bool {
+        self.work_directory_abs_path == self.original_repo_abs_path
+    }
+
+    /// Returns true if this repository is a linked worktree, that is, one that
+    /// was created from another worktree.
+    ///
+    /// This is by definition the opposite of [`Self::is_main_worktree`].
+    pub fn is_linked_worktree(&self) -> bool {
+        !self.is_main_worktree()
+    }
+
     pub fn linked_worktrees(&self) -> &[GitWorktree] {
         &self.linked_worktrees
     }
@@ -4551,6 +4568,32 @@ impl Repository {
         log_order: LogOrder,
     ) -> Option<&InitialGitGraphData> {
         self.initial_graph_data.get(&(log_source, log_order))
+    }
+
+    pub fn search_commits(
+        &mut self,
+        log_source: LogSource,
+        search_args: SearchCommitArgs,
+        request_tx: smol::channel::Sender<Oid>,
+        cx: &mut Context<Self>,
+    ) {
+        let repository_state = self.repository_state.clone();
+
+        cx.background_spawn(async move {
+            let repo_state = repository_state.await;
+
+            match repo_state {
+                Ok(RepositoryState::Local(LocalRepositoryState { backend, .. })) => {
+                    backend
+                        .search_commits(log_source, search_args, request_tx)
+                        .await
+                        .log_err();
+                }
+                Ok(RepositoryState::Remote(_)) => {}
+                Err(_) => {}
+            };
+        })
+        .detach();
     }
 
     pub fn graph_data(

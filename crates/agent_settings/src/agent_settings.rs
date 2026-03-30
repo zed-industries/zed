@@ -12,7 +12,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
     DefaultAgentView, DockPosition, LanguageModelParameters, LanguageModelSelection,
-    NewThreadLocation, NotifyWhenAgentWaiting, RegisterSetting, Settings, ToolPermissionMode,
+    NewThreadLocation, NotifyWhenAgentWaiting, RegisterSetting, Settings, SidebarDockPosition,
+    SidebarSide, ThinkingBlockDisplay, ToolPermissionMode,
 };
 
 pub use crate::agent_profile::*;
@@ -26,6 +27,8 @@ pub struct AgentSettings {
     pub enabled: bool,
     pub button: bool,
     pub dock: DockPosition,
+    pub flexible: bool,
+    pub sidebar_side: SidebarDockPosition,
     pub default_width: Pixels,
     pub default_height: Pixels,
     pub default_model: Option<LanguageModelSelection>,
@@ -46,6 +49,7 @@ pub struct AgentSettings {
     pub enable_feedback: bool,
     pub expand_edit_card: bool,
     pub expand_terminal_card: bool,
+    pub thinking_display: ThinkingBlockDisplay,
     pub cancel_generation_on_terminal_stop: bool,
     pub use_modifier_to_send: bool,
     pub message_editor_min_lines: usize,
@@ -75,6 +79,17 @@ impl AgentSettings {
             return setting.temperature;
         }
         return None;
+    }
+
+    pub fn sidebar_side(&self) -> SidebarSide {
+        match self.sidebar_side {
+            SidebarDockPosition::Left => SidebarSide::Left,
+            SidebarDockPosition::Right => SidebarSide::Right,
+            SidebarDockPosition::FollowAgent => match self.dock {
+                DockPosition::Right => SidebarSide::Right,
+                _ => SidebarSide::Left,
+            },
+        }
     }
 
     pub fn set_message_editor_max_lines(&self) -> usize {
@@ -407,8 +422,10 @@ impl Settings for AgentSettings {
             enabled: agent.enabled.unwrap(),
             button: agent.button.unwrap(),
             dock: agent.dock.unwrap(),
+            sidebar_side: agent.sidebar_side.unwrap(),
             default_width: px(agent.default_width.unwrap()),
             default_height: px(agent.default_height.unwrap()),
+            flexible: agent.flexible.unwrap(),
             default_model: Some(agent.default_model.unwrap()),
             inline_assistant_model: agent.inline_assistant_model,
             inline_assistant_use_streaming_tools: agent
@@ -434,6 +451,7 @@ impl Settings for AgentSettings {
             enable_feedback: agent.enable_feedback.unwrap(),
             expand_edit_card: agent.expand_edit_card.unwrap(),
             expand_terminal_card: agent.expand_terminal_card.unwrap(),
+            thinking_display: agent.thinking_display.unwrap(),
             cancel_generation_on_terminal_stop: agent.cancel_generation_on_terminal_stop.unwrap(),
             use_modifier_to_send: agent.use_modifier_to_send.unwrap(),
             message_editor_min_lines: agent.message_editor_min_lines.unwrap(),

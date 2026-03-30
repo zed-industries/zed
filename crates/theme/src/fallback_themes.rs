@@ -25,7 +25,8 @@ pub fn zed_default_themes() -> ThemeFamily {
 // If a theme customizes a foreground version of a status color, but does not
 // customize the background color, then use a partly-transparent version of the
 // foreground color for the background color.
-pub(crate) fn apply_status_color_defaults(status: &mut StatusColorsRefinement) {
+/// Applies default status color backgrounds from their foreground counterparts.
+pub fn apply_status_color_defaults(status: &mut StatusColorsRefinement) {
     for (fg_color, bg_color) in [
         (&status.deleted, &mut status.deleted_background),
         (&status.created, &mut status.created_background),
@@ -42,7 +43,8 @@ pub(crate) fn apply_status_color_defaults(status: &mut StatusColorsRefinement) {
     }
 }
 
-pub(crate) fn apply_theme_color_defaults(
+/// Applies default theme color values derived from player colors.
+pub fn apply_theme_color_defaults(
     theme_colors: &mut ThemeColorsRefinement,
     player_colors: &PlayerColors,
 ) {

@@ -176,6 +176,7 @@ pub struct X11ClientState {
     pub(crate) last_mouse_button: Option<MouseButton>,
     pub(crate) last_location: Point<Pixels>,
     pub(crate) current_count: usize,
+    pub(crate) pinch_scale: f32,
 
     pub(crate) gpu_context: GpuContext,
     pub(crate) compositor_gpu: Option<CompositorGpuHint>,
@@ -342,11 +343,12 @@ impl X11Client {
         xcb_connection.prefetch_extension_information(render::X11_EXTENSION_NAME)?;
         xcb_connection.prefetch_extension_information(xinput::X11_EXTENSION_NAME)?;
 
-        // Announce to X server that XInput up to 2.1 is supported. To increase this to 2.2 and
-        // beyond, support for touch events would need to be added.
+        // Announce to X server that XInput up to 2.4 is supported.
+        // Version 2.4 is needed for gesture events (GesturePinchBegin/Update/End).
+        // If the server only supports an older version, gesture events simply won't be delivered.
         let xinput_version = get_reply(
             || "XInput XiQueryVersion failed",
-            xcb_connection.xinput_xi_query_version(2, 1),
+            xcb_connection.xinput_xi_query_version(2, 4),
         )?;
         assert!(
             xinput_version.major_version >= 2,
@@ -502,6 +504,7 @@ impl X11Client {
             last_mouse_button: None,
             last_location: Point::new(px(0.0), px(0.0)),
             current_count: 0,
+            pinch_scale: 1.0,
             gpu_context: Rc::new(RefCell::new(None)),
             compositor_gpu,
             scale_factor,
@@ -1323,6 +1326,64 @@ impl X11Client {
                 if let Some(pointer) = state.pointer_device_states.get_mut(&event.sourceid) {
                     reset_pointer_device_scroll_positions(pointer);
                 }
+            }
+            Event::XinputGesturePinchBegin(event) => {
+                let window = self.get_window(event.event)?;
+                let mut state = self.0.borrow_mut();
+                state.pinch_scale = 1.0;
+                let modifiers = modifiers_from_xinput_info(event.mods);
+                state.modifiers = modifiers;
+                let position = point(
+                    px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
+                    px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
+                );
+                drop(state);
+                window.handle_input(PlatformInput::Pinch(gpui::PinchEvent {
+                    position,
+                    delta: 0.0,
+                    modifiers,
+                    phase: gpui::TouchPhase::Started,
+                }));
+            }
+            Event::XinputGesturePinchUpdate(event) => {
+                let window = self.get_window(event.event)?;
+                let mut state = self.0.borrow_mut();
+                let modifiers = modifiers_from_xinput_info(event.mods);
+                state.modifiers = modifiers;
+                let position = point(
+                    px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
+                    px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
+                );
+                // scale is in FP16.16 format: divide by 65536 to get the float value
+                let new_absolute_scale = event.scale as f32 / 65536.0;
+                let previous_scale = state.pinch_scale;
+                let zoom_delta = new_absolute_scale - previous_scale;
+                state.pinch_scale = new_absolute_scale;
+                drop(state);
+                window.handle_input(PlatformInput::Pinch(gpui::PinchEvent {
+                    position,
+                    delta: zoom_delta,
+                    modifiers,
+                    phase: gpui::TouchPhase::Moved,
+                }));
+            }
+            Event::XinputGesturePinchEnd(event) => {
+                let window = self.get_window(event.event)?;
+                let mut state = self.0.borrow_mut();
+                state.pinch_scale = 1.0;
+                let modifiers = modifiers_from_xinput_info(event.mods);
+                state.modifiers = modifiers;
+                let position = point(
+                    px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
+                    px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
+                );
+                drop(state);
+                window.handle_input(PlatformInput::Pinch(gpui::PinchEvent {
+                    position,
+                    delta: 0.0,
+                    modifiers,
+                    phase: gpui::TouchPhase::Ended,
+                }));
             }
             _ => {}
         };

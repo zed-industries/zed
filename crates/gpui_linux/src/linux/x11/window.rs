@@ -671,7 +671,13 @@ impl X11WindowState {
                                 | xinput::XIEventMask::BUTTON_PRESS
                                 | xinput::XIEventMask::BUTTON_RELEASE
                                 | xinput::XIEventMask::ENTER
-                                | xinput::XIEventMask::LEAVE,
+                                | xinput::XIEventMask::LEAVE
+                                // x11rb 0.13 doesn't define XIEventMask constants for gesture
+                                // events, so we construct them from the event opcodes (each
+                                // XInput event type N maps to mask bit N).
+                                | xinput::XIEventMask::from(1u32 << xinput::GESTURE_PINCH_BEGIN_EVENT)
+                                | xinput::XIEventMask::from(1u32 << xinput::GESTURE_PINCH_UPDATE_EVENT)
+                                | xinput::XIEventMask::from(1u32 << xinput::GESTURE_PINCH_END_EVENT),
                         ],
                     }],
                 ),

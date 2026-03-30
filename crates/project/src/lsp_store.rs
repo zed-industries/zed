@@ -71,10 +71,10 @@ use http_client::HttpClient;
 use itertools::Itertools as _;
 use language::{
     Bias, BinaryStatus, Buffer, BufferRow, BufferSnapshot, CachedLspAdapter, Capability, CodeLabel,
-    Diagnostic, DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff, File as _, Language,
-    LanguageName, LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate, LspInstaller,
-    ManifestDelegate, ManifestName, ModelineSettings, Patch, PointUtf16, TextBufferSnapshot,
-    ToOffset, ToPointUtf16, Toolchain, Transaction, Unclipped,
+    CodeLabelExt, Diagnostic, DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff,
+    File as _, Language, LanguageName, LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate,
+    LspInstaller, ManifestDelegate, ManifestName, ModelineSettings, Patch, PointUtf16,
+    TextBufferSnapshot, ToOffset, ToPointUtf16, Toolchain, Transaction, Unclipped,
     language_settings::{
         AllLanguageSettings, FormatOnSave, Formatter, LanguageSettings, all_language_settings,
     },
@@ -822,15 +822,7 @@ impl LocalLspStore {
                     let adapter = adapter.clone();
                     if let Some(this) = this.upgrade() {
                         this.update(cx, |this, cx| {
-                            {
-                                let buffer = params
-                                    .uri
-                                    .to_file_path()
-                                    .map(|file_path| this.get_buffer(&file_path, cx))
-                                    .ok()
-                                    .flatten();
-                                adapter.process_diagnostics(&mut params, server_id, buffer);
-                            }
+                            adapter.process_diagnostics(&mut params, server_id);
 
                             this.merge_lsp_diagnostics(
                                 DiagnosticSourceKind::Pushed,
@@ -843,9 +835,9 @@ impl LocalLspStore {
                                     ),
                                     registration_id: None,
                                 }],
-                                |_, diagnostic, cx| match diagnostic.source_kind {
+                                |_, diagnostic, _cx| match diagnostic.source_kind {
                                     DiagnosticSourceKind::Other | DiagnosticSourceKind::Pushed => {
-                                        adapter.retain_old_diagnostic(diagnostic, cx)
+                                        adapter.retain_old_diagnostic(diagnostic)
                                     }
                                     DiagnosticSourceKind::Pulled => true,
                                 },
@@ -11204,23 +11196,6 @@ impl LspStore {
             .collect::<Vec<_>>();
 
         cx.background_spawn(futures::future::join_all(tasks).map(|_| ()))
-    }
-
-    fn get_buffer<'a>(&self, abs_path: &Path, cx: &'a App) -> Option<&'a Buffer> {
-        let (worktree, relative_path) =
-            self.worktree_store.read(cx).find_worktree(&abs_path, cx)?;
-
-        let project_path = ProjectPath {
-            worktree_id: worktree.read(cx).id(),
-            path: relative_path,
-        };
-
-        Some(
-            self.buffer_store()
-                .read(cx)
-                .get_by_path(&project_path)?
-                .read(cx),
-        )
     }
 
     #[cfg(any(test, feature = "test-support"))]

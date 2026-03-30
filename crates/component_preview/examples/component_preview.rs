@@ -39,7 +39,7 @@ fn main() {
         <dyn fs::Fs>::set_global(fs.clone(), cx);
 
         settings::init(cx);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
 
         let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
         let client = Client::production(cx);
@@ -65,7 +65,7 @@ fn main() {
             node_runtime,
             session,
         });
-        AppState::set_global(Arc::downgrade(&app_state), cx);
+        AppState::set_global(app_state.clone(), cx);
 
         workspace::init(app_state.clone(), cx);
         init(app_state.clone(), cx);
@@ -81,7 +81,7 @@ fn main() {
             {
                 move |window, cx| {
                     let app_state = app_state;
-                    theme::setup_ui_font(window, cx);
+                    theme_settings::setup_ui_font(window, cx);
 
                     let project = Project::local(
                         app_state.client.clone(),

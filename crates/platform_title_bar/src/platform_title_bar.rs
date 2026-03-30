@@ -4,8 +4,8 @@ mod system_window_tabs;
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
 use gpui::{
     Action, AnyElement, App, Context, Decorations, Entity, Hsla, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, StatefulInteractiveElement, Styled, Window, WindowButtonLayout,
-    WindowControlArea, div, px,
+    MouseButton, ParentElement, StatefulInteractiveElement, Styled, WeakEntity, Window,
+    WindowButtonLayout, WindowControlArea, div, px,
 };
 use project::DisableAiSettings;
 use settings::Settings;
@@ -15,6 +15,7 @@ use ui::{
     prelude::*,
     utils::{TRAFFIC_LIGHT_PADDING, platform_title_bar_height},
 };
+use workspace::{MultiWorkspace, SidebarRenderState, SidebarSide};
 
 use crate::{
     platforms::{platform_linux, platform_windows},
@@ -32,7 +33,7 @@ pub struct PlatformTitleBar {
     should_move: bool,
     system_window_tabs: Entity<SystemWindowTabs>,
     button_layout: Option<WindowButtonLayout>,
-    workspace_sidebar_open: bool,
+    multi_workspace: Option<WeakEntity<MultiWorkspace>>,
 }
 
 impl PlatformTitleBar {
@@ -47,8 +48,17 @@ impl PlatformTitleBar {
             should_move: false,
             system_window_tabs,
             button_layout: None,
-            workspace_sidebar_open: false,
+            multi_workspace: None,
         }
+    }
+
+    pub fn with_multi_workspace(mut self, multi_workspace: WeakEntity<MultiWorkspace>) -> Self {
+        self.multi_workspace = Some(multi_workspace);
+        self
+    }
+
+    pub fn set_multi_workspace(&mut self, multi_workspace: WeakEntity<MultiWorkspace>) {
+        self.multi_workspace = Some(multi_workspace);
     }
 
     pub fn title_bar_color(&self, window: &mut Window, cx: &mut Context<Self>) -> Hsla {
@@ -92,13 +102,12 @@ impl PlatformTitleBar {
         SystemWindowTabs::init(cx);
     }
 
-    pub fn is_workspace_sidebar_open(&self) -> bool {
-        self.workspace_sidebar_open
-    }
-
-    pub fn set_workspace_sidebar_open(&mut self, open: bool, cx: &mut Context<Self>) {
-        self.workspace_sidebar_open = open;
-        cx.notify();
+    fn sidebar_render_state(&self, cx: &App) -> SidebarRenderState {
+        self.multi_workspace
+            .as_ref()
+            .and_then(|mw| mw.upgrade())
+            .map(|mw| mw.read(cx).sidebar_render_state(cx))
+            .unwrap_or_default()
     }
 
     pub fn is_multi_workspace_enabled(cx: &App) -> bool {
@@ -116,8 +125,7 @@ impl Render for PlatformTitleBar {
         let children = mem::take(&mut self.children);
 
         let button_layout = self.effective_button_layout(&decorations, cx);
-        let is_multiworkspace_sidebar_open =
-            PlatformTitleBar::is_multi_workspace_enabled(cx) && self.is_workspace_sidebar_open();
+        let sidebar = self.sidebar_render_state(cx);
 
         let title_bar = h_flex()
             .window_control_area(WindowControlArea::Drag)
@@ -168,7 +176,7 @@ impl Render for PlatformTitleBar {
                 if window.is_fullscreen() {
                     this.pl_2()
                 } else if self.platform_style == PlatformStyle::Mac
-                    && !is_multiworkspace_sidebar_open
+                    && !(sidebar.open && sidebar.side == SidebarSide::Left)
                 {
                     this.pl(px(TRAFFIC_LIGHT_PADDING))
                 } else if let Some(button_layout) =
@@ -186,11 +194,14 @@ impl Render for PlatformTitleBar {
             .map(|el| match decorations {
                 Decorations::Server => el,
                 Decorations::Client { tiling, .. } => el
-                    .when(!(tiling.top || tiling.right), |el| {
-                        el.rounded_tr(theme::CLIENT_SIDE_DECORATION_ROUNDING)
-                    })
                     .when(
-                        !(tiling.top || tiling.left) && !is_multiworkspace_sidebar_open,
+                        !(tiling.top || tiling.right)
+                            && !(sidebar.open && sidebar.side == SidebarSide::Right),
+                        |el| el.rounded_tr(theme::CLIENT_SIDE_DECORATION_ROUNDING),
+                    )
+                    .when(
+                        !(tiling.top || tiling.left)
+                            && !(sidebar.open && sidebar.side == SidebarSide::Left),
                         |el| el.rounded_tl(theme::CLIENT_SIDE_DECORATION_ROUNDING),
                     )
                     // this border is to avoid a transparent gap in the rounded corners

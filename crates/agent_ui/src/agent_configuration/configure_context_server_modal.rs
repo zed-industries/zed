@@ -22,7 +22,7 @@ use project::{
 use serde::Deserialize;
 use settings::{Settings as _, update_settings_file};
 use std::sync::Arc;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{
     CommonAnimationExt, KeyBinding, Modal, ModalFooter, ModalHeader, Section, Tooltip,
     WithScrollbar, prelude::*,

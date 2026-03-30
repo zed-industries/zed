@@ -403,8 +403,8 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
 
         Some(
             v_flex()
-                .flex_1()
                 .p_1p5()
+                .flex_1()
                 .gap_1()
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
@@ -414,9 +414,10 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                     };
                     Button::new("open_local_folder", "Add Local Project")
                         .key_binding(KeyBinding::for_action_in(&open_action, &focus_handle, cx))
-                        .on_click(move |_, window, cx| {
+                        .on_click(cx.listener(move |_, _, window, cx| {
+                            cx.emit(DismissEvent);
                             window.dispatch_action(open_action.boxed_clone(), cx)
-                        })
+                        }))
                 })
                 .into_any(),
         )

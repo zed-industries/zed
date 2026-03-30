@@ -7,7 +7,8 @@ use gpui::{
     Animation, AnimationExt, AnyView, ClickEvent, Hsla, MouseButton, SharedString,
     pulsating_between,
 };
-use std::time::Duration;
+use itertools::Itertools as _;
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum AgentThreadStatus {
@@ -16,6 +17,13 @@ pub enum AgentThreadStatus {
     Running,
     WaitingForConfirmation,
     Error,
+}
+
+#[derive(Clone)]
+pub struct ThreadItemWorktreeInfo {
+    pub name: SharedString,
+    pub full_path: SharedString,
+    pub highlight_positions: Vec<usize>,
 }
 
 #[derive(IntoElement, RegisterComponent)]
@@ -37,9 +45,8 @@ pub struct ThreadItem {
     hovered: bool,
     added: Option<usize>,
     removed: Option<usize>,
-    worktree: Option<SharedString>,
-    worktree_full_path: Option<SharedString>,
-    worktree_highlight_positions: Vec<usize>,
+    project_paths: Option<Arc<[PathBuf]>>,
+    worktrees: Vec<ThreadItemWorktreeInfo>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_hover: Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>,
     action_slot: Option<AnyElement>,
@@ -66,9 +73,8 @@ impl ThreadItem {
             hovered: false,
             added: None,
             removed: None,
-            worktree: None,
-            worktree_full_path: None,
-            worktree_highlight_positions: Vec::new(),
+            project_paths: None,
+            worktrees: Vec::new(),
             on_click: None,
             on_hover: Box::new(|_, _, _| {}),
             action_slot: None,
@@ -146,18 +152,13 @@ impl ThreadItem {
         self
     }
 
-    pub fn worktree(mut self, worktree: impl Into<SharedString>) -> Self {
-        self.worktree = Some(worktree.into());
+    pub fn project_paths(mut self, paths: Arc<[PathBuf]>) -> Self {
+        self.project_paths = Some(paths);
         self
     }
 
-    pub fn worktree_full_path(mut self, worktree_full_path: impl Into<SharedString>) -> Self {
-        self.worktree_full_path = Some(worktree_full_path.into());
-        self
-    }
-
-    pub fn worktree_highlight_positions(mut self, positions: Vec<usize>) -> Self {
-        self.worktree_highlight_positions = positions;
+    pub fn worktrees(mut self, worktrees: Vec<ThreadItemWorktreeInfo>) -> Self {
+        self.worktrees = worktrees;
         self
     }
 
@@ -319,7 +320,22 @@ impl RenderOnce for ThreadItem {
         let added_count = self.added.unwrap_or(0);
         let removed_count = self.removed.unwrap_or(0);
 
-        let has_worktree = self.worktree.is_some();
+        let project_paths = self.project_paths.as_ref().and_then(|paths| {
+            let paths_str = paths
+                .as_ref()
+                .iter()
+                .filter_map(|p| p.file_name())
+                .filter_map(|name| name.to_str())
+                .join(", ");
+            if paths_str.is_empty() {
+                None
+            } else {
+                Some(paths_str)
+            }
+        });
+
+        let has_project_paths = project_paths.is_some();
+        let has_worktree = !self.worktrees.is_empty();
         let has_timestamp = !self.timestamp.is_empty();
         let timestamp = self.timestamp;
 
@@ -376,51 +392,83 @@ impl RenderOnce for ThreadItem {
                     }),
             )
             .when(has_worktree || has_diff_stats || has_timestamp, |this| {
-                let worktree_full_path = self.worktree_full_path.clone().unwrap_or_default();
-                let worktree_label = self.worktree.map(|worktree| {
-                    let positions = self.worktree_highlight_positions;
-                    if positions.is_empty() {
-                        Label::new(worktree)
+                // Collect all full paths for the shared tooltip.
+                let worktree_tooltip: SharedString = self
+                    .worktrees
+                    .iter()
+                    .map(|wt| wt.full_path.as_ref())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    .into();
+                let worktree_tooltip_title = if self.worktrees.len() > 1 {
+                    "Thread Running in Local Git Worktrees"
+                } else {
+                    "Thread Running in a Local Git Worktree"
+                };
+
+                // Deduplicate chips by name — e.g. two paths both named
+                // "olivetti" produce a single chip. Highlight positions
+                // come from the first occurrence.
+                let mut seen_names: Vec<SharedString> = Vec::new();
+                let mut worktree_chips: Vec<AnyElement> = Vec::new();
+                for wt in self.worktrees {
+                    if seen_names.contains(&wt.name) {
+                        continue;
+                    }
+                    let chip_index = seen_names.len();
+                    seen_names.push(wt.name.clone());
+                    let label = if wt.highlight_positions.is_empty() {
+                        Label::new(wt.name)
                             .size(LabelSize::Small)
                             .color(Color::Muted)
                             .into_any_element()
                     } else {
-                        HighlightedLabel::new(worktree, positions)
+                        HighlightedLabel::new(wt.name, wt.highlight_positions)
                             .size(LabelSize::Small)
                             .color(Color::Muted)
                             .into_any_element()
-                    }
-                });
+                    };
+                    let tooltip_title = worktree_tooltip_title;
+                    let tooltip_meta = worktree_tooltip.clone();
+                    worktree_chips.push(
+                        h_flex()
+                            .id(format!("{}-worktree-{chip_index}", self.id.clone()))
+                            .gap_0p5()
+                            .child(
+                                Icon::new(IconName::GitWorktree)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                            .child(label)
+                            .tooltip(move |_, cx| {
+                                Tooltip::with_meta(tooltip_title, None, tooltip_meta.clone(), cx)
+                            })
+                            .into_any_element(),
+                    );
+                }
 
                 this.child(
                     h_flex()
                         .min_w_0()
                         .gap_1p5()
                         .child(icon_container()) // Icon Spacing
-                        .when_some(worktree_label, |this, label| {
+                        .when_some(project_paths, |this, paths| {
                             this.child(
-                                h_flex()
-                                    .id(format!("{}-worktree", self.id.clone()))
-                                    .gap_0p5()
-                                    .child(
-                                        Icon::new(IconName::GitWorktree)
-                                            .size(IconSize::XSmall)
-                                            .color(Color::Muted),
-                                    )
-                                    .child(label)
-                                    .tooltip(move |_, cx| {
-                                        Tooltip::with_meta(
-                                            "Thread Running in a Local Git Worktree",
-                                            None,
-                                            worktree_full_path.clone(),
-                                            cx,
-                                        )
-                                    }),
+                                Label::new(paths)
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted)
+                                    .into_any_element(),
                             )
                         })
-                        .when(has_worktree && (has_diff_stats || has_timestamp), |this| {
+                        .when(has_project_paths && has_worktree, |this| {
                             this.child(dot_separator())
                         })
+                        .children(worktree_chips)
+                        .when(
+                            (has_project_paths || has_worktree)
+                                && (has_diff_stats || has_timestamp),
+                            |this| this.child(dot_separator()),
+                        )
                         .when(has_diff_stats, |this| {
                             this.child(
                                 DiffStat::new(diff_stat_id, added_count, removed_count)
@@ -526,7 +574,11 @@ impl Component for ThreadItem {
                         ThreadItem::new("ti-4", "Add line numbers option to FileEditBlock")
                             .icon(IconName::AiClaude)
                             .timestamp("2w")
-                            .worktree("link-agent-panel"),
+                            .worktrees(vec![ThreadItemWorktreeInfo {
+                                name: "link-agent-panel".into(),
+                                full_path: "link-agent-panel".into(),
+                                highlight_positions: Vec::new(),
+                            }]),
                     )
                     .into_any_element(),
             ),
@@ -548,7 +600,11 @@ impl Component for ThreadItem {
                     .child(
                         ThreadItem::new("ti-5b", "Full metadata example")
                             .icon(IconName::AiClaude)
-                            .worktree("my-project")
+                            .worktrees(vec![ThreadItemWorktreeInfo {
+                                name: "my-project".into(),
+                                full_path: "my-project".into(),
+                                highlight_positions: Vec::new(),
+                            }])
                             .added(42)
                             .removed(17)
                             .timestamp("3w"),
@@ -623,8 +679,11 @@ impl Component for ThreadItem {
                         ThreadItem::new("ti-11", "Search in worktree name")
                             .icon(IconName::AiClaude)
                             .timestamp("3mo")
-                            .worktree("my-project-name")
-                            .worktree_highlight_positions(vec![3, 4, 5, 6, 7, 8, 9, 10, 11]),
+                            .worktrees(vec![ThreadItemWorktreeInfo {
+                                name: "my-project-name".into(),
+                                full_path: "my-project-name".into(),
+                                highlight_positions: vec![3, 4, 5, 6, 7, 8, 9, 10, 11],
+                            }]),
                     )
                     .into_any_element(),
             ),

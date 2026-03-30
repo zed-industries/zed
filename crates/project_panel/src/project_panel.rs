@@ -58,7 +58,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{
     Color, ContextMenu, ContextMenuEntry, DecoratedIcon, Divider, Icon, IconDecoration,
     IconDecorationKind, IndentGuideColors, IndentGuideLayout, Indicator, KeyBinding, Label,
@@ -82,7 +82,10 @@ use zed_actions::{
     workspace::OpenWithSystem,
 };
 
-use crate::undo::{ProjectPanelOperation, UndoManager};
+use crate::{
+    project_panel_settings::ProjectPanelScrollbarProxy,
+    undo::{ProjectPanelOperation, UndoManager},
+};
 
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
@@ -7038,8 +7041,9 @@ impl Render for ProjectPanel {
                 )
                 .custom_scrollbars(
                     {
-                        let mut scrollbars = Scrollbars::for_settings::<ProjectPanelSettings>()
-                            .tracked_scroll_handle(&self.scroll_handle);
+                        let mut scrollbars =
+                            Scrollbars::for_settings::<ProjectPanelScrollbarProxy>()
+                                .tracked_scroll_handle(&self.scroll_handle);
                         if horizontal_scroll {
                             scrollbars = scrollbars.with_track_along(
                                 ScrollAxes::Horizontal,
@@ -7239,7 +7243,7 @@ impl Panel for ProjectPanel {
     }
 
     fn activation_priority(&self) -> u32 {
-        0
+        1
     }
 }
 

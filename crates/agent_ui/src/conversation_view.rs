@@ -13,6 +13,7 @@ use agent_servers::AgentServerDelegate;
 use agent_servers::{AgentServer, GEMINI_TERMINAL_AUTH_METHOD_ID};
 use agent_settings::{AgentProfileId, AgentSettings};
 use anyhow::{Result, anyhow};
+#[cfg(feature = "audio")]
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
 use client::zed_urls;
@@ -42,14 +43,14 @@ use prompt_store::{PromptId, PromptStore};
 use crate::DEFAULT_THREAD_TITLE;
 use crate::message_editor::SessionCapabilities;
 use rope::Point;
-use settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore};
+use settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore, ThinkingBlockDisplay};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 use std::{collections::BTreeMap, rc::Rc, time::Duration};
 use terminal_view::terminal_panel::TerminalPanel;
 use text::Anchor;
-use theme::AgentFontSize;
+use theme_settings::AgentFontSize;
 use ui::{
     Callout, CircularProgress, CommonAnimationExt, ContextMenu, ContextMenuEntry, CopyButton,
     DecoratedIcon, DiffStat, Disclosure, Divider, DividerColor, IconDecoration, IconDecorationKind,
@@ -77,7 +78,7 @@ use crate::agent_diff::AgentDiff;
 use crate::entry_view_state::{EntryViewEvent, ViewEvent};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
-use crate::thread_metadata_store::SidebarThreadMetadataStore;
+use crate::thread_metadata_store::ThreadMetadataStore;
 use crate::ui::{AgentNotification, AgentNotificationEvent};
 use crate::{
     Agent, AgentDiffPane, AgentInitialContent, AgentPanel, AllowAlways, AllowOnce,
@@ -235,6 +236,20 @@ impl Conversation {
             tool_id.clone(),
             options,
         ))
+    }
+
+    pub fn subagents_awaiting_permission(&self, cx: &App) -> Vec<(acp::SessionId, usize)> {
+        self.permission_requests
+            .iter()
+            .filter_map(|(session_id, tool_call_ids)| {
+                let thread = self.threads.get(session_id)?;
+                if thread.read(cx).parent_session_id().is_some() && !tool_call_ids.is_empty() {
+                    Some((session_id.clone(), tool_call_ids.len()))
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     pub fn authorize_pending_tool_call(
@@ -795,7 +810,7 @@ impl ConversationView {
         });
 
         let count = thread.read(cx).entries().len();
-        let list_state = ListState::new(0, gpui::ListAlignment::Bottom, px(2048.0));
+        let list_state = ListState::new(0, gpui::ListAlignment::Top, px(2048.0));
         entry_view_state.update(cx, |view_state, cx| {
             for ix in 0..count {
                 view_state.sync_entry(ix, &thread, window, cx);
@@ -1215,6 +1230,9 @@ impl ConversationView {
                                 .and_then(|entry| entry.focus_handle(cx))],
                         );
                     });
+                    active.update(cx, |active, cx| {
+                        active.sync_editor_mode_for_empty_state(cx);
+                    });
                 }
             }
             AcpThreadEvent::EntryUpdated(index) => {
@@ -1234,6 +1252,9 @@ impl ConversationView {
                     let list_state = active.read(cx).list_state.clone();
                     entry_view_state.update(cx, |view_state, _cx| view_state.remove(range.clone()));
                     list_state.splice(range.clone(), 0);
+                    active.update(cx, |active, cx| {
+                        active.sync_editor_mode_for_empty_state(cx);
+                    });
                 }
             }
             AcpThreadEvent::SubagentSpawned(session_id) => self.load_subagent_session(
@@ -1255,9 +1276,11 @@ impl ConversationView {
             }
             AcpThreadEvent::Stopped(stop_reason) => {
                 if let Some(active) = self.thread_view(&thread_id) {
-                    active.update(cx, |active, _cx| {
+                    active.update(cx, |active, cx| {
                         active.thread_retry_status.take();
                         active.clear_auto_expand_tracking();
+                        active.list_state.set_follow_tail(false);
+                        active.sync_generating_indicator(cx);
                     });
                 }
                 if is_subagent {
@@ -1325,8 +1348,10 @@ impl ConversationView {
             }
             AcpThreadEvent::Error => {
                 if let Some(active) = self.thread_view(&thread_id) {
-                    active.update(cx, |active, _cx| {
+                    active.update(cx, |active, cx| {
                         active.thread_retry_status.take();
+                        active.list_state.set_follow_tail(false);
+                        active.sync_generating_indicator(cx);
                     });
                 }
                 if !is_subagent {
@@ -2254,6 +2279,7 @@ impl ConversationView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        #[cfg(feature = "audio")]
         self.play_notification_sound(window, cx);
         self.show_notification(caption, icon, window, cx);
     }
@@ -2283,7 +2309,7 @@ impl ConversationView {
 
     fn play_notification_sound(&self, window: &Window, cx: &mut App) {
         let settings = AgentSettings::get_global(cx);
-        let visible = window.is_window_active()
+        let _visible = window.is_window_active()
             && if let Some(mw) = window.root::<MultiWorkspace>().flatten() {
                 self.agent_panel_visible(&mw, cx)
             } else {
@@ -2291,7 +2317,8 @@ impl ConversationView {
                     .upgrade()
                     .is_some_and(|workspace| AgentPanel::is_visible(&workspace, cx))
             };
-        if settings.play_sound_when_agent_done && !visible {
+        #[cfg(feature = "audio")]
+        if settings.play_sound_when_agent_done && !_visible {
             Audio::play_sound(Sound::AgentDone, cx);
         }
     }
@@ -2545,7 +2572,7 @@ impl ConversationView {
         let task = history.update(cx, |history, cx| history.delete_session(&session_id, cx));
         task.detach_and_log_err(cx);
 
-        if let Some(store) = SidebarThreadMetadataStore::try_global(cx) {
+        if let Some(store) = ThreadMetadataStore::try_global(cx) {
             store.update(cx, |store, cx| store.delete(session_id.clone(), cx));
         }
     }
@@ -4232,8 +4259,8 @@ pub(crate) mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            SidebarThreadMetadataStore::init_global(cx);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            ThreadMetadataStore::init_global(cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
             agent_panel::init(cx);
             release_channel::init(semver::Version::new(0, 0, 0), cx);
@@ -6186,13 +6213,13 @@ pub(crate) mod tests {
             match error {
                 Some(ThreadError::Other { message, .. }) => {
                     assert!(
-                        message.contains("Max tokens reached"),
-                        "Expected 'Max tokens reached' error, got: {}",
+                        message.contains("Maximum tokens reached"),
+                        "Expected 'Maximum tokens reached' error, got: {}",
                         message
                     );
                 }
                 other => panic!(
-                    "Expected ThreadError::Other with 'Max tokens reached', got: {:?}",
+                    "Expected ThreadError::Other with 'Maximum tokens reached', got: {:?}",
                     other.is_some()
                 ),
             }

@@ -204,7 +204,7 @@ async fn test_diagnostics_refresh_suppressed_while_following(cx: &mut TestAppCon
 
     let app_state = cx.update(|cx| {
         let app_state = AppState::test(cx);
-        AppState::set_global(Arc::downgrade(&app_state), cx);
+        AppState::set_global(app_state.clone(), cx);
         app_state
     });
 
@@ -214,7 +214,7 @@ async fn test_diagnostics_refresh_suppressed_while_following(cx: &mut TestAppCon
         .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
         .unwrap();
     cx.update(|cx| {
-        AppState::set_global(Arc::downgrade(workspace.read(cx).app_state()), cx);
+        AppState::set_global(workspace.read(cx).app_state().clone(), cx);
     });
     let _ = app_state;
 

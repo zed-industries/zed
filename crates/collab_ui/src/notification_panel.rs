@@ -640,7 +640,7 @@ impl Panel for NotificationPanel {
     }
 
     fn activation_priority(&self) -> u32 {
-        3
+        4
     }
 }
 

@@ -33,6 +33,7 @@ mod text_thread_editor;
 mod text_thread_history;
 mod thread_history;
 mod thread_history_view;
+mod thread_import;
 pub mod thread_metadata_store;
 pub mod threads_archive_view;
 mod ui;
@@ -250,6 +251,16 @@ pub enum Agent {
         #[serde(rename = "name")]
         id: AgentId,
     },
+}
+
+impl From<AgentId> for Agent {
+    fn from(id: AgentId) -> Self {
+        if id.as_ref() == agent::ZED_AGENT_ID.as_ref() {
+            Self::NativeAgent
+        } else {
+            Self::Custom { id }
+        }
+    }
 }
 
 impl Agent {
@@ -636,6 +647,7 @@ mod tests {
             enabled: true,
             button: true,
             dock: DockPosition::Right,
+            flexible: true,
             default_width: px(300.),
             default_height: px(600.),
             default_model: None,
@@ -648,7 +660,6 @@ mod tests {
             default_profile: AgentProfileId::default(),
             default_view: DefaultAgentView::Thread,
             profiles: Default::default(),
-
             notify_when_agent_waiting: NotifyWhenAgentWaiting::default(),
             play_sound_when_agent_done: false,
             single_file_review: false,
@@ -662,6 +673,8 @@ mod tests {
             tool_permissions: Default::default(),
             show_turn_stats: false,
             new_thread_location: Default::default(),
+            sidebar_side: Default::default(),
+            thinking_display: Default::default(),
         };
 
         cx.update(|cx| {

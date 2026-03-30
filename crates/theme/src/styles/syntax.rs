@@ -57,8 +57,8 @@ impl SyntaxTheme {
         )
     }
 
-    pub fn get(&self, highlight_index: usize) -> Option<&HighlightStyle> {
-        self.highlights.get(highlight_index)
+    pub fn get(&self, highlight_index: impl Into<usize>) -> Option<&HighlightStyle> {
+        self.highlights.get(highlight_index.into())
     }
 
     pub fn style_for_name(&self, name: &str) -> Option<HighlightStyle> {
@@ -67,7 +67,8 @@ impl SyntaxTheme {
             .map(|highlight_idx| self.highlights[*highlight_idx])
     }
 
-    pub fn get_capture_name(&self, idx: usize) -> Option<&str> {
+    pub fn get_capture_name(&self, idx: impl Into<usize>) -> Option<&str> {
+        let idx = idx.into();
         self.capture_name_map
             .iter()
             .find(|(_, value)| **value == idx)
