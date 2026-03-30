@@ -811,9 +811,10 @@ impl AgentPanel {
                 .ok()
                 .flatten();
 
-            let serialized_panel = cx
+            let load_kvp = kvp.clone();
+            let mut serialized_panel = cx
                 .background_spawn(async move {
-                    kvp.and_then(|kvp| {
+                    load_kvp.and_then(|kvp| {
                         workspace_id
                             .and_then(|id| read_serialized_panel(id, &kvp))
                             .or_else(|| read_legacy_serialized_panel(&kvp))
@@ -834,6 +835,7 @@ impl AgentPanel {
                 })?
                 .await?;
 
+            let mut serialized_panel_to_save = None;
             let last_active_thread = if let Some(thread_info) = serialized_panel
                 .as_ref()
                 .and_then(|p| p.last_active_thread.as_ref())
@@ -856,6 +858,14 @@ impl AgentPanel {
                             "last active thread {} not found in database, skipping restoration",
                             thread_info.session_id
                         );
+                        if let Some(serialized_panel) = serialized_panel.as_mut() {
+                            serialized_panel.last_active_thread = None;
+                            serialized_panel_to_save = Some(SerializedAgentPanel {
+                                selected_agent: serialized_panel.selected_agent.clone(),
+                                last_active_thread: None,
+                                start_thread_in: serialized_panel.start_thread_in,
+                            });
+                        }
                         None
                     }
                 } else {
@@ -864,6 +874,17 @@ impl AgentPanel {
             } else {
                 None
             };
+
+            if let (Some(workspace_id), Some(kvp), Some(serialized_panel)) =
+                (workspace_id, kvp, serialized_panel_to_save)
+            {
+                cx.background_spawn(async move {
+                    save_serialized_panel(workspace_id, serialized_panel, kvp)
+                        .await
+                        .log_err();
+                })
+                .detach();
+            }
 
             let panel = workspace.update_in(cx, |workspace, window, cx| {
                 let panel =
@@ -6034,6 +6055,78 @@ mod tests {
                 "thread target should survive serialization round-trip"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_load_clears_missing_last_active_thread(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+
+        let workspace_id = workspace
+            .read_with(cx, |workspace, _cx| workspace.database_id())
+            .unwrap();
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let kvp = cx.update(|_window, cx| KeyValueStore::global(cx));
+        save_serialized_panel(
+            workspace_id,
+            SerializedAgentPanel {
+                selected_agent: Some(AgentType::NativeAgent),
+                last_active_thread: Some(SerializedActiveThread {
+                    session_id: "missing-thread".to_string(),
+                    agent_type: AgentType::NativeAgent,
+                    title: Some("Missing thread".to_string()),
+                    work_dirs: None,
+                }),
+                start_thread_in: Some(StartThreadIn::LocalProject),
+            },
+            kvp.clone(),
+        )
+        .await
+        .expect("seed serialized panel");
+
+        let prompt_builder = Arc::new(prompt_store::PromptBuilder::new(None).unwrap());
+        let async_cx = cx.update(|window, cx| window.to_async(cx));
+        let loaded_panel = AgentPanel::load(workspace.downgrade(), prompt_builder, async_cx)
+            .await
+            .expect("panel load should succeed");
+        cx.run_until_parked();
+
+        loaded_panel.read_with(cx, |panel, _cx| {
+            assert_eq!(panel.selected_agent_type, AgentType::NativeAgent);
+            assert!(
+                panel.active_conversation_view().is_none(),
+                "missing thread should not be restored"
+            );
+        });
+
+        let saved_panel = read_serialized_panel(workspace_id, &kvp)
+            .expect("serialized panel should still exist after load");
+        assert!(
+            saved_panel.last_active_thread.is_none(),
+            "loading should clear stale last_active_thread state"
+        );
     }
 
     #[gpui::test]
