@@ -5283,6 +5283,7 @@ dependencies = [
  "client",
  "cloud_llm_client",
  "collections",
+ "criterion",
  "db",
  "debug_adapter_extension",
  "dirs 4.0.0",
