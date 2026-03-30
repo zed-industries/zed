@@ -261,6 +261,7 @@ pub struct Markdown {
     copied_code_blocks: HashSet<ElementId>,
     code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
     context_menu_selected_text: Option<String>,
+    details_open_states: BTreeMap<usize, bool>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -350,6 +351,7 @@ impl Markdown {
             copied_code_blocks: HashSet::default(),
             code_block_scroll_handles: BTreeMap::default(),
             context_menu_selected_text: None,
+            details_open_states: BTreeMap::default(),
         };
         this.parse(cx);
         this
