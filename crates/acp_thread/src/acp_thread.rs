@@ -2241,16 +2241,17 @@ impl AcpThread {
                             cx.emit(AcpThreadEvent::Error);
                             log::error!("Max tokens reached. Usage: {:?}", this.token_usage);
 
-                            let exceeded_max_output_tokens = this
-                                .token_usage
-                                .as_ref()
-                                .is_some_and(|u| {
+                            let exceeded_max_output_tokens =
+                                this.token_usage.as_ref().is_some_and(|u| {
                                     u.max_output_tokens
                                         .is_some_and(|max| u.output_tokens >= max)
                                 });
 
                             let message = if exceeded_max_output_tokens {
-                                log::error!("Max output tokens reached. Usage: {:?}", this.token_usage);
+                                log::error!(
+                                    "Max output tokens reached. Usage: {:?}",
+                                    this.token_usage
+                                );
                                 "Maximum output tokens reached"
                             } else {
                                 log::error!("Max tokens reached. Usage: {:?}", this.token_usage);
