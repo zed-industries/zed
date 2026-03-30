@@ -5,7 +5,6 @@ use crate::Editor;
 use collections::HashMap;
 use gpui::AsyncApp;
 use gpui::{App, Entity, Task};
-use itertools::Itertools;
 use language::Buffer;
 use language::Language;
 use lsp::LanguageServerId;
@@ -33,31 +32,38 @@ where
     F: Fn(&Language) -> bool,
 {
     let project = editor.project.clone()?;
-    let singleton_buffer_id = editor
-        .buffer()
-        .read(cx)
-        .as_singleton()
-        .map(|buffer| buffer.read(cx).remote_id());
+    let multi_buffer = editor.buffer();
+    let mut seen_buffer_ids = Vec::new();
     editor
         .selections
         .disjoint_anchors_arc()
         .iter()
-        .filter_map(|selection| {
+        .find_map(|selection| {
             let head = selection.head();
-            let buffer_id = head.text_anchor.buffer_id.or(singleton_buffer_id);
-            Some((head, buffer_id?))
-        })
-        .unique_by(|(_, buffer_id)| *buffer_id)
-        .find_map(|(trigger_anchor, buffer_id)| {
-            let buffer = editor.buffer().read(cx).buffer(buffer_id)?;
-            let language = buffer.read(cx).language_at(trigger_anchor.text_anchor)?;
+            let (buffer_id, buffer) = {
+                let multi_buffer_ref = multi_buffer.read(cx);
+                let snapshot = multi_buffer_ref.read(cx);
+                let buffer_id = snapshot
+                    .buffer_id_for_anchor(head)
+                    .or_else(|| snapshot.buffer_id_for_anchor(selection.tail()))?;
+                drop(snapshot);
+                let buffer = multi_buffer_ref.buffer(buffer_id)?;
+                (buffer_id, buffer)
+            };
+
+            if seen_buffer_ids.contains(&buffer_id) {
+                return None;
+            }
+            seen_buffer_ids.push(buffer_id);
+
+            let language = buffer.read(cx).language_at(head.text_anchor)?;
             if filter_language(&language) {
                 let server_id = buffer.update(cx, |buffer, cx| {
                     project
                         .read(cx)
                         .language_server_id_for_name(buffer, &language_server_name, cx)
                 })?;
-                Some((trigger_anchor, language, server_id, buffer))
+                Some((head, language, server_id, buffer))
             } else {
                 None
             }
@@ -185,12 +191,14 @@ pub fn lsp_tasks(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use futures::StreamExt as _;
-    use gpui::{AppContext as _, TestAppContext};
-    use language::FakeLspAdapter;
+    use gpui::{App, AppContext as _, Entity, TestAppContext};
+    use language::{FakeLspAdapter, Language};
     use languages::rust_lang;
-    use lsp::LanguageServerName;
-    use multi_buffer::{MultiBuffer, MultiBufferOffset};
+    use lsp::{LanguageServerId, LanguageServerName};
+    use multi_buffer::{Anchor, MultiBuffer, MultiBufferOffset};
     use project::{FakeFs, Project};
     use util::path;
 
@@ -212,35 +220,57 @@ mod tests {
         let mut fake_servers =
             language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
 
-        let buffer = project
+        let underlying_buffer = project
             .update(cx, |project, cx| {
                 project.open_local_buffer(path!("/file.rs"), cx)
             })
             .await
             .unwrap();
 
-        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(underlying_buffer.clone(), cx));
         let (editor, cx) = cx.add_window_view(|window, cx| {
             build_editor_with_project(project.clone(), buffer, window, cx)
         });
 
-        let _fake_server = fake_servers.next().await.unwrap();
+        let fake_server = fake_servers.next().await.unwrap();
         cx.executor().run_until_parked();
 
+        let expected_server_id = fake_server.server.server_id();
         let language_server_name = LanguageServerName::new_static("the-fake-language-server");
-        let filter = |language: &language::Language| language.name().as_ref() == "Rust";
+        let filter = |language: &Language| language.name().as_ref() == "Rust";
 
-        // Cursor at beginning of file (default position) — should find server.
-        editor.update(cx, |editor, cx| {
-            let result = find_specific_language_server_in_selection(
-                editor,
-                cx,
-                filter,
-                language_server_name.clone(),
+        let assert_result = |result: Option<(
+            Anchor,
+            Arc<Language>,
+            LanguageServerId,
+            Entity<language::Buffer>,
+        )>,
+                             cx: &App,
+                             message: &str| {
+            let (_, language, server_id, buffer) = result.expect(message);
+            assert_eq!(
+                language.name().as_ref(),
+                "Rust",
+                "{message}: wrong language"
             );
+            assert_eq!(server_id, expected_server_id, "{message}: wrong server ID");
+            assert_eq!(buffer, underlying_buffer, "{message}: wrong buffer");
             assert!(
-                result.is_some(),
-                "should find language server at beginning of file"
+                buffer.read(cx).file().is_some(),
+                "{message}: buffer should have a file"
+            );
+        };
+
+        editor.update(cx, |editor, cx| {
+            assert_result(
+                find_specific_language_server_in_selection(
+                    editor,
+                    cx,
+                    filter,
+                    language_server_name.clone(),
+                ),
+                cx,
+                "should find correct language server at beginning of file",
             );
         });
 
@@ -248,23 +278,20 @@ mod tests {
         editor.update_in(cx, |editor, window, cx| {
             let text_len = editor.text(cx).len();
             editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                s.select_ranges([
-                    MultiBufferOffset(text_len)..MultiBufferOffset(text_len),
-                ])
+                s.select_ranges([MultiBufferOffset(text_len)..MultiBufferOffset(text_len)])
             });
         });
 
-        // Cursor at end of file — should still find server.
         editor.update(cx, |editor, cx| {
-            let result = find_specific_language_server_in_selection(
-                editor,
+            assert_result(
+                find_specific_language_server_in_selection(
+                    editor,
+                    cx,
+                    filter,
+                    language_server_name.clone(),
+                ),
                 cx,
-                filter,
-                language_server_name.clone(),
-            );
-            assert!(
-                result.is_some(),
-                "should find language server at end of file"
+                "should find correct language server at end of file",
             );
         });
     }
