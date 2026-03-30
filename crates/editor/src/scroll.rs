@@ -5,8 +5,7 @@ pub(crate) mod scroll_amount;
 use crate::editor_settings::ScrollBeyondLastLine;
 use crate::{
     Anchor, DisplayPoint, DisplayRow, Editor, EditorEvent, EditorMode, EditorSettings,
-    InlayHintRefreshReason, MultiBufferSnapshot, RowExt, ToPoint,
-    SizingBehavior,
+    InlayHintRefreshReason, MultiBufferSnapshot, RowExt, SizingBehavior, ToPoint,
     display_map::{DisplaySnapshot, ToDisplayPoint},
     hover_popover::hide_hover,
     persistence::EditorDb,
@@ -640,19 +639,17 @@ impl Editor {
         self.scroll_manager.vertical_scroll_margin as usize
     }
 
-    pub(crate) fn effective_scroll_beyond_last_line(&self, cx: &App) -> ScrollBeyondLastLine {
+    pub(crate) fn scroll_beyond_last_line(&self, cx: &App) -> ScrollBeyondLastLine {
         match self.mode {
-            EditorMode::SingleLine | EditorMode::AutoHeight { .. } => ScrollBeyondLastLine::Off,
-            EditorMode::Full {
-                sizing_behavior: SizingBehavior::ExcludeOverscrollMargin
-                    | SizingBehavior::SizeByContent,
-                ..
-            } => ScrollBeyondLastLine::Off,
-            EditorMode::Full {
+            EditorMode::Minimap { .. }
+            | EditorMode::Full {
                 sizing_behavior: SizingBehavior::Default,
                 ..
+            } => EditorSettings::get_global(cx).scroll_beyond_last_line,
+
+            EditorMode::Full { .. } | EditorMode::SingleLine | EditorMode::AutoHeight { .. } => {
+                ScrollBeyondLastLine::Off
             }
-            | EditorMode::Minimap { .. } => EditorSettings::get_global(cx).scroll_beyond_last_line,
         }
     }
 
@@ -793,7 +790,7 @@ impl Editor {
         } else {
             scroll_position
         };
-        let scroll_beyond_last_line = self.effective_scroll_beyond_last_line(cx);
+        let scroll_beyond_last_line = self.scroll_beyond_last_line(cx);
         self.scroll_manager.set_scroll_position(
             adjusted_position,
             &display_map,

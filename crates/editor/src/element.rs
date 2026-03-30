@@ -9772,8 +9772,7 @@ impl Element for EditorElement {
                         f64::from(visible_bounds.size.height / line_height);
 
                     // The max scroll position for the top of the window
-                    let scroll_beyond_last_line =
-                        self.editor.read(cx).effective_scroll_beyond_last_line(cx);
+                    let scroll_beyond_last_line = self.editor.read(cx).scroll_beyond_last_line(cx);
                     let max_scroll_top = match scroll_beyond_last_line {
                         ScrollBeyondLastLine::OnePage => max_row,
                         ScrollBeyondLastLine::Off => (max_row - height_in_lines + 1.).max(0.),
