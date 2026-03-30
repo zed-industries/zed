@@ -32,9 +32,6 @@
 /crates/agent_ui/ @zed-industries/ai-team
 /crates/ai_onboarding/ @zed-industries/ai-team
 /crates/anthropic/ @zed-industries/ai-team
-/crates/assistant_slash_command/ @zed-industries/ai-team
-/crates/assistant_slash_commands/ @zed-industries/ai-team
-/crates/assistant_text_thread/ @zed-industries/ai-team
 /crates/bedrock/ @zed-industries/ai-team
 /crates/cloud_llm_client/ @zed-industries/ai-team
 /crates/codestral/ @zed-industries/ai-team
