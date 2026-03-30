@@ -11,6 +11,7 @@ use feature_flags::FeatureFlagAppExt as _;
 use fs::FakeFs;
 use gpui::TestAppContext;
 use pretty_assertions::assert_eq;
+use project::AgentId;
 use settings::SettingsStore;
 use std::{path::PathBuf, sync::Arc};
 use util::path_list::PathList;
@@ -30,9 +31,11 @@ fn init_test(cx: &mut TestAppContext) {
 }
 
 fn has_thread_entry(sidebar: &Sidebar, session_id: &acp::SessionId) -> bool {
-    sidebar.contents.entries.iter().any(
-        |entry| matches!(entry, ListEntry::Thread(t) if &t.session_info.session_id == session_id),
-    )
+    sidebar
+        .contents
+        .entries
+        .iter()
+        .any(|entry| matches!(entry, ListEntry::Thread(t) if &t.metadata.session_id == session_id))
 }
 
 async fn init_test_project(
@@ -176,12 +179,7 @@ fn visible_entries_as_strings(
                         format!("{} [{}]{}", icon, label, selected)
                     }
                     ListEntry::Thread(thread) => {
-                        let title = thread
-                            .session_info
-                            .title
-                            .as_ref()
-                            .map(|s| s.as_ref())
-                            .unwrap_or("Untitled");
+                        let title = thread.metadata.title.as_ref();
                         let active = if thread.is_live { " *" } else { "" };
                         let status_str = match thread.status {
                             AgentThreadStatus::Running => " (running)",
@@ -191,7 +189,7 @@ fn visible_entries_as_strings(
                         };
                         let notified = if sidebar
                             .contents
-                            .is_thread_notified(&thread.session_info.session_id)
+                            .is_thread_notified(&thread.metadata.session_id)
                         {
                             " (!)"
                         } else {
@@ -566,13 +564,14 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
             },
             ListEntry::Thread(ThreadEntry {
                 agent: Agent::NativeAgent,
-                session_info: acp_thread::AgentSessionInfo {
+                metadata: ThreadMetadata {
                     session_id: acp::SessionId::new(Arc::from("t-1")),
-                    work_dirs: None,
-                    title: Some("Completed thread".into()),
-                    updated_at: Some(Utc::now()),
+                    agent_id: AgentId::new("zed-agent"),
+                    folder_paths: PathList::default(),
+                    title: "Completed thread".into(),
+                    updated_at: Utc::now(),
                     created_at: Some(Utc::now()),
-                    meta: None,
+                    archived: false,
                 },
                 icon: IconName::ZedAgent,
                 icon_from_external_svg: None,
@@ -588,13 +587,14 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
             // Active thread with Running status
             ListEntry::Thread(ThreadEntry {
                 agent: Agent::NativeAgent,
-                session_info: acp_thread::AgentSessionInfo {
+                metadata: ThreadMetadata {
                     session_id: acp::SessionId::new(Arc::from("t-2")),
-                    work_dirs: None,
-                    title: Some("Running thread".into()),
-                    updated_at: Some(Utc::now()),
+                    agent_id: AgentId::new("zed-agent"),
+                    folder_paths: PathList::default(),
+                    title: "Running thread".into(),
+                    updated_at: Utc::now(),
                     created_at: Some(Utc::now()),
-                    meta: None,
+                    archived: false,
                 },
                 icon: IconName::ZedAgent,
                 icon_from_external_svg: None,
@@ -610,13 +610,14 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
             // Active thread with Error status
             ListEntry::Thread(ThreadEntry {
                 agent: Agent::NativeAgent,
-                session_info: acp_thread::AgentSessionInfo {
+                metadata: ThreadMetadata {
                     session_id: acp::SessionId::new(Arc::from("t-3")),
-                    work_dirs: None,
-                    title: Some("Error thread".into()),
-                    updated_at: Some(Utc::now()),
+                    agent_id: AgentId::new("zed-agent"),
+                    folder_paths: PathList::default(),
+                    title: "Error thread".into(),
+                    updated_at: Utc::now(),
                     created_at: Some(Utc::now()),
-                    meta: None,
+                    archived: false,
                 },
                 icon: IconName::ZedAgent,
                 icon_from_external_svg: None,
@@ -632,13 +633,14 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
             // Thread with WaitingForConfirmation status, not active
             ListEntry::Thread(ThreadEntry {
                 agent: Agent::NativeAgent,
-                session_info: acp_thread::AgentSessionInfo {
+                metadata: ThreadMetadata {
                     session_id: acp::SessionId::new(Arc::from("t-4")),
-                    work_dirs: None,
-                    title: Some("Waiting thread".into()),
-                    updated_at: Some(Utc::now()),
+                    agent_id: AgentId::new("zed-agent"),
+                    folder_paths: PathList::default(),
+                    title: "Waiting thread".into(),
+                    updated_at: Utc::now(),
                     created_at: Some(Utc::now()),
-                    meta: None,
+                    archived: false,
                 },
                 icon: IconName::ZedAgent,
                 icon_from_external_svg: None,
@@ -654,13 +656,14 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
             // Background thread that completed (should show notification)
             ListEntry::Thread(ThreadEntry {
                 agent: Agent::NativeAgent,
-                session_info: acp_thread::AgentSessionInfo {
+                metadata: ThreadMetadata {
                     session_id: acp::SessionId::new(Arc::from("t-5")),
-                    work_dirs: None,
-                    title: Some("Notified thread".into()),
-                    updated_at: Some(Utc::now()),
+                    agent_id: AgentId::new("zed-agent"),
+                    folder_paths: PathList::default(),
+                    title: "Notified thread".into(),
+                    updated_at: Utc::now(),
                     created_at: Some(Utc::now()),
-                    meta: None,
+                    archived: false,
                 },
                 icon: IconName::ZedAgent,
                 icon_from_external_svg: None,
@@ -3231,24 +3234,14 @@ async fn test_clicking_worktree_thread_does_not_briefly_render_as_separate_proje
                     );
                 }
                 ListEntry::Thread(thread)
-                    if thread
-                        .session_info
-                        .title
-                        .as_ref()
-                        .map(|title| title.as_ref())
-                        == Some("WT Thread")
+                    if thread.metadata.title.as_ref() == "WT Thread"
                         && thread.worktrees.first().map(|wt| wt.name.as_ref())
                             == Some("wt-feature-a") =>
                 {
                     saw_expected_thread = true;
                 }
                 ListEntry::Thread(thread) => {
-                    let title = thread
-                        .session_info
-                        .title
-                        .as_ref()
-                        .map(|title| title.as_ref())
-                        .unwrap_or("Untitled");
+                    let title = thread.metadata.title.as_ref();
                     let worktree_name = thread
                         .worktrees
                         .first()

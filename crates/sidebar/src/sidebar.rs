@@ -4,7 +4,7 @@ use acp_thread::ThreadStatus;
 use action_log::DiffStats;
 use agent_client_protocol::{self as acp};
 use agent_settings::AgentSettings;
-use agent_ui::thread_metadata_store::ThreadMetadataStore;
+use agent_ui::thread_metadata_store::{ThreadMetadata, ThreadMetadataStore};
 use agent_ui::threads_archive_view::{
     ThreadsArchiveView, ThreadsArchiveViewEvent, format_history_entry_timestamp,
 };
@@ -120,7 +120,7 @@ struct WorktreeInfo {
 #[derive(Clone)]
 struct ThreadEntry {
     agent: Agent,
-    session_info: acp_thread::AgentSessionInfo,
+    metadata: ThreadMetadata,
     icon: IconName,
     icon_from_external_svg: Option<SharedString>,
     status: AgentThreadStatus,
@@ -140,7 +140,7 @@ impl ThreadEntry {
     /// but if we have a correspond thread already loaded we want to apply the
     /// live information.
     fn apply_active_info(&mut self, info: &ActiveThreadInfo) {
-        self.session_info.title = Some(info.title.clone());
+        self.metadata.title = info.title.clone();
         self.status = info.status;
         self.icon = info.icon;
         self.icon_from_external_svg = info.icon_from_external_svg.clone();
@@ -190,7 +190,7 @@ impl ListEntry {
 
     fn session_id(&self) -> Option<&acp::SessionId> {
         match self {
-            ListEntry::Thread(thread_entry) => Some(&thread_entry.session_info.session_id),
+            ListEntry::Thread(thread_entry) => Some(&thread_entry.metadata.session_id),
             _ => None,
         }
     }
@@ -689,7 +689,7 @@ impl Sidebar {
             .iter()
             .filter_map(|entry| match entry {
                 ListEntry::Thread(thread) if thread.is_live => {
-                    Some((thread.session_info.session_id.clone(), thread.status))
+                    Some((thread.metadata.session_id.clone(), thread.status))
                 }
                 _ => None,
             })
@@ -772,14 +772,7 @@ impl Sidebar {
                             worktree_info_from_thread_paths(&row.folder_paths, &project_groups);
                         threads.push(ThreadEntry {
                             agent,
-                            session_info: acp_thread::AgentSessionInfo {
-                                session_id: row.session_id.clone(),
-                                work_dirs: None,
-                                title: Some(row.title.clone()),
-                                updated_at: Some(row.updated_at),
-                                created_at: row.created_at,
-                                meta: None,
-                            },
+                            metadata: row,
                             icon,
                             icon_from_external_svg,
                             status: AgentThreadStatus::default(),
@@ -822,14 +815,7 @@ impl Sidebar {
                             worktree_info_from_thread_paths(&row.folder_paths, &project_groups);
                         threads.push(ThreadEntry {
                             agent,
-                            session_info: acp_thread::AgentSessionInfo {
-                                session_id: row.session_id.clone(),
-                                work_dirs: None,
-                                title: Some(row.title.clone()),
-                                updated_at: Some(row.updated_at),
-                                created_at: row.created_at,
-                                meta: None,
-                            },
+                            metadata: row,
                             icon,
                             icon_from_external_svg,
                             status: AgentThreadStatus::default(),
@@ -861,11 +847,11 @@ impl Sidebar {
                 // Merge live info into threads and update notification state
                 // in a single pass.
                 for thread in &mut threads {
-                    if let Some(info) = live_info_by_session.get(&thread.session_info.session_id) {
+                    if let Some(info) = live_info_by_session.get(&thread.metadata.session_id) {
                         thread.apply_active_info(info);
                     }
 
-                    let session_id = &thread.session_info.session_id;
+                    let session_id = &thread.metadata.session_id;
 
                     let is_thread_workspace_active = match &thread.workspace {
                         ThreadEntryWorkspace::Open(thread_workspace) => active_workspace
@@ -889,16 +875,16 @@ impl Sidebar {
                 threads.sort_by(|a, b| {
                     let a_time = self
                         .thread_last_message_sent_or_queued
-                        .get(&a.session_info.session_id)
+                        .get(&a.metadata.session_id)
                         .copied()
-                        .or(a.session_info.created_at)
-                        .or(a.session_info.updated_at);
+                        .or(a.metadata.created_at)
+                        .or(Some(a.metadata.updated_at));
                     let b_time = self
                         .thread_last_message_sent_or_queued
-                        .get(&b.session_info.session_id)
+                        .get(&b.metadata.session_id)
                         .copied()
-                        .or(b.session_info.created_at)
-                        .or(b.session_info.updated_at);
+                        .or(b.metadata.created_at)
+                        .or(Some(b.metadata.updated_at));
                     b_time.cmp(&a_time)
                 });
             } else {
@@ -919,12 +905,7 @@ impl Sidebar {
 
                 let mut matched_threads: Vec<ThreadEntry> = Vec::new();
                 for mut thread in threads {
-                    let title = thread
-                        .session_info
-                        .title
-                        .as_ref()
-                        .map(|s| s.as_ref())
-                        .unwrap_or("");
+                    let title: &str = &thread.metadata.title;
                     if let Some(positions) = fuzzy_match_positions(&query, title) {
                         thread.highlight_positions = positions;
                     }
@@ -959,7 +940,7 @@ impl Sidebar {
                 });
 
                 for thread in matched_threads {
-                    current_session_ids.insert(thread.session_info.session_id.clone());
+                    current_session_ids.insert(thread.metadata.session_id.clone());
                     entries.push(thread.into());
                 }
             } else {
@@ -1010,7 +991,7 @@ impl Sidebar {
                 for (index, thread) in threads.into_iter().enumerate() {
                     let is_hidden = index >= count;
 
-                    let session_id = &thread.session_info.session_id;
+                    let session_id = &thread.metadata.session_id;
                     if is_hidden {
                         let is_promoted = thread.status == AgentThreadStatus::Running
                             || thread.status == AgentThreadStatus::WaitingForConfirmation
@@ -1840,7 +1821,7 @@ impl Sidebar {
                 self.toggle_collapse(&path_list, window, cx);
             }
             ListEntry::Thread(thread) => {
-                let session_info = thread.session_info.clone();
+                let session_info = acp_thread::AgentSessionInfo::from(&thread.metadata);
                 match &thread.workspace {
                     ThreadEntryWorkspace::Open(workspace) => {
                         let workspace = workspace.clone();
@@ -2285,7 +2266,7 @@ impl Sidebar {
         // a blank new thread in the panel instead.
         if self.focused_thread.as_ref() == Some(session_id) {
             let current_pos = self.contents.entries.iter().position(|entry| {
-                matches!(entry, ListEntry::Thread(t) if &t.session_info.session_id == session_id)
+                matches!(entry, ListEntry::Thread(t) if &t.metadata.session_id == session_id)
             });
 
             // Find the workspace that owns this thread's project group by
@@ -2337,10 +2318,10 @@ impl Sidebar {
             });
 
             if let Some(next) = next_thread {
-                let next_session_id = next.session_info.session_id.clone();
+                let next_session_id = next.metadata.session_id.clone();
                 let next_agent = next.agent.clone();
-                let next_work_dirs = next.session_info.work_dirs.clone();
-                let next_title = next.session_info.title.clone();
+                let next_work_dirs = Some(next.metadata.folder_paths.clone());
+                let next_title = Some(next.metadata.title.clone());
                 // Use the thread's own workspace when it has one open (e.g. an absorbed
                 // linked worktree thread that appears under the main workspace's header
                 // but belongs to its own workspace). Loading into the wrong panel binds
@@ -2398,7 +2379,7 @@ impl Sidebar {
             AgentThreadStatus::Completed | AgentThreadStatus::Error => {}
         }
 
-        let session_id = thread.session_info.session_id.clone();
+        let session_id = thread.metadata.session_id.clone();
         self.archive_thread(&session_id, window, cx)
     }
 
@@ -2432,28 +2413,23 @@ impl Sidebar {
                     };
                     let notified = self
                         .contents
-                        .is_thread_notified(&thread.session_info.session_id);
-                    let timestamp: SharedString = self
-                        .thread_last_message_sent_or_queued
-                        .get(&thread.session_info.session_id)
-                        .copied()
-                        .or(thread.session_info.created_at)
-                        .or(thread.session_info.updated_at)
-                        .map(format_history_entry_timestamp)
-                        .unwrap_or_default()
-                        .into();
+                        .is_thread_notified(&thread.metadata.session_id);
+                    let timestamp: SharedString = format_history_entry_timestamp(
+                        self.thread_last_message_sent_or_queued
+                            .get(&thread.metadata.session_id)
+                            .copied()
+                            .or(thread.metadata.created_at)
+                            .unwrap_or(thread.metadata.updated_at),
+                    )
+                    .into();
                     Some(ThreadSwitcherEntry {
-                        session_id: thread.session_info.session_id.clone(),
-                        title: thread
-                            .session_info
-                            .title
-                            .clone()
-                            .unwrap_or_else(|| "Untitled".into()),
+                        session_id: thread.metadata.session_id.clone(),
+                        title: thread.metadata.title.clone(),
                         icon: thread.icon,
                         icon_from_external_svg: thread.icon_from_external_svg.clone(),
                         status: thread.status,
                         agent: thread.agent.clone(),
-                        session_info: thread.session_info.clone(),
+                        session_info: acp_thread::AgentSessionInfo::from(&thread.metadata),
                         workspace,
                         worktree_name: thread.worktrees.first().map(|wt| wt.name.clone()),
 
@@ -2697,14 +2673,10 @@ impl Sidebar {
     ) -> AnyElement {
         let has_notification = self
             .contents
-            .is_thread_notified(&thread.session_info.session_id);
+            .is_thread_notified(&thread.metadata.session_id);
 
-        let title: SharedString = thread
-            .session_info
-            .title
-            .clone()
-            .unwrap_or_else(|| "Untitled".into());
-        let session_info = thread.session_info.clone();
+        let title: SharedString = thread.metadata.title.clone();
+        let session_info = acp_thread::AgentSessionInfo::from(&thread.metadata);
         let thread_workspace = thread.workspace.clone();
 
         let is_hovered = self.hovered_thread_index == Some(ix);
@@ -2715,18 +2687,18 @@ impl Sidebar {
             AgentThreadStatus::Running | AgentThreadStatus::WaitingForConfirmation
         );
 
-        let session_id_for_delete = thread.session_info.session_id.clone();
+        let session_id_for_delete = thread.metadata.session_id.clone();
         let focus_handle = self.focus_handle.clone();
 
         let id = SharedString::from(format!("thread-entry-{}", ix));
 
-        let timestamp = self
-            .thread_last_message_sent_or_queued
-            .get(&thread.session_info.session_id)
-            .copied()
-            .or(thread.session_info.created_at)
-            .or(thread.session_info.updated_at)
-            .map(format_history_entry_timestamp);
+        let timestamp = format_history_entry_timestamp(
+            self.thread_last_message_sent_or_queued
+                .get(&thread.metadata.session_id)
+                .copied()
+                .or(thread.metadata.created_at)
+                .unwrap_or(thread.metadata.updated_at),
+        );
 
         ThreadItem::new(id, title)
             .icon(thread.icon)
@@ -2745,7 +2717,7 @@ impl Sidebar {
                     })
                     .collect(),
             )
-            .when_some(timestamp, |this, ts| this.timestamp(ts))
+            .timestamp(timestamp)
             .highlight_positions(thread.highlight_positions.to_vec())
             .title_generating(thread.is_title_generating)
             .notified(has_notification)
