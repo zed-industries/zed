@@ -2698,7 +2698,6 @@ impl Sidebar {
                 )
             })
             .on_click({
-                let metadata = metadata.clone();
                 cx.listener(move |this, _, window, cx| {
                     this.selection = None;
                     match &thread_workspace {
