@@ -318,6 +318,9 @@ impl Render for ThreadImportModal {
             .collect::<Vec<_>>();
 
         let has_agents = !self.agent_entries.is_empty();
+        let disabled_import_thread = self.is_importing
+            || !has_agents
+            || self.unchecked_agents.len() == self.agent_entries.len();
 
         v_flex()
             .id("thread-import-modal")
@@ -375,7 +378,7 @@ impl Render for ThreadImportModal {
                             .end_slot(
                                 Button::new("import-threads", "Import Threads")
                                     .loading(self.is_importing)
-                                    .disabled(self.is_importing || !has_agents)
+                                    .disabled(disabled_import_thread)
                                     .key_binding(
                                         KeyBinding::for_action(&menu::SecondaryConfirm, cx)
                                             .map(|kb| kb.size(rems_from_px(12.))),
