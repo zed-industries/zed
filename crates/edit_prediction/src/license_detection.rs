@@ -21,15 +21,23 @@ use worktree::ChildEntriesOptions;
 static LICENSE_FILE_NAME_REGEX: LazyLock<regex::bytes::Regex> = LazyLock::new(|| {
     regex::bytes::RegexBuilder::new(
         "^ \
-        (?: license | licence)? \
-        (?: [\\-._]? \
+        (?: \
+            (?: license | licence) \
+            (?: [\\-._]? \
+                (?: apache (?: [\\-._] (?: 2.0 | 2 ))? | \
+                    0? bsd (?: [\\-._] [0123])? (?: [\\-._] clause)? | \
+                    isc | \
+                    mit | \
+                    upl | \
+                    zlib))? | \
             (?: apache (?: [\\-._] (?: 2.0 | 2 ))? | \
                 0? bsd (?: [\\-._] [0123])? (?: [\\-._] clause)? | \
                 isc | \
                 mit | \
                 upl | \
-                zlib))? \
-        (?: [\\-._]? (?: license | licence))? \
+                zlib) \
+            (?: [\\-._]? (?: license | licence))? \
+        ) \
         (?: \\.txt | \\.md)? \
         $",
     )
@@ -38,6 +46,10 @@ static LICENSE_FILE_NAME_REGEX: LazyLock<regex::bytes::Regex> = LazyLock::new(||
     .build()
     .unwrap()
 });
+
+fn is_candidate_license_path(rel_path: &RelPath) -> bool {
+    !rel_path.is_empty() && LICENSE_FILE_NAME_REGEX.is_match(rel_path.as_unix_str().as_bytes())
+}
 
 #[derive(Debug, Clone, Copy, Eq, Ord, PartialOrd, PartialEq, VariantArray)]
 pub enum OpenSourceLicense {
@@ -290,8 +302,7 @@ impl LicenseDetectionWatcher {
             include_ignored: true,
         };
         for top_file in local_worktree.child_entries_with_options(RelPath::empty(), options) {
-            let path_bytes = top_file.path.as_unix_str().as_bytes();
-            if top_file.is_created() && LICENSE_FILE_NAME_REGEX.is_match(path_bytes) {
+            if top_file.is_created() && is_candidate_license_path(&top_file.path) {
                 let rel_path = top_file.path.clone();
                 files_to_check_tx.unbounded_send(rel_path).ok();
             }
@@ -302,8 +313,7 @@ impl LicenseDetectionWatcher {
                 worktree::Event::UpdatedEntries(updated_entries) => {
                     for updated_entry in updated_entries.iter() {
                         let rel_path = &updated_entry.0;
-                        let path_bytes = rel_path.as_unix_str().as_bytes();
-                        if LICENSE_FILE_NAME_REGEX.is_match(path_bytes) {
+                        if is_candidate_license_path(rel_path) {
                             files_to_check_tx.unbounded_send(rel_path.clone()).ok();
                         }
                     }
@@ -348,6 +358,10 @@ impl LicenseDetectionWatcher {
             return None;
         };
         let metadata = fs.metadata(&abs_path).await.log_err()??;
+        if metadata.is_dir {
+            log::debug!("`{abs_path:?}` was skipped because it is a directory");
+            return None;
+        }
         if metadata.len > LICENSE_PATTERNS.approximate_max_length as u64 {
             log::debug!(
                 "`{abs_path:?}` license file was skipped \
@@ -648,6 +662,8 @@ mod tests {
 
     #[test]
     fn test_license_file_name_regex() {
+        assert!(!LICENSE_FILE_NAME_REGEX.is_match(b""));
+
         // Test basic license file names
         assert!(LICENSE_FILE_NAME_REGEX.is_match(b"LICENSE"));
         assert!(LICENSE_FILE_NAME_REGEX.is_match(b"LICENCE"));
@@ -702,6 +718,12 @@ mod tests {
         assert!(!LICENSE_FILE_NAME_REGEX.is_match(b"LICENSE.old"));
         assert!(!LICENSE_FILE_NAME_REGEX.is_match(b"LICENSE-GPL"));
         assert!(!LICENSE_FILE_NAME_REGEX.is_match(b"LICENSEABC"));
+    }
+
+    #[test]
+    fn test_is_candidate_license_path_rejects_root_entry() {
+        assert!(!is_candidate_license_path(RelPath::empty()));
+        assert!(is_candidate_license_path(RelPath::unix("LICENSE").unwrap()));
     }
 
     #[test]
