@@ -778,8 +778,11 @@ impl EditPredictionStore {
             while current_user.borrow().is_none() {
                 current_user.next().await;
             }
+
             this.update(cx, |this, cx| {
-                this.refresh_available_experiments(cx);
+                if cx.is_staff() {
+                    this.refresh_available_experiments(cx);
+                }
             })
             .log_err();
         });
