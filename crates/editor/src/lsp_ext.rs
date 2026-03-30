@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::Editor;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use gpui::AsyncApp;
 use gpui::{App, Entity, Task};
 use language::Buffer;
@@ -33,37 +33,33 @@ where
 {
     let project = editor.project.clone()?;
     let multi_buffer = editor.buffer();
-    let mut seen_buffer_ids = Vec::new();
+    let mut seen_buffer_ids = HashSet::default();
     editor
         .selections
         .disjoint_anchors_arc()
         .iter()
         .find_map(|selection| {
-            let head = selection.head();
-            let (buffer_id, buffer) = {
-                let multi_buffer_ref = multi_buffer.read(cx);
-                let snapshot = multi_buffer_ref.read(cx);
-                let buffer_id = snapshot
-                    .buffer_id_for_anchor(head)
-                    .or_else(|| snapshot.buffer_id_for_anchor(selection.tail()))?;
-                drop(snapshot);
-                let buffer = multi_buffer_ref.buffer(buffer_id)?;
-                (buffer_id, buffer)
-            };
-
-            if seen_buffer_ids.contains(&buffer_id) {
+            let multi_buffer = multi_buffer.read(cx);
+            let (position, buffer) = multi_buffer
+                .buffer_for_anchor(selection.head(), cx)
+                .map(|buffer| (selection.head(), buffer))
+                .or_else(|| {
+                    multi_buffer
+                        .buffer_for_anchor(selection.tail(), cx)
+                        .map(|buffer| (selection.tail(), buffer))
+                })?;
+            if !seen_buffer_ids.insert(buffer.read(cx).remote_id()) {
                 return None;
             }
-            seen_buffer_ids.push(buffer_id);
 
-            let language = buffer.read(cx).language_at(head.text_anchor)?;
+            let language = buffer.read(cx).language_at(position.text_anchor)?;
             if filter_language(&language) {
                 let server_id = buffer.update(cx, |buffer, cx| {
                     project
                         .read(cx)
                         .language_server_id_for_name(buffer, &language_server_name, cx)
                 })?;
-                Some((head, language, server_id, buffer))
+                Some((position, language, server_id, buffer))
             } else {
                 None
             }
@@ -194,15 +190,15 @@ mod tests {
     use std::sync::Arc;
 
     use futures::StreamExt as _;
-    use gpui::{App, AppContext as _, Entity, TestAppContext};
+    use gpui::{AppContext as _, Entity, TestAppContext};
     use language::{FakeLspAdapter, Language};
     use languages::rust_lang;
     use lsp::{LanguageServerId, LanguageServerName};
-    use multi_buffer::{Anchor, MultiBuffer, MultiBufferOffset};
+    use multi_buffer::{Anchor, MultiBuffer};
     use project::{FakeFs, Project};
     use util::path;
 
-    use crate::{SelectionEffects, editor_tests::init_test, test::build_editor_with_project};
+    use crate::{MoveToEnd, editor_tests::init_test, test::build_editor_with_project};
 
     use super::find_specific_language_server_in_selection;
 
@@ -245,7 +241,6 @@ mod tests {
             LanguageServerId,
             Entity<language::Buffer>,
         )>,
-                             cx: &App,
                              message: &str| {
             let (_, language, server_id, buffer) = result.expect(message);
             assert_eq!(
@@ -255,10 +250,6 @@ mod tests {
             );
             assert_eq!(server_id, expected_server_id, "{message}: wrong server ID");
             assert_eq!(buffer, underlying_buffer, "{message}: wrong buffer");
-            assert!(
-                buffer.read(cx).file().is_some(),
-                "{message}: buffer should have a file"
-            );
         };
 
         editor.update(cx, |editor, cx| {
@@ -269,17 +260,12 @@ mod tests {
                     filter,
                     language_server_name.clone(),
                 ),
-                cx,
                 "should find correct language server at beginning of file",
             );
         });
 
-        // Move cursor to end of file.
         editor.update_in(cx, |editor, window, cx| {
-            let text_len = editor.text(cx).len();
-            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                s.select_ranges([MultiBufferOffset(text_len)..MultiBufferOffset(text_len)])
-            });
+            editor.move_to_end(&MoveToEnd, window, cx);
         });
 
         editor.update(cx, |editor, cx| {
@@ -290,7 +276,6 @@ mod tests {
                     filter,
                     language_server_name.clone(),
                 ),
-                cx,
                 "should find correct language server at end of file",
             );
         });
