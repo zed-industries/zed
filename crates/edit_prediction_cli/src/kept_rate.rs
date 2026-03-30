@@ -144,7 +144,10 @@ fn lcs_keep_masks(a: &[&str], b: &[&str]) -> (Vec<bool>, Vec<bool>) {
         return (keep_a, keep_b);
     }
 
-    if should_use_diff_alignment(a_mid, b_mid) {
+    let dense_region_dp_cell_count = (a_mid.len() as u128 + 1) * (b_mid.len() as u128 + 1);
+    if dense_region_dp_cell_count >= DENSE_REGION_DP_CELL_THRESHOLD as u128
+        && should_use_diff_alignment(a_mid, b_mid)
+    {
         let a_mid_start = prefix_len;
         let b_mid_start = prefix_len;
         mark_equal_diff_ranges(
