@@ -998,12 +998,21 @@ impl CollabPanel {
 
         if select_same_item {
             if let Some(prev_selected_entry) = prev_selected_entry {
-                self.selection.take();
+                let prev_selection = self.selection.take();
                 for (ix, entry) in self.entries.iter().enumerate() {
                     if *entry == prev_selected_entry {
                         self.selection = Some(ix);
                         break;
                     }
+                }
+                if self.selection.is_none() {
+                    self.selection = prev_selection.and_then(|prev_ix| {
+                        if self.entries.is_empty() {
+                            None
+                        } else {
+                            Some(prev_ix.min(self.entries.len() - 1))
+                        }
+                    });
                 }
             }
         } else {
@@ -1927,31 +1936,10 @@ impl CollabPanel {
     }
 
     pub fn toggle_favorite_channel(&mut self, channel_id: ChannelId, cx: &mut Context<Self>) {
-        let old_selection = if self.selected_entry_is_favorite()
-            && self
-                .selected_channel()
-                .is_some_and(|channel| channel.id == channel_id)
-        {
-            self.selection
-        } else {
-            None
-        };
-
         self.channel_store.update(cx, |store, cx| {
             store.toggle_favorite_channel(channel_id, cx);
         });
         self.persist_favorites(cx);
-        self.update_entries(true, cx);
-
-        if let Some(old_ix) = old_selection {
-            if self.selection.is_none() {
-                self.selection = if self.entries.is_empty() {
-                    None
-                } else {
-                    Some(old_ix.min(self.entries.len() - 1))
-                };
-            }
-        }
     }
 
     fn is_channel_favorited(&self, channel_id: ChannelId, cx: &App) -> bool {
