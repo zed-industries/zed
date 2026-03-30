@@ -1220,6 +1220,17 @@ impl Sidebar {
             .element_active
             .blend(color.element_background.opacity(0.2));
 
+        let is_remote = workspace.read(cx).project().read(cx).is_via_remote_server();
+        let remote_id = SharedString::from(format!("{id_prefix}-remote-project-{ix}"));
+        let remote_icon = div()
+            .id(remote_id)
+            .child(
+                Icon::new(IconName::Server)
+                    .size(IconSize::XSmall)
+                    .color(Color::Muted),
+            )
+            .tooltip(Tooltip::text("Remote Project"));
+
         h_flex()
             .id(id)
             .group(&group_name)
@@ -1251,6 +1262,7 @@ impl Sidebar {
                         ),
                     )
                     .child(label)
+                    .when(is_remote, |this| this.child(remote_icon))
                     .when(is_collapsed, |this| {
                         this.when(has_running_threads, |this| {
                             this.child(
