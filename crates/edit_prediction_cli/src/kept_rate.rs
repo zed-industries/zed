@@ -31,50 +31,99 @@ pub struct KeptRateResult {
     pub token_annotations: Vec<TokenAnnotation>,
 }
 
-/// Build the full LCS dynamic-programming table for backtracking.
-///
-/// `dp[i][j]` = LCS length of `a[..i]` and `b[..j]`.
-fn lcs_table(a: &[&str], b: &[&str]) -> Vec<Vec<usize>> {
-    let n = a.len();
-    let m = b.len();
-    let mut dp = vec![vec![0usize; m + 1]; n + 1];
+fn common_prefix_len(a: &[&str], b: &[&str]) -> usize {
+    a.iter()
+        .zip(b.iter())
+        .take_while(|(left, right)| left == right)
+        .count()
+}
 
-    for i in 1..=n {
-        let elem_a = a[i - 1];
-        for j in 1..=m {
-            if elem_a == b[j - 1] {
-                dp[i][j] = dp[i - 1][j - 1] + 1;
+fn common_suffix_len(a: &[&str], b: &[&str], prefix_len: usize) -> usize {
+    let max_suffix = (a.len() - prefix_len).min(b.len() - prefix_len);
+    let mut suffix_len = 0;
+
+    while suffix_len < max_suffix {
+        let a_index = a.len() - 1 - suffix_len;
+        let b_index = b.len() - 1 - suffix_len;
+        if a[a_index] != b[b_index] {
+            break;
+        }
+        suffix_len += 1;
+    }
+
+    suffix_len
+}
+
+fn dp_index(width: usize, row: usize, column: usize) -> usize {
+    row * width + column
+}
+
+/// Return boolean masks over `a` and `b` where `true` means the token is part
+/// of one LCS(a, b), interpreted as "kept".
+fn lcs_keep_masks(a: &[&str], b: &[&str]) -> (Vec<bool>, Vec<bool>) {
+    if a.is_empty() || b.is_empty() {
+        return (vec![false; a.len()], vec![false; b.len()]);
+    }
+
+    if a == b {
+        return (vec![true; a.len()], vec![true; b.len()]);
+    }
+
+    let mut keep_a = vec![false; a.len()];
+    let mut keep_b = vec![false; b.len()];
+
+    let prefix_len = common_prefix_len(a, b);
+    let suffix_len = common_suffix_len(a, b, prefix_len);
+
+    for index in 0..prefix_len {
+        keep_a[index] = true;
+        keep_b[index] = true;
+    }
+
+    for offset in 0..suffix_len {
+        let a_index = a.len() - suffix_len + offset;
+        let b_index = b.len() - suffix_len + offset;
+        keep_a[a_index] = true;
+        keep_b[b_index] = true;
+    }
+
+    let a_mid = &a[prefix_len..a.len() - suffix_len];
+    let b_mid = &b[prefix_len..b.len() - suffix_len];
+
+    if a_mid.is_empty() || b_mid.is_empty() {
+        return (keep_a, keep_b);
+    }
+
+    let row_count = a_mid.len() + 1;
+    let column_count = b_mid.len() + 1;
+    let mut dp = vec![0u32; row_count * column_count];
+
+    for i in 1..row_count {
+        let token_a = a_mid[i - 1];
+        for j in 1..column_count {
+            let index = dp_index(column_count, i, j);
+            if token_a == b_mid[j - 1] {
+                dp[index] = dp[dp_index(column_count, i - 1, j - 1)] + 1;
             } else {
-                let up = dp[i - 1][j];
-                let left = dp[i][j - 1];
-                dp[i][j] = up.max(left);
+                let up = dp[dp_index(column_count, i - 1, j)];
+                let left = dp[dp_index(column_count, i, j - 1)];
+                dp[index] = up.max(left);
             }
         }
     }
-    dp
-}
 
-/// Return a boolean mask over `a` where `true` means the token is part of
-/// one LCS(a, b), interpreted as "kept".
-fn lcs_keep_mask(a: &[&str], b: &[&str]) -> Vec<bool> {
-    if a.is_empty() || b.is_empty() {
-        return vec![false; a.len()];
-    }
-
-    let dp = lcs_table(a, b);
-    let mut keep = vec![false; a.len()];
-
-    let mut i = a.len();
-    let mut j = b.len();
+    let mut i = a_mid.len();
+    let mut j = b_mid.len();
 
     while i > 0 && j > 0 {
-        if a[i - 1] == b[j - 1] {
-            keep[i - 1] = true;
+        if a_mid[i - 1] == b_mid[j - 1] {
+            keep_a[prefix_len + i - 1] = true;
+            keep_b[prefix_len + j - 1] = true;
             i -= 1;
             j -= 1;
         } else {
-            let up = dp[i - 1][j];
-            let left = dp[i][j - 1];
+            let up = dp[dp_index(column_count, i - 1, j)];
+            let left = dp[dp_index(column_count, i, j - 1)];
             if up >= left {
                 i -= 1;
             } else {
@@ -83,7 +132,27 @@ fn lcs_keep_mask(a: &[&str], b: &[&str]) -> Vec<bool> {
         }
     }
 
-    keep
+    (keep_a, keep_b)
+}
+
+fn lcs_keep_mask(a: &[&str], b: &[&str]) -> Vec<bool> {
+    lcs_keep_masks(a, b).0
+}
+
+fn collect_unmasked_tokens<'a>(tokens: &[&'a str], mask: &[bool]) -> Vec<&'a str> {
+    tokens
+        .iter()
+        .zip(mask.iter())
+        .filter_map(|(&token, &is_masked)| (!is_masked).then_some(token))
+        .collect()
+}
+
+fn sum_masked_chars(tokens: &[&str], mask: &[bool], masked_value: bool) -> usize {
+    tokens
+        .iter()
+        .zip(mask.iter())
+        .filter_map(|(&token, &is_masked)| (is_masked == masked_value).then_some(token.len()))
+        .sum()
 }
 
 /// Compute kept rate by comparing predicted vs final full texts, excluding
@@ -99,58 +168,59 @@ fn lcs_keep_mask(a: &[&str], b: &[&str]) -> Vec<bool> {
 /// each predicted token is labelled [`TokenAnnotation::Context`],
 /// [`TokenAnnotation::Kept`], or [`TokenAnnotation::Discarded`].
 pub fn compute_kept_rate(base: &str, predicted: &str, final_text: &str) -> KeptRateResult {
+    if base == predicted && predicted == final_text {
+        let predicted_tokens = tokenize(predicted);
+        let context_chars = predicted_tokens.iter().map(|token| token.len()).sum();
+        return KeptRateResult {
+            predicted_new_chars: 0,
+            final_new_chars: 0,
+            kept_chars: 0,
+            discarded_chars: 0,
+            context_chars,
+            kept_rate: 1.0,
+            token_annotations: vec![TokenAnnotation::Context; predicted_tokens.len()],
+        };
+    }
+
     let base_tokens = tokenize(base);
     let predicted_tokens = tokenize(predicted);
     let final_tokens = tokenize(final_text);
 
     // Context in predicted: tokens matched in BOTH base and final.
-    let pred_base_mask = lcs_keep_mask(&predicted_tokens, &base_tokens);
-    let pred_final_mask = lcs_keep_mask(&predicted_tokens, &final_tokens);
+    let (pred_base_mask, _base_pred_mask) = lcs_keep_masks(&predicted_tokens, &base_tokens);
+    let (pred_final_mask, final_pred_mask) = lcs_keep_masks(&predicted_tokens, &final_tokens);
     let context_mask: Vec<bool> = pred_base_mask
         .iter()
         .zip(pred_final_mask.iter())
-        .map(|(&b, &f)| b && f)
+        .map(|(&in_base, &in_final)| in_base && in_final)
         .collect();
 
-    let stripped_predicted: Vec<&str> = predicted_tokens
-        .iter()
-        .zip(context_mask.iter())
-        .filter(|(_, c)| !*c)
-        .map(|(t, _)| *t)
-        .collect();
+    let stripped_predicted = collect_unmasked_tokens(&predicted_tokens, &context_mask);
 
     // Context in final: tokens matched in BOTH base and predicted.
-    let final_base_mask = lcs_keep_mask(&final_tokens, &base_tokens);
-    let final_pred_mask = lcs_keep_mask(&final_tokens, &predicted_tokens);
+    let (final_base_mask, _base_final_mask) = lcs_keep_masks(&final_tokens, &base_tokens);
     let final_context_mask: Vec<bool> = final_base_mask
         .iter()
         .zip(final_pred_mask.iter())
-        .map(|(&b, &p)| b && p)
+        .map(|(&in_base, &in_predicted)| in_base && in_predicted)
         .collect();
 
-    let stripped_final: Vec<&str> = final_tokens
-        .iter()
-        .zip(final_context_mask.iter())
-        .filter(|(_, c)| !*c)
-        .map(|(t, _)| *t)
-        .collect();
+    let stripped_final = collect_unmasked_tokens(&final_tokens, &final_context_mask);
 
-    let keep_mask = lcs_keep_mask(&stripped_predicted, &stripped_final);
+    let keep_mask = if stripped_predicted == stripped_final {
+        vec![true; stripped_predicted.len()]
+    } else {
+        lcs_keep_mask(&stripped_predicted, &stripped_final)
+    };
 
-    let predicted_new_chars: usize = stripped_predicted.iter().map(|t| t.len()).sum();
-    let final_new_chars: usize = stripped_final.iter().map(|t| t.len()).sum();
+    let predicted_new_chars = sum_masked_chars(&predicted_tokens, &context_mask, false);
+    let final_new_chars = sum_masked_chars(&final_tokens, &final_context_mask, false);
     let kept_chars: usize = stripped_predicted
         .iter()
         .zip(keep_mask.iter())
-        .filter(|(_, k)| **k)
-        .map(|(t, _)| t.len())
+        .filter_map(|(&token, &is_kept)| is_kept.then_some(token.len()))
         .sum();
-    let context_chars: usize = predicted_tokens
-        .iter()
-        .zip(context_mask.iter())
-        .filter(|(_, c)| **c)
-        .map(|(t, _)| t.len())
-        .sum();
+    let context_chars = sum_masked_chars(&predicted_tokens, &context_mask, true);
     let discarded_chars = predicted_new_chars - kept_chars;
 
     let kept_rate = if predicted_new_chars == 0 {
@@ -160,18 +230,18 @@ pub fn compute_kept_rate(base: &str, predicted: &str, final_text: &str) -> KeptR
     };
 
     let mut token_annotations = Vec::with_capacity(predicted_tokens.len());
-    let mut new_idx = 0;
-    for (token_idx, _token) in predicted_tokens.iter().enumerate() {
-        if context_mask[token_idx] {
+    let mut new_index = 0;
+    for (token_index, _token) in predicted_tokens.iter().enumerate() {
+        if context_mask[token_index] {
             token_annotations.push(TokenAnnotation::Context);
         } else {
-            let annotation = if keep_mask[new_idx] {
+            let annotation = if keep_mask[new_index] {
                 TokenAnnotation::Kept
             } else {
                 TokenAnnotation::Discarded
             };
             token_annotations.push(annotation);
-            new_idx += 1;
+            new_index += 1;
         }
     }
 
@@ -202,6 +272,13 @@ mod test_kept_rate {
     fn test_lcs_keep_mask_tokens() {
         let mask = lcs_keep_mask(&["alpha", "beta", "gamma"], &["alpha", "gamma"]);
         assert_eq!(mask, vec![true, false, true]);
+    }
+
+    #[test]
+    fn test_lcs_keep_masks_returns_both_sides() {
+        let (a_mask, b_mask) = lcs_keep_masks(&["alpha", "beta", "gamma"], &["alpha", "gamma"]);
+        assert_eq!(a_mask, vec![true, false, true]);
+        assert_eq!(b_mask, vec![true, true]);
     }
 
     #[test]
@@ -435,7 +512,7 @@ mod test_kept_rate {
         assert_eq!(
             result.token_annotations[eprintln_idx + 6],
             TokenAnnotation::Discarded
-        );
+               );
         assert_eq!(
             result.token_annotations[eprintln_idx + 7],
             TokenAnnotation::Discarded
