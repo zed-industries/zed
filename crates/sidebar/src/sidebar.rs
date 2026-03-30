@@ -2265,6 +2265,8 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        ThreadMetadataStore::global(cx).update(cx, |store, cx| store.archive(session_id, cx));
+
         // If we're archiving the currently focused thread, move focus to the
         // nearest thread within the same project group. We never cross group
         // boundaries — if the group has no other threads, clear focus and open
@@ -2365,8 +2367,6 @@ impl Sidebar {
                 }
             }
         }
-
-        ThreadMetadataStore::global(cx).update(cx, |store, cx| store.archive(session_id, cx));
     }
 
     fn remove_selected_thread(
@@ -2381,9 +2381,6 @@ impl Sidebar {
         let Some(ListEntry::Thread(thread)) = self.contents.entries.get(ix) else {
             return;
         };
-        if thread.agent != Agent::NativeAgent {
-            return;
-        }
         let session_id = thread.session_info.session_id.clone();
         self.archive_thread(&session_id, window, cx);
     }
