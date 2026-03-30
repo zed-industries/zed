@@ -35094,6 +35094,95 @@ async fn test_restore_and_next(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_restore_hunk_with_stale_base_text(cx: &mut TestAppContext) {
+    // Regression test: prepare_restore_change must read base_text from the same
+    // snapshot the hunk came from, not from the live BufferDiff entity. The live
+    // entity's base_text may have already been updated asynchronously (e.g.
+    // because git HEAD changed) while the MultiBufferSnapshot still holds the
+    // old hunk byte ranges — using both together causes Rope::slice to panic
+    // when the old range exceeds the new base text length.
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let long_base_text = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n";
+    cx.set_state("ˇONE\ntwo\nTHREE\nfour\nFIVE\nsix\nseven\neight\nnine\nten\n");
+    cx.set_head_text(long_base_text);
+
+    let buffer_id = cx.update_buffer(|buffer, _| buffer.remote_id());
+
+    // Verify we have hunks from the initial diff.
+    let has_hunks = cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let hunks = snapshot
+            .buffer_snapshot()
+            .diff_hunks_in_range(MultiBufferOffset(0)..snapshot.buffer_snapshot().len());
+        hunks.count() > 0
+    });
+    assert!(has_hunks, "should have diff hunks before restoring");
+
+    // Now trigger a git HEAD change to a much shorter base text.
+    // After this, the live BufferDiff entity's base_text buffer will be
+    // updated synchronously (inside set_snapshot_with_secondary_inner),
+    // but DiffChanged is deferred until parsing_idle completes.
+    // We step the executor tick-by-tick to find the window where the
+    // live base_text is already short but the MultiBuffer snapshot is
+    // still stale (old hunks + old base_text).
+    let short_base_text = "short\n";
+    let fs = cx.update_editor(|editor, _, cx| editor.project().unwrap().read(cx).fs().as_fake());
+    let path = cx.update_buffer(|buffer, _| buffer.file().unwrap().path().clone());
+    fs.set_head_for_repo(
+        &Path::new(path!("/root")).join(".git"),
+        &[(path.as_unix_str(), short_base_text.to_string())],
+        "newcommit",
+    );
+
+    // Step the executor tick-by-tick. At each step, check whether the
+    // race condition exists: live BufferDiff has short base text but
+    // the MultiBuffer snapshot still has old (long) hunks.
+    let mut found_race = false;
+    for _ in 0..200 {
+        cx.executor().tick();
+
+        let race_exists = cx.update_editor(|editor, _window, cx| {
+            let multi_buffer = editor.buffer().read(cx);
+            let diff_entity = match multi_buffer.diff_for(buffer_id) {
+                Some(d) => d,
+                None => return false,
+            };
+            let live_base_len = diff_entity.read(cx).base_text(cx).len();
+            let snapshot = multi_buffer.snapshot(cx);
+            let snapshot_base_len = snapshot
+                .diff_for_buffer_id(buffer_id)
+                .map(|d| d.base_text().len());
+            // Race: live base text is shorter than what the snapshot knows.
+            live_base_len < long_base_text.len() && snapshot_base_len == Some(long_base_text.len())
+        });
+
+        if race_exists {
+            found_race = true;
+            // The race window is open: the live entity has new (short) base
+            // text but the MultiBuffer snapshot still has old hunks with byte
+            // ranges computed against the old long base text. Attempt restore.
+            // Without the fix, this panics with "cannot summarize past end of
+            // rope". With the fix, it reads base_text from the stale snapshot
+            // (consistent with the stale hunks) and succeeds.
+            cx.update_editor(|editor, window, cx| {
+                editor.select_all(&SelectAll, window, cx);
+                editor.git_restore(&Default::default(), window, cx);
+            });
+            break;
+        }
+    }
+
+    assert!(
+        found_race,
+        "failed to observe the race condition between \
+        live BufferDiff base_text and stale MultiBuffer snapshot; \
+        the test may need adjustment if the async diff pipeline changed"
+    );
+}
+
+#[gpui::test]
 async fn test_align_selections(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
