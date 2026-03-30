@@ -2614,6 +2614,101 @@ async fn test_two_worktree_workspaces_absorbed_when_main_added(cx: &mut TestAppC
 }
 
 #[gpui::test]
+async fn test_threadless_workspace_shows_new_thread_with_worktree_chip(cx: &mut TestAppContext) {
+    // When a group has two workspaces — one with threads and one
+    // without — the threadless workspace should appear as a
+    // "New Thread" button with its worktree chip.
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+
+    // Main repo with two linked worktrees.
+    fs.insert_tree(
+        "/project",
+        serde_json::json!({
+            ".git": {
+                "worktrees": {
+                    "feature-a": {
+                        "commondir": "../../",
+                        "HEAD": "ref: refs/heads/feature-a",
+                    },
+                    "feature-b": {
+                        "commondir": "../../",
+                        "HEAD": "ref: refs/heads/feature-b",
+                    },
+                },
+            },
+            "src": {},
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        "/wt-feature-a",
+        serde_json::json!({
+            ".git": "gitdir: /project/.git/worktrees/feature-a",
+            "src": {},
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        "/wt-feature-b",
+        serde_json::json!({
+            ".git": "gitdir: /project/.git/worktrees/feature-b",
+            "src": {},
+        }),
+    )
+    .await;
+
+    fs.with_git_state(std::path::Path::new("/project/.git"), false, |state| {
+        state.worktrees.push(git::repository::Worktree {
+            path: std::path::PathBuf::from("/wt-feature-a"),
+            ref_name: Some("refs/heads/feature-a".into()),
+            sha: "aaa".into(),
+        });
+        state.worktrees.push(git::repository::Worktree {
+            path: std::path::PathBuf::from("/wt-feature-b"),
+            ref_name: Some("refs/heads/feature-b".into()),
+            sha: "bbb".into(),
+        });
+    })
+    .unwrap();
+
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    // Workspace A: worktree feature-a (has threads).
+    let project_a = project::Project::test(fs.clone(), ["/wt-feature-a".as_ref()], cx).await;
+    project_a.update(cx, |p, cx| p.git_scans_complete(cx)).await;
+
+    // Workspace B: worktree feature-b (no threads).
+    let project_b = project::Project::test(fs.clone(), ["/wt-feature-b".as_ref()], cx).await;
+    project_b.update(cx, |p, cx| p.git_scans_complete(cx)).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
+    multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(project_b.clone(), window, cx);
+    });
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    // Only save a thread for workspace A.
+    let paths_a = PathList::new(&[std::path::PathBuf::from("/wt-feature-a")]);
+    save_named_thread_metadata("thread-a", "Thread A", &paths_a, cx).await;
+
+    multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
+    cx.run_until_parked();
+
+    // Workspace A's thread appears normally. Workspace B (threadless)
+    // appears as a "New Thread" button with its worktree chip.
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec![
+            "v [project]",
+            "  [+ New Thread {wt-feature-b}]",
+            "  Thread A {wt-feature-a}",
+        ]
+    );
+}
+
+#[gpui::test]
 async fn test_multi_worktree_thread_shows_multiple_chips(cx: &mut TestAppContext) {
     // A thread created in a workspace with roots from different git
     // worktrees should show a chip for each distinct worktree name.
