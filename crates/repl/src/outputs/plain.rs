@@ -32,7 +32,7 @@ use menu;
 use settings::Settings as _;
 use terminal::terminal_settings::TerminalSettings;
 use terminal_view::terminal_element::TerminalElement;
-use theme::{ActiveTheme, ThemeSettings};
+use theme_settings::ThemeSettings;
 use ui::{IntoElement, prelude::*};
 
 use crate::outputs::OutputContent;
@@ -361,7 +361,7 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
         });
         cx.add_empty_window()
     }

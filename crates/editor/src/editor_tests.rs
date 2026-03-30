@@ -29721,7 +29721,7 @@ pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsC
         assets::Assets.load_test_fonts(cx);
         let store = SettingsStore::test(cx);
         cx.set_global(store);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
         release_channel::init(semver::Version::new(0, 0, 0), cx);
         crate::init(cx);
     });

@@ -344,7 +344,7 @@ impl State {
                 .ok_or(AuthenticateError::CredentialsNotFound)?;
 
             let credentials_str = String::from_utf8(credentials_bytes)
-                .context("invalid {PROVIDER_NAME} credentials")?;
+                .with_context(|| format!("invalid {PROVIDER_NAME} credentials"))?;
 
             let credentials: BedrockCredentials =
                 serde_json::from_str(&credentials_str).context("failed to parse credentials")?;

@@ -22,7 +22,7 @@ import os
 import shlex
 from pathlib import Path
 
-from harbor.agents.installed.base import BaseInstalledAgent, ExecInput
+from harbor.agents.installed.base import BaseInstalledAgent, with_prompt_template
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 
@@ -51,12 +51,143 @@ class ZedAgent(BaseInstalledAgent):
     def name() -> str:
         return "zed"
 
-    @property
-    def _install_agent_template_path(self) -> Path:
-        return Path(__file__).parent / "install.sh.j2"
+    async def _detect_workdir(self, environment: BaseEnvironment) -> str:
+        """Detect the repo working directory inside the container.
 
-    async def setup(self, environment: BaseEnvironment) -> None:
-        await environment.exec(command="mkdir -p /installed-agent")
+        Checks, in order:
+          1. Explicit ``EVAL_CLI_WORKDIR`` extra-env override
+          2. ``/app``      (SWE-bench Pro)
+          3. ``/testbed``  (SWE-bench Verified)
+          4. ``/repo``
+          5. First git repo found under ``/`` (max depth 3)
+        """
+        override = self._extra_env.get("EVAL_CLI_WORKDIR")
+        if override:
+            return override
+
+        result = await self.exec_as_agent(
+            environment,
+            command=(
+                "for d in /app /testbed /repo; do "
+                '  if [ -d "$d/.git" ]; then echo "$d"; exit 0; fi; '
+                "done; "
+                "find / -maxdepth 3 -name .git -type d 2>/dev/null "
+                '| head -1 | sed "s|/.git$||"'
+            ),
+        )
+        workdir = result.stdout.strip()
+        if not workdir:
+            raise RuntimeError(
+                "Could not find a git repository in the container. "
+                "Set EVAL_CLI_WORKDIR explicitly via --ae EVAL_CLI_WORKDIR=/path/to/repo"
+            )
+        return workdir
+
+    async def install(self, environment: BaseEnvironment) -> None:
+        await self.exec_as_root(
+            environment,
+            command=(
+                "apt-get update && "
+                "apt-get install -y --no-install-recommends "
+                "ca-certificates "
+                "curl "
+                "git"
+            ),
+            env={"DEBIAN_FRONTEND": "noninteractive"},
+        )
+
+        await self.exec_as_root(
+            environment,
+            command=(
+                "curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && "
+                "apt-get install -y --no-install-recommends nodejs"
+            ),
+            env={"DEBIAN_FRONTEND": "noninteractive"},
+        )
+
+        # Pre-install default LSPs so Zed doesn't have to download them at
+        # runtime.  Each gets its own subdirectory under $ZED_DATA_DIR/languages.
+        await self.exec_as_agent(
+            environment,
+            command=(
+                "set -euo pipefail; "
+                'ZED_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/zed"; '
+                # basedpyright (Python - default type checker)
+                'BASEDPYRIGHT_DIR="$ZED_DATA_DIR/languages/basedpyright"; '
+                'mkdir -p "$BASEDPYRIGHT_DIR"; '
+                'npm install --prefix "$BASEDPYRIGHT_DIR" --save-exact basedpyright; '
+                # typescript-language-server (TypeScript/JS - default LSP)
+                'TSSERVER_DIR="$ZED_DATA_DIR/languages/typescript-language-server"; '
+                'mkdir -p "$TSSERVER_DIR"; '
+                'npm install --prefix "$TSSERVER_DIR" --save-exact typescript typescript-language-server; '
+                # vtsls (VS Code TypeScript language features)
+                'VTSLS_DIR="$ZED_DATA_DIR/languages/vtsls"; '
+                'mkdir -p "$VTSLS_DIR"; '
+                'npm install --prefix "$VTSLS_DIR" --save-exact @vtsls/language-server typescript; '
+                # tailwindcss-language-server
+                'TAILWIND_DIR="$ZED_DATA_DIR/languages/tailwindcss-language-server"; '
+                'mkdir -p "$TAILWIND_DIR"; '
+                'npm install --prefix "$TAILWIND_DIR" --save-exact @tailwindcss/language-server'
+            ),
+        )
+
+        # eslint LSP (downloaded from zed-industries/vscode-eslint GitHub release,
+        # then compiled — this mirrors what Zed does at runtime).
+        await self.exec_as_agent(
+            environment,
+            command=(
+                "set -euo pipefail; "
+                'ZED_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/zed"; '
+                'ESLINT_DIR="$ZED_DATA_DIR/languages/eslint/vscode-eslint-2.4.4"; '
+                'mkdir -p "$ESLINT_DIR"; '
+                'curl -fsSL "https://github.com/zed-industries/vscode-eslint/archive/refs/tags/release/2.4.4.tar.gz" '
+                '| tar -xz -C "$ESLINT_DIR"; '
+                'mv "$ESLINT_DIR"/vscode-eslint-release-2.4.4 "$ESLINT_DIR/vscode-eslint"; '
+                'cd "$ESLINT_DIR/vscode-eslint" && npm install && npm run compile'
+            ),
+        )
+
+        # gopls (Go - default LSP).  Only install when Go is present in the
+        # container (i.e. Go-related SWE-bench tasks).
+        await self.exec_as_agent(
+            environment,
+            command=(
+                "if command -v go >/dev/null 2>&1; then "
+                "go install golang.org/x/tools/gopls@latest; "
+                "fi"
+            ),
+        )
+
+        await self.exec_as_agent(
+            environment,
+            command=(
+                "curl -LsSf https://astral.sh/uv/install.sh | sh && "
+                '. "$HOME/.local/bin/env"'
+            ),
+        )
+
+        agent_home_result = await self.exec_as_agent(
+            environment,
+            command='printf %s "$HOME"',
+        )
+        agent_home = agent_home_result.stdout.strip()
+        if not agent_home:
+            raise RuntimeError("Could not determine agent home directory")
+
+        await self.exec_as_root(
+            environment,
+            command=(
+                f"ln -sf {shlex.quote(agent_home + '/.local/bin/uv')} /usr/local/bin/uv && "
+                f"ln -sf {shlex.quote(agent_home + '/.local/bin/uvx')} /usr/local/bin/uvx"
+            ),
+        )
+
+        # Install a modern ruff so `ruff server` works without --preview.
+        # This also makes it available as a CLI tool for the agent.
+        await self.exec_as_agent(
+            environment,
+            command=('export PATH="$HOME/.local/bin:$PATH" && uv tool install ruff'),
+        )
 
         if self._binary_path:
             binary = Path(self._binary_path)
@@ -69,18 +200,29 @@ class ZedAgent(BaseInstalledAgent):
                 source_path=binary,
                 target_path="/usr/local/bin/eval-cli",
             )
-            await environment.exec(command="chmod +x /usr/local/bin/eval-cli")
+            await self.exec_as_root(
+                environment,
+                command="chmod +x /usr/local/bin/eval-cli && eval-cli --help",
+            )
+            return
 
-        await super().setup(environment)
-
-    @property
-    def _template_variables(self) -> dict[str, str]:
-        variables = super()._template_variables
-        if self._binary_path:
-            variables["binary_uploaded"] = "true"
         if self._download_url:
-            variables["download_url"] = self._download_url
-        return variables
+            await self.exec_as_root(
+                environment,
+                command=(
+                    f"curl -fsSL {shlex.quote(self._download_url)} "
+                    "-o /usr/local/bin/eval-cli && "
+                    "chmod +x /usr/local/bin/eval-cli && "
+                    "eval-cli --help"
+                ),
+            )
+            return
+
+        raise ValueError(
+            "No eval-cli binary provided. "
+            "Either pass binary_path=/path/to/target/release/eval-cli "
+            "or set download_url=/EVAL_CLI_DOWNLOAD_URL."
+        )
 
     def populate_context_post_run(self, context: AgentContext) -> None:
         result_data = None
@@ -131,18 +273,27 @@ class ZedAgent(BaseInstalledAgent):
 
         return env
 
-    def create_run_agent_commands(self, instruction: str) -> list[ExecInput]:
+    @with_prompt_template
+    async def run(
+        self, instruction: str, environment: BaseEnvironment, context: AgentContext
+    ) -> None:
         escaped_instruction = shlex.quote(instruction)
         env = self._get_api_env()
 
-        parts = ["eval-cli", "--workdir /testbed", "--output-dir /logs/agent"]
+        workdir = await self._detect_workdir(environment)
+
+        parts = [
+            "eval-cli",
+            f"--workdir {shlex.quote(workdir)}",
+            "--output-dir /logs/agent",
+        ]
 
         if self.model_name:
-            parts.append(f"--model {self.model_name}")
+            parts.append(f"--model {shlex.quote(self.model_name)}")
 
         timeout = self._extra_env.get("EVAL_CLI_TIMEOUT")
         if timeout:
-            parts.append(f"--timeout {timeout}")
+            parts.append(f"--timeout {shlex.quote(timeout)}")
 
         staff = self._extra_env.get("EVAL_CLI_STAFF")
         if staff and staff.lower() == "false":
@@ -161,18 +312,20 @@ class ZedAgent(BaseInstalledAgent):
 
         parts.append(f"--instruction {escaped_instruction}")
 
-        eval_cli_command = (
-            " ".join(parts) + " 2>&1 | stdbuf -oL tee /logs/agent/eval-cli.txt"
+        await self.exec_as_agent(
+            environment,
+            command=(
+                " ".join(parts) + " 2>&1 | stdbuf -oL tee /logs/agent/eval-cli.txt"
+            ),
+            env=env,
         )
 
-        patch_command = (
-            "cd /testbed && "
-            "git add -A && "
-            "git diff --cached HEAD > /logs/agent/patch.diff && "
-            'echo "Patch size: $(wc -c < /logs/agent/patch.diff) bytes"'
+        await self.exec_as_agent(
+            environment,
+            command=(
+                "git add -A && "
+                "git diff --cached HEAD > /logs/agent/patch.diff && "
+                'echo "Patch size: $(wc -c < /logs/agent/patch.diff) bytes"'
+            ),
+            cwd=workdir,
         )
-
-        return [
-            ExecInput(command=eval_cli_command, env=env),
-            ExecInput(command=patch_command),
-        ]

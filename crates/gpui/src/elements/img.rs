@@ -697,7 +697,7 @@ impl Asset for ImageAssetLoader {
                 Ok(Arc::new(RenderImage::new(data)))
             } else {
                 svg_renderer
-                    .render_single_frame(&bytes, 1.0, true)
+                    .render_single_frame(&bytes, 1.0)
                     .map_err(Into::into)
             }
         }

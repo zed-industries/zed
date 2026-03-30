@@ -304,6 +304,8 @@
       "cmd-y": "agent::AllowOnce",
       "cmd-alt-a": "agent::OpenPermissionDropdown",
       "cmd-alt-z": "agent::RejectOnce",
+      "ctrl-tab": "agents_sidebar::ToggleThreadSwitcher",
+      "ctrl-shift-tab": ["agents_sidebar::ToggleThreadSwitcher", { "select_last": true }],
     },
   },
   {
@@ -767,6 +769,8 @@
       "cmd-f": "agents_sidebar::FocusSidebarFilter",
       "cmd-g": "agents_sidebar::ToggleArchive",
       "shift-backspace": "agent::RemoveSelectedThread",
+      "ctrl-tab": "agents_sidebar::ToggleThreadSwitcher",
+      "ctrl-shift-tab": ["agents_sidebar::ToggleThreadSwitcher", { "select_last": true }],
     },
   },
   {
@@ -775,6 +779,13 @@
     "bindings": {
       "space": "menu::Confirm",
     },
+  },
+  {
+    "context": "ThreadSwitcher",
+    "bindings": {
+      "ctrl-tab": "agents_sidebar::ToggleThreadSwitcher",
+      "ctrl-shift-tab": ["agents_sidebar::ToggleThreadSwitcher", { "select_last": true }]
+    }
   },
   {
     "context": "Workspace && debugger_running",

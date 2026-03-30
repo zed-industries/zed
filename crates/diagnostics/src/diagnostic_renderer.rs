@@ -11,7 +11,7 @@ use lsp::DiagnosticSeverity;
 use markdown::{Markdown, MarkdownElement};
 use settings::Settings;
 use text::{AnchorRangeExt, Point};
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{CopyButton, prelude::*};
 use util::maybe;
 

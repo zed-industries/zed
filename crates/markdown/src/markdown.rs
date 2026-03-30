@@ -16,7 +16,7 @@ use mermaid::{
 };
 pub use path_range::{LineCol, PathWithRange};
 use settings::Settings as _;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::Checkbox;
 use ui::CopyButton;
 
@@ -2677,7 +2677,7 @@ mod tests {
                 settings::init(cx);
             }
             if !cx.has_global::<theme::GlobalTheme>() {
-                theme::init(theme::LoadThemes::JustBase, cx);
+                theme_settings::init(theme::LoadThemes::JustBase, cx);
             }
         });
     }
