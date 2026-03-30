@@ -1465,7 +1465,7 @@ mod element {
                             0.,
                             gpui::transparent_black(),
                             border,
-                            cx.theme().colors().border_selected,
+                            cx.theme().colors().pane_focused_border,
                             BorderStyle::Solid,
                         ));
                     }
