@@ -73,7 +73,10 @@ use workspace::{
     DraggedSelection, OpenInTerminal, OpenOptions, OpenVisible, PreviewTabsSettings, SelectedEntry,
     SplitDirection, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
-    notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
+    notifications::{
+        DetachAndPromptErr, NotificationId, NotifyResultExt, NotifyTaskExt, show_app_notification,
+        simple_message_notification::MessageNotification,
+    },
 };
 use worktree::CreatedEntry;
 use zed_actions::{
@@ -694,6 +697,32 @@ impl ProjectPanel {
                         }
                     }
                     project::Event::RevealInProjectPanel(entry_id) => {
+                        // When working with an entry that belongs to an
+                        // invisible worktree, for example, opening a file that
+                        // is not present in any of the open projects, display a
+                        // toast informing the user that the file is not present
+                        // in any of the open projects.
+                        if let Some(worktree) = project
+                            .read(cx)
+                            .worktree_for_entry(*entry_id, cx)
+                            .map(|worktree| worktree.read(cx))
+                            && !worktree.is_visible()
+                        {
+                            let file_name = worktree.root_name_str().to_string();
+                            let notification_id =
+                                NotificationId::Named("ProjectPanel::reveal_entry".into());
+                            show_app_notification(notification_id, cx, move |cx| {
+                                cx.new(|cx| {
+                                    let message = format!(
+                                        "\"{file_name}\" is not part of any open projects."
+                                    );
+
+                                    MessageNotification::new("Reveal in Project Panel", cx)
+                                        .primary_message(message)
+                                })
+                            });
+                        }
+
                         if let Some(()) = this
                             .reveal_entry(project.clone(), *entry_id, false, window, cx)
                             .log_err()
