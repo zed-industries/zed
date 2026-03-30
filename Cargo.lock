@@ -5826,62 +5826,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "eval"
-version = "0.1.0"
-dependencies = [
- "acp_thread",
- "agent",
- "agent-client-protocol",
- "agent_settings",
- "agent_ui",
- "anyhow",
- "async-trait",
- "buffer_diff",
- "chrono",
- "clap",
- "client",
- "collections",
- "debug_adapter_extension",
- "dirs 4.0.0",
- "dotenvy",
- "env_logger 0.11.8",
- "extension",
- "fs",
- "futures 0.3.31",
- "gpui",
- "gpui_platform",
- "gpui_tokio",
- "handlebars 4.5.0",
- "language",
- "language_extension",
- "language_model",
- "language_models",
- "languages",
- "markdown",
- "node_runtime",
- "pathdiff",
- "paths",
- "pretty_assertions",
- "project",
- "prompt_store",
- "rand 0.9.2",
- "regex",
- "release_channel",
- "reqwest_client",
- "serde",
- "serde_json",
- "settings",
- "shellexpand 2.1.2",
- "telemetry",
- "terminal_view",
- "toml 0.8.23",
- "unindent",
- "util",
- "uuid",
- "watch",
-]
-
-[[package]]
 name = "eval_cli"
 version = "0.1.0"
 dependencies = [
@@ -7302,6 +7246,7 @@ dependencies = [
  "anyhow",
  "collections",
  "db",
+ "editor",
  "feature_flags",
  "fs",
  "git",
@@ -7311,9 +7256,11 @@ dependencies = [
  "menu",
  "project",
  "rand 0.9.2",
+ "search",
  "serde_json",
  "settings",
  "smallvec",
+ "smol",
  "theme",
  "theme_settings",
  "time",
@@ -16019,6 +15966,7 @@ dependencies = [
  "anyhow",
  "assistant_text_thread",
  "chrono",
+ "collections",
  "editor",
  "feature_flags",
  "fs",
@@ -16030,6 +15978,7 @@ dependencies = [
  "project",
  "prompt_store",
  "recent_projects",
+ "remote",
  "serde_json",
  "settings",
  "theme",
@@ -18625,9 +18574,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-rust"
-version = "0.24.1"
+version = "0.24.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f715f73a0687261ddb686f0d64a1e5af57bd199c4d12be5fdda6676ce1885bf9"
+checksum = "439e577dbe07423ec2582ac62c7531120dbfccfa6e5f92406f93dd271a120e45"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -18837,7 +18786,6 @@ dependencies = [
  "story",
  "strum 0.27.2",
  "theme",
- "theme_settings",
  "ui_macros",
  "windows 0.61.3",
 ]

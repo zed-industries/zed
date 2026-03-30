@@ -66,6 +66,34 @@ pub enum SidebarSide {
     Right,
 }
 
+/// How thinking blocks should be displayed by default in the agent panel.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ThinkingBlockDisplay {
+    /// Thinking blocks auto-expand with a height constraint during streaming,
+    /// then remain in their constrained state when complete. Users can click
+    /// to fully expand or collapse.
+    #[default]
+    Automatic,
+    /// Thinking blocks are always fully expanded by default (no height constraint).
+    AlwaysExpanded,
+    /// Thinking blocks are always collapsed by default.
+    AlwaysCollapsed,
+}
+
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
 pub struct AgentSettingsContent {
@@ -159,6 +187,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub expand_terminal_card: Option<bool>,
+    /// How thinking blocks should be displayed by default in the agent panel.
+    ///
+    /// Default: automatic
+    pub thinking_display: Option<ThinkingBlockDisplay>,
     /// Whether clicking the stop button on a running terminal tool should also cancel the agent's generation.
     /// Note that this only applies to the stop button, not to ctrl+c inside the terminal.
     ///

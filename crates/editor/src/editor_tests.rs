@@ -49,7 +49,8 @@ use serde_json::{self, json};
 use settings::{
     AllLanguageSettingsContent, DelayMs, EditorSettingsContent, GlobalLspSettingsContent,
     IndentGuideBackgroundColoring, IndentGuideColoring, InlayHintSettingsContent,
-    ProjectSettingsContent, SearchSettingsContent, SettingsContent, SettingsStore,
+    ProjectSettingsContent, ScrollBeyondLastLine, SearchSettingsContent, SettingsContent,
+    SettingsStore,
 };
 use std::borrow::Cow;
 use std::{cell::RefCell, future::Future, rc::Rc, sync::atomic::AtomicBool, time::Instant};
@@ -2780,6 +2781,60 @@ async fn test_autoscroll(cx: &mut TestAppContext) {
         assert_eq!(
             editor.snapshot(window, cx).scroll_position(),
             gpui::Point::new(0., 1.0)
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_exclude_overscroll_margin_clamps_scroll_position(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    update_test_editor_settings(cx, &|settings| {
+        settings.scroll_beyond_last_line = Some(ScrollBeyondLastLine::OnePage);
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let line_height = cx.update_editor(|editor, window, cx| {
+        editor.set_mode(EditorMode::Full {
+            scale_ui_elements_with_buffer_font_size: false,
+            show_active_line_background: false,
+            sizing_behavior: SizingBehavior::ExcludeOverscrollMargin,
+        });
+        editor
+            .style(cx)
+            .text
+            .line_height_in_pixels(window.rem_size())
+    });
+    let window = cx.window;
+    cx.simulate_window_resize(window, size(px(1000.), 6. * line_height));
+    cx.set_state(
+        &r#"
+        ˇone
+        two
+        three
+        four
+        five
+        six
+        seven
+        eight
+        nine
+        ten
+        eleven
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let max_scroll_top =
+            (snapshot.max_point().row().as_f64() - editor.visible_line_count().unwrap() + 1.)
+                .max(0.);
+
+        editor.set_scroll_position(gpui::Point::new(0., max_scroll_top + 10.), window, cx);
+
+        assert_eq!(
+            editor.snapshot(window, cx).scroll_position(),
+            gpui::Point::new(0., max_scroll_top)
         );
     });
 }
@@ -8837,6 +8892,36 @@ async fn test_paste_multiline(cx: &mut TestAppContext) {
             e,
             f
         )ˇ"});
+}
+
+#[gpui::test]
+async fn test_paste_undo_does_not_include_preceding_edits(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.update_editor(|e, _, cx| {
+        e.buffer().update(cx, |buffer, cx| {
+            buffer.set_group_interval(Duration::from_secs(10), cx)
+        })
+    });
+    // Type some text
+    cx.set_state("ˇ");
+    cx.update_editor(|e, window, cx| e.insert("hello", window, cx));
+    // cx.assert_editor_state("helloˇ");
+
+    // Paste some text immediately after typing
+    cx.write_to_clipboard(ClipboardItem::new_string(" world".into()));
+    cx.update_editor(|e, window, cx| e.paste(&Paste, window, cx));
+    cx.assert_editor_state("hello worldˇ");
+
+    // Undo should only undo the paste, not the preceding typing
+    cx.update_editor(|e, window, cx| e.undo(&Undo, window, cx));
+    cx.assert_editor_state("helloˇ");
+
+    // Undo again should undo the typing
+    cx.update_editor(|e, window, cx| e.undo(&Undo, window, cx));
+    cx.assert_editor_state("ˇ");
 }
 
 #[gpui::test]
@@ -20687,6 +20772,103 @@ async fn test_completions_with_additional_edits(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_completions_with_additional_edits_undo(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                trigger_characters: Some(vec![".".to_string()]),
+                resolve_provider: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state("fn main() { let a = 2ˇ; }");
+    cx.simulate_keystroke(".");
+    let completion_item = lsp::CompletionItem {
+        label: "some".into(),
+        kind: Some(lsp::CompletionItemKind::SNIPPET),
+        detail: Some("Wrap the expression in an `Option::Some`".to_string()),
+        documentation: Some(lsp::Documentation::MarkupContent(lsp::MarkupContent {
+            kind: lsp::MarkupKind::Markdown,
+            value: "```rust\nSome(2)\n```".to_string(),
+        })),
+        deprecated: Some(false),
+        sort_text: Some("fffffff2".to_string()),
+        filter_text: Some("some".to_string()),
+        insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+            range: lsp::Range {
+                start: lsp::Position {
+                    line: 0,
+                    character: 22,
+                },
+                end: lsp::Position {
+                    line: 0,
+                    character: 22,
+                },
+            },
+            new_text: "Some(2)".to_string(),
+        })),
+        additional_text_edits: Some(vec![lsp::TextEdit {
+            range: lsp::Range {
+                start: lsp::Position {
+                    line: 0,
+                    character: 20,
+                },
+                end: lsp::Position {
+                    line: 0,
+                    character: 22,
+                },
+            },
+            new_text: "".to_string(),
+        }]),
+        ..Default::default()
+    };
+
+    let closure_completion_item = completion_item.clone();
+    let mut request = cx.set_request_handler::<lsp::request::Completion, _, _>(move |_, _, _| {
+        let task_completion_item = closure_completion_item.clone();
+        async move {
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                task_completion_item,
+            ])))
+        }
+    });
+
+    request.next().await;
+
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    let apply_additional_edits = cx.update_editor(|editor, window, cx| {
+        editor
+            .confirm_completion(&ConfirmCompletion::default(), window, cx)
+            .unwrap()
+    });
+    cx.assert_editor_state("fn main() { let a = 2.Some(2)ˇ; }");
+
+    cx.set_request_handler::<lsp::request::ResolveCompletionItem, _, _>(move |_, _, _| {
+        let task_completion_item = completion_item.clone();
+        async move { Ok(task_completion_item) }
+    })
+    .next()
+    .await
+    .unwrap();
+    apply_additional_edits.await.unwrap();
+    cx.assert_editor_state("fn main() { let a = Some(2)ˇ; }");
+
+    cx.update_editor(|editor, window, cx| {
+        editor.undo(&crate::Undo, window, cx);
+    });
+    cx.assert_editor_state("fn main() { let a = 2.ˇ; }");
+}
+
+#[gpui::test]
 async fn test_completions_with_additional_edits_and_multiple_cursors(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -25371,6 +25553,55 @@ async fn test_goto_definition_far_ranges_open_multibuffer(cx: &mut TestAppContex
             "Multibuffer should contain the second definition"
         );
     });
+}
+
+#[gpui::test]
+async fn test_goto_definition_contained_ranges(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            definition_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    // The LSP returns two single-line definitions on the same row where one
+    // range contains the other. Both are on the same line so the
+    // `fits_in_one_excerpt` check won't underflow, and the code reaches
+    // `change_selections`.
+    cx.set_state(
+        &r#"fn caller() {
+            let _ = ˇtarget();
+        }
+        fn target_outer() { fn target_inner() {} }
+        "#
+        .unindent(),
+    );
+
+    // Return two definitions on the same line: an outer range covering the
+    // whole line and an inner range for just the inner function name.
+    cx.set_request_handler::<lsp::request::GotoDefinition, _, _>(move |url, _, _| async move {
+        Ok(Some(lsp::GotoDefinitionResponse::Array(vec![
+            // Inner range: just "target_inner" (cols 23..35)
+            lsp::Location {
+                uri: url.clone(),
+                range: lsp::Range::new(lsp::Position::new(3, 23), lsp::Position::new(3, 35)),
+            },
+            // Outer range: the whole line (cols 0..48)
+            lsp::Location {
+                uri: url,
+                range: lsp::Range::new(lsp::Position::new(3, 0), lsp::Position::new(3, 48)),
+            },
+        ])))
+    });
+
+    let navigated = cx
+        .update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition, window, cx))
+        .await
+        .expect("Failed to navigate to definitions");
+    assert_eq!(navigated, Navigated::Yes);
 }
 
 #[gpui::test]

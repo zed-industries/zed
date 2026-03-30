@@ -3,9 +3,7 @@ use gpui::{
     AnyElement, App, IntoElement, ParentElement, Rems, RenderOnce, SharedString, Styled, Window,
     div, rems,
 };
-use settings::Settings;
 use theme::ActiveTheme;
-use theme_settings::ThemeSettings;
 
 use crate::{Color, rems_from_px};
 
@@ -13,16 +11,16 @@ use crate::{Color, rems_from_px};
 pub trait StyledTypography: Styled + Sized {
     /// Sets the font family to the buffer font.
     fn font_buffer(self, cx: &App) -> Self {
-        let settings = ThemeSettings::get_global(cx);
-        let buffer_font_family = settings.buffer_font.family.clone();
+        let settings = theme::theme_settings(cx);
+        let buffer_font_family = settings.buffer_font(cx).family.clone();
 
         self.font_family(buffer_font_family)
     }
 
     /// Sets the font family to the UI font.
     fn font_ui(self, cx: &App) -> Self {
-        let settings = ThemeSettings::get_global(cx);
-        let ui_font_family = settings.ui_font.family.clone();
+        let settings = theme::theme_settings(cx);
+        let ui_font_family = settings.ui_font(cx).family.clone();
 
         self.font_family(ui_font_family)
     }
@@ -83,7 +81,7 @@ pub trait StyledTypography: Styled + Sized {
     /// This should only be used for text that is displayed in a buffer,
     /// or other places that text needs to match the user's buffer font size.
     fn text_buffer(self, cx: &App) -> Self {
-        let settings = ThemeSettings::get_global(cx);
+        let settings = theme::theme_settings(cx);
         self.text_size(settings.buffer_font_size(cx))
     }
 }
@@ -134,28 +132,28 @@ pub enum TextSize {
 impl TextSize {
     /// Returns the text size in rems.
     pub fn rems(self, cx: &App) -> Rems {
-        let theme_settings = ThemeSettings::get_global(cx);
+        let settings = theme::theme_settings(cx);
 
         match self {
             Self::Large => rems_from_px(16.),
             Self::Default => rems_from_px(14.),
             Self::Small => rems_from_px(12.),
             Self::XSmall => rems_from_px(10.),
-            Self::Ui => rems_from_px(theme_settings.ui_font_size(cx)),
-            Self::Editor => rems_from_px(theme_settings.buffer_font_size(cx)),
+            Self::Ui => rems_from_px(settings.ui_font_size(cx)),
+            Self::Editor => rems_from_px(settings.buffer_font_size(cx)),
         }
     }
 
     pub fn pixels(self, cx: &App) -> Pixels {
-        let theme_settings = ThemeSettings::get_global(cx);
+        let settings = theme::theme_settings(cx);
 
         match self {
             Self::Large => px(16.),
             Self::Default => px(14.),
             Self::Small => px(12.),
             Self::XSmall => px(10.),
-            Self::Ui => theme_settings.ui_font_size(cx),
-            Self::Editor => theme_settings.buffer_font_size(cx),
+            Self::Ui => settings.ui_font_size(cx),
+            Self::Editor => settings.buffer_font_size(cx),
         }
     }
 }
@@ -213,7 +211,7 @@ pub struct Headline {
 
 impl RenderOnce for Headline {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let ui_font = ThemeSettings::get_global(cx).ui_font.clone();
+        let ui_font = theme::theme_settings(cx).ui_font(cx).clone();
 
         div()
             .font(ui_font)

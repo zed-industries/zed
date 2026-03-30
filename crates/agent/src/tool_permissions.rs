@@ -597,6 +597,7 @@ mod tests {
             show_turn_stats: false,
             new_thread_location: Default::default(),
             sidebar_side: Default::default(),
+            thinking_display: Default::default(),
         }
     }
 

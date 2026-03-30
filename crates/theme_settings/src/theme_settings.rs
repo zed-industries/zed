@@ -12,13 +12,13 @@ use std::sync::Arc;
 
 use ::settings::{IntoGpui, Settings, SettingsStore};
 use anyhow::{Context as _, Result};
-use gpui::{App, HighlightStyle, Refineable};
+use gpui::{App, Font, HighlightStyle, Pixels, Refineable};
 use gpui_util::ResultExt;
 use theme::{
     AccentColors, Appearance, AppearanceContent, DEFAULT_DARK_THEME, DEFAULT_ICON_THEME_NAME,
     GlobalTheme, LoadThemes, PlayerColor, PlayerColors, StatusColors, SyntaxTheme,
-    SystemAppearance, SystemColors, Theme, ThemeColors, ThemeFamily, ThemeRegistry, ThemeStyles,
-    default_color_scales, try_parse_color,
+    SystemAppearance, SystemColors, Theme, ThemeColors, ThemeFamily, ThemeRegistry,
+    ThemeSettingsProvider, ThemeStyles, default_color_scales, try_parse_color,
 };
 
 pub use crate::schema::{
@@ -28,12 +28,37 @@ pub use crate::schema::{
 };
 pub use crate::settings::{
     AgentFontSize, BufferLineHeight, FontFamilyName, IconThemeName, IconThemeSelection,
-    ThemeAppearanceMode, ThemeName, ThemeSelection, ThemeSettings, UiDensity,
-    adjust_agent_buffer_font_size, adjust_agent_ui_font_size, adjust_buffer_font_size,
-    adjust_ui_font_size, adjusted_font_size, appearance_to_mode, clamp_font_size, default_theme,
-    observe_buffer_font_size_adjustment, reset_agent_buffer_font_size, reset_agent_ui_font_size,
-    reset_buffer_font_size, reset_ui_font_size, set_icon_theme, set_mode, set_theme, setup_ui_font,
+    ThemeAppearanceMode, ThemeName, ThemeSelection, ThemeSettings, adjust_agent_buffer_font_size,
+    adjust_agent_ui_font_size, adjust_buffer_font_size, adjust_ui_font_size, adjusted_font_size,
+    appearance_to_mode, clamp_font_size, default_theme, observe_buffer_font_size_adjustment,
+    reset_agent_buffer_font_size, reset_agent_ui_font_size, reset_buffer_font_size,
+    reset_ui_font_size, set_icon_theme, set_mode, set_theme, setup_ui_font,
 };
+pub use theme::UiDensity;
+
+struct ThemeSettingsProviderImpl;
+
+impl ThemeSettingsProvider for ThemeSettingsProviderImpl {
+    fn ui_font<'a>(&'a self, cx: &'a App) -> &'a Font {
+        &ThemeSettings::get_global(cx).ui_font
+    }
+
+    fn buffer_font<'a>(&'a self, cx: &'a App) -> &'a Font {
+        &ThemeSettings::get_global(cx).buffer_font
+    }
+
+    fn ui_font_size(&self, cx: &App) -> Pixels {
+        ThemeSettings::get_global(cx).ui_font_size(cx)
+    }
+
+    fn buffer_font_size(&self, cx: &App) -> Pixels {
+        ThemeSettings::get_global(cx).buffer_font_size(cx)
+    }
+
+    fn ui_density(&self, cx: &App) -> UiDensity {
+        ThemeSettings::get_global(cx).ui_density
+    }
+}
 
 /// Initialize the theme system with settings integration.
 ///
@@ -43,6 +68,7 @@ pub fn init(themes_to_load: LoadThemes, cx: &mut App) {
     let load_user_themes = matches!(&themes_to_load, LoadThemes::All(_));
 
     theme::init(themes_to_load, cx);
+    theme::set_theme_settings_provider(Box::new(ThemeSettingsProviderImpl), cx);
 
     if load_user_themes {
         let registry = ThemeRegistry::global(cx);

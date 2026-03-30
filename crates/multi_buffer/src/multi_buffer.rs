@@ -1307,8 +1307,15 @@ impl MultiBuffer {
         }
     }
 
-    pub fn set_group_interval(&mut self, group_interval: Duration) {
+    pub fn set_group_interval(&mut self, group_interval: Duration, cx: &mut Context<Self>) {
         self.history.set_group_interval(group_interval);
+        if self.singleton {
+            for BufferState { buffer, .. } in self.buffers.values() {
+                buffer.update(cx, |buffer, _| {
+                    buffer.set_group_interval(group_interval);
+                });
+            }
+        }
     }
 
     pub fn with_title(mut self, title: String) -> Self {

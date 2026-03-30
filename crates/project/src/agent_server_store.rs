@@ -307,9 +307,9 @@ impl AgentServerStore {
         cx.emit(AgentServersUpdated);
     }
 
-    pub fn agent_icon(&self, name: &AgentId) -> Option<SharedString> {
+    pub fn agent_icon(&self, id: &AgentId) -> Option<SharedString> {
         self.external_agents
-            .get(name)
+            .get(id)
             .and_then(|entry| entry.icon.clone())
     }
 

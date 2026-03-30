@@ -38,6 +38,7 @@ pub struct ChannelStore {
     channel_invitations: Vec<Arc<Channel>>,
     channel_participants: HashMap<ChannelId, Vec<Arc<User>>>,
     channel_states: HashMap<ChannelId, ChannelState>,
+    favorite_channel_ids: Vec<ChannelId>,
     outgoing_invites: HashSet<(ChannelId, UserId)>,
     update_channels_tx: mpsc::UnboundedSender<proto::UpdateChannels>,
     opened_buffers: HashMap<ChannelId, OpenEntityHandle<ChannelBuffer>>,
@@ -160,6 +161,32 @@ impl ChannelStore {
         cx.try_global::<GlobalChannelStore>().map(|g| g.0.clone())
     }
 
+    pub fn favorite_channel_ids(&self) -> &[ChannelId] {
+        &self.favorite_channel_ids
+    }
+
+    pub fn is_channel_favorited(&self, channel_id: ChannelId) -> bool {
+        self.favorite_channel_ids.contains(&channel_id)
+    }
+
+    pub fn toggle_favorite_channel(&mut self, channel_id: ChannelId, cx: &mut Context<Self>) {
+        if let Some(ix) = self
+            .favorite_channel_ids
+            .iter()
+            .position(|id| *id == channel_id)
+        {
+            self.favorite_channel_ids.remove(ix);
+        } else {
+            self.favorite_channel_ids.push(channel_id);
+        }
+        cx.notify();
+    }
+
+    pub fn set_favorite_channel_ids(&mut self, ids: Vec<ChannelId>, cx: &mut Context<Self>) {
+        self.favorite_channel_ids = ids;
+        cx.notify();
+    }
+
     pub fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
         let rpc_subscriptions = [
             client.add_message_handler(cx.weak_entity(), Self::handle_update_channels),
@@ -217,6 +244,7 @@ impl ChannelStore {
                 .log_err();
             }),
             channel_states: Default::default(),
+            favorite_channel_ids: Vec::default(),
             did_subscribe: false,
             channels_loaded: watch::channel_with(false),
         }
@@ -1066,6 +1094,8 @@ impl ChannelStore {
                 self.channel_index.delete_channels(&delete_channels);
                 self.channel_participants
                     .retain(|channel_id, _| !delete_channels.contains(channel_id));
+                self.favorite_channel_ids
+                    .retain(|channel_id| !delete_channels.contains(channel_id));
 
                 for channel_id in &delete_channels {
                     let channel_id = *channel_id;

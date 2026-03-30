@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use ui::prelude::*;
 use util::ResultExt;
-use zed_actions::agents_sidebar::MoveWorkspaceToNewWindow;
+use zed_actions::agents_sidebar::{MoveWorkspaceToNewWindow, ToggleThreadSwitcher};
 
 use agent_settings::AgentSettings;
 use settings::SidebarDockPosition;
@@ -100,8 +100,16 @@ pub trait Sidebar: Focusable + Render + Sized {
     fn is_threads_list_view_active(&self) -> bool {
         true
     }
-    /// Makes focus reset bac to the search editor upon toggling the sidebar from outside
+    /// Makes focus reset back to the search editor upon toggling the sidebar from outside
     fn prepare_for_focus(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
+    /// Opens or cycles the thread switcher popup.
+    fn toggle_thread_switcher(
+        &mut self,
+        _select_last: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+    }
 }
 
 pub trait SidebarHandle: 'static + Send + Sync {
@@ -113,6 +121,7 @@ pub trait SidebarHandle: 'static + Send + Sync {
     fn has_notifications(&self, cx: &App) -> bool;
     fn to_any(&self) -> AnyView;
     fn entity_id(&self) -> EntityId;
+    fn toggle_thread_switcher(&self, select_last: bool, window: &mut Window, cx: &mut App);
 
     fn is_threads_list_view_active(&self, cx: &App) -> bool;
 
@@ -162,6 +171,15 @@ impl<T: Sidebar> SidebarHandle for Entity<T> {
         Entity::entity_id(self)
     }
 
+    fn toggle_thread_switcher(&self, select_last: bool, window: &mut Window, cx: &mut App) {
+        let entity = self.clone();
+        window.defer(cx, move |window, cx| {
+            entity.update(cx, |this, cx| {
+                this.toggle_thread_switcher(select_last, window, cx);
+            });
+        });
+    }
+
     fn is_threads_list_view_active(&self, cx: &App) -> bool {
         self.read(cx).is_threads_list_view_active()
     }
@@ -177,6 +195,7 @@ pub struct MultiWorkspace {
     active_workspace_index: usize,
     sidebar: Option<Box<dyn SidebarHandle>>,
     sidebar_open: bool,
+    sidebar_overlay: Option<AnyView>,
     pending_removal_tasks: Vec<Task<()>>,
     _serialize_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
@@ -225,6 +244,7 @@ impl MultiWorkspace {
             active_workspace_index: 0,
             sidebar: None,
             sidebar_open: false,
+            sidebar_overlay: None,
             pending_removal_tasks: Vec::new(),
             _serialize_task: None,
             _subscriptions: vec![
@@ -245,6 +265,11 @@ impl MultiWorkspace {
 
     pub fn sidebar(&self) -> Option<&dyn SidebarHandle> {
         self.sidebar.as_deref()
+    }
+
+    pub fn set_sidebar_overlay(&mut self, overlay: Option<AnyView>, cx: &mut Context<Self>) {
+        self.sidebar_overlay = overlay;
+        cx.notify();
     }
 
     pub fn sidebar_open(&self) -> bool {
@@ -916,6 +941,13 @@ impl Render for MultiWorkspace {
                     .on_action(cx.listener(Self::next_workspace))
                     .on_action(cx.listener(Self::previous_workspace))
                     .on_action(cx.listener(Self::move_active_workspace_to_new_window))
+                    .on_action(cx.listener(
+                        |this: &mut Self, action: &ToggleThreadSwitcher, window, cx| {
+                            if let Some(sidebar) = &this.sidebar {
+                                sidebar.toggle_thread_switcher(action.select_last, window, cx);
+                            }
+                        },
+                    ))
                 })
                 .when(
                     self.sidebar_open() && self.multi_workspace_enabled(cx),
@@ -947,7 +979,20 @@ impl Render for MultiWorkspace {
                         .child(self.workspace().clone()),
                 )
                 .children(right_sidebar)
-                .child(self.workspace().read(cx).modal_layer.clone()),
+                .child(self.workspace().read(cx).modal_layer.clone())
+                .children(self.sidebar_overlay.as_ref().map(|view| {
+                    deferred(div().absolute().size_full().inset_0().occlude().child(
+                        v_flex().h(px(0.0)).top_20().items_center().child(
+                            h_flex().occlude().child(view.clone()).on_mouse_down(
+                                MouseButton::Left,
+                                |_, _, cx| {
+                                    cx.stop_propagation();
+                                },
+                            ),
+                        ),
+                    ))
+                    .with_priority(2)
+                })),
             window,
             cx,
             Tiling {

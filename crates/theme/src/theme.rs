@@ -17,6 +17,8 @@ mod registry;
 mod scale;
 mod schema;
 mod styles;
+mod theme_settings_provider;
+mod ui_density;
 
 use std::sync::Arc;
 
@@ -37,6 +39,8 @@ pub use crate::registry::*;
 pub use crate::scale::*;
 pub use crate::schema::*;
 pub use crate::styles::*;
+pub use crate::theme_settings_provider::*;
+pub use crate::ui_density::*;
 
 /// The name of the default dark theme.
 pub const DEFAULT_DARK_THEME: &str = "One Dark";

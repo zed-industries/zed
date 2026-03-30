@@ -7,7 +7,9 @@ use chardetng::EncodingDetector;
 use clock::ReplicaId;
 use collections::{HashMap, HashSet, VecDeque};
 use encoding_rs::Encoding;
-use fs::{Fs, MTime, PathEvent, RemoveOptions, Watcher, copy_recursive, read_dir_items};
+use fs::{
+    Fs, MTime, PathEvent, PathEventKind, RemoveOptions, Watcher, copy_recursive, read_dir_items,
+};
 use futures::{
     FutureExt as _, Stream, StreamExt,
     channel::{
@@ -4137,7 +4139,7 @@ impl BackgroundScanner {
             }
 
             for (ix, event) in events.iter().enumerate() {
-                let abs_path = &SanitizedPath::new(&event.path);
+                let abs_path = SanitizedPath::new(&event.path);
 
                 let mut is_git_related = false;
                 let mut dot_git_paths = None;
@@ -4154,13 +4156,33 @@ impl BackgroundScanner {
                 }
 
                 if let Some((dot_git_abs_path, path_in_git_dir)) = dot_git_paths {
-                    if skipped_files_in_dot_git
+                    // We ignore `""` as well, as that is going to be the
+                    // `.git` folder itself. WE do not care about it, if
+                    // there are changes within we will see them, we need
+                    // this ignore to prevent us from accidentally observing
+                    // the ignored created file due to the events not being
+                    // empty after filtering.
+
+                    let is_dot_git_changed = {
+                        path_in_git_dir == Path::new("")
+                            && event.kind == Some(PathEventKind::Changed)
+                            && abs_path
+                                .strip_prefix(root_canonical_path)
+                                .ok()
+                                .and_then(|it| RelPath::new(it, PathStyle::local()).ok())
+                                .is_some_and(|it| {
+                                    snapshot
+                                        .entry_for_path(&it)
+                                        .is_some_and(|entry| entry.kind == EntryKind::Dir)
+                                })
+                    };
+                    let condition = skipped_files_in_dot_git.iter().any(|skipped| {
+                        OsStr::new(skipped) == path_in_git_dir.as_path().as_os_str()
+                    }) || skipped_dirs_in_dot_git
                         .iter()
-                        .any(|skipped| OsStr::new(skipped) == path_in_git_dir.as_path().as_os_str())
-                        || skipped_dirs_in_dot_git.iter().any(|skipped_git_subdir| {
-                            path_in_git_dir.starts_with(skipped_git_subdir)
-                        })
-                    {
+                        .any(|skipped_git_subdir| path_in_git_dir.starts_with(skipped_git_subdir))
+                        || is_dot_git_changed;
+                    if condition {
                         log::debug!(
                             "ignoring event {abs_path:?} as it's in the .git directory among skipped files or directories"
                         );

@@ -3,8 +3,7 @@ use std::sync::Arc;
 use crate::{Disclosure, prelude::*};
 use component::{Component, ComponentScope, example_group_with_title, single_example};
 use gpui::{AnyElement, ClickEvent};
-use settings::Settings;
-use theme_settings::ThemeSettings;
+use theme::UiDensity;
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct ListHeader {
@@ -81,7 +80,7 @@ impl Toggleable for ListHeader {
 
 impl RenderOnce for ListHeader {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let ui_density = ThemeSettings::get_global(cx).ui_density;
+        let ui_density = theme::theme_settings(cx).ui_density(cx);
 
         h_flex()
             .id(self.label.clone())
@@ -91,7 +90,7 @@ impl RenderOnce for ListHeader {
             .child(
                 div()
                     .map(|this| match ui_density {
-                        theme_settings::UiDensity::Comfortable => this.h_5(),
+                        UiDensity::Comfortable => this.h_5(),
                         _ => this.h_7(),
                     })
                     .when(self.inset, |this| this.px_2())

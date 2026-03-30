@@ -2849,7 +2849,7 @@ impl Pane {
             }))
             .on_aux_click(
                 cx.listener(move |pane: &mut Self, event: &ClickEvent, window, cx| {
-                    if !event.is_middle_click() {
+                    if !event.is_middle_click() || is_pinned {
                         return;
                     }
 
@@ -6856,6 +6856,79 @@ mod tests {
         cx.run_until_parked();
 
         assert_item_labels(&pane, ["A!", "B!", "D", "E", "C*", "F"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_middle_click_pinned_tab_does_not_close(cx: &mut TestAppContext) {
+        use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseUpEvent};
+
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.pin_tab_at(
+                pane.index_for_item_id(item_a.item_id()).unwrap(),
+                window,
+                cx,
+            );
+        });
+        assert_item_labels(&pane, ["A!", "B*"], cx);
+        cx.run_until_parked();
+
+        let tab_a_bounds = cx
+            .debug_bounds("TAB-0")
+            .expect("Tab A (index 1) should have debug bounds");
+        let tab_b_bounds = cx
+            .debug_bounds("TAB-1")
+            .expect("Tab B (index 2) should have debug bounds");
+
+        cx.simulate_event(MouseDownEvent {
+            position: tab_a_bounds.center(),
+            button: MouseButton::Middle,
+            modifiers: Modifiers::default(),
+            click_count: 1,
+            first_mouse: false,
+        });
+
+        cx.run_until_parked();
+
+        cx.simulate_event(MouseUpEvent {
+            position: tab_a_bounds.center(),
+            button: MouseButton::Middle,
+            modifiers: Modifiers::default(),
+            click_count: 1,
+        });
+
+        cx.run_until_parked();
+
+        cx.simulate_event(MouseDownEvent {
+            position: tab_b_bounds.center(),
+            button: MouseButton::Middle,
+            modifiers: Modifiers::default(),
+            click_count: 1,
+            first_mouse: false,
+        });
+
+        cx.run_until_parked();
+
+        cx.simulate_event(MouseUpEvent {
+            position: tab_b_bounds.center(),
+            button: MouseButton::Middle,
+            modifiers: Modifiers::default(),
+            click_count: 1,
+        });
+
+        cx.run_until_parked();
+
+        assert_item_labels(&pane, ["A*!"], cx);
     }
 
     #[gpui::test]

@@ -8,8 +8,8 @@
 //! This module is provides the functions and structures necessary to do this
 //! lookup and mapping.
 
+use collections::{HashMap, HashSet, vecmap::VecMap};
 use std::{
-    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -73,27 +73,34 @@ impl ProjectGroup {
             .first()
             .expect("groups always have at least one workspace")
     }
+
+    pub fn main_workspace(&self, cx: &App) -> &Entity<Workspace> {
+        self.workspaces
+            .iter()
+            .find(|ws| {
+                !crate::root_repository_snapshots(ws, cx)
+                    .any(|snapshot| snapshot.is_linked_worktree())
+            })
+            .unwrap_or_else(|| self.first_workspace())
+    }
 }
 
 pub struct ProjectGroupBuilder {
     /// Maps git repositories' work_directory_abs_path to their original_repo_abs_path
     directory_mappings: HashMap<PathBuf, PathBuf>,
-    project_group_names: Vec<ProjectGroupName>,
-    project_groups: Vec<ProjectGroup>,
+    project_groups: VecMap<ProjectGroupName, ProjectGroup>,
 }
 
 impl ProjectGroupBuilder {
     fn new() -> Self {
         Self {
-            directory_mappings: HashMap::new(),
-            project_group_names: Vec::new(),
-            project_groups: Vec::new(),
+            directory_mappings: HashMap::default(),
+            project_groups: VecMap::new(),
         }
     }
 
     pub fn from_multiworkspace(mw: &MultiWorkspace, cx: &App) -> Self {
         let mut builder = Self::new();
-
         // First pass: collect all directory mappings from every workspace
         // so we know how to canonicalize any path (including linked
         // worktree paths discovered by the main repo's workspace).
@@ -113,15 +120,7 @@ impl ProjectGroupBuilder {
     }
 
     fn project_group_entry(&mut self, name: &ProjectGroupName) -> &mut ProjectGroup {
-        match self.project_group_names.iter().position(|n| n == name) {
-            Some(idx) => &mut self.project_groups[idx],
-            None => {
-                let idx = self.project_group_names.len();
-                self.project_group_names.push(name.clone());
-                self.project_groups.push(ProjectGroup::default());
-                &mut self.project_groups[idx]
-            }
-        }
+        self.project_groups.entry_ref(name).or_insert_default()
     }
 
     fn add_mapping(&mut self, work_directory: &Path, original_repo: &Path) {
@@ -158,9 +157,8 @@ impl ProjectGroupBuilder {
         workspace: &Entity<Workspace>,
         cx: &App,
     ) -> ProjectGroupName {
-        let paths: Vec<_> = workspace
-            .read(cx)
-            .root_paths(cx)
+        let root_paths = workspace.read(cx).root_paths(cx);
+        let paths: Vec<_> = root_paths
             .iter()
             .map(|p| self.canonicalize_path(p).to_path_buf())
             .collect();
@@ -176,24 +174,26 @@ impl ProjectGroupBuilder {
             .unwrap_or(path)
     }
 
-    /// Whether the given group should load threads for a linked worktree at
-    /// `worktree_path`. Returns `false` if the worktree already has an open
-    /// workspace in the group (its threads are loaded via the workspace loop)
-    /// or if the worktree's canonical path list doesn't match `group_path_list`.
+    /// Whether the given group should load threads for a linked worktree
+    /// at `worktree_path`. Returns `false` if the worktree already has an
+    /// open workspace in the group (its threads are loaded via the
+    /// workspace loop) or if the worktree's canonical path list doesn't
+    /// match `group_path_list`.
     pub fn group_owns_worktree(
         &self,
         group: &ProjectGroup,
         group_path_list: &PathList,
         worktree_path: &Path,
     ) -> bool {
-        let worktree_arc: Arc<Path> = Arc::from(worktree_path);
-        if group.covered_paths.contains(&worktree_arc) {
+        if group.covered_paths.contains(worktree_path) {
             return false;
         }
         let canonical = self.canonicalize_path_list(&PathList::new(&[worktree_path]));
         canonical == *group_path_list
     }
 
+    /// Canonicalizes every path in a [`PathList`] using the builder's
+    /// directory mappings.
     fn canonicalize_path_list(&self, path_list: &PathList) -> PathList {
         let paths: Vec<_> = path_list
             .paths()
@@ -204,9 +204,7 @@ impl ProjectGroupBuilder {
     }
 
     pub fn groups(&self) -> impl Iterator<Item = (&ProjectGroupName, &ProjectGroup)> {
-        self.project_group_names
-            .iter()
-            .zip(self.project_groups.iter())
+        self.project_groups.iter()
     }
 }
 

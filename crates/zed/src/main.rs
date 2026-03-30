@@ -441,10 +441,8 @@ fn main() {
         }
     });
     app.on_reopen(move |cx| {
-        if let Some(app_state) = AppState::try_global(cx).and_then(|app_state| app_state.upgrade())
-        {
+        if let Some(app_state) = AppState::try_global(cx) {
             cx.spawn({
-                let app_state = app_state;
                 async move |cx| {
                     if let Err(e) = restore_or_create_workspace(app_state, cx).await {
                         fail_to_open_window_async(e, cx)
@@ -626,7 +624,7 @@ fn main() {
             node_runtime,
             session: app_session,
         });
-        AppState::set_global(Arc::downgrade(&app_state), cx);
+        AppState::set_global(app_state.clone(), cx);
 
         auto_update::init(client.clone(), cx);
         dap_adapters::init(cx);
