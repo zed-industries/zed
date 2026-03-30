@@ -73,13 +73,27 @@ async fn capture_unix(
             command.arg("-l");
         }
     }
+
+    match shell_kind {
+        // Nushell does not allow non-interactive login shells.
+        // Instead of doing "-l -i -c '<command>'"
+        // use "-l -e '<command>; exit'" instead
+        ShellKind::Nushell => command.arg("-e"),
+        _ => command.args(["-i", "-c"]),
+    };
+
     // cd into the directory, triggering directory specific side-effects (asdf, direnv, etc)
     command_string.push_str(&format!("cd '{}';", directory.display()));
     if let Some(prefix) = shell_kind.command_prefix() {
         command_string.push(prefix);
     }
     command_string.push_str(&format!("{} --printenv {}", zed_path, redir));
-    command.args(["-i", "-c", &command_string]);
+
+    if let ShellKind::Nushell = shell_kind {
+        command_string.push_str("; exit");
+    }
+
+    command.arg(&command_string);
 
     super::set_pre_exec_to_start_new_session(&mut command);
 

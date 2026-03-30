@@ -5,35 +5,85 @@ use gpui::{
     ManagedView, MouseButton, Pixels, Render, Subscription, Task, Tiling, Window, WindowId,
     actions, deferred, px,
 };
-use project::{DisableAiSettings, Project};
+use project::DisableAiSettings;
+#[cfg(any(test, feature = "test-support"))]
+use project::Project;
 use settings::Settings;
+pub use settings::SidebarSide;
 use std::future::Future;
 use std::path::PathBuf;
+use std::sync::Arc;
 use ui::prelude::*;
 use util::ResultExt;
+use zed_actions::agents_sidebar::MoveWorkspaceToNewWindow;
+
+use agent_settings::AgentSettings;
+use settings::SidebarDockPosition;
+use ui::{ContextMenu, right_click_menu};
 
 const SIDEBAR_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
 
 use crate::{
-    CloseIntent, CloseWindow, DockPosition, Event as WorkspaceEvent, Item, ModalView, Panel, Toast,
-    Workspace, WorkspaceId, client_side_decorations, notifications::NotificationId,
+    CloseIntent, CloseWindow, DockPosition, Event as WorkspaceEvent, Item, ModalView, Panel,
+    Workspace, WorkspaceId, client_side_decorations,
 };
 
 actions!(
     multi_workspace,
     [
-        /// Creates a new workspace within the current window.
-        NewWorkspaceInWindow,
-        /// Switches to the next workspace within the current window.
-        NextWorkspaceInWindow,
-        /// Switches to the previous workspace within the current window.
-        PreviousWorkspaceInWindow,
         /// Toggles the workspace switcher sidebar.
         ToggleWorkspaceSidebar,
+        /// Closes the workspace sidebar.
+        CloseWorkspaceSidebar,
         /// Moves focus to or from the workspace sidebar without closing it.
         FocusWorkspaceSidebar,
+        /// Switches to the next workspace.
+        NextWorkspace,
+        /// Switches to the previous workspace.
+        PreviousWorkspace,
     ]
 );
+
+#[derive(Default)]
+pub struct SidebarRenderState {
+    pub open: bool,
+    pub side: SidebarSide,
+}
+
+pub fn sidebar_side_context_menu(
+    id: impl Into<ElementId>,
+    cx: &App,
+) -> ui::RightClickMenu<ContextMenu> {
+    let current_position = AgentSettings::get_global(cx).sidebar_side;
+    right_click_menu(id).menu(move |window, cx| {
+        let fs = <dyn fs::Fs>::global(cx);
+        ContextMenu::build(window, cx, move |mut menu, _, _cx| {
+            let positions: [(SidebarDockPosition, &str); 3] = [
+                (SidebarDockPosition::Left, "Left"),
+                (SidebarDockPosition::Right, "Right"),
+                (SidebarDockPosition::FollowAgent, "Follow Agent Panel"),
+            ];
+            for (position, label) in positions {
+                let fs = fs.clone();
+                menu = menu.toggleable_entry(
+                    label,
+                    position == current_position,
+                    IconPosition::Start,
+                    None,
+                    move |_window, cx| {
+                        settings::update_settings_file(fs.clone(), cx, move |settings, _cx| {
+                            settings
+                                .agent
+                                .get_or_insert_default()
+                                .set_sidebar_side(position);
+                        });
+                    },
+                );
+            }
+            menu
+        })
+    })
+}
 
 pub enum MultiWorkspaceEvent {
     ActiveWorkspaceChanged,
@@ -41,15 +91,17 @@ pub enum MultiWorkspaceEvent {
     WorkspaceRemoved(EntityId),
 }
 
-pub enum SidebarEvent {
-    Open,
-    Close,
-}
-
-pub trait Sidebar: EventEmitter<SidebarEvent> + Focusable + Render + Sized {
+pub trait Sidebar: Focusable + Render + Sized {
     fn width(&self, cx: &App) -> Pixels;
     fn set_width(&mut self, width: Option<Pixels>, cx: &mut Context<Self>);
     fn has_notifications(&self, cx: &App) -> bool;
+    fn side(&self, _cx: &App) -> SidebarSide;
+
+    fn is_threads_list_view_active(&self) -> bool {
+        true
+    }
+    /// Makes focus reset bac to the search editor upon toggling the sidebar from outside
+    fn prepare_for_focus(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
 }
 
 pub trait SidebarHandle: 'static + Send + Sync {
@@ -57,9 +109,14 @@ pub trait SidebarHandle: 'static + Send + Sync {
     fn set_width(&self, width: Option<Pixels>, cx: &mut App);
     fn focus_handle(&self, cx: &App) -> FocusHandle;
     fn focus(&self, window: &mut Window, cx: &mut App);
+    fn prepare_for_focus(&self, window: &mut Window, cx: &mut App);
     fn has_notifications(&self, cx: &App) -> bool;
     fn to_any(&self) -> AnyView;
     fn entity_id(&self) -> EntityId;
+
+    fn is_threads_list_view_active(&self, cx: &App) -> bool;
+
+    fn side(&self, cx: &App) -> SidebarSide;
 }
 
 #[derive(Clone)]
@@ -89,6 +146,10 @@ impl<T: Sidebar> SidebarHandle for Entity<T> {
         window.focus(&handle, cx);
     }
 
+    fn prepare_for_focus(&self, window: &mut Window, cx: &mut App) {
+        self.update(cx, |this, cx| this.prepare_for_focus(window, cx));
+    }
+
     fn has_notifications(&self, cx: &App) -> bool {
         self.read(cx).has_notifications(cx)
     }
@@ -100,6 +161,14 @@ impl<T: Sidebar> SidebarHandle for Entity<T> {
     fn entity_id(&self) -> EntityId {
         Entity::entity_id(self)
     }
+
+    fn is_threads_list_view_active(&self, cx: &App) -> bool {
+        self.read(cx).is_threads_list_view_active()
+    }
+
+    fn side(&self, cx: &App) -> SidebarSide {
+        self.read(cx).side(cx)
+    }
 }
 
 pub struct MultiWorkspace {
@@ -108,22 +177,30 @@ pub struct MultiWorkspace {
     active_workspace_index: usize,
     sidebar: Option<Box<dyn SidebarHandle>>,
     sidebar_open: bool,
-    _sidebar_subscription: Option<Subscription>,
     pending_removal_tasks: Vec<Task<()>>,
     _serialize_task: Option<Task<()>>,
-    _create_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl EventEmitter<MultiWorkspaceEvent> for MultiWorkspace {}
 
 impl MultiWorkspace {
+    pub fn sidebar_side(&self, cx: &App) -> SidebarSide {
+        self.sidebar
+            .as_ref()
+            .map_or(SidebarSide::Left, |s| s.side(cx))
+    }
+
+    pub fn sidebar_render_state(&self, cx: &App) -> SidebarRenderState {
+        SidebarRenderState {
+            open: self.sidebar_open() && self.multi_workspace_enabled(cx),
+            side: self.sidebar_side(cx),
+        }
+    }
+
     pub fn new(workspace: Entity<Workspace>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let release_subscription = cx.on_release(|this: &mut MultiWorkspace, _cx| {
             if let Some(task) = this._serialize_task.take() {
-                task.detach();
-            }
-            if let Some(task) = this._create_task.take() {
                 task.detach();
             }
             for task in std::mem::take(&mut this.pending_removal_tasks) {
@@ -138,16 +215,18 @@ impl MultiWorkspace {
                 }
             });
         Self::subscribe_to_workspace(&workspace, cx);
+        let weak_self = cx.weak_entity();
+        workspace.update(cx, |workspace, cx| {
+            workspace.set_multi_workspace(weak_self, cx);
+        });
         Self {
             window_id: window.window_handle().window_id(),
             workspaces: vec![workspace],
             active_workspace_index: 0,
             sidebar: None,
             sidebar_open: false,
-            _sidebar_subscription: None,
             pending_removal_tasks: Vec::new(),
             _serialize_task: None,
-            _create_task: None,
             _subscriptions: vec![
                 release_subscription,
                 quit_subscription,
@@ -156,21 +235,12 @@ impl MultiWorkspace {
         }
     }
 
-    pub fn register_sidebar<T: Sidebar>(
-        &mut self,
-        sidebar: Entity<T>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let subscription =
-            cx.subscribe_in(&sidebar, window, |this, _, event, window, cx| match event {
-                SidebarEvent::Open => this.toggle_sidebar(window, cx),
-                SidebarEvent::Close => {
-                    this.close_sidebar(window, cx);
-                }
-            });
+    pub fn register_sidebar<T: Sidebar>(&mut self, sidebar: Entity<T>, cx: &mut Context<Self>) {
+        self._subscriptions
+            .push(cx.observe(&sidebar, |_this, _, cx| {
+                cx.notify();
+            }));
         self.sidebar = Some(Box::new(sidebar));
-        self._sidebar_subscription = Some(subscription);
     }
 
     pub fn sidebar(&self) -> Option<&dyn SidebarHandle> {
@@ -178,13 +248,19 @@ impl MultiWorkspace {
     }
 
     pub fn sidebar_open(&self) -> bool {
-        self.sidebar_open && self.sidebar.is_some()
+        self.sidebar_open
     }
 
     pub fn sidebar_has_notifications(&self, cx: &App) -> bool {
         self.sidebar
             .as_ref()
             .map_or(false, |s| s.has_notifications(cx))
+    }
+
+    pub fn is_threads_list_view_active(&self, cx: &App) -> bool {
+        self.sidebar
+            .as_ref()
+            .map_or(false, |s| s.is_threads_list_view_active(cx))
     }
 
     pub fn multi_workspace_enabled(&self, cx: &App) -> bool {
@@ -201,8 +277,19 @@ impl MultiWorkspace {
         } else {
             self.open_sidebar(cx);
             if let Some(sidebar) = &self.sidebar {
+                sidebar.prepare_for_focus(window, cx);
                 sidebar.focus(window, cx);
             }
+        }
+    }
+
+    pub fn close_sidebar_action(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.multi_workspace_enabled(cx) {
+            return;
+        }
+
+        if self.sidebar_open {
+            self.close_sidebar(window, cx);
         }
     }
 
@@ -222,11 +309,13 @@ impl MultiWorkspace {
                 let pane_focus = pane.read(cx).focus_handle(cx);
                 window.focus(&pane_focus, cx);
             } else if let Some(sidebar) = &self.sidebar {
+                sidebar.prepare_for_focus(window, cx);
                 sidebar.focus(window, cx);
             }
         } else {
             self.open_sidebar(cx);
             if let Some(sidebar) = &self.sidebar {
+                sidebar.prepare_for_focus(window, cx);
                 sidebar.focus(window, cx);
             }
         }
@@ -234,20 +323,21 @@ impl MultiWorkspace {
 
     pub fn open_sidebar(&mut self, cx: &mut Context<Self>) {
         self.sidebar_open = true;
+        let sidebar_focus_handle = self.sidebar.as_ref().map(|s| s.focus_handle(cx));
         for workspace in &self.workspaces {
-            workspace.update(cx, |workspace, cx| {
-                workspace.set_workspace_sidebar_open(true, cx);
+            workspace.update(cx, |workspace, _cx| {
+                workspace.set_sidebar_focus_handle(sidebar_focus_handle.clone());
             });
         }
         self.serialize(cx);
         cx.notify();
     }
 
-    fn close_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn close_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sidebar_open = false;
         for workspace in &self.workspaces {
-            workspace.update(cx, |workspace, cx| {
-                workspace.set_workspace_sidebar_open(false, cx);
+            workspace.update(cx, |workspace, _cx| {
+                workspace.set_sidebar_focus_handle(None);
             });
         }
         let pane = self.workspace().read(cx).active_pane().clone();
@@ -290,10 +380,6 @@ impl MultiWorkspace {
             }
         })
         .detach();
-    }
-
-    pub fn is_sidebar_open(&self) -> bool {
-        self.sidebar_open
     }
 
     pub fn workspace(&self) -> &Entity<Workspace> {
@@ -346,10 +432,15 @@ impl MultiWorkspace {
             index
         } else {
             if self.sidebar_open {
-                workspace.update(cx, |workspace, cx| {
-                    workspace.set_workspace_sidebar_open(true, cx);
+                let sidebar_focus_handle = self.sidebar.as_ref().map(|s| s.focus_handle(cx));
+                workspace.update(cx, |workspace, _cx| {
+                    workspace.set_sidebar_focus_handle(sidebar_focus_handle);
                 });
             }
+            let weak_self = cx.weak_entity();
+            workspace.update(cx, |workspace, cx| {
+                workspace.set_multi_workspace(weak_self, cx);
+            });
             Self::subscribe_to_workspace(&workspace, cx);
             self.workspaces.push(workspace.clone());
             cx.emit(MultiWorkspaceEvent::WorkspaceAdded(workspace));
@@ -373,22 +464,27 @@ impl MultiWorkspace {
         cx.notify();
     }
 
-    pub fn activate_next_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.workspaces.len() > 1 {
-            let next_index = (self.active_workspace_index + 1) % self.workspaces.len();
-            self.activate_index(next_index, window, cx);
+    fn cycle_workspace(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
+        let count = self.workspaces.len() as isize;
+        if count <= 1 {
+            return;
         }
+        let current = self.active_workspace_index as isize;
+        let next = ((current + delta).rem_euclid(count)) as usize;
+        self.activate_index(next, window, cx);
     }
 
-    pub fn activate_previous_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.workspaces.len() > 1 {
-            let prev_index = if self.active_workspace_index == 0 {
-                self.workspaces.len() - 1
-            } else {
-                self.active_workspace_index - 1
-            };
-            self.activate_index(prev_index, window, cx);
-        }
+    fn next_workspace(&mut self, _: &NextWorkspace, window: &mut Window, cx: &mut Context<Self>) {
+        self.cycle_workspace(1, window, cx);
+    }
+
+    fn previous_workspace(
+        &mut self,
+        _: &PreviousWorkspace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cycle_workspace(-1, window, cx);
     }
 
     fn serialize(&mut self, cx: &mut App) {
@@ -397,8 +493,9 @@ impl MultiWorkspace {
             active_workspace_id: self.workspace().read(cx).database_id(),
             sidebar_open: self.sidebar_open,
         };
+        let kvp = db::kvp::KeyValueStore::global(cx);
         self._serialize_task = Some(cx.background_spawn(async move {
-            crate::persistence::write_multi_workspace_state(window_id, state).await;
+            crate::persistence::write_multi_workspace_state(&kvp, window_id, state).await;
         }));
     }
 
@@ -412,9 +509,6 @@ impl MultiWorkspace {
     fn app_will_quit(&mut self, _cx: &mut Context<Self>) -> impl Future<Output = ()> + use<> {
         let mut tasks: Vec<Task<()>> = Vec::new();
         if let Some(task) = self._serialize_task.take() {
-            tasks.push(task);
-        }
-        if let Some(task) = self._create_task.take() {
             tasks.push(task);
         }
         tasks.extend(std::mem::take(&mut self.pending_removal_tasks));
@@ -519,15 +613,10 @@ impl MultiWorkspace {
     }
 
     pub fn take_pending_removal_tasks(&mut self) -> Vec<Task<()>> {
-        let mut tasks: Vec<Task<()>> = std::mem::take(&mut self.pending_removal_tasks)
+        let tasks: Vec<Task<()>> = std::mem::take(&mut self.pending_removal_tasks)
             .into_iter()
             .filter(|task| !task.is_ready())
             .collect();
-        if let Some(task) = self._create_task.take() {
-            if !task.is_ready() {
-                tasks.push(task);
-            }
-        }
         tasks
     }
 
@@ -556,10 +645,12 @@ impl MultiWorkspace {
         workspace
     }
 
-    pub fn create_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.multi_workspace_enabled(cx) {
-            return;
-        }
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn create_test_workspace(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
         let app_state = self.workspace().read(cx).app_state().clone();
         let project = Project::local(
             app_state.client.clone(),
@@ -576,58 +667,38 @@ impl MultiWorkspace {
         self.focus_active_workspace(window, cx);
 
         let weak_workspace = new_workspace.downgrade();
-        self._create_task = Some(cx.spawn_in(window, async move |this, cx| {
-            let result = crate::persistence::DB.next_id().await;
-            this.update_in(cx, |this, window, cx| match result {
-                Ok(workspace_id) => {
-                    if let Some(workspace) = weak_workspace.upgrade() {
-                        let session_id = workspace.read(cx).session_id();
-                        let window_id = window.window_handle().window_id().as_u64();
-                        workspace.update(cx, |workspace, _cx| {
-                            workspace.set_database_id(workspace_id);
-                        });
-                        cx.background_spawn(async move {
-                            crate::persistence::DB
-                                .set_session_binding(workspace_id, session_id, Some(window_id))
-                                .await
-                                .log_err();
-                        })
-                        .detach();
-                    } else {
-                        cx.background_spawn(async move {
-                            crate::persistence::DB
-                                .delete_workspace_by_id(workspace_id)
-                                .await
-                                .log_err();
-                        })
-                        .detach();
-                    }
-                    this.serialize(cx);
-                }
-                Err(error) => {
-                    log::error!("Failed to create workspace: {error:#}");
-                    if let Some(index) = weak_workspace
-                        .upgrade()
-                        .and_then(|w| this.workspaces.iter().position(|ws| *ws == w))
-                    {
-                        this.remove_workspace(index, window, cx);
-                    }
-                    this.workspace().update(cx, |workspace, cx| {
-                        let id = NotificationId::unique::<MultiWorkspace>();
-                        workspace.show_toast(
-                            Toast::new(id, format!("Failed to create workspace: {error}")),
-                            cx,
-                        );
+        let db = crate::persistence::WorkspaceDb::global(cx);
+        cx.spawn_in(window, async move |this, cx| {
+            let workspace_id = db.next_id().await.unwrap();
+            let workspace = weak_workspace.upgrade().unwrap();
+            let task: Task<()> = this
+                .update_in(cx, |this, window, cx| {
+                    let session_id = workspace.read(cx).session_id();
+                    let window_id = window.window_handle().window_id().as_u64();
+                    workspace.update(cx, |workspace, _cx| {
+                        workspace.set_database_id(workspace_id);
                     });
-                }
-            })
-            .log_err();
-        }));
+                    this.serialize(cx);
+                    let db = db.clone();
+                    cx.background_spawn(async move {
+                        db.set_session_binding(workspace_id, session_id, Some(window_id))
+                            .await
+                            .log_err();
+                    })
+                })
+                .unwrap();
+            task.await
+        })
     }
 
-    pub fn remove_workspace(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn remove_workspace(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<Workspace>> {
         if self.workspaces.len() <= 1 || index >= self.workspaces.len() {
-            return;
+            return None;
         }
 
         let removed_workspace = self.workspaces.remove(index);
@@ -638,12 +709,24 @@ impl MultiWorkspace {
             self.active_workspace_index -= 1;
         }
 
+        // Clear session_id and cancel any in-flight serialization on the
+        // removed workspace. Without this, a pending throttle timer from
+        // `serialize_workspace` could fire and write the old session_id
+        // back to the DB, resurrecting the workspace on next launch.
+        removed_workspace.update(cx, |workspace, _cx| {
+            workspace.session_id.take();
+            workspace._schedule_serialize_workspace.take();
+            workspace._serialize_workspace_task.take();
+        });
+
         if let Some(workspace_id) = removed_workspace.read(cx).database_id() {
+            let db = crate::persistence::WorkspaceDb::global(cx);
             self.pending_removal_tasks.retain(|task| !task.is_ready());
             self.pending_removal_tasks
                 .push(cx.background_spawn(async move {
-                    crate::persistence::DB
-                        .delete_workspace_by_id(workspace_id)
+                    // Clear the session binding instead of deleting the row so
+                    // the workspace still appears in the recent-projects list.
+                    db.set_session_binding(workspace_id, None, None)
                         .await
                         .log_err();
                 }));
@@ -656,6 +739,49 @@ impl MultiWorkspace {
         ));
         cx.emit(MultiWorkspaceEvent::ActiveWorkspaceChanged);
         cx.notify();
+
+        Some(removed_workspace)
+    }
+
+    pub fn move_workspace_to_new_window(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.workspaces.len() <= 1 || index >= self.workspaces.len() {
+            return;
+        }
+
+        let Some(workspace) = self.remove_workspace(index, window, cx) else {
+            return;
+        };
+
+        let app_state: Arc<crate::AppState> = workspace.read(cx).app_state().clone();
+
+        cx.defer(move |cx| {
+            let options = (app_state.build_window_options)(None, cx);
+
+            let Ok(window) = cx.open_window(options, |window, cx| {
+                cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
+            }) else {
+                return;
+            };
+
+            let _ = window.update(cx, |_, window, _| {
+                window.activate_window();
+            });
+        });
+    }
+
+    fn move_active_workspace_to_new_window(
+        &mut self,
+        _: &MoveWorkspaceToNewWindow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let index = self.active_workspace_index;
+        self.move_workspace_to_new_window(index, window, cx);
     }
 
     pub fn open_project(
@@ -663,7 +789,7 @@ impl MultiWorkspace {
         paths: Vec<PathBuf>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
+    ) -> Task<Result<Entity<Workspace>>> {
         let workspace = self.workspace().clone();
 
         if self.multi_workspace_enabled(cx) {
@@ -684,7 +810,7 @@ impl MultiWorkspace {
                         })?
                         .await
                 } else {
-                    Ok(())
+                    Ok(workspace)
                 }
             })
         }
@@ -694,8 +820,10 @@ impl MultiWorkspace {
 impl Render for MultiWorkspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let multi_workspace_enabled = self.multi_workspace_enabled(cx);
+        let sidebar_side = self.sidebar_side(cx);
+        let sidebar_on_right = sidebar_side == SidebarSide::Right;
 
-        let sidebar: Option<AnyElement> = if multi_workspace_enabled && self.sidebar_open {
+        let sidebar: Option<AnyElement> = if multi_workspace_enabled && self.sidebar_open() {
             self.sidebar.as_ref().map(|sidebar_handle| {
                 let weak = cx.weak_entity();
 
@@ -704,7 +832,12 @@ impl Render for MultiWorkspace {
                     div()
                         .id("sidebar-resize-handle")
                         .absolute()
-                        .right(-SIDEBAR_RESIZE_HANDLE_SIZE / 2.)
+                        .when(!sidebar_on_right, |el| {
+                            el.right(-SIDEBAR_RESIZE_HANDLE_SIZE / 2.)
+                        })
+                        .when(sidebar_on_right, |el| {
+                            el.left(-SIDEBAR_RESIZE_HANDLE_SIZE / 2.)
+                        })
                         .top(px(0.))
                         .h_full()
                         .w(SIDEBAR_RESIZE_HANDLE_SIZE)
@@ -744,6 +877,12 @@ impl Render for MultiWorkspace {
             None
         };
 
+        let (left_sidebar, right_sidebar) = if sidebar_on_right {
+            (None, sidebar)
+        } else {
+            (sidebar, None)
+        };
+
         let ui_font = theme::setup_ui_font(window, cx);
         let text_color = cx.theme().colors().text;
 
@@ -758,21 +897,6 @@ impl Render for MultiWorkspace {
                 .font(ui_font)
                 .text_color(text_color)
                 .on_action(cx.listener(Self::close_window))
-                .on_action(
-                    cx.listener(|this: &mut Self, _: &NewWorkspaceInWindow, window, cx| {
-                        this.create_workspace(window, cx);
-                    }),
-                )
-                .on_action(
-                    cx.listener(|this: &mut Self, _: &NextWorkspaceInWindow, window, cx| {
-                        this.activate_next_workspace(window, cx);
-                    }),
-                )
-                .on_action(cx.listener(
-                    |this: &mut Self, _: &PreviousWorkspaceInWindow, window, cx| {
-                        this.activate_previous_workspace(window, cx);
-                    },
-                ))
                 .when(self.multi_workspace_enabled(cx), |this| {
                     this.on_action(cx.listener(
                         |this: &mut Self, _: &ToggleWorkspaceSidebar, window, cx| {
@@ -780,25 +904,40 @@ impl Render for MultiWorkspace {
                         },
                     ))
                     .on_action(cx.listener(
+                        |this: &mut Self, _: &CloseWorkspaceSidebar, window, cx| {
+                            this.close_sidebar_action(window, cx);
+                        },
+                    ))
+                    .on_action(cx.listener(
                         |this: &mut Self, _: &FocusWorkspaceSidebar, window, cx| {
                             this.focus_sidebar(window, cx);
                         },
                     ))
+                    .on_action(cx.listener(Self::next_workspace))
+                    .on_action(cx.listener(Self::previous_workspace))
+                    .on_action(cx.listener(Self::move_active_workspace_to_new_window))
                 })
                 .when(
                     self.sidebar_open() && self.multi_workspace_enabled(cx),
                     |this| {
                         this.on_drag_move(cx.listener(
-                            |this: &mut Self, e: &DragMoveEvent<DraggedSidebar>, _window, cx| {
+                            move |this: &mut Self,
+                                  e: &DragMoveEvent<DraggedSidebar>,
+                                  window,
+                                  cx| {
                                 if let Some(sidebar) = &this.sidebar {
-                                    let new_width = e.event.position.x;
+                                    let new_width = if sidebar_on_right {
+                                        window.bounds().size.width - e.event.position.x
+                                    } else {
+                                        e.event.position.x
+                                    };
                                     sidebar.set_width(Some(new_width), cx);
                                 }
                             },
                         ))
-                        .children(sidebar)
                     },
                 )
+                .children(left_sidebar)
                 .child(
                     div()
                         .flex()
@@ -807,11 +946,13 @@ impl Render for MultiWorkspace {
                         .overflow_hidden()
                         .child(self.workspace().clone()),
                 )
+                .children(right_sidebar)
                 .child(self.workspace().read(cx).modal_layer.clone()),
             window,
             cx,
             Tiling {
-                left: multi_workspace_enabled && self.sidebar_open,
+                left: !sidebar_on_right && multi_workspace_enabled && self.sidebar_open(),
+                right: sidebar_on_right && multi_workspace_enabled && self.sidebar_open(),
                 ..Tiling::default()
             },
         )
@@ -850,7 +991,7 @@ mod tests {
 
         multi_workspace.update_in(cx, |mw, _window, cx| {
             mw.open_sidebar(cx);
-            assert!(mw.is_sidebar_open());
+            assert!(mw.sidebar_open());
         });
 
         cx.update(|_window, cx| {
@@ -860,7 +1001,7 @@ mod tests {
 
         multi_workspace.read_with(cx, |mw, cx| {
             assert!(
-                !mw.is_sidebar_open(),
+                !mw.sidebar_open(),
                 "Sidebar should be closed when disable_ai is true"
             );
             assert!(
@@ -874,7 +1015,7 @@ mod tests {
         });
         multi_workspace.read_with(cx, |mw, _cx| {
             assert!(
-                !mw.is_sidebar_open(),
+                !mw.sidebar_open(),
                 "Sidebar should remain closed when toggled with disable_ai true"
             );
         });
@@ -890,7 +1031,7 @@ mod tests {
                 "Multi-workspace should be enabled after re-enabling AI"
             );
             assert!(
-                !mw.is_sidebar_open(),
+                !mw.sidebar_open(),
                 "Sidebar should still be closed after re-enabling AI (not auto-opened)"
             );
         });
@@ -900,7 +1041,7 @@ mod tests {
         });
         multi_workspace.read_with(cx, |mw, _cx| {
             assert!(
-                mw.is_sidebar_open(),
+                mw.sidebar_open(),
                 "Sidebar should open when toggled after re-enabling AI"
             );
         });

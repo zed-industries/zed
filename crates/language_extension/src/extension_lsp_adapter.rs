@@ -350,6 +350,44 @@ impl LspAdapter for ExtensionLspAdapter {
         })
     }
 
+    async fn initialization_options_schema(
+        self: Arc<Self>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        _cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
+        _cx: &mut AsyncApp,
+    ) -> Option<serde_json::Value> {
+        let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
+        let json_schema: Option<String> = self
+            .extension
+            .language_server_initialization_options_schema(
+                self.language_server_id.clone(),
+                delegate,
+            )
+            .await
+            .ok()
+            .flatten();
+        json_schema.and_then(|s| serde_json::from_str(&s).ok())
+    }
+
+    async fn settings_schema(
+        self: Arc<Self>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        _cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
+        _cx: &mut AsyncApp,
+    ) -> Option<serde_json::Value> {
+        let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
+        let json_schema: Option<String> = self
+            .extension
+            .language_server_workspace_configuration_schema(
+                self.language_server_id.clone(),
+                delegate,
+            )
+            .await
+            .ok()
+            .flatten();
+        json_schema.and_then(|s| serde_json::from_str(&s).ok())
+    }
+
     async fn additional_initialization_options(
         self: Arc<Self>,
         target_language_server_id: LanguageServerName,
@@ -509,15 +547,16 @@ fn build_code_label(
                 text.push_str(code_span);
             }
             extension::CodeLabelSpan::Literal(span) => {
-                let highlight_id = language
+                if let Some(highlight_id) = language
                     .grammar()
                     .zip(span.highlight_name.as_ref())
                     .and_then(|(grammar, highlight_name)| {
                         grammar.highlight_id_for_name(highlight_name)
                     })
-                    .unwrap_or_default();
-                let ix = text.len();
-                runs.push((ix..ix + span.text.len(), highlight_id));
+                {
+                    let ix = text.len();
+                    runs.push((ix..ix + span.text.len(), highlight_id));
+                }
                 text.push_str(&span.text);
             }
         }

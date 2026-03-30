@@ -182,7 +182,7 @@ impl SvgPreviewView {
             buffer,
             window,
             move |this, _buffer, event: &BufferEvent, window, cx| match event {
-                BufferEvent::Edited | BufferEvent::Saved => {
+                BufferEvent::Edited { .. } | BufferEvent::Saved => {
                     this.render_image(window, cx);
                 }
                 _ => {}

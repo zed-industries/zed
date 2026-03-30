@@ -350,10 +350,7 @@ impl ConfigOptionSelector {
         )
         .label_size(LabelSize::Small)
         .color(Color::Muted)
-        .icon(icon)
-        .icon_size(IconSize::XSmall)
-        .icon_position(IconPosition::End)
-        .icon_color(Color::Muted)
+        .end_icon(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted))
         .disabled(self.setting_value)
     }
 }
