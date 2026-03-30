@@ -18217,6 +18217,20 @@ impl Editor {
             for ranges in locations.values_mut() {
                 ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
                 ranges.dedup();
+                // Merge overlapping or contained ranges. After sorting by
+                // (start, Reverse(end)), we can merge in a single pass:
+                // if the next range starts before the current one ends,
+                // extend the current range's end if needed.
+                let mut i = 0;
+                while i + 1 < ranges.len() {
+                    if ranges[i + 1].start <= ranges[i].end {
+                        let merged_end = ranges[i].end.max(ranges[i + 1].end);
+                        ranges[i].end = merged_end;
+                        ranges.remove(i + 1);
+                    } else {
+                        i += 1;
+                    }
+                }
                 let fits_in_one_excerpt = ranges
                     .iter()
                     .tuple_windows()
