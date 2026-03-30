@@ -3434,7 +3434,7 @@ impl BufferSnapshot {
             &self.text,
             TreeSitterOptions {
                 max_bytes_to_query: Some(MAX_BYTES_TO_QUERY),
-                max_start_depth: None,
+                ..Default::default()
             },
             |grammar| Some(&grammar.indents_config.as_ref()?.query),
         );
@@ -4590,7 +4590,7 @@ impl BufferSnapshot {
                 &self.text,
                 TreeSitterOptions {
                     max_bytes_to_query: Some(MAX_BYTES_TO_QUERY),
-                    max_start_depth: None,
+                    ..Default::default()
                 },
                 |grammar| grammar.brackets_config.as_ref().map(|c| &c.query),
             );
@@ -5120,9 +5120,15 @@ impl BufferSnapshot {
         &self,
         offset_range: Range<usize>,
     ) -> impl Iterator<Item = RunnableRange> + '_ {
-        let mut syntax_matches = self.syntax.matches(offset_range, self, |grammar| {
-            grammar.runnable_config.as_ref().map(|config| &config.query)
-        });
+        let mut syntax_matches = self.syntax.matches_with_options(
+            offset_range,
+            self,
+            TreeSitterOptions {
+                match_limit: Some(1024),
+                ..Default::default()
+            },
+            |grammar| grammar.runnable_config.as_ref().map(|config| &config.query),
+        );
 
         let test_configs = syntax_matches
             .grammars()

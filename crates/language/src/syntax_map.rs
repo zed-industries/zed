@@ -1212,6 +1212,7 @@ impl<'a> SyntaxMapCaptures<'a> {
 pub struct TreeSitterOptions {
     pub max_start_depth: Option<u32>,
     pub max_bytes_to_query: Option<usize>,
+    pub match_limit: Option<u32>,
 }
 
 impl TreeSitterOptions {
@@ -1219,6 +1220,7 @@ impl TreeSitterOptions {
         Self {
             max_start_depth: Some(max_start_depth),
             max_bytes_to_query: None,
+            match_limit: None,
         }
     }
 }
@@ -1251,6 +1253,9 @@ impl<'a> SyntaxMapMatches<'a> {
                 )
             };
             cursor.set_max_start_depth(options.max_start_depth);
+            if let Some(match_limit) = options.match_limit {
+                cursor.set_match_limit(match_limit);
+            }
 
             if let Some(max_bytes_to_query) = options.max_bytes_to_query {
                 let midpoint = (range.start + range.end) / 2;

@@ -1183,22 +1183,21 @@ mod tests {
         );
 
         let go_test_count = tag_strings.iter().filter(|&tag| tag == "go-test").count();
-        // This is currently broken; see #39148
-        // let go_table_test_count = tag_strings
-        //     .iter()
-        //     .filter(|&tag| tag == "go-table-test-case")
-        //     .count();
+        let go_table_test_count = tag_strings
+            .iter()
+            .filter(|&tag| tag == "go-table-test-case")
+            .count();
 
         assert!(
             go_test_count == 1,
             "Should find exactly 1 go-test, found: {}",
             go_test_count
         );
-        // assert!(
-        //     go_table_test_count == 3,
-        //     "Should find exactly 3 go-table-test-case, found: {}",
-        //     go_table_test_count
-        // );
+        assert!(
+            go_table_test_count == 3,
+            "Should find exactly 3 go-table-test-case, found: {}",
+            go_table_test_count
+        );
     }
 
     #[gpui::test]
@@ -1530,6 +1529,61 @@ mod tests {
             !tag_strings.contains(&"go-table-test-case".to_string()),
             "Should find go-table-test-case tag, found: {:?}",
             tag_strings
+        );
+    }
+
+    #[gpui::test]
+    fn test_go_table_test_map_many_entries(cx: &mut TestAppContext) {
+        let language = language("go", tree_sitter_go::LANGUAGE.into());
+
+        let mut entries = String::new();
+        for i in 1..=40 {
+            entries.push_str(&format!(
+                "          \"test case {i}\": {{\n             someStr: \"val{i}\",\n          }},\n"
+            ));
+        }
+
+        let table_test = format!(
+            r#"
+        package main
+
+        import "testing"
+
+        func TestManyEntries(t *testing.T) {{
+           testCases := map[string]struct {{
+              someStr string
+           }}{{
+{entries}
+           }}
+
+            for name, _ := range testCases {{
+                t.Run(name, func(t *testing.T) {{
+                    // test code here
+                }})
+            }}
+        }}
+        "#
+        );
+
+        let buffer =
+            cx.new(|cx| crate::Buffer::local(&table_test, cx).with_language(language.clone(), cx));
+        cx.executor().run_until_parked();
+
+        let runnables: Vec<_> = buffer.update(cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            snapshot.runnable_ranges(0..table_test.len()).collect()
+        });
+
+        let go_table_test_count = runnables
+            .iter()
+            .flat_map(|r| &r.runnable.tags)
+            .filter(|tag| tag.0.as_ref() == "go-table-test-case")
+            .count();
+
+        assert_eq!(
+            go_table_test_count, 40,
+            "Should find all 40 go-table-test-case entries, found: {}",
+            go_table_test_count
         );
     }
 
