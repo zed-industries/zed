@@ -327,13 +327,23 @@ impl SerializedPane {
 
         let mut items = Vec::new();
         for item_handle in futures::future::join_all(item_tasks).await {
-            let item_handle = item_handle.log_err();
-            items.push(item_handle.clone());
-
-            if let Some(item_handle) = item_handle {
-                pane.update_in(cx, |pane, window, cx| {
-                    pane.add_item(item_handle.clone(), true, true, None, window, cx);
-                })?;
+            match item_handle {
+                Ok(item_handle) => {
+                    items.push(Some(item_handle.clone()));
+                    pane.update_in(cx, |pane, window, cx| {
+                        pane.add_item(item_handle.clone(), true, true, None, window, cx);
+                    })?;
+                }
+                Err(error) => {
+                    if error
+                        .downcast_ref::<crate::SkipItemDeserialization>()
+                        .is_some()
+                    {
+                        items.push(None);
+                    } else {
+                        items.push(Err(error).log_err());
+                    }
+                }
             }
         }
 

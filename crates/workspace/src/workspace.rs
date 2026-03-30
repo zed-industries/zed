@@ -59,6 +59,17 @@ use gpui::{
     SystemWindowTabController, Task, Tiling, WeakEntity, WindowBounds, WindowHandle, WindowId,
     WindowOptions, actions, canvas, point, relative, size, transparent_black,
 };
+
+#[derive(Debug)]
+pub struct SkipItemDeserialization;
+
+impl std::fmt::Display for SkipItemDeserialization {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "skip item deserialization")
+    }
+}
+
+impl std::error::Error for SkipItemDeserialization {}
 pub use history_manager::*;
 pub use item::{
     FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,

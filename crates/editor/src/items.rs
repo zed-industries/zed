@@ -52,7 +52,7 @@ use workspace::{
     },
 };
 use workspace::{
-    Pane, WorkspaceSettings,
+    Pane, SkipItemDeserialization, WorkspaceSettings,
     item::{FollowEvent, ProjectItemKind},
     searchable::SearchOptions,
 };
@@ -1240,17 +1240,22 @@ impl SerializableItem for Editor {
                 mtime,
                 ..
             } => {
-                let opened_buffer = project.update(cx, |project, cx| {
+                let fs = project.read(cx).fs().clone();
+                let project_path = project.update(cx, |project, cx| {
                     let (worktree, path) = project.find_worktree(&abs_path, cx)?;
-                    let project_path = ProjectPath {
+                    if worktree.read(cx).entry_for_path(&path).is_none() {
+                        return None;
+                    }
+                    Some(ProjectPath {
                         worktree_id: worktree.read(cx).id(),
                         path: path,
-                    };
-                    Some(project.open_path(project_path, cx))
+                    })
                 });
 
-                match opened_buffer {
-                    Some(opened_buffer) => window.spawn(cx, async move |cx| {
+                match project_path {
+                    Some(project_path) => window.spawn(cx, async move |cx| {
+                        let opened_buffer =
+                            project.update(cx, |project, cx| project.open_path(project_path, cx));
                         let (_, buffer) = opened_buffer
                             .await
                             .context("Failed to open path in project")?;
@@ -1272,12 +1277,23 @@ impl SerializableItem for Editor {
                         })
                     }),
                     None => {
-                        // File is not in any worktree (e.g., opened as a standalone file).
-                        // Open the buffer directly via the project rather than through
-                        // workspace.open_abs_path(), which has the side effect of adding
-                        // the item to a pane. The caller (deserialize_to) will add the
-                        // returned item to the correct pane.
                         window.spawn(cx, async move |cx| {
+                            let file_exists = fs
+                                .metadata(&abs_path)
+                                .await
+                                .log_err()
+                                .flatten()
+                                .is_some_and(|metadata| !metadata.is_dir);
+                            if !file_exists {
+                                return Err(anyhow::Error::new(SkipItemDeserialization));
+                            }
+
+                            // File is not currently in the worktree snapshot (e.g., restored
+                            // from stale workspace state or opened as a standalone file). Open
+                            // the buffer directly via the project rather than through
+                            // workspace.open_abs_path(), which has the side effect of adding
+                            // the item to a pane. The caller (deserialize_to) will add the
+                            // returned item to the correct pane.
                             let buffer = project
                                 .update(cx, |project, cx| project.open_local_buffer(&abs_path, cx))
                                 .await
@@ -2429,6 +2445,60 @@ mod tests {
         assert_eq!(
             pane_items_before, pane_items_after,
             "Editor::deserialize should not add items to panes as a side effect"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_deserialize_missing_worktree_file_returns_skip_error(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({})).await;
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let db = cx.update(|_, cx| workspace::WorkspaceDb::global(cx));
+        let editor_db = cx.update(|_, cx| EditorDb::global(cx));
+
+        let workspace_id = db.next_id().await.unwrap();
+        let item_id = 123456 as ItemId;
+
+        let serialized_editor = SerializedEditor {
+            abs_path: Some(PathBuf::from(path!("/project/missing.rs"))),
+            contents: None,
+            language: None,
+            mtime: None,
+        };
+
+        editor_db
+            .save_serialized_editor(item_id, workspace_id, serialized_editor)
+            .await
+            .unwrap();
+
+        let result = workspace.update_in(cx, |workspace, window, cx| {
+            let pane = workspace.active_pane();
+            pane.update(cx, |_, cx| {
+                Editor::deserialize(
+                    project.clone(),
+                    workspace.weak_handle(),
+                    workspace_id,
+                    item_id,
+                    window,
+                    cx,
+                )
+            })
+        });
+
+        let error = result
+            .await
+            .expect_err("missing project file should be skipped");
+        assert!(
+            error.downcast_ref::<SkipItemDeserialization>().is_some(),
+            "missing project files should raise SkipItemDeserialization"
         );
     }
 }
