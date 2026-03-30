@@ -15,8 +15,6 @@ pub mod batches;
 
 pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com";
 
-pub const CONTEXT_1M_BETA_HEADER: &str = "context-1m-2025-08-07";
-
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct AnthropicModelCacheConfiguration {
@@ -341,9 +339,6 @@ impl Model {
         let mut headers = vec![];
 
         match self {
-            Self::ClaudeSonnet4_5_1mContext => {
-                headers.push(CONTEXT_1M_BETA_HEADER.to_string());
-            }
             Self::Custom {
                 extra_beta_headers, ..
             } => {
