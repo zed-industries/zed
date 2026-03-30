@@ -416,6 +416,16 @@ fn main() {
         fs.clone(),
         paths::keymap_file().clone(),
     );
+    let (zed_vimrc_rx, zed_vimrc_watcher) = watch_config_file(
+        &app.background_executor(),
+        fs.clone(),
+        paths::zed_vimrc_file().clone(),
+    );
+    let (home_vimrc_rx, home_vimrc_watcher) = watch_config_file(
+        &app.background_executor(),
+        fs.clone(),
+        paths::home_vimrc_file().clone(),
+    );
 
     let (shell_env_loaded_tx, shell_env_loaded_rx) = oneshot::channel();
     if !stdout_is_a_pty() {
@@ -480,7 +490,15 @@ fn main() {
             global_settings_watcher,
             cx,
         );
-        handle_keymap_file_changes(user_keymap_file_rx, user_keymap_watcher, cx);
+        handle_keymap_file_changes(
+            user_keymap_file_rx,
+            user_keymap_watcher,
+            zed_vimrc_rx,
+            zed_vimrc_watcher,
+            home_vimrc_rx,
+            home_vimrc_watcher,
+            cx,
+        );
 
         let user_agent = format!(
             "Zed/{} ({}; {})",

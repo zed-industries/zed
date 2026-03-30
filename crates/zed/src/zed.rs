@@ -1661,6 +1661,10 @@ pub fn handle_settings_file_changes(
 pub fn handle_keymap_file_changes(
     mut user_keymap_file_rx: mpsc::UnboundedReceiver<String>,
     user_keymap_watcher: gpui::Task<()>,
+    mut zed_vimrc_rx: mpsc::UnboundedReceiver<String>,
+    zed_vimrc_watcher: gpui::Task<()>,
+    mut home_vimrc_rx: mpsc::UnboundedReceiver<String>,
+    home_vimrc_watcher: gpui::Task<()>,
     cx: &mut App,
 ) {
     let (base_keymap_tx, mut base_keymap_rx) = mpsc::unbounded();
@@ -1718,9 +1722,16 @@ pub fn handle_keymap_file_changes(
     struct KeymapParseErrorNotification;
     let notification_id = NotificationId::unique::<KeymapParseErrorNotification>();
 
+    struct VimrcParseErrorNotification;
+    let vimrc_notification_id = NotificationId::unique::<VimrcParseErrorNotification>();
+
     cx.spawn(async move |cx| {
         let _user_keymap_watcher = user_keymap_watcher;
+        let _zed_vimrc_watcher = zed_vimrc_watcher;
+        let _home_vimrc_watcher = home_vimrc_watcher;
         let mut user_keymap_content = String::new();
+        let mut zed_vimrc_content = String::new();
+        let mut home_vimrc_content = String::new();
         let mut migrating_in_memory = false;
         loop {
             select_biased! {
@@ -1737,6 +1748,16 @@ pub fn handle_keymap_file_changes(
                         }
                     }
                 }
+                content = zed_vimrc_rx.next() => {
+                    if let Some(content) = content {
+                        zed_vimrc_content = content;
+                    }
+                }
+                content = home_vimrc_rx.next() => {
+                    if let Some(content) = content {
+                        home_vimrc_content = content;
+                    }
+                }
             };
             cx.update(|cx| {
                 if let Some(notifier) = MigrationNotification::try_global(cx) {
@@ -1747,10 +1768,42 @@ pub fn handle_keymap_file_changes(
                         });
                     });
                 }
+
+                let effective_vimrc = if !zed_vimrc_content.is_empty() {
+                    &zed_vimrc_content
+                } else {
+                    &home_vimrc_content
+                };
+                let vimrc_bindings = if !effective_vimrc.is_empty() {
+                    let (bindings, errors) = vim::vimrc::load_vimrc(effective_vimrc, cx);
+                    if !errors.is_empty() {
+                        let error_lines: Vec<String> = errors
+                            .iter()
+                            .take(5)
+                            .map(|e| format!("Line {}: {}", e.line_number, e.message))
+                            .collect();
+                        let message = format!(
+                            "vimrc: {} error(s)\n{}",
+                            errors.len(),
+                            error_lines.join("\n")
+                        );
+                        show_vimrc_load_error(
+                            vimrc_notification_id.clone(),
+                            message.into(),
+                            cx,
+                        );
+                    } else {
+                        dismiss_app_notification(&vimrc_notification_id.clone(), cx);
+                    }
+                    bindings
+                } else {
+                    Vec::new()
+                };
+
                 let load_result = KeymapFile::load(&user_keymap_content, cx);
                 match load_result {
                     KeymapFileLoadResult::Success { key_bindings } => {
-                        reload_keymaps(cx, key_bindings);
+                        reload_keymaps(cx, vimrc_bindings, key_bindings);
                         dismiss_app_notification(&notification_id.clone(), cx);
                     }
                     KeymapFileLoadResult::SomeFailedToLoad {
@@ -1758,7 +1811,7 @@ pub fn handle_keymap_file_changes(
                         error_message,
                     } => {
                         if !key_bindings.is_empty() {
-                            reload_keymaps(cx, key_bindings);
+                            reload_keymaps(cx, vimrc_bindings, key_bindings);
                         }
                         show_keymap_file_load_error(notification_id.clone(), error_message, cx);
                     }
@@ -1809,6 +1862,16 @@ fn show_keymap_file_load_error(
     )
 }
 
+fn show_vimrc_load_error(
+    notification_id: NotificationId,
+    message: SharedString,
+    cx: &mut App,
+) {
+    show_app_notification(notification_id, cx, move |cx| {
+        cx.new(|cx| MessageNotification::new(message.clone(), cx))
+    });
+}
+
 fn show_markdown_app_notification<F>(
     notification_id: NotificationId,
     message: MarkdownString,
@@ -1842,9 +1905,17 @@ fn show_markdown_app_notification<F>(
     })
 }
 
-fn reload_keymaps(cx: &mut App, mut user_key_bindings: Vec<KeyBinding>) {
+fn reload_keymaps(
+    cx: &mut App,
+    vimrc_bindings: Vec<KeyBinding>,
+    mut user_key_bindings: Vec<KeyBinding>,
+) {
     cx.clear_key_bindings();
     load_default_keymap(cx);
+
+    if !vimrc_bindings.is_empty() {
+        cx.bind_keys(vimrc_bindings);
+    }
 
     for key_binding in &mut user_key_bindings {
         key_binding.set_meta(KeybindSource::User.meta());
@@ -4519,7 +4590,17 @@ mod tests {
                 global_settings_watcher,
                 cx,
             );
-            handle_keymap_file_changes(keymap_rx, keymap_watcher, cx);
+            let (zed_vimrc_rx, zed_vimrc_watcher) = watch_config_file(
+                &executor,
+                app_state.fs.clone(),
+                PathBuf::from("/zed_vimrc"),
+            );
+            let (home_vimrc_rx, home_vimrc_watcher) = watch_config_file(
+                &executor,
+                app_state.fs.clone(),
+                PathBuf::from("/home_vimrc"),
+            );
+            handle_keymap_file_changes(keymap_rx, keymap_watcher, zed_vimrc_rx, zed_vimrc_watcher, home_vimrc_rx, home_vimrc_watcher, cx);
         });
         window
             .update(cx, |_, _, cx| {
@@ -4651,7 +4732,17 @@ mod tests {
                 global_settings_watcher,
                 cx,
             );
-            handle_keymap_file_changes(keymap_rx, keymap_watcher, cx);
+            let (zed_vimrc_rx, zed_vimrc_watcher) = watch_config_file(
+                &executor,
+                app_state.fs.clone(),
+                PathBuf::from("/zed_vimrc"),
+            );
+            let (home_vimrc_rx, home_vimrc_watcher) = watch_config_file(
+                &executor,
+                app_state.fs.clone(),
+                PathBuf::from("/home_vimrc"),
+            );
+            handle_keymap_file_changes(keymap_rx, keymap_watcher, zed_vimrc_rx, zed_vimrc_watcher, home_vimrc_rx, home_vimrc_watcher, cx);
         });
 
         cx.background_executor.run_until_parked();
