@@ -58,10 +58,9 @@ pub fn sidebar_side_context_menu(
     right_click_menu(id).menu(move |window, cx| {
         let fs = <dyn fs::Fs>::global(cx);
         ContextMenu::build(window, cx, move |mut menu, _, _cx| {
-            let positions: [(SidebarDockPosition, &str); 3] = [
+            let positions: [(SidebarDockPosition, &str); 2] = [
                 (SidebarDockPosition::Left, "Left"),
                 (SidebarDockPosition::Right, "Right"),
-                (SidebarDockPosition::FollowAgent, "Follow Agent Panel"),
             ];
             for (position, label) in positions {
                 let fs = fs.clone();

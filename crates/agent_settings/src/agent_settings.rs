@@ -85,10 +85,6 @@ impl AgentSettings {
         match self.sidebar_side {
             SidebarDockPosition::Left => SidebarSide::Left,
             SidebarDockPosition::Right => SidebarSide::Right,
-            SidebarDockPosition::FollowAgent => match self.dock {
-                DockPosition::Right => SidebarSide::Right,
-                _ => SidebarSide::Left,
-            },
         }
     }
 

@@ -51,12 +51,10 @@ pub enum NewThreadLocation {
 #[serde(rename_all = "snake_case")]
 pub enum SidebarDockPosition {
     /// Always show the sidebar on the left side.
+    #[default]
     Left,
     /// Always show the sidebar on the right side.
     Right,
-    /// Show the sidebar on the same side as the agent panel.
-    #[default]
-    FollowAgent,
 }
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -115,7 +113,7 @@ pub struct AgentSettingsContent {
     pub flexible: Option<bool>,
     /// Where to position the sidebar.
     ///
-    /// Default: follow_agent
+    /// Default: left
     pub sidebar_side: Option<SidebarDockPosition>,
     /// Default width in pixels when the agent panel is docked to the left or right.
     ///
