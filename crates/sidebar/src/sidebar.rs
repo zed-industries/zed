@@ -4,6 +4,7 @@ use acp_thread::ThreadStatus;
 use action_log::DiffStats;
 use agent_client_protocol::{self as acp};
 use agent_settings::AgentSettings;
+use agent_ui::ThreadImportModal;
 use agent_ui::thread_metadata_store::ThreadMetadataStore;
 use agent_ui::threads_archive_view::{
     ThreadsArchiveView, ThreadsArchiveViewEvent, format_history_entry_timestamp,
@@ -3280,6 +3281,74 @@ impl Sidebar {
         }
     }
 
+    fn show_thread_import_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(active_workspace) = self.multi_workspace.upgrade().and_then(|w| {
+            w.read(cx)
+                .workspaces()
+                .get(w.read(cx).active_workspace_index())
+                .cloned()
+        }) else {
+            return;
+        };
+
+        let Some(agent_registry_store) = AgentRegistryStore::try_global(cx) else {
+            return;
+        };
+
+        let agent_server_store = active_workspace
+            .read(cx)
+            .project()
+            .read(cx)
+            .agent_server_store()
+            .clone();
+
+        let workspace_handle = active_workspace.downgrade();
+        let multi_workspace = self.multi_workspace.clone();
+
+        active_workspace.update(cx, |workspace, cx| {
+            workspace.toggle_modal(window, cx, |window, cx| {
+                ThreadImportModal::new(
+                    agent_server_store,
+                    agent_registry_store,
+                    workspace_handle.clone(),
+                    multi_workspace.clone(),
+                    window,
+                    cx,
+                )
+            });
+        });
+    }
+
+    fn render_acp_import_onboarding(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let description =
+            "Import threads from your ACP agents — whether started in Zed or another client.";
+
+        div().p_1p5().child(
+            v_flex()
+                .min_w_0()
+                .w_full()
+                .p_1p5()
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .child(Label::new("Looking for ACP threads?"))
+                .child(Label::new(description).mb_2())
+                .child(
+                    Button::new("import-acp", "Import ACP Threads")
+                        .full_width()
+                        .style(ButtonStyle::OutlinedCustom(cx.theme().colors().border))
+                        .label_size(LabelSize::Small)
+                        .start_icon(
+                            Icon::new(IconName::ArrowDown)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.show_thread_import_modal(window, cx);
+                        })),
+                ),
+        )
+    }
+
     fn toggle_archive(&mut self, _: &ToggleArchive, window: &mut Window, cx: &mut Context<Self>) {
         match &self.view {
             SidebarView::ThreadList => self.show_archive(window, cx),
@@ -3483,6 +3552,7 @@ impl Render for Sidebar {
                     }),
                 SidebarView::Archive(archive_view) => this.child(archive_view.clone()),
             })
+            .child(self.render_acp_import_onboarding(cx))
             .child(self.render_sidebar_bottom_bar(cx))
     }
 }

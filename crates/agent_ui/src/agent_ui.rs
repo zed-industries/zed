@@ -79,6 +79,7 @@ pub(crate) use model_selector_popover::ModelSelectorPopover;
 pub use text_thread_editor::{AgentPanelDelegate, TextThreadEditor};
 pub(crate) use thread_history::ThreadHistory;
 pub(crate) use thread_history_view::*;
+pub use thread_import::ThreadImportModal;
 use zed_actions;
 
 pub const DEFAULT_THREAD_TITLE: &str = "New Thread";
