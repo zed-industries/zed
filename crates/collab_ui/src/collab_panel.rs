@@ -3146,13 +3146,12 @@ impl CollabPanel {
         let (favorite_icon, favorite_color, favorite_tooltip) = if is_favorited {
             (IconName::StarFilled, Color::Accent, "Remove from Favorites")
         } else {
-            (IconName::Star, Color::Muted, "Add to Favorites")
+            (IconName::Star, Color::Default, "Add to Favorites")
         };
 
         h_flex()
             .id(ix)
             .group("")
-            .h_6()
             .w_full()
             .when(!channel.is_root_channel(), |el| {
                 el.on_drag(channel.clone(), move |channel, _, _, cx| {
@@ -3182,7 +3181,6 @@ impl CollabPanel {
             .child(
                 ListItem::new(ix)
                     // Add one level of depth for the disclosure arrow.
-                    .height(px(26.))
                     .indent_level(depth + 1)
                     .indent_step_size(px(20.))
                     .toggle_state(is_selected || is_active)
@@ -3262,14 +3260,13 @@ impl CollabPanel {
             )
             .child(
                 h_flex()
+                    .visible_on_hover("")
                     .absolute()
                     .right_0()
-                    .visible_on_hover("")
-                    .h_full()
-                    .pl_1()
-                    .pr_1p5()
-                    .gap_0p5()
-                    .bg(cx.theme().colors().background.opacity(0.5))
+                    .px_1()
+                    .gap_px()
+                    .bg(cx.theme().colors().background)
+                    .rounded_l_md()
                     .child({
                         let focus_handle = self.focus_handle.clone();
                         IconButton::new("channel_favorite", favorite_icon)
@@ -3291,9 +3288,6 @@ impl CollabPanel {
                         let focus_handle = self.focus_handle.clone();
                         IconButton::new("channel_notes", IconName::Reader)
                             .icon_size(IconSize::Small)
-                            .when(!has_notes_notification, |this| {
-                                this.icon_color(Color::Muted)
-                            })
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.open_channel_notes(channel_id, window, cx)
                             }))
