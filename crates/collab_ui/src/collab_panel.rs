@@ -1954,6 +1954,12 @@ impl CollabPanel {
     }
 
     fn persist_favorites(&mut self, cx: &mut Context<Self>) {
+        // GlobalKeyValueStore uses a sqlez worker thread that the test
+        // scheduler can't control, causing non-determinism failures.
+        if cfg!(any(test, feature = "test-support")) {
+            return;
+        }
+
         let favorite_ids: Vec<u64> = self
             .channel_store
             .read(cx)
