@@ -107,7 +107,49 @@ impl Render for BufferSearchBar {
                 .as_ref()
                 .and_then(|weak| weak.upgrade())
                 .map(|splittable_editor| {
-                    let is_split = splittable_editor.read(cx).is_split();
+                    let editor_ref = splittable_editor.read(cx);
+                    let is_split = editor_ref.is_split();
+                    let settings = EditorSettings::get_global(cx);
+                    let is_width_collapsed = editor_ref.is_width_collapsed()
+                        && settings.diff_view_style == DiffViewStyle::Split;
+                    let min_columns = settings.minimum_split_diff_width.map(|v| v as u32);
+
+                    let split_button = {
+                        let mut button = IconButton::new("diff-split", IconName::DiffSplit)
+                            .shape(IconButtonShape::Square);
+
+                        if is_width_collapsed {
+                            button =
+                                button
+                                    .toggle_state(false)
+                                    .disabled(true)
+                                    .tooltip(Tooltip::text(format!(
+                                        "Using unified diff while width is less than {} columns",
+                                        min_columns.unwrap_or(0)
+                                    )));
+                        } else {
+                            button = button
+                                .toggle_state(is_split)
+                                .tooltip(Tooltip::text("Split"));
+                        }
+
+                        button.on_click({
+                            let splittable_editor = splittable_editor.downgrade();
+                            move |_, window, cx| {
+                                update_settings_file(<dyn Fs>::global(cx), cx, |settings, _| {
+                                    settings.editor.diff_view_style = Some(DiffViewStyle::Split);
+                                });
+                                if !is_split {
+                                    splittable_editor
+                                        .update(cx, |editor, cx| {
+                                            editor.toggle_split(&ToggleSplitDiff, window, cx);
+                                        })
+                                        .ok();
+                                }
+                            }
+                        })
+                    };
+
                     h_flex()
                         .gap_1()
                         .child(
@@ -140,36 +182,7 @@ impl Render for BufferSearchBar {
                                     }
                                 }),
                         )
-                        .child(
-                            IconButton::new("diff-split", IconName::DiffSplit)
-                                .shape(IconButtonShape::Square)
-                                .toggle_state(is_split)
-                                .tooltip(Tooltip::text("Split"))
-                                .on_click({
-                                    let splittable_editor = splittable_editor.downgrade();
-                                    move |_, window, cx| {
-                                        update_settings_file(
-                                            <dyn Fs>::global(cx),
-                                            cx,
-                                            |settings, _| {
-                                                settings.editor.diff_view_style =
-                                                    Some(DiffViewStyle::Split);
-                                            },
-                                        );
-                                        if !is_split {
-                                            splittable_editor
-                                                .update(cx, |editor, cx| {
-                                                    editor.toggle_split(
-                                                        &ToggleSplitDiff,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                })
-                                                .ok();
-                                        }
-                                    }
-                                }),
-                        )
+                        .child(split_button)
                 })
         } else {
             None

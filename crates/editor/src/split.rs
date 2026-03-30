@@ -7,7 +7,8 @@ use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use collections::HashMap;
 
 use gpui::{
-    Action, AppContext as _, Entity, EventEmitter, Focusable, Font, Subscription, WeakEntity,
+    Action, AppContext as _, Entity, EventEmitter, Focusable, Font, Pixels, Subscription,
+    WeakEntity, canvas,
 };
 use itertools::Itertools;
 use language::{Buffer, Capability, HighlightedText};
@@ -17,7 +18,7 @@ use multi_buffer::{
 };
 use project::Project;
 use rope::Point;
-use settings::DiffViewStyle;
+use settings::{DiffViewStyle, Settings};
 use text::{Bias, BufferId, OffsetRangeExt as _, Patch, ToPoint as _};
 use ui::{
     App, Context, InteractiveElement as _, IntoElement as _, ParentElement as _, Render,
@@ -36,7 +37,7 @@ use workspace::{
 };
 
 use crate::{
-    Autoscroll, Editor, EditorEvent, RenderDiffHunkControlsFn, ToggleSoftWrap,
+    Autoscroll, Editor, EditorEvent, EditorSettings, RenderDiffHunkControlsFn, ToggleSoftWrap,
     actions::{DisableBreakpoint, EditLogBreakpoint, EnableBreakpoint, ToggleBreakpoint},
     display_map::Companion,
 };
@@ -377,6 +378,8 @@ pub struct SplittableEditor {
     workspace: WeakEntity<Workspace>,
     split_state: Entity<SplitEditorState>,
     searched_side: Option<SplitSide>,
+    width_collapsed: bool,
+    last_width: Option<Pixels>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -398,6 +401,10 @@ impl SplittableEditor {
 
     pub fn is_split(&self) -> bool {
         self.lhs.is_some()
+    }
+
+    pub fn is_width_collapsed(&self) -> bool {
+        self.width_collapsed
     }
 
     pub fn set_render_diff_hunk_controls(
@@ -505,6 +512,8 @@ impl SplittableEditor {
             workspace: workspace.downgrade(),
             split_state,
             searched_side: None,
+            width_collapsed: false,
+            last_width: None,
             _subscriptions: subscriptions,
         }
     }
@@ -826,6 +835,7 @@ impl SplittableEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.width_collapsed = false;
         if self.lhs.is_some() {
             self.unsplit(window, cx);
         } else {
@@ -2042,17 +2052,37 @@ impl Focusable for SplittableEditor {
     }
 }
 
-// impl Item for SplittableEditor {
-//     type Event = EditorEvent;
+impl SplittableEditor {
+    fn width_changed(&mut self, width: Pixels, window: &mut Window, cx: &mut Context<Self>) {
+        self.last_width = Some(width);
 
-//     fn tab_content_text(&self, detail: usize, cx: &App) -> ui::SharedString {
-//         self.rhs_editor().tab_content_text(detail, cx)
-//     }
+        let settings = EditorSettings::get_global(cx);
+        if settings.diff_view_style != DiffViewStyle::Split {
+            return;
+        }
+        let Some(min_ems) = settings.minimum_split_diff_width else {
+            return;
+        };
 
-//     fn as_searchable(&self, _this: &Entity<Self>, cx: &App) -> Option<Box<dyn workspace::searchable::SearchableItemHandle>> {
-//         Some(Box::new(self.last_selected_editor().clone()))
-//     }
-// }
+        let style = self.rhs_editor.read(cx).create_style(cx);
+        let font_id = window.text_system().resolve_font(&style.text.font());
+        let font_size = style.text.font_size.to_pixels(window.rem_size());
+        let em_width = window
+            .text_system()
+            .em_width(font_id, font_size)
+            .unwrap_or(font_size);
+        let min_width = em_width * min_ems;
+        let is_split = self.lhs.is_some();
+
+        if is_split && width < min_width {
+            self.width_collapsed = true;
+            self.unsplit(window, cx);
+        } else if !is_split && self.width_collapsed && width >= min_width {
+            self.width_collapsed = false;
+            self.split(window, cx);
+        }
+    }
+}
 
 impl Render for SplittableEditor {
     fn render(
@@ -2060,12 +2090,17 @@ impl Render for SplittableEditor {
         _window: &mut ui::Window,
         cx: &mut ui::Context<Self>,
     ) -> impl ui::IntoElement {
-        let inner = if self.lhs.is_some() {
+        let is_split = self.lhs.is_some();
+        let inner = if is_split {
             let style = self.rhs_editor.read(cx).create_style(cx);
             SplitEditorView::new(cx.entity(), style, self.split_state.clone()).into_any_element()
         } else {
             self.rhs_editor.clone().into_any_element()
         };
+
+        let this = cx.entity().downgrade();
+        let last_width = self.last_width;
+
         div()
             .id("splittable-editor")
             .on_action(cx.listener(Self::toggle_split))
@@ -2079,6 +2114,25 @@ impl Render for SplittableEditor {
             .capture_action(cx.listener(Self::toggle_soft_wrap))
             .size_full()
             .child(inner)
+            .child(
+                canvas(
+                    move |bounds, window, cx| {
+                        let width = bounds.size.width;
+                        if last_width == Some(width) {
+                            return;
+                        }
+                        window.defer(cx, move |window, cx| {
+                            this.update(cx, |this, cx| {
+                                this.width_changed(width, window, cx);
+                            })
+                            .ok();
+                        });
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            )
     }
 }
 
