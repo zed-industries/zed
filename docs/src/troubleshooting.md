@@ -46,17 +46,17 @@ Xcode Instruments (which comes bundled with your [Xcode](https://apps.apple.com/
 1. With Zed running, open Instruments
 1. Select `Time Profiler` as the profiling template
 
-   ![Instruments template picker with Time Profiler selected](https://zed.dev/img/troubleshooting/instruments-template-picker.webp)
+   ![Instruments template picker with Time Profiler selected](https://images.zed.dev/troubleshooting/instruments-template-picker.webp)
 
 1. In the `Time Profiler` configuration, set the target to the running Zed process
 1. Start recording
 
-   ![Time Profiler configuration showing the target dropdown and record button](https://zed.dev/img/troubleshooting/instruments-target-and-record.webp)
+   ![Time Profiler configuration showing the target dropdown and record button](https://images.zed.dev/troubleshooting/instruments-target-and-record.webp)
 
 1. Perform the action in Zed that causes performance issues
 1. Stop recording
 
-   ![A completed Time Profiler recording in Instruments](https://zed.dev/img/troubleshooting/instruments-recording.webp)
+   ![A completed Time Profiler recording in Instruments](https://images.zed.dev/troubleshooting/instruments-recording.webp)
 
 1. Save the trace file
 1. Compress the trace file into a zip archive
