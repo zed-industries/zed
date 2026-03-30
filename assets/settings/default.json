@@ -947,8 +947,8 @@
     //
     // Default: true
     "flexible": true,
-    // Where to position the sidebar. Can be 'left', 'right', or 'follow_agent'.
-    "sidebar_side": "follow_agent",
+    // Where to position the sidebar. Can be 'left' or 'right'.
+    "sidebar_side": "left",
     // Default width when the agent panel is docked to the left or right.
     "default_width": 640,
     // Default height when the agent panel is docked to the bottom.
