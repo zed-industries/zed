@@ -6,10 +6,10 @@ This is a fork of zed-industries/zed with the goal of porting Zed to iPadOS as a
 client. The iPad runs minimal local compute. All language servers, git operations, file I/O,
 terminal PTYs, Node runtimes, and extension hosting run on a remote host (e.g. a Mac Studio)
 over SSH. The iPad is a rendering and input shell that connects to a `zed --headless`
-server instance. The one exception is the **AI agent panel**: LLM API calls (HTTPS) execute
-from the iPad, while agent tool invocations (file edits, terminal commands) proxy through
-the remote protocol to execute on the host. Agent settings and API keys are synced from
-the remote host at connection time — the user configures AI on the Mac Studio, not the iPad.
+server instance. The **AI agent panel** initially runs locally on the iPad (LLM calls over
+HTTPS, tool invocations proxy through the remote protocol). In a later phase, the agent
+engine moves to the remote host so it can survive iOS backgrounding — iOS kills
+backgrounded apps after ~30 seconds, which is incompatible with long-running agent turns.
 
 This product definition is **non-negotiable** and must inform every architectural decision. If
 you find yourself about to add a capability that requires spawning a subprocess, accessing
@@ -89,8 +89,8 @@ HTTPS calls directly to LLM providers (Anthropic, OpenAI, etc.). Agent *tool* in
 (file edits, grep, terminal commands) flow through the `Project` abstraction, which
 transparently proxies them to the remote host via protobuf RPC. The headless server has
 **no agent, language model, or LLM provider infrastructure** — it only handles tool
-execution. Settings and API keys sync from the remote host at connection time (see
-Phase 2.4).
+execution. API keys are configured in iPad-local settings or via Zed Pro account auth
+(see Phase 3.9). Remote settings sync is a Phase 3B enhancement (Phase 3.10).
 
 ---
 
@@ -176,41 +176,35 @@ where the agent assumes local context:
 - **Claude Code on remote (Issue #47362, open):** Claude Code external agent fails to
   initialize in remote sessions
 
-### Architecture decision for iPad: Option A (v1) + Option B (v2)
+### Architecture decision for iPad
 
-**v1 — LLM calls from iPad, config synced from remote host:**
+**Zed agent (built-in) — works with stock server (Phase 3A):**
 
-The iPad makes HTTPS calls to LLM providers directly — this works fine from iOS, it's
-just reqwest over HTTPS with no platform dependencies. The key change is **settings
-resolution**: instead of reading `language_models` config and API keys from the iPad's
-local environment (which has neither), we sync them from the remote host at connection
-time.
+The iPad runs the Thread engine locally, identical to desktop. LLM calls go directly from
+iPad to providers over HTTPS (reqwest, no platform deps). Tool invocations proxy through
+`Project` → remote host (existing protocol). API keys come from iPad-local settings or
+Zed Pro account auth (`ASWebAuthenticationSession` for OAuth/PKCE).
 
-This requires:
-1. A new `SyncLanguageModelSettings` protobuf message sent by the headless server at
-   session start, containing the host's `language_models` settings block and
-   environment-variable API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, etc.)
-2. A settings overlay in `SettingsStore` that applies remote agent config on the iPad
-3. A credential forwarding path: API keys from the host's OS keychain or environment
-   → protobuf → iPad's in-memory credential store (never written to iPad disk/keychain)
-4. For Zed Pro / hosted LLM access via Zed's proxy: `ASWebAuthenticationSession` on
-   iOS for the OAuth/PKCE flow through Zed's web auth endpoint — this is the **only**
-   place Authentication Services Framework is needed
+The agent code doesn't know or care that it's on an iPad — it gets settings from
+`SettingsStore` and credentials from the credential store as it always does.
 
-What stays unchanged: `Thread`, `AcpThread`, `NativeAgent`, `AgentPanel`, all tool
-definitions, the entire `crates/agent/` and `crates/agent_ui/` crate. The agent code
-doesn't know or care that it's on an iPad — it gets settings from `SettingsStore` and
-credentials from the credential store as it always does.
+Limitation: iOS kills backgrounded apps after ~30s. Agent turns that outlast the user's
+attention span get killed. Acceptable for v1 with a warning.
 
-**v2 (future) — Full server-side agent execution:**
+**External agents (Claude Code, Gemini CLI) — via SSH channels (Phase 3A):**
 
-Move `Thread.run_turn()` and LLM streaming to the headless server. The iPad sends
-user messages over a new agent protocol and receives streamed conversation events.
-This is architecturally cleaner (true thin client) but requires:
-- New protobuf message types for agent conversation lifecycle
-- Agent initialization in `HeadlessProject` (currently has none)
-- Tool confirmation UI flowing back to the iPad client
-- Multi-month effort — defer to v2
+External agents are discovered on the remote host and advertised to the client via
+`ExternalAgentsUpdated` proto. On desktop, the client spawns the binary locally. On iPad,
+we open an SSH channel and exec the agent binary on the remote host — same technique as
+the terminal (Phase 3.7). ACP messages flow over the channel's stdio. No server protocol
+changes needed.
+
+**Remote Zed agent execution — future enhancement (Phase 3B):**
+
+Move `Thread.run_turn()` and LLM streaming to the headless server so agent turns survive
+iOS backgrounding. Requires new proto messages and agent initialization in
+`HeadlessProject` (which currently has none). Also requires settings sync so the server
+has API keys.
 
 ### What NOT to use: Authentication Services Framework
 
@@ -221,7 +215,7 @@ for web OAuth. The actual frameworks needed:
 | Need | Framework | Notes |
 |---|---|---|
 | SSH key storage on iPad | `Security.framework` (Keychain Services) | Already in plan |
-| LLM API keys | None — synced from remote host, held in memory only | More secure than desktop |
+| LLM API keys | None — configured in iPad-local settings or via Zed Pro | Zed Pro avoids key management |
 | Zed Pro OAuth (if supported) | `AuthenticationServices` (`ASWebAuthenticationSession`) | Standard OAuth/PKCE |
 | LLM provider OAuth (e.g. Google/Gemini) | `AuthenticationServices` (`ASWebAuthenticationSession`) | Narrow case, v2 |
 
@@ -450,36 +444,7 @@ that:
 **This transport should also work on macOS** as an alternative to the system-ssh path,
 enabling shared testing and a migration path for desktop Zed.
 
-#### 2.1 — SSH Key Management (Keychain)
-
-New file: `crates/zed-ios/src/keychain.rs`
-
-- `store_ssh_key(label: &str, pem_bytes: &[u8]) -> Result<()>` — calls `SecItemAdd`
-  with `kSecClassKey` (or `kSecClassGenericPassword` for simpler storage),
-  `kSecAttrKeyType`, `kSecAttrApplicationLabel`, `kSecValueData`,
-  and `kSecAttrAccessible = kSecAttrAccessibleWhenUnlockedThisDeviceOnly`
-- `load_ssh_key(label: &str) -> Result<Vec<u8>>` — calls `SecItemCopyMatching`
-- `delete_ssh_key(label: &str) -> Result<()>` — calls `SecItemDelete`
-- `list_ssh_key_labels() -> Result<Vec<String>>` — for the host connection UI to show
-  available keys
-- Expose these via the C FFI header so they're callable from Swift if needed for the key
-  import flow
-
-**Integration with russh:**
-```rust
-let pem_bytes = keychain::load_ssh_key("my-server-key")?;
-let pem_str = std::str::from_utf8(&pem_bytes)?;
-let key_pair = russh_keys::decode_secret_key(pem_str, passphrase)?;
-// Use key_pair for authentication
-```
-
-SSH key import UI flow (Swift side):
-1. Tap "Import SSH Key" → present `UIDocumentPickerViewController` filtering for
-   `.pem`, `.p8`, `.key` extensions
-2. User selects file → read bytes → call `store_ssh_key` → confirm to user
-3. Key never written to disk; raw bytes only exist in memory during import
-
-#### 2.2 — Connection Manager UI
+#### 2.1 — Connection Manager UI
 
 New GPUI-based screens (pure Rust, no UIKit — these render via GPUI like all other Zed UI):
 
@@ -500,79 +465,25 @@ New GPUI-based screens (pure Rust, no UIKit — these render via GPUI like all o
 - Shows: host display name, latency (ping the host every 10s), connection health icon
 - Tap → dropdown with "Disconnect", "Reconnect", "Host Info"
 
-#### 2.3 — Network Resilience
-
-New file: `crates/zed-ios/src/network_monitor.rs`
-
-- Wraps `NWPathMonitor` (Network.framework) via Rust FFI or `objc2` crate bindings
-- Emits `NetworkEvent::Available` / `NetworkEvent::Lost` into GPUI's event system
-- `ConnectionManager` listens for `NetworkEvent::Available` and triggers reconnection
-  if a session was previously active
-- Reconnection strategy: immediate retry, then 1s, 2s, 4s, 8s, 16s, cap at 30s
-  (exponential backoff)
-- During reconnection, editor is read-only with a banner ("Reconnecting to host…");
-  existing buffer content remains visible because CRDT state is local
-
-#### 2.4 — Agent Settings Sync from Remote Host
-
-The agent panel runs on the iPad but its configuration lives on the remote host. At
-connection time, the iPad must receive the host's agent settings and API keys.
-
-**New protobuf messages** (add to `crates/proto/proto/zed.proto`):
-
-```protobuf
-message SyncLanguageModelSettings {
-    string language_models_json = 1;   // serialized "language_models" settings block
-    repeated ApiKeyEntry api_keys = 2; // keys from host environment/keychain
-}
-
-message ApiKeyEntry {
-    string provider = 1;   // "anthropic", "openai", "google", etc.
-    string api_key = 2;    // key value (transmitted over encrypted SSH tunnel)
-}
-```
-
-**Host side** (`crates/remote_server/`):
-- On session initialization, read the host's `language_models` settings from
-  `~/.config/zed/settings.json` and collect API keys from environment variables
-  (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_AI_API_KEY`, etc.) and/or the
-  host's OS keychain
-- Send `SyncLanguageModelSettings` to the client immediately after session handshake
-
-**iPad side** (`crates/zed-ios/` + `crates/settings/`):
-- `SettingsStore` receives the remote settings and applies them as a **remote overlay**
-  layer — higher priority than iPad-local settings, lower than project `.zed/settings.json`
-- API keys are stored in an **in-memory credential store** only — never written to the
-  iPad's Keychain or filesystem. Keys exist in memory for the duration of the session
-  and are cleared on disconnect.
-- The `LanguageModelRegistry` picks up the settings transparently — no changes needed
-  to `crates/agent/` or `crates/agent_ui/`
-
-**Zed Pro / hosted LLM authentication** (if supported):
-- Zed's own proxy service uses account-based auth, not API keys
-- Implement the OAuth/PKCE flow using `ASWebAuthenticationSession` on iOS
-- Store the Zed account token in the iPad's Keychain (this IS iPad-local, unlike
-  LLM API keys which come from the remote host)
-
-**External agents** (Claude Code, Gemini CLI, etc.):
-- External agents spawn as subprocesses — **this is blocked on iOS** regardless
-- External agents that users configure on the Mac Studio will run there; the iPad
-  receives conversation events via the existing ACP protocol over the remote connection
-- Note: External agent discovery on remote is a known pain point (Issue #47910, #47362);
-  verify these are resolved before shipping
-
 **Success criterion:** Connect to a `zed --headless` instance on a Mac Studio. Project panel
-shows remote files. Tap a file → it opens in the editor. Open the agent panel → it shows
-the models configured on the Mac Studio. Send a prompt → completions stream. Agent
-edits a file → edit happens on the remote host. Kill WiFi for 5 seconds and reconnect
-→ session automatically restores.
+shows remote files. Tap a file → it opens in the editor. Edit and save. See LSP
+completions and git diff decorations (from remote). Auto-connect to a previously saved
+host on launch.
 
 ---
 
-### Phase 3 — Editor & Terminal
+### Phase 3 — Editor, Terminal, Agent & Debug
 
-**Goal:** Full editing session end-to-end. LSP completions (from remote), git decorations
-(from remote), remote terminal with touch keyboard accessory bar.
+**Goal:** Full editing session with all major panels. LSP completions (from remote), git
+decorations (from remote), remote terminal, agent panel with LLM integration, debug panel,
+edit predictions, collab panel, and git branch/worktree management.
+
+Phase 3 is split at a **protocol cut line**. Phase 3A items work with a stock
+`zed --headless` binary (the same one desktop Zed installs). Phase 3B items require
+running a modified server with new protocol messages — which means setting up a dev
+workflow for building and deploying a custom `remote_server` binary to the remote host.
+
+#### ═══ Phase 3A — Stock Server (no protocol changes) ═══
 
 #### 3.1 — Editor Interaction
 
@@ -592,34 +503,7 @@ validation and polish:
   approaching Jetsam limits. Large files may need buffer eviction strategies that desktop
   Zed never needed.
 
-#### 3.2 — Remote Terminal
-
-The terminal panel in thin-client mode:
-
-- VT100/VT220 parsing lives in `crates/terminal/` — wraps
-  `alacritty_terminal::Term<ZedListener>` using the `vte` crate (Paul Williams' state
-  machine, ~2.9K SLoC, `no_std` compatible, **zero platform dependencies**)
-- **Key proof point:** `TerminalBuilder::new_display_only()` already creates a terminal
-  **without any PTY** — used by the REPL subsystem. This proves the VT state machine
-  operates independently of PTY spawning. The iPad only needs this display-only mode
-  with input forwarded over the SSH channel.
-- PTY management lives on the host — the iPad receives a byte stream over the remote
-  connection and writes keystrokes back
-- Terminal rendering via GPUI's text rendering — works as-is
-- Terminal events bridge via `ZedListener` implementing alacritty's `EventListener` trait,
-  using an unbounded channel with **4ms batching** for efficiency
-
-**Touch keyboard accessory bar** (new component:
-`crates/terminal/src/ios_accessory_bar.rs`):
-- A `UIInputAccessoryView`-equivalent implemented as a GPUI element rendered above
-  the software keyboard
-- Buttons: `Esc`, `Tab`, `Ctrl`, `↑`, `↓`, `←`, `→`, `~`, `/`, `|`, `-`
-- Each button emits the appropriate escape sequence / control character into the terminal
-  input stream
-- Visibility: shown when the terminal panel is focused and software keyboard is visible;
-  hidden otherwise
-
-#### 3.3 — Settings Path Adjustment
+#### 3.2 — Settings Path Adjustment
 
 In `crates/paths/src/lib.rs` (or wherever `config_dir()`, `data_dir()`, `cache_dir()` are
 defined), add an iOS branch:
@@ -641,9 +525,491 @@ The iOS sandbox directories to use:
 - Caches: `Library/Caches/zed/`
 - Temp: `tmp/`
 
+#### 3.3 — Debug Panel
+
+The debug panel (`debugger_ui`) supports remote debugging out of the box via `DapStore`'s
+`RemoteDapStore` mode, which proxies DAP (Debug Adapter Protocol) operations through the
+remote connection to the headless server. The headless server manages debug adapter
+processes (CodeLLDB, debugpy, etc.) — the iPad never spawns debugger subprocesses.
+
+**Crates to add to zed-ios:**
+- `debugger_ui` — panel UI, session views, breakpoint visualization
+- `debugger_tools` — debug logging (`dap_log`)
+- `dap_adapters` — built-in adapter definitions (the iPad doesn't run them, but needs
+  the type definitions for remote adapter discovery)
+
+**Initialization:**
+```rust
+debugger_ui::init(cx);
+debugger_tools::init(cx);
+dap_adapters::init(cx);
+```
+
+Plus in the workspace observer:
+```rust
+project::debugger::breakpoint_store::BreakpointStore::init(...)
+project::debugger::dap_store::DapStore::init(...)
+```
+
+**iOS-specific concerns:**
+- The `dap` crate's `StdioTransport` and `TcpTransport` use `std::process::Command` to
+  spawn debug adapter binaries. These code paths are only exercised in `LocalDapStore`
+  mode — the iPad uses `RemoteDapStore` exclusively. May need `#[cfg(not(target_os = "ios"))]`
+  gates on the local transport if the crate fails to compile for iOS.
+- `dap_adapters` references adapter binaries and download URLs — these are used by the
+  remote host, not the iPad. Should compile fine as data definitions.
+- `debugger_ui` depends on `terminal_view` for the debug console — this must be wired up
+  as part of the terminal panel work (Phase 3.7).
+
+**Keybindings:**
+- `F5` or `cmd-shift-d` → start/continue debugging
+- `F9` → toggle breakpoint
+- `F10` → step over, `F11` → step into
+
+#### 3.4 — Git Branch Picker & AI Worktree Selection
+
+The git branch picker and worktree picker already support remote connections via the
+existing protocol (`proto::GitGetBranches`, `proto::GitGetWorktrees`). Both live in
+`git_ui` and use `Project`/`Repository` abstractions that transparently proxy to the
+remote host.
+
+**Components:**
+- `git_ui::branch_picker::BranchList` — modal/popover for switching branches
+- `git_ui::worktree_picker::WorktreeList` — picker for git worktrees
+- `git_ui::git_picker::GitPicker` — unified tabbed picker (Branches / Worktrees / Stash)
+- All registered via `git_ui::init(cx)` which is already called in `init_zed()`
+
+**AI worktree selection** (in `agent_ui`):
+- `StartThreadIn` enum: `LocalProject` vs `NewWorktree`
+- When `NewWorktree` is selected, the agent creates a new git worktree for its changes
+- The worktree picker in the agent panel uses the same `git_ui` worktree infrastructure
+- Requires a git repository in the workspace (validated in `set_start_thread_in()`)
+- Gated behind `AgentV2FeatureFlag` on desktop
+
+**iPad status: Works with stock server** — all git operations proxy through existing
+remote protocol messages. No additional crates needed beyond `git_ui` (already included).
+
+**Keybindings:**
+- `cmd-shift-b` → open branch picker
+
+#### 3.5 — Collab Panel
+
+The collab panel (`collab_ui::collab_panel`) manages channels, contacts, and calls. It
+connects to **Zed's collab server** (zed.dev), not to the SSH remote host — so it's
+independent of the `zed --headless` connection.
+
+**Dependency challenge:**
+
+`collab_ui` pulls in `call`, which depends on:
+- `livekit_client` — native audio/video codec bindings (NOT iOS-compatible as-is)
+- `audio` — platform-specific audio backend
+- `gpui` with `screen-capture` feature — desktop-only
+
+The `title_bar` crate (also initialized by `collab_ui::init`) depends on `livekit_client`
+and `platform_title_bar`.
+
+**Approach for iPad:**
+
+Feature-gate the audio/video/screen-capture dependencies. The iPad doesn't need voice
+calls or screen sharing for v1 — it needs the channel list, contacts, and chat:
+
+1. Make `livekit_client`, `audio`, and `screen-capture` optional in `call` crate via
+   a `voice` or `media` feature flag
+2. Gate `call_stats_modal` and call-related UI on that feature
+3. The collab panel's channel list, contact list, and channel notes work without audio
+4. `title_bar` needs similar treatment or can be excluded entirely on iPad (we have our
+   own iOS titlebar)
+
+**Requires Zed account auth:** The collab panel needs authentication with zed.dev. This
+means implementing `ASWebAuthenticationSession` for OAuth/PKCE on iOS — same work
+as Zed Pro LLM access (see Phase 3.9).
+
+**Crates to add:**
+- `collab_ui` (with feature-gated media deps)
+- `channel` — channel store, channel buffers
+- `call` (with feature-gated `livekit_client`, `audio`)
+- `notifications` — already included
+
+**Graceful degradation:** The panel shows "Connect to view notifications" when
+disconnected from zed.dev. Channel data is cached in memory across reconnections.
+
+#### 3.6 — Edit Prediction (Inline Completions)
+
+Zed's edit prediction system has multiple providers. Most are HTTP-based and will work
+on iPad without modification. The Copilot provider is the exception — it spawns a Node.js
+LSP server.
+
+**Provider compatibility on iPad:**
+
+| Provider | Transport | iPad Status |
+|---|---|---|
+| Zed (Zeta) | HTTPS to Zed cloud API | Works |
+| Zed (Mercury) | HTTPS to Zed cloud API | Works |
+| Codestral | HTTPS to Mistral API | Works |
+| Ollama | HTTP to local/remote server | Works (if server reachable) |
+| OpenAI-compatible | HTTPS | Works |
+| Copilot | Node.js LSP subprocess | **Blocked** — requires local process |
+
+**Crates to add to zed-ios:**
+- `edit_prediction` — core engine, Zed/Codestral/OpenAI delegates
+- `edit_prediction_types` — trait definitions
+- `edit_prediction_context` — context analysis for predictions
+- `edit_prediction_ui` — UI components (inline ghost text, accept/reject)
+- `codestral` — Codestral (Mistral) provider (HTTPS only)
+- `cloud_llm_client` — Zed cloud prediction API client
+
+**Exclude from iOS:**
+- `copilot` — spawns Node.js subprocess (depends on `node_runtime`, `lsp`)
+- `copilot_ui` — Copilot auth UI (depends on `copilot`)
+
+**Initialization:**
+```rust
+edit_prediction_ui::init(cx);
+// edit_prediction_registry::init() — need to check if this can be
+// adapted to skip the Copilot provider path on iOS
+edit_prediction::init(cx);
+```
+
+**iOS-specific work:**
+- The `edit_prediction_registry` module (in `crates/zed/src/zed/`) assigns providers to
+  editors based on settings. This logic lives in the desktop `zed` crate, not a library
+  crate. Need to either extract it to a shared crate or duplicate the non-Copilot
+  registration logic in `zed-ios`.
+- Settings: users who have `"edit_predictions": { "provider": "copilot" }` will get no
+  completions on iPad. Consider a settings overlay that maps `copilot` → `zed` on iOS,
+  or show a notification suggesting they switch providers.
+
+**Keybindings:**
+- `Tab` → accept prediction
+- `Escape` → dismiss prediction
+- `Alt+]` / `Alt+[` → cycle through predictions
+
+#### 3.7 — Remote Terminal
+
+The terminal panel on desktop shells out to `ssh` for each terminal (`build_command()` in
+`subprocess_ssh.rs`). On iPad we can't spawn subprocesses, but we don't need to — **SSH's
+native channel multiplexing** gives us everything we need without any server protocol
+changes.
+
+Our `RusshRemoteConnection` stores the SSH handle as
+`Arc<tokio::sync::Mutex<SessionHandle>>`. The existing Zed protocol runs on one channel
+(opened by `start_proxy()`). We can open additional session channels on the same
+connection for terminal sessions — this is core SSH protocol, handled entirely by the
+remote host's SSH daemon.
+
+**Implementation:**
+
+```rust
+// Open a new session channel (alongside the Zed protocol channel)
+let handle = self.session.lock().await;
+let channel = handle.channel_open_session().await?;
+drop(handle); // Release lock — channel is independent
+
+// Allocate PTY and start shell
+channel.request_pty("xterm-256color", cols, rows, 0, 0, &[]).await?;
+channel.request_shell().await?;
+
+// Bidirectional I/O via split (same pattern as start_proxy)
+let (read_half, write_half) = channel.split();
+
+// Terminal resize
+channel.window_change(new_cols, new_rows, 0, 0).await?;
+```
+
+**Client-side rendering:**
+- VT100/VT220 parsing via `alacritty_terminal::Term<ZedListener>` using `vte` crate
+  (Paul Williams' state machine, ~2.9K SLoC, `no_std`, zero platform deps)
+- `TerminalBuilder::new_display_only()` already creates a terminal without a PTY — used
+  by the REPL subsystem. iPad uses this mode with I/O from the SSH channel.
+- Terminal rendering via GPUI's text system — works as-is
+
+**Integration point:** `RusshRemoteConnection` needs a public method to open terminal
+channels. Something like:
+```rust
+impl RusshRemoteConnection {
+    pub async fn open_terminal(
+        &self,
+        working_directory: Option<&str>,
+        cols: u32,
+        rows: u32,
+        env: &[(String, String)],
+    ) -> Result<TerminalChannel> { ... }
+}
+```
+
+Where `TerminalChannel` wraps the russh channel split halves and exposes `write()`,
+`read()`, and `resize()`. The `project::terminals` module routes here on iPad instead of
+calling `build_command()`.
+
+**Touch keyboard accessory bar** (new component):
+- A GPUI element rendered above the software keyboard
+- Buttons: `Esc`, `Tab`, `Ctrl`, `↑`, `↓`, `←`, `→`, `~`, `/`, `|`, `-`
+- Each button emits the appropriate escape sequence / control character
+- Shown when terminal panel is focused and software keyboard is visible
+
+#### 3.8 — Extensions & Tree-sitter Grammar Support
+
+Zed's extensions provide Tree-sitter grammars (for syntax highlighting), language
+configurations, themes, and optional WASM logic. On desktop, grammars are compiled to
+WASM and loaded via **wasmtime** (JIT). iOS prohibits JIT compilation everywhere — except
+inside **WKWebView's JavaScriptCore**, which has a system-level exemption.
+
+**What works on iOS without changes:**
+- Extension downloading from `extensions.zed.dev` (HTTP + tar.gz unpack to sandbox)
+- Extension metadata/index scanning (`ExtensionStore::rebuild_extension_index()`)
+- Language configuration loading (JSON — file matchers, indent rules, brackets)
+- Theme loading (JSON/TOML — pure data, no WASM)
+
+**What's blocked on iOS:**
+- wasmtime WASM engine (JIT prohibited) — affects grammar loading and extension logic
+- Extension subprocess spawning (`process:exec`, `npm:install` capabilities)
+- Language server binary downloads from extensions
+
+The codebase already has `#[cfg(not(target_os = "ios"))]` on the WASM store setup in
+`crates/language/src/language.rs` (lines 88–137), with a fallback to native-only grammars.
+But this only covers built-in grammars — extension grammars need WASM.
+
+**WKWebView WASM runtime for grammars:**
+
+Use a hidden `WKWebView` as a JIT-enabled WASM execution environment for Tree-sitter
+grammars. This is the standard iOS approach for apps that need WASM JIT (used by
+iSH, a]Shell, Pyto, etc.).
+
+Architecture:
+```
+Extension installed → grammar.wasm on disk
+    ↓
+iOS grammar loader reads WASM bytes
+    ↓
+Hidden WKWebView loads web-tree-sitter JS + grammar WASM
+    ↓
+Native code sends source text to WKWebView via WKScriptMessageHandler
+    ↓
+web-tree-sitter parses in JavaScriptCore (JIT enabled)
+    ↓
+Parse tree (node types + ranges) returned to native via postMessage/evaluateJavaScript
+    ↓
+Native Tree-sitter highlight queries applied to parse tree
+    ↓
+Editor renders syntax colors
+```
+
+**Implementation components:**
+
+1. **`crates/gpui_ios/src/wasm_grammar_host.rs`** — manages a hidden `WKWebView`
+   - Loads `web-tree-sitter` JavaScript module (bundled in app)
+   - Accepts grammar WASM bytes, creates parser instances
+   - Exposes async `parse(source: &str) -> ParseTree` interface
+   - Uses `WKScriptMessageHandler` for native↔JS message passing
+
+2. **Grammar bridge trait** — abstract over native vs WKWebView parsing
+   ```rust
+   #[cfg(target_os = "ios")]
+   trait GrammarRuntime {
+       fn load_grammar(&self, name: &str, wasm_bytes: &[u8]) -> Result<GrammarHandle>;
+       fn parse(&self, grammar: &GrammarHandle, source: &str) -> Result<Tree>;
+   }
+   ```
+
+3. **Language registry integration** — `LanguageRegistry::get_or_load_grammar()` in
+   `crates/language/src/language_registry.rs` already loads WASM bytes from disk.
+   On iOS, route these bytes to the WKWebView host instead of wasmtime.
+
+**Performance considerations:**
+- JavaScriptCore JIT is fast but slower than native wasmtime (~2-5x overhead)
+- Parse tree serialization across the JS↔native boundary adds latency
+- Mitigate with: incremental parsing (Tree-sitter's edit API), background parsing,
+  and coalescing rapid edits (reuse the 4ms batching from terminal)
+- Consider keeping a pool of WKWebView instances for parallel grammar loading
+
+**Extension logic (non-grammar WASM):**
+Full extension WASM logic (slash commands, context servers, language server management)
+also runs on wasmtime. For v1, **skip extension logic on iPad** — only load grammars,
+language configs, and themes. Extensions that need WASM logic (e.g., custom formatters)
+show as "not supported on iPad" in the extension panel. This can be revisited if the
+WKWebView WASM host proves performant enough for general extension execution.
+
+**Crates involved:**
+- `extension` — manifest parsing, extension builder (skip WASM compilation on iOS)
+- `extension_host` — extension store, download, index management
+- `language` — grammar loading, parser setup (iOS conditional already exists)
+
+**Exclude from iOS (for now):**
+- `extension_host` WASM host subsystem (wasmtime engine, WIT bindings)
+- Extensions declaring `process:exec` or `npm:install` capabilities
+
+#### 3.9 — Agent Panel (Zed Agent)
+
+The **Zed agent** (built-in Thread engine) works with the stock server:
+- `Thread` engine (`crates/agent/src/thread.rs`) runs `run_turn()` locally on iPad
+- LLM API calls (HTTPS) go directly from iPad to providers — no server involvement
+- Tool invocations go through `Project` → remote proxy → headless server — same path
+  desktop SSH remote already uses
+- API keys: user configures in iPad-local settings, or signs into Zed Pro
+  (`ASWebAuthenticationSession` for OAuth/PKCE — LLM calls route through `api.zed.dev`)
+
+**What to wire up:**
+- Compile agent crates into the iPad binary (`agent`, `agent_ui`, `agent_settings`,
+  `language_model`, `language_models`, `anthropic`, `open_ai`, `acp_thread`)
+- Initialize the agent panel in `init_zed()` — same as desktop
+
+**External agents (Claude Code, Gemini CLI) via SSH channels:**
+
+The headless server discovers installed agents and advertises them via
+`ExternalAgentsUpdated` proto. When selected, the client gets the command via
+`GetAgentServerCommand` proto. On desktop, the client spawns the binary locally
+(`Child::spawn(path)` in `acp.rs:218`). On iPad, we instead **open an SSH channel and
+exec the agent binary on the remote host** — same technique as the terminal (Phase 3.7).
+
+The agent binary's stdio carries ACP (Agent Communication Protocol) messages. An SSH
+channel gives us bidirectional byte streams, which is exactly what ACP needs. The flow:
+
+```rust
+// Reuse the same SSH handle as terminal channels
+let handle = self.session.lock().await;
+let channel = handle.channel_open_session().await?;
+drop(handle);
+
+// Exec the agent binary (command came from GetAgentServerCommand)
+channel.exec(true, "/usr/local/bin/claude --mcp".into()).await?;
+
+// Split for bidirectional ACP I/O
+let (read_half, write_half) = channel.split();
+// Pipe ACP JSON-RPC messages over read_half / write_half
+```
+
+On iPad, replace `Child::spawn()` in `acp.rs` with this SSH channel path. The agent
+panel code and ACP protocol handling remain unchanged — only the transport layer differs.
+
+**Limitation — iOS background execution:**
+iOS kills backgrounded apps after ~30 seconds. Agent turns can take minutes. If the user
+switches apps mid-turn, the turn is killed. This is acceptable for v1 with a clear
+warning: "Keep Zed in the foreground while the agent is working." The remote Zed agent
+enhancement (Phase 3B) solves this by moving the Thread engine to the server.
+
+**Crates included in iOS build:**
+- `agent` — Thread engine, tool definitions
+- `agent_ui` — agent panel UI
+- `agent_settings` — configuration resolution
+- `language_model` — model trait + registry
+- `language_models` — provider implementations (HTTPS)
+- `anthropic`, `open_ai`, etc. — HTTP client crates
+- `acp_thread` — ACP protocol bridge for conversation UI
+
+#### ═══ Phase 3B — Modified Server (new protocol messages) ═══
+
+Phase 3B items require building and deploying a custom `remote_server` binary to the
+remote host. This means adding new protobuf messages to the remote protocol and running a
+version of `zed --headless` that includes them. Getting this dev workflow set up (build
+the server, deploy it, ensure the iPad client and server versions match) is a prerequisite
+for all 3B work.
+
+#### 3.10 — Remote Zed Agent Execution (survives backgrounding)
+
+Move the Thread engine to the remote host so Zed agent turns survive iOS backgrounding.
+The iPad becomes a thin UI shell — it sends prompts and renders streamed responses, but
+the actual LLM calls and tool invocations happen on the server.
+
+New protocol messages needed:
+- `proto::AgentStartThread` — create a thread on the server
+- `proto::AgentSendMessage` — send a user message to a server-side thread
+- `proto::AgentStreamEvent` — server→client streaming of assistant responses, tool use
+  status, file diffs, terminal output
+- `proto::AgentListThreads` — enumerate saved threads on the server
+- `proto::AgentResumeThread` — reconnect to an in-progress thread after app relaunch
+
+Server-side changes:
+- `HeadlessProject` hosts a `Thread` instance and runs `run_turn()` locally
+- LLM API calls happen from the server, which means the server needs API keys
+
+**Agent settings sync (required for remote Zed agent):**
+
+The remote host needs API keys and agent configuration. Two approaches, not mutually
+exclusive:
+
+*Approach A — Forward settings from host:*
+The user configures `~/.config/zed/settings.json` and environment variables on their Mac
+Studio. At connection time, the iPad reads `agent_settings` and LLM provider API keys
+from the remote host via new proto messages (`proto::GetAgentSettings`,
+`proto::GetEnvironmentVariables`). The iPad's `SettingsStore` applies these as an overlay.
+
+*Approach B — Zed Pro account auth:*
+LLM calls already go through Zed's proxy when using Zed Pro (from Phase 3.9). For remote
+execution, the server can use the same Zed Pro credentials to make LLM calls.
+
+For remote execution, Approach A is essential — the server must have the API keys to
+make LLM calls. Approach B complements it for users who prefer Zed Pro.
+
+#### 3.11 — Notifications
+
+Zed has three notification layers, each with different iOS considerations:
+
+**Layer 1: Toast notifications (ephemeral, in-app)**
+- Status toasts for git operations, build results, agent actions, settings changes
+- Rendered via GPUI `StatusToast` component in the workspace toast layer
+- Duration: ~10 seconds, dismissible
+- **iPad status: Works as-is** — no platform dependencies, pure GPUI rendering
+- Already included via the `notifications` crate (dependency of `workspace`)
+
+**Layer 2: Workspace notifications (inline prompts)**
+- Error message prompts, language server prompts, custom notifications
+- Rendered inline in the workspace area
+- **iPad status: Works as-is** — part of the `workspace` crate
+
+**Layer 3: Collaboration notification panel (server-backed)**
+- Contact requests, channel invitations, project sharing notifications
+- Requires connection to Zed's collab server (separate from the SSH remote connection)
+- Shows "Connect to view notifications" when disconnected
+- **iPad status: Requires collab server authentication** — defer unless/until Zed account
+  auth is implemented (see Phase 3.9)
+
+**Crates involved:**
+- `notifications` — `NotificationStore`, `StatusToast` (already a transitive dependency)
+- `collab_ui` — `NotificationPanel`, `IncomingCallNotification`,
+  `ProjectSharedNotification` (heavy dependency chain: `channel`, `client`, `call`)
+
+**iOS push notifications — brainstorm:**
+
+iPadOS supports `UNUserNotificationCenter` for local notifications and APNs for push.
+Potential uses:
+
+| Scenario | Type | Utility | Recommendation |
+|---|---|---|---|
+| SSH connection lost | Local | Medium — user may have backgrounded the app | **Yes for v1** — schedule a local notification when the app enters background with an active session and the connection drops |
+| SSH reconnected | Local | Low — app will show reconnection banner when foregrounded | Skip |
+| Long-running agent task complete | Local | High — agent may run for minutes; user switches apps | **Yes for v1** — fire when agent thread completes a turn while app is backgrounded |
+| Collab invite / channel message | Push (APNs) | High — real-time collaboration | **Defer to v2** — requires server-side APNs integration |
+| Remote build complete | Local | Medium — could monitor a build command in terminal | **Defer** — needs terminal output pattern matching |
+| Jetsam memory warning | Local | Low — if we're about to be killed, notification won't help | Skip |
+| Remote server went offline | Push (APNs) | High — server monitoring use case | **Defer to v2** — requires server-side health reporting |
+
+**Implementation for v1 local notifications:**
+
+```rust
+// In crates/zed-ios/src/local_notifications.rs
+// Wrap UNUserNotificationCenter via objc2-user-notifications
+
+fn schedule_disconnect_notification() {
+    // "Zed: Connection to {host} lost"
+    // Trigger: 5 seconds after connection drops while backgrounded
+    // Auto-cancel if connection restores before trigger
+}
+
+fn schedule_agent_complete_notification() {
+    // "Zed: Agent finished editing {n} files"
+    // Trigger: immediately when agent turn completes while backgrounded
+}
+```
+
+Request notification permission at first SSH connection (not at launch — Apple rejects
+apps that ask for notification permission without clear context).
+
 **Success criterion:** Open a file on the remote host, edit it, save it (save goes to host via
 remote protocol), see git diff decorations in the gutter. Open the terminal panel, run `ls`,
-see output. Disconnect WiFi mid-session, reconnect, continue editing.
+see output. Disconnect WiFi mid-session, reconnect, continue editing. Open the agent panel,
+send a prompt, see completions stream, verify tool invocations execute on the remote host.
+Start a debug session, hit a breakpoint, inspect variables. See edit prediction ghost text
+while typing.
 
 ---
 
@@ -720,6 +1086,122 @@ Explicitly **NOT** requested (would cause App Review rejection):
   need — but note this entitlement IS available on iPad and may be worth requesting
   given Metal texture atlas memory usage)
 
+#### 4.5 — Per-Project Settings Profiles for rust-analyzer
+
+Settings profiles (`profiles` key in `settings.json`) currently only work in user settings
+(`~/.config/zed/settings.json`), not in project settings (`.zed/settings.json`). This is a
+Zed-wide limitation, not iOS-specific, but it directly impacts the iPad development workflow.
+
+**The problem:** When working on Zed for iPad, rust-analyzer needs different configuration
+(target `aarch64-apple-ios`, `--no-default-features`, `-p zed-ios`) than when working on
+desktop Zed. Today, developers must configure an "iOS" profile in their personal user
+settings. This can't be shared via `.zed/settings.json` in the repo.
+
+**Why profiles are user-only today:**
+
+The settings system has two content types:
+- `UserSettingsContent` — has `profiles: IndexMap<String, SettingsContent>`, plus
+  `release_channel_overrides` and `platform_overrides`
+- `ProjectSettingsContent` — focused subset (LSP, terminal, DAP, language settings),
+  **no profiles field**
+
+The `SettingsStore::recompute_values()` merge order applies user profiles at step 7,
+before project settings at step 9. Project settings always win over user profiles, which
+is the correct precedence.
+
+**What needs to change:**
+
+1. Add `profiles: IndexMap<String, SettingsContent>` to `ProjectSettingsContent`
+   (in `crates/settings_content/src/project.rs`)
+
+2. Update `SettingsStore::set_local_settings()` to parse and store project-level profiles
+
+3. Update `SettingsStore::recompute_values()` to apply project profiles after user
+   profiles but before the final local settings merge — so project profiles can override
+   user settings but project-level non-profile settings still win
+
+4. Update `configured_settings_profiles()` to include project-level profiles in the
+   selector, distinguishing them from user profiles (e.g., "iOS (project)" vs
+   "Streaming (user)")
+
+5. Decide on profile scope: should the active profile be global (current behavior) or
+   per-workspace? Per-workspace would allow having an "iOS" profile active for the Zed
+   repo while another workspace uses the default.
+
+**Example `.zed/settings.json` with profiles:**
+```json
+{
+  "profiles": {
+    "iOS": {
+      "lsp": {
+        "rust-analyzer": {
+          "initialization_options": {
+            "cargo": {
+              "target": "aarch64-apple-ios",
+              "noDefaultFeatures": true,
+              "buildScripts": {
+                "overrideCommand": [
+                  "cargo", "check", "--message-format=json",
+                  "--target", "aarch64-apple-ios",
+                  "--no-default-features", "-p", "zed-ios"
+                ]
+              }
+            },
+            "check": {
+              "overrideCommand": [
+                "cargo", "check", "--message-format=json",
+                "--target", "aarch64-apple-ios",
+                "--no-default-features", "-p", "zed-ios"
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+This would let any Zed contributor working on the iPad port activate the "iOS" profile
+from the command palette without any per-user setup.
+
+#### 4.6 — SSH Key Management (Keychain)
+
+New file: `crates/zed-ios/src/keychain.rs`
+
+- `store_ssh_key(label: &str, pem_bytes: &[u8]) -> Result<()>` — calls `SecItemAdd`
+  with `kSecClassKey` (or `kSecClassGenericPassword` for simpler storage),
+  `kSecAttrAccessible = kSecAttrAccessibleWhenUnlockedThisDeviceOnly`
+- `load_ssh_key(label: &str) -> Result<Vec<u8>>` — calls `SecItemCopyMatching`
+- `delete_ssh_key(label: &str) -> Result<()>` — calls `SecItemDelete`
+- `list_ssh_key_labels() -> Result<Vec<String>>` — for the connection UI
+
+SSH key import UI flow (Swift side):
+1. Tap "Import SSH Key" → present `UIDocumentPickerViewController`
+2. User selects file → read bytes → call `store_ssh_key` → confirm
+3. Key never written to disk; raw bytes only exist in memory during import
+
+#### 4.7 — Network Resilience
+
+New file: `crates/zed-ios/src/network_monitor.rs`
+
+- Wraps `NWPathMonitor` (Network.framework) via `objc2` crate bindings
+- Emits `NetworkEvent::Available` / `NetworkEvent::Lost` into GPUI's event system
+- `ConnectionManager` listens for `NetworkEvent::Available` and triggers reconnection
+- Reconnection strategy: exponential backoff (1s, 2s, 4s, 8s, 16s, cap at 30s)
+- During reconnection, editor is read-only with a banner ("Reconnecting to host…");
+  existing buffer content remains visible because CRDT state is local
+
+#### 4.8 — Server Host Key Verification
+
+Currently `check_server_key` in `russh_ssh.rs` returns `true` for all keys. Before
+shipping, implement proper host key verification:
+
+- Consult a known_hosts file stored in the app sandbox
+- On first connection to a host, prompt the user to accept the fingerprint
+- Store accepted fingerprints in the known_hosts file
+- On subsequent connections, verify the key matches; warn on mismatch
+
 ---
 
 ## Crates Excluded from iOS Build
@@ -733,7 +1215,7 @@ or `[target.'cfg(target_os = "ios")'.dependencies]` exclusions:
 | `lsp` (local spawn path) | Spawns language server subprocesses |
 | `task` | Spawns local task runner |
 | `dap` | Spawns local debugger |
-| `extension_host` | Manages local WASM extensions |
+| `extension_host` (WASM host subsystem) | wasmtime engine requires JIT — use WKWebView for grammars |
 | `git` (CLI wrapper path) | Spawns git binary |
 | Terminal PTY spawn code | Spawns shell subprocess |
 
@@ -751,13 +1233,27 @@ the iPad communicates with the host that runs them.
 | `language_models` | Provider implementations (anthropic, openai, etc.) — HTTPS only |
 | `anthropic`, `open_ai`, etc. | HTTP client crates — pure reqwest, no platform deps |
 | `acp_thread` | ACP protocol bridge — needed for conversation UI |
+| `edit_prediction` | Core edit prediction engine — Zed/Codestral/OpenAI delegates |
+| `edit_prediction_types` | Trait definitions for edit prediction providers |
+| `edit_prediction_context` | Context analysis for predictions |
+| `edit_prediction_ui` | Inline ghost text UI, accept/reject actions |
+| `codestral` | Codestral (Mistral) provider — pure HTTPS |
+| `cloud_llm_client` | Zed cloud prediction API client |
+| `debugger_ui` | Debug panel UI — uses `RemoteDapStore` on iPad |
+| `debugger_tools` | Debug logging |
+| `dap_adapters` | Adapter type definitions (iPad doesn't run adapters locally) |
+| `notifications` | `NotificationStore`, `StatusToast` — already transitive dep |
+| `extension` | Manifest parsing, extension metadata — no WASM |
+| `extension_host` (store/download) | Extension download, index management — HTTP + filesystem only |
+| `language` | Grammar loading, parser setup — iOS uses WKWebView WASM host |
 
-**Exclude from iOS:** `extension_host` (which manages external ACP agent server
-processes like Claude Code) — these spawn subprocesses. External agents configured on
-the Mac Studio run there; the iPad receives their events via the remote protocol.
-
-**Also exclude the system-ssh transport** (`crates/remote/src/transport/ssh.rs` in its
-current form) — replace with the `russh`-based `IosSshTransport`.
+**Exclude from iOS:**
+- `extension_host` WASM host — wasmtime engine, WIT bindings (JIT prohibited on iOS)
+- Extensions with `process:exec` or `npm:install` capabilities (subprocess spawning)
+- `copilot` — spawns Node.js LSP server for Copilot completions
+- `copilot_ui` — Copilot auth UI (depends on `copilot`)
+- `subprocess_ssh` — system-ssh transport (replaced by `russh_ssh` on iOS)
+- `collab_ui` — notification panel + call UI (heavy deps, defer to v2)
 
 ---
 
@@ -787,14 +1283,6 @@ current form) — replace with the `russh`-based `IosSshTransport`.
 - Monitor `os_proc_available_memory()` (iOS 13+) to detect approaching termination
 - Release Metal texture caches and non-visible buffers when entering background
 - Use `CADisplayLink` with `preferredFrameRateRange` for ProMotion frame timing
-
-**Developer tooling TODO:**
-- Settings profiles (`profiles` key) currently only work in user settings
-  (`~/.config/zed/settings.json`), not in project settings (`.zed/settings.json`).
-  We should extend `SettingsStore` to read profiles from project settings so that an
-  "iOS" profile with the correct rust-analyzer target/check config can live in the
-  repo's `.zed/settings.json` and be available to all contributors without requiring
-  per-user setup.
 
 ---
 
@@ -898,7 +1386,7 @@ Swift host app (AppDelegate, SceneDelegate)
 - **Remote server (no agent):** `crates/remote_server/src/headless_project.rs` — confirm
   zero agent initialization; understand what the headless server does and doesn't do
 - **Settings sync reference:** GitHub Discussion #47058 — Coder team requesting remote
-  host settings/API key resolution (our Phase 2.4 addresses this)
+  host settings/API key resolution (our Phase 3.10 addresses this)
 - **Known agent+remote bugs:** Issues #35603, #30106, #38392, #47362, #47910
 - ASWebAuthenticationSession:
   https://developer.apple.com/documentation/authenticationservices/aswebauthenticationsession
@@ -913,7 +1401,8 @@ Swift host app (AppDelegate, SceneDelegate)
 - What is the minimum iOS deployment target? (Recommendation: iPadOS 17.0 for Stage
   Manager reliability; iPadOS 16.1 is the Stage Manager minimum but has rough edges.)
 - **Do we need to bundle `zed --headless` binary for auto-deploy to remote hosts, or
-  assume users install it manually?** (Impacts binary upload code in SSH transport.)
+  assume users install it manually?** (Decision: download from URL rather than embed in
+  the iOS binary — embedding would bloat the app with server binaries for every arch.)
 
 **Before Phase 1:**
 - Do we implement the full UITextInput protocol or use the hidden UITextField
@@ -926,24 +1415,37 @@ Swift host app (AppDelegate, SceneDelegate)
 **Before Phase 2:**
 - Do we support password authentication in addition to key-based SSH?
   (Recommendation: keys only for v1; passwords require careful Keychain UX.)
-- What is the reconnection UX during a long network outage — show error and require
-  manual reconnect, or keep retrying indefinitely?
 - **`russh` vs `ssh2` for the embedded SSH library?** (Recommendation: `russh` — pure
   Rust, no C dependencies, async-native, simpler cross-compilation.)
-- **Agent settings sync: which API keys does the host forward?** All environment
-  variables matching known provider patterns? Only keys for providers configured in
-  settings.json? (Recommendation: forward keys for all configured providers only.)
-- **Do we support Zed Pro account auth on iPad?** If yes, need
-  `ASWebAuthenticationSession` for OAuth/PKCE. (Recommendation: yes for v1 — many
-  users rely on Zed's hosted LLM proxy and won't have their own API keys.)
+
+**Before Phase 3A:**
+- What languages get in-process syntax highlighting (Tree-sitter grammars) as a fallback
+  when disconnected? All of them? Or a curated set?
+- **What is the Jetsam memory budget we're targeting?** Profile on the lowest-RAM
+  target iPad (likely 4GB models) to establish baseline.
+- **Debug panel: does the `dap` crate compile for iOS?** The local transport code uses
+  `std::process::Command` — may need cfg gates even though iPad only uses `RemoteDapStore`.
+- **Edit prediction: how to handle the provider registry?** The `edit_prediction_registry`
+  module lives in `crates/zed/src/zed/` (the desktop binary crate). Extract to a shared
+  library crate, or duplicate the non-Copilot logic in `zed-ios`?
+- **Edit prediction: what happens for Copilot users?** Silently fall back to Zed provider?
+  Show a notification? Respect the setting and show no predictions?
+
+**Before Phase 3B:**
+- **Remote terminal: how to design the PTY multiplexing protocol?** Should terminal I/O
+  messages be length-prefixed binary (efficient) or protobuf-wrapped (consistent with
+  the rest of the protocol)?
+- **Agent panel: implement settings sync (Approach A) first, or Zed Pro auth
+  (Approach B)?** Approach A is more self-contained; Approach B serves more users.
+  Both may be needed.
 - **External agents (Claude Code, Gemini CLI) — do we show them on iPad?** They run
   as subprocesses on the host. (Recommendation: show them if the host has them
   configured; the iPad displays conversation events, the host runs the process. Verify
   Issues #47362 and #47910 are resolved first.)
+- **Notifications: request permission at first connection or defer?** Apple rejects apps
+  that request notification permission without clear user context.
 
-**Before Phase 3:**
-- What languages get in-process syntax highlighting (Tree-sitter grammars) as a fallback
-  when disconnected? All of them? Or a curated set?
-- Does the terminal panel show at all when disconnected, or is it hidden?
-- **What is the Jetsam memory budget we're targeting?** Profile on the lowest-RAM
-  target iPad (likely 4GB models) to establish baseline.
+**Before Phase 4:**
+- **Per-project profiles: should profile selection be global or per-workspace?**
+  Per-workspace is more useful but requires scoping `ActiveSettingsProfileName` to a
+  workspace entity rather than a global.
