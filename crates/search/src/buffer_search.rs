@@ -17,6 +17,7 @@ use editor::{
     Editor, EditorSettings, MultiBufferOffset, SplittableEditor, ToggleSplitDiff,
     actions::{Backtab, FoldAll, Tab, ToggleFoldAll, UnfoldAll},
     scroll::Autoscroll,
+    set_diff_view_style_override,
 };
 use futures::channel::oneshot;
 use gpui::{
@@ -148,6 +149,11 @@ impl Render for BufferSearchBar {
                                                         Some(DiffViewStyle::Unified);
                                                 },
                                             );
+                                        } else {
+                                            set_diff_view_style_override(
+                                                DiffViewStyle::Unified,
+                                                cx,
+                                            );
                                         }
                                         if is_split {
                                             splittable_editor
@@ -198,6 +204,8 @@ impl Render for BufferSearchBar {
                                                         Some(DiffViewStyle::Split);
                                                 },
                                             );
+                                        } else {
+                                            set_diff_view_style_override(DiffViewStyle::Split, cx);
                                         }
                                         if !is_split {
                                             splittable_editor

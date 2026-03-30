@@ -80,7 +80,9 @@ pub use multi_buffer::{
     MultiBufferOffset, MultiBufferOffsetUtf16, MultiBufferSnapshot, PathKey, RowInfo, ToOffset,
     ToPoint,
 };
-pub use split::{SplittableEditor, ToggleSplitDiff};
+pub use split::{
+    SplittableEditor, ToggleSplitDiff, effective_diff_view_style, set_diff_view_style_override,
+};
 pub use split_editor_view::SplitEditorView;
 pub use text::Bias;
 
