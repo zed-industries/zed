@@ -693,6 +693,7 @@ fn main() {
         load_embedded_fonts(cx);
 
         editor::init(cx);
+        zed::language_detection::init(cx);
         image_viewer::init(cx);
         repl::notebook::init(cx);
         diagnostics::init(cx);

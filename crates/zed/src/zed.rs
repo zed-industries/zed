@@ -1,5 +1,6 @@
 mod app_menus;
 pub mod edit_prediction_registry;
+pub mod language_detection;
 #[cfg(target_os = "macos")]
 pub(crate) mod mac_only_instance;
 mod migrate;

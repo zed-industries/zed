@@ -226,6 +226,12 @@ pub struct EditorSettingsContent {
     ///
     /// Default: split
     pub diff_view_style: Option<DiffViewStyle>,
+
+    /// Whether to automatically detect the language of pasted code
+    /// in Plain Text buffers using tree-sitter grammar scoring.
+    ///
+    /// Default: true
+    pub auto_detect_language: Option<bool>,
 }
 
 #[derive(
