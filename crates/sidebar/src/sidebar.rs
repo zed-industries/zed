@@ -2381,8 +2381,13 @@ impl Sidebar {
         let Some(ListEntry::Thread(thread)) = self.contents.entries.get(ix) else {
             return;
         };
+        match thread.status {
+            AgentThreadStatus::Running | AgentThreadStatus::WaitingForConfirmation => return,
+            AgentThreadStatus::Completed | AgentThreadStatus::Error => {}
+        }
+
         let session_id = thread.session_info.session_id.clone();
-        self.archive_thread(&session_id, window, cx);
+        self.archive_thread(&session_id, window, cx)
     }
 
     fn record_thread_access(&mut self, session_id: &acp::SessionId) {
