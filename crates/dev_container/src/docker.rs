@@ -85,6 +85,10 @@ pub(crate) struct DockerComposeService {
     pub(crate) volumes: Vec<MountDefinition>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) env_file: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) ports: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) network_mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq, Default)]

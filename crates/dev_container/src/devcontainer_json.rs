@@ -191,9 +191,9 @@ pub(crate) struct DevContainer {
     pub(crate) image: Option<String>,
     pub(crate) name: Option<String>,
     pub(crate) remote_user: Option<String>,
-    forward_ports: Option<Vec<ForwardPort>>,
-    ports_attributes: Option<HashMap<String, PortAttributes>>,
-    other_ports_attributes: Option<PortAttributes>,
+    pub(crate) forward_ports: Option<Vec<ForwardPort>>,
+    pub(crate) ports_attributes: Option<HashMap<String, PortAttributes>>,
+    pub(crate) other_ports_attributes: Option<PortAttributes>,
     pub(crate) container_env: Option<HashMap<String, String>>,
     pub(crate) remote_env: Option<HashMap<String, String>>,
     pub(crate) container_user: Option<String>,
@@ -213,17 +213,15 @@ pub(crate) struct DevContainer {
     pub(crate) customizations: Option<ZedCustomizationsWrapper>,
     pub(crate) build: Option<ContainerBuild>,
     #[serde(default, deserialize_with = "deserialize_string_or_int")]
-    app_port: Option<String>,
+    pub(crate) app_port: Option<String>,
     #[serde(default, deserialize_with = "deserialize_mount_definition")]
     pub(crate) workspace_mount: Option<MountDefinition>,
     pub(crate) workspace_folder: Option<String>,
     run_args: Option<Vec<String>>,
-    // Docker compose stuff:
     #[serde(default, deserialize_with = "deserialize_string_or_array")]
     pub(crate) docker_compose_file: Option<Vec<String>>,
     pub(crate) service: Option<String>,
     run_services: Option<Vec<String>>,
-    // Scripts
     pub(crate) initialize_command: Option<LifecyleScript>,
     pub(crate) on_create_command: Option<LifecyleScript>,
     pub(crate) update_content_command: Option<LifecyleScript>,

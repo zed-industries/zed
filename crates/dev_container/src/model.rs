@@ -15,7 +15,7 @@ use crate::{
     command_json::{CommandRunner, DefaultCommandRunner},
     devcontainer_api::{DevContainerError, DevContainerUp},
     devcontainer_json::{
-        DevContainer, DevContainerBuildType, FeatureOptions, MountDefinition,
+        DevContainer, DevContainerBuildType, FeatureOptions, ForwardPort, MountDefinition,
         deserialize_devcontainer_json,
     },
     docker::{
@@ -703,6 +703,7 @@ impl DevContainerManifest {
             return Err(DevContainerError::DevContainerParseFailed);
         };
         let mut docker_compose_resources = self.docker_compose_manifest().await?;
+        dbg!(&docker_compose_resources);
         let supports_buildkit = self.docker_client.supports_compose_buildkit();
 
         let (main_service_name, main_service) =
@@ -900,8 +901,11 @@ impl DevContainerManifest {
 
         let resources = self.build_merged_resources(built_service_image)?;
 
+        let network_mode = main_service.network_mode.as_ref();
+        dbg!(&main_service);
+        let network_mode_service = network_mode.and_then(|mode| mode.strip_prefix("service:"));
         let runtime_override_file = self
-            .write_runtime_override_file(&main_service_name, resources)
+            .write_runtime_override_file(&main_service_name, network_mode_service, resources)
             .await?;
 
         dbg!(&runtime_override_file);
@@ -914,9 +918,11 @@ impl DevContainerManifest {
     async fn write_runtime_override_file(
         &self,
         main_service_name: &str,
+        network_mode_service: Option<&str>,
         resources: DockerBuildResources,
     ) -> Result<PathBuf, DevContainerError> {
-        let config = self.build_runtime_override(main_service_name, resources)?;
+        let config =
+            self.build_runtime_override(main_service_name, network_mode_service, resources)?;
         let temp_base = std::env::temp_dir().join("devcontainer-zed");
         let config_location = temp_base.join("docker_compose_runtime.json");
 
@@ -939,8 +945,10 @@ impl DevContainerManifest {
     fn build_runtime_override(
         &self,
         main_service_name: &str,
+        network_mode_service: Option<&str>,
         resources: DockerBuildResources,
     ) -> Result<DockerComposeConfig, DevContainerError> {
+        dbg!(&network_mode_service);
         let mut runtime_labels = vec![];
 
         if let Some(metadata) = &resources.image.config.labels.metadata {
@@ -970,6 +978,7 @@ impl DevContainerManifest {
                         mount
                             .source
                             .clone()
+                            // TODO ensure this si done
                             .replace("${devcontainerId}", "devcontainer123"),
                         DockerComposeVolume {
                             name: mount
@@ -1000,25 +1009,116 @@ impl DevContainerManifest {
             })
             .collect();
 
+        let mut main_service = DockerComposeService {
+            entrypoint: Some(vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                resources.entrypoint_script,
+                "-".to_string(),
+            ]),
+            cap_add: Some(vec!["SYS_PTRACE".to_string()]),
+            security_opt: Some(vec!["seccomp=unconfined".to_string()]),
+            labels: Some(runtime_labels),
+            volumes,
+            privileged: Some(resources.privileged),
+            ..Default::default()
+        };
+        // let mut extra_service_port_declarations: Vec<(String, DockerComposeService)> = Vec::new();
+        let mut service_declarations: HashMap<String, DockerComposeService> = HashMap::new();
+        if let Some(forward_ports) = &self.dev_container().forward_ports {
+            let main_service_ports: Vec<String> = forward_ports
+                .iter()
+                .filter_map(|f| match f {
+                    ForwardPort::Number(port) => Some(port.to_string()),
+                    ForwardPort::String(port) => {
+                        let parts: Vec<&str> = port.split(":").collect();
+                        if parts.len() <= 1 {
+                            Some(port.to_string())
+                        } else if parts.len() == 2 {
+                            if parts[0] == main_service_name {
+                                Some(parts[1].to_string())
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                })
+                .collect();
+            for port in main_service_ports {
+                // If the main service uses a different service's network bridge, append to that service's ports instead
+                if let Some(network_service_name) = network_mode_service {
+                    dbg!(&port, &network_service_name);
+                    if let Some(service) = service_declarations.get_mut(network_service_name) {
+                        service.ports.push(format!("{port}:{port}"));
+                    } else {
+                        service_declarations.insert(
+                            network_service_name.to_string(),
+                            DockerComposeService {
+                                ports: vec![format!("{port}:{port}")],
+                                ..Default::default()
+                            },
+                        );
+                    }
+                } else {
+                    main_service.ports.push(format!("{port}:{port}"));
+                }
+            }
+            let other_service_ports: Vec<(&str, &str)> = forward_ports
+                .iter()
+                .filter_map(|f| match f {
+                    ForwardPort::Number(_) => None,
+                    ForwardPort::String(port) => {
+                        let parts: Vec<&str> = port.split(":").collect();
+                        if parts.len() != 2 {
+                            None
+                        } else {
+                            if parts[0] == main_service_name {
+                                None
+                            } else {
+                                Some((parts[0], parts[1]))
+                            }
+                        }
+                    }
+                })
+                .collect();
+            for (service_name, port) in other_service_ports {
+                if let Some(service) = service_declarations.get_mut(service_name) {
+                    service.ports.push(format!("{port}:{port}"));
+                } else {
+                    service_declarations.insert(
+                        service_name.to_string(),
+                        DockerComposeService {
+                            ports: vec![format!("{port}:{port}")],
+                            ..Default::default()
+                        },
+                    );
+                }
+            }
+        }
+        if let Some(port) = &self.dev_container().app_port {
+            if let Some(network_service_name) = network_mode_service {
+                if let Some(service) = service_declarations.get_mut(network_service_name) {
+                    service.ports.push(format!("{port}:{port}"));
+                } else {
+                    service_declarations.insert(
+                        network_service_name.to_string(),
+                        DockerComposeService {
+                            ports: vec![format!("{port}:{port}")],
+                            ..Default::default()
+                        },
+                    );
+                }
+            } else {
+                main_service.ports.push(format!("{port}:{port}"));
+            }
+        }
+
+        service_declarations.insert(main_service_name.to_string(), main_service);
         let new_docker_compose_config = DockerComposeConfig {
             name: None,
-            services: HashMap::from([(
-                main_service_name.to_string(),
-                DockerComposeService {
-                    entrypoint: Some(vec![
-                        "/bin/sh".to_string(),
-                        "-c".to_string(),
-                        resources.entrypoint_script,
-                        "-".to_string(),
-                    ]),
-                    cap_add: Some(vec!["SYS_PTRACE".to_string()]),
-                    security_opt: Some(vec!["seccomp=unconfined".to_string()]),
-                    labels: Some(runtime_labels),
-                    volumes,
-                    privileged: Some(resources.privileged),
-                    ..Default::default()
-                },
-            )]),
+            services: service_declarations,
             volumes: config_volumes,
             ..Default::default()
         };
@@ -1574,6 +1674,19 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             ));
         }
 
+        if let Some(forward_ports) = &self.dev_container().forward_ports {
+            for port in forward_ports {
+                if let ForwardPort::Number(port_number) = port {
+                    command.arg("-p");
+                    command.arg(format!("{port_number}:{port_number}"));
+                }
+            }
+        }
+        if let Some(app_port) = &self.dev_container().app_port {
+            command.arg("-p");
+            command.arg(format!("{app_port}:{app_port}"));
+        }
+
         command.arg("--entrypoint");
         command.arg("/bin/sh");
         command.arg(&build_resources.image.id);
@@ -1938,7 +2051,6 @@ fn extract_feature_id(feature_ref: &str) -> &str {
 ///
 /// Mirrors the CLI's `getEntPasswdShellCommand` in `commonUtils.ts`.
 /// Tries `getent passwd` first, then falls back to grepping `/etc/passwd`.
-// TODO fairly sure this exists elsewhere, we should deduplicate
 fn get_ent_passwd_shell_command(user: &str) -> String {
     let escaped_for_shell = user.replace('\\', "\\\\").replace('\'', "\\'");
     let escaped_for_regex = escape_regex_chars(user).replace('\'', "\\'");
@@ -2235,7 +2347,7 @@ mod test {
         collections::HashMap,
         path::PathBuf,
         process::{ExitStatus, Output},
-        sync::Arc,
+        sync::{Arc, Mutex},
     };
 
     use async_trait::async_trait;
@@ -2322,8 +2434,8 @@ mod test {
     struct TestDependencies {
         fs: Arc<FakeFs>,
         _http_client: Arc<dyn HttpClient>,
-        _docker: Arc<FakeDocker>,
-        _command_runner: Arc<TestCommandRunner>,
+        docker: Arc<FakeDocker>,
+        command_runner: Arc<TestCommandRunner>,
     }
 
     async fn init_default_devcontainer_manifest(
@@ -2332,7 +2444,7 @@ mod test {
     ) -> Result<(TestDependencies, DevContainerManifest), DevContainerError> {
         let fs = FakeFs::new(cx.executor());
         let http_client = fake_http_client();
-        let command_runner = Arc::new(TestCommandRunner {});
+        let command_runner = Arc::new(TestCommandRunner::new());
         let docker = Arc::new(FakeDocker::new());
         let environment = HashMap::new();
 
@@ -2375,8 +2487,8 @@ mod test {
         let test_dependencies = TestDependencies {
             fs: fs.clone(),
             _http_client: http_client.clone(),
-            _docker: docker_client.clone(),
-            _command_runner: command_runner.clone(),
+            docker: docker_client.clone(),
+            command_runner: command_runner.clone(),
         };
         let manifest = DevContainerManifest::new(
             &context,
@@ -3403,7 +3515,7 @@ mod test {
             fs,
             fake_http_client(),
             Arc::new(FakeDocker::new()),
-            Arc::new(TestCommandRunner {}),
+            Arc::new(TestCommandRunner::new()),
             HashMap::from([
                 ("local_env_1".to_string(), "local_env_value1".to_string()),
                 ("my_other_env".to_string(), "THISVALUEHERE".to_string()),
@@ -3600,6 +3712,12 @@ mod test {
                 // Keep command history across instances
                 "source=dev-containers-cli-bashhistory,target=/home/node/commandhistory",
               ],
+
+              "forwardPorts": [
+                8082,
+                8083,
+              ],
+              "appPort": "8084",
 
               "containerEnv": {
                 "VARIABLE_VALUE": "value",
@@ -3867,6 +3985,49 @@ set +a
 chmod +x ./install.sh
 ./install.sh
 "#
+        );
+
+        let docker_commands = test_dependencies
+            .command_runner
+            .commands_by_program("docker");
+
+        let docker_run_command = docker_commands
+            .iter()
+            .find(|c| c.args.get(0).is_some_and(|a| a == "run"))
+            .expect("found");
+
+        assert_eq!(
+            docker_run_command.args,
+            vec![
+                "run".to_string(),
+                "--privileged".to_string(),
+                "--sig-proxy=false".to_string(),
+                "-d".to_string(),
+                "--mount".to_string(),
+                "type=bind,source=/path/to/local/project,target=/workspace2,consistency=cached".to_string(),
+                "--mount".to_string(),
+                "type=volume,source=dev-containers-cli-bashhistory,target=/home/node/commandhistory,consistency=cached".to_string(),
+                "--mount".to_string(),
+                "type=volume,source=dind-var-lib-docker-42dad4b4ca7b8ced,target=/var/lib/docker,consistency=cached".to_string(),
+                "-l".to_string(),
+                "devcontainer.local_folder=/path/to/local/project".to_string(),
+                "-l".to_string(),
+                "devcontainer.config_file=/path/to/local/project/.devcontainer/devcontainer.json".to_string(),
+                "-l".to_string(),
+                "devcontainer.metadata=[{\"remoteUser\":\"node\"}]".to_string(),
+                "-p".to_string(),
+                "8082:8082".to_string(),
+                "-p".to_string(),
+                "8083:8083".to_string(),
+                "-p".to_string(),
+                "8084:8084".to_string(),
+                "--entrypoint".to_string(),
+                "/bin/sh".to_string(),
+                "sha256:610e6cfca95280188b021774f8cf69dd6f49bdb6eebc34c5ee2010f4d51cc105".to_string(),
+                "-c".to_string(),
+                "echo Container started\ntrap \"exit 0\" 15\n/usr/local/share/docker-init.sh\nexec \"$@\"\nwhile sleep 1 & wait $!; do :; done".to_string(),
+                "-".to_string()
+            ]
         )
     }
 
@@ -3891,7 +4052,12 @@ chmod +x ./install.sh
               // "features": {},
 
               // Use 'forwardPorts' to make a list of ports inside the container available locally.
-              // "forwardPorts": [5432],
+              "forwardPorts": [
+                8083,
+                "db:5432",
+                "db:1234",
+              ],
+              "appPort": "8084",
 
               // Use 'postCreateCommand' to run commands after the container is created.
               // "postCreateCommand": "rustc --version",
@@ -3920,36 +4086,36 @@ volumes:
 
 services:
     app:
-    build:
-        context: .
-        dockerfile: Dockerfile
-    env_file:
-        # Ensure that the variables in .env match the same variables in devcontainer.json
-        - .env
+        build:
+            context: .
+            dockerfile: Dockerfile
+        env_file:
+            # Ensure that the variables in .env match the same variables in devcontainer.json
+            - .env
 
-    volumes:
-        - ../..:/workspaces:cached
+        volumes:
+            - ../..:/workspaces:cached
 
-    # Overrides default command so things don't shut down after the process ends.
-    command: sleep infinity
+        # Overrides default command so things don't shut down after the process ends.
+        command: sleep infinity
 
-    # Runs app on the same network as the database container, allows "forwardPorts" in devcontainer.json function.
-    network_mode: service:db
+        # Runs app on the same network as the database container, allows "forwardPorts" in devcontainer.json function.
+        network_mode: service:db
 
-    # Use "forwardPorts" in **devcontainer.json** to forward an app port locally.
-    # (Adding the "ports" property to this file will not forward from a Codespace.)
+        # Use "forwardPorts" in **devcontainer.json** to forward an app port locally.
+        # (Adding the "ports" property to this file will not forward from a Codespace.)
 
     db:
-    image: postgres:14.1
-    restart: unless-stopped
-    volumes:
-        - postgres-data:/var/lib/postgresql/data
-    env_file:
-        # Ensure that the variables in .env match the same variables in devcontainer.json
-        - .env
+        image: postgres:14.1
+        restart: unless-stopped
+        volumes:
+            - postgres-data:/var/lib/postgresql/data
+        env_file:
+            # Ensure that the variables in .env match the same variables in devcontainer.json
+            - .env
 
-    # Add "forwardPorts": ["5432"] to **devcontainer.json** to forward PostgreSQL locally.
-    # (Adding the "ports" property to this file will not forward from a Codespace.)
+        # Add "forwardPorts": ["5432"] to **devcontainer.json** to forward PostgreSQL locally.
+        # (Adding the "ports" property to this file will not forward from a Codespace.)
                     "#.trim().to_string(),
             )
             .await
@@ -4088,6 +4254,73 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
 ENV DOCKER_BUILDKIT=1
 "#
         );
+
+        let runtime_override = files
+            .iter()
+            .find(|f| {
+                f.file_name().is_some_and(|s| {
+                    s.display().to_string() == "docker_compose_runtime.json".to_string()
+                })
+            })
+            .expect("to be found");
+        let runtime_override = test_dependencies.fs.load(runtime_override).await.unwrap();
+
+        let expected_runtime_override = DockerComposeConfig {
+            name: None,
+            services: HashMap::from([
+                (
+                    "app".to_string(),
+                    DockerComposeService {
+                        entrypoint: Some(vec![
+                            "/bin/sh".to_string(),
+                            "-c".to_string(),
+                            "echo Container started\ntrap \"exit 0\" 15\n/usr/local/share/docker-init.sh\nexec \"$@\"\nwhile sleep 1 & wait $!; do :; done".to_string(),
+                            "-".to_string(),
+                        ]),
+                        cap_add: Some(vec!["SYS_PTRACE".to_string()]),
+                        security_opt: Some(vec!["seccomp=unconfined".to_string()]),
+                        privileged: Some(true),
+                        labels: Some(vec![
+                            "devcontainer.metadata=[{\"remoteUser\":\"vscode\"}]".to_string(),
+                            "devcontainer.local_folder=/path/to/local/project".to_string(),
+                            "devcontainer.config_file=/path/to/local/project/.devcontainer/devcontainer.json".to_string()
+                        ]),
+                        volumes: vec![
+                            MountDefinition {
+                                source: "dind-var-lib-docker-42dad4b4ca7b8ced".to_string(),
+                                target: "/var/lib/docker".to_string(),
+                                mount_type: Some("volume".to_string())
+                            }
+                        ],
+                        ..Default::default()
+                    },
+                ),
+                (
+                    "db".to_string(),
+                    DockerComposeService {
+                        ports: vec![
+                            "8083:8083".to_string(),
+                            "5432:5432".to_string(),
+                            "1234:1234".to_string(),
+                            "8084:8084".to_string()
+                        ],
+                        ..Default::default()
+                    },
+                ),
+            ]),
+            volumes: HashMap::from([(
+                "dind-var-lib-docker-42dad4b4ca7b8ced".to_string(),
+                DockerComposeVolume {
+                    name: "dind-var-lib-docker-42dad4b4ca7b8ced".to_string(),
+                },
+            )]),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            serde_json_lenient::from_str::<DockerComposeConfig>(&runtime_override).unwrap(),
+            expected_runtime_override
+        )
     }
 
     #[gpui::test]
@@ -4130,7 +4363,7 @@ ENV DOCKER_BUILDKIT=1
             FakeFs::new(cx.executor()),
             fake_http_client(),
             Arc::new(fake_docker),
-            Arc::new(TestCommandRunner {}),
+            Arc::new(TestCommandRunner::new()),
             HashMap::new(),
             given_devcontainer_contents,
         )
@@ -4319,12 +4552,16 @@ ENV DOCKER_BUILDKIT=1
     }
 
     pub(crate) struct FakeDocker {
+        commands_recorded: Vec<Command>,
         podman: bool,
     }
 
     impl FakeDocker {
         pub(crate) fn new() -> Self {
-            Self { podman: false }
+            Self {
+                podman: false,
+                commands_recorded: Vec::new(),
+            }
         }
         fn set_podman(&mut self, podman: bool) {
             self.podman = podman;
@@ -4453,6 +4690,7 @@ ENV DOCKER_BUILDKIT=1
                                     target: "/workspaces".to_string(),
                                     mount_type: Some("bind".to_string()),
                                 }],
+                                network_mode: Some("service:db".to_string()),
                                 ..Default::default()
                             },
                         ),
@@ -4520,10 +4758,46 @@ ENV DOCKER_BUILDKIT=1
         }
     }
 
-    pub(crate) struct TestCommandRunner {}
+    #[derive(Debug, Clone)]
+    pub(crate) struct TestCommand {
+        pub(crate) program: String,
+        pub(crate) args: Vec<String>,
+    }
+
+    pub(crate) struct TestCommandRunner {
+        commands_recorded: Mutex<Vec<TestCommand>>,
+    }
+
+    impl TestCommandRunner {
+        fn new() -> Self {
+            Self {
+                commands_recorded: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn commands_by_program(&self, program: &str) -> Vec<TestCommand> {
+            let record = self.commands_recorded.lock().expect("poisoned");
+            record
+                .iter()
+                .filter(|r| r.program == program)
+                .map(|r| r.clone())
+                .collect()
+        }
+    }
+
     #[async_trait]
     impl CommandRunner for TestCommandRunner {
-        async fn run_command(&self, _command: &mut Command) -> Result<Output, std::io::Error> {
+        async fn run_command(&self, command: &mut Command) -> Result<Output, std::io::Error> {
+            let mut record = self.commands_recorded.lock().expect("poisoned");
+
+            record.push(TestCommand {
+                program: command.get_program().display().to_string(),
+                args: command
+                    .get_args()
+                    .map(|a| a.display().to_string())
+                    .collect(),
+            });
+
             Ok(Output {
                 status: ExitStatus::default(),
                 stdout: vec![],
