@@ -2135,8 +2135,9 @@ impl Sidebar {
         let paths: Vec<std::path::PathBuf> =
             path_list.paths().iter().map(|p| p.to_path_buf()).collect();
 
-        let open_task =
-            multi_workspace.update(cx, |mw, cx| mw.open_project(paths, false, window, cx));
+        let open_task = multi_workspace.update(cx, |mw, cx| {
+            mw.open_project(paths, workspace::OpenMode::Activate, window, cx)
+        });
 
         cx.spawn_in(window, async move |this, cx| {
             let workspace = open_task.await?;

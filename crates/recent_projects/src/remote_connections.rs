@@ -132,7 +132,7 @@ pub async fn open_remote_project(
     open_options: workspace::OpenOptions,
     cx: &mut AsyncApp,
 ) -> Result<()> {
-    let created_new_window = open_options.replace_window.is_none();
+    let created_new_window = open_options.requesting_window.is_none();
 
     let (existing, open_visible) = find_existing_workspace(
         &paths,
@@ -201,7 +201,7 @@ pub async fn open_remote_project(
         );
     }
 
-    let (window, initial_workspace) = if let Some(window) = open_options.replace_window {
+    let (window, initial_workspace) = if let Some(window) = open_options.requesting_window {
         let workspace = window.update(cx, |multi_workspace, _, _| {
             multi_workspace.workspace().clone()
         })?;
@@ -854,7 +854,7 @@ mod tests {
             paths,
             app_state,
             workspace::OpenOptions {
-                replace_window: Some(window),
+                requesting_window: Some(window),
                 ..Default::default()
             },
             &mut async_cx,

@@ -19,8 +19,8 @@ use zed_actions::agents_sidebar::MoveWorkspaceToNewWindow;
 const SIDEBAR_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
 
 use crate::{
-    CloseIntent, CloseWindow, DockPosition, Event as WorkspaceEvent, Item, ModalView,
-    MultiWorkspaceOperation, Panel, Workspace, WorkspaceId, client_side_decorations,
+    CloseIntent, CloseWindow, DockPosition, Event as WorkspaceEvent, Item, ModalView, OpenMode,
+    Panel, Workspace, WorkspaceId, client_side_decorations,
 };
 
 actions!(
@@ -786,20 +786,15 @@ impl MultiWorkspace {
     pub fn open_project(
         &mut self,
         paths: Vec<PathBuf>,
-        replace_active: bool,
+        open_mode: OpenMode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
         let workspace = self.workspace().clone();
-        let addition = if replace_active {
-            MultiWorkspaceOperation::Replace
-        } else {
-            MultiWorkspaceOperation::Activate
-        };
 
         if self.multi_workspace_enabled(cx) {
             workspace.update(cx, |workspace, cx| {
-                workspace.open_workspace_for_paths(true, addition, paths, window, cx)
+                workspace.open_workspace_for_paths(open_mode, paths, window, cx)
             })
         } else {
             cx.spawn_in(window, async move |_this, cx| {
@@ -811,7 +806,7 @@ impl MultiWorkspace {
                 if should_continue {
                     workspace
                         .update_in(cx, |workspace, window, cx| {
-                            workspace.open_workspace_for_paths(true, addition, paths, window, cx)
+                            workspace.open_workspace_for_paths(OpenMode::Replace, paths, window, cx)
                         })?
                         .await
                 } else {

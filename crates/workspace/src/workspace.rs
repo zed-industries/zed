@@ -668,7 +668,7 @@ fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, c
             None,
             None,
             None,
-            MultiWorkspaceOperation::Replace,
+            OpenMode::Replace,
             cx,
         );
         cx.spawn(async move |cx| {
@@ -709,7 +709,7 @@ pub fn prompt_for_open_path_and_open(
             if let Some(handle) = multi_workspace_handle {
                 if let Some(task) = handle
                     .update(cx, |multi_workspace, window, cx| {
-                        multi_workspace.open_project(paths, true, window, cx)
+                        multi_workspace.open_project(paths, OpenMode::Replace, window, cx)
                     })
                     .log_err()
                 {
@@ -720,13 +720,7 @@ pub fn prompt_for_open_path_and_open(
         }
         if let Some(task) = this
             .update_in(cx, |this, window, cx| {
-                this.open_workspace_for_paths(
-                    false,
-                    MultiWorkspaceOperation::Replace,
-                    paths,
-                    window,
-                    cx,
-                )
+                this.open_workspace_for_paths(OpenMode::NewWindow, paths, window, cx)
             })
             .log_err()
         {
@@ -1378,15 +1372,16 @@ struct FollowerView {
     location: Option<proto::PanelId>,
 }
 
-/// Controls how a newly created workspace is added to the multi-workspace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum MultiWorkspaceOperation {
-    /// Add the workspace to the list without activating it (used during deserialization).
+pub enum OpenMode {
+    /// Open the workspace in a new window.
+    NewWindow,
+    /// Add to the window's multi workspace without activating it (used during deserialization).
     Add,
-    /// Add the workspace and make it the active one.
+    /// Add to the window's multi workspace and activate it.
     #[default]
     Activate,
-    /// Replace the currently active workspace with the new one.
+    /// Replace the currently active workspace, and any of it's linked workspaces
     Replace,
 }
 
@@ -1789,7 +1784,7 @@ impl Workspace {
         requesting_window: Option<WindowHandle<MultiWorkspace>>,
         env: Option<HashMap<String, String>>,
         init: Option<Box<dyn FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send>>,
-        addition: MultiWorkspaceOperation,
+        open_mode: OpenMode,
         cx: &mut App,
     ) -> Task<anyhow::Result<OpenResult>> {
         let project_handle = Project::local(
@@ -1887,8 +1882,13 @@ impl Workspace {
                 });
             }
 
+            let window_to_replace = match open_mode {
+                OpenMode::NewWindow => None,
+                _ => requesting_window,
+            };
+
             let (window, workspace): (WindowHandle<MultiWorkspace>, Entity<Workspace>) =
-                if let Some(window) = requesting_window {
+                if let Some(window) = window_to_replace {
                     let centered_layout = serialized_workspace
                         .as_ref()
                         .map(|w| w.centered_layout)
@@ -1913,15 +1913,18 @@ impl Workspace {
 
                             workspace
                         });
-                        match addition {
-                            MultiWorkspaceOperation::Replace => {
+                        match open_mode {
+                            OpenMode::Replace => {
                                 multi_workspace.replace(workspace.clone(), &*window, cx);
                             }
-                            MultiWorkspaceOperation::Activate => {
+                            OpenMode::Activate => {
                                 multi_workspace.activate(workspace.clone(), window, cx);
                             }
-                            MultiWorkspaceOperation::Add => {
+                            OpenMode::Add => {
                                 multi_workspace.add(workspace.clone(), &*window, cx);
+                            }
+                            OpenMode::NewWindow => {
+                                unreachable!()
                             }
                         }
                         workspace
@@ -2904,7 +2907,7 @@ impl Workspace {
                 None,
                 env,
                 None,
-                MultiWorkspaceOperation::Activate,
+                OpenMode::Activate,
                 cx,
             );
             cx.spawn_in(window, async move |_vh, cx| {
@@ -2945,7 +2948,7 @@ impl Workspace {
                 None,
                 env,
                 None,
-                MultiWorkspaceOperation::Activate,
+                OpenMode::Activate,
                 cx,
             );
             cx.spawn_in(window, async move |_vh, cx| {
@@ -3327,24 +3330,22 @@ impl Workspace {
 
     pub fn open_workspace_for_paths(
         &mut self,
-        replace_current_window: bool,
-        addition: MultiWorkspaceOperation,
+        // replace_current_window: bool,
+        mut open_mode: OpenMode,
         paths: Vec<PathBuf>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
-        let window_handle = window.window_handle().downcast::<MultiWorkspace>();
+        let requesting_window = window.window_handle().downcast::<MultiWorkspace>();
         let is_remote = self.project.read(cx).is_via_collab();
         let has_worktree = self.project.read(cx).worktrees(cx).next().is_some();
         let has_dirty_items = self.items(cx).any(|item| item.is_dirty(cx));
 
-        let window_to_replace = if replace_current_window {
-            window_handle
-        } else if is_remote || has_worktree || has_dirty_items {
-            None
-        } else {
-            window_handle
-        };
+        let workspace_is_empty = !is_remote && !has_worktree && !has_dirty_items;
+        if workspace_is_empty {
+            open_mode = OpenMode::Replace;
+        }
+
         let app_state = self.app_state.clone();
 
         cx.spawn(async move |_, cx| {
@@ -3354,8 +3355,8 @@ impl Workspace {
                         &paths,
                         app_state,
                         OpenOptions {
-                            replace_window: window_to_replace,
-                            multi_workspace_operation: addition,
+                            requesting_window,
+                            open_mode,
                             ..Default::default()
                         },
                         cx,
@@ -8534,7 +8535,7 @@ pub async fn restore_multiworkspace(
                     None,
                     None,
                     None,
-                    MultiWorkspaceOperation::Activate,
+                    OpenMode::Activate,
                     cx,
                 )
             })
@@ -8564,7 +8565,7 @@ pub async fn restore_multiworkspace(
                     Some(window_handle),
                     None,
                     None,
-                    MultiWorkspaceOperation::Add,
+                    OpenMode::Add,
                     cx,
                 )
             })
@@ -8845,7 +8846,7 @@ pub fn join_channel(
                         requesting_window,
                         None,
                         None,
-                        MultiWorkspaceOperation::Activate,
+                        OpenMode::Activate,
                         cx,
                     )
                 })
@@ -8925,7 +8926,7 @@ pub async fn get_any_active_multi_workspace(
                 None,
                 None,
                 None,
-                MultiWorkspaceOperation::Activate,
+                OpenMode::Activate,
                 cx,
             )
         })
@@ -9099,8 +9100,8 @@ pub struct OpenOptions {
     pub focus: Option<bool>,
     pub open_new_workspace: Option<bool>,
     pub wait: bool,
-    pub replace_window: Option<WindowHandle<MultiWorkspace>>,
-    pub multi_workspace_operation: MultiWorkspaceOperation,
+    pub requesting_window: Option<WindowHandle<MultiWorkspace>>,
+    pub open_mode: OpenMode,
     pub env: Option<HashMap<String, String>>,
 }
 
@@ -9319,10 +9320,10 @@ pub fn open_paths(
                     Workspace::new_local(
                         abs_paths,
                         app_state.clone(),
-                        open_options.replace_window,
+                        open_options.requesting_window,
                         open_options.env,
                         None,
-                        open_options.multi_workspace_operation,
+                        open_options.open_mode,
                         cx,
                     )
                 })
@@ -9380,11 +9381,11 @@ pub fn open_new(
     cx: &mut App,
     init: impl FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + 'static + Send,
 ) -> Task<anyhow::Result<()>> {
-    let addition = open_options.multi_workspace_operation;
+    let addition = open_options.open_mode;
     let task = Workspace::new_local(
         Vec::new(),
         app_state,
-        open_options.replace_window,
+        open_options.requesting_window,
         open_options.env,
         Some(Box::new(init)),
         addition,

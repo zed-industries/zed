@@ -46,8 +46,8 @@ use ui::{
 };
 use util::{ResultExt, paths::PathExt};
 use workspace::{
-    HistoryManager, ModalView, MultiWorkspace, MultiWorkspaceOperation, OpenOptions, OpenVisible,
-    PathList, SerializedWorkspaceLocation, Workspace, WorkspaceDb, WorkspaceId,
+    HistoryManager, ModalView, MultiWorkspace, OpenMode, OpenOptions, OpenVisible, PathList,
+    SerializedWorkspaceLocation, Workspace, WorkspaceDb, WorkspaceId,
     notifications::DetachAndPromptErr, with_active_or_new_workspace,
 };
 use zed_actions::{OpenDevContainer, OpenRecent, OpenRemote};
@@ -1079,8 +1079,12 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     cx.defer(move |cx| {
                                         if let Some(task) = handle
                                             .update(cx, |multi_workspace, window, cx| {
-                                                multi_workspace
-                                                    .open_project(paths, true, window, cx)
+                                                multi_workspace.open_project(
+                                                    paths,
+                                                    OpenMode::Replace,
+                                                    window,
+                                                    cx,
+                                                )
                                             })
                                             .log_err()
                                         {
@@ -1092,8 +1096,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                             } else {
                                 workspace
                                     .open_workspace_for_paths(
-                                        false,
-                                        MultiWorkspaceOperation::Replace,
+                                        OpenMode::NewWindow,
                                         paths,
                                         window,
                                         cx,
@@ -1114,7 +1117,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 None
                             };
                             let open_options = OpenOptions {
-                                replace_window,
+                                requesting_window: replace_window,
                                 ..Default::default()
                             };
                             if let RemoteConnectionOptions::Ssh(connection) = &mut connection {

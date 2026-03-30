@@ -1566,7 +1566,7 @@ impl RemoteServerProjects {
                         project.paths.into_iter().map(PathBuf::from).collect(),
                         app_state,
                         OpenOptions {
-                            replace_window,
+                            requesting_window: replace_window,
                             ..OpenOptions::default()
                         },
                         cx,
@@ -1895,7 +1895,7 @@ impl RemoteServerProjects {
                 vec![starting_dir].into_iter().map(PathBuf::from).collect(),
                 app_state,
                 OpenOptions {
-                    replace_window,
+                    requesting_window: replace_window,
                     ..OpenOptions::default()
                 },
                 cx,

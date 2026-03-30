@@ -1120,7 +1120,7 @@ fn register_actions(
                             let task = cx.update(|_window, cx| {
                                 open_new(
                                     workspace::OpenOptions {
-                                        replace_window: Some(window_handle),
+                                        requesting_window: Some(window_handle),
                                         ..Default::default()
                                     },
                                     app_state,
@@ -2459,7 +2459,7 @@ mod tests {
                 &[PathBuf::from(path!("/root/e"))],
                 app_state,
                 workspace::OpenOptions {
-                    replace_window: Some(window),
+                    requesting_window: Some(window),
                     ..Default::default()
                 },
                 cx,
@@ -5794,7 +5794,7 @@ mod tests {
     async fn test_multi_workspace_session_restore(cx: &mut TestAppContext) {
         use collections::HashMap;
         use session::Session;
-        use workspace::{MultiWorkspaceOperation, Workspace, WorkspaceId};
+        use workspace::{OpenMode, Workspace, WorkspaceId};
 
         let app_state = init_test(cx);
 
@@ -5829,7 +5829,7 @@ mod tests {
                     None,
                     None,
                     None,
-                    MultiWorkspaceOperation::Activate,
+                    OpenMode::Activate,
                     cx,
                 )
             })
@@ -5838,7 +5838,7 @@ mod tests {
 
         window_a
             .update(cx, |multi_workspace, window, cx| {
-                multi_workspace.open_project(vec![dir2.into()], true, window, cx)
+                multi_workspace.open_project(vec![dir2.into()], OpenMode::Replace, window, cx)
             })
             .unwrap()
             .await
@@ -5855,7 +5855,7 @@ mod tests {
                     None,
                     None,
                     None,
-                    MultiWorkspaceOperation::Activate,
+                    OpenMode::Activate,
                     cx,
                 )
             })

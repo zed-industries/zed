@@ -83,7 +83,7 @@ use ui::{
 };
 use util::{ResultExt as _, debug_panic};
 use workspace::{
-    CollaboratorId, DraggedSelection, DraggedTab, MultiWorkspaceOperation, OpenResult, PathList,
+    CollaboratorId, DraggedSelection, DraggedTab, OpenMode, OpenResult, PathList,
     SerializedPathList, ToggleWorkspaceSidebar, ToggleZoom, ToolbarItemView, Workspace,
     WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
@@ -2940,7 +2940,7 @@ impl AgentPanel {
                     window_handle,
                     None,
                     None,
-                    MultiWorkspaceOperation::Add,
+                    OpenMode::Add,
                     cx,
                 )
             })?

@@ -21,8 +21,7 @@ use std::{path::PathBuf, sync::Arc};
 use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use util::ResultExt;
 use workspace::{
-    ModalView, MultiWorkspace, MultiWorkspaceOperation, Workspace,
-    notifications::DetachAndPromptErr,
+    ModalView, MultiWorkspace, OpenMode, Workspace, notifications::DetachAndPromptErr,
 };
 
 use crate::git_panel::show_error_toast;
@@ -354,8 +353,7 @@ impl WorktreeListDelegate {
                 workspace
                     .update_in(cx, |workspace, window, cx| {
                         workspace.open_workspace_for_paths(
-                            replace_current_window,
-                            MultiWorkspaceOperation::Activate,
+                            OpenMode::Replace,
                             vec![new_worktree_path],
                             window,
                             cx,
@@ -408,16 +406,15 @@ impl WorktreeListDelegate {
         else {
             return;
         };
+        let open_mode = if replace_current_window {
+            OpenMode::Replace
+        } else {
+            OpenMode::NewWindow
+        };
 
         if is_local {
             let open_task = workspace.update(cx, |workspace, cx| {
-                workspace.open_workspace_for_paths(
-                    replace_current_window,
-                    MultiWorkspaceOperation::Activate,
-                    vec![path],
-                    window,
-                    cx,
-                )
+                workspace.open_workspace_for_paths(open_mode, vec![path], window, cx)
             });
             cx.spawn(async move |_, _| {
                 open_task?.await?;
@@ -927,16 +924,6 @@ impl PickerDelegate for WorktreeListDelegate {
                     .child(
                         Button::new("open-in-new-window", "Open in New Window")
                             .key_binding(
-                                KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
-                                    .map(|kb| kb.size(rems_from_px(12.))),
-                            )
-                            .on_click(|_, window, cx| {
-                                window.dispatch_action(menu::Confirm.boxed_clone(), cx)
-                            }),
-                    )
-                    .child(
-                        Button::new("open-in-window", "Open")
-                            .key_binding(
                                 KeyBinding::for_action_in(
                                     &menu::SecondaryConfirm,
                                     &focus_handle,
@@ -946,6 +933,16 @@ impl PickerDelegate for WorktreeListDelegate {
                             )
                             .on_click(|_, window, cx| {
                                 window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx)
+                            }),
+                    )
+                    .child(
+                        Button::new("open-in-window", "Open")
+                            .key_binding(
+                                KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
+                                    .map(|kb| kb.size(rems_from_px(12.))),
+                            )
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(menu::Confirm.boxed_clone(), cx)
                             }),
                     )
                     .into_any(),
