@@ -38,6 +38,7 @@ mod ui;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use ::ui::IconName;
 use agent_client_protocol as acp;
 use agent_settings::{AgentProfileId, AgentSettings};
 use command_palette_hooks::CommandPaletteFilter;
@@ -234,11 +235,13 @@ pub struct NewNativeAgentThreadFromSummary {
     from_session_id: agent_client_protocol::SessionId,
 }
 
-// TODO unify this with AgentType
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Agent {
+    #[default]
+    #[serde(alias = "NativeAgent")]
     NativeAgent,
+    #[serde(alias = "Custom")]
     Custom {
         #[serde(rename = "name")]
         id: AgentId,
@@ -260,6 +263,24 @@ impl Agent {
         match self {
             Self::NativeAgent => agent::ZED_AGENT_ID.clone(),
             Self::Custom { id } => id.clone(),
+        }
+    }
+
+    pub fn is_native(&self) -> bool {
+        matches!(self, Self::NativeAgent)
+    }
+
+    pub fn label(&self) -> SharedString {
+        match self {
+            Self::NativeAgent => "Zed Agent".into(),
+            Self::Custom { id, .. } => id.0.clone(),
+        }
+    }
+
+    pub fn icon(&self) -> Option<IconName> {
+        match self {
+            Self::NativeAgent => None,
+            Self::Custom { .. } => Some(IconName::Sparkle),
         }
     }
 
@@ -879,11 +900,11 @@ mod tests {
     #[test]
     fn test_deserialize_external_agent_variants() {
         assert_eq!(
-            serde_json::from_str::<Agent>(r#""native_agent""#).unwrap(),
+            serde_json::from_str::<Agent>(r#""NativeAgent""#).unwrap(),
             Agent::NativeAgent,
         );
         assert_eq!(
-            serde_json::from_str::<Agent>(r#"{"custom":{"name":"my-agent"}}"#).unwrap(),
+            serde_json::from_str::<Agent>(r#"{"Custom":{"name":"my-agent"}}"#).unwrap(),
             Agent::Custom {
                 id: "my-agent".into(),
             },

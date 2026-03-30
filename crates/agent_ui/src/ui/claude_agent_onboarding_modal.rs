@@ -6,7 +6,7 @@ use gpui::{
 use ui::{TintColor, Vector, VectorName, prelude::*};
 use workspace::{ModalView, Workspace};
 
-use crate::agent_panel::{AgentPanel, AgentType};
+use crate::{Agent, agent_panel::AgentPanel};
 
 macro_rules! claude_agent_onboarding_event {
     ($name:expr) => {
@@ -38,7 +38,7 @@ impl ClaudeCodeOnboardingModal {
             if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                 panel.update(cx, |panel, cx| {
                     panel.new_agent_thread(
-                        AgentType::Custom {
+                        Agent::Custom {
                             id: CLAUDE_AGENT_ID.into(),
                         },
                         window,
