@@ -2820,7 +2820,8 @@ async fn test_exclude_overscroll_margin_clamps_scroll_position(cx: &mut TestAppC
         nine
         ten
         eleven
-        "#.unindent(),
+        "#
+        .unindent(),
     );
 
     cx.update_editor(|editor, window, cx| {
