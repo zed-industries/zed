@@ -1,6 +1,7 @@
 use super::*;
 use agent_settings::AgentSettings;
 use gpui::{App, SharedString, Task};
+use language_model::LanguageModelImage;
 use std::future;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -217,6 +218,45 @@ impl AgentTool for DelayTool {
                 .map_err(|e| format!("Failed to receive tool input: {e}"))?;
             executor.timer(Duration::from_millis(input.ms)).await;
             Ok("Ding".to_string())
+        })
+    }
+}
+
+/// A tool that returns an image
+#[derive(JsonSchema, Serialize, Deserialize)]
+pub struct ImageToolInput {}
+
+pub struct ImageTool;
+
+impl AgentTool for ImageTool {
+    type Input = ImageToolInput;
+    type Output = LanguageModelImage;
+
+    const NAME: &'static str = "image";
+
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Other
+    }
+
+    fn initial_title(
+        &self,
+        _input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
+        "Image".into()
+    }
+
+    fn run(
+        self: Arc<Self>,
+        _input: ToolInput<Self::Input>,
+        _event_stream: ToolCallEventStream,
+        cx: &mut App,
+    ) -> Task<Result<LanguageModelImage, LanguageModelImage>> {
+        cx.spawn(async move |_cx| {
+            Ok(LanguageModelImage {
+                source: "Encoded Image".into(),
+                size: None,
+            })
         })
     }
 }

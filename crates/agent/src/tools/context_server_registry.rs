@@ -5,6 +5,7 @@ use collections::{BTreeMap, HashMap};
 use context_server::{ContextServerId, client::NotificationSubscription};
 use futures::FutureExt as _;
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
+use language_model::LanguageModelImage;
 use project::context_server_store::{ContextServerStatus, ContextServerStore};
 use std::sync::Arc;
 use util::ResultExt;
@@ -395,8 +396,17 @@ impl AnyAgentTool for ContextServerTool {
                     context_server::types::ToolResponseContent::Text { text } => {
                         result.push_str(&text);
                     }
-                    context_server::types::ToolResponseContent::Image { .. } => {
-                        log::warn!("Ignoring image content from tool response");
+                    context_server::types::ToolResponseContent::Image { data, mime_type } => {
+                        return Ok(AgentToolOutput {
+                            raw_output: serde_json::json!({
+                                "type": "image",
+                                "mime_type": mime_type,
+                            }),
+                            llm_output: LanguageModelImage {
+                                source: data.into(),
+                                size: None,
+                            }.into(),
+                        });
                     }
                     context_server::types::ToolResponseContent::Audio { .. } => {
                         log::warn!("Ignoring audio content from tool response");

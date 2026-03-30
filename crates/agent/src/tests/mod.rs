@@ -26,10 +26,10 @@ use gpui::{
 use indoc::indoc;
 use language_model::{
     CompletionIntent, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelId, LanguageModelProviderName, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelToolResult, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, MessageContent, Role, StopReason, TokenUsage,
-    fake_provider::FakeLanguageModel,
+    LanguageModelId, LanguageModelImage, LanguageModelProviderName, LanguageModelRegistry,
+    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelToolResult,
+    LanguageModelToolResultContent, LanguageModelToolSchemaFormat, LanguageModelToolUse,
+    MessageContent, Role, StopReason, TokenUsage, fake_provider::FakeLanguageModel,
 };
 use pretty_assertions::assert_eq;
 use project::{
@@ -1573,6 +1573,119 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
                 output: Some("mcp".into()),
             },),
         ]
+    );
+    fake_model.end_last_completion_stream();
+    events.collect::<Vec<_>>().await;
+}
+
+#[gpui::test]
+async fn test_mcp_tool_image_result(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model,
+        thread,
+        context_server_store,
+        fs,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+    fake_model.set_supports_images(true);
+
+    fs.insert_file(
+        paths::settings_file(),
+        json!({
+            "agent": {
+                "tool_permissions": { "default": "allow" },
+                "profiles": {
+                    "test": {
+                        "name": "Test Profile",
+                        "enable_all_context_servers": true,
+                        "tools": {
+                            ImageTool::NAME: true,
+                        }
+                    },
+                }
+            }
+        })
+        .to_string()
+        .into_bytes(),
+    )
+    .await;
+    cx.run_until_parked();
+    thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("test".into()), cx)
+    });
+
+    let mut mcp_tool_calls = setup_context_server(
+        "test_server",
+        vec![context_server::types::Tool {
+            name: "screen_capture".into(),
+            description: None,
+            input_schema: json!({"type": "object", "properties": {}}),
+            output_schema: None,
+            annotations: None,
+        }],
+        &context_server_store,
+        cx,
+    );
+
+    let events = thread.update(cx, |thread, cx| {
+        thread
+            .send(UserMessageId::new(), ["Take a screenshot"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+
+    let completion = fake_model.pending_completions().pop().unwrap();
+    assert_eq!(
+        tool_names_for_completion(&completion),
+        vec!["screen_capture"]
+    );
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_1".into(),
+            name: "screen_capture".into(),
+            raw_input: json!({}).to_string(),
+            input: json!({}),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    let image_base64 = "Base64EncodedImage";
+
+    let (tool_call_params, tool_call_response) = mcp_tool_calls.next().await.unwrap();
+    assert_eq!(tool_call_params.name, "screen_capture");
+    tool_call_response
+        .send(context_server::types::CallToolResponse {
+            content: vec![context_server::types::ToolResponseContent::Image {
+                data: image_base64.into(),
+                mime_type: "image/png".into(),
+            }],
+            is_error: None,
+            meta: None,
+            structured_content: None,
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    let completion = fake_model.pending_completions().pop().unwrap();
+    assert_eq!(
+        completion.messages.last().unwrap().content,
+        vec![MessageContent::ToolResult(LanguageModelToolResult {
+            tool_use_id: "tool_1".into(),
+            tool_name: "screen_capture".into(),
+            is_error: false,
+            content: LanguageModelToolResultContent::Image(LanguageModelImage {
+                source: image_base64.into(),
+                size: None,
+            }),
+            output: Some(json!({
+                "type": "image",
+                "mime_type": "image/png",
+            })),
+        })]
     );
     fake_model.end_last_completion_stream();
     events.collect::<Vec<_>>().await;

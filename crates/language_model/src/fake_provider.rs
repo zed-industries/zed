@@ -125,6 +125,7 @@ pub struct FakeLanguageModel {
     >,
     forbid_requests: AtomicBool,
     supports_thinking: AtomicBool,
+    supports_images: AtomicBool,
 }
 
 impl Default for FakeLanguageModel {
@@ -137,6 +138,7 @@ impl Default for FakeLanguageModel {
             current_completion_txs: Mutex::new(Vec::new()),
             forbid_requests: AtomicBool::new(false),
             supports_thinking: AtomicBool::new(false),
+            supports_images: AtomicBool::new(false),
         }
     }
 }
@@ -167,6 +169,10 @@ impl FakeLanguageModel {
 
     pub fn set_supports_thinking(&self, supports: bool) {
         self.supports_thinking.store(supports, SeqCst);
+    }
+
+    pub fn set_supports_images(&self, supports: bool) {
+        self.supports_images.store(supports, SeqCst);
     }
 
     pub fn pending_completions(&self) -> Vec<LanguageModelRequest> {
@@ -275,7 +281,7 @@ impl LanguageModel for FakeLanguageModel {
     }
 
     fn supports_images(&self) -> bool {
-        false
+        self.supports_images.load(SeqCst)
     }
 
     fn supports_thinking(&self) -> bool {
