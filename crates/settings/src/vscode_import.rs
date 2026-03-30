@@ -880,6 +880,7 @@ impl VsCodeSettings {
             scroll_multiplier: None,
             toolbar: None,
             show_count_badge: None,
+            flexible: None,
         })
     }
 

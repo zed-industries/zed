@@ -3150,8 +3150,21 @@ impl Panel for AgentPanel {
         }
     }
 
-    fn supports_flexible_size(&self, _window: &Window, _cx: &App) -> bool {
+    fn supports_flexible_size(&self) -> bool {
         true
+    }
+
+    fn has_flexible_size(&self, _window: &Window, cx: &App) -> bool {
+        AgentSettings::get_global(cx).flexible
+    }
+
+    fn set_flexible_size(&mut self, flexible: bool, _window: &mut Window, cx: &mut Context<Self>) {
+        settings::update_settings_file(self.fs.clone(), cx, move |settings, _| {
+            settings
+                .agent
+                .get_or_insert_default()
+                .set_flexible_size(flexible);
+        });
     }
 
     fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut Context<Self>) {

@@ -571,6 +571,7 @@ mod tests {
             enabled: true,
             button: true,
             dock: DockPosition::Right,
+            flexible: true,
             default_width: px(300.),
             default_height: px(600.),
             default_model: None,

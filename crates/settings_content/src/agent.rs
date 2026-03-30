@@ -48,6 +48,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: right
     pub dock: Option<DockPosition>,
+    /// Whether the agent panel should use flexible (proportional) sizing.
+    ///
+    /// Default: true
+    pub flexible: Option<bool>,
     /// Default width in pixels when the agent panel is docked to the left or right.
     ///
     /// Default: 640
@@ -155,6 +159,10 @@ pub struct AgentSettingsContent {
 impl AgentSettingsContent {
     pub fn set_dock(&mut self, dock: DockPosition) {
         self.dock = Some(dock);
+    }
+
+    pub fn set_flexible_size(&mut self, flexible: bool) {
+        self.flexible = Some(flexible);
     }
 
     pub fn set_model(&mut self, language_model: LanguageModelSelection) {
