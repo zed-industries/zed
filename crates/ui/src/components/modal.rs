@@ -169,6 +169,7 @@ impl RenderOnce for ModalHeader {
         }
 
         h_flex()
+            .min_w_0()
             .flex_none()
             .justify_between()
             .w_full()
@@ -187,6 +188,7 @@ impl RenderOnce for ModalHeader {
             })
             .child(
                 v_flex()
+                    .min_w_0()
                     .flex_1()
                     .child(
                         h_flex()
@@ -195,7 +197,7 @@ impl RenderOnce for ModalHeader {
                             .children(children),
                     )
                     .when_some(self.description, |this, description| {
-                        this.child(Label::new(description).color(Color::Muted).mb_2())
+                        this.child(Label::new(description).color(Color::Muted).mb_2().flex_1())
                     }),
             )
             .when(self.show_dismiss_button, |this| {
