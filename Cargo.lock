@@ -16034,6 +16034,7 @@ dependencies = [
  "project",
  "prompt_store",
  "recent_projects",
+ "remote",
  "serde_json",
  "settings",
  "theme",

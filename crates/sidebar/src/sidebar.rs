@@ -23,6 +23,7 @@ use menu::{
 };
 use project::{AgentId, AgentRegistryStore, Event as ProjectEvent, linked_worktree_short_name};
 use recent_projects::sidebar_recent_projects::SidebarRecentProjects;
+use remote::RemoteConnectionOptions;
 use ui::utils::platform_title_bar_height;
 
 use settings::Settings as _;
@@ -1165,6 +1166,34 @@ impl Sidebar {
         }
     }
 
+    fn render_remote_project_icon(
+        &self,
+        ix: usize,
+        workspace: &Entity<Workspace>,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let project = workspace.read(cx).project().read(cx);
+        let remote_connection_options = project.remote_connection_options(cx)?;
+
+        let remote_icon_per_type = match remote_connection_options {
+            RemoteConnectionOptions::Wsl(_) => IconName::Linux,
+            RemoteConnectionOptions::Docker(_) => IconName::Box,
+            _ => IconName::Server,
+        };
+
+        Some(
+            div()
+                .id(format!("remote-project-icon-{}", ix))
+                .child(
+                    Icon::new(remote_icon_per_type)
+                        .size(IconSize::XSmall)
+                        .color(Color::Muted),
+                )
+                .tooltip(Tooltip::text("Remote Project"))
+                .into_any_element(),
+        )
+    }
+
     fn render_project_header(
         &self,
         ix: usize,
@@ -1220,17 +1249,6 @@ impl Sidebar {
             .element_active
             .blend(color.element_background.opacity(0.2));
 
-        let is_remote = workspace.read(cx).project().read(cx).is_via_remote_server();
-        let remote_id = SharedString::from(format!("{id_prefix}-remote-project-{ix}"));
-        let remote_icon = div()
-            .id(remote_id)
-            .child(
-                Icon::new(IconName::Server)
-                    .size(IconSize::XSmall)
-                    .color(Color::Muted),
-            )
-            .tooltip(Tooltip::text("Remote Project"));
-
         h_flex()
             .id(id)
             .group(&group_name)
@@ -1262,7 +1280,10 @@ impl Sidebar {
                         ),
                     )
                     .child(label)
-                    .when(is_remote, |this| this.child(remote_icon))
+                    .when_some(
+                        self.render_remote_project_icon(ix, workspace, cx),
+                        |this, icon| this.child(icon),
+                    )
                     .when(is_collapsed, |this| {
                         this.when(has_running_threads, |this| {
                             this.child(
