@@ -108,6 +108,7 @@ pub struct ThreadsArchiveView {
     items: Vec<ArchiveListItem>,
     selection: Option<usize>,
     hovered_index: Option<usize>,
+    preserve_selection_on_next_update: bool,
     filter_editor: Entity<Editor>,
     _subscriptions: Vec<gpui::Subscription>,
     _refresh_history_task: Task<()>,
@@ -176,6 +177,7 @@ impl ThreadsArchiveView {
             items: Vec::new(),
             selection: None,
             hovered_index: None,
+            preserve_selection_on_next_update: false,
             filter_editor,
             _subscriptions: vec![
                 filter_editor_subscription,
@@ -251,10 +253,36 @@ impl ThreadsArchiveView {
             });
         }
 
+        let preserve = self.preserve_selection_on_next_update;
+        self.preserve_selection_on_next_update = false;
+
+        let saved_scroll = if preserve {
+            Some(self.list_state.logical_scroll_top())
+        } else {
+            None
+        };
+
         self.list_state.reset(items.len());
         self.items = items;
-        self.selection = None;
         self.hovered_index = None;
+
+        if let Some(scroll_top) = saved_scroll {
+            self.list_state.scroll_to(scroll_top);
+
+            if let Some(ix) = self.selection {
+                let next = self.find_next_selectable(ix).or_else(|| {
+                    ix.checked_sub(1)
+                        .and_then(|i| self.find_previous_selectable(i))
+                });
+                self.selection = next;
+                if let Some(next) = next {
+                    self.list_state.scroll_to_reveal_item(next);
+                }
+            }
+        } else {
+            self.selection = None;
+        }
+
         cx.notify();
     }
 
@@ -470,6 +498,21 @@ impl ThreadsArchiveView {
         }
     }
 
+    fn remove_selected_thread(
+        &mut self,
+        _: &RemoveSelectedThread,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ix) = self.selection else { return };
+        let Some(ArchiveListItem::Entry { thread, .. }) = self.items.get(ix) else {
+            return;
+        };
+
+        self.preserve_selection_on_next_update = true;
+        self.delete_thread(thread.session_id.clone(), thread.agent_id.clone(), cx);
+    }
+
     fn delete_thread(
         &mut self,
         session_id: acp::SessionId,
@@ -681,6 +724,7 @@ impl Render for ThreadsArchiveView {
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::remove_selected_thread))
             .size_full()
             .child(self.render_header(window, cx))
             .child(content)
