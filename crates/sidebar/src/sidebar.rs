@@ -744,19 +744,18 @@ impl Sidebar {
             let mut has_running_threads = false;
             let mut waiting_thread_count: usize = 0;
 
-            let thread_store = ThreadMetadataStore::global(cx);
-
             if should_load_threads {
                 let mut seen_session_ids: HashSet<acp::SessionId> = HashSet::new();
+                let thread_store = ThreadMetadataStore::global(cx);
 
                 // Load threads from each workspace in the group.
                 for workspace in &group.workspaces {
                     let ws_path_list = workspace_path_list(workspace, cx);
-                    let workspace_rows: Vec<_> = thread_store
+                    let mut workspace_rows = thread_store
                         .read(cx)
                         .entries_for_path(&ws_path_list)
-                        .collect();
-                    if workspace_rows.is_empty() {
+                        .peekable();
+                    if workspace_rows.peek().is_none() {
                         let worktrees =
                             worktree_info_from_thread_paths(&ws_path_list, &project_groups);
                         threadless_workspaces.push((workspace.clone(), worktrees));
