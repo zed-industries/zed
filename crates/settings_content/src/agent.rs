@@ -81,6 +81,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: right
     pub dock: Option<DockPosition>,
+    /// Whether the agent panel should use flexible (proportional) sizing.
+    ///
+    /// Default: true
+    pub flexible: Option<bool>,
     /// Where to position the sidebar.
     ///
     /// Default: follow_agent
@@ -196,6 +200,10 @@ impl AgentSettingsContent {
 
     pub fn set_sidebar_side(&mut self, position: SidebarDockPosition) {
         self.sidebar_side = Some(position);
+    }
+
+    pub fn set_flexible_size(&mut self, flexible: bool) {
+        self.flexible = Some(flexible);
     }
 
     pub fn set_model(&mut self, language_model: LanguageModelSelection) {

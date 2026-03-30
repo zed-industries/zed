@@ -2232,7 +2232,7 @@ impl Workspace {
             .unwrap_or_default();
         let position = dock.position();
 
-        let use_flex = size_state.is_flexible(panel.supports_flexible_size(window, cx));
+        let use_flex = panel.has_flexible_size(window, cx);
 
         if position.axis() == Axis::Horizontal
             && use_flex
@@ -7316,9 +7316,7 @@ impl Workspace {
         if let Some(panel) = dock.visible_panel() {
             let size_state = dock.stored_panel_size_state(panel.as_ref());
             if position.axis() == Axis::Horizontal {
-                let use_flexible = size_state
-                    .unwrap_or_default()
-                    .is_flexible(panel.supports_flexible_size(window, cx));
+                let use_flexible = panel.has_flexible_size(window, cx);
                 let flex_grow = if use_flexible {
                     size_state
                         .and_then(|state| state.flex)

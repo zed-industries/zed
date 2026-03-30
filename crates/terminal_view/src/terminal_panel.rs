@@ -1574,8 +1574,18 @@ impl Panel for TerminalPanel {
         }
     }
 
-    fn supports_flexible_size(&self, _window: &Window, _cx: &App) -> bool {
+    fn supports_flexible_size(&self) -> bool {
         true
+    }
+
+    fn has_flexible_size(&self, _window: &Window, cx: &App) -> bool {
+        TerminalSettings::get_global(cx).flexible
+    }
+
+    fn set_flexible_size(&mut self, flexible: bool, _window: &mut Window, cx: &mut Context<Self>) {
+        settings::update_settings_file(self.fs.clone(), cx, move |settings, _| {
+            settings.terminal.get_or_insert_default().flexible = Some(flexible);
+        });
     }
 
     fn is_zoomed(&self, _window: &Window, cx: &App) -> bool {

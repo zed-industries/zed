@@ -943,6 +943,10 @@
     "button": true,
     // Where to dock the agent panel. Can be 'left', 'right' or 'bottom'.
     "dock": "right",
+    // Whether the agent panel should use flexible (proportional) sizing.
+    //
+    // Default: true
+    "flexible": true,
     // Where to position the sidebar. Can be 'left', 'right', or 'follow_agent'.
     "sidebar_side": "follow_agent",
     // Default width when the agent panel is docked to the left or right.
@@ -1647,6 +1651,10 @@
     "shell": "system",
     // Where to dock terminals panel. Can be `left`, `right`, `bottom`.
     "dock": "bottom",
+    // Whether the terminal panel should use flexible (proportional) sizing.
+    //
+    // Default: true
+    "flexible": true,
     // Default width when the terminal is docked to the left or right.
     "default_width": 640,
     // Default height when the terminal is docked to the bottom.

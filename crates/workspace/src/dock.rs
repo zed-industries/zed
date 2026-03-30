@@ -42,8 +42,18 @@ pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
         PanelSizeState::default()
     }
     fn size_state_changed(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
-    fn supports_flexible_size(&self, _window: &Window, _cx: &App) -> bool {
+    fn supports_flexible_size(&self) -> bool {
         false
+    }
+    fn has_flexible_size(&self, _window: &Window, _cx: &App) -> bool {
+        false
+    }
+    fn set_flexible_size(
+        &mut self,
+        _flexible: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
     }
     fn icon(&self, window: &Window, cx: &App) -> Option<ui::IconName>;
     fn icon_tooltip(&self, window: &Window, cx: &App) -> Option<&'static str>;
@@ -89,7 +99,9 @@ pub trait PanelHandle: Send + Sync {
     fn default_size(&self, window: &Window, cx: &App) -> Pixels;
     fn initial_size_state(&self, window: &Window, cx: &App) -> PanelSizeState;
     fn size_state_changed(&self, window: &mut Window, cx: &mut App);
-    fn supports_flexible_size(&self, window: &Window, cx: &App) -> bool;
+    fn supports_flexible_size(&self, cx: &App) -> bool;
+    fn has_flexible_size(&self, window: &Window, cx: &App) -> bool;
+    fn set_flexible_size(&self, flexible: bool, window: &mut Window, cx: &mut App);
     fn icon(&self, window: &Window, cx: &App) -> Option<ui::IconName>;
     fn icon_tooltip(&self, window: &Window, cx: &App) -> Option<&'static str>;
     fn toggle_action(&self, window: &Window, cx: &App) -> Box<dyn Action>;
@@ -176,8 +188,16 @@ where
         self.update(cx, |this, cx| this.size_state_changed(window, cx))
     }
 
-    fn supports_flexible_size(&self, window: &Window, cx: &App) -> bool {
-        self.read(cx).supports_flexible_size(window, cx)
+    fn supports_flexible_size(&self, cx: &App) -> bool {
+        self.read(cx).supports_flexible_size()
+    }
+
+    fn has_flexible_size(&self, window: &Window, cx: &App) -> bool {
+        self.read(cx).has_flexible_size(window, cx)
+    }
+
+    fn set_flexible_size(&self, flexible: bool, window: &mut Window, cx: &mut App) {
+        self.update(cx, |this, cx| this.set_flexible_size(flexible, window, cx))
     }
 
     fn icon(&self, window: &Window, cx: &App) -> Option<ui::IconName> {
@@ -293,18 +313,6 @@ pub struct PanelSizeState {
     pub size: Option<Pixels>,
     #[serde(default)]
     pub flex: Option<f32>,
-}
-
-impl PanelSizeState {
-    pub fn is_flexible(&self, default: bool) -> bool {
-        if self.flex.is_some() {
-            true
-        } else if self.size.is_some() {
-            false
-        } else {
-            default
-        }
-    }
 }
 
 struct PanelEntry {
@@ -867,19 +875,18 @@ impl Dock {
         else {
             return;
         };
-        let currently_flexible = entry
-            .size_state
-            .is_flexible(entry.panel.supports_flexible_size(window, cx));
+        let currently_flexible = entry.panel.has_flexible_size(window, cx);
         if currently_flexible {
             entry.size_state.size = current_size;
-            entry.size_state.flex = None;
         } else {
             entry.size_state.flex = current_flex;
-            entry.size_state.size = None;
         }
         let panel_key = entry.panel.panel_key();
         let size_state = entry.size_state;
         let workspace = self.workspace.clone();
+        entry
+            .panel
+            .set_flexible_size(!currently_flexible, window, cx);
         entry.panel.size_state_changed(window, cx);
         cx.defer(move |cx| {
             if let Some(workspace) = workspace.upgrade() {
@@ -903,9 +910,7 @@ impl Dock {
         {
             let size = size.map(|size| size.max(RESIZE_HANDLE_SIZE).round());
 
-            let use_flex = entry
-                .size_state
-                .is_flexible(entry.panel.supports_flexible_size(window, cx));
+            let use_flex = entry.panel.has_flexible_size(window, cx);
             if use_flex {
                 entry.size_state.flex = flex;
             } else {
@@ -938,9 +943,7 @@ impl Dock {
 
         for entry in &mut self.panel_entries {
             let size = size.map(|size| size.max(RESIZE_HANDLE_SIZE).round());
-            let use_flex = entry
-                .size_state
-                .is_flexible(entry.panel.supports_flexible_size(window, cx));
+            let use_flex = entry.panel.has_flexible_size(window, cx);
             if use_flex {
                 entry.size_state.flex = flex;
             } else {
@@ -982,9 +985,7 @@ impl Dock {
     pub fn clamp_panel_size(&mut self, max_size: Pixels, window: &Window, cx: &mut App) {
         let max_size = (max_size - RESIZE_HANDLE_SIZE).abs();
         for entry in &mut self.panel_entries {
-            let use_flexible = entry
-                .size_state
-                .is_flexible(entry.panel.supports_flexible_size(window, cx));
+            let use_flexible = entry.panel.has_flexible_size(window, cx);
             if use_flexible {
                 continue;
             }
@@ -1164,11 +1165,8 @@ impl Render for PanelButtons {
                     .log_err()?;
                 let name = entry.panel.persistent_name();
                 let panel = entry.panel.clone();
-                let supports_flexible = panel.supports_flexible_size(window, cx);
-                let currently_flexible = dock
-                    .stored_panel_size_state(panel.as_ref())
-                    .unwrap_or_default()
-                    .is_flexible(supports_flexible);
+                let supports_flexible = panel.supports_flexible_size(cx);
+                let currently_flexible = panel.has_flexible_size(window, cx);
                 let dock_for_menu = dock_entity.clone();
                 let workspace_for_menu = workspace.clone();
 
@@ -1419,8 +1417,21 @@ pub mod test {
             }
         }
 
-        fn supports_flexible_size(&self, _window: &Window, _: &App) -> bool {
+        fn supports_flexible_size(&self) -> bool {
             self.flexible
+        }
+
+        fn has_flexible_size(&self, _window: &Window, _: &App) -> bool {
+            self.flexible
+        }
+
+        fn set_flexible_size(
+            &mut self,
+            flexible: bool,
+            _window: &mut Window,
+            _cx: &mut Context<Self>,
+        ) {
+            self.flexible = flexible;
         }
 
         fn icon(&self, _window: &Window, _: &App) -> Option<ui::IconName> {
