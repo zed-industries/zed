@@ -15,10 +15,6 @@ impl KeyValueStore {
     pub fn from_app_db(db: &crate::AppDatabase) -> Self {
         Self(db.0.clone())
     }
-
-    pub fn global(cx: &App) -> Self {
-        Self(crate::AppDatabase::global(cx).0.clone())
-    }
 }
 
 impl Domain for KeyValueStore {
