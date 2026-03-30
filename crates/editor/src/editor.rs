@@ -6788,16 +6788,16 @@ impl Editor {
                 }
             }
 
-            if let Some(tx_id) = tx_id {
-                if let Some(additional_edits_tx) = additional_edits_tx {
-                    editor
-                        .update(cx, |editor, cx| {
-                            editor.buffer.update(cx, |buffer, cx| {
-                                buffer.merge_transactions(additional_edits_tx.id, tx_id, cx)
-                            });
-                        })
-                        .ok();
-                }
+            if let Some(tx_id) = tx_id
+                && let Some(additional_edits_tx) = additional_edits_tx
+            {
+                editor
+                    .update(cx, |editor, cx| {
+                        editor.buffer.update(cx, |buffer, cx| {
+                            buffer.merge_transactions(additional_edits_tx.id, tx_id, cx)
+                        });
+                    })
+                    .context("merge transactions")?;
             }
 
             Ok(())
