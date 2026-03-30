@@ -4,11 +4,11 @@ use acp_thread::ThreadStatus;
 use action_log::DiffStats;
 use agent_client_protocol::{self as acp};
 use agent_settings::AgentSettings;
-use agent_ui::ThreadImportModal;
 use agent_ui::thread_metadata_store::{ThreadMetadata, ThreadMetadataStore};
 use agent_ui::threads_archive_view::{
     ThreadsArchiveView, ThreadsArchiveViewEvent, format_history_entry_timestamp,
 };
+use agent_ui::{AcpThreadImportOnboarding, ThreadImportModal};
 use agent_ui::{
     Agent, AgentPanel, AgentPanelEvent, DEFAULT_THREAD_TITLE, NewThread, RemoveSelectedThread,
 };
@@ -3165,13 +3165,17 @@ impl Sidebar {
         }
     }
 
-    fn show_thread_import_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(active_workspace) = self.multi_workspace.upgrade().and_then(|w| {
+    fn active_workspace(&self, cx: &App) -> Option<Entity<Workspace>> {
+        self.multi_workspace.upgrade().and_then(|w| {
             w.read(cx)
                 .workspaces()
                 .get(w.read(cx).active_workspace_index())
                 .cloned()
-        }) else {
+        })
+    }
+
+    fn show_thread_import_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(active_workspace) = self.active_workspace(cx) else {
             return;
         };
 
@@ -3203,6 +3207,26 @@ impl Sidebar {
         });
     }
 
+    fn should_render_acp_import_onboarding(&self, cx: &App) -> bool {
+        if !matches!(self.view, SidebarView::ThreadList) {
+            return false;
+        }
+
+        let has_external_agents = self
+            .active_workspace(cx)
+            .map(|ws| {
+                ws.read(cx)
+                    .project()
+                    .read(cx)
+                    .agent_server_store()
+                    .read(cx)
+                    .has_external_agents()
+            })
+            .unwrap_or(false);
+
+        has_external_agents && !AcpThreadImportOnboarding::dismissed(cx)
+    }
+
     fn render_acp_import_onboarding(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let description =
             "Import threads from your ACP agents — whether started in Zed or another client.";
@@ -3217,18 +3241,28 @@ impl Sidebar {
                 .child(Label::new("Looking for ACP threads?"))
                 .child(Label::new(description).mb_2())
                 .child(
-                    Button::new("import-acp", "Import ACP Threads")
-                        .full_width()
-                        .style(ButtonStyle::OutlinedCustom(cx.theme().colors().border))
-                        .label_size(LabelSize::Small)
-                        .start_icon(
-                            Icon::new(IconName::ArrowDown)
-                                .size(IconSize::XSmall)
-                                .color(Color::Muted),
+                    h_flex()
+                        .w_full()
+                        .justify_between()
+                        .child(
+                            Button::new("import-acp", "Import ACP Threads")
+                                .full_width()
+                                .style(ButtonStyle::OutlinedCustom(cx.theme().colors().border))
+                                .label_size(LabelSize::Small)
+                                .start_icon(
+                                    Icon::new(IconName::ArrowDown)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Muted),
+                                )
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.show_archive(window, cx);
+                                    this.show_thread_import_modal(window, cx);
+                                })),
                         )
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.show_thread_import_modal(window, cx);
-                        })),
+                        .child(
+                            IconButton::new("close-onboarding", IconName::Close)
+                                .on_click(|_, _window, cx| AcpThreadImportOnboarding::dismiss(cx)),
+                        ),
                 ),
         )
     }
@@ -3425,7 +3459,9 @@ impl Render for Sidebar {
                     }),
                 SidebarView::Archive(archive_view) => this.child(archive_view.clone()),
             })
-            .child(self.render_acp_import_onboarding(cx))
+            .when(self.should_render_acp_import_onboarding(cx), |this| {
+                this.child(self.render_acp_import_onboarding(cx))
+            })
             .child(self.render_sidebar_bottom_bar(cx))
     }
 }

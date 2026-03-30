@@ -3,6 +3,7 @@ use agent::ThreadStore;
 use agent_client_protocol as acp;
 use chrono::Utc;
 use collections::HashSet;
+use db::kvp::Dismissable;
 use fs::Fs;
 use futures::FutureExt as _;
 use gpui::{
@@ -23,6 +24,22 @@ use crate::{
     agent_connection_store::AgentConnectionStore,
     thread_metadata_store::{ThreadMetadata, ThreadMetadataStore},
 };
+
+pub struct AcpThreadImportOnboarding;
+
+impl AcpThreadImportOnboarding {
+    pub fn dismissed(cx: &App) -> bool {
+        <Self as Dismissable>::dismissed(cx)
+    }
+
+    pub fn dismiss(cx: &mut App) {
+        <Self as Dismissable>::set_dismissed(true, cx);
+    }
+}
+
+impl Dismissable for AcpThreadImportOnboarding {
+    const KEY: &'static str = "dismissed-acp-thread-import";
+}
 
 #[derive(Clone)]
 struct AgentEntry {
@@ -51,6 +68,8 @@ impl ThreadImportModal {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        AcpThreadImportOnboarding::dismiss(cx);
+
         let agent_entries = agent_server_store
             .read(cx)
             .external_agents()

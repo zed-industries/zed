@@ -695,6 +695,10 @@ impl AgentServerStore {
         }
     }
 
+    pub fn has_external_agents(&self) -> bool {
+        !self.external_agents.is_empty()
+    }
+
     pub fn external_agents(&self) -> impl Iterator<Item = &AgentId> {
         self.external_agents.keys()
     }
