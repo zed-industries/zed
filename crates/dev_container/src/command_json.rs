@@ -2,7 +2,7 @@ use std::process::Output;
 
 use async_trait::async_trait;
 use serde::Deserialize;
-use smol::process::Command;
+use util::command::Command;
 
 use crate::devcontainer_api::DevContainerError;
 

@@ -4841,7 +4841,6 @@ dependencies = [
  "serde_json_lenient",
  "settings",
  "shlex",
- "smol",
  "tempfile",
  "ui",
  "util",

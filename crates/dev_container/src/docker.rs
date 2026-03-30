@@ -2,7 +2,7 @@ use std::{collections::HashMap, path::PathBuf};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Deserializer, Serialize};
-use smol::process::Command;
+use util::command::Command;
 
 use crate::{
     command_json::evaluate_json_command, devcontainer_api::DevContainerError,
@@ -122,7 +122,7 @@ impl Docker {
     }
 
     async fn pull_image(&self, image: &String) -> Result<(), DevContainerError> {
-        let mut command = smol::process::Command::new(&self.docker_cli);
+        let mut command = Command::new(&self.docker_cli);
         command.args(&["pull", image]);
 
         let output = command.output().await.map_err(|e| {
@@ -139,7 +139,7 @@ impl Docker {
     }
 
     fn create_docker_query_containers(&self, filters: Vec<String>) -> Command {
-        let mut command = smol::process::Command::new(&self.docker_cli);
+        let mut command = Command::new(&self.docker_cli);
         command.args(&["ps", "-a"]);
 
         for filter in filters {
@@ -151,13 +151,13 @@ impl Docker {
     }
 
     fn create_docker_inspect(&self, id: &str) -> Command {
-        let mut command = smol::process::Command::new(&self.docker_cli);
+        let mut command = Command::new(&self.docker_cli);
         command.args(&["inspect", "--format={{json . }}", id]);
         command
     }
 
     fn create_docker_compose_config_command(&self, config_files: &Vec<PathBuf>) -> Command {
-        let mut command = smol::process::Command::new(&self.docker_cli);
+        let mut command = Command::new(&self.docker_cli);
         command.arg("compose");
         for file_path in config_files {
             command.args(&["-f", &file_path.display().to_string()]);

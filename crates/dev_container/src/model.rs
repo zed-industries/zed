@@ -8,8 +8,7 @@ use std::{
 
 use fs::Fs;
 use http_client::HttpClient;
-use smol::process::Command;
-use util::ResultExt;
+use util::{ResultExt, command::Command};
 
 use crate::{
     DevContainerConfig, DevContainerContext,
@@ -1339,7 +1338,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             );
             return Err(DevContainerError::DevContainerParseFailed);
         };
-        let mut command = smol::process::Command::new(self.docker_client.docker_cli());
+        let mut command = Command::new(self.docker_client.docker_cli());
 
         command.args(["buildx", "build"]);
 
@@ -2248,8 +2247,7 @@ mod test {
         worktree_store::{WorktreeIdCounter, WorktreeStore},
     };
     use serde_json_lenient::Value;
-    use smol::process::Command;
-    use util::paths::SanitizedPath;
+    use util::{command::Command, paths::SanitizedPath};
 
     use crate::{
         DevContainerConfig, DevContainerContext,

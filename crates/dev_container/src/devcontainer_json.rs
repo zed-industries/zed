@@ -3,7 +3,7 @@ use std::{collections::HashMap, fmt::Display, path::Path, sync::Arc};
 use crate::{command_json::CommandRunner, devcontainer_api::DevContainerError};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json_lenient::Value;
-use smol::process::Command;
+use util::command::Command;
 
 #[derive(Debug, Deserialize, Serialize, Eq, PartialEq, Clone)]
 #[serde(untagged)]
