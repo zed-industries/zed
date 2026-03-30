@@ -7759,7 +7759,6 @@ impl ThreadView {
                     this.when(is_expanded, |this| {
                         this.child(self.render_subagent_expanded_content(
                             thread_view,
-                            is_running,
                             tool_call,
                             window,
                             cx,
@@ -7782,7 +7781,6 @@ impl ThreadView {
     fn render_subagent_expanded_content(
         &self,
         thread_view: &Entity<ThreadView>,
-        is_running: bool,
         tool_call: &ToolCall,
         window: &Window,
         cx: &Context<Self>,
@@ -7834,9 +7832,8 @@ impl ThreadView {
             .entry(session_id.clone())
             .or_default()
             .clone();
-        if is_running {
-            scroll_handle.scroll_to_bottom();
-        }
+
+        scroll_handle.scroll_to_bottom();
 
         let rendered_entries: Vec<AnyElement> = entries
             .get(entry_range)
