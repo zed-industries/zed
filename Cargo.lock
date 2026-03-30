@@ -312,6 +312,7 @@ dependencies = [
  "gpui",
  "language_model",
  "log",
+ "paths",
  "project",
  "regex",
  "schemars",
