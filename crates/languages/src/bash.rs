@@ -1,5 +1,13 @@
+use anyhow::Result;
+use async_trait::async_trait;
+use language::{LanguageServerName, LspAdapter, LspAdapterDelegate, LspInstaller, Toolchain};
+use lsp::LanguageServerBinary;
+use node_runtime::{NodeRuntime, VersionStrategy};
 use project::ContextProviderWithTasks;
+use semver::Version;
+use std::{path::PathBuf, vec};
 use task::{TaskTemplate, TaskTemplates, VariableName};
+use util::{ResultExt, maybe};
 
 pub(super) fn bash_task_context() -> ContextProviderWithTasks {
     ContextProviderWithTasks::new(TaskTemplates(vec![
@@ -15,6 +23,142 @@ pub(super) fn bash_task_context() -> ContextProviderWithTasks {
             ..TaskTemplate::default()
         },
     ]))
+}
+
+pub struct BashLspAdapter {
+    node: NodeRuntime,
+}
+
+impl BashLspAdapter {
+    const PACKAGE_NAME: &str = "bash-language-server";
+    const NODE_MODULE_RELATIVE_SERVER_PATH: &str = "bash-language-server/out/cli.js";
+
+    pub fn new(node: NodeRuntime) -> Self {
+        Self { node }
+    }
+
+    async fn get_cached_server_binary(
+        container_dir: PathBuf,
+        node: &NodeRuntime,
+    ) -> Option<lsp::LanguageServerBinary> {
+        maybe!(async {
+            let server_path = container_dir
+                .join("node_modules")
+                .join(Self::NODE_MODULE_RELATIVE_SERVER_PATH);
+            anyhow::ensure!(
+                server_path.exists(),
+                "missing executable in directory {server_path:?}"
+            );
+            Ok(LanguageServerBinary {
+                path: node.binary_path().await?,
+                env: None,
+                arguments: vec![server_path.into(), "--stdio".into()],
+            })
+        })
+        .await
+        .log_err()
+    }
+}
+
+impl LspInstaller for BashLspAdapter {
+    type BinaryVersion = Version;
+
+    async fn cached_server_binary(
+        &self,
+        container_dir: std::path::PathBuf,
+        _: &dyn LspAdapterDelegate,
+    ) -> Option<lsp::LanguageServerBinary> {
+        Self::get_cached_server_binary(container_dir, &self.node).await
+    }
+
+    async fn check_if_user_installed(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+        _: Option<Toolchain>,
+        _: &gpui::AsyncApp,
+    ) -> Option<lsp::LanguageServerBinary> {
+        let path = delegate.which(Self::PACKAGE_NAME.as_ref()).await?;
+        let env = delegate.shell_env().await;
+
+        Some(LanguageServerBinary {
+            path,
+            env: Some(env),
+            arguments: vec!["start".into()],
+        })
+    }
+
+    async fn check_if_version_installed(
+        &self,
+        version: &Self::BinaryVersion,
+        container_dir: &PathBuf,
+        _: &dyn LspAdapterDelegate,
+    ) -> Option<lsp::LanguageServerBinary> {
+        let server_path = container_dir
+            .join("node_modules")
+            .join(Self::NODE_MODULE_RELATIVE_SERVER_PATH);
+
+        let should_install_language_server = self
+            .node
+            .should_install_npm_package(
+                Self::PACKAGE_NAME,
+                &server_path,
+                container_dir,
+                VersionStrategy::Latest(version),
+            )
+            .await;
+
+        if should_install_language_server {
+            None
+        } else {
+            Some(LanguageServerBinary {
+                path: self.node.binary_path().await.ok()?,
+                env: None,
+                arguments: vec![server_path.into(), "start".into()],
+            })
+        }
+    }
+
+    async fn fetch_latest_server_version(
+        &self,
+        _: &dyn LspAdapterDelegate,
+        _: bool,
+        _: &mut gpui::AsyncApp,
+    ) -> Result<Self::BinaryVersion> {
+        self.node
+            .npm_package_latest_version(Self::PACKAGE_NAME)
+            .await
+    }
+
+    async fn fetch_server_binary(
+        &self,
+        latest_version: Self::BinaryVersion,
+        container_dir: std::path::PathBuf,
+        _: &dyn LspAdapterDelegate,
+    ) -> Result<lsp::LanguageServerBinary> {
+        let server_path = container_dir
+            .join("node_modules")
+            .join(Self::NODE_MODULE_RELATIVE_SERVER_PATH);
+
+        self.node
+            .npm_install_packages(
+                &container_dir,
+                &[(Self::PACKAGE_NAME, &latest_version.to_string())],
+            )
+            .await?;
+
+        Ok(LanguageServerBinary {
+            path: self.node.binary_path().await?,
+            env: None,
+            arguments: vec![server_path.into(), "start".into()],
+        })
+    }
+}
+
+#[async_trait(?Send)]
+impl LspAdapter for BashLspAdapter {
+    fn name(&self) -> LanguageServerName {
+        LanguageServerName::new_static(Self::PACKAGE_NAME)
+    }
 }
 
 #[cfg(test)]
