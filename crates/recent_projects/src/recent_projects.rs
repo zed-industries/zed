@@ -262,13 +262,13 @@ pub fn init(cx: &mut App) {
                         user: None,
                     });
 
-                    let replace_window = match create_new_window {
+                    let requesting_window = match create_new_window {
                         false => window_handle,
                         true => None,
                     };
 
                     let open_options = workspace::OpenOptions {
-                        replace_window,
+                        requesting_window,
                         ..Default::default()
                     };
 
@@ -321,7 +321,7 @@ pub fn init(cx: &mut App) {
             let fs = workspace.project().read(cx).fs().clone();
             add_wsl_distro(fs, &open_wsl.distro, cx);
             let open_options = OpenOptions {
-                replace_window: window.window_handle().downcast::<MultiWorkspace>(),
+                requesting_window: window.window_handle().downcast::<MultiWorkspace>(),
                 ..Default::default()
             };
 
