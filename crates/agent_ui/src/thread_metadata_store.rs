@@ -440,7 +440,12 @@ impl ThreadMetadataStore {
             | acp_thread::AcpThreadEvent::Error
             | acp_thread::AcpThreadEvent::LoadError(_)
             | acp_thread::AcpThreadEvent::Refusal => {
-                let metadata = ThreadMetadata::from_thread(false, &thread, cx);
+                let is_archived = self
+                    .threads
+                    .get(thread.read(cx).session_id())
+                    .map(|t| t.archived)
+                    .unwrap_or(false);
+                let metadata = ThreadMetadata::from_thread(is_archived, &thread, cx);
                 self.save(metadata, cx);
             }
             _ => {}
