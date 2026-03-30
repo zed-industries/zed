@@ -3,13 +3,6 @@ package zed.messages;
 
 import "task.proto";
 
-enum LanguageModelRole {
-  LanguageModelUser = 0;
-  LanguageModelAssistant = 1;
-  LanguageModelSystem = 2;
-  reserved 3;
-}
-
 message GetAgentServerCommand {
   uint64 project_id = 1;
   string name = 2;
