@@ -82,7 +82,10 @@ use zed_actions::{
     workspace::OpenWithSystem,
 };
 
-use crate::undo::{ProjectPanelOperation, UndoManager};
+use crate::{
+    project_panel_settings::ProjectPanelScrollbarProxy,
+    undo::{ProjectPanelOperation, UndoManager},
+};
 
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
@@ -7038,8 +7041,9 @@ impl Render for ProjectPanel {
                 )
                 .custom_scrollbars(
                     {
-                        let mut scrollbars = Scrollbars::for_settings::<ProjectPanelSettings>()
-                            .tracked_scroll_handle(&self.scroll_handle);
+                        let mut scrollbars =
+                            Scrollbars::for_settings::<ProjectPanelScrollbarProxy>()
+                                .tracked_scroll_handle(&self.scroll_handle);
                         if horizontal_scroll {
                             scrollbars = scrollbars.with_track_along(
                                 ScrollAxes::Horizontal,

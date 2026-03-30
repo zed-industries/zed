@@ -62,6 +62,8 @@ use workspace::{
 };
 use worktree::{Entry, ProjectEntryId, WorktreeId};
 
+use crate::outline_panel_settings::OutlinePanelSettingsScrollbarProxy;
+
 actions!(
     outline_panel,
     [
@@ -4805,7 +4807,7 @@ impl OutlinePanel {
                 .size_full()
                 .child(list_contents.size_full().flex_shrink())
                 .custom_scrollbars(
-                    Scrollbars::for_settings::<OutlinePanelSettings>()
+                    Scrollbars::for_settings::<OutlinePanelSettingsScrollbarProxy>()
                         .tracked_scroll_handle(&self.scroll_handle.clone())
                         .with_track_along(
                             ScrollAxes::Horizontal,

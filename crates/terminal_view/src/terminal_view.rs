@@ -6,7 +6,10 @@ pub mod terminal_scrollbar;
 mod terminal_slash_command;
 
 use assistant_slash_command::SlashCommandRegistry;
-use editor::{Editor, EditorSettings, actions::SelectAll, blink_manager::BlinkManager};
+use editor::{
+    Editor, EditorSettings, actions::SelectAll, blink_manager::BlinkManager,
+    ui_scrollbar_settings_from_raw,
+};
 use gpui::{
     Action, AnyElement, App, ClipboardEntry, DismissEvent, Entity, EventEmitter, ExternalPaths,
     FocusHandle, Focusable, Font, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
@@ -48,7 +51,7 @@ use terminal_slash_command::TerminalSlashCommand;
 use ui::{
     ContextMenu, Divider, ScrollAxes, Scrollbars, Tooltip, WithScrollbar,
     prelude::*,
-    scrollbars::{self, GlobalSetting, ScrollbarVisibility},
+    scrollbars::{self, ScrollbarVisibility},
 };
 use util::ResultExt;
 use workspace::{
@@ -1121,20 +1124,15 @@ fn regex_search_for_query(query: &SearchQuery) -> Option<RegexSearch> {
     }
 }
 
+#[derive(Default)]
 struct TerminalScrollbarSettingsWrapper;
-
-impl GlobalSetting for TerminalScrollbarSettingsWrapper {
-    fn get_value(_cx: &App) -> &Self {
-        &Self
-    }
-}
 
 impl ScrollbarVisibility for TerminalScrollbarSettingsWrapper {
     fn visibility(&self, cx: &App) -> scrollbars::ShowScrollbar {
         TerminalSettings::get_global(cx)
             .scrollbar
             .show
-            .map(Into::into)
+            .map(ui_scrollbar_settings_from_raw)
             .unwrap_or_else(|| EditorSettings::get_global(cx).scrollbar.show)
     }
 }

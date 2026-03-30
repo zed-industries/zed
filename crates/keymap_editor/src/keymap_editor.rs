@@ -542,8 +542,9 @@ impl KeymapEditor {
         let _keymap_subscription =
             cx.observe_global_in::<KeymapEventChannel>(window, Self::on_keymap_changed);
         let table_interaction_state = cx.new(|cx| {
-            TableInteractionState::new(cx)
-                .with_custom_scrollbar(ui::Scrollbars::for_settings::<editor::EditorSettings>())
+            TableInteractionState::new(cx).with_custom_scrollbar(ui::Scrollbars::for_settings::<
+                editor::EditorSettingsScrollbarProxy,
+            >())
         });
 
         let keystroke_editor = cx.new(|cx| {
