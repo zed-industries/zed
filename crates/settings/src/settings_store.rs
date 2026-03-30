@@ -370,6 +370,10 @@ impl SettingsStore {
         setting_value.set_global_value(value);
     }
 
+    pub fn merged_settings(&self) -> &SettingsContent {
+        &self.merged_settings
+    }
+
     /// Get the value of a setting.
     ///
     /// Panics if the given setting type has not been registered, or if there is no
