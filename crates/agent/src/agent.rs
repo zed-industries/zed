@@ -1251,6 +1251,20 @@ impl NativeAgentConnection {
                                 log::debug!("Assistant message complete: {:?}", stop_reason);
                                 return Ok(acp::PromptResponse::new(stop_reason));
                             }
+                            ThreadEvent::ToolUseStarted(event) => {
+                                log::debug!(
+                                    "Tool use started: {} ({})",
+                                    event.tool_name,
+                                    event.tool_use_id
+                                );
+                            }
+                            ThreadEvent::ToolUseFinished(event) => {
+                                log::debug!(
+                                    "Tool use finished: {} ({:?})",
+                                    event.tool_name,
+                                    event.status
+                                );
+                            }
                         }
                     }
                     Err(e) => {

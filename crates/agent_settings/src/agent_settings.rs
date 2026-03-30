@@ -54,6 +54,22 @@ pub struct AgentSettings {
     pub show_turn_stats: bool,
     pub tool_permissions: ToolPermissions,
     pub new_thread_location: NewThreadLocation,
+    pub hooks: AgentHooks,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct AgentHooks {
+    pub pre_tool_use: Option<String>,
+    pub post_tool_use: Option<String>,
+}
+
+impl From<settings::AgentHooksContent> for AgentHooks {
+    fn from(content: settings::AgentHooksContent) -> Self {
+        Self {
+            pre_tool_use: content.pre_tool_use,
+            post_tool_use: content.post_tool_use,
+        }
+    }
 }
 
 impl AgentSettings {
@@ -454,6 +470,7 @@ impl Settings for AgentSettings {
             show_turn_stats: agent.show_turn_stats.unwrap(),
             tool_permissions: compile_tool_permissions(agent.tool_permissions),
             new_thread_location: agent.new_thread_location.unwrap_or_default(),
+            hooks: agent.hooks.map(Into::into).unwrap_or_default(),
         }
     }
 }

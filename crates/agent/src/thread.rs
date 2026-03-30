@@ -667,6 +667,28 @@ pub enum ThreadEvent {
     SubagentSpawned(acp::SessionId),
     Retry(acp_thread::RetryStatus),
     Stop(acp::StopReason),
+    ToolUseStarted(ToolUseHookEvent),
+    ToolUseFinished(ToolUseHookEvent),
+}
+
+/// Event data passed to tool-use hooks.
+#[derive(Debug, Clone, Serialize)]
+pub struct ToolUseHookEvent {
+    pub event: &'static str,
+    pub tool_name: String,
+    pub tool_use_id: String,
+    pub session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<ToolUseHookStatus>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolUseHookStatus {
+    Completed,
+    Failed,
 }
 
 #[derive(Debug)]
@@ -2333,6 +2355,7 @@ impl Thread {
                     tool_input,
                     tool_use.id,
                     tool_use.name,
+                    None,
                     event_stream,
                     cancellation_rx,
                     cx,
@@ -2353,12 +2376,14 @@ impl Thread {
         }
 
         log::debug!("Running tool {}", tool_use.name);
+        let hook_input = Some(tool_use.input.clone());
         let tool_input = ToolInput::ready(tool_use.input);
         Some(self.run_tool(
             tool,
             tool_input,
             tool_use.id,
             tool_use.name,
+            hook_input,
             event_stream,
             cancellation_rx,
             cx,
@@ -2371,6 +2396,7 @@ impl Thread {
         tool_input: ToolInput<serde_json::Value>,
         tool_use_id: LanguageModelToolUseId,
         tool_name: Arc<str>,
+        hook_input: Option<serde_json::Value>,
         event_stream: &ThreadEventStream,
         cancellation_rx: watch::Receiver<bool>,
         cx: &mut Context<Self>,
@@ -2385,6 +2411,25 @@ impl Thread {
         tool_event_stream.update_fields(
             acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress),
         );
+
+        let session_id = self.id.to_string();
+        let started_event = ToolUseHookEvent {
+            event: "tool_use_started",
+            tool_name: tool_name.to_string(),
+            tool_use_id: tool_use_id.to_string(),
+            session_id: session_id.clone(),
+            input: hook_input,
+            status: None,
+        };
+
+        event_stream.send_tool_use_started(started_event.clone());
+
+        let hooks = AgentSettings::get_global(cx).hooks.clone();
+        if let Some(ref command) = hooks.pre_tool_use {
+            run_hook_command(command, &started_event, cx);
+        }
+
+        let event_stream_clone = event_stream.clone();
         let supports_images = self.model().is_some_and(|model| model.supports_images());
         let tool_result = tool.run(tool_input, tool_event_stream, cx);
         cx.foreground_executor().spawn(async move {
@@ -2403,6 +2448,27 @@ impl Thread {
                 }
                 Err(output) => (true, output),
             };
+
+            let status = if is_error {
+                ToolUseHookStatus::Failed
+            } else {
+                ToolUseHookStatus::Completed
+            };
+
+            let finished_event = ToolUseHookEvent {
+                event: "tool_use_finished",
+                tool_name: tool_name.to_string(),
+                tool_use_id: tool_use_id.to_string(),
+                session_id,
+                input: None,
+                status: Some(status),
+            };
+
+            event_stream_clone.send_tool_use_finished(finished_event.clone());
+
+            if let Some(ref command) = hooks.post_tool_use {
+                run_hook_command_sync(command, &finished_event);
+            }
 
             LanguageModelToolResult {
                 tool_use_id,
@@ -3506,6 +3572,18 @@ impl ThreadEventStream {
             .ok();
     }
 
+    fn send_tool_use_started(&self, event: ToolUseHookEvent) {
+        self.0
+            .unbounded_send(Ok(ThreadEvent::ToolUseStarted(event)))
+            .ok();
+    }
+
+    fn send_tool_use_finished(&self, event: ToolUseHookEvent) {
+        self.0
+            .unbounded_send(Ok(ThreadEvent::ToolUseFinished(event)))
+            .ok();
+    }
+
     fn send_error(&self, error: impl Into<anyhow::Error>) {
         self.0.unbounded_send(Err(error.into())).ok();
     }
@@ -4035,6 +4113,82 @@ fn convert_image(image_content: acp::ImageContent) -> LanguageModelImage {
     LanguageModelImage {
         source: image_content.data.into(),
         size: None,
+    }
+}
+
+fn run_hook_command(command: &str, event: &ToolUseHookEvent, cx: &mut App) {
+    let command = command.to_string();
+    let json = match serde_json::to_string(event) {
+        Ok(json) => json,
+        Err(err) => {
+            log::error!("Failed to serialize hook event: {}", err);
+            return;
+        }
+    };
+    cx.background_spawn(async move {
+        run_hook_command_inner(&command, &json);
+    })
+    .detach();
+}
+
+fn run_hook_command_sync(command: &str, event: &ToolUseHookEvent) {
+    let command = command.to_string();
+    let json = match serde_json::to_string(event) {
+        Ok(json) => json,
+        Err(err) => {
+            log::error!("Failed to serialize hook event: {}", err);
+            return;
+        }
+    };
+    std::thread::spawn(move || {
+        run_hook_command_inner(&command, &json);
+    });
+}
+
+fn run_hook_command_inner(command: &str, json: &str) {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let shell = if cfg!(target_os = "windows") {
+        "cmd"
+    } else {
+        "sh"
+    };
+    let shell_arg = if cfg!(target_os = "windows") {
+        "/C"
+    } else {
+        "-c"
+    };
+
+    let child = Command::new(shell)
+        .arg(shell_arg)
+        .arg(command)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn();
+
+    match child {
+        Ok(mut child) => {
+            if let Some(mut stdin) = child.stdin.take() {
+                if let Err(err) = stdin.write_all(json.as_bytes()) {
+                    log::warn!("Failed to write to hook stdin: {}", err);
+                }
+            }
+            match child.wait() {
+                Ok(status) => {
+                    if !status.success() {
+                        log::warn!("Hook command exited with status: {}", status);
+                    }
+                }
+                Err(err) => {
+                    log::warn!("Failed to wait for hook command: {}", err);
+                }
+            }
+        }
+        Err(err) => {
+            log::error!("Failed to spawn hook command '{}': {}", command, err);
+        }
     }
 }
 

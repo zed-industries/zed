@@ -187,6 +187,19 @@ pub struct AgentSettingsContent {
     /// `always_confirm`) match against the tool's text input (command, path,
     /// URL, etc.).
     pub tool_permissions: Option<ToolPermissionsContent>,
+    /// Shell commands to run before and after agent tool invocations.
+    /// These hooks receive tool information as JSON via stdin.
+    ///
+    /// Example:
+    /// ```json
+    /// {
+    ///   "hooks": {
+    ///     "pre_tool_use": "my-hook-script --pre",
+    ///     "post_tool_use": "my-hook-script --post"
+    ///   }
+    /// }
+    /// ```
+    pub hooks: Option<AgentHooksContent>,
 }
 
 impl AgentSettingsContent {
@@ -622,6 +635,16 @@ impl std::fmt::Display for ToolPermissionMode {
             ToolPermissionMode::Confirm => write!(f, "Confirm"),
         }
     }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct AgentHooksContent {
+    /// Shell command to run before each tool invocation.
+    /// Receives JSON on stdin with fields: event, tool_name, tool_use_id, input, session_id.
+    pub pre_tool_use: Option<String>,
+    /// Shell command to run after each tool invocation.
+    /// Receives JSON on stdin with fields: event, tool_name, tool_use_id, status, session_id.
+    pub post_tool_use: Option<String>,
 }
 
 #[cfg(test)]
