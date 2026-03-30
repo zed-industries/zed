@@ -1,4 +1,6 @@
 use crate::word_diff::tokenize;
+use similar::{DiffTag, TextDiff};
+use std::collections::HashMap;
 
 /// Per-token annotation for debug/visualization of kept rate results.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,8 +56,56 @@ fn common_suffix_len(a: &[&str], b: &[&str], prefix_len: usize) -> usize {
     suffix_len
 }
 
+const DENSE_REGION_DP_CELL_THRESHOLD: usize = 200_000;
+const HIGH_MATCH_DENSITY_NUMERATOR: u128 = 1;
+const HIGH_MATCH_DENSITY_DENOMINATOR: u128 = 32;
+
 fn dp_index(width: usize, row: usize, column: usize) -> usize {
     row * width + column
+}
+
+fn estimated_match_pairs(a: &[&str], b: &[&str]) -> u128 {
+    let mut counts_by_token = HashMap::new();
+    for &token in a {
+        *counts_by_token.entry(token).or_insert(0usize) += 1;
+    }
+
+    let mut match_pairs = 0u128;
+    for &token in b {
+        if let Some(&count) = counts_by_token.get(token) {
+            match_pairs += count as u128;
+        }
+    }
+
+    match_pairs
+}
+
+#[cold]
+fn should_use_diff_alignment(a: &[&str], b: &[&str]) -> bool {
+    let dp_cell_count = (a.len() as u128 + 1) * (b.len() as u128 + 1);
+    if dp_cell_count < DENSE_REGION_DP_CELL_THRESHOLD as u128 {
+        return false;
+    }
+
+    let match_pairs = estimated_match_pairs(a, b);
+    match_pairs * HIGH_MATCH_DENSITY_DENOMINATOR >= dp_cell_count * HIGH_MATCH_DENSITY_NUMERATOR
+}
+
+#[cold]
+fn mark_equal_diff_ranges(a: &[&str], b: &[&str], keep_a: &mut [bool], keep_b: &mut [bool]) {
+    let diff = TextDiff::from_slices(a, b);
+    for operation in diff.ops() {
+        if operation.tag() != DiffTag::Equal {
+            continue;
+        }
+
+        for index in operation.old_range() {
+            keep_a[index] = true;
+        }
+        for index in operation.new_range() {
+            keep_b[index] = true;
+        }
+    }
 }
 
 /// Return boolean masks over `a` and `b` where `true` means the token is part
@@ -91,6 +141,18 @@ fn lcs_keep_masks(a: &[&str], b: &[&str]) -> (Vec<bool>, Vec<bool>) {
     let b_mid = &b[prefix_len..b.len() - suffix_len];
 
     if a_mid.is_empty() || b_mid.is_empty() {
+        return (keep_a, keep_b);
+    }
+
+    if should_use_diff_alignment(a_mid, b_mid) {
+        let a_mid_start = prefix_len;
+        let b_mid_start = prefix_len;
+        mark_equal_diff_ranges(
+            a_mid,
+            b_mid,
+            &mut keep_a[a_mid_start..a_mid_start + a_mid.len()],
+            &mut keep_b[b_mid_start..b_mid_start + b_mid.len()],
+        );
         return (keep_a, keep_b);
     }
 
@@ -512,7 +574,7 @@ mod test_kept_rate {
         assert_eq!(
             result.token_annotations[eprintln_idx + 6],
             TokenAnnotation::Discarded
-               );
+        );
         assert_eq!(
             result.token_annotations[eprintln_idx + 7],
             TokenAnnotation::Discarded
@@ -566,5 +628,17 @@ mod test_kept_rate {
                 .iter()
                 .all(|&a| a == TokenAnnotation::Kept)
         );
+    }
+
+    #[test]
+    fn test_repetitive_tokens_remain_discarded() {
+        let base = "foo + foo + foo + foo + foo\n".repeat(16);
+        let predicted = "foo + foo + prediction_token + foo + foo\n".repeat(16);
+        let final_text = "foo + foo + kept_token + foo + foo\n".repeat(16);
+        let result = compute_kept_rate(&base, &predicted, &final_text);
+
+        assert_eq!(result.kept_chars, 0);
+        assert_eq!(result.discarded_chars, result.predicted_new_chars);
+        assert_eq!(result.predicted_new_chars, "prediction_token".len() * 16);
     }
 }
