@@ -135,6 +135,7 @@ impl Project {
 
             let activation_script = if self.is_restricted_project(cx) {
                 Vec::new() // Do not activate environments if project is restricted
+                
             } else {
                 maybe!(async {
                     for toolchain in toolchains {
