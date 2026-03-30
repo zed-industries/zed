@@ -551,34 +551,243 @@ fn find_threads_to_import(
             session_list_tasks.push(task);
         }
 
-        let mut to_insert = Vec::new();
-        let mut existing_sessions = existing_sessions;
+        let mut sessions_by_agent = Vec::new();
         let results = futures::future::join_all(session_list_tasks).await;
         for (agent_id, result) in results {
             let Some(response) = result.log_err() else {
                 continue;
             };
-            for session in response.sessions {
-                if !existing_sessions.insert(session.session_id.clone()) {
-                    continue;
-                }
-                let Some(folder_paths) = session.work_dirs else {
-                    continue;
-                };
-                to_insert.push(ThreadMetadata {
-                    session_id: session.session_id,
-                    agent_id: agent_id.clone(),
-                    title: session
-                        .title
-                        .unwrap_or_else(|| crate::DEFAULT_THREAD_TITLE.into()),
-                    updated_at: session.updated_at.unwrap_or_else(|| Utc::now()),
-                    created_at: session.created_at,
-                    folder_paths,
-                    archived: true,
-                });
-            }
+            sessions_by_agent.push((agent_id, response.sessions));
         }
 
-        Ok(to_insert)
+        Ok(collect_importable_threads(
+            sessions_by_agent,
+            existing_sessions,
+        ))
     })
+}
+
+fn collect_importable_threads(
+    sessions_by_agent: Vec<(AgentId, Vec<acp_thread::AgentSessionInfo>)>,
+    mut existing_sessions: HashSet<acp::SessionId>,
+) -> Vec<ThreadMetadata> {
+    let mut to_insert = Vec::new();
+    for (agent_id, sessions) in sessions_by_agent {
+        for session in sessions {
+            if !existing_sessions.insert(session.session_id.clone()) {
+                continue;
+            }
+            let Some(folder_paths) = session.work_dirs else {
+                continue;
+            };
+            to_insert.push(ThreadMetadata {
+                session_id: session.session_id,
+                agent_id: agent_id.clone(),
+                title: session
+                    .title
+                    .unwrap_or_else(|| crate::DEFAULT_THREAD_TITLE.into()),
+                updated_at: session.updated_at.unwrap_or_else(|| Utc::now()),
+                created_at: session.created_at,
+                folder_paths,
+                archived: true,
+            });
+        }
+    }
+    to_insert
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use acp_thread::AgentSessionInfo;
+    use chrono::Utc;
+    use std::path::Path;
+    use workspace::PathList;
+
+    fn make_session(
+        session_id: &str,
+        title: Option<&str>,
+        work_dirs: Option<PathList>,
+        updated_at: Option<chrono::DateTime<Utc>>,
+        created_at: Option<chrono::DateTime<Utc>>,
+    ) -> AgentSessionInfo {
+        AgentSessionInfo {
+            session_id: acp::SessionId::new(session_id),
+            title: title.map(|t| SharedString::from(t.to_string())),
+            work_dirs,
+            updated_at,
+            created_at,
+            meta: None,
+        }
+    }
+
+    #[test]
+    fn test_collect_skips_sessions_already_in_existing_set() {
+        let existing = HashSet::from_iter(vec![acp::SessionId::new("existing-1")]);
+        let paths = PathList::new(&[Path::new("/project")]);
+
+        let sessions_by_agent = vec![(
+            AgentId::new("agent-a"),
+            vec![
+                make_session(
+                    "existing-1",
+                    Some("Already There"),
+                    Some(paths.clone()),
+                    None,
+                    None,
+                ),
+                make_session("new-1", Some("Brand New"), Some(paths.clone()), None, None),
+            ],
+        )];
+
+        let result = collect_importable_threads(sessions_by_agent, existing);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].session_id.0.as_ref(), "new-1");
+        assert_eq!(result[0].title.as_ref(), "Brand New");
+    }
+
+    #[test]
+    fn test_collect_skips_sessions_without_work_dirs() {
+        let existing = HashSet::default();
+        let paths = PathList::new(&[Path::new("/project")]);
+
+        let sessions_by_agent = vec![(
+            AgentId::new("agent-a"),
+            vec![
+                make_session(
+                    "has-dirs",
+                    Some("With Dirs"),
+                    Some(paths.clone()),
+                    None,
+                    None,
+                ),
+                make_session("no-dirs", Some("No Dirs"), None, None, None),
+            ],
+        )];
+
+        let result = collect_importable_threads(sessions_by_agent, existing);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].session_id.0.as_ref(), "has-dirs");
+    }
+
+    #[test]
+    fn test_collect_marks_all_imported_threads_as_archived() {
+        let existing = HashSet::default();
+        let paths = PathList::new(&[Path::new("/project")]);
+
+        let sessions_by_agent = vec![(
+            AgentId::new("agent-a"),
+            vec![
+                make_session("s1", Some("Thread 1"), Some(paths.clone()), None, None),
+                make_session("s2", Some("Thread 2"), Some(paths.clone()), None, None),
+            ],
+        )];
+
+        let result = collect_importable_threads(sessions_by_agent, existing);
+
+        assert_eq!(result.len(), 2);
+        assert!(result.iter().all(|t| t.archived));
+    }
+
+    #[test]
+    fn test_collect_assigns_correct_agent_id_per_session() {
+        let existing = HashSet::default();
+        let paths = PathList::new(&[Path::new("/project")]);
+
+        let sessions_by_agent = vec![
+            (
+                AgentId::new("agent-a"),
+                vec![make_session(
+                    "s1",
+                    Some("From A"),
+                    Some(paths.clone()),
+                    None,
+                    None,
+                )],
+            ),
+            (
+                AgentId::new("agent-b"),
+                vec![make_session(
+                    "s2",
+                    Some("From B"),
+                    Some(paths.clone()),
+                    None,
+                    None,
+                )],
+            ),
+        ];
+
+        let result = collect_importable_threads(sessions_by_agent, existing);
+
+        assert_eq!(result.len(), 2);
+        let s1 = result
+            .iter()
+            .find(|t| t.session_id.0.as_ref() == "s1")
+            .unwrap();
+        let s2 = result
+            .iter()
+            .find(|t| t.session_id.0.as_ref() == "s2")
+            .unwrap();
+        assert_eq!(s1.agent_id.as_ref(), "agent-a");
+        assert_eq!(s2.agent_id.as_ref(), "agent-b");
+    }
+
+    #[test]
+    fn test_collect_deduplicates_across_agents() {
+        let existing = HashSet::default();
+        let paths = PathList::new(&[Path::new("/project")]);
+
+        let sessions_by_agent = vec![
+            (
+                AgentId::new("agent-a"),
+                vec![make_session(
+                    "shared-session",
+                    Some("From A"),
+                    Some(paths.clone()),
+                    None,
+                    None,
+                )],
+            ),
+            (
+                AgentId::new("agent-b"),
+                vec![make_session(
+                    "shared-session",
+                    Some("From B"),
+                    Some(paths.clone()),
+                    None,
+                    None,
+                )],
+            ),
+        ];
+
+        let result = collect_importable_threads(sessions_by_agent, existing);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].session_id.0.as_ref(), "shared-session");
+        assert_eq!(
+            result[0].agent_id.as_ref(),
+            "agent-a",
+            "first agent encountered should win"
+        );
+    }
+
+    #[test]
+    fn test_collect_all_existing_returns_empty() {
+        let paths = PathList::new(&[Path::new("/project")]);
+        let existing =
+            HashSet::from_iter(vec![acp::SessionId::new("s1"), acp::SessionId::new("s2")]);
+
+        let sessions_by_agent = vec![(
+            AgentId::new("agent-a"),
+            vec![
+                make_session("s1", Some("T1"), Some(paths.clone()), None, None),
+                make_session("s2", Some("T2"), Some(paths.clone()), None, None),
+            ],
+        )];
+
+        let result = collect_importable_threads(sessions_by_agent, existing);
+        assert!(result.is_empty());
+    }
 }
