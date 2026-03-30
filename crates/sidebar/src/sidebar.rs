@@ -17,7 +17,8 @@ use editor::Editor;
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagViewExt as _};
 use gpui::{
     Action as _, AnyElement, App, Context, Entity, FocusHandle, Focusable, KeyContext, ListState,
-    Pixels, Render, SharedString, WeakEntity, Window, WindowHandle, list, prelude::*, px,
+    Pixels, Render, SharedString, WeakEntity, Window, WindowHandle, linear_color_stop,
+    linear_gradient, list, prelude::*, px,
 };
 use menu::{
     Cancel, Confirm, SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious,
@@ -3231,40 +3232,48 @@ impl Sidebar {
         let description =
             "Import threads from your ACP agents — whether started in Zed or another client.";
 
-        div().p_1p5().child(
-            v_flex()
-                .min_w_0()
-                .w_full()
-                .p_1p5()
-                .border_1()
-                .border_color(cx.theme().colors().border)
-                .child(Label::new("Looking for ACP threads?"))
-                .child(Label::new(description).mb_2())
-                .child(
-                    h_flex()
-                        .w_full()
-                        .justify_between()
-                        .child(
-                            Button::new("import-acp", "Import ACP Threads")
-                                .full_width()
-                                .style(ButtonStyle::OutlinedCustom(cx.theme().colors().border))
-                                .label_size(LabelSize::Small)
-                                .start_icon(
-                                    Icon::new(IconName::ArrowDown)
-                                        .size(IconSize::XSmall)
-                                        .color(Color::Muted),
-                                )
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.show_archive(window, cx);
-                                    this.show_thread_import_modal(window, cx);
-                                })),
-                        )
-                        .child(
-                            IconButton::new("close-onboarding", IconName::Close)
-                                .on_click(|_, _window, cx| AcpThreadImportOnboarding::dismiss(cx)),
-                        ),
-                ),
-        )
+        let bg = cx.theme().colors().text_accent;
+
+        v_flex()
+            .min_w_0()
+            .w_full()
+            .p_1p5()
+            .border_t_1()
+            .border_color(cx.theme().colors().border)
+            .bg(linear_gradient(
+                360.,
+                linear_color_stop(bg.opacity(0.08), 1.),
+                linear_color_stop(bg.opacity(0.), 0.),
+            ))
+            .child(
+                h_flex()
+                    .min_w_0()
+                    .w_full()
+                    .gap_1()
+                    .justify_between()
+                    .child(Label::new("Looking for ACP threads?"))
+                    .child(
+                        IconButton::new("close-onboarding", IconName::Close)
+                            .icon_size(IconSize::Small)
+                            .on_click(|_, _window, cx| AcpThreadImportOnboarding::dismiss(cx)),
+                    ),
+            )
+            .child(Label::new(description).color(Color::Muted).mb_2())
+            .child(
+                Button::new("import-acp", "Import ACP Threads")
+                    .full_width()
+                    .style(ButtonStyle::OutlinedCustom(cx.theme().colors().border))
+                    .label_size(LabelSize::Small)
+                    .start_icon(
+                        Icon::new(IconName::ArrowDown)
+                            .size(IconSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.show_archive(window, cx);
+                        this.show_thread_import_modal(window, cx);
+                    })),
+            )
     }
 
     fn toggle_archive(&mut self, _: &ToggleArchive, window: &mut Window, cx: &mut Context<Self>) {
