@@ -433,7 +433,7 @@ pub fn init(cx: &mut App) {
                 .and_then(|editor| editor.read(cx).addon::<VimAddon>().cloned());
             let Some(vim) = vim else { return };
             vim.entity.update(cx, |vim, cx| {
-                if vim.search.vim_mode_search {
+                if !vim.search.cmd_f_search {
                     cx.defer_in(window, |vim, window, cx| vim.search_submit(window, cx))
                 } else {
                     cx.propagate()
@@ -2084,7 +2084,7 @@ impl Vim {
         VimEditorSettingsState {
             cursor_shape: self.cursor_shape(cx),
             clip_at_line_ends: self.clip_at_line_ends(),
-            collapse_matches: !HelixModeSetting::get_global(cx).0 && self.search.vim_mode_search,
+            collapse_matches: !HelixModeSetting::get_global(cx).0 && !self.search.cmd_f_search,
             input_enabled: self.editor_input_enabled(),
             expects_character_input: self.expects_character_input(),
             autoindent: self.should_autoindent(),

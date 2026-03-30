@@ -284,7 +284,7 @@ impl Vim {
         self.search = SearchState {
             direction,
             count,
-            vim_mode_search: true,
+            cmd_f_search: false,
             prior_selections,
             prior_operator: self.operator_stack.last().cloned(),
             prior_mode,
@@ -299,6 +299,7 @@ impl Vim {
         let current_mode = self.mode;
         self.search = Default::default();
         self.search.prior_mode = current_mode;
+        self.search.cmd_f_search = true;
         cx.propagate();
     }
 
