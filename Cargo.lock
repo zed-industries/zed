@@ -18781,7 +18781,6 @@ dependencies = [
  "menu",
  "schemars",
  "serde",
- "settings",
  "smallvec",
  "story",
  "strum 0.27.2",
