@@ -80,7 +80,7 @@ The following example sets the minimum number of characters required for a proje
 
 See the [Expert configuration](https://expert-lsp.org/docs/configuration/) page for all available options.
 
-To use a custom Expert build, add the following to your setttings file:
+To use a custom Expert build, add the following to your settings file:
 
 ```json [settings]
   "lsp": {
