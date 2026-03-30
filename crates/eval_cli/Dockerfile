@@ -20,9 +20,8 @@ RUN rustup toolchain install 1.94.1 --profile minimal \
 # libraries (libgit2-sys, zstd-sys, libsqlite3-sys).  No audio/GUI -dev
 # packages required — eval-cli runs headless with those features disabled.
 #
-# cargo-zigbuild cross-compiles against a specific glibc version (2.31 =
-# Debian Bullseye / Ubuntu Focal) so the resulting binary is portable to
-# any Linux distro with glibc >= 2.31.
+# cargo-zigbuild cross-compiles against musl libc, producing a fully
+# static binary that runs on any Linux distro (glibc or musl / Alpine).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake \
     build-essential \
@@ -43,8 +42,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/app/target \
     cargo zigbuild --release --package eval_cli \
-        --target x86_64-unknown-linux-gnu.2.31 && \
-    cp /app/target/x86_64-unknown-linux-gnu/release/eval-cli /eval-cli && \
+        --target x86_64-unknown-linux-musl && \
+    cp /app/target/x86_64-unknown-linux-musl/release/eval-cli /eval-cli && \
     strip /eval-cli
 
 FROM scratch
