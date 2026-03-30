@@ -222,8 +222,21 @@ fn visible_entries_as_strings(
                             format!("  + View More{}", selected)
                         }
                     }
-                    ListEntry::NewThread { .. } => {
-                        format!("  [+ New Thread]{}", selected)
+                    ListEntry::NewThread { worktrees, .. } => {
+                        let worktree = if worktrees.is_empty() {
+                            String::new()
+                        } else {
+                            let mut seen = Vec::new();
+                            let mut chips = Vec::new();
+                            for wt in worktrees {
+                                if !seen.contains(&wt.name) {
+                                    seen.push(wt.name.clone());
+                                    chips.push(format!("{{{}}}", wt.name));
+                                }
+                            }
+                            format!(" {}", chips.join(", "))
+                        };
+                        format!("  [+ New Thread{}]{}", worktree, selected)
                     }
                 }
             })
@@ -2337,7 +2350,11 @@ async fn test_cmd_n_shows_new_thread_entry_in_absorbed_worktree(cx: &mut TestApp
 
     assert_eq!(
         visible_entries_as_strings(&sidebar, cx),
-        vec!["v [project]", "  Hello {wt-feature-a} *"]
+        vec![
+            "v [project]",
+            "  [+ New Thread]",
+            "  Hello {wt-feature-a} *"
+        ]
     );
 
     // Simulate Cmd-N in the worktree workspace.
@@ -2354,6 +2371,7 @@ async fn test_cmd_n_shows_new_thread_entry_in_absorbed_worktree(cx: &mut TestApp
         vec![
             "v [project]",
             "  [+ New Thread]",
+            "  [+ New Thread {wt-feature-a}]",
             "  Hello {wt-feature-a} *"
         ],
         "After Cmd-N in an absorbed worktree, the sidebar should show \
@@ -2470,7 +2488,11 @@ async fn test_git_worktree_added_live_updates_sidebar(cx: &mut TestAppContext) {
 
     assert_eq!(
         visible_entries_as_strings(&sidebar, cx),
-        vec!["v [project]", "  Worktree Thread {rosewood}",]
+        vec![
+            "v [project]",
+            "  [+ New Thread]",
+            "  Worktree Thread {rosewood}",
+        ]
     );
 }
 
@@ -2584,6 +2606,7 @@ async fn test_two_worktree_workspaces_absorbed_when_main_added(cx: &mut TestAppC
         visible_entries_as_strings(&sidebar, cx),
         vec![
             "v [project]",
+            "  [+ New Thread]",
             "  Thread A {wt-feature-a}",
             "  Thread B {wt-feature-b}",
         ]
@@ -2920,7 +2943,11 @@ async fn test_absorbed_worktree_running_thread_shows_live_status(cx: &mut TestAp
     let entries = visible_entries_as_strings(&sidebar, cx);
     assert_eq!(
         entries,
-        vec!["v [project]", "  Hello {wt-feature-a} * (running)",]
+        vec![
+            "v [project]",
+            "  [+ New Thread]",
+            "  Hello {wt-feature-a} * (running)",
+        ]
     );
 }
 
@@ -3017,7 +3044,11 @@ async fn test_absorbed_worktree_completion_triggers_notification(cx: &mut TestAp
 
     assert_eq!(
         visible_entries_as_strings(&sidebar, cx),
-        vec!["v [project]", "  Hello {wt-feature-a} * (running)",]
+        vec![
+            "v [project]",
+            "  [+ New Thread]",
+            "  Hello {wt-feature-a} * (running)",
+        ]
     );
 
     connection.end_turn(session_id, acp::StopReason::EndTurn);
@@ -3025,7 +3056,11 @@ async fn test_absorbed_worktree_completion_triggers_notification(cx: &mut TestAp
 
     assert_eq!(
         visible_entries_as_strings(&sidebar, cx),
-        vec!["v [project]", "  Hello {wt-feature-a} * (!)",]
+        vec![
+            "v [project]",
+            "  [+ New Thread]",
+            "  Hello {wt-feature-a} * (!)",
+        ]
     );
 }
 
@@ -3090,7 +3125,11 @@ async fn test_clicking_worktree_thread_opens_workspace_when_none_exists(cx: &mut
     // Thread should appear under the main repo with a worktree chip.
     assert_eq!(
         visible_entries_as_strings(&sidebar, cx),
-        vec!["v [project]", "  WT Thread {wt-feature-a}"],
+        vec![
+            "v [project]",
+            "  [+ New Thread]",
+            "  WT Thread {wt-feature-a}"
+        ],
     );
 
     // Only 1 workspace should exist.
@@ -3102,7 +3141,7 @@ async fn test_clicking_worktree_thread_opens_workspace_when_none_exists(cx: &mut
     // Focus the sidebar and select the worktree thread.
     open_and_focus_sidebar(&sidebar, cx);
     sidebar.update_in(cx, |sidebar, _window, _cx| {
-        sidebar.selection = Some(1); // index 0 is header, 1 is the thread
+        sidebar.selection = Some(2); // index 0 is header, 1 is new thread, 2 is the thread
     });
 
     // Confirm to open the worktree thread.
@@ -3188,12 +3227,16 @@ async fn test_clicking_worktree_thread_does_not_briefly_render_as_separate_proje
 
     assert_eq!(
         visible_entries_as_strings(&sidebar, cx),
-        vec!["v [project]", "  WT Thread {wt-feature-a}"],
+        vec![
+            "v [project]",
+            "  [+ New Thread]",
+            "  WT Thread {wt-feature-a}"
+        ],
     );
 
     open_and_focus_sidebar(&sidebar, cx);
     sidebar.update_in(cx, |sidebar, _window, _cx| {
-        sidebar.selection = Some(1);
+        sidebar.selection = Some(2);
     });
 
     let assert_sidebar_state = |sidebar: &mut Sidebar, _cx: &mut Context<Sidebar>| {
@@ -3249,9 +3292,7 @@ async fn test_clicking_worktree_thread_does_not_briefly_render_as_separate_proje
                 ListEntry::ViewMore { .. } => {
                     panic!("unexpected `View More` entry while opening linked worktree thread");
                 }
-                ListEntry::NewThread { .. } => {
-                    panic!("unexpected `New Thread` entry while opening linked worktree thread");
-                }
+                ListEntry::NewThread { .. } => {}
             }
         }
 
@@ -4112,6 +4153,7 @@ async fn test_linked_worktree_threads_not_duplicated_across_groups(cx: &mut Test
         visible_entries_as_strings(&sidebar, cx),
         vec![
             "v [project]",
+            "  [+ New Thread]",
             "  Worktree Thread {wt-feature-a}",
             "v [other, project]",
             "  [+ New Thread]",

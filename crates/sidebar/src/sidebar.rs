@@ -158,6 +158,7 @@ enum ListEntry {
         path_list: PathList,
         workspace: Entity<Workspace>,
         is_active_draft: bool,
+        worktrees: Vec<WorktreeInfo>,
     },
 }
 
@@ -739,18 +740,28 @@ impl Sidebar {
                 .collect();
 
             let mut threads: Vec<ThreadEntry> = Vec::new();
+            let mut threadless_workspaces: Vec<(Entity<Workspace>, Vec<WorktreeInfo>)> = Vec::new();
             let mut has_running_threads = false;
             let mut waiting_thread_count: usize = 0;
 
+            let thread_store = ThreadMetadataStore::global(cx);
+
             if should_load_threads {
                 let mut seen_session_ids: HashSet<acp::SessionId> = HashSet::new();
-                let thread_store = ThreadMetadataStore::global(cx);
 
                 // Load threads from each workspace in the group.
                 for workspace in &group.workspaces {
                     let ws_path_list = workspace_path_list(workspace, cx);
-
-                    for row in thread_store.read(cx).entries_for_path(&ws_path_list) {
+                    let workspace_rows: Vec<_> = thread_store
+                        .read(cx)
+                        .entries_for_path(&ws_path_list)
+                        .collect();
+                    if workspace_rows.is_empty() {
+                        let worktrees =
+                            worktree_info_from_thread_paths(&ws_path_list, &project_groups);
+                        threadless_workspaces.push((workspace.clone(), worktrees));
+                    }
+                    for row in workspace_rows {
                         if !seen_session_ids.insert(row.session_id.clone()) {
                             continue;
                         }
@@ -929,13 +940,10 @@ impl Sidebar {
                     entries.push(thread.into());
                 }
             } else {
-                let thread_count = threads.len();
                 let is_draft_for_workspace = self.agent_panel_visible
                     && self.active_thread_is_draft
                     && self.focused_thread.is_none()
                     && is_active;
-
-                let show_new_thread_entry = thread_count == 0 || is_draft_for_workspace;
 
                 project_header_indices.push(entries.len());
                 entries.push(ListEntry::ProjectHeader {
@@ -952,11 +960,29 @@ impl Sidebar {
                     continue;
                 }
 
-                if show_new_thread_entry {
+                // Emit "New Thread" entries for threadless workspaces
+                // and active drafts, right after the header.
+                for (workspace, worktrees) in &threadless_workspaces {
+                    let is_draft = is_draft_for_workspace && workspace == representative_workspace;
+                    entries.push(ListEntry::NewThread {
+                        path_list: path_list.clone(),
+                        workspace: workspace.clone(),
+                        is_active_draft: is_draft,
+                        worktrees: worktrees.clone(),
+                    });
+                }
+                if is_draft_for_workspace
+                    && !threadless_workspaces
+                        .iter()
+                        .any(|(ws, _)| ws == representative_workspace)
+                {
+                    let ws_path_list = workspace_path_list(representative_workspace, cx);
+                    let worktrees = worktree_info_from_thread_paths(&ws_path_list, &project_groups);
                     entries.push(ListEntry::NewThread {
                         path_list: path_list.clone(),
                         workspace: representative_workspace.clone(),
-                        is_active_draft: is_draft_for_workspace,
+                        is_active_draft: true,
+                        worktrees,
                     });
                 }
 
@@ -1114,9 +1140,16 @@ impl Sidebar {
                 path_list,
                 workspace,
                 is_active_draft,
-            } => {
-                self.render_new_thread(ix, path_list, workspace, *is_active_draft, is_selected, cx)
-            }
+                worktrees,
+            } => self.render_new_thread(
+                ix,
+                path_list,
+                workspace,
+                *is_active_draft,
+                worktrees,
+                is_selected,
+                cx,
+            ),
         };
 
         if is_group_header_after_first {
@@ -2914,6 +2947,7 @@ impl Sidebar {
         _path_list: &PathList,
         workspace: &Entity<Workspace>,
         is_active_draft: bool,
+        worktrees: &[WorktreeInfo],
         is_selected: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -2932,6 +2966,16 @@ impl Sidebar {
         let thread_item = ThreadItem::new(id, label)
             .icon(IconName::Plus)
             .icon_color(Color::Custom(cx.theme().colors().icon_muted.opacity(0.8)))
+            .worktrees(
+                worktrees
+                    .iter()
+                    .map(|wt| ThreadItemWorktreeInfo {
+                        name: wt.name.clone(),
+                        full_path: wt.full_path.clone(),
+                        highlight_positions: wt.highlight_positions.clone(),
+                    })
+                    .collect(),
+            )
             .selected(is_active)
             .focused(is_selected)
             .when(!is_active, |this| {
@@ -3638,8 +3682,21 @@ mod tests {
                                 format!("  + View More{}", selected)
                             }
                         }
-                        ListEntry::NewThread { .. } => {
-                            format!("  [+ New Thread]{}", selected)
+                        ListEntry::NewThread { worktrees, .. } => {
+                            let worktree = if worktrees.is_empty() {
+                                String::new()
+                            } else {
+                                let mut seen = Vec::new();
+                                let mut chips = Vec::new();
+                                for wt in worktrees {
+                                    if !seen.contains(&wt.name) {
+                                        seen.push(wt.name.clone());
+                                        chips.push(format!("{{{}}}", wt.name));
+                                    }
+                                }
+                                format!(" {}", chips.join(", "))
+                            };
+                            format!("  [+ New Thread{}]{}", worktree, selected)
                         }
                     }
                 })
@@ -5755,7 +5812,11 @@ mod tests {
 
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [project]", "  Hello {wt-feature-a} *"]
+            vec![
+                "v [project]",
+                "  [+ New Thread]",
+                "  Hello {wt-feature-a} *",
+            ]
         );
 
         // Simulate Cmd-N in the worktree workspace.
@@ -5772,7 +5833,8 @@ mod tests {
             vec![
                 "v [project]",
                 "  [+ New Thread]",
-                "  Hello {wt-feature-a} *"
+                "  [+ New Thread {wt-feature-a}]",
+                "  Hello {wt-feature-a} *",
             ],
             "After Cmd-N in an absorbed worktree, the sidebar should show \
              a highlighted New Thread entry under the main repo header"
@@ -5888,7 +5950,11 @@ mod tests {
 
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [project]", "  Worktree Thread {rosewood}",]
+            vec![
+                "v [project]",
+                "  [+ New Thread]",
+                "  Worktree Thread {rosewood}",
+            ]
         );
     }
 
@@ -5998,11 +6064,14 @@ mod tests {
 
         // Both worktree workspaces should now be absorbed under the main
         // repo header, with worktree chips.
-        // TODO: Thread B should also appear here but is currently not
-        // found after the main workspace is added. Investigate.
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [project]", "  Thread A {wt-feature-a}",]
+            vec![
+                "v [project]",
+                "  [+ New Thread]",
+                "  Thread A {wt-feature-a}",
+                "  Thread B {wt-feature-b}",
+            ]
         );
 
         // Remove feature-b from the main repo's linked worktrees.
@@ -6017,10 +6086,113 @@ mod tests {
         cx.run_until_parked();
 
         // feature-b's workspace is pruned; feature-a remains absorbed
-        // under the main repo.
+        // under the main repo. Thread B still appears because its
+        // metadata is persisted.
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [project]", "  Thread A {wt-feature-a}"]
+            vec![
+                "v [project]",
+                "  [+ New Thread]",
+                "  Thread A {wt-feature-a}",
+                "  Thread B {wt-feature-b}",
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_threadless_workspace_shows_new_thread_with_worktree_chip(
+        cx: &mut TestAppContext,
+    ) {
+        // When a group has two workspaces — one with threads and one
+        // without — the threadless workspace should appear as a
+        // "New Thread" button with its worktree chip.
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        // Main repo with two linked worktrees.
+        fs.insert_tree(
+            "/project",
+            serde_json::json!({
+                ".git": {
+                    "worktrees": {
+                        "feature-a": {
+                            "commondir": "../../",
+                            "HEAD": "ref: refs/heads/feature-a",
+                        },
+                        "feature-b": {
+                            "commondir": "../../",
+                            "HEAD": "ref: refs/heads/feature-b",
+                        },
+                    },
+                },
+                "src": {},
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            "/wt-feature-a",
+            serde_json::json!({
+                ".git": "gitdir: /project/.git/worktrees/feature-a",
+                "src": {},
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            "/wt-feature-b",
+            serde_json::json!({
+                ".git": "gitdir: /project/.git/worktrees/feature-b",
+                "src": {},
+            }),
+        )
+        .await;
+
+        fs.with_git_state(std::path::Path::new("/project/.git"), false, |state| {
+            state.worktrees.push(git::repository::Worktree {
+                path: std::path::PathBuf::from("/wt-feature-a"),
+                ref_name: Some("refs/heads/feature-a".into()),
+                sha: "aaa".into(),
+            });
+            state.worktrees.push(git::repository::Worktree {
+                path: std::path::PathBuf::from("/wt-feature-b"),
+                ref_name: Some("refs/heads/feature-b".into()),
+                sha: "bbb".into(),
+            });
+        })
+        .unwrap();
+
+        cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+        // Workspace A: worktree feature-a (has threads).
+        let project_a = project::Project::test(fs.clone(), ["/wt-feature-a".as_ref()], cx).await;
+        project_a.update(cx, |p, cx| p.git_scans_complete(cx)).await;
+
+        // Workspace B: worktree feature-b (no threads).
+        let project_b = project::Project::test(fs.clone(), ["/wt-feature-b".as_ref()], cx).await;
+        project_b.update(cx, |p, cx| p.git_scans_complete(cx)).await;
+
+        let (multi_workspace, cx) = cx
+            .add_window_view(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.test_add_workspace(project_b.clone(), window, cx);
+        });
+        let sidebar = setup_sidebar(&multi_workspace, cx);
+
+        // Only save a thread for workspace A.
+        let paths_a = PathList::new(&[std::path::PathBuf::from("/wt-feature-a")]);
+        save_named_thread_metadata("thread-a", "Thread A", &paths_a, cx).await;
+
+        multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
+        cx.run_until_parked();
+
+        // Workspace A's thread appears normally. Workspace B (threadless)
+        // appears as a "New Thread" button with its worktree chip.
+        assert_eq!(
+            visible_entries_as_strings(&sidebar, cx),
+            vec![
+                "v [project]",
+                "  [+ New Thread {wt-feature-b}]",
+                "  Thread A {wt-feature-a}",
+            ]
         );
     }
 
@@ -6358,7 +6530,11 @@ mod tests {
         let entries = visible_entries_as_strings(&sidebar, cx);
         assert_eq!(
             entries,
-            vec!["v [project]", "  Hello {wt-feature-a} * (running)",]
+            vec![
+                "v [project]",
+                "  [+ New Thread]",
+                "  Hello {wt-feature-a} * (running)",
+            ]
         );
     }
 
@@ -6457,7 +6633,11 @@ mod tests {
 
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [project]", "  Hello {wt-feature-a} * (running)",]
+            vec![
+                "v [project]",
+                "  [+ New Thread]",
+                "  Hello {wt-feature-a} * (running)",
+            ]
         );
 
         connection.end_turn(session_id, acp::StopReason::EndTurn);
@@ -6465,7 +6645,11 @@ mod tests {
 
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [project]", "  Hello {wt-feature-a} * (!)",]
+            vec![
+                "v [project]",
+                "  [+ New Thread]",
+                "  Hello {wt-feature-a} * (!)",
+            ]
         );
     }
 
@@ -6533,7 +6717,11 @@ mod tests {
         // Thread should appear under the main repo with a worktree chip.
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [project]", "  WT Thread {wt-feature-a}"],
+            vec![
+                "v [project]",
+                "  [+ New Thread]",
+                "  WT Thread {wt-feature-a}"
+            ],
         );
 
         // Only 1 workspace should exist.
@@ -6545,7 +6733,7 @@ mod tests {
         // Focus the sidebar and select the worktree thread.
         open_and_focus_sidebar(&sidebar, cx);
         sidebar.update_in(cx, |sidebar, _window, _cx| {
-            sidebar.selection = Some(1); // index 0 is header, 1 is the thread
+            sidebar.selection = Some(2); // index 0 is header, 1 is new thread, 2 is the thread
         });
 
         // Confirm to open the worktree thread.
@@ -6632,12 +6820,16 @@ mod tests {
 
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [project]", "  WT Thread {wt-feature-a}"],
+            vec![
+                "v [project]",
+                "  [+ New Thread]",
+                "  WT Thread {wt-feature-a}"
+            ],
         );
 
         open_and_focus_sidebar(&sidebar, cx);
         sidebar.update_in(cx, |sidebar, _window, _cx| {
-            sidebar.selection = Some(1);
+            sidebar.selection = Some(2);
         });
 
         let assert_sidebar_state = |sidebar: &mut Sidebar, _cx: &mut Context<Sidebar>| {
@@ -6693,11 +6885,7 @@ mod tests {
                     ListEntry::ViewMore { .. } => {
                         panic!("unexpected `View More` entry while opening linked worktree thread");
                     }
-                    ListEntry::NewThread { .. } => {
-                        panic!(
-                            "unexpected `New Thread` entry while opening linked worktree thread"
-                        );
-                    }
+                    ListEntry::NewThread { .. } => {}
                 }
             }
 
@@ -7567,6 +7755,7 @@ mod tests {
             visible_entries_as_strings(&sidebar, cx),
             vec![
                 "v [project]",
+                "  [+ New Thread]",
                 "  Worktree Thread {wt-feature-a}",
                 "v [other, project]",
                 "  [+ New Thread]",
