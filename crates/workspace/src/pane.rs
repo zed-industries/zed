@@ -2855,6 +2855,7 @@ impl Pane {
 
                     pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
                         .detach_and_log_err(cx);
+                    cx.stop_propagation();
                 }),
             )
             .on_drag(

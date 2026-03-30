@@ -3932,10 +3932,13 @@ impl ProjectSettingsUpdateQueue {
 
         buffer.update(cx, |buffer, cx| {
             let current_text = buffer.text();
-            let new_text = cx
+            if let Some(new_text) = cx
                 .global::<SettingsStore>()
-                .new_text_for_update(current_text, |settings| update(settings, cx));
-            buffer.edit([(0..buffer.len(), new_text)], None, cx);
+                .new_text_for_update(current_text, |settings| update(settings, cx))
+                .log_err()
+            {
+                buffer.edit([(0..buffer.len(), new_text)], None, cx);
+            }
         });
 
         buffer_store

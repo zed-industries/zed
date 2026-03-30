@@ -9,7 +9,7 @@ use channel::{Channel, ChannelEvent, ChannelStore};
 use client::{ChannelId, Client, Contact, User, UserStore};
 use collections::{HashMap, HashSet};
 use contact_finder::ContactFinder;
-use db::kvp::{GlobalKeyValueStore, KeyValueStore};
+use db::kvp::KeyValueStore;
 use editor::{Editor, EditorElement, EditorStyle};
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
@@ -473,7 +473,7 @@ impl CollabPanel {
                 });
             }
 
-            let favorites: Vec<ChannelId> = GlobalKeyValueStore::global()
+            let favorites: Vec<ChannelId> = KeyValueStore::global(cx)
                 .read_kvp("favorite_channels")
                 .ok()
                 .flatten()
@@ -1947,12 +1947,6 @@ impl CollabPanel {
     }
 
     fn persist_favorites(&mut self, cx: &mut Context<Self>) {
-        // GlobalKeyValueStore uses a sqlez worker thread that the test
-        // scheduler can't control, causing non-determinism failures.
-        if cfg!(any(test, feature = "test-support")) {
-            return;
-        }
-
         let favorite_ids: Vec<u64> = self
             .channel_store
             .read(cx)
@@ -1960,10 +1954,11 @@ impl CollabPanel {
             .iter()
             .map(|id| id.0)
             .collect();
+        let kvp_store = KeyValueStore::global(cx);
         self.pending_serialization = cx.background_spawn(
             async move {
                 let json = serde_json::to_string(&favorite_ids)?;
-                GlobalKeyValueStore::global()
+                kvp_store
                     .write_kvp("favorite_channels".to_string(), json)
                     .await?;
                 anyhow::Ok(())
@@ -3146,13 +3141,12 @@ impl CollabPanel {
         let (favorite_icon, favorite_color, favorite_tooltip) = if is_favorited {
             (IconName::StarFilled, Color::Accent, "Remove from Favorites")
         } else {
-            (IconName::Star, Color::Muted, "Add to Favorites")
+            (IconName::Star, Color::Default, "Add to Favorites")
         };
 
         h_flex()
             .id(ix)
             .group("")
-            .h_6()
             .w_full()
             .when(!channel.is_root_channel(), |el| {
                 el.on_drag(channel.clone(), move |channel, _, _, cx| {
@@ -3182,7 +3176,6 @@ impl CollabPanel {
             .child(
                 ListItem::new(ix)
                     // Add one level of depth for the disclosure arrow.
-                    .height(px(26.))
                     .indent_level(depth + 1)
                     .indent_step_size(px(20.))
                     .toggle_state(is_selected || is_active)
@@ -3262,14 +3255,13 @@ impl CollabPanel {
             )
             .child(
                 h_flex()
+                    .visible_on_hover("")
                     .absolute()
                     .right_0()
-                    .visible_on_hover("")
-                    .h_full()
-                    .pl_1()
-                    .pr_1p5()
-                    .gap_0p5()
-                    .bg(cx.theme().colors().background.opacity(0.5))
+                    .px_1()
+                    .gap_px()
+                    .bg(cx.theme().colors().background)
+                    .rounded_l_md()
                     .child({
                         let focus_handle = self.focus_handle.clone();
                         IconButton::new("channel_favorite", favorite_icon)
@@ -3291,9 +3283,6 @@ impl CollabPanel {
                         let focus_handle = self.focus_handle.clone();
                         IconButton::new("channel_notes", IconName::Reader)
                             .icon_size(IconSize::Small)
-                            .when(!has_notes_notification, |this| {
-                                this.icon_color(Color::Muted)
-                            })
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.open_channel_notes(channel_id, window, cx)
                             }))

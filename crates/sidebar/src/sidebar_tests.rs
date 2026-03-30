@@ -385,7 +385,8 @@ async fn test_workspace_lifecycle(cx: &mut TestAppContext) {
 
     // Remove the second workspace
     multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.remove_workspace(1, window, cx);
+        let workspace = mw.workspaces()[1].clone();
+        mw.remove(&workspace, window, cx);
     });
     cx.run_until_parked();
 
@@ -1737,7 +1738,8 @@ async fn test_confirm_on_historical_thread_activates_workspace(cx: &mut TestAppC
 
     // Switch to workspace 1 so we can verify the confirm switches back.
     multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.activate_index(1, window, cx);
+        let workspace = mw.workspaces()[1].clone();
+        mw.activate(workspace, window, cx);
     });
     cx.run_until_parked();
     assert_eq!(
@@ -2001,7 +2003,8 @@ async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
     });
 
     multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.activate_index(0, window, cx);
+        let workspace = mw.workspaces()[0].clone();
+        mw.activate(workspace, window, cx);
     });
     cx.run_until_parked();
 
@@ -2056,7 +2059,8 @@ async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
     // a workspace header) should clear focused_thread.
     multi_workspace.update_in(cx, |mw, window, cx| {
         if let Some(index) = mw.workspaces().iter().position(|w| w == &workspace_b) {
-            mw.activate_index(index, window, cx);
+            let workspace = mw.workspaces()[index].clone();
+            mw.activate(workspace, window, cx);
         }
     });
     cx.run_until_parked();
@@ -2317,7 +2321,8 @@ async fn test_cmd_n_shows_new_thread_entry_in_absorbed_worktree(cx: &mut TestApp
 
     // Switch to the worktree workspace.
     multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.activate_index(1, window, cx);
+        let workspace = mw.workspaces()[1].clone();
+        mw.activate(workspace, window, cx);
     });
 
     let sidebar = setup_sidebar(&multi_workspace, cx);
@@ -2887,7 +2892,8 @@ async fn test_absorbed_worktree_running_thread_shows_live_status(cx: &mut TestAp
 
     // Switch back to the main workspace before setting up the sidebar.
     multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.activate_index(0, window, cx);
+        let workspace = mw.workspaces()[0].clone();
+        mw.activate(workspace, window, cx);
     });
 
     let sidebar = setup_sidebar(&multi_workspace, cx);
@@ -2993,7 +2999,8 @@ async fn test_absorbed_worktree_completion_triggers_notification(cx: &mut TestAp
     let worktree_panel = add_agent_panel(&worktree_workspace, &worktree_project, cx);
 
     multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.activate_index(0, window, cx);
+        let workspace = mw.workspaces()[0].clone();
+        mw.activate(workspace, window, cx);
     });
 
     let sidebar = setup_sidebar(&multi_workspace, cx);
@@ -3338,7 +3345,8 @@ async fn test_clicking_absorbed_worktree_thread_activates_worktree_workspace(
 
     // Activate the main workspace before setting up the sidebar.
     multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.activate_index(0, window, cx);
+        let workspace = mw.workspaces()[0].clone();
+        mw.activate(workspace, window, cx);
     });
 
     let sidebar = setup_sidebar(&multi_workspace, cx);
@@ -3422,7 +3430,8 @@ async fn test_activate_archived_thread_with_saved_paths_activates_matching_works
 
     // Ensure workspace A is active.
     multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.activate_index(0, window, cx);
+        let workspace = mw.workspaces()[0].clone();
+        mw.activate(workspace, window, cx);
     });
     cx.run_until_parked();
     assert_eq!(
@@ -3484,7 +3493,8 @@ async fn test_activate_archived_thread_cwd_fallback_with_matching_workspace(
 
     // Start with workspace A active.
     multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.activate_index(0, window, cx);
+        let workspace = mw.workspaces()[0].clone();
+        mw.activate(workspace, window, cx);
     });
     cx.run_until_parked();
     assert_eq!(
@@ -3545,7 +3555,8 @@ async fn test_activate_archived_thread_no_paths_no_cwd_uses_active_workspace(
 
     // Activate workspace B (index 1) to make it the active one.
     multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.activate_index(1, window, cx);
+        let workspace = mw.workspaces()[1].clone();
+        mw.activate(workspace, window, cx);
     });
     cx.run_until_parked();
     assert_eq!(
@@ -3928,7 +3939,8 @@ async fn test_archive_thread_uses_next_threads_own_workspace(cx: &mut TestAppCon
 
     // Activate main workspace so the sidebar tracks the main panel.
     multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.activate_index(0, window, cx);
+        let workspace = mw.workspaces()[0].clone();
+        mw.activate(workspace, window, cx);
     });
 
     let sidebar = setup_sidebar(&multi_workspace, cx);
@@ -4784,9 +4796,11 @@ mod property_test {
                 state.workspace_paths.push(worktree.path);
             }
             Operation::RemoveWorkspace { index } => {
-                let removed = multi_workspace
-                    .update_in(cx, |mw, window, cx| mw.remove_workspace(index, window, cx));
-                if removed.is_some() {
+                let removed = multi_workspace.update_in(cx, |mw, window, cx| {
+                    let workspace = mw.workspaces()[index].clone();
+                    mw.remove(&workspace, window, cx)
+                });
+                if removed {
                     state.workspace_paths.remove(index);
                     state.main_repo_indices.retain(|i| *i != index);
                     for i in &mut state.main_repo_indices {
@@ -4799,8 +4813,8 @@ mod property_test {
             Operation::SwitchWorkspace { index } => {
                 let workspace =
                     multi_workspace.read_with(cx, |mw, _| mw.workspaces()[index].clone());
-                multi_workspace.update_in(cx, |mw, _window, cx| {
-                    mw.activate(workspace, cx);
+                multi_workspace.update_in(cx, |mw, window, cx| {
+                    mw.activate(workspace, window, cx);
                 });
             }
             Operation::AddLinkedWorktree { workspace_index } => {

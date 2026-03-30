@@ -24,8 +24,8 @@ use ui::{ContextMenu, right_click_menu};
 const SIDEBAR_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
 
 use crate::{
-    CloseIntent, CloseWindow, DockPosition, Event as WorkspaceEvent, Item, ModalView, Panel,
-    Workspace, WorkspaceId, client_side_decorations,
+    CloseIntent, CloseWindow, DockPosition, Event as WorkspaceEvent, Item, ModalView, OpenMode,
+    Panel, Workspace, WorkspaceId, client_side_decorations,
 };
 
 actions!(
@@ -233,7 +233,7 @@ impl MultiWorkspace {
                     this.close_sidebar(window, cx);
                 }
             });
-        Self::subscribe_to_workspace(&workspace, cx);
+        Self::subscribe_to_workspace(&workspace, window, cx);
         let weak_self = cx.weak_entity();
         workspace.update(cx, |workspace, cx| {
             workspace.set_multi_workspace(weak_self, cx);
@@ -398,10 +398,14 @@ impl MultiWorkspace {
         .detach_and_log_err(cx);
     }
 
-    fn subscribe_to_workspace(workspace: &Entity<Workspace>, cx: &mut Context<Self>) {
-        cx.subscribe(workspace, |this, workspace, event, cx| {
+    fn subscribe_to_workspace(
+        workspace: &Entity<Workspace>,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.subscribe_in(workspace, window, |this, workspace, event, window, cx| {
             if let WorkspaceEvent::Activate = event {
-                this.activate(workspace, cx);
+                this.activate(workspace.clone(), window, cx);
             }
         })
         .detach();
@@ -419,54 +423,107 @@ impl MultiWorkspace {
         self.active_workspace_index
     }
 
-    pub fn activate(&mut self, workspace: Entity<Workspace>, cx: &mut Context<Self>) {
+    /// Adds a workspace to this window without changing which workspace is
+    /// active.
+    pub fn add(&mut self, workspace: Entity<Workspace>, window: &Window, cx: &mut Context<Self>) {
         if !self.multi_workspace_enabled(cx) {
-            self.workspaces[0] = workspace;
-            self.active_workspace_index = 0;
-            cx.emit(MultiWorkspaceEvent::ActiveWorkspaceChanged);
-            cx.notify();
+            self.set_single_workspace(workspace, cx);
             return;
         }
 
-        let old_index = self.active_workspace_index;
-        let new_index = self.set_active_workspace(workspace, cx);
-        if old_index != new_index {
-            self.serialize(cx);
-        }
+        self.insert_workspace(workspace, window, cx);
     }
 
-    fn set_active_workspace(
+    /// Ensures the workspace is in the multiworkspace and makes it the active one.
+    pub fn activate(
         &mut self,
         workspace: Entity<Workspace>,
+        window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> usize {
-        let index = self.add_workspace(workspace, cx);
+    ) {
+        if !self.multi_workspace_enabled(cx) {
+            self.set_single_workspace(workspace, cx);
+            return;
+        }
+
+        let index = self.insert_workspace(workspace, &*window, cx);
         let changed = self.active_workspace_index != index;
         self.active_workspace_index = index;
         if changed {
             cx.emit(MultiWorkspaceEvent::ActiveWorkspaceChanged);
+            self.serialize(cx);
         }
+        self.focus_active_workspace(window, cx);
         cx.notify();
-        index
     }
 
-    /// Adds a workspace to this window without changing which workspace is active.
-    /// Returns the index of the workspace (existing or newly inserted).
-    pub fn add_workspace(&mut self, workspace: Entity<Workspace>, cx: &mut Context<Self>) -> usize {
+    /// Replaces the currently active workspace with a new one. If the
+    /// workspace is already in the list, this just switches to it.
+    pub fn replace(
+        &mut self,
+        workspace: Entity<Workspace>,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.multi_workspace_enabled(cx) {
+            self.set_single_workspace(workspace, cx);
+            return;
+        }
+
+        if let Some(index) = self.workspaces.iter().position(|w| *w == workspace) {
+            let changed = self.active_workspace_index != index;
+            self.active_workspace_index = index;
+            if changed {
+                cx.emit(MultiWorkspaceEvent::ActiveWorkspaceChanged);
+                self.serialize(cx);
+            }
+            cx.notify();
+            return;
+        }
+
+        let old_workspace = std::mem::replace(
+            &mut self.workspaces[self.active_workspace_index],
+            workspace.clone(),
+        );
+
+        let old_entity_id = old_workspace.entity_id();
+        self.detach_workspace(&old_workspace, cx);
+
+        Self::subscribe_to_workspace(&workspace, window, cx);
+        self.sync_sidebar_to_workspace(&workspace, cx);
+
+        cx.emit(MultiWorkspaceEvent::WorkspaceRemoved(old_entity_id));
+        cx.emit(MultiWorkspaceEvent::WorkspaceAdded(workspace));
+        cx.emit(MultiWorkspaceEvent::ActiveWorkspaceChanged);
+        self.serialize(cx);
+        cx.notify();
+    }
+
+    fn set_single_workspace(&mut self, workspace: Entity<Workspace>, cx: &mut Context<Self>) {
+        self.workspaces[0] = workspace;
+        self.active_workspace_index = 0;
+        cx.emit(MultiWorkspaceEvent::ActiveWorkspaceChanged);
+        cx.notify();
+    }
+
+    /// Inserts a workspace into the list if not already present. Returns the
+    /// index of the workspace (existing or newly inserted). Does not change
+    /// the active workspace index.
+    fn insert_workspace(
+        &mut self,
+        workspace: Entity<Workspace>,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> usize {
         if let Some(index) = self.workspaces.iter().position(|w| *w == workspace) {
             index
         } else {
-            if self.sidebar_open {
-                let sidebar_focus_handle = self.sidebar.as_ref().map(|s| s.focus_handle(cx));
-                workspace.update(cx, |workspace, _cx| {
-                    workspace.set_sidebar_focus_handle(sidebar_focus_handle);
-                });
-            }
+            Self::subscribe_to_workspace(&workspace, window, cx);
+            self.sync_sidebar_to_workspace(&workspace, cx);
             let weak_self = cx.weak_entity();
             workspace.update(cx, |workspace, cx| {
                 workspace.set_multi_workspace(weak_self, cx);
             });
-            Self::subscribe_to_workspace(&workspace, cx);
             self.workspaces.push(workspace.clone());
             cx.emit(MultiWorkspaceEvent::WorkspaceAdded(workspace));
             cx.notify();
@@ -474,19 +531,35 @@ impl MultiWorkspace {
         }
     }
 
-    pub fn activate_index(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        debug_assert!(
-            index < self.workspaces.len(),
-            "workspace index out of bounds"
-        );
-        let changed = self.active_workspace_index != index;
-        self.active_workspace_index = index;
-        self.serialize(cx);
-        self.focus_active_workspace(window, cx);
-        if changed {
-            cx.emit(MultiWorkspaceEvent::ActiveWorkspaceChanged);
+    /// Clears session state and DB binding for a workspace that is being
+    /// removed or replaced. The DB row is preserved so the workspace still
+    /// appears in the recent-projects list.
+    fn detach_workspace(&mut self, workspace: &Entity<Workspace>, cx: &mut Context<Self>) {
+        workspace.update(cx, |workspace, _cx| {
+            workspace.session_id.take();
+            workspace._schedule_serialize_workspace.take();
+            workspace._serialize_workspace_task.take();
+        });
+
+        if let Some(workspace_id) = workspace.read(cx).database_id() {
+            let db = crate::persistence::WorkspaceDb::global(cx);
+            self.pending_removal_tasks.retain(|task| !task.is_ready());
+            self.pending_removal_tasks
+                .push(cx.background_spawn(async move {
+                    db.set_session_binding(workspace_id, None, None)
+                        .await
+                        .log_err();
+                }));
         }
-        cx.notify();
+    }
+
+    fn sync_sidebar_to_workspace(&self, workspace: &Entity<Workspace>, cx: &mut Context<Self>) {
+        if self.sidebar_open {
+            let sidebar_focus_handle = self.sidebar.as_ref().map(|s| s.focus_handle(cx));
+            workspace.update(cx, |workspace, _| {
+                workspace.set_sidebar_focus_handle(sidebar_focus_handle);
+            });
+        }
     }
 
     fn cycle_workspace(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
@@ -496,7 +569,8 @@ impl MultiWorkspace {
         }
         let current = self.active_workspace_index as isize;
         let next = ((current + delta).rem_euclid(count)) as usize;
-        self.activate_index(next, window, cx);
+        let workspace = self.workspaces[next].clone();
+        self.activate(workspace, window, cx);
     }
 
     fn next_workspace(&mut self, _: &NextWorkspace, window: &mut Window, cx: &mut Context<Self>) {
@@ -666,7 +740,7 @@ impl MultiWorkspace {
         cx: &mut Context<Self>,
     ) -> Entity<Workspace> {
         let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
-        self.activate(workspace.clone(), cx);
+        self.activate(workspace.clone(), window, cx);
         workspace
     }
 
@@ -688,8 +762,7 @@ impl MultiWorkspace {
             cx,
         );
         let new_workspace = cx.new(|cx| Workspace::new(None, project, app_state, window, cx));
-        self.set_active_workspace(new_workspace.clone(), cx);
-        self.focus_active_workspace(window, cx);
+        self.activate(new_workspace.clone(), window, cx);
 
         let weak_workspace = new_workspace.downgrade();
         let db = crate::persistence::WorkspaceDb::global(cx);
@@ -716,14 +789,17 @@ impl MultiWorkspace {
         })
     }
 
-    pub fn remove_workspace(
+    pub fn remove(
         &mut self,
-        index: usize,
+        workspace: &Entity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<Workspace>> {
-        if self.workspaces.len() <= 1 || index >= self.workspaces.len() {
-            return None;
+    ) -> bool {
+        let Some(index) = self.workspaces.iter().position(|w| w == workspace) else {
+            return false;
+        };
+        if self.workspaces.len() <= 1 {
+            return false;
         }
 
         let removed_workspace = self.workspaces.remove(index);
@@ -734,28 +810,7 @@ impl MultiWorkspace {
             self.active_workspace_index -= 1;
         }
 
-        // Clear session_id and cancel any in-flight serialization on the
-        // removed workspace. Without this, a pending throttle timer from
-        // `serialize_workspace` could fire and write the old session_id
-        // back to the DB, resurrecting the workspace on next launch.
-        removed_workspace.update(cx, |workspace, _cx| {
-            workspace.session_id.take();
-            workspace._schedule_serialize_workspace.take();
-            workspace._serialize_workspace_task.take();
-        });
-
-        if let Some(workspace_id) = removed_workspace.read(cx).database_id() {
-            let db = crate::persistence::WorkspaceDb::global(cx);
-            self.pending_removal_tasks.retain(|task| !task.is_ready());
-            self.pending_removal_tasks
-                .push(cx.background_spawn(async move {
-                    // Clear the session binding instead of deleting the row so
-                    // the workspace still appears in the recent-projects list.
-                    db.set_session_binding(workspace_id, None, None)
-                        .await
-                        .log_err();
-                }));
-        }
+        self.detach_workspace(&removed_workspace, cx);
 
         self.serialize(cx);
         self.focus_active_workspace(window, cx);
@@ -765,22 +820,19 @@ impl MultiWorkspace {
         cx.emit(MultiWorkspaceEvent::ActiveWorkspaceChanged);
         cx.notify();
 
-        Some(removed_workspace)
+        true
     }
 
     pub fn move_workspace_to_new_window(
         &mut self,
-        index: usize,
+        workspace: &Entity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.workspaces.len() <= 1 || index >= self.workspaces.len() {
+        let workspace = workspace.clone();
+        if !self.remove(&workspace, window, cx) {
             return;
         }
-
-        let Some(workspace) = self.remove_workspace(index, window, cx) else {
-            return;
-        };
 
         let app_state: Arc<crate::AppState> = workspace.read(cx).app_state().clone();
 
@@ -805,23 +857,28 @@ impl MultiWorkspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let index = self.active_workspace_index;
-        self.move_workspace_to_new_window(index, window, cx);
+        let workspace = self.workspace().clone();
+        self.move_workspace_to_new_window(&workspace, window, cx);
     }
 
     pub fn open_project(
         &mut self,
         paths: Vec<PathBuf>,
+        open_mode: OpenMode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
         let workspace = self.workspace().clone();
 
-        if self.multi_workspace_enabled(cx) {
-            workspace.update(cx, |workspace, cx| {
-                workspace.open_workspace_for_paths(true, paths, window, cx)
-            })
+        let needs_close_prompt =
+            open_mode == OpenMode::Replace || !self.multi_workspace_enabled(cx);
+        let open_mode = if self.multi_workspace_enabled(cx) {
+            open_mode
         } else {
+            OpenMode::Replace
+        };
+
+        if needs_close_prompt {
             cx.spawn_in(window, async move |_this, cx| {
                 let should_continue = workspace
                     .update_in(cx, |workspace, window, cx| {
@@ -831,12 +888,16 @@ impl MultiWorkspace {
                 if should_continue {
                     workspace
                         .update_in(cx, |workspace, window, cx| {
-                            workspace.open_workspace_for_paths(true, paths, window, cx)
+                            workspace.open_workspace_for_paths(open_mode, paths, window, cx)
                         })?
                         .await
                 } else {
                     Ok(workspace)
                 }
+            })
+        } else {
+            workspace.update(cx, |workspace, cx| {
+                workspace.open_workspace_for_paths(open_mode, paths, window, cx)
             })
         }
     }
@@ -1088,6 +1149,92 @@ mod tests {
             assert!(
                 mw.sidebar_open(),
                 "Sidebar should open when toggled after re-enabling AI"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_replace(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project_a = Project::test(fs.clone(), [], cx).await;
+        let project_b = Project::test(fs.clone(), [], cx).await;
+        let project_c = Project::test(fs.clone(), [], cx).await;
+        let project_d = Project::test(fs.clone(), [], cx).await;
+
+        let (multi_workspace, cx) = cx
+            .add_window_view(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
+
+        let workspace_a_id =
+            multi_workspace.read_with(cx, |mw, _cx| mw.workspaces()[0].entity_id());
+
+        // Replace the only workspace (single-workspace case).
+        let workspace_b = multi_workspace.update_in(cx, |mw, window, cx| {
+            let workspace = cx.new(|cx| Workspace::test_new(project_b.clone(), window, cx));
+            mw.replace(workspace.clone(), &*window, cx);
+            workspace
+        });
+
+        multi_workspace.read_with(cx, |mw, _cx| {
+            assert_eq!(mw.workspaces().len(), 1);
+            assert_eq!(
+                mw.workspaces()[0].entity_id(),
+                workspace_b.entity_id(),
+                "slot should now be project_b"
+            );
+            assert_ne!(
+                mw.workspaces()[0].entity_id(),
+                workspace_a_id,
+                "project_a should be gone"
+            );
+        });
+
+        // Add project_c as a second workspace, then replace it with project_d.
+        let workspace_c = multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.test_add_workspace(project_c.clone(), window, cx)
+        });
+
+        multi_workspace.read_with(cx, |mw, _cx| {
+            assert_eq!(mw.workspaces().len(), 2);
+            assert_eq!(mw.active_workspace_index(), 1);
+        });
+
+        let workspace_d = multi_workspace.update_in(cx, |mw, window, cx| {
+            let workspace = cx.new(|cx| Workspace::test_new(project_d.clone(), window, cx));
+            mw.replace(workspace.clone(), &*window, cx);
+            workspace
+        });
+
+        multi_workspace.read_with(cx, |mw, _cx| {
+            assert_eq!(mw.workspaces().len(), 2, "should still have 2 workspaces");
+            assert_eq!(mw.active_workspace_index(), 1);
+            assert_eq!(
+                mw.workspaces()[1].entity_id(),
+                workspace_d.entity_id(),
+                "active slot should now be project_d"
+            );
+            assert_ne!(
+                mw.workspaces()[1].entity_id(),
+                workspace_c.entity_id(),
+                "project_c should be gone"
+            );
+        });
+
+        // Replace with workspace_b which is already in the list — should just switch.
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.replace(workspace_b.clone(), &*window, cx);
+        });
+
+        multi_workspace.read_with(cx, |mw, _cx| {
+            assert_eq!(
+                mw.workspaces().len(),
+                2,
+                "no workspace should be added or removed"
+            );
+            assert_eq!(
+                mw.active_workspace_index(),
+                0,
+                "should have switched to workspace_b"
             );
         });
     }

@@ -1336,8 +1336,11 @@ impl Sidebar {
                                     this.focused_thread = None;
                                     if let Some(multi_workspace) = this.multi_workspace.upgrade() {
                                         multi_workspace.update(cx, |multi_workspace, cx| {
-                                            multi_workspace
-                                                .activate(workspace_for_open.clone(), cx);
+                                            multi_workspace.activate(
+                                                workspace_for_open.clone(),
+                                                window,
+                                                cx,
+                                            );
                                         });
                                     }
                                     if AgentPanel::is_visible(&workspace_for_open, cx) {
@@ -1440,13 +1443,7 @@ impl Sidebar {
                                 if let Some(mw) = multi_workspace_for_worktree.upgrade() {
                                     let ws = workspace_for_remove_worktree.clone();
                                     mw.update(cx, |multi_workspace, cx| {
-                                        if let Some(index) = multi_workspace
-                                            .workspaces()
-                                            .iter()
-                                            .position(|w| *w == ws)
-                                        {
-                                            multi_workspace.remove_workspace(index, window, cx);
-                                        }
+                                        multi_workspace.remove(&ws, window, cx);
                                     });
                                 }
                             } else {
@@ -1476,7 +1473,7 @@ impl Sidebar {
                         move |window, cx| {
                             if let Some(mw) = multi_workspace_for_add.upgrade() {
                                 mw.update(cx, |mw, cx| {
-                                    mw.activate(workspace_for_add.clone(), cx);
+                                    mw.activate(workspace_for_add.clone(), window, cx);
                                 });
                             }
                             workspace_for_add.update(cx, |workspace, cx| {
@@ -1499,14 +1496,11 @@ impl Sidebar {
                             move |window, cx| {
                                 if let Some(mw) = multi_workspace_for_move.upgrade() {
                                     mw.update(cx, |multi_workspace, cx| {
-                                        if let Some(index) = multi_workspace
-                                            .workspaces()
-                                            .iter()
-                                            .position(|w| *w == workspace_for_move)
-                                        {
-                                            multi_workspace
-                                                .move_workspace_to_new_window(index, window, cx);
-                                        }
+                                        multi_workspace.move_workspace_to_new_window(
+                                            &workspace_for_move,
+                                            window,
+                                            cx,
+                                        );
                                     });
                                 }
                             },
@@ -1522,11 +1516,7 @@ impl Sidebar {
                             if let Some(mw) = multi_workspace_for_remove.upgrade() {
                                 let ws = workspace_for_remove.clone();
                                 mw.update(cx, |multi_workspace, cx| {
-                                    if let Some(index) =
-                                        multi_workspace.workspaces().iter().position(|w| *w == ws)
-                                    {
-                                        multi_workspace.remove_workspace(index, window, cx);
-                                    }
+                                    multi_workspace.remove(&ws, window, cx);
                                 });
                             }
                         })
@@ -1944,7 +1934,7 @@ impl Sidebar {
         self.record_thread_access(&metadata.session_id);
 
         multi_workspace.update(cx, |multi_workspace, cx| {
-            multi_workspace.activate(workspace.clone(), cx);
+            multi_workspace.activate(workspace.clone(), window, cx);
         });
 
         Self::load_agent_thread_in_workspace(workspace, metadata, true, window, cx);
@@ -1964,7 +1954,7 @@ impl Sidebar {
         let activated = target_window
             .update(cx, |multi_workspace, window, cx| {
                 window.activate_window();
-                multi_workspace.activate(workspace.clone(), cx);
+                multi_workspace.activate(workspace.clone(), window, cx);
                 Self::load_agent_thread_in_workspace(&workspace, &metadata, true, window, cx);
             })
             .log_err()
@@ -2026,7 +2016,9 @@ impl Sidebar {
         let paths: Vec<std::path::PathBuf> =
             path_list.paths().iter().map(|p| p.to_path_buf()).collect();
 
-        let open_task = multi_workspace.update(cx, |mw, cx| mw.open_project(paths, window, cx));
+        let open_task = multi_workspace.update(cx, |mw, cx| {
+            mw.open_project(paths, workspace::OpenMode::Activate, window, cx)
+        });
 
         cx.spawn_in(window, async move |this, cx| {
             let workspace = open_task.await?;
@@ -2514,7 +2506,7 @@ impl Sidebar {
                 } => {
                     if let Some(mw) = weak_multi_workspace.upgrade() {
                         mw.update(cx, |mw, cx| {
-                            mw.activate(workspace.clone(), cx);
+                            mw.activate(workspace.clone(), window, cx);
                         });
                     }
                     this.focused_thread = Some(metadata.session_id.clone());
@@ -2529,7 +2521,7 @@ impl Sidebar {
                 } => {
                     if let Some(mw) = weak_multi_workspace.upgrade() {
                         mw.update(cx, |mw, cx| {
-                            mw.activate(workspace.clone(), cx);
+                            mw.activate(workspace.clone(), window, cx);
                         });
                     }
                     this.record_thread_access(&metadata.session_id);
@@ -2545,7 +2537,7 @@ impl Sidebar {
                     if let Some(mw) = weak_multi_workspace.upgrade() {
                         if let Some(original_ws) = &original_workspace {
                             mw.update(cx, |mw, cx| {
-                                mw.activate(original_ws.clone(), cx);
+                                mw.activate(original_ws.clone(), window, cx);
                             });
                         }
                     }
@@ -2596,7 +2588,7 @@ impl Sidebar {
         if let Some((metadata, workspace)) = initial_preview {
             if let Some(mw) = self.multi_workspace.upgrade() {
                 mw.update(cx, |mw, cx| {
-                    mw.activate(workspace.clone(), cx);
+                    mw.activate(workspace.clone(), window, cx);
                 });
             }
             self.focused_thread = Some(metadata.session_id.clone());
@@ -2897,7 +2889,7 @@ impl Sidebar {
         self.focused_thread = None;
 
         multi_workspace.update(cx, |multi_workspace, cx| {
-            multi_workspace.activate(workspace.clone(), cx);
+            multi_workspace.activate(workspace.clone(), window, cx);
         });
 
         workspace.update(cx, |workspace, cx| {
