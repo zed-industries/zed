@@ -526,14 +526,6 @@ pub mod assistant {
         ]
     );
 
-    actions!(
-        assistant,
-        [
-            /// Shows the assistant configuration panel.
-            ShowConfiguration
-        ]
-    );
-
     /// Opens the rules library for managing agent rules and prompts.
     #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
     #[action(namespace = agent, deprecated_aliases = ["assistant::OpenRulesLibrary", "assistant::DeployPromptLibrary"])]
