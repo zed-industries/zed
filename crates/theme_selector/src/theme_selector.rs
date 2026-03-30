@@ -79,7 +79,18 @@ fn toggle_icon_theme_selector(
     });
 }
 
-impl ModalView for ThemeSelector {}
+impl ModalView for ThemeSelector {
+    fn on_before_dismiss(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> workspace::DismissDecision {
+        self.picker.update(cx, |picker, cx| {
+            picker.delegate.revert_theme(cx);
+        });
+        workspace::DismissDecision::Dismiss(true)
+    }
+}
 
 struct ThemeSelector {
     picker: Entity<Picker<ThemeSelectorDelegate>>,
@@ -212,6 +223,15 @@ impl ThemeSelectorDelegate {
             }
         } else {
             None
+        }
+    }
+
+    fn revert_theme(&mut self, cx: &mut App) {
+        if !self.selection_completed {
+            SettingsStore::update_global(cx, |store, _| {
+                store.override_global(self.original_theme_settings.clone());
+            });
+            self.selection_completed = true;
         }
     }
 
@@ -371,12 +391,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
     }
 
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<ThemeSelectorDelegate>>) {
-        if !self.selection_completed {
-            SettingsStore::update_global(cx, |store, _| {
-                store.override_global(self.original_theme_settings.clone());
-            });
-            self.selection_completed = true;
-        }
+        self.revert_theme(cx);
 
         self.selector
             .update(cx, |_, cx| cx.emit(DismissEvent))
