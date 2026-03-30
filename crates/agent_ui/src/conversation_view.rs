@@ -6212,13 +6212,13 @@ pub(crate) mod tests {
             match error {
                 Some(ThreadError::Other { message, .. }) => {
                     assert!(
-                        message.contains("Max tokens reached"),
-                        "Expected 'Max tokens reached' error, got: {}",
+                        message.contains("Maximum tokens reached"),
+                        "Expected 'Maximum tokens reached' error, got: {}",
                         message
                     );
                 }
                 other => panic!(
-                    "Expected ThreadError::Other with 'Max tokens reached', got: {:?}",
+                    "Expected ThreadError::Other with 'Maximum tokens reached', got: {:?}",
                     other.is_some()
                 ),
             }
