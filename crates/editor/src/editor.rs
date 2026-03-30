@@ -120,8 +120,8 @@ use gpui::{
     KeyContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, PaintQuad, ParentElement,
     Pixels, PressureStage, Render, ScrollHandle, SharedString, SharedUri, Size, Stateful, Styled,
     Subscription, Task, TextRun, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
-    UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window, div, point, prelude::*,
-    pulsating_between, px, relative, size,
+    UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window, div, ease_in_out, point,
+    prelude::*, pulsating_between, px, relative, size,
 };
 use hover_links::{HoverLink, HoveredLinkState, find_file};
 use hover_popover::{HoverState, hide_hover};
@@ -243,6 +243,7 @@ pub const FILE_HEADER_HEIGHT: u32 = 2;
 pub const BUFFER_HEADER_PADDING: Rems = rems(0.25);
 pub const MULTI_BUFFER_EXCERPT_HEADER_HEIGHT: u32 = 1;
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
+const CURSOR_ANIMATION_DURATION: Duration = Duration::from_millis(120);
 const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
 const MAX_SELECTION_HISTORY_LEN: usize = 1024;
@@ -1253,6 +1254,7 @@ pub struct Editor {
     next_color_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
     pixel_position_of_newest_cursor: Option<gpui::Point<Pixels>>,
+    cursor_animation: Option<CursorAnimationState>,
     gutter_dimensions: GutterDimensions,
     style: Option<EditorStyle>,
     text_style_refinement: Option<TextStyleRefinement>,
@@ -1544,6 +1546,20 @@ struct DeferredSelectionEffectsState {
     effects: SelectionEffects,
     old_cursor_position: Anchor,
     history_entry: SelectionHistoryEntry,
+}
+
+#[derive(Clone, Copy)]
+struct CursorAnimationState {
+    from: Anchor,
+    to: Anchor,
+    started_at: Instant,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct CursorAnimationFrame {
+    pub from: DisplayPoint,
+    pub to: DisplayPoint,
+    pub progress: f32,
 }
 
 #[derive(Default)]
@@ -2482,6 +2498,7 @@ impl Editor {
             inline_value_cache: InlineValueCache::new(inlay_hint_settings.show_value_hints),
             gutter_hovered: false,
             pixel_position_of_newest_cursor: None,
+            cursor_animation: None,
             last_bounds: None,
             last_position_map: None,
             expect_bounds_change: None,
@@ -3683,6 +3700,12 @@ impl Editor {
         let newest_selection = self.selections.newest_anchor();
         let new_cursor_position = newest_selection.head();
         let selection_start = newest_selection.start;
+        self.update_cursor_animation(
+            local,
+            old_cursor_position,
+            new_cursor_position,
+            &display_map,
+        );
 
         if effects.nav_history.is_none() || effects.nav_history == Some(true) {
             self.push_to_nav_history(
@@ -3825,6 +3848,51 @@ impl Editor {
         }
 
         cx.notify();
+    }
+
+    fn update_cursor_animation(
+        &mut self,
+        local: bool,
+        old_cursor_position: &Anchor,
+        new_cursor_position: Anchor,
+        display_map: &DisplaySnapshot,
+    ) {
+        let old_cursor_position = *old_cursor_position;
+        let should_animate = local
+            && self.selections.count() == 1
+            && old_cursor_position != new_cursor_position
+            && old_cursor_position.to_display_point(display_map)
+                != new_cursor_position.to_display_point(display_map);
+
+        self.cursor_animation = should_animate.then_some(CursorAnimationState {
+            from: old_cursor_position,
+            to: new_cursor_position,
+            started_at: Instant::now(),
+        });
+    }
+
+    pub(crate) fn cursor_animation_frame(
+        &self,
+        display_map: &DisplaySnapshot,
+    ) -> Option<CursorAnimationFrame> {
+        let animation = self.cursor_animation?;
+        let progress =
+            animation.started_at.elapsed().as_secs_f32() / CURSOR_ANIMATION_DURATION.as_secs_f32();
+        if progress >= 1.0 {
+            return None;
+        }
+
+        let from = animation.from.to_display_point(display_map);
+        let to = animation.to.to_display_point(display_map);
+        if from == to {
+            return None;
+        }
+
+        Some(CursorAnimationFrame {
+            from,
+            to,
+            progress: ease_in_out(progress.clamp(0.0, 1.0)),
+        })
     }
 
     fn folds_did_change(&mut self, cx: &mut Context<Self>) {

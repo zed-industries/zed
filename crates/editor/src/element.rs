@@ -1,13 +1,13 @@
 use crate::{
     ActiveDiagnostic, BUFFER_HEADER_PADDING, BlockId, CURSORS_VISIBLE_FOR, ChunkRendererContext,
     ChunkReplacement, CodeActionSource, ColumnarMode, ConflictsOurs, ConflictsOursMarker,
-    ConflictsOuter, ConflictsTheirs, ConflictsTheirsMarker, ContextMenuPlacement, CursorShape,
-    CustomBlockId, DisplayDiffHunk, DisplayPoint, DisplayRow, EditDisplayMode, EditPrediction,
-    Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle, FILE_HEADER_HEIGHT,
-    FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
-    InlayHintRefreshReason, JumpData, LineDown, LineHighlight, LineUp, MAX_LINE_LEN,
-    MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown, PageUp,
-    PhantomBreakpointIndicator, PhantomDiffReviewIndicator, Point, RowExt, RowRangeExt,
+    ConflictsOuter, ConflictsTheirs, ConflictsTheirsMarker, ContextMenuPlacement,
+    CursorAnimationFrame, CursorShape, CustomBlockId, DisplayDiffHunk, DisplayPoint, DisplayRow,
+    EditDisplayMode, EditPrediction, Editor, EditorMode, EditorSettings, EditorSnapshot,
+    EditorStyle, FILE_HEADER_HEIGHT, FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp,
+    HandleInput, HoveredCursor, InlayHintRefreshReason, JumpData, LineDown, LineHighlight, LineUp,
+    MAX_LINE_LEN, MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown,
+    PageUp, PhantomBreakpointIndicator, PhantomDiffReviewIndicator, Point, RowExt, RowRangeExt,
     SelectPhase, Selection, SelectionDragState, SelectionEffects, SizingBehavior, SoftWrap,
     StickyHeaderExcerpt, ToPoint, ToggleFold, ToggleFoldAll,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
@@ -1804,6 +1804,25 @@ impl EditorElement {
             let mut cursors = Vec::new();
 
             let show_local_cursors = editor.show_local_cursors(window, cx);
+            let cursor_animation = editor.cursor_animation_frame(&snapshot.display_snapshot);
+            let cursor_origin = |cursor_position: DisplayPoint| -> Option<gpui::Point<Pixels>> {
+                if !visible_display_row_range.contains(&cursor_position.row()) {
+                    return None;
+                }
+
+                let cursor_row_layout = &line_layouts
+                    [cursor_position.row().minus(visible_display_row_range.start) as usize];
+                let cursor_column = cursor_position.column() as usize;
+                let cursor_x = cursor_row_layout.x_for_index(cursor_column)
+                    + cursor_row_layout
+                        .alignment_offset(self.style.text.text_align, text_hitbox.size.width)
+                    - scroll_pixel_position.x.into();
+                let cursor_y = ((cursor_position.row().as_f64() - scroll_position.y)
+                    * ScrollPixelOffset::from(line_height))
+                .into();
+
+                Some(point(cursor_x, cursor_y))
+            };
 
             for (player_color, selections) in selections {
                 for selection in selections {
@@ -1900,6 +1919,21 @@ impl EditorElement {
                     let y = ((cursor_position.row().as_f64() - scroll_position.y)
                         * ScrollPixelOffset::from(line_height))
                     .into();
+                    let mut origin = point(x, y);
+
+                    if selection.is_local
+                        && selection.is_newest
+                        && let Some(CursorAnimationFrame { from, to, progress }) = cursor_animation
+                        && to == cursor_position
+                        && let Some(from_origin) = cursor_origin(from)
+                    {
+                        origin = point(
+                            from_origin.x + (origin.x - from_origin.x) * progress,
+                            from_origin.y + (origin.y - from_origin.y) * progress,
+                        );
+                        window.request_animation_frame();
+                    }
+
                     if selection.is_newest {
                         editor.pixel_position_of_newest_cursor = Some(point(
                             text_hitbox.origin.x + x + block_width / 2.,
@@ -1938,7 +1972,7 @@ impl EditorElement {
                     let mut cursor = CursorLayout {
                         color: player_color.cursor,
                         block_width,
-                        origin: point(x, y),
+                        origin,
                         line_height,
                         shape: selection.cursor_shape,
                         block_text,
