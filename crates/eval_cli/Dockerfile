@@ -7,55 +7,44 @@
 # Or use the helper script:
 #   crates/eval_cli/script/build-linux
 
-FROM rust:1.93.1-bookworm AS builder
+FROM rust:1.93 AS builder
 
 WORKDIR /app
 
-# Install build dependencies (subset of script/linux needed for headless GPUI).
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    cmake \
-    clang \
-    g++ \
-    libasound2-dev \
-    libfontconfig-dev \
-    libgit2-dev \
-    libglib2.0-dev \
-    libssl-dev \
-    libwayland-dev \
-    libx11-xcb-dev \
-    libxkbcommon-x11-dev \
-    libzstd-dev \
-    libsqlite3-dev \
-    build-essential \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install wild linker for faster linking (built from source to match bookworm's glibc).
-RUN cargo install --locked wild-linker --version 0.8.0 --root /usr/local
-
-# Download WASI SDK (needed by some dependencies).
-ARG TARGETARCH
-RUN mkdir -p /app/target && \
-    WASI_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "arm64" || echo "x86_64") && \
-    curl -L "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-${WASI_ARCH}-linux.tar.gz" \
-    | tar -xz -C /app/target && \
-    mv /app/target/wasi-sdk-25.0-${WASI_ARCH}-linux /app/target/wasi-sdk
-
-# Pre-install the toolchain specified in rust-toolchain.toml so it is cached.
+    # Pre-install the toolchain specified in rust-toolchain.toml so it is cached.
 RUN rustup toolchain install 1.93 --profile minimal \
     --component rustfmt --component clippy --component rust-analyzer --component rust-src \
-    --target wasm32-wasip2 --target wasm32-unknown-unknown --target x86_64-unknown-linux-musl
+    --target wasm32-wasip2 --target wasm32-unknown-unknown --target x86_64-unknown-linux-musl --target x86_64-unknown-linux-gnu
+
+# Install build tools.  cmake + build-essential are needed for vendored C
+# libraries (libgit2-sys, zstd-sys, libsqlite3-sys).  No audio/GUI -dev
+# packages required — eval-cli runs headless with those features disabled.
+#
+# cargo-zigbuild cross-compiles against a specific glibc version (2.31 =
+# Debian Bullseye / Ubuntu Focal) so the resulting binary is portable to
+# any Linux distro with glibc >= 2.31.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    cmake \
+    build-essential \
+    curl \
+    xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /opt/zig \
+    && curl -fsSL https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz \
+    | tar -xJ -C /opt/zig --strip-components=1 \
+    && ln -s /opt/zig/zig /usr/local/bin/zig
+
+RUN cargo install --locked cargo-zigbuild
 
 COPY . .
-
-ENV CC=clang CXX=clang++
-ENV RUSTFLAGS="-C linker=clang -C link-arg=--ld-path=wild"
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/app/target \
-    cargo build --release --package eval_cli && \
-    cp /app/target/release/eval-cli /eval-cli && \
+    cargo zigbuild --release --package eval_cli \
+        --target x86_64-unknown-linux-gnu.2.31 && \
+    cp /app/target/x86_64-unknown-linux-gnu/release/eval-cli /eval-cli && \
     strip /eval-cli
 
 FROM scratch

@@ -7,6 +7,7 @@ use client::{Client, UserStore};
 use clock::FakeSystemClock;
 use collections::{HashMap, HashSet};
 use language_model::LanguageModelToolResultContent;
+use languages::rust_lang;
 
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
@@ -14,7 +15,7 @@ use gpui::{AppContext as _, Entity, SharedString, TestAppContext};
 use http_client::{BlockedHttpClient, FakeHttpClient};
 use language::{
     Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LineEnding,
-    language_settings::{AllLanguageSettings, language_settings},
+    language_settings::{AllLanguageSettings, LanguageSettings},
 };
 use lsp::{
     CompletionContext, CompletionResponse, CompletionTriggerKind, DEFAULT_LSP_REQUEST_TIMEOUT,
@@ -481,6 +482,7 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
 
     let worktree_id = project
         .update(cx, |project, cx| {
+            project.languages().add(rust_lang());
             project.find_or_create_worktree("/code/project1", true, cx)
         })
         .await
@@ -521,9 +523,8 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
     });
 
     cx.read(|cx| {
-        let file = buffer.read(cx).file();
         assert_eq!(
-            language_settings(Some("Rust".into()), file, cx).language_servers,
+            LanguageSettings::for_buffer(buffer.read(cx), cx).language_servers,
             ["override-rust-analyzer".to_string()]
         )
     });
@@ -646,6 +647,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
 
     let worktree_id = project
         .update(cx, |project, cx| {
+            project.languages().add(rust_lang());
             project.find_or_create_worktree(path!("/code/project1"), true, cx)
         })
         .await
@@ -668,9 +670,8 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
     let fake_second_lsp = fake_second_lsp.next().await.unwrap();
 
     cx.read(|cx| {
-        let file = buffer.read(cx).file();
         assert_eq!(
-            language_settings(Some("Rust".into()), file, cx).language_servers,
+            LanguageSettings::for_buffer(buffer.read(cx), cx).language_servers,
             ["rust-analyzer".to_string(), "fake-analyzer".to_string()]
         )
     });
@@ -1660,7 +1661,7 @@ async fn test_remote_git_diffs_when_recv_update_repository_delay(
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
         release_channel::init(semver::Version::new(0, 0, 0), cx);
         editor::init(cx);
     });

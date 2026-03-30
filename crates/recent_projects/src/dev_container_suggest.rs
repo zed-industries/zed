@@ -1,9 +1,10 @@
-use db::kvp::KEY_VALUE_STORE;
+use db::kvp::KeyValueStore;
 use dev_container::find_configs_in_snapshot;
 use gpui::{SharedString, Window};
 use project::{Project, WorktreeId};
 use std::sync::LazyLock;
 use ui::prelude::*;
+use util::ResultExt;
 use util::rel_path::RelPath;
 use workspace::Workspace;
 use workspace::notifications::NotificationId;
@@ -61,7 +62,7 @@ pub fn suggest_on_worktree_updated(
     let project_path = abs_path.to_string_lossy().to_string();
     let key_for_dismiss = project_devcontainer_key(&project_path);
 
-    let already_dismissed = KEY_VALUE_STORE
+    let already_dismissed = KeyValueStore::global(cx)
         .read_kvp(&key_for_dismiss)
         .ok()
         .flatten()
@@ -98,9 +99,13 @@ pub fn suggest_on_worktree_updated(
                 .secondary_on_click({
                     move |_window, cx| {
                         let key = key_for_dismiss.clone();
-                        db::write_and_log(cx, move || {
-                            KEY_VALUE_STORE.write_kvp(key, "dismissed".to_string())
-                        });
+                        let kvp = KeyValueStore::global(cx);
+                        cx.background_spawn(async move {
+                            kvp.write_kvp(key, "dismissed".to_string())
+                                .await
+                                .log_err();
+                        })
+                        .detach();
                     }
                 })
             })

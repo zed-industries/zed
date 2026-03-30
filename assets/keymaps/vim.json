@@ -337,6 +337,8 @@
       "shift-j": "vim::JoinLines",
       "i": "vim::InsertBefore",
       "a": "vim::InsertAfter",
+      "o": "vim::InsertLineBelow",
+      "shift-o": "vim::InsertLineAbove",
       "p": "vim::Paste",
       "u": "vim::Undo",
       "r": "vim::PushReplace",
@@ -511,8 +513,8 @@
       "g shift-u": "git::UnstageAndNext", // Zed specific
 
       // Window mode
-      "space w v": "pane::SplitDown",
-      "space w s": "pane::SplitRight",
+      "space w v": "pane::SplitRight",
+      "space w s": "pane::SplitDown",
       "space w h": "workspace::ActivatePaneLeft",
       "space w j": "workspace::ActivatePaneDown",
       "space w k": "workspace::ActivatePaneUp",
@@ -1060,7 +1062,7 @@
     },
   },
   {
-    "context": "Editor && edit_prediction",
+    "context": "Editor && edit_prediction && edit_prediction_mode == eager && !showing_completions",
     "bindings": {
       // This is identical to the binding in the base keymap, but the vim bindings above to
       // "vim::Tab" shadow it, so it needs to be bound again.
@@ -1073,15 +1075,7 @@
       "enter": "agent::Chat",
     },
   },
-  {
-    "context": "os != macos && Editor && edit_prediction_conflict",
-    "bindings": {
-      // alt-l is provided as an alternative to tab/alt-tab. and will be displayed in the UI. This
-      // is because alt-tab may not be available, as it is often used for window switching on Linux
-      // and Windows.
-      "alt-l": "editor::AcceptEditPrediction",
-    },
-  },
+
   {
     "context": "SettingsWindow > NavigationMenu && !search",
     "bindings": {
@@ -1100,6 +1094,8 @@
       "ctrl-d": "markdown::ScrollPageDown",
       "ctrl-y": "markdown::ScrollUp",
       "ctrl-e": "markdown::ScrollDown",
+      "g g": "markdown::ScrollToTop",
+      "shift-g": "markdown::ScrollToBottom",
     },
   },
   {
@@ -1117,6 +1113,33 @@
     "bindings": {
       "j": "notebook::NotebookMoveDown",
       "k": "notebook::NotebookMoveUp",
+    },
+  },
+  {
+    "context": "ThreadsSidebar && !Editor",
+    "bindings": {
+      "j": "menu::SelectNext",
+      "k": "menu::SelectPrevious",
+      "h": "menu::SelectParent",
+      "l": "menu::SelectChild",
+      "g g": "menu::SelectFirst",
+      "shift-g": "menu::SelectLast",
+      "/": "agents_sidebar::FocusSidebarFilter",
+      "z a": "editor::ToggleFold",
+      "z c": "menu::SelectParent",
+      "z o": "menu::SelectChild",
+      "z shift-m": "editor::FoldAll",
+      "z shift-r": "editor::UnfoldAll",
+    },
+  },
+  {
+    "context": "ThreadsSidebar > Editor && VimControl && vim_mode == normal",
+    "bindings": {
+      "j": "editor::MoveDown",
+      "k": "editor::MoveUp",
+      "/": "vim::SwitchToInsertMode",
+      "escape": "menu::Cancel",
+      "enter": "editor::Newline",
     },
   },
 ]

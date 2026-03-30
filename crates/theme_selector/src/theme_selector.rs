@@ -9,9 +9,9 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use settings::{Settings, SettingsStore, update_settings_file};
 use std::sync::Arc;
-use theme::{
-    Appearance, SystemAppearance, Theme, ThemeAppearanceMode, ThemeMeta, ThemeName, ThemeRegistry,
-    ThemeSelection, ThemeSettings,
+use theme::{Appearance, SystemAppearance, Theme, ThemeMeta, ThemeRegistry};
+use theme_settings::{
+    ThemeAppearanceMode, ThemeName, ThemeSelection, ThemeSettings, appearance_to_mode,
 };
 use ui::{ListItem, ListItemSpacing, prelude::*, v_flex};
 use util::ResultExt;
@@ -233,7 +233,7 @@ impl ThemeSelectorDelegate {
 /// Overrides the global (in-memory) theme settings.
 ///
 /// Note that this does **not** update the user's `settings.json` file (see the
-/// [`ThemeSelectorDelegate::confirm`] method and [`theme::set_theme`] function).
+/// [`ThemeSelectorDelegate::confirm`] method and [`theme_settings::set_theme`] function).
 fn override_global_theme(
     store: &mut SettingsStore,
     new_theme: &Theme,
@@ -303,7 +303,7 @@ fn update_mode_if_new_appearance_is_different_from_system(
     if original_mode == &ThemeAppearanceMode::System && system_appearance == new_appearance {
         ThemeAppearanceMode::System
     } else {
-        ThemeAppearanceMode::from(new_appearance)
+        appearance_to_mode(new_appearance)
     }
 }
 
@@ -360,7 +360,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
         telemetry::event!("Settings Changed", setting = "theme", value = theme_name);
 
         update_settings_file(self.fs.clone(), cx, move |settings, _| {
-            theme::set_theme(settings, theme_name, theme_appearance, system_appearance);
+            theme_settings::set_theme(settings, theme_name, theme_appearance, system_appearance);
         });
 
         self.selector

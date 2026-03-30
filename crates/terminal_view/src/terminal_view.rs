@@ -15,7 +15,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use menu;
-use persistence::TERMINAL_DB;
+use persistence::TerminalDb;
 use project::{Project, ProjectEntryId, search::SearchQuery};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -754,7 +754,14 @@ impl TerminalView {
     }
 
     pub fn should_show_cursor(&self, focused: bool, cx: &mut Context<Self>) -> bool {
-        // Always show cursor when not focused or in special modes
+        // Hide cursor when in embedded mode and not focused (read-only output like Agent panel)
+        if let TerminalMode::Embedded { .. } = &self.mode {
+            if !focused {
+                return false;
+            }
+        }
+
+        // For Standalone mode: always show cursor when not focused or in special modes
         if !focused
             || self
                 .terminal
@@ -813,17 +820,16 @@ impl TerminalView {
             return;
         };
 
-        if clipboard.entries().iter().any(|entry| match entry {
-            ClipboardEntry::Image(image) => !image.bytes.is_empty(),
-            _ => false,
-        }) {
-            self.forward_ctrl_v(cx);
-            return;
-        }
-
-        if let Some(text) = clipboard.text() {
-            self.terminal
-                .update(cx, |terminal, _cx| terminal.paste(&text));
+        match clipboard.entries().first() {
+            Some(ClipboardEntry::Image(image)) if !image.bytes.is_empty() => {
+                self.forward_ctrl_v(cx);
+            }
+            _ => {
+                if let Some(text) = clipboard.text() {
+                    self.terminal
+                        .update(cx, |terminal, _cx| terminal.paste(&text));
+                }
+            }
         }
     }
 
@@ -1351,9 +1357,16 @@ impl Item for TerminalView {
             None => (IconName::Terminal, Color::Muted, None),
         };
 
+        let self_handle = self.self_handle.clone();
         h_flex()
             .gap_1()
             .group("term-tab-icon")
+            .track_focus(&self.focus_handle)
+            .on_action(move |action: &RenameTerminal, window, cx| {
+                self_handle
+                    .update(cx, |this, cx| this.rename_terminal(action, window, cx))
+                    .ok();
+            })
             .child(
                 h_flex()
                     .group("term-tab-icon")
@@ -1676,11 +1689,11 @@ impl Item for TerminalView {
                 log::debug!(
                     "Updating workspace id for the terminal, old: {old_id:?}, new: {new_id:?}",
                 );
-                cx.background_spawn(TERMINAL_DB.update_workspace_id(
-                    new_id,
-                    old_id,
-                    cx.entity_id().as_u64(),
-                ))
+                let db = TerminalDb::global(cx);
+                let entity_id = cx.entity_id().as_u64();
+                cx.background_spawn(async move {
+                    db.update_workspace_id(new_id, old_id, entity_id).await
+                })
                 .detach();
             }
             self.workspace_id = workspace.database_id();
@@ -1703,7 +1716,8 @@ impl SerializableItem for TerminalView {
         _window: &mut Window,
         cx: &mut App,
     ) -> Task<anyhow::Result<()>> {
-        delete_unloaded_items(alive_items, workspace_id, "terminals", &TERMINAL_DB, cx)
+        let db = TerminalDb::global(cx);
+        delete_unloaded_items(alive_items, workspace_id, "terminals", &db, cx)
     }
 
     fn serialize(
@@ -1728,14 +1742,13 @@ impl SerializableItem for TerminalView {
         let custom_title = self.custom_title.clone();
         self.needs_serialize = false;
 
+        let db = TerminalDb::global(cx);
         Some(cx.background_spawn(async move {
             if let Some(cwd) = cwd {
-                TERMINAL_DB
-                    .save_working_directory(item_id, workspace_id, cwd)
+                db.save_working_directory(item_id, workspace_id, cwd)
                     .await?;
             }
-            TERMINAL_DB
-                .save_custom_title(item_id, workspace_id, custom_title)
+            db.save_custom_title(item_id, workspace_id, custom_title)
                 .await?;
             Ok(())
         }))
@@ -1756,7 +1769,8 @@ impl SerializableItem for TerminalView {
         window.spawn(cx, async move |cx| {
             let (cwd, custom_title) = cx
                 .update(|_window, cx| {
-                    let from_db = TERMINAL_DB
+                    let db = TerminalDb::global(cx);
+                    let from_db = db
                         .get_working_directory(item_id, workspace_id)
                         .log_err()
                         .flatten();
@@ -1770,7 +1784,7 @@ impl SerializableItem for TerminalView {
                             .upgrade()
                             .and_then(|workspace| default_working_directory(workspace.read(cx), cx))
                     };
-                    let custom_title = TERMINAL_DB
+                    let custom_title = db
                         .get_custom_title(item_id, workspace_id)
                         .log_err()
                         .flatten()
@@ -2208,7 +2222,7 @@ mod tests {
     ) {
         let params = cx.update(AppState::test);
         cx.update(|cx| {
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
         });
 
         let project = Project::test(params.fs.clone(), [], cx).await;

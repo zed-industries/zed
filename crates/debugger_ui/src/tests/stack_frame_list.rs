@@ -9,7 +9,7 @@ use dap::{
     StackFrame,
     requests::{Scopes, StackTrace, Threads},
 };
-use db::kvp::KEY_VALUE_STORE;
+use db::kvp::KeyValueStore;
 use editor::{Editor, ToPoint as _};
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use project::{FakeFs, Project};
@@ -1211,15 +1211,16 @@ async fn test_stack_frame_filter_persistence(
     cx.run_until_parked();
 
     let workspace_id = workspace
-        .update(cx, |workspace, _window, cx| {
-            workspace.active_workspace_database_id(cx)
-        })
+        .update(cx, |workspace, _window, cx| workspace.database_id(cx))
         .ok()
         .flatten()
         .expect("workspace id has to be some for this test to work properly");
 
     let key = stack_frame_filter_key(&adapter_name, workspace_id);
-    let stored_value = KEY_VALUE_STORE.read_kvp(&key).unwrap();
+    let stored_value = cx
+        .update(|_, cx| KeyValueStore::global(cx))
+        .read_kvp(&key)
+        .unwrap();
     assert_eq!(
         stored_value,
         Some(StackFrameFilter::OnlyUserFrames.into()),

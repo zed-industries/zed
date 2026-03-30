@@ -115,7 +115,7 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
             "xlsx",
         ],
     ),
-    ("elixir", &["eex", "ex", "exs", "heex"]),
+    ("elixir", &["eex", "ex", "exs", "heex", "leex", "neex"]),
     ("elm", &["elm"]),
     (
         "erlang",
@@ -416,7 +416,7 @@ fn icon_keys_by_association(
 }
 
 /// The name of the default icon theme.
-pub(crate) const DEFAULT_ICON_THEME_NAME: &str = "Zed (Default)";
+pub const DEFAULT_ICON_THEME_NAME: &str = "Zed (Default)";
 
 static DEFAULT_ICON_THEME: LazyLock<Arc<IconTheme>> = LazyLock::new(|| {
     Arc::new(IconTheme {

@@ -15,10 +15,10 @@ use gpui::{
 };
 use log::LevelFilter;
 use reqwest_client::ReqwestClient;
-use settings::{KeymapFile, Settings};
+use settings::{KeymapFile, Settings as _};
 use simplelog::SimpleLogger;
 use strum::IntoEnumIterator;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::prelude::*;
 
 use crate::app_menus::app_menus;
@@ -76,13 +76,13 @@ fn main() {
             cx.set_http_client(Arc::new(http_client));
 
             settings::init(cx);
-            theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
+            theme_settings::init(theme::LoadThemes::All(Box::new(Assets)), cx);
 
             let selector = story_selector;
 
             let mut theme_settings = ThemeSettings::get_global(cx).clone();
             theme_settings.theme =
-                theme::ThemeSelection::Static(settings::ThemeName(theme_name.into()));
+                theme_settings::ThemeSelection::Static(settings::ThemeName(theme_name.into()));
             ThemeSettings::override_global(theme_settings, cx);
 
             editor::init(cx);
@@ -98,7 +98,7 @@ fn main() {
                     ..Default::default()
                 },
                 move |window, cx| {
-                    theme::setup_ui_font(window, cx);
+                    theme_settings::setup_ui_font(window, cx);
 
                     cx.new(|cx| StoryWrapper::new(selector.story(window, cx)))
                 },

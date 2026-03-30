@@ -33,7 +33,7 @@ use std::{
     sync::{Arc, LazyLock, RwLock},
     time::Duration,
 };
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{
     Banner, ContextMenu, Divider, DropdownMenu, DropdownStyle, IconButtonShape, KeyBinding,
     KeybindingHint, PopoverMenu, Scrollbars, Switch, Tooltip, TreeViewItem, WithScrollbar,
@@ -392,29 +392,22 @@ pub fn init(cx: &mut App) {
     let queue = ProjectSettingsUpdateQueue::new(cx);
     cx.set_global(queue);
 
+    cx.on_action(|_: &OpenSettings, cx| {
+        open_settings_editor(None, None, None, cx);
+    });
+
     cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
         workspace
-            .register_action(
-                |workspace, OpenSettingsAt { path }: &OpenSettingsAt, window, cx| {
-                    let window_handle = window
-                        .window_handle()
-                        .downcast::<MultiWorkspace>()
-                        .expect("Workspaces are root Windows");
-                    open_settings_editor(workspace, Some(&path), None, window_handle, cx);
-                },
-            )
-            .register_action(|workspace, _: &OpenSettings, window, cx| {
-                let window_handle = window
-                    .window_handle()
-                    .downcast::<MultiWorkspace>()
-                    .expect("Workspaces are root Windows");
-                open_settings_editor(workspace, None, None, window_handle, cx);
+            .register_action(|_, OpenSettingsAt { path }: &OpenSettingsAt, window, cx| {
+                let window_handle = window.window_handle().downcast::<MultiWorkspace>();
+                open_settings_editor(Some(&path), None, window_handle, cx);
+            })
+            .register_action(|_, _: &OpenSettings, window, cx| {
+                let window_handle = window.window_handle().downcast::<MultiWorkspace>();
+                open_settings_editor(None, None, window_handle, cx);
             })
             .register_action(|workspace, _: &OpenProjectSettings, window, cx| {
-                let window_handle = window
-                    .window_handle()
-                    .downcast::<MultiWorkspace>()
-                    .expect("Workspaces are root Windows");
+                let window_handle = window.window_handle().downcast::<MultiWorkspace>();
                 let target_worktree_id = workspace
                     .project()
                     .read(cx)
@@ -425,7 +418,7 @@ pub fn init(cx: &mut App) {
                             .is_dir()
                             .then_some(tree.read(cx).id())
                     });
-                open_settings_editor(workspace, None, target_worktree_id, window_handle, cx);
+                open_settings_editor(None, target_worktree_id, window_handle, cx);
             });
     })
     .detach();
@@ -552,6 +545,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::EditPredictionsMode>(render_dropdown)
         .add_basic_renderer::<settings::RelativeLineNumbers>(render_dropdown)
         .add_basic_renderer::<settings::WindowDecorations>(render_dropdown)
+        .add_basic_renderer::<settings::WindowButtonLayoutContentDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::FontSize>(render_editable_number_field)
         .add_basic_renderer::<settings::OllamaModelName>(render_ollama_model_picker)
         .add_basic_renderer::<settings::SemanticTokens>(render_dropdown)
@@ -564,10 +558,9 @@ fn init_renderers(cx: &mut App) {
 }
 
 pub fn open_settings_editor(
-    _workspace: &mut Workspace,
     path: Option<&str>,
     target_worktree_id: Option<WorktreeId>,
-    workspace_handle: WindowHandle<MultiWorkspace>,
+    workspace_handle: Option<WindowHandle<MultiWorkspace>>,
     cx: &mut App,
 ) {
     telemetry::event!("Settings Viewed");
@@ -624,7 +617,8 @@ pub fn open_settings_editor(
     if let Some(existing_window) = existing_window {
         existing_window
             .update(cx, |settings_window, window, cx| {
-                settings_window.original_window = Some(workspace_handle);
+                settings_window.original_window = workspace_handle;
+
                 window.activate_window();
                 if let Some(path) = path {
                     open_path(path, settings_window, window, cx);
@@ -645,7 +639,9 @@ pub fn open_settings_editor(
     // We have to defer this to get the workspace off the stack.
     let path = path.map(ToOwned::to_owned);
     cx.defer(move |cx| {
-        let current_rem_size: f32 = theme::ThemeSettings::get_global(cx).ui_font_size(cx).into();
+        let current_rem_size: f32 = theme_settings::ThemeSettings::get_global(cx)
+            .ui_font_size(cx)
+            .into();
 
         let default_bounds = DEFAULT_ADDITIONAL_WINDOW_SIZE;
         let default_rem_size = 16.0;
@@ -685,7 +681,7 @@ pub fn open_settings_editor(
             },
             |window, cx| {
                 let settings_window =
-                    cx.new(|cx| SettingsWindow::new(Some(workspace_handle), window, cx));
+                    cx.new(|cx| SettingsWindow::new(workspace_handle, window, cx));
                 settings_window.update(cx, |settings_window, cx| {
                     if let Some(path) = path {
                         open_path(&path, settings_window, window, cx);
@@ -1398,17 +1394,14 @@ impl PartialEq for ActionLink {
 }
 
 fn all_language_names(cx: &App) -> Vec<SharedString> {
-    workspace::AppState::global(cx)
-        .upgrade()
-        .map_or(vec![], |state| {
-            state
-                .languages
-                .language_names()
-                .into_iter()
-                .filter(|name| name.as_ref() != "Zed Keybind Context")
-                .map(Into::into)
-                .collect()
-        })
+    let state = workspace::AppState::global(cx);
+    state
+        .languages
+        .language_names()
+        .into_iter()
+        .filter(|name| name.as_ref() != "Zed Keybind Context")
+        .map(Into::into)
+        .collect()
 }
 
 #[allow(unused)]
@@ -1522,7 +1515,7 @@ impl SettingsWindow {
         })
         .detach();
 
-        cx.on_window_closed(|cx| {
+        cx.on_window_closed(|cx, _window_id| {
             if let Some(existing_window) = cx
                 .windows()
                 .into_iter()
@@ -1539,29 +1532,26 @@ impl SettingsWindow {
         })
         .detach();
 
-        if let Some(app_state) = AppState::global(cx).upgrade() {
-            let workspaces: Vec<Entity<Workspace>> = app_state
-                .workspace_store
-                .read(cx)
-                .workspaces()
-                .filter_map(|weak| weak.upgrade())
-                .collect();
+        let app_state = AppState::global(cx);
+        let workspaces: Vec<Entity<Workspace>> = app_state
+            .workspace_store
+            .read(cx)
+            .workspaces()
+            .filter_map(|weak| weak.upgrade())
+            .collect();
 
-            for workspace in workspaces {
-                let project = workspace.read(cx).project().clone();
-                cx.observe_release_in(&project, window, |this, _, window, cx| {
-                    this.fetch_files(window, cx)
-                })
+        for workspace in workspaces {
+            let project = workspace.read(cx).project().clone();
+            cx.observe_release_in(&project, window, |this, _, window, cx| {
+                this.fetch_files(window, cx)
+            })
+            .detach();
+            cx.subscribe_in(&project, window, Self::handle_project_event)
                 .detach();
-                cx.subscribe_in(&project, window, Self::handle_project_event)
-                    .detach();
-                cx.observe_release_in(&workspace, window, |this, _, window, cx| {
-                    this.fetch_files(window, cx)
-                })
-                .detach();
-            }
-        } else {
-            log::error!("App state doesn't exist when creating a new settings window");
+            cx.observe_release_in(&workspace, window, |this, _, window, cx| {
+                this.fetch_files(window, cx)
+            })
+            .detach();
         }
 
         let this_weak = cx.weak_entity();
@@ -2191,37 +2181,39 @@ impl SettingsWindow {
 
         ui_files.reverse();
 
-        let mut missing_worktrees = Vec::new();
+        if self.original_window.is_some() {
+            let mut missing_worktrees = Vec::new();
 
-        for worktree in all_projects(self.original_window.as_ref(), cx)
-            .flat_map(|project| project.read(cx).visible_worktrees(cx))
-            .filter(|tree| !self.worktree_root_dirs.contains_key(&tree.read(cx).id()))
-        {
-            let worktree = worktree.read(cx);
-            let worktree_id = worktree.id();
-            let Some(directory_name) = worktree.root_dir().and_then(|file| {
-                file.file_name()
-                    .map(|os_string| os_string.to_string_lossy().to_string())
-            }) else {
-                continue;
-            };
+            for worktree in all_projects(self.original_window.as_ref(), cx)
+                .flat_map(|project| project.read(cx).visible_worktrees(cx))
+                .filter(|tree| !self.worktree_root_dirs.contains_key(&tree.read(cx).id()))
+            {
+                let worktree = worktree.read(cx);
+                let worktree_id = worktree.id();
+                let Some(directory_name) = worktree.root_dir().and_then(|file| {
+                    file.file_name()
+                        .map(|os_string| os_string.to_string_lossy().to_string())
+                }) else {
+                    continue;
+                };
 
-            missing_worktrees.push((worktree_id, directory_name.clone()));
-            let path = RelPath::empty().to_owned().into_arc();
+                missing_worktrees.push((worktree_id, directory_name.clone()));
+                let path = RelPath::empty().to_owned().into_arc();
 
-            let settings_ui_file = SettingsUiFile::Project((worktree_id, path));
+                let settings_ui_file = SettingsUiFile::Project((worktree_id, path));
 
-            let focus_handle = prev_files
-                .iter()
-                .find_map(|(prev_file, handle)| {
-                    (prev_file == &settings_ui_file).then(|| handle.clone())
-                })
-                .unwrap_or_else(|| cx.focus_handle().tab_index(0).tab_stop(true));
+                let focus_handle = prev_files
+                    .iter()
+                    .find_map(|(prev_file, handle)| {
+                        (prev_file == &settings_ui_file).then(|| handle.clone())
+                    })
+                    .unwrap_or_else(|| cx.focus_handle().tab_index(0).tab_stop(true));
 
-            ui_files.push((settings_ui_file, focus_handle));
+                ui_files.push((settings_ui_file, focus_handle));
+            }
+
+            self.worktree_root_dirs.extend(missing_worktrees);
         }
-
-        self.worktree_root_dirs.extend(missing_worktrees);
 
         self.files = ui_files;
         let current_file_still_exists = self
@@ -2883,7 +2875,7 @@ impl SettingsWindow {
     }
 
     fn render_sub_page_breadcrumbs(&self) -> impl IntoElement {
-        h_flex().gap_1().children(
+        h_flex().min_w_0().gap_1().overflow_x_hidden().children(
             itertools::intersperse(
                 std::iter::once(self.current_page().title.into()).chain(
                     self.sub_page_stack
@@ -3113,9 +3105,11 @@ impl SettingsWindow {
         if let Some(current_sub_page) = self.sub_page_stack.last() {
             page_header = h_flex()
                 .w_full()
+                .min_w_0()
                 .justify_between()
                 .child(
                     h_flex()
+                        .min_w_0()
                         .ml_neg_1p5()
                         .gap_1()
                         .child(
@@ -3130,17 +3124,19 @@ impl SettingsWindow {
                 )
                 .when(current_sub_page.link.in_json, |this| {
                     this.child(
-                        Button::new("open-in-settings-file", "Edit in settings.json")
-                            .tab_index(0_isize)
-                            .style(ButtonStyle::OutlinedGhost)
-                            .tooltip(Tooltip::for_action_title_in(
-                                "Edit in settings.json",
-                                &OpenCurrentFile,
-                                &self.focus_handle,
-                            ))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.open_current_settings_file(window, cx);
-                            })),
+                        div().flex_shrink_0().child(
+                            Button::new("open-in-settings-file", "Edit in settings.json")
+                                .tab_index(0_isize)
+                                .style(ButtonStyle::OutlinedGhost)
+                                .tooltip(Tooltip::for_action_title_in(
+                                    "Edit in settings.json",
+                                    &OpenCurrentFile,
+                                    &self.focus_handle,
+                                ))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.open_current_settings_file(window, cx);
+                                })),
+                        ),
                     )
                 })
                 .into_any_element();
@@ -3310,6 +3306,7 @@ impl SettingsWindow {
             .pt_6()
             .gap_4()
             .flex_1()
+            .min_w_0()
             .bg(cx.theme().colors().editor_background)
             .child(
                 v_flex()
@@ -3359,9 +3356,7 @@ impl SettingsWindow {
             }
             SettingsUiFile::Project((worktree_id, path)) => {
                 let settings_path = path.join(paths::local_settings_file_relative_path());
-                let Some(app_state) = workspace::AppState::global(cx).upgrade() else {
-                    return;
-                };
+                let app_state = workspace::AppState::global(cx);
 
                 let Some((workspace_window, worktree, corresponding_workspace)) = app_state
                     .workspace_store
@@ -3649,7 +3644,7 @@ impl SettingsWindow {
 
 impl Render for SettingsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let ui_font = theme::setup_ui_font(window, cx);
+        let ui_font = theme_settings::setup_ui_font(window, cx);
 
         client_side_decorations(
             v_flex()
@@ -3742,31 +3737,26 @@ fn all_projects(
     cx: &App,
 ) -> impl Iterator<Item = Entity<Project>> {
     let mut seen_project_ids = std::collections::HashSet::new();
-    workspace::AppState::global(cx)
-        .upgrade()
-        .map(|app_state| {
-            app_state
-                .workspace_store
-                .read(cx)
-                .workspaces()
-                .filter_map(|weak| weak.upgrade())
-                .map(|workspace: Entity<Workspace>| workspace.read(cx).project().clone())
-                .chain(
-                    window
-                        .and_then(|handle| handle.read(cx).ok())
-                        .into_iter()
-                        .flat_map(|multi_workspace| {
-                            multi_workspace
-                                .workspaces()
-                                .iter()
-                                .map(|workspace| workspace.read(cx).project().clone())
-                                .collect::<Vec<_>>()
-                        }),
-                )
-                .filter(move |project| seen_project_ids.insert(project.entity_id()))
-        })
-        .into_iter()
-        .flatten()
+    let app_state = workspace::AppState::global(cx);
+    app_state
+        .workspace_store
+        .read(cx)
+        .workspaces()
+        .filter_map(|weak| weak.upgrade())
+        .map(|workspace: Entity<Workspace>| workspace.read(cx).project().clone())
+        .chain(
+            window
+                .and_then(|handle| handle.read(cx).ok())
+                .into_iter()
+                .flat_map(|multi_workspace| {
+                    multi_workspace
+                        .workspaces()
+                        .iter()
+                        .map(|workspace| workspace.read(cx).project().clone())
+                        .collect::<Vec<_>>()
+                }),
+        )
+        .filter(move |project| seen_project_ids.insert(project.entity_id()))
 }
 
 fn open_user_settings_in_workspace(
@@ -4409,7 +4399,7 @@ pub mod test {
 
     pub fn register_settings(cx: &mut App) {
         settings::init(cx);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
         editor::init(cx);
         menu::init();
     }
@@ -4720,7 +4710,7 @@ pub mod test {
 
         let app_state = cx.update(|cx| {
             let app_state = AppState::test(cx);
-            AppState::set_global(Arc::downgrade(&app_state), cx);
+            AppState::set_global(app_state.clone(), cx);
             app_state
         });
 
@@ -4894,7 +4884,7 @@ pub mod test {
 
         let app_state = cx.update(|cx| {
             let app_state = AppState::test(cx);
-            AppState::set_global(Arc::downgrade(&app_state), cx);
+            AppState::set_global(app_state.clone(), cx);
             app_state
         });
 
@@ -5074,7 +5064,7 @@ mod project_settings_update_tests {
         cx.update(|cx| {
             let store = settings::SettingsStore::test(cx);
             cx.set_global(store);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
             menu::init();
             let queue = ProjectSettingsUpdateQueue::new(cx);

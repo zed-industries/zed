@@ -15,6 +15,7 @@ pub enum Event {
     CursorTheme(String),
     #[cfg_attr(feature = "x11", allow(dead_code))]
     CursorSize(u32),
+    ButtonLayout(String),
 }
 
 pub struct XDPEventSource {
@@ -51,6 +52,13 @@ impl XDPEventSource {
                     sender.send(Event::CursorSize(initial_size as u32))?;
                 }
 
+                if let Ok(initial_layout) = settings
+                    .read::<String>("org.gnome.desktop.wm.preferences", "button-layout")
+                    .await
+                {
+                    sender.send(Event::ButtonLayout(initial_layout))?;
+                }
+
                 if let Ok(mut cursor_theme_changed) = settings
                     .receive_setting_changed_with_args(
                         "org.gnome.desktop.interface",
@@ -83,6 +91,25 @@ impl XDPEventSource {
                             while let Some(size) = cursor_size_changed.next().await {
                                 let size = size?;
                                 sender.send(Event::CursorSize(size as u32))?;
+                            }
+                            anyhow::Ok(())
+                        })
+                        .detach();
+                }
+
+                if let Ok(mut button_layout_changed) = settings
+                    .receive_setting_changed_with_args(
+                        "org.gnome.desktop.wm.preferences",
+                        "button-layout",
+                    )
+                    .await
+                {
+                    let sender = sender.clone();
+                    background
+                        .spawn(async move {
+                            while let Some(layout) = button_layout_changed.next().await {
+                                let layout = layout?;
+                                sender.send(Event::ButtonLayout(layout))?;
                             }
                             anyhow::Ok(())
                         })

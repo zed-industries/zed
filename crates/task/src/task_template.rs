@@ -72,6 +72,9 @@ pub struct TaskTemplate {
     /// Whether to show the command line in the task output.
     #[serde(default = "default_true")]
     pub show_command: bool,
+    /// Which edited buffers to save before running the task.
+    #[serde(default)]
+    pub save: SaveStrategy,
 }
 
 #[derive(Deserialize, Eq, PartialEq, Clone, Debug)]
@@ -107,6 +110,19 @@ pub enum HideStrategy {
     Always,
     /// Hide the terminal tab on task success only, otherwise behaves similar to `Always`.
     OnSuccess,
+}
+
+/// Which edited buffers to save before running a task.
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SaveStrategy {
+    #[default]
+    /// Save all edited buffers.
+    All,
+    /// Save the current buffer.
+    Current,
+    /// Don't save any buffers.
+    None,
 }
 
 /// A group of Tasks defined in a JSON file.
@@ -271,6 +287,7 @@ impl TaskTemplate {
                 show_summary: self.show_summary,
                 show_command: self.show_command,
                 show_rerun: true,
+                save: self.save,
             },
         })
     }
@@ -1072,7 +1089,6 @@ mod tests {
             command,
             ..TaskTemplate::default()
         };
-
         assert!(task.unknown_variables().is_empty());
     }
 }

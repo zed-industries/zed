@@ -3,9 +3,9 @@ use collections::{HashMap, HashSet};
 use editor::{CompletionProvider, SelectionEffects};
 use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle, actions::Tab};
 use gpui::{
-    App, Bounds, DEFAULT_ADDITIONAL_WINDOW_SIZE, Entity, EventEmitter, Focusable, MouseButton,
-    PromptLevel, Subscription, Task, TextStyle, Tiling, TitlebarOptions, WindowBounds,
-    WindowHandle, WindowOptions, actions, point, size, transparent_black,
+    App, Bounds, DEFAULT_ADDITIONAL_WINDOW_SIZE, Entity, EventEmitter, Focusable, PromptLevel,
+    Subscription, Task, TextStyle, Tiling, TitlebarOptions, WindowBounds, WindowHandle,
+    WindowOptions, actions, point, size, transparent_black,
 };
 use language::{Buffer, LanguageRegistry, language_settings::SoftWrap};
 use language_model::{
@@ -15,12 +15,12 @@ use picker::{Picker, PickerDelegate};
 use platform_title_bar::PlatformTitleBar;
 use release_channel::ReleaseChannel;
 use rope::Rope;
-use settings::Settings;
+use settings::{ActionSequence, Settings};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{Divider, ListItem, ListItemSpacing, ListSubHeader, Tooltip, prelude::*};
 use ui_input::ErasedEditor;
 use util::{ResultExt, TryFutureExt};
@@ -133,7 +133,6 @@ pub fn open_rules_library(
                     window_decorations: Some(window_decorations),
                     window_min_size: Some(DEFAULT_ADDITIONAL_WINDOW_SIZE),
                     kind: gpui::WindowKind::Floating,
-                    is_movable: !cfg!(target_os = "macos"),
                     ..Default::default()
                 },
                 |window, cx| {
@@ -504,7 +503,11 @@ impl RulesLibrary {
         });
 
         Self {
-            title_bar: Some(cx.new(|cx| PlatformTitleBar::new("rules-library-title-bar", cx))),
+            title_bar: if !cfg!(target_os = "macos") {
+                Some(cx.new(|cx| PlatformTitleBar::new("rules-library-title-bar", cx)))
+            } else {
+                None
+            },
             store,
             language_registry,
             rule_editors: HashMap::default(),
@@ -1126,44 +1129,30 @@ impl RulesLibrary {
         v_flex()
             .id("rule-list")
             .capture_action(cx.listener(Self::focus_active_rule))
+            .px_1p5()
             .h_full()
             .w_64()
             .overflow_x_hidden()
             .bg(cx.theme().colors().panel_background)
-            .when(!cfg!(target_os = "macos"), |this| this.px_1p5())
             .map(|this| {
                 if cfg!(target_os = "macos") {
-                    let Some(title_bar) = self.title_bar.as_ref() else {
-                        return this;
-                    };
-                    let button_padding = DynamicSpacing::Base08.rems(cx);
-                    let panel_background = cx.theme().colors().panel_background;
-                    title_bar.update(cx, |title_bar, _cx| {
-                        title_bar.set_background_color(Some(panel_background));
-                        title_bar.set_children(Some(
-                            h_flex()
-                                .w_full()
-                                .pr(button_padding)
-                                .justify_end()
-                                .child(
-                                    div()
-                                        .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                                            cx.stop_propagation();
-                                        })
-                                        .child(
-                                            IconButton::new("new-rule", IconName::Plus)
-                                                .tooltip(move |_window, cx| {
-                                                    Tooltip::for_action("New Rule", &NewRule, cx)
-                                                })
-                                                .on_click(|_, window, cx| {
-                                                    window.dispatch_action(Box::new(NewRule), cx);
-                                                }),
-                                        ),
-                                )
-                                .into_any_element(),
-                        ));
-                    });
-                    this.child(title_bar.clone())
+                    this.child(
+                        h_flex()
+                            .p(DynamicSpacing::Base04.rems(cx))
+                            .h_9()
+                            .w_full()
+                            .flex_none()
+                            .justify_end()
+                            .child(
+                                IconButton::new("new-rule", IconName::Plus)
+                                    .tooltip(move |_window, cx| {
+                                        Tooltip::for_action("New Rule", &NewRule, cx)
+                                    })
+                                    .on_click(|_, window, cx| {
+                                        window.dispatch_action(Box::new(NewRule), cx);
+                                    }),
+                            ),
+                    )
                 } else {
                     this.child(
                         h_flex().p_1().w_full().child(
@@ -1182,12 +1171,7 @@ impl RulesLibrary {
                     )
                 }
             })
-            .child(
-                div()
-                    .flex_grow()
-                    .when(cfg!(target_os = "macos"), |this| this.px_1p5())
-                    .child(self.picker.clone()),
-            )
+            .child(div().flex_grow().child(self.picker.clone()))
     }
 
     fn render_active_rule_editor(
@@ -1408,13 +1392,20 @@ impl RulesLibrary {
 
 impl Render for RulesLibrary {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let ui_font = theme::setup_ui_font(window, cx);
+        let ui_font = theme_settings::setup_ui_font(window, cx);
         let theme = cx.theme().clone();
 
         client_side_decorations(
             v_flex()
                 .id("rules-library")
                 .key_context("RulesLibrary")
+                .on_action(
+                    |action_sequence: &ActionSequence, window: &mut Window, cx: &mut App| {
+                        for action in &action_sequence.0 {
+                            window.dispatch_action(action.boxed_clone(), cx);
+                        }
+                    },
+                )
                 .on_action(cx.listener(|this, &NewRule, window, cx| this.new_rule(window, cx)))
                 .on_action(
                     cx.listener(|this, &DeleteRule, window, cx| {
@@ -1434,9 +1425,7 @@ impl Render for RulesLibrary {
                 .overflow_hidden()
                 .font(ui_font)
                 .text_color(theme.colors().text)
-                .when(!cfg!(target_os = "macos"), |this| {
-                    this.children(self.title_bar.clone())
-                })
+                .children(self.title_bar.clone())
                 .bg(theme.colors().background)
                 .child(
                     h_flex()
