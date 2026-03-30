@@ -1936,6 +1936,7 @@ impl CollabPanel {
             store.toggle_favorite_channel(channel_id, cx);
         });
         self.persist_favorites(cx);
+        self.update_entries(true, cx);
 
         if was_selected_favorite && self.selection.is_none() {
             self.selection = self.entries.iter().position(|entry| {
