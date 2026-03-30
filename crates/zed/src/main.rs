@@ -52,6 +52,7 @@ use std::{
     time::Instant,
 };
 use theme::{ActiveTheme, GlobalTheme, ThemeRegistry};
+use theme_settings::load_user_theme;
 use util::{ResultExt, TryFutureExt, maybe};
 use uuid::Uuid;
 use workspace::{
@@ -440,10 +441,8 @@ fn main() {
         }
     });
     app.on_reopen(move |cx| {
-        if let Some(app_state) = AppState::try_global(cx).and_then(|app_state| app_state.upgrade())
-        {
+        if let Some(app_state) = AppState::try_global(cx) {
             cx.spawn({
-                let app_state = app_state;
                 async move |cx| {
                     if let Err(e) = restore_or_create_workspace(app_state, cx).await {
                         fail_to_open_window_async(e, cx)
@@ -625,7 +624,7 @@ fn main() {
             node_runtime,
             session: app_session,
         });
-        AppState::set_global(Arc::downgrade(&app_state), cx);
+        AppState::set_global(app_state.clone(), cx);
 
         auto_update::init(client.clone(), cx);
         dap_adapters::init(cx);
@@ -639,7 +638,7 @@ fn main() {
             cx,
         );
 
-        theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
+        theme_settings::init(theme::LoadThemes::All(Box::new(Assets)), cx);
         eager_load_active_theme_and_icon_theme(fs.clone(), cx);
         theme_extension::init(
             extension_host_proxy,
@@ -811,6 +810,7 @@ fn main() {
         let fs = app_state.fs.clone();
         load_user_themes_in_background(fs.clone(), cx);
         watch_themes(fs.clone(), cx);
+        #[cfg(debug_assertions)]
         watch_languages(fs.clone(), app_state.languages.clone(), cx);
 
         let menus = app_menus(cx);
@@ -1781,8 +1781,24 @@ fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut App) {
                     })?;
                 }
             }
-            theme_registry.load_user_themes(themes_dir, fs).await?;
-            cx.update(GlobalTheme::reload_theme);
+
+            let mut theme_paths = fs
+                .read_dir(themes_dir)
+                .await
+                .with_context(|| format!("reading themes from {themes_dir:?}"))?;
+
+            while let Some(theme_path) = theme_paths.next().await {
+                let Some(theme_path) = theme_path.log_err() else {
+                    continue;
+                };
+                let Some(bytes) = fs.load_bytes(&theme_path).await.log_err() else {
+                    continue;
+                };
+
+                load_user_theme(&theme_registry, &bytes).log_err();
+            }
+
+            cx.update(theme_settings::reload_theme);
             anyhow::Ok(())
         }
     })
@@ -1801,13 +1817,10 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut App) {
             for event in paths {
                 if fs.metadata(&event.path).await.ok().flatten().is_some() {
                     let theme_registry = cx.update(|cx| ThemeRegistry::global(cx));
-                    if theme_registry
-                        .load_user_theme(&event.path, fs.clone())
-                        .await
-                        .log_err()
-                        .is_some()
+                    if let Some(bytes) = fs.load_bytes(&event.path).await.log_err()
+                        && load_user_theme(&theme_registry, &bytes).log_err().is_some()
                     {
-                        cx.update(GlobalTheme::reload_theme);
+                        cx.update(theme_settings::reload_theme);
                     }
                 }
             }
@@ -1821,7 +1834,7 @@ fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>, cx: &m
     use std::time::Duration;
 
     cx.background_spawn(async move {
-        let languages_src = Path::new("crates/languages/src");
+        let languages_src = Path::new("crates/grammars/src");
         let Some(languages_src) = fs.canonicalize(languages_src).await.log_err() else {
             return;
         };
@@ -1850,9 +1863,6 @@ fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>, cx: &m
     })
     .detach();
 }
-
-#[cfg(not(debug_assertions))]
-fn watch_languages(_fs: Arc<dyn fs::Fs>, _languages: Arc<LanguageRegistry>, _cx: &mut App) {}
 
 fn dump_all_gpui_actions() {
     #[derive(Debug, serde::Serialize)]

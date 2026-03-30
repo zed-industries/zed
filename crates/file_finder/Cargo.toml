@@ -47,3 +47,4 @@ theme = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
 remote_connection = { workspace = true, features = ["test-support"] }
+theme_settings = { workspace = true, features = ["test-support"] }

@@ -23,13 +23,14 @@ use language::{
     IndentGuideSettings, IndentSize, Language, LanguageScope, OffsetRangeExt, OffsetUtf16, Outline,
     OutlineItem, Point, PointUtf16, Selection, TextDimension, TextObject, ToOffset as _,
     ToPoint as _, TransactionId, TreeSitterOptions, Unclipped,
-    language_settings::{LanguageSettings, language_settings},
+    language_settings::{AllLanguageSettings, LanguageSettings},
 };
 
 #[cfg(any(test, feature = "test-support"))]
 use gpui::AppContext as _;
 
 use rope::DimensionPair;
+use settings::Settings;
 use smallvec::SmallVec;
 use smol::future::yield_now;
 use std::{
@@ -54,6 +55,7 @@ use text::{
     subscription::{Subscription, Topic},
 };
 use theme::SyntaxTheme;
+use unicode_segmentation::UnicodeSegmentation;
 use util::post_inc;
 use ztracing::instrument;
 
@@ -1232,8 +1234,15 @@ impl MultiBuffer {
         }
     }
 
-    pub fn set_group_interval(&mut self, group_interval: Duration) {
+    pub fn set_group_interval(&mut self, group_interval: Duration, cx: &mut Context<Self>) {
         self.history.set_group_interval(group_interval);
+        if self.singleton {
+            for BufferState { buffer, .. } in self.buffers.values() {
+                buffer.update(cx, |buffer, _| {
+                    buffer.set_group_interval(group_interval);
+                });
+            }
+        }
     }
 
     pub fn with_title(mut self, title: String) -> Self {
@@ -2576,10 +2585,7 @@ impl MultiBuffer {
             .map(|excerpt| excerpt.buffer.remote_id());
         buffer_id
             .and_then(|buffer_id| self.buffer(buffer_id))
-            .map(|buffer| {
-                let buffer = buffer.read(cx);
-                language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
-            })
+            .map(|buffer| LanguageSettings::for_buffer(&buffer.read(cx), cx))
             .unwrap_or_else(move || self.language_settings_at(MultiBufferOffset::default(), cx))
     }
 
@@ -2588,14 +2594,11 @@ impl MultiBuffer {
         point: T,
         cx: &'a App,
     ) -> Cow<'a, LanguageSettings> {
-        let mut language = None;
-        let mut file = None;
         if let Some((buffer, offset)) = self.point_to_buffer_offset(point, cx) {
-            let buffer = buffer.read(cx);
-            language = buffer.language_at(offset);
-            file = buffer.file();
+            LanguageSettings::for_buffer_at(buffer.read(cx), offset, cx)
+        } else {
+            Cow::Borrowed(&AllLanguageSettings::get_global(cx).defaults)
         }
-        language_settings(language.map(|l| l.name()), file, cx)
     }
 
     pub fn for_each_buffer(&self, f: &mut dyn FnMut(&Entity<Buffer>)) {
@@ -6603,8 +6606,7 @@ impl MultiBufferSnapshot {
         let end_row = MultiBufferRow(range.end.row);
 
         let mut row_indents = self.line_indents(start_row, |buffer| {
-            let settings =
-                language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx);
+            let settings = LanguageSettings::for_buffer_snapshot(buffer, None, cx);
             settings.indent_guides.enabled || ignore_disabled_for_language
         });
 
@@ -6628,7 +6630,7 @@ impl MultiBufferSnapshot {
                 .get_or_insert_with(|| {
                     (
                         buffer.remote_id(),
-                        language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx),
+                        LanguageSettings::for_buffer_snapshot(buffer, None, cx),
                     )
                 })
                 .1;
@@ -6724,13 +6726,7 @@ impl MultiBufferSnapshot {
         self.excerpts
             .first()
             .map(|excerpt| &excerpt.buffer)
-            .map(|buffer| {
-                language_settings(
-                    buffer.language().map(|language| language.name()),
-                    buffer.file(),
-                    cx,
-                )
-            })
+            .map(|buffer| LanguageSettings::for_buffer_snapshot(buffer, None, cx))
             .unwrap_or_else(move || self.language_settings_at(MultiBufferOffset::ZERO, cx))
     }
 
@@ -6739,13 +6735,11 @@ impl MultiBufferSnapshot {
         point: T,
         cx: &'a App,
     ) -> Cow<'a, LanguageSettings> {
-        let mut language = None;
-        let mut file = None;
         if let Some((buffer, offset)) = self.point_to_buffer_offset(point) {
-            language = buffer.language_at(offset);
-            file = buffer.file();
+            buffer.settings_at(offset, cx)
+        } else {
+            Cow::Borrowed(&AllLanguageSettings::get_global(cx).defaults)
         }
-        language_settings(language.map(|l| l.name()), file, cx)
     }
 
     pub fn language_scope_at<T: ToOffset>(&self, point: T) -> Option<LanguageScope> {
@@ -7256,6 +7250,16 @@ impl MultiBufferSnapshot {
             }
         }
         excerpt_edits
+    }
+
+    /// Returns the number of graphemes in `range`.
+    ///
+    /// This counts user-visible characters like `e\u{301}` as one.
+    pub fn grapheme_count_for_range(&self, range: &Range<MultiBufferOffset>) -> usize {
+        self.text_for_range(range.clone())
+            .collect::<String>()
+            .graphemes(true)
+            .count()
     }
 }
 

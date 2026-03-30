@@ -2,12 +2,12 @@ use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
-use gpui::{App, AsyncApp, Task};
+use gpui::{App, AsyncApp, Entity, Task};
 use http_client::github::latest_github_release;
 pub use language::*;
 use language::{
     LanguageName, LanguageToolchainStore, LspAdapterDelegate, LspInstaller,
-    language_settings::language_settings,
+    language_settings::LanguageSettings,
 };
 use lsp::{LanguageServerBinary, LanguageServerName};
 
@@ -31,10 +31,8 @@ use std::{
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
 use util::{ResultExt, fs::remove_matching, maybe, merge_json_value_into};
 
-use crate::LanguageDir;
-
 pub(crate) fn semantic_token_rules() -> SemanticTokenRules {
-    let content = LanguageDir::get("go/semantic_token_rules.json")
+    let content = grammars::get_file("go/semantic_token_rules.json")
         .expect("missing go/semantic_token_rules.json");
     let json = std::str::from_utf8(&content.data).expect("invalid utf-8 in semantic_token_rules");
     settings::parse_json_with_comments::<SemanticTokenRules>(json)
@@ -211,7 +209,7 @@ impl LspAdapter for GoLspAdapter {
         cx: &mut AsyncApp,
     ) -> Result<Option<serde_json::Value>> {
         let semantic_tokens_enabled = cx.update(|cx| {
-            language_settings(Some(LanguageName::new("Go")), None, cx)
+            LanguageSettings::resolve(None, Some(&LanguageName::new("Go")), cx)
                 .semantic_tokens
                 .enabled()
         });
@@ -593,7 +591,7 @@ impl ContextProvider for GoContextProvider {
         )))
     }
 
-    fn associated_tasks(&self, _: Option<Arc<dyn File>>, _: &App) -> Task<Option<TaskTemplates>> {
+    fn associated_tasks(&self, _: Option<Entity<Buffer>>, _: &App) -> Task<Option<TaskTemplates>> {
         let package_cwd = if GO_PACKAGE_TASK_VARIABLE.template_value() == "." {
             None
         } else {

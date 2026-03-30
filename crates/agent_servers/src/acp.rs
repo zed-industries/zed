@@ -42,7 +42,6 @@ pub struct UnsupportedVersion;
 
 pub struct AcpConnection {
     id: AgentId,
-    display_name: SharedString,
     telemetry_id: SharedString,
     connection: Rc<acp::ClientSideConnection>,
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
@@ -166,7 +165,7 @@ impl AgentSessionList for AcpSessionList {
 
 pub async fn connect(
     agent_id: AgentId,
-    display_name: SharedString,
+    project: Entity<Project>,
     command: AgentServerCommand,
     default_mode: Option<acp::SessionModeId>,
     default_model: Option<acp::ModelId>,
@@ -175,7 +174,7 @@ pub async fn connect(
 ) -> Result<Rc<dyn AgentConnection>> {
     let conn = AcpConnection::stdio(
         agent_id,
-        display_name,
+        project,
         command.clone(),
         default_mode,
         default_model,
@@ -191,7 +190,7 @@ const MINIMUM_SUPPORTED_VERSION: acp::ProtocolVersion = acp::ProtocolVersion::V1
 impl AcpConnection {
     pub async fn stdio(
         agent_id: AgentId,
-        display_name: SharedString,
+        project: Entity<Project>,
         command: AgentServerCommand,
         default_mode: Option<acp::SessionModeId>,
         default_model: Option<acp::ModelId>,
@@ -203,6 +202,19 @@ impl AcpConnection {
         let mut child =
             builder.build_std_command(Some(command.path.display().to_string()), &command.args);
         child.envs(command.env.iter().flatten());
+        if let Some(cwd) = project.update(cx, |project, cx| {
+            if project.is_local() {
+                project
+                    .default_path_list(cx)
+                    .ordered_paths()
+                    .next()
+                    .cloned()
+            } else {
+                None
+            }
+        }) {
+            child.current_dir(cwd);
+        }
         let mut child = Child::spawn(child, Stdio::piped(), Stdio::piped(), Stdio::piped())?;
 
         let stdout = child.stdout.take().context("Failed to take stdout")?;
@@ -352,7 +364,6 @@ impl AcpConnection {
             auth_methods,
             command,
             connection,
-            display_name,
             telemetry_id,
             sessions,
             agent_capabilities: response.agent_capabilities,
@@ -648,7 +659,7 @@ impl AgentConnection for AcpConnection {
             let thread: Entity<AcpThread> = cx.new(|cx| {
                 AcpThread::new(
                     None,
-                    self.display_name.clone(),
+                    None,
                     Some(work_dirs),
                     self.clone(),
                     project,
@@ -706,7 +717,6 @@ impl AgentConnection for AcpConnection {
 
         let mcp_servers = mcp_servers_for_project(&project, cx);
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let title = title.unwrap_or_else(|| self.display_name.clone());
         let thread: Entity<AcpThread> = cx.new(|cx| {
             AcpThread::new(
                 None,
@@ -789,7 +799,6 @@ impl AgentConnection for AcpConnection {
 
         let mcp_servers = mcp_servers_for_project(&project, cx);
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let title = title.unwrap_or_else(|| self.display_name.clone());
         let thread: Entity<AcpThread> = cx.new(|cx| {
             AcpThread::new(
                 None,
@@ -1458,7 +1467,7 @@ impl acp::Client for ClientDelegate {
 
         let outcome = task.await;
 
-        Ok(acp::RequestPermissionResponse::new(outcome))
+        Ok(acp::RequestPermissionResponse::new(outcome.into()))
     }
 
     async fn write_text_file(

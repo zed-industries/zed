@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use anthropic::AnthropicModelMode;
 use anyhow::{Result, anyhow};
-use cloud_llm_client::CompletionIntent;
 use collections::HashMap;
 use copilot::{GlobalCopilotAuth, Status};
 use copilot_chat::responses as copilot_responses;
@@ -21,7 +20,7 @@ use gpui::{AnyView, App, AsyncApp, Entity, Subscription, Task};
 use http_client::StatusCode;
 use language::language_settings::all_language_settings;
 use language_model::{
-    AuthenticateError, IconOrSvg, LanguageModel, LanguageModelCompletionError,
+    AuthenticateError, CompletionIntent, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelCostInfo, LanguageModelEffortLevel, LanguageModelId,
     LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelRequestMessage,
@@ -357,7 +356,8 @@ impl LanguageModel for CopilotChatLanguageModel {
             | CompletionIntent::TerminalInlineAssist
             | CompletionIntent::GenerateGitCommitMessage => true,
 
-            CompletionIntent::ToolResults
+            CompletionIntent::Subagent
+            | CompletionIntent::ToolResults
             | CompletionIntent::ThreadSummarization
             | CompletionIntent::CreateFile
             | CompletionIntent::EditFile => false,
@@ -1046,7 +1046,7 @@ fn into_copilot_chat(
         tools,
         tool_choice: tool_choice.map(|choice| match choice {
             LanguageModelToolChoice::Auto => ToolChoice::Auto,
-            LanguageModelToolChoice::Any => ToolChoice::Any,
+            LanguageModelToolChoice::Any => ToolChoice::Required,
             LanguageModelToolChoice::None => ToolChoice::None,
         }),
         thinking_budget: None,
@@ -1072,6 +1072,7 @@ fn compute_thinking_budget(
 fn intent_to_chat_location(intent: Option<CompletionIntent>) -> ChatLocation {
     match intent {
         Some(CompletionIntent::UserPrompt) => ChatLocation::Agent,
+        Some(CompletionIntent::Subagent) => ChatLocation::Agent,
         Some(CompletionIntent::ToolResults) => ChatLocation::Agent,
         Some(CompletionIntent::ThreadSummarization) => ChatLocation::Panel,
         Some(CompletionIntent::ThreadContextSummarization) => ChatLocation::Panel,
@@ -1255,7 +1256,7 @@ fn into_copilot_responses(
 
     let mapped_tool_choice = tool_choice.map(|choice| match choice {
         LanguageModelToolChoice::Auto => responses::ToolChoice::Auto,
-        LanguageModelToolChoice::Any => responses::ToolChoice::Any,
+        LanguageModelToolChoice::Any => responses::ToolChoice::Required,
         LanguageModelToolChoice::None => responses::ToolChoice::None,
     });
 

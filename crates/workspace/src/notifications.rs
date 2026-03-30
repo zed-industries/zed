@@ -9,7 +9,7 @@ use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use parking_lot::Mutex;
 use project::project_settings::ProjectSettings;
 use settings::Settings;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 
 use std::ops::Deref;
 use std::sync::{Arc, LazyLock};
