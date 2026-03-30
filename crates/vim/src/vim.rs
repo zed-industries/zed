@@ -17,6 +17,7 @@ mod replace;
 mod rewrap;
 mod state;
 mod surrounds;
+pub mod vimrc;
 mod visual;
 
 use crate::normal::paste::Paste as VimPaste;
