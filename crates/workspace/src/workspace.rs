@@ -2243,7 +2243,7 @@ impl Workspace {
                 return None;
             }
             let flex = flex.max(0.001);
-            let opposite = self.opposite_dock_panel_and_size_state(position, cx);
+            let opposite = self.opposite_dock_panel_and_size_state(position, window, cx);
             if let Some(opposite_flex) = opposite.as_ref().and_then(|(_, s)| s.flex) {
                 // Both docks are flex items sharing the full workspace width.
                 let total_flex = flex + 1.0 + opposite_flex;
@@ -2281,7 +2281,7 @@ impl Workspace {
             return None;
         }
 
-        let opposite = self.opposite_dock_panel_and_size_state(position, cx);
+        let opposite = self.opposite_dock_panel_and_size_state(position, window, cx);
         if let Some(opposite_flex) = opposite.as_ref().and_then(|(_, s)| s.flex) {
             let size = size.clamp(px(0.), workspace_width - px(1.));
             Some((size * (1.0 + opposite_flex) / (workspace_width - size)).max(0.0))
@@ -2298,6 +2298,7 @@ impl Workspace {
     fn opposite_dock_panel_and_size_state(
         &self,
         position: DockPosition,
+        window: &Window,
         cx: &App,
     ) -> Option<(Arc<dyn PanelHandle>, PanelSizeState)> {
         let opposite_position = match position {
@@ -2308,9 +2309,12 @@ impl Workspace {
 
         let opposite_dock = self.dock_at_position(opposite_position).read(cx);
         let panel = opposite_dock.visible_panel()?;
-        let size_state = opposite_dock
+        let mut size_state = opposite_dock
             .stored_panel_size_state(panel.as_ref())
             .unwrap_or_default();
+        if size_state.flex.is_none() && panel.has_flexible_size(window, cx) {
+            size_state.flex = self.default_dock_flex(opposite_position);
+        }
         Some((panel.clone(), size_state))
     }
 
@@ -12648,6 +12652,64 @@ mod tests {
                 left_width,
                 available_width / 2.,
                 "flexible left panel should shrink proportionally as the right dock takes space"
+            );
+        });
+
+        // Step 4: Toggle the right dock's panel to flexible. Now both docks use
+        // flex sizing and the workspace width is divided among left-flex, center
+        // (implicit flex 1.0), and right-flex.
+        workspace.update_in(cx, |workspace, window, cx| {
+            let right_dock = workspace.right_dock().clone();
+            let right_panel = right_dock
+                .read(cx)
+                .visible_panel()
+                .expect("right dock should have a visible panel")
+                .clone();
+            workspace.toggle_dock_panel_flexible_size(
+                &right_dock,
+                right_panel.as_ref(),
+                window,
+                cx,
+            );
+
+            let right_dock = right_dock.read(cx);
+            let right_panel = right_dock
+                .visible_panel()
+                .expect("right dock should still have a visible panel");
+            assert!(
+                right_panel.has_flexible_size(window, cx),
+                "right panel should now be flexible"
+            );
+
+            let right_size_state = right_dock
+                .stored_panel_size_state(right_panel.as_ref())
+                .expect("right panel should have a stored size state after toggling");
+            let right_flex = right_size_state
+                .flex
+                .expect("right panel should have a flex value after toggling");
+
+            let left_dock = workspace.left_dock().read(cx);
+            let left_width = workspace
+                .dock_size(&left_dock, window, cx)
+                .expect("left dock should still have an active panel");
+            let right_width = workspace
+                .dock_size(&right_dock, window, cx)
+                .expect("right dock should still have an active panel");
+
+            let left_flex = workspace
+                .default_dock_flex(DockPosition::Left)
+                .expect("left dock should have a default flex");
+
+            let total_flex = left_flex + 1.0 + right_flex;
+            let expected_left = left_flex / total_flex * workspace.bounds.size.width;
+            let expected_right = right_flex / total_flex * workspace.bounds.size.width;
+            assert_eq!(
+                left_width, expected_left,
+                "flexible left panel should share workspace width via flex ratios"
+            );
+            assert_eq!(
+                right_width, expected_right,
+                "flexible right panel should share workspace width via flex ratios"
             );
         });
     }
