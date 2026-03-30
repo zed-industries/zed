@@ -1255,4 +1255,307 @@ mod tests {
         assert!(deduped.contains(&DbOperation::Insert(metadata1)));
         assert!(deduped.contains(&DbOperation::Insert(metadata2)));
     }
+
+    #[gpui::test]
+    async fn test_archive_and_unarchive_thread(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            ThreadMetadataStore::init_global(cx);
+        });
+
+        let paths = PathList::new(&[Path::new("/project-a")]);
+        let now = Utc::now();
+        let metadata = make_metadata("session-1", "Thread 1", now, paths.clone());
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            store.update(cx, |store, cx| {
+                store.save(metadata, cx);
+            });
+        });
+
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            let store = store.read(cx);
+
+            let path_entries = store
+                .entries_for_path(&paths)
+                .map(|e| e.session_id.0.to_string())
+                .collect::<Vec<_>>();
+            assert_eq!(path_entries, vec!["session-1"]);
+
+            let archived = store
+                .archived_entries()
+                .map(|e| e.session_id.0.to_string())
+                .collect::<Vec<_>>();
+            assert!(archived.is_empty());
+        });
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            store.update(cx, |store, cx| {
+                store.archive(&acp::SessionId::new("session-1"), cx);
+            });
+        });
+
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            let store = store.read(cx);
+
+            let path_entries = store
+                .entries_for_path(&paths)
+                .map(|e| e.session_id.0.to_string())
+                .collect::<Vec<_>>();
+            assert!(path_entries.is_empty());
+
+            let archived = store.archived_entries().collect::<Vec<_>>();
+            assert_eq!(archived.len(), 1);
+            assert_eq!(archived[0].session_id.0.as_ref(), "session-1");
+            assert!(archived[0].archived);
+        });
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            store.update(cx, |store, cx| {
+                store.unarchive(&acp::SessionId::new("session-1"), cx);
+            });
+        });
+
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            let store = store.read(cx);
+
+            let path_entries = store
+                .entries_for_path(&paths)
+                .map(|e| e.session_id.0.to_string())
+                .collect::<Vec<_>>();
+            assert_eq!(path_entries, vec!["session-1"]);
+
+            let archived = store
+                .archived_entries()
+                .map(|e| e.session_id.0.to_string())
+                .collect::<Vec<_>>();
+            assert!(archived.is_empty());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_entries_for_path_excludes_archived(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            ThreadMetadataStore::init_global(cx);
+        });
+
+        let paths = PathList::new(&[Path::new("/project-a")]);
+        let now = Utc::now();
+
+        let metadata1 = make_metadata("session-1", "Active Thread", now, paths.clone());
+        let metadata2 = make_metadata(
+            "session-2",
+            "Archived Thread",
+            now - chrono::Duration::seconds(1),
+            paths.clone(),
+        );
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            store.update(cx, |store, cx| {
+                store.save(metadata1, cx);
+                store.save(metadata2, cx);
+            });
+        });
+
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            store.update(cx, |store, cx| {
+                store.archive(&acp::SessionId::new("session-2"), cx);
+            });
+        });
+
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            let store = store.read(cx);
+
+            let path_entries = store
+                .entries_for_path(&paths)
+                .map(|e| e.session_id.0.to_string())
+                .collect::<Vec<_>>();
+            assert_eq!(path_entries, vec!["session-1"]);
+
+            let all_entries = store
+                .entries()
+                .map(|e| e.session_id.0.to_string())
+                .collect::<Vec<_>>();
+            assert_eq!(all_entries.len(), 2);
+            assert!(all_entries.contains(&"session-1".to_string()));
+            assert!(all_entries.contains(&"session-2".to_string()));
+
+            let archived = store
+                .archived_entries()
+                .map(|e| e.session_id.0.to_string())
+                .collect::<Vec<_>>();
+            assert_eq!(archived, vec!["session-2"]);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_save_all_persists_multiple_threads(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            ThreadMetadataStore::init_global(cx);
+        });
+
+        let paths = PathList::new(&[Path::new("/project-a")]);
+        let now = Utc::now();
+
+        let m1 = make_metadata("session-1", "Thread One", now, paths.clone());
+        let m2 = make_metadata(
+            "session-2",
+            "Thread Two",
+            now - chrono::Duration::seconds(1),
+            paths.clone(),
+        );
+        let m3 = make_metadata(
+            "session-3",
+            "Thread Three",
+            now - chrono::Duration::seconds(2),
+            paths.clone(),
+        );
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            store.update(cx, |store, cx| {
+                store.save_all(vec![m1, m2, m3], cx);
+            });
+        });
+
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            let store = store.read(cx);
+
+            let all_entries = store
+                .entries()
+                .map(|e| e.session_id.0.to_string())
+                .collect::<Vec<_>>();
+            assert_eq!(all_entries.len(), 3);
+            assert!(all_entries.contains(&"session-1".to_string()));
+            assert!(all_entries.contains(&"session-2".to_string()));
+            assert!(all_entries.contains(&"session-3".to_string()));
+
+            let entry_ids = store.entry_ids().collect::<Vec<_>>();
+            assert_eq!(entry_ids.len(), 3);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_archived_flag_persists_across_reload(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            ThreadMetadataStore::init_global(cx);
+        });
+
+        let paths = PathList::new(&[Path::new("/project-a")]);
+        let now = Utc::now();
+        let metadata = make_metadata("session-1", "Thread 1", now, paths.clone());
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            store.update(cx, |store, cx| {
+                store.save(metadata, cx);
+            });
+        });
+
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            store.update(cx, |store, cx| {
+                store.archive(&acp::SessionId::new("session-1"), cx);
+            });
+        });
+
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            store.update(cx, |store, cx| {
+                let _ = store.reload(cx);
+            });
+        });
+
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            let store = store.read(cx);
+
+            let thread = store
+                .entries()
+                .find(|e| e.session_id.0.as_ref() == "session-1")
+                .expect("thread should exist after reload");
+            assert!(thread.archived);
+
+            let path_entries = store
+                .entries_for_path(&paths)
+                .map(|e| e.session_id.0.to_string())
+                .collect::<Vec<_>>();
+            assert!(path_entries.is_empty());
+
+            let archived = store
+                .archived_entries()
+                .map(|e| e.session_id.0.to_string())
+                .collect::<Vec<_>>();
+            assert_eq!(archived, vec!["session-1"]);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_archive_nonexistent_thread_is_noop(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            ThreadMetadataStore::init_global(cx);
+        });
+
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            store.update(cx, |store, cx| {
+                store.archive(&acp::SessionId::new("nonexistent"), cx);
+            });
+        });
+
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            let store = store.read(cx);
+
+            assert!(store.is_empty());
+            assert_eq!(store.entries().count(), 0);
+            assert_eq!(store.archived_entries().count(), 0);
+        });
+    }
 }

@@ -4448,6 +4448,119 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     cx.run_until_parked();
 }
 
+#[gpui::test]
+async fn test_archive_thread_keeps_metadata_but_hides_from_sidebar(cx: &mut TestAppContext) {
+    let project = init_test_project("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
+
+    save_thread_metadata(
+        acp::SessionId::new(Arc::from("thread-to-archive")),
+        "Thread To Archive".into(),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        path_list.clone(),
+        cx,
+    )
+    .await;
+    cx.run_until_parked();
+
+    multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
+    cx.run_until_parked();
+
+    let entries = visible_entries_as_strings(&sidebar, cx);
+    assert!(
+        entries.iter().any(|e| e.contains("Thread To Archive")),
+        "expected thread to be visible before archiving, got: {entries:?}"
+    );
+
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.archive_thread(
+            &acp::SessionId::new(Arc::from("thread-to-archive")),
+            window,
+            cx,
+        );
+    });
+    cx.run_until_parked();
+
+    let entries = visible_entries_as_strings(&sidebar, cx);
+    assert!(
+        !entries.iter().any(|e| e.contains("Thread To Archive")),
+        "expected thread to be hidden after archiving, got: {entries:?}"
+    );
+
+    cx.update(|_, cx| {
+        let store = ThreadMetadataStore::global(cx);
+        let archived: Vec<_> = store.read(cx).archived_entries().collect();
+        assert_eq!(archived.len(), 1);
+        assert_eq!(archived[0].session_id.0.as_ref(), "thread-to-archive");
+        assert!(archived[0].archived);
+    });
+}
+
+#[gpui::test]
+async fn test_archived_threads_excluded_from_sidebar_entries(cx: &mut TestAppContext) {
+    let project = init_test_project("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
+
+    save_thread_metadata(
+        acp::SessionId::new(Arc::from("visible-thread")),
+        "Visible Thread".into(),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
+        path_list.clone(),
+        cx,
+    )
+    .await;
+
+    cx.update(|_, cx| {
+        let metadata = ThreadMetadata {
+            session_id: acp::SessionId::new(Arc::from("archived-thread")),
+            agent_id: agent::ZED_AGENT_ID.clone(),
+            title: "Archived Thread".into(),
+            updated_at: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+            created_at: None,
+            folder_paths: path_list.clone(),
+            archived: true,
+        };
+        ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(metadata, cx));
+    });
+    cx.run_until_parked();
+
+    multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
+    cx.run_until_parked();
+
+    let entries = visible_entries_as_strings(&sidebar, cx);
+    assert!(
+        entries.iter().any(|e| e.contains("Visible Thread")),
+        "expected visible thread in sidebar, got: {entries:?}"
+    );
+    assert!(
+        !entries.iter().any(|e| e.contains("Archived Thread")),
+        "expected archived thread to be hidden from sidebar, got: {entries:?}"
+    );
+
+    cx.update(|_, cx| {
+        let store = ThreadMetadataStore::global(cx);
+        let all: Vec<_> = store.read(cx).entries().collect();
+        assert_eq!(
+            all.len(),
+            2,
+            "expected 2 total entries in the store, got: {}",
+            all.len()
+        );
+
+        let archived: Vec<_> = store.read(cx).archived_entries().collect();
+        assert_eq!(archived.len(), 1);
+        assert_eq!(archived[0].session_id.0.as_ref(), "archived-thread");
+    });
+}
+
 mod property_test {
     use super::*;
     use gpui::EntityId;
