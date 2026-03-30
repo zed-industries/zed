@@ -345,7 +345,8 @@ impl Render for ThreadImportModal {
                             .description(
                                 "Import threads from your ACP agents — whether started in Zed or another client. \
                                 Choose which agents to include, and their threads will appear in your archive."
-                            ),
+                            )
+                            .show_dismiss_button(true),
 
                     )
                     .section(
