@@ -1435,7 +1435,7 @@ mod tests {
             "session-3",
             "Thread Three",
             now - chrono::Duration::seconds(2),
-            paths.clone(),
+            paths,
         );
 
         cx.update(|cx| {

@@ -636,7 +636,7 @@ mod tests {
                     None,
                     None,
                 ),
-                make_session("new-1", Some("Brand New"), Some(paths.clone()), None, None),
+                make_session("new-1", Some("Brand New"), Some(paths), None, None),
             ],
         )];
 
@@ -655,13 +655,7 @@ mod tests {
         let sessions_by_agent = vec![(
             AgentId::new("agent-a"),
             vec![
-                make_session(
-                    "has-dirs",
-                    Some("With Dirs"),
-                    Some(paths.clone()),
-                    None,
-                    None,
-                ),
+                make_session("has-dirs", Some("With Dirs"), Some(paths), None, None),
                 make_session("no-dirs", Some("No Dirs"), None, None, None),
             ],
         )];
@@ -681,7 +675,7 @@ mod tests {
             AgentId::new("agent-a"),
             vec![
                 make_session("s1", Some("Thread 1"), Some(paths.clone()), None, None),
-                make_session("s2", Some("Thread 2"), Some(paths.clone()), None, None),
+                make_session("s2", Some("Thread 2"), Some(paths), None, None),
             ],
         )];
 
@@ -709,13 +703,7 @@ mod tests {
             ),
             (
                 AgentId::new("agent-b"),
-                vec![make_session(
-                    "s2",
-                    Some("From B"),
-                    Some(paths.clone()),
-                    None,
-                    None,
-                )],
+                vec![make_session("s2", Some("From B"), Some(paths), None, None)],
             ),
         ];
 
@@ -755,7 +743,7 @@ mod tests {
                 vec![make_session(
                     "shared-session",
                     Some("From B"),
-                    Some(paths.clone()),
+                    Some(paths),
                     None,
                     None,
                 )],
@@ -783,7 +771,7 @@ mod tests {
             AgentId::new("agent-a"),
             vec![
                 make_session("s1", Some("T1"), Some(paths.clone()), None, None),
-                make_session("s2", Some("T2"), Some(paths.clone()), None, None),
+                make_session("s2", Some("T2"), Some(paths), None, None),
             ],
         )];
 
