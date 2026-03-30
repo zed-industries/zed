@@ -22,7 +22,7 @@ mod visual;
 use crate::normal::paste::Paste as VimPaste;
 use collections::HashMap;
 use editor::{
-    Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, ModalCursorOffset,
+    Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, ModalCursorMode,
     MultiBufferOffset, SelectionEffects,
     actions::Paste,
     display_map::ToDisplayPoint,
@@ -2085,9 +2085,9 @@ impl Vim {
             expects_character_input: self.expects_character_input(),
             autoindent: self.should_autoindent(),
             cursor_offset: match (self.mode.is_helix(), self.mode.is_visual()) {
-                (true, _) => ModalCursorOffset::Helix,
-                (_, true) => ModalCursorOffset::Vim,
-                (_ , _) => ModalCursorOffset::None
+                (true, _) => ModalCursorMode::Helix,
+                (_, true) => ModalCursorMode::Vim,
+                (_ , _) => ModalCursorMode::None
             },
             line_mode: matches!(self.mode, Mode::VisualLine),
             hide_edit_predictions: !matches!(self.mode, Mode::Insert | Mode::Replace),
@@ -2124,7 +2124,7 @@ struct VimEditorSettingsState {
     input_enabled: bool,
     expects_character_input: bool,
     autoindent: bool,
-    cursor_offset: ModalCursorOffset,
+    cursor_offset: ModalCursorMode,
     line_mode: bool,
     hide_edit_predictions: bool,
 }

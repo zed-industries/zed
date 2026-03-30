@@ -6,7 +6,7 @@ use crate::{
     Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle, FILE_HEADER_HEIGHT,
     FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
     InlayHintRefreshReason, JumpData, LineDown, LineHighlight, LineUp, MAX_LINE_LEN,
-    MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, ModalCursorOffset, OpenExcerpts,
+    MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, ModalCursorMode, OpenExcerpts,
     PageDown, PageUp,
     PhantomBreakpointIndicator, PhantomDiffReviewIndicator, Point, RowExt, RowRangeExt,
     SelectPhase, Selection, SelectionDragState, SelectionEffects, SizingBehavior, SoftWrap,
@@ -130,7 +130,7 @@ impl SelectionLayout {
     fn new<T: ToPoint + ToDisplayPoint + Clone>(
         selection: Selection<T>,
         line_mode: bool,
-        cursor_offset: ModalCursorOffset,
+        cursor_offset: ModalCursorMode,
         cursor_shape: CursorShape,
         map: &DisplaySnapshot,
         is_newest: bool,
@@ -155,7 +155,7 @@ impl SelectionLayout {
             if head.column() > 0 {
                 head = map.clip_point(DisplayPoint::new(head.row(), head.column() - 1), Bias::Left);
             } else if head.row().0 > 0
-                && (head != map.max_point() || cursor_offset == ModalCursorOffset::Helix)
+                && (head != map.max_point() || cursor_offset == ModalCursorMode::Helix)
             {
                 head = map.clip_point(
                     DisplayPoint::new(
@@ -12892,7 +12892,7 @@ mod tests {
 
         window
             .update(cx, |editor, window, cx| {
-                editor.cursor_offset = ModalCursorOffset::Vim;
+                editor.cursor_offset = ModalCursorMode::Vim;
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.select_ranges([
                         Point::new(0, 0)..Point::new(1, 0),

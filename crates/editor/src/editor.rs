@@ -289,16 +289,16 @@ impl ReportEditorEvent {
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
-pub enum ModalCursorOffset {
+pub enum ModalCursorMode {
     #[default]
     None,
     Vim,
     Helix,
 }
 
-impl ModalCursorOffset {
+impl ModalCursorMode {
     pub fn is_active(self) -> bool {
-        !matches!(self, Self::None)
+        self != Self::None
     }
 
     pub fn for_remote(self) -> Self {
@@ -1243,7 +1243,7 @@ pub struct Editor {
     pending_rename: Option<RenameState>,
     searchable: bool,
     cursor_shape: CursorShape,
-    cursor_offset: ModalCursorOffset,
+    cursor_offset: ModalCursorMode,
     current_line_highlight: Option<CurrentLineHighlight>,
     /// Whether to collapse search match ranges to just their start position.
     /// When true, navigating to a match positions the cursor at the match
@@ -2476,7 +2476,7 @@ impl Editor {
             cursor_shape: EditorSettings::get_global(cx)
                 .cursor_shape
                 .unwrap_or_default(),
-            cursor_offset: ModalCursorOffset::None,
+            cursor_offset: ModalCursorMode::None,
             current_line_highlight: None,
             autoindent_mode: Some(AutoindentMode::EachLine),
             collapse_matches: false,
@@ -3470,7 +3470,7 @@ impl Editor {
         self.cursor_shape
     }
 
-    pub fn set_cursor_offset(&mut self, cursor_offset: ModalCursorOffset) {
+    pub fn set_cursor_offset(&mut self, cursor_offset: ModalCursorMode) {
         self.cursor_offset = cursor_offset;
     }
 
