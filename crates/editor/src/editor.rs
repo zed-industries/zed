@@ -6684,7 +6684,7 @@ impl Editor {
             text: new_text[common_prefix_len..].into(),
         });
 
-        self.transact(window, cx, |editor, window, cx| {
+        let tx_id = self.transact(window, cx, |editor, window, cx| {
             if let Some(mut snippet) = snippet {
                 snippet.text = new_text.to_string();
                 editor
@@ -6766,7 +6766,7 @@ impl Editor {
         }
 
         Some(cx.spawn_in(window, async move |editor, cx| {
-            apply_edits.await?;
+            let additional_edits_tx = apply_edits.await?;
 
             if let Some((lsp_store, command)) = lsp_store.zip(command) {
                 let title = command.lsp_action.title().to_owned();
@@ -6785,6 +6785,18 @@ impl Editor {
                         cx,
                     )
                     .await?;
+                }
+            }
+
+            if let Some(tx_id) = tx_id {
+                if let Some(additional_edits_tx) = additional_edits_tx {
+                    editor
+                        .update(cx, |editor, cx| {
+                            editor.buffer.update(cx, |buffer, cx| {
+                                buffer.merge_transactions(additional_edits_tx.id, tx_id, cx)
+                            });
+                        })
+                        .ok();
                 }
             }
 
