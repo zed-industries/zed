@@ -6,10 +6,13 @@ use crate::{
     proxy::ProxyLaunchError,
     transport::{
         docker::{DockerConnectionOptions, DockerExecConnection},
-        ssh::SshRemoteConnection,
         wsl::{WslConnectionOptions, WslRemoteConnection},
     },
 };
+#[cfg(not(feature = "russh-transport"))]
+use crate::transport::subprocess_ssh::SshRemoteConnection;
+#[cfg(feature = "russh-transport")]
+use crate::transport::russh_ssh::RusshRemoteConnection;
 use anyhow::{Context as _, Result, anyhow};
 use askpass::EncryptedPassword;
 use async_trait::async_trait;
@@ -1219,9 +1222,18 @@ impl ConnectionPool {
                 async move |cx| {
                     let connection = match opts.clone() {
                         RemoteConnectionOptions::Ssh(opts) => {
-                            SshRemoteConnection::new(opts, delegate, cx)
-                                .await
-                                .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>)
+                            #[cfg(not(feature = "russh-transport"))]
+                            {
+                                SshRemoteConnection::new(opts, delegate, cx)
+                                    .await
+                                    .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>)
+                            }
+                            #[cfg(feature = "russh-transport")]
+                            {
+                                RusshRemoteConnection::new(opts, delegate, cx)
+                                    .await
+                                    .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>)
+                            }
                         }
                         RemoteConnectionOptions::Wsl(opts) => {
                             WslRemoteConnection::new(opts, delegate, cx)

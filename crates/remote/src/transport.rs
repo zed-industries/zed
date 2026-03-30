@@ -20,6 +20,8 @@ pub mod mock;
 #[cfg(feature = "russh-transport")]
 pub mod russh_ssh;
 pub mod ssh;
+#[cfg(not(feature = "russh-transport"))]
+pub mod subprocess_ssh;
 pub mod wsl;
 
 /// Parses the output of `uname -sm` to determine the remote platform.
