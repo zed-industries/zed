@@ -8,7 +8,7 @@ use editor::actions::OpenExcerpts;
 use crate::StartThreadIn;
 use crate::message_editor::SharedSessionCapabilities;
 use gpui::{Corner, List};
-use language_model::{LanguageModelCostInfo, LanguageModelEffortLevel, Speed};
+use language_model::{LanguageModelCostInfo, LanguageModelEffortLevel, Speed, TokenUsage};
 use settings::update_settings_file;
 use ui::{ButtonLike, SplitButton, SplitButtonStyle, Tab};
 use workspace::SERIALIZATION_THROTTLE_TIME;
@@ -3249,13 +3249,18 @@ impl ThreadView {
             let output = crate::text_thread_editor::humanize_token_count(usage.output_tokens);
             let output_max = crate::text_thread_editor::humanize_token_count(max_output_tokens);
 
+            let model_token_usage = TokenUsage {
+                input_tokens: usage.input_tokens,
+                output_tokens: usage.output_tokens,
+                cache_read_input_tokens: usage.cache_read_input_tokens,
+                cache_creation_input_tokens: usage.cache_creation_input_tokens,
+            };
+
             let estimated_cost = self
                 .as_native_thread(cx)
                 .and_then(|thread| thread.read(cx).model().cloned())
                 .and_then(|model| model.model_cost_info())
-                .and_then(|cost_info| {
-                    cost_info.estimate_cost(usage.input_tokens, usage.output_tokens)
-                })
+                .and_then(|cost_info| cost_info.estimate_cost(&model_token_usage))
                 .map(LanguageModelCostInfo::format_cost);
 
             Some(
@@ -3326,13 +3331,18 @@ impl ThreadView {
 
             let percentage = format!("{}%", (progress_ratio * 100.0).round() as u32);
 
+            let model_token_usage = TokenUsage {
+                input_tokens: usage.input_tokens,
+                output_tokens: usage.output_tokens,
+                cache_read_input_tokens: usage.cache_read_input_tokens,
+                cache_creation_input_tokens: usage.cache_creation_input_tokens,
+            };
+
             let estimated_cost = self
                 .as_native_thread(cx)
                 .and_then(|thread| thread.read(cx).model().cloned())
                 .and_then(|model| model.model_cost_info())
-                .and_then(|cost_info| {
-                    cost_info.estimate_cost(usage.input_tokens, usage.output_tokens)
-                })
+                .and_then(|cost_info| cost_info.estimate_cost(&model_token_usage))
                 .map(LanguageModelCostInfo::format_cost);
 
             let (user_rules_count, project_rules_count) = self

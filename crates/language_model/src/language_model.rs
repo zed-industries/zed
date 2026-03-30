@@ -898,10 +898,12 @@ pub struct LanguageModelProviderName(pub SharedString);
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum LanguageModelCostInfo {
-    /// Cost per 1,000 input and output tokens
+    /// Cost per 1,000,000 input and output tokens
     TokenCost {
         input_token_cost_per_1m: f64,
         output_token_cost_per_1m: f64,
+        cache_read_input_token_cost_per_1m: Option<f64>,
+        cache_creation_input_token_cost_per_1m: Option<f64>,
     },
     /// Cost per request
     RequestCost { cost_per_request: f64 },
@@ -917,6 +919,7 @@ impl LanguageModelCostInfo {
             LanguageModelCostInfo::TokenCost {
                 input_token_cost_per_1m,
                 output_token_cost_per_1m,
+                ..
             } => {
                 let input_cost = Self::cost_value_to_string(input_token_cost_per_1m);
                 let output_cost = Self::cost_value_to_string(output_token_cost_per_1m);
@@ -933,14 +936,25 @@ impl LanguageModelCostInfo {
         }
     }
 
-    pub fn estimate_cost(&self, input_tokens: u64, output_tokens: u64) -> Option<f64> {
+    pub fn estimate_cost(&self, usage: &TokenUsage) -> Option<f64> {
         match self {
             LanguageModelCostInfo::TokenCost {
                 input_token_cost_per_1m,
                 output_token_cost_per_1m,
+                cache_read_input_token_cost_per_1m,
+                cache_creation_input_token_cost_per_1m,
             } => {
-                let cost = (input_tokens as f64 * input_token_cost_per_1m / 1_000_000.0)
-                    + (output_tokens as f64 * output_token_cost_per_1m / 1_000_000.0);
+                let mut cost = (usage.input_tokens as f64 * input_token_cost_per_1m / 1_000_000.0)
+                    + (usage.output_tokens as f64 * output_token_cost_per_1m / 1_000_000.0);
+
+                if let Some(cache_read_rate) = cache_read_input_token_cost_per_1m {
+                    cost += usage.cache_read_input_tokens as f64 * cache_read_rate / 1_000_000.0;
+                }
+                if let Some(cache_creation_rate) = cache_creation_input_token_cost_per_1m {
+                    cost += usage.cache_creation_input_tokens as f64 * cache_creation_rate
+                        / 1_000_000.0;
+                }
+
                 Some(cost)
             }
             LanguageModelCostInfo::RequestCost { .. } => None,
@@ -1204,9 +1218,16 @@ mod tests {
         let cost_info = LanguageModelCostInfo::TokenCost {
             input_token_cost_per_1m: 3.0,
             output_token_cost_per_1m: 15.0,
+            cache_read_input_token_cost_per_1m: None,
+            cache_creation_input_token_cost_per_1m: None,
         };
 
-        let cost = cost_info.estimate_cost(100_000, 20_000);
+        let usage = TokenUsage {
+            input_tokens: 100_000,
+            output_tokens: 20_000,
+            ..Default::default()
+        };
+        let cost = cost_info.estimate_cost(&usage);
         assert_eq!(cost, Some(0.6));
     }
 
@@ -1216,7 +1237,12 @@ mod tests {
             cost_per_request: 1.0,
         };
 
-        assert_eq!(cost_info.estimate_cost(100_000, 20_000), None);
+        let usage = TokenUsage {
+            input_tokens: 100_000,
+            output_tokens: 20_000,
+            ..Default::default()
+        };
+        assert_eq!(cost_info.estimate_cost(&usage), None);
     }
 
     #[test]
@@ -1224,9 +1250,59 @@ mod tests {
         let cost_info = LanguageModelCostInfo::TokenCost {
             input_token_cost_per_1m: 3.0,
             output_token_cost_per_1m: 15.0,
+            cache_read_input_token_cost_per_1m: None,
+            cache_creation_input_token_cost_per_1m: None,
         };
 
-        assert_eq!(cost_info.estimate_cost(0, 0), Some(0.0));
+        assert_eq!(cost_info.estimate_cost(&TokenUsage::default()), Some(0.0));
+    }
+
+    #[test]
+    fn test_estimate_cost_with_cache_tokens() {
+        // Anthropic Claude Sonnet 4 pricing (example):
+        // input: $3/1M, output: $15/1M, cache_read: $0.30/1M, cache_write: $3.75/1M
+        let cost_info = LanguageModelCostInfo::TokenCost {
+            input_token_cost_per_1m: 3.0,
+            output_token_cost_per_1m: 15.0,
+            cache_read_input_token_cost_per_1m: Some(0.30),
+            cache_creation_input_token_cost_per_1m: Some(3.75),
+        };
+
+        let usage = TokenUsage {
+            input_tokens: 10_000,
+            output_tokens: 5_000,
+            cache_read_input_tokens: 200_000,
+            cache_creation_input_tokens: 50_000,
+        };
+        let cost = cost_info.estimate_cost(&usage);
+        // input: 10k * 3.0 / 1M = 0.03
+        // output: 5k * 15.0 / 1M = 0.075
+        // cache_read: 200k * 0.30 / 1M = 0.06
+        // cache_write: 50k * 3.75 / 1M = 0.1875
+        // total = 0.3525
+        assert_eq!(cost, Some(0.3525));
+    }
+
+    #[test]
+    fn test_estimate_cost_cache_tokens_without_cache_pricing() {
+        let cost_info = LanguageModelCostInfo::TokenCost {
+            input_token_cost_per_1m: 3.0,
+            output_token_cost_per_1m: 15.0,
+            cache_read_input_token_cost_per_1m: None,
+            cache_creation_input_token_cost_per_1m: None,
+        };
+
+        let usage = TokenUsage {
+            input_tokens: 10_000,
+            output_tokens: 5_000,
+            cache_read_input_tokens: 200_000,
+            cache_creation_input_tokens: 50_000,
+        };
+        let cost = cost_info.estimate_cost(&usage);
+        // Only input + output counted when no cache pricing set
+        // input: 10k * 3.0 / 1M = 0.03
+        // output: 5k * 15.0 / 1M = 0.075
+        assert_eq!(cost, Some(0.105));
     }
 
     #[test]

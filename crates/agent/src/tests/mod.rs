@@ -2920,6 +2920,8 @@ async fn test_truncate_first_message(cx: &mut TestAppContext) {
                 max_output_tokens: None,
                 input_tokens: 32_000,
                 output_tokens: 16_000,
+                cache_read_input_tokens: 0,
+                cache_creation_input_tokens: 0,
             })
         );
     });
@@ -2982,6 +2984,8 @@ async fn test_truncate_first_message(cx: &mut TestAppContext) {
                 max_output_tokens: None,
                 input_tokens: 40_000,
                 output_tokens: 20_000,
+                cache_read_input_tokens: 0,
+                cache_creation_input_tokens: 0,
             })
         );
     });
@@ -3090,6 +3094,8 @@ async fn test_truncate_second_message(cx: &mut TestAppContext) {
                 max_output_tokens: None,
                 input_tokens: 40_000,
                 output_tokens: 20_000,
+                cache_read_input_tokens: 0,
+                cache_creation_input_tokens: 0,
             })
         );
     });
