@@ -65,7 +65,6 @@ members = [
     "crates/editor",
     "crates/encoding_selector",
     "crates/etw_tracing",
-    "crates/eval",
     "crates/eval_cli",
     "crates/eval_utils",
     "crates/explorer_command_injector",
