@@ -3003,9 +3003,9 @@ impl Sidebar {
                 h_flex()
                     .w_1_2()
                     .gap_2()
-                    .child(Divider::horizontal())
+                    .child(Divider::horizontal().color(ui::DividerColor::Border))
                     .child(Label::new("or").size(LabelSize::XSmall).color(Color::Muted))
-                    .child(Divider::horizontal()),
+                    .child(Divider::horizontal().color(ui::DividerColor::Border)),
             )
             .child(
                 Button::new("clone_repo", "Clone Repository")
@@ -3209,10 +3209,6 @@ impl Sidebar {
     }
 
     fn should_render_acp_import_onboarding(&self, cx: &App) -> bool {
-        if !matches!(self.view, SidebarView::ThreadList) {
-            return false;
-        }
-
         let has_external_agents = self
             .active_workspace(cx)
             .map(|ws| {
@@ -3242,7 +3238,7 @@ impl Sidebar {
             .border_color(cx.theme().colors().border)
             .bg(linear_gradient(
                 360.,
-                linear_color_stop(bg.opacity(0.08), 1.),
+                linear_color_stop(bg.opacity(0.06), 1.),
                 linear_color_stop(bg.opacity(0.), 0.),
             ))
             .child(

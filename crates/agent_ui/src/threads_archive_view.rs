@@ -1,5 +1,5 @@
 use crate::agent_connection_store::AgentConnectionStore;
-use crate::thread_import::ThreadImportModal;
+use crate::thread_import::{AcpThreadImportOnboarding, ThreadImportModal};
 use crate::thread_metadata_store::{ThreadMetadata, ThreadMetadataStore};
 use crate::{Agent, RemoveSelectedThread};
 
@@ -531,6 +531,16 @@ impl ThreadsArchiveView {
         .detach_and_log_err(cx);
     }
 
+    fn should_render_acp_import_onboarding(&self, cx: &App) -> bool {
+        let has_external_agents = self
+            .agent_server_store
+            .upgrade()
+            .map(|store| store.read(cx).has_external_agents())
+            .unwrap_or(false);
+
+        has_external_agents && !AcpThreadImportOnboarding::dismissed(cx)
+    }
+
     fn show_thread_import_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(agent_server_store) = self.agent_server_store.upgrade() else {
             return;
@@ -699,26 +709,28 @@ impl Render for ThreadsArchiveView {
             .size_full()
             .child(self.render_header(window, cx))
             .child(content)
-            .child(
-                div()
-                    .w_full()
-                    .p_1p5()
-                    .border_t_1()
-                    .border_color(cx.theme().colors().border)
-                    .child(
-                        Button::new("import-acp", "Import ACP Threads")
-                            .full_width()
-                            .style(ButtonStyle::OutlinedCustom(cx.theme().colors().border))
-                            .label_size(LabelSize::Small)
-                            .start_icon(
-                                Icon::new(IconName::ArrowDown)
-                                    .size(IconSize::XSmall)
-                                    .color(Color::Muted),
-                            )
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.show_thread_import_modal(window, cx);
-                            })),
-                    ),
-            )
+            .when(!self.should_render_acp_import_onboarding(cx), |this| {
+                this.child(
+                    div()
+                        .w_full()
+                        .p_1p5()
+                        .border_t_1()
+                        .border_color(cx.theme().colors().border)
+                        .child(
+                            Button::new("import-acp", "Import ACP Threads")
+                                .full_width()
+                                .style(ButtonStyle::OutlinedCustom(cx.theme().colors().border))
+                                .label_size(LabelSize::Small)
+                                .start_icon(
+                                    Icon::new(IconName::ArrowDown)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Muted),
+                                )
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.show_thread_import_modal(window, cx);
+                                })),
+                        ),
+                )
+            })
     }
 }
