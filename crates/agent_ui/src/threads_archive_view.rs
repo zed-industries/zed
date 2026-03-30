@@ -605,27 +605,16 @@ impl ThreadsArchiveView {
             .when(show_focus_keybinding, |this| {
                 this.child(KeyBinding::for_action(&FocusSidebarFilter, cx))
             })
-            .map(|this| {
-                if has_query {
-                    this.child(
-                        IconButton::new("clear-filter", IconName::Close)
-                            .icon_size(IconSize::Small)
-                            .tooltip(Tooltip::text("Clear Search"))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.reset_filter_editor_text(window, cx);
-                                this.update_items(cx);
-                            })),
-                    )
-                } else {
-                    this.child(
-                        IconButton::new("import-thread", IconName::Plus)
-                            .icon_size(IconSize::Small)
-                            .tooltip(Tooltip::text("Import ACP Threads"))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.show_thread_import_modal(window, cx);
-                            })),
-                    )
-                }
+            .when(has_query, |this| {
+                this.child(
+                    IconButton::new("clear-filter", IconName::Close)
+                        .icon_size(IconSize::Small)
+                        .tooltip(Tooltip::text("Clear Search"))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.reset_filter_editor_text(window, cx);
+                            this.update_items(cx);
+                        })),
+                )
             })
     }
 }
@@ -710,5 +699,26 @@ impl Render for ThreadsArchiveView {
             .size_full()
             .child(self.render_header(window, cx))
             .child(content)
+            .child(
+                div()
+                    .w_full()
+                    .p_1p5()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border)
+                    .child(
+                        Button::new("import-acp", "Import ACP Threads")
+                            .full_width()
+                            .style(ButtonStyle::OutlinedCustom(cx.theme().colors().border))
+                            .label_size(LabelSize::Small)
+                            .start_icon(
+                                Icon::new(IconName::ArrowDown)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.show_thread_import_modal(window, cx);
+                            })),
+                    ),
+            )
     }
 }
