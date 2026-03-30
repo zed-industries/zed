@@ -2,9 +2,9 @@ use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
     DummyKeyboardMapper, ForegroundExecutor, Keymap, NoopTextSystem, PathPromptOptions, Platform,
     PlatformDisplay, PlatformHeadlessRenderer, PlatformKeyboardLayout, PlatformKeyboardMapper,
-    PlatformTextSystem, PromptButton, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
-    SourceMetadata, Task, TestDisplay, TestWindow, ThermalState, WindowAppearance, WindowParams,
-    size,
+    PlatformTextSystem, PreventIdleSleepToken, PromptButton, ScreenCaptureFrame,
+    ScreenCaptureSource, ScreenCaptureStream, SourceMetadata, Task, TestDisplay, TestWindow,
+    ThermalState, WindowAppearance, WindowParams, size,
 };
 use anyhow::Result;
 use collections::VecDeque;
@@ -14,7 +14,10 @@ use std::{
     cell::RefCell,
     path::{Path, PathBuf},
     rc::{Rc, Weak},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 /// TestPlatform implements the Platform trait for use in tests.
@@ -35,8 +38,19 @@ pub(crate) struct TestPlatform {
     pub opened_url: RefCell<Option<String>>,
     pub text_system: Arc<dyn PlatformTextSystem>,
     pub expect_restart: RefCell<Option<oneshot::Sender<Option<PathBuf>>>>,
+    idle_sleep_prevention_count: Arc<AtomicUsize>,
     headless_renderer_factory: Option<Box<dyn Fn() -> Option<Box<dyn PlatformHeadlessRenderer>>>>,
     weak: Weak<Self>,
+}
+
+struct TestPreventIdleSleepGuard {
+    count: Arc<AtomicUsize>,
+}
+
+impl Drop for TestPreventIdleSleepGuard {
+    fn drop(&mut self) {
+        self.count.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 #[derive(Clone)]
@@ -132,6 +146,7 @@ impl TestPlatform {
             current_primary_item: Mutex::new(None),
             #[cfg(target_os = "macos")]
             current_find_pasteboard_item: Mutex::new(None),
+            idle_sleep_prevention_count: Arc::new(AtomicUsize::new(0)),
             weak: weak.clone(),
             opened_url: Default::default(),
             text_system,
@@ -258,6 +273,10 @@ impl TestPlatform {
     pub(crate) fn did_prompt_for_new_path(&self) -> bool {
         !self.prompts.borrow().new_path.is_empty()
     }
+
+    pub(crate) fn active_idle_sleep_preventions(&self) -> usize {
+        self.idle_sleep_prevention_count.load(Ordering::SeqCst)
+    }
 }
 
 impl Platform for TestPlatform {
@@ -287,6 +306,14 @@ impl Platform for TestPlatform {
 
     fn thermal_state(&self) -> ThermalState {
         ThermalState::Nominal
+    }
+
+    fn prevent_idle_sleep(&self, _reason: &str) -> Option<PreventIdleSleepToken> {
+        self.idle_sleep_prevention_count
+            .fetch_add(1, Ordering::SeqCst);
+        Some(PreventIdleSleepToken::new(TestPreventIdleSleepGuard {
+            count: self.idle_sleep_prevention_count.clone(),
+        }))
     }
 
     fn run(&self, _on_finish_launching: Box<dyn FnOnce()>) {

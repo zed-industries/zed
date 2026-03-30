@@ -1,5 +1,5 @@
 use dispatch2::{DispatchQueue, DispatchQueueGlobalPriority, DispatchTime, GlobalQueueIdentifier};
-use gpui::{PlatformDispatcher, Priority, RunnableMeta, RunnableVariant};
+use gpui::{PlatformDispatcher, PreventAppNapToken, Priority, RunnableMeta, RunnableVariant};
 use mach2::{
     kern_return::KERN_SUCCESS,
     mach_time::mach_timebase_info_data_t,
@@ -13,6 +13,10 @@ use mach2::{
 use util::ResultExt;
 
 use async_task::Runnable;
+use cocoa::{
+    base::{id, nil},
+    foundation::{NSProcessInfo, NSString},
+};
 use objc::{
     class, msg_send,
     runtime::{BOOL, YES},
@@ -21,6 +25,46 @@ use objc::{
 use std::{ffi::c_void, ptr::NonNull, time::Duration};
 
 pub(crate) struct MacDispatcher;
+
+struct MacAppNapActivity {
+    activity: id,
+}
+
+unsafe impl Send for MacAppNapActivity {}
+
+impl MacAppNapActivity {
+    const NS_ACTIVITY_IDLE_SYSTEM_SLEEP_DISABLED: u64 = 1 << 20;
+    const NS_ACTIVITY_USER_INITIATED: u64 =
+        0x00FF_FFFF | Self::NS_ACTIVITY_IDLE_SYSTEM_SLEEP_DISABLED;
+    const NS_ACTIVITY_USER_INITIATED_ALLOWING_IDLE_SYSTEM_SLEEP: u64 =
+        Self::NS_ACTIVITY_USER_INITIATED & !Self::NS_ACTIVITY_IDLE_SYSTEM_SLEEP_DISABLED;
+
+    fn new(reason: &str) -> Self {
+        unsafe {
+            let process_info = NSProcessInfo::processInfo(nil);
+            #[allow(clippy::disallowed_methods)]
+            let reason = NSString::alloc(nil).init_str(reason);
+            let activity: id = msg_send![
+                process_info,
+                beginActivityWithOptions:Self::NS_ACTIVITY_USER_INITIATED_ALLOWING_IDLE_SYSTEM_SLEEP
+                reason:reason
+            ];
+            let _: () = msg_send![reason, release];
+            let _: () = msg_send![activity, retain];
+            Self { activity }
+        }
+    }
+}
+
+impl Drop for MacAppNapActivity {
+    fn drop(&mut self) {
+        unsafe {
+            let process_info = NSProcessInfo::processInfo(nil);
+            let _: () = msg_send![process_info, endActivity:self.activity];
+            let _: () = msg_send![self.activity, release];
+        }
+    }
+}
 
 impl MacDispatcher {
     pub fn new() -> Self {
@@ -75,6 +119,10 @@ impl PlatformDispatcher for MacDispatcher {
             set_audio_thread_priority().log_err();
             f();
         });
+    }
+
+    fn prevent_app_nap(&self, reason: &str) -> Option<PreventAppNapToken> {
+        Some(PreventAppNapToken::new(MacAppNapActivity::new(reason)))
     }
 }
 

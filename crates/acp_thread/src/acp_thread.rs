@@ -4,6 +4,7 @@ mod mention;
 mod terminal;
 use action_log::{ActionLog, ActionLogTelemetry};
 use agent_client_protocol::schema as acp;
+use agent_settings::AgentOutputIdleSleepControl;
 use anyhow::{Context as _, Result, anyhow};
 use collections::HashSet;
 pub use connection::*;
@@ -11,8 +12,8 @@ pub use diff::*;
 use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 use gpui::{
-    AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
-    WeakEntity,
+    AppContext, AsyncApp, Context, Entity, EventEmitter, PreventIdleSleepToken, SharedString,
+    Subscription, Task, WeakEntity,
 };
 use itertools::Itertools;
 use language::language_settings::FormatOnSave;
@@ -1231,6 +1232,7 @@ pub struct AcpThread {
     prompt_capabilities: acp::PromptCapabilities,
     available_commands: Vec<acp::AvailableCommand>,
     _observe_prompt_capabilities: Task<anyhow::Result<()>>,
+    _idle_sleep_control_subscription: Subscription,
     terminals: HashMap<acp::TerminalId, Entity<Terminal>>,
     pending_terminal_output: HashMap<acp::TerminalId, Vec<Vec<u8>>>,
     pending_terminal_exit: HashMap<acp::TerminalId, acp::TerminalExitStatus>,
@@ -1244,6 +1246,7 @@ pub struct AcpThread {
     /// gradually to create a fluid typing effect instead of choppy chunk-at-a-time
     /// updates.
     streaming_text_buffer: Option<StreamingTextBuffer>,
+    idle_sleep_prevention: Option<PreventIdleSleepToken>,
 }
 
 struct StreamingTextBuffer {
@@ -1403,6 +1406,11 @@ impl AcpThread {
                 })?;
             }
         });
+        cx.default_global::<AgentOutputIdleSleepControl>();
+        let idle_sleep_control_subscription =
+            cx.observe_global::<AgentOutputIdleSleepControl>(|this, cx| {
+                this.update_idle_sleep_prevention(cx);
+            });
 
         let git_store = project.read(cx).git_store().clone();
         let _git_store_subscription = cx.subscribe(&git_store, |this, _, event, cx| {
@@ -1440,6 +1448,7 @@ impl AcpThread {
             prompt_capabilities,
             available_commands: Vec::new(),
             _observe_prompt_capabilities: task,
+            _idle_sleep_control_subscription: idle_sleep_control_subscription,
             terminals: HashMap::default(),
             pending_terminal_output: HashMap::default(),
             pending_terminal_exit: HashMap::default(),
@@ -1447,6 +1456,7 @@ impl AcpThread {
             draft_prompt: None,
             ui_scroll_position: None,
             streaming_text_buffer: None,
+            idle_sleep_prevention: None,
         }
     }
 
@@ -1555,6 +1565,21 @@ impl AcpThread {
             ThreadStatus::Generating
         } else {
             ThreadStatus::Idle
+        }
+    }
+
+    fn update_idle_sleep_prevention(&mut self, cx: &App) {
+        if !AgentOutputIdleSleepControl::is_enabled(cx) {
+            self.idle_sleep_prevention = None;
+            return;
+        }
+
+        if self.running_turn.is_some() {
+            if self.idle_sleep_prevention.is_none() {
+                self.idle_sleep_prevention = cx.prevent_idle_sleep("Agent thread in progress");
+            }
+        } else {
+            self.idle_sleep_prevention = None;
         }
     }
 
@@ -2566,12 +2591,12 @@ impl AcpThread {
                 tx.send(f(this, cx).await).ok();
             }),
         });
+        self.update_idle_sleep_prevention(cx);
 
         cx.spawn(async move |this, cx| {
             let response = rx.await;
-
-            this.update(cx, |this, cx| this.update_last_checkpoint(cx))?
-                .await?;
+            let checkpoint_task = this.update(cx, |this, cx| this.update_last_checkpoint(cx))?;
+            let checkpoint_result = checkpoint_task.await;
 
             this.update(cx, |this, cx| {
                 if this.parent_session_id.is_none() {
@@ -2592,6 +2617,7 @@ impl AcpThread {
                 if is_same_turn {
                     this.running_turn.take();
                 }
+                this.update_idle_sleep_prevention(cx);
 
                 let Ok(response) = response else {
                     // tx dropped, just return
@@ -2600,6 +2626,7 @@ impl AcpThread {
 
                 match response {
                     Ok(r) => {
+                        checkpoint_result?;
                         Self::flush_streaming_text(&mut this.streaming_text_buffer, cx);
 
                         if r.stop_reason == acp::StopReason::MaxTokens {
@@ -2682,6 +2709,7 @@ impl AcpThread {
                         Ok(Some(r))
                     }
                     Err(e) => {
+                        checkpoint_result?;
                         Self::flush_streaming_text(&mut this.streaming_text_buffer, cx);
 
                         this.had_error = true;
@@ -2700,6 +2728,7 @@ impl AcpThread {
             return Task::ready(());
         };
         self.connection.cancel(&self.session_id, cx);
+        self.update_idle_sleep_prevention(cx);
 
         Self::flush_streaming_text(&mut self.streaming_text_buffer, cx);
         self.mark_pending_tools_as_canceled();
@@ -3421,6 +3450,7 @@ fn markdown_for_raw_output(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agent_settings::AgentOutputIdleSleepControl;
     use anyhow::anyhow;
     use futures::stream::StreamExt as _;
     use futures::{channel::mpsc, future::LocalBoxFuture, select};
@@ -3445,6 +3475,12 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
+        });
+    }
+
+    fn set_idle_sleep_control(enabled: bool, cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            AgentOutputIdleSleepControl::set_enabled(enabled, cx);
         });
     }
 
@@ -5592,14 +5628,18 @@ mod tests {
             .await
             .unwrap();
 
+        set_idle_sleep_control(true, cx);
+
         // Send first message (turn_id=1) - handler will block
         let first_request = thread.update(cx, |thread, cx| thread.send_raw("first", cx));
         assert_eq!(thread.read_with(cx, |t, _| t.turn_id), 1);
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
 
         // Send second message (turn_id=2) while first is still blocked
         // This calls cancel() which takes turn 1's running_turn and sets turn 2's
         let second_request = thread.update(cx, |thread, cx| thread.send_raw("second", cx));
         assert_eq!(thread.read_with(cx, |t, _| t.turn_id), 2);
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
 
         let running_turn_after_second_send =
             thread.read_with(cx, |thread, _| thread.running_turn.as_ref().map(|t| t.id));
@@ -5623,6 +5663,7 @@ mod tests {
             Some(2),
             "first turn completing should not clear running_turn (belongs to turn 2)"
         );
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
 
         // Second request completes - SHOULD clear running_turn
         second_request.await.unwrap();
@@ -5633,6 +5674,110 @@ mod tests {
             !running_turn_after_second,
             "second turn completing should clear running_turn"
         );
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+    }
+
+    #[gpui::test]
+    async fn test_cancel_releases_idle_sleep_prevention_immediately_when_thread_stops(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        set_idle_sleep_control(true, cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+
+        let (turn_complete_tx, turn_complete_rx) = futures::channel::oneshot::channel::<()>();
+        let turn_complete_rx = RefCell::new(Some(turn_complete_rx));
+
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message({
+            move |_params, _thread, _cx| {
+                let turn_complete_rx = turn_complete_rx.borrow_mut().take();
+
+                async move {
+                    if let Some(turn_complete_rx) = turn_complete_rx {
+                        turn_complete_rx.await.ok();
+                    }
+
+                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                }
+                .boxed_local()
+            }
+        }));
+
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        let send_request = thread.update(cx, |thread, cx| thread.send_raw("first", cx));
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
+
+        let cancel_task = thread.update(cx, |thread, cx| thread.cancel(cx));
+
+        assert_eq!(
+            thread.read_with(cx, |thread, _| thread.status()),
+            ThreadStatus::Idle
+        );
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+
+        turn_complete_tx.send(()).ok();
+
+        cancel_task.await;
+        send_request.await.unwrap();
+
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+    }
+
+    #[gpui::test]
+    async fn test_setting_toggle_updates_idle_sleep_prevention_for_running_turn(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+
+        let (turn_complete_tx, turn_complete_rx) = futures::channel::oneshot::channel::<()>();
+        let turn_complete_rx = RefCell::new(Some(turn_complete_rx));
+
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message({
+            move |_params, _thread, _cx| {
+                let turn_complete_rx = turn_complete_rx.borrow_mut().take();
+
+                async move {
+                    if let Some(turn_complete_rx) = turn_complete_rx {
+                        turn_complete_rx.await.ok();
+                    }
+
+                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                }
+                .boxed_local()
+            }
+        }));
+
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        let send_request = thread.update(cx, |thread, cx| thread.send_raw("first", cx));
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+
+        set_idle_sleep_control(true, cx);
+        assert_eq!(cx.active_idle_sleep_preventions(), 1);
+
+        set_idle_sleep_control(false, cx);
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
+
+        turn_complete_tx.send(()).ok();
+        send_request.await.unwrap();
+
+        assert_eq!(cx.active_idle_sleep_preventions(), 0);
     }
 
     #[gpui::test]

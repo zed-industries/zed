@@ -31,7 +31,8 @@ use gpui::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
     KeyContext, Keymap, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions, Platform,
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, Result, SystemMenuType, Task, ThermalState, WindowAppearance, WindowParams,
+    PlatformWindow, PreventIdleSleepToken, Result, SystemMenuType, Task, ThermalState,
+    WindowAppearance, WindowParams,
 };
 use itertools::Itertools;
 use objc::{
@@ -68,6 +69,45 @@ const NSUTF8StringEncoding: NSUInteger = 4;
 const MAC_PLATFORM_IVAR: &str = "platform";
 static mut APP_CLASS: *const Class = ptr::null();
 static mut APP_DELEGATE_CLASS: *const Class = ptr::null();
+
+struct PreventIdleSleepGuard {
+    activity: id,
+}
+
+impl PreventIdleSleepGuard {
+    const NS_ACTIVITY_IDLE_DISPLAY_SLEEP_DISABLED: u64 = 1 << 40;
+    const NS_ACTIVITY_IDLE_SYSTEM_SLEEP_DISABLED: u64 = 1 << 20;
+    const NS_ACTIVITY_USER_INITIATED: u64 =
+        0x00FF_FFFF | Self::NS_ACTIVITY_IDLE_SYSTEM_SLEEP_DISABLED;
+
+    fn new(reason: &str) -> Self {
+        unsafe {
+            let process_info = NSProcessInfo::processInfo(nil);
+            #[allow(clippy::disallowed_methods)]
+            let reason = NSString::alloc(nil).init_str(reason);
+            let activity: id = msg_send![
+                process_info,
+                beginActivityWithOptions:
+                    Self::NS_ACTIVITY_USER_INITIATED
+                        | Self::NS_ACTIVITY_IDLE_DISPLAY_SLEEP_DISABLED
+                    reason:reason
+            ];
+            let _: () = msg_send![reason, release];
+            let _: () = msg_send![activity, retain];
+            Self { activity }
+        }
+    }
+}
+
+impl Drop for PreventIdleSleepGuard {
+    fn drop(&mut self) {
+        unsafe {
+            let process_info = NSProcessInfo::processInfo(nil);
+            let _: () = msg_send![process_info, endActivity:self.activity];
+            let _: () = msg_send![self.activity, release];
+        }
+    }
+}
 
 #[ctor(unsafe)]
 unsafe fn build_classes() {
@@ -926,6 +966,12 @@ impl Platform for MacPlatform {
                 _ => ThermalState::Nominal,
             }
         }
+    }
+
+    fn prevent_idle_sleep(&self, reason: &str) -> Option<PreventIdleSleepToken> {
+        Some(PreventIdleSleepToken::new(PreventIdleSleepGuard::new(
+            reason,
+        )))
     }
 
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
