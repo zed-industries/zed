@@ -2337,6 +2337,7 @@ impl EditorElement {
         gutter_hitbox: &Hitbox,
         display_rows: Range<DisplayRow>,
         snapshot: &EditorSnapshot,
+        scroll_position: gpui::Point<ScrollOffset>,
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<(DisplayDiffHunk, Option<Hitbox>)> {
@@ -2349,8 +2350,13 @@ impl EditorElement {
         if let GitGutterSetting::TrackedFiles = git_gutter_setting {
             for (hunk, hitbox) in &mut display_hunks {
                 if matches!(hunk, DisplayDiffHunk::Unfolded { .. }) {
-                    let hunk_bounds =
-                        Self::diff_hunk_bounds(snapshot, line_height, gutter_hitbox.bounds, hunk);
+                    let hunk_bounds = Self::diff_hunk_bounds(
+                        scroll_position,
+                        line_height,
+                        gutter_hitbox.bounds,
+                        hunk,
+                        snapshot,
+                    );
                     *hitbox = Some(window.insert_hitbox(hunk_bounds, HitboxBehavior::BlockMouse));
                 }
             }
@@ -6220,10 +6226,11 @@ impl EditorElement {
                 let hunk_to_paint = match hunk {
                     DisplayDiffHunk::Folded { .. } => {
                         let hunk_bounds = Self::diff_hunk_bounds(
-                            &layout.position_map.snapshot,
+                            layout.position_map.scroll_position,
                             line_height,
                             layout.gutter_hitbox.bounds,
                             hunk,
+                            &layout.position_map.snapshot,
                         );
                         Some((
                             hunk_bounds,
@@ -6314,12 +6321,12 @@ impl EditorElement {
     }
 
     fn diff_hunk_bounds(
-        snapshot: &EditorSnapshot,
+        scroll_position: gpui::Point<ScrollOffset>,
         line_height: Pixels,
         gutter_bounds: Bounds<Pixels>,
         hunk: &DisplayDiffHunk,
+        snapshot: &EditorSnapshot,
     ) -> Bounds<Pixels> {
-        let scroll_position = snapshot.scroll_position();
         let scroll_top = scroll_position.y * ScrollPixelOffset::from(line_height);
         let gutter_strip_width = Self::gutter_strip_width(line_height);
 
@@ -9825,6 +9832,16 @@ impl Element for EditorElement {
                     });
 
                     let mut scroll_position = snapshot.scroll_position();
+                    // Round scroll Y to the nearest device pixel so that all
+                    // positioned elements (gutter, code lines) use a consistent
+                    // vertical offset. This must NOT be written back to the
+                    // editor's scroll state — doing so would accumulate
+                    // floating-point drift across frames.
+                    if !line_height.is_zero() {
+                        scroll_position.y = window.round_f64_to_nearest_device_pixel(
+                            scroll_position.y * f64::from(line_height),
+                        ) / f64::from(line_height);
+                    }
                     // The scroll position is a fractional point, the whole number of which represents
                     // the top of the window in terms of display rows.
                     // We add clipped_top_in_lines to skip rows that are clipped by parent containers,
@@ -10194,6 +10211,7 @@ impl Element for EditorElement {
                         &gutter_hitbox,
                         start_row..end_row,
                         &snapshot,
+                        scroll_position,
                         window,
                         cx,
                     );
@@ -10326,11 +10344,9 @@ impl Element for EditorElement {
                     let start_buffer_row = MultiBufferRow(start_anchor.to_point(&buffer).row);
                     let end_buffer_row = MultiBufferRow(end_anchor.to_point(&buffer).row);
 
-                    let preliminary_scroll_pixel_position = rounded_scroll_pixel_position(
-                        window,
-                        scroll_position,
-                        em_layout_width,
-                        line_height,
+                    let preliminary_scroll_pixel_position = point(
+                        scroll_position.x * f64::from(em_layout_width),
+                        scroll_position.y * f64::from(line_height),
                     );
                     let indent_guides = self.layout_indent_guides(
                         content_origin,
@@ -10448,27 +10464,22 @@ impl Element for EditorElement {
                                 cx,
                             )
                         {
-                            scroll_position = new_scroll_position;
+                            scroll_position.x = new_scroll_position.x;
                         }
                     });
 
-                    // Snap scroll pixel position to device-pixel boundaries so
-                    // that all paint coordinates derived from it land on clean
-                    // device pixels. The rounded value is converted back to
-                    // scroll-offset units for consistent use during this frame.
-                    // This rounded scroll_position must NOT be written back to
-                    // the editor's scroll state — doing so would accumulate
-                    // floating-point drift across frames.
-                    let scroll_pixel_position = rounded_scroll_pixel_position(
-                        window,
-                        scroll_position,
-                        em_layout_width,
-                        line_height,
-                    );
-                    let scroll_position = scroll_position_from_rounded_pixels(
-                        scroll_pixel_position,
-                        em_layout_width,
-                        line_height,
+                    // Round scroll X to the nearest device pixel now that
+                    // horizontal autoscroll is done. Y was already rounded
+                    // earlier, before gutter layout.
+                    if !em_layout_width.is_zero() {
+                        scroll_position.x = window.round_f64_to_nearest_device_pixel(
+                            scroll_position.x * f64::from(em_layout_width),
+                        ) / f64::from(em_layout_width);
+                    }
+
+                    let scroll_pixel_position = point(
+                        scroll_position.x * f64::from(em_layout_width),
+                        scroll_position.y * f64::from(line_height),
                     );
                     let sticky_headers = if !is_minimap
                         && is_singleton
@@ -12384,38 +12395,6 @@ pub fn register_action<T: Action>(
 
 /// Shared between `prepaint` and `compute_auto_height_layout` to ensure
 /// both full and auto-height editors compute wrap widths consistently.
-#[inline]
-fn rounded_scroll_pixel_position(
-    window: &Window,
-    scroll_position: gpui::Point<ScrollOffset>,
-    em_layout_width: Pixels,
-    line_height: Pixels,
-) -> gpui::Point<ScrollPixelOffset> {
-    point(
-        window.round_f64_to_nearest_device_pixel(scroll_position.x * f64::from(em_layout_width)),
-        window.round_f64_to_nearest_device_pixel(scroll_position.y * f64::from(line_height)),
-    )
-}
-
-#[inline]
-fn scroll_position_from_rounded_pixels(
-    scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
-    em_layout_width: Pixels,
-    line_height: Pixels,
-) -> gpui::Point<ScrollOffset> {
-    point(
-        if em_layout_width.is_zero() {
-            0.0
-        } else {
-            scroll_pixel_position.x / f64::from(em_layout_width)
-        },
-        if line_height.is_zero() {
-            0.0
-        } else {
-            scroll_pixel_position.y / f64::from(line_height)
-        },
-    )
-}
 
 fn calculate_wrap_width(
     soft_wrap: SoftWrap,
