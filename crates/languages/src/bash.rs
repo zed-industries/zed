@@ -52,7 +52,7 @@ impl BashLspAdapter {
             Ok(LanguageServerBinary {
                 path: node.binary_path().await?,
                 env: None,
-                arguments: vec![server_path.into(), "--stdio".into()],
+                arguments: vec![server_path.into(), "start".into()],
             })
         })
         .await
