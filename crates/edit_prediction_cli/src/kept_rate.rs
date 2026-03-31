@@ -18,6 +18,7 @@ pub struct KeptRateResult {
     pub discarded_chars: usize,
     pub context_chars: usize,
     pub kept_rate: f64,
+    #[cfg(test)]
     pub token_annotations: Vec<TokenAnnotation>,
 }
 
@@ -191,6 +192,7 @@ pub fn compute_kept_rate(base: &str, predicted: &str, final_text: &str) -> KeptR
             discarded_chars: 0,
             context_chars,
             kept_rate: 1.0,
+            #[cfg(test)]
             token_annotations: vec![TokenAnnotation::Context; predicted_tokens.len()],
         };
     }
@@ -236,21 +238,26 @@ pub fn compute_kept_rate(base: &str, predicted: &str, final_text: &str) -> KeptR
         kept_chars as f64 / predicted_new_chars as f64
     };
 
-    let mut token_annotations = Vec::with_capacity(predicted_tokens.len());
-    let mut new_index = 0;
-    for (token_index, _token) in predicted_tokens.iter().enumerate() {
-        if context_mask[token_index] {
-            token_annotations.push(TokenAnnotation::Context);
-        } else {
-            let annotation = if keep_mask[new_index] {
-                TokenAnnotation::Kept
+    #[cfg(test)]
+    let token_annotations = {
+        let mut token_annotations = Vec::with_capacity(predicted_tokens.len());
+        let mut new_index = 0;
+        for (token_index, _token) in predicted_tokens.iter().enumerate() {
+            if context_mask[token_index] {
+                token_annotations.push(TokenAnnotation::Context);
             } else {
-                TokenAnnotation::Discarded
-            };
-            token_annotations.push(annotation);
-            new_index += 1;
+                let annotation = if keep_mask[new_index] {
+                    TokenAnnotation::Kept
+                } else {
+                    TokenAnnotation::Discarded
+                };
+                #[cfg(test)]
+                token_annotations.push(annotation);
+                new_index += 1;
+            }
         }
-    }
+        token_annotations
+    };
 
     KeptRateResult {
         predicted_new_chars,
@@ -259,6 +266,7 @@ pub fn compute_kept_rate(base: &str, predicted: &str, final_text: &str) -> KeptR
         discarded_chars,
         context_chars,
         kept_rate,
+        #[cfg(test)]
         token_annotations,
     }
 }
