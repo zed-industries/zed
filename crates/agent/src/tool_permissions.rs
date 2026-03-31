@@ -571,6 +571,7 @@ mod tests {
             enabled: true,
             button: true,
             dock: DockPosition::Right,
+            flexible: true,
             default_width: px(300.),
             default_height: px(600.),
             default_model: None,
@@ -597,6 +598,7 @@ mod tests {
             show_turn_stats: false,
             new_thread_location: Default::default(),
             sidebar_side: Default::default(),
+            thinking_display: Default::default(),
         }
     }
 

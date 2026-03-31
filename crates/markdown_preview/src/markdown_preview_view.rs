@@ -16,7 +16,7 @@ use markdown::{
     CodeBlockRenderer, Markdown, MarkdownElement, MarkdownFont, MarkdownOptions, MarkdownStyle,
 };
 use settings::Settings;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{WithScrollbar, prelude::*};
 use util::normalize_path;
 use workspace::item::{Item, ItemHandle};

@@ -83,6 +83,8 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           PR_URL: ${{ github.event.pull_request.html_url }}
           TARGET_REPO: ${{ github.repository }}
+          ASSIGN_INTERNAL: ${{ vars.ASSIGN_INTERNAL || 'false' }}
+          ASSIGN_EXTERNAL: ${{ vars.ASSIGN_EXTERNAL || 'true' }}
         run: |
           cd codeowner-coordinator
           python .github/scripts/assign-reviewers.py \

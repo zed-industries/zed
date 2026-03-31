@@ -33,7 +33,7 @@ use prompt_store::PromptStore;
 use rope::Point;
 use settings::Settings;
 use std::{fmt::Write, ops::Range, rc::Rc, sync::Arc};
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{ContextMenu, Disclosure, ElevationIndex, prelude::*};
 use util::paths::PathStyle;
 use util::{ResultExt, debug_panic};

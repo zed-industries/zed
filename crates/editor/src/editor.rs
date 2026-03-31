@@ -61,8 +61,8 @@ pub use display_map::{
 pub use edit_prediction_types::Direction;
 pub use editor_settings::{
     CompletionDetailAlignment, CurrentLineHighlight, DiffViewStyle, DocumentColorsRenderMode,
-    EditorSettings, HideMouseMode, ScrollBeyondLastLine, ScrollbarAxes, SearchSettings,
-    ShowMinimap,
+    EditorSettings, EditorSettingsScrollbarProxy, HideMouseMode, ScrollBeyondLastLine,
+    ScrollbarAxes, SearchSettings, ShowMinimap, ui_scrollbar_settings_from_raw,
 };
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
@@ -205,8 +205,8 @@ use task::TaskVariables;
 use text::{BufferId, FromAnchor, OffsetUtf16, Rope, ToOffset as _, ToPoint as _};
 use theme::{
     AccentColors, ActiveTheme, GlobalTheme, PlayerColor, StatusColors, SyntaxTheme, Theme,
-    ThemeSettings, observe_buffer_font_size_adjustment,
 };
+use theme_settings::{ThemeSettings, observe_buffer_font_size_adjustment};
 use ui::{
     Avatar, ButtonSize, ButtonStyle, ContextMenu, Disclosure, IconButton, IconButtonShape,
     IconName, IconSize, Indicator, Key, Tooltip, h_flex, prelude::*, scrollbars::ScrollbarAutoHide,
@@ -355,32 +355,26 @@ pub fn init(cx: &mut App) {
 
     cx.on_action(move |_: &workspace::NewFile, cx| {
         let app_state = workspace::AppState::global(cx);
-        if let Some(app_state) = app_state.upgrade() {
-            workspace::open_new(
-                Default::default(),
-                app_state,
-                cx,
-                |workspace, window, cx| {
-                    Editor::new_file(workspace, &Default::default(), window, cx)
-                },
-            )
-            .detach_and_log_err(cx);
-        }
+        workspace::open_new(
+            Default::default(),
+            app_state,
+            cx,
+            |workspace, window, cx| Editor::new_file(workspace, &Default::default(), window, cx),
+        )
+        .detach_and_log_err(cx);
     })
     .on_action(move |_: &workspace::NewWindow, cx| {
         let app_state = workspace::AppState::global(cx);
-        if let Some(app_state) = app_state.upgrade() {
-            workspace::open_new(
-                Default::default(),
-                app_state,
-                cx,
-                |workspace, window, cx| {
-                    cx.activate(true);
-                    Editor::new_file(workspace, &Default::default(), window, cx)
-                },
-            )
-            .detach_and_log_err(cx);
-        }
+        workspace::open_new(
+            Default::default(),
+            app_state,
+            cx,
+            |workspace, window, cx| {
+                cx.activate(true);
+                Editor::new_file(workspace, &Default::default(), window, cx)
+            },
+        )
+        .detach_and_log_err(cx);
     });
     _ = ui_input::ERASED_EDITOR_FACTORY.set(|window, cx| {
         Arc::new(ErasedEditorImpl(
@@ -6725,7 +6719,7 @@ impl Editor {
             text: new_text[common_prefix_len..].into(),
         });
 
-        self.transact(window, cx, |editor, window, cx| {
+        let tx_id = self.transact(window, cx, |editor, window, cx| {
             if let Some(mut snippet) = snippet {
                 snippet.text = new_text.to_string();
                 let offset_ranges = ranges
@@ -6814,7 +6808,7 @@ impl Editor {
         }
 
         Some(cx.spawn_in(window, async move |editor, cx| {
-            apply_edits.await?;
+            let additional_edits_tx = apply_edits.await?;
 
             if let Some((lsp_store, command)) = lsp_store.zip(command) {
                 let title = command.lsp_action.title().to_owned();
@@ -6834,6 +6828,18 @@ impl Editor {
                     )
                     .await?;
                 }
+            }
+
+            if let Some(tx_id) = tx_id
+                && let Some(additional_edits_tx) = additional_edits_tx
+            {
+                editor
+                    .update(cx, |editor, cx| {
+                        editor.buffer.update(cx, |buffer, cx| {
+                            buffer.merge_transactions(additional_edits_tx.id, tx_id, cx)
+                        });
+                    })
+                    .context("merge transactions")?;
             }
 
             Ok(())
@@ -9976,7 +9982,11 @@ impl Editor {
         h_flex()
             .px_0p5()
             .when(is_platform_style_mac, |parent| parent.gap_0p5())
-            .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+            .font(
+                theme_settings::ThemeSettings::get_global(cx)
+                    .buffer_font
+                    .clone(),
+            )
             .text_size(TextSize::XSmall.rems(cx))
             .child(h_flex().children(ui::render_modifiers(
                 keystroke.modifiers(),
@@ -9990,7 +10000,7 @@ impl Editor {
             })
             .when(!is_platform_style_mac, |parent| {
                 parent.child(
-                    Key::new(util::capitalize(keystroke.key()), Some(Color::Default))
+                    Key::new(ui::utils::capitalize(keystroke.key()), Some(Color::Default))
                         .size(Some(IconSize::XSmall.rems().into())),
                 )
             })
@@ -10007,7 +10017,11 @@ impl Editor {
 
         if keystroke.modifiers().modified() {
             h_flex()
-                .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+                .font(
+                    theme_settings::ThemeSettings::get_global(cx)
+                        .buffer_font
+                        .clone(),
+                )
                 .when(is_platform_style_mac, |parent| parent.gap_1())
                 .child(h_flex().children(ui::render_modifiers(
                     keystroke.modifiers(),
@@ -10018,7 +10032,7 @@ impl Editor {
                 )))
                 .into_any()
         } else {
-            Key::new(util::capitalize(keystroke.key()), Some(color))
+            Key::new(ui::utils::capitalize(keystroke.key()), Some(color))
                 .size(Some(IconSize::XSmall.rems().into()))
                 .into_any_element()
         }
@@ -10525,7 +10539,11 @@ impl Editor {
                         .gap_2()
                         .pr_1()
                         .overflow_x_hidden()
-                        .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+                        .font(
+                            theme_settings::ThemeSettings::get_global(cx)
+                                .buffer_font
+                                .clone(),
+                        )
                         .child(left)
                         .child(preview),
                 )
@@ -12313,15 +12331,15 @@ impl Editor {
         if hunk.is_created_file() {
             return None;
         }
-        let buffer = self.buffer.read(cx);
-        let diff = buffer.diff_for(hunk.buffer_id)?;
-        let buffer = buffer.buffer(hunk.buffer_id)?;
-        let buffer = buffer.read(cx);
-        let original_text = diff
-            .read(cx)
-            .base_text(cx)
+        let multi_buffer = self.buffer.read(cx);
+        let multi_buffer_snapshot = multi_buffer.snapshot(cx);
+        let diff_snapshot = multi_buffer_snapshot.diff_for_buffer_id(hunk.buffer_id)?;
+        let original_text = diff_snapshot
+            .base_text()
             .as_rope()
             .slice(hunk.diff_base_byte_range.start.0..hunk.diff_base_byte_range.end.0);
+        let buffer = multi_buffer.buffer(hunk.buffer_id)?;
+        let buffer = buffer.read(cx);
         let buffer_snapshot = buffer.snapshot();
         let buffer_revert_changes = revert_changes.entry(buffer.remote_id()).or_default();
         if let Err(i) = buffer_revert_changes.binary_search_by(|probe| {
@@ -14058,6 +14076,8 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
+
+        self.finalize_last_transaction(cx);
 
         let clipboard_text = Cow::Borrowed(text.as_str());
 
@@ -16166,11 +16186,8 @@ impl Editor {
         };
 
         let mut new_selections = Vec::new();
-
-        let reversed = self
-            .selections
-            .oldest::<MultiBufferOffset>(&display_map)
-            .reversed;
+        let initial_selection = self.selections.oldest::<MultiBufferOffset>(&display_map);
+        let reversed = initial_selection.reversed;
         let buffer = display_map.buffer_snapshot();
         let query_matches = select_next_state
             .query
@@ -16184,21 +16201,33 @@ impl Editor {
                 MultiBufferOffset(query_match.start())..MultiBufferOffset(query_match.end())
             };
 
-            if !select_next_state.wordwise
-                || (!buffer.is_inside_word(offset_range.start, None)
-                    && !buffer.is_inside_word(offset_range.end, None))
-            {
-                new_selections.push(offset_range.start..offset_range.end);
+            let is_partial_word_match = select_next_state.wordwise
+                && (buffer.is_inside_word(offset_range.start, None)
+                    || buffer.is_inside_word(offset_range.end, None));
+
+            let is_initial_selection = MultiBufferOffset(query_match.start())
+                == initial_selection.start
+                && MultiBufferOffset(query_match.end()) == initial_selection.end;
+
+            if !is_partial_word_match && !is_initial_selection {
+                new_selections.push(offset_range);
             }
         }
 
+        // Ensure that the initial range is the last selection, as
+        // `MutableSelectionsCollection::select_ranges` makes the last selection
+        // the newest selection, which the editor then relies on as the primary
+        // cursor for scroll targeting. Without this, the last match would then
+        // be automatically focused when the user started editing the selected
+        // matches.
+        let initial_directed_range = if reversed {
+            initial_selection.end..initial_selection.start
+        } else {
+            initial_selection.start..initial_selection.end
+        };
+        new_selections.push(initial_directed_range);
+
         select_next_state.done = true;
-
-        if new_selections.is_empty() {
-            log::error!("bug: new_selections is empty in select_all_matches");
-            return Ok(());
-        }
-
         self.unfold_ranges(&new_selections, false, false, cx);
         self.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
             selections.select_ranges(new_selections)
@@ -18249,6 +18278,20 @@ impl Editor {
             for ranges in locations.values_mut() {
                 ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
                 ranges.dedup();
+                // Merge overlapping or contained ranges. After sorting by
+                // (start, Reverse(end)), we can merge in a single pass:
+                // if the next range starts before the current one ends,
+                // extend the current range's end if needed.
+                let mut i = 0;
+                while i + 1 < ranges.len() {
+                    if ranges[i + 1].start <= ranges[i].end {
+                        let merged_end = ranges[i].end.max(ranges[i + 1].end);
+                        ranges[i].end = merged_end;
+                        ranges.remove(i + 1);
+                    } else {
+                        i += 1;
+                    }
+                }
                 let fits_in_one_excerpt = ranges
                     .iter()
                     .tuple_windows()
@@ -24380,7 +24423,7 @@ impl Editor {
             return None;
         }
 
-        let theme_settings = theme::ThemeSettings::get_global(cx);
+        let theme_settings = theme_settings::ThemeSettings::get_global(cx);
         let theme = cx.theme();
         let accent_colors = theme.accents().clone();
 
@@ -24938,7 +24981,7 @@ impl Editor {
     fn copy_highlight_json(
         &mut self,
         _: &CopyHighlightJson,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut Context<Self>,
     ) {
         #[derive(Serialize)]
@@ -24948,23 +24991,19 @@ impl Editor {
         }
 
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        let range = self
-            .selected_text_range(false, window, cx)
-            .and_then(|selection| {
-                if selection.range.is_empty() {
-                    None
-                } else {
-                    Some(
-                        snapshot.offset_utf16_to_offset(MultiBufferOffsetUtf16(OffsetUtf16(
-                            selection.range.start,
-                        )))
-                            ..snapshot.offset_utf16_to_offset(MultiBufferOffsetUtf16(OffsetUtf16(
-                                selection.range.end,
-                            ))),
-                    )
-                }
-            })
-            .unwrap_or_else(|| MultiBufferOffset(0)..snapshot.len());
+        let mut selection = self.selections.newest::<Point>(&self.display_snapshot(cx));
+        let max_point = snapshot.max_point();
+
+        let range = if self.selections.line_mode() {
+            selection.start = Point::new(selection.start.row, 0);
+            selection.end = cmp::min(max_point, Point::new(selection.end.row + 1, 0));
+            selection.goal = SelectionGoal::None;
+            selection.range()
+        } else if selection.is_empty() {
+            Point::new(0, 0)..max_point
+        } else {
+            selection.range()
+        };
 
         let chunks = snapshot.chunks(range, true);
         let mut lines = Vec::new();
@@ -25007,6 +25046,10 @@ impl Editor {
                     lines.push(mem::take(&mut line));
                 }
             }
+        }
+
+        if line.iter().any(|chunk| !chunk.text.is_empty()) {
+            lines.push(line);
         }
 
         let Some(lines) = serde_json::to_string_pretty(&lines).log_err() else {

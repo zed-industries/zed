@@ -51,12 +51,10 @@ pub enum NewThreadLocation {
 #[serde(rename_all = "snake_case")]
 pub enum SidebarDockPosition {
     /// Always show the sidebar on the left side.
+    #[default]
     Left,
     /// Always show the sidebar on the right side.
     Right,
-    /// Show the sidebar on the same side as the agent panel.
-    #[default]
-    FollowAgent,
 }
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -64,6 +62,34 @@ pub enum SidebarSide {
     #[default]
     Left,
     Right,
+}
+
+/// How thinking blocks should be displayed by default in the agent panel.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ThinkingBlockDisplay {
+    /// Thinking blocks auto-expand with a height constraint during streaming,
+    /// then remain in their constrained state when complete. Users can click
+    /// to fully expand or collapse.
+    #[default]
+    Automatic,
+    /// Thinking blocks are always fully expanded by default (no height constraint).
+    AlwaysExpanded,
+    /// Thinking blocks are always collapsed by default.
+    AlwaysCollapsed,
 }
 
 #[with_fallible_options]
@@ -81,9 +107,13 @@ pub struct AgentSettingsContent {
     ///
     /// Default: right
     pub dock: Option<DockPosition>,
+    /// Whether the agent panel should use flexible (proportional) sizing.
+    ///
+    /// Default: true
+    pub flexible: Option<bool>,
     /// Where to position the sidebar.
     ///
-    /// Default: follow_agent
+    /// Default: left
     pub sidebar_side: Option<SidebarDockPosition>,
     /// Default width in pixels when the agent panel is docked to the left or right.
     ///
@@ -159,6 +189,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub expand_terminal_card: Option<bool>,
+    /// How thinking blocks should be displayed by default in the agent panel.
+    ///
+    /// Default: automatic
+    pub thinking_display: Option<ThinkingBlockDisplay>,
     /// Whether clicking the stop button on a running terminal tool should also cancel the agent's generation.
     /// Note that this only applies to the stop button, not to ctrl+c inside the terminal.
     ///
@@ -196,6 +230,10 @@ impl AgentSettingsContent {
 
     pub fn set_sidebar_side(&mut self, position: SidebarDockPosition) {
         self.sidebar_side = Some(position);
+    }
+
+    pub fn set_flexible_size(&mut self, flexible: bool) {
+        self.flexible = Some(flexible);
     }
 
     pub fn set_model(&mut self, language_model: LanguageModelSelection) {

@@ -33,7 +33,7 @@ jobs:
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
     - name: compare_perf::run_perf::install_hyperfine
-      uses: taiki-e/install-action@hyperfine
+      uses: taiki-e/install-action@b4f2d5cb8597b15997c8ede873eb6185efc5f0ad
     - name: steps::git_checkout
       run: git fetch origin "$REF_NAME" && git checkout "$REF_NAME"
       env:

@@ -3970,6 +3970,45 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_streaming_edit_preserves_blank_line_after_trailing_newline_replacement(
+        cx: &mut TestAppContext,
+    ) {
+        let file_content = "before\ntarget\n\nafter\n";
+        let old_text = "target\n";
+        let new_text = "one\ntwo\ntarget\n";
+        let expected = "before\none\ntwo\ntarget\n\nafter\n";
+
+        let (tool, _project, _action_log, _fs, _thread) =
+            setup_test(cx, json!({"file.rs": file_content})).await;
+        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
+        let (event_stream, _receiver) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
+
+        sender.send_final(json!({
+            "display_description": "description",
+            "path": "root/file.rs",
+            "mode": "edit",
+            "edits": [{"old_text": old_text, "new_text": new_text}]
+        }));
+
+        let result = task.await;
+
+        let StreamingEditFileToolOutput::Success {
+            new_text: final_text,
+            ..
+        } = result.unwrap()
+        else {
+            panic!("expected success");
+        };
+
+        pretty_assertions::assert_eq!(
+            final_text,
+            expected,
+            "Edit should preserve a single blank line before test_after"
+        );
+    }
+
+    #[gpui::test]
     async fn test_streaming_reject_created_file_deletes_it(cx: &mut TestAppContext) {
         let (tool, _project, action_log, fs, _thread) = setup_test(cx, json!({"dir": {}})).await;
         cx.update(|cx| {

@@ -41,7 +41,6 @@ pub struct Grammar {
     pub injection_config: Option<InjectionConfig>,
     pub override_config: Option<OverrideConfig>,
     pub debug_variables_config: Option<DebugVariablesConfig>,
-    pub imports_config: Option<ImportsConfig>,
     pub highlight_map: Mutex<HighlightMap>,
 }
 
@@ -185,17 +184,6 @@ pub struct DebugVariablesConfig {
     pub objects_by_capture_ix: Vec<(u32, DebuggerTextObject)>,
 }
 
-pub struct ImportsConfig {
-    pub query: Query,
-    pub import_ix: u32,
-    pub name_ix: Option<u32>,
-    pub namespace_ix: Option<u32>,
-    pub source_ix: Option<u32>,
-    pub list_ix: Option<u32>,
-    pub wildcard_ix: Option<u32>,
-    pub alias_ix: Option<u32>,
-}
-
 enum Capture<'a> {
     Required(&'static str, &'a mut u32),
     Optional(&'static str, &'a mut Option<u32>),
@@ -273,7 +261,6 @@ impl Grammar {
             runnable_config: None,
             error_query: Query::new(&ts_language, "(ERROR) @error").ok(),
             debug_variables_config: None,
-            imports_config: None,
             ts_language,
             highlight_map: Default::default(),
         }
@@ -298,10 +285,6 @@ impl Grammar {
 
     pub fn debug_variables_config(&self) -> Option<&DebugVariablesConfig> {
         self.debug_variables_config.as_ref()
-    }
-
-    pub fn imports_config(&self) -> Option<&ImportsConfig> {
-        self.imports_config.as_ref()
     }
 
     /// Load all queries from `LanguageQueries` into this grammar, mutating the
@@ -368,11 +351,6 @@ impl Grammar {
             self = self
                 .with_debug_variables_query(query.as_ref(), name)
                 .context("Error loading debug variables query")?;
-        }
-        if let Some(query) = queries.imports {
-            self = self
-                .with_imports_query(query.as_ref(), name)
-                .context("Error loading imports query")?;
         }
         Ok(self)
     }
@@ -516,49 +494,6 @@ impl Grammar {
             query,
             objects_by_capture_ix,
         });
-        Ok(self)
-    }
-
-    pub fn with_imports_query(
-        mut self,
-        source: &str,
-        language_name: &LanguageName,
-    ) -> Result<Self> {
-        let query = Query::new(&self.ts_language, source)?;
-
-        let mut import_ix = 0;
-        let mut name_ix = None;
-        let mut namespace_ix = None;
-        let mut source_ix = None;
-        let mut list_ix = None;
-        let mut wildcard_ix = None;
-        let mut alias_ix = None;
-        if populate_capture_indices(
-            &query,
-            language_name,
-            "imports",
-            &[],
-            &mut [
-                Capture::Required("import", &mut import_ix),
-                Capture::Optional("name", &mut name_ix),
-                Capture::Optional("namespace", &mut namespace_ix),
-                Capture::Optional("source", &mut source_ix),
-                Capture::Optional("list", &mut list_ix),
-                Capture::Optional("wildcard", &mut wildcard_ix),
-                Capture::Optional("alias", &mut alias_ix),
-            ],
-        ) {
-            self.imports_config = Some(ImportsConfig {
-                query,
-                import_ix,
-                name_ix,
-                namespace_ix,
-                source_ix,
-                list_ix,
-                wildcard_ix,
-                alias_ix,
-            });
-        }
         Ok(self)
     }
 

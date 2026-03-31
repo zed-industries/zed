@@ -76,15 +76,16 @@ use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
 use rules_library::{RulesLibrary, open_rules_library};
 use search::{BufferSearchBar, buffer_search};
 use settings::{Settings, update_settings_file};
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{
     Button, Callout, CommonAnimationExt, ContextMenu, ContextMenuEntry, DocumentationSide,
     KeyBinding, PopoverMenu, PopoverMenuHandle, Tab, Tooltip, prelude::*, utils::WithRemSize,
 };
 use util::{ResultExt as _, debug_panic};
 use workspace::{
-    CollaboratorId, DraggedSelection, DraggedTab, OpenResult, PathList, SerializedPathList,
-    ToggleWorkspaceSidebar, ToggleZoom, ToolbarItemView, Workspace, WorkspaceId,
+    CollaboratorId, DraggedSelection, DraggedTab, OpenMode, OpenResult, PathList,
+    SerializedPathList, ToggleWorkspaceSidebar, ToggleZoom, ToolbarItemView, Workspace,
+    WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
 };
 use zed_actions::{
@@ -742,6 +743,7 @@ pub struct AgentPanel {
     agent_navigation_menu_handle: PopoverMenuHandle<ContextMenu>,
     agent_navigation_menu: Option<Entity<ContextMenu>>,
     _extension_subscription: Option<Subscription>,
+    _project_subscription: Subscription,
     zoomed: bool,
     pending_serialization: Option<Task<Result<()>>>,
     onboarding: Entity<AgentPanelOnboarding>,
@@ -1050,6 +1052,16 @@ impl AgentPanel {
             );
             store
         });
+        let _project_subscription =
+            cx.subscribe(&project, |this, _project, event, cx| match event {
+                project::Event::WorktreeAdded(_)
+                | project::Event::WorktreeRemoved(_)
+                | project::Event::WorktreeOrderChanged => {
+                    this.update_thread_work_dirs(cx);
+                }
+                _ => {}
+            });
+
         let mut panel = Self {
             workspace_id,
             active_view,
@@ -1073,6 +1085,7 @@ impl AgentPanel {
             agent_navigation_menu_handle: PopoverMenuHandle::default(),
             agent_navigation_menu: None,
             _extension_subscription: extension_subscription,
+            _project_subscription,
             zoomed: false,
             pending_serialization: None,
             onboarding,
@@ -1624,17 +1637,17 @@ impl AgentPanel {
                         let agent_buffer_font_size =
                             ThemeSettings::get_global(cx).agent_buffer_font_size(cx) + delta;
 
-                        let _ = settings
-                            .theme
-                            .agent_ui_font_size
-                            .insert(f32::from(theme::clamp_font_size(agent_ui_font_size)).into());
+                        let _ = settings.theme.agent_ui_font_size.insert(
+                            f32::from(theme_settings::clamp_font_size(agent_ui_font_size)).into(),
+                        );
                         let _ = settings.theme.agent_buffer_font_size.insert(
-                            f32::from(theme::clamp_font_size(agent_buffer_font_size)).into(),
+                            f32::from(theme_settings::clamp_font_size(agent_buffer_font_size))
+                                .into(),
                         );
                     });
                 } else {
-                    theme::adjust_agent_ui_font_size(cx, |size| size + delta);
-                    theme::adjust_agent_buffer_font_size(cx, |size| size + delta);
+                    theme_settings::adjust_agent_ui_font_size(cx, |size| size + delta);
+                    theme_settings::adjust_agent_buffer_font_size(cx, |size| size + delta);
                 }
             }
             WhichFontSize::BufferFont => {
@@ -1658,14 +1671,14 @@ impl AgentPanel {
                 settings.theme.agent_buffer_font_size = None;
             });
         } else {
-            theme::reset_agent_ui_font_size(cx);
-            theme::reset_agent_buffer_font_size(cx);
+            theme_settings::reset_agent_ui_font_size(cx);
+            theme_settings::reset_agent_buffer_font_size(cx);
         }
     }
 
     pub fn reset_agent_zoom(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        theme::reset_agent_ui_font_size(cx);
-        theme::reset_agent_buffer_font_size(cx);
+        theme_settings::reset_agent_ui_font_size(cx);
+        theme_settings::reset_agent_buffer_font_size(cx);
     }
 
     pub fn toggle_zoom(&mut self, _: &ToggleZoom, window: &mut Window, cx: &mut Context<Self>) {
@@ -1908,6 +1921,14 @@ impl AgentPanel {
         }
     }
 
+    pub fn workspace_id(&self) -> Option<WorkspaceId> {
+        self.workspace_id
+    }
+
+    pub fn background_threads(&self) -> &HashMap<acp::SessionId, Entity<ConversationView>> {
+        &self.background_threads
+    }
+
     pub fn active_conversation_view(&self) -> Option<&Entity<ConversationView>> {
         match &self.active_view {
             ActiveView::AgentThread { conversation_view } => Some(conversation_view),
@@ -1970,6 +1991,22 @@ impl AgentPanel {
         }
 
         views
+    }
+
+    fn update_thread_work_dirs(&self, cx: &mut Context<Self>) {
+        let new_work_dirs = self.project.read(cx).default_path_list(cx);
+
+        if let Some(conversation_view) = self.active_conversation_view() {
+            conversation_view.update(cx, |conversation_view, cx| {
+                conversation_view.set_work_dirs(new_work_dirs.clone(), cx);
+            });
+        }
+
+        for conversation_view in self.background_threads.values() {
+            conversation_view.update(cx, |conversation_view, cx| {
+                conversation_view.set_work_dirs(new_work_dirs.clone(), cx);
+            });
+        }
     }
 
     fn retain_running_thread(&mut self, old_view: ActiveView, cx: &mut Context<Self>) {
@@ -2233,6 +2270,10 @@ impl AgentPanel {
                 |this, view, event: &AcpThreadViewEvent, window, cx| match event {
                     AcpThreadViewEvent::FirstSendRequested { content } => {
                         this.handle_first_send_requested(view.clone(), content.clone(), window, cx);
+                    }
+                    AcpThreadViewEvent::MessageSentOrQueued => {
+                        let session_id = view.read(cx).thread.read(cx).session_id().clone();
+                        cx.emit(AgentPanelEvent::MessageSentOrQueued { session_id });
                     }
                 },
             )
@@ -2935,7 +2976,15 @@ impl AgentPanel {
             ..
         } = cx
             .update(|_window, cx| {
-                Workspace::new_local(all_paths, app_state, window_handle, None, None, false, cx)
+                Workspace::new_local(
+                    all_paths,
+                    app_state,
+                    window_handle,
+                    None,
+                    None,
+                    OpenMode::Add,
+                    cx,
+                )
             })?
             .await?;
 
@@ -3058,8 +3107,8 @@ impl AgentPanel {
             });
         })?;
 
-        new_window_handle.update(cx, |multi_workspace, _window, cx| {
-            multi_workspace.activate(new_workspace.clone(), cx);
+        new_window_handle.update(cx, |multi_workspace, window, cx| {
+            multi_workspace.activate(new_workspace.clone(), window, cx);
         })?;
 
         this.update_in(cx, |this, window, cx| {
@@ -3113,6 +3162,7 @@ pub enum AgentPanelEvent {
     ActiveViewChanged,
     ThreadFocused,
     BackgroundThreadChanged,
+    MessageSentOrQueued { session_id: acp::SessionId },
 }
 
 impl EventEmitter<PanelEvent> for AgentPanel {}
@@ -3152,8 +3202,21 @@ impl Panel for AgentPanel {
         }
     }
 
-    fn supports_flexible_size(&self, _window: &Window, _cx: &App) -> bool {
+    fn supports_flexible_size(&self) -> bool {
         true
+    }
+
+    fn has_flexible_size(&self, _window: &Window, cx: &App) -> bool {
+        AgentSettings::get_global(cx).flexible
+    }
+
+    fn set_flexible_size(&mut self, flexible: bool, _window: &mut Window, cx: &mut Context<Self>) {
+        settings::update_settings_file(self.fs.clone(), cx, move |settings, _| {
+            settings
+                .agent
+                .get_or_insert_default()
+                .set_flexible_size(flexible);
+        });
     }
 
     fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -6268,6 +6331,201 @@ mod tests {
                 id: CODEX_ID.into()
             },
             "the new worktree workspace should use the same agent (Codex) that was selected in the original panel",
+        );
+    }
+
+    #[gpui::test]
+    async fn test_work_dirs_update_when_worktrees_change(cx: &mut TestAppContext) {
+        use crate::thread_metadata_store::ThreadMetadataStore;
+
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        // Set up a project with one worktree.
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project_a", json!({ "file.txt": "" }))
+            .await;
+        let project = Project::test(fs.clone(), [Path::new("/project_a")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+        let mut cx = VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let panel = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+            cx.new(|cx| AgentPanel::new(workspace, text_thread_store, None, window, cx))
+        });
+
+        // Open thread A and send a message. With empty next_prompt_updates it
+        // stays generating, so opening B will move A to background_threads.
+        let connection_a = StubAgentConnection::new().with_agent_id("agent-a".into());
+        open_thread_with_custom_connection(&panel, connection_a.clone(), &mut cx);
+        send_message(&panel, &mut cx);
+        let session_id_a = active_session_id(&panel, &cx);
+
+        // Open thread C — thread A (generating) moves to background.
+        // Thread C completes immediately (idle), then opening B moves C to background too.
+        let connection_c = StubAgentConnection::new().with_agent_id("agent-c".into());
+        connection_c.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("done".into()),
+        )]);
+        open_thread_with_custom_connection(&panel, connection_c.clone(), &mut cx);
+        send_message(&panel, &mut cx);
+        let session_id_c = active_session_id(&panel, &cx);
+
+        // Open thread B — thread C (idle, non-loadable) is retained in background.
+        let connection_b = StubAgentConnection::new().with_agent_id("agent-b".into());
+        open_thread_with_custom_connection(&panel, connection_b.clone(), &mut cx);
+        send_message(&panel, &mut cx);
+        let session_id_b = active_session_id(&panel, &cx);
+
+        let metadata_store = cx.update(|_, cx| ThreadMetadataStore::global(cx));
+
+        panel.read_with(&cx, |panel, _cx| {
+            assert!(
+                panel.background_threads.contains_key(&session_id_a),
+                "Thread A should be in background_threads"
+            );
+            assert!(
+                panel.background_threads.contains_key(&session_id_c),
+                "Thread C should be in background_threads"
+            );
+        });
+
+        // Verify initial work_dirs for thread B contain only /project_a.
+        let initial_b_paths = panel.read_with(&cx, |panel, cx| {
+            let thread = panel.active_agent_thread(cx).unwrap();
+            thread.read(cx).work_dirs().cloned().unwrap()
+        });
+        assert_eq!(
+            initial_b_paths.ordered_paths().collect::<Vec<_>>(),
+            vec![&PathBuf::from("/project_a")],
+            "Thread B should initially have only /project_a"
+        );
+
+        // Now add a second worktree to the project.
+        fs.insert_tree("/project_b", json!({ "other.txt": "" }))
+            .await;
+        let (new_tree, _) = project
+            .update(&mut cx, |project, cx| {
+                project.find_or_create_worktree("/project_b", true, cx)
+            })
+            .await
+            .unwrap();
+        cx.read(|cx| new_tree.read(cx).as_local().unwrap().scan_complete())
+            .await;
+        cx.run_until_parked();
+
+        // Verify thread B's (active) work_dirs now include both worktrees.
+        let updated_b_paths = panel.read_with(&cx, |panel, cx| {
+            let thread = panel.active_agent_thread(cx).unwrap();
+            thread.read(cx).work_dirs().cloned().unwrap()
+        });
+        let mut b_paths_sorted = updated_b_paths.ordered_paths().cloned().collect::<Vec<_>>();
+        b_paths_sorted.sort();
+        assert_eq!(
+            b_paths_sorted,
+            vec![PathBuf::from("/project_a"), PathBuf::from("/project_b")],
+            "Thread B work_dirs should include both worktrees after adding /project_b"
+        );
+
+        // Verify thread A's (background) work_dirs are also updated.
+        let updated_a_paths = panel.read_with(&cx, |panel, cx| {
+            let bg_view = panel.background_threads.get(&session_id_a).unwrap();
+            let root_thread = bg_view.read(cx).root_thread(cx).unwrap();
+            root_thread
+                .read(cx)
+                .thread
+                .read(cx)
+                .work_dirs()
+                .cloned()
+                .unwrap()
+        });
+        let mut a_paths_sorted = updated_a_paths.ordered_paths().cloned().collect::<Vec<_>>();
+        a_paths_sorted.sort();
+        assert_eq!(
+            a_paths_sorted,
+            vec![PathBuf::from("/project_a"), PathBuf::from("/project_b")],
+            "Thread A work_dirs should include both worktrees after adding /project_b"
+        );
+
+        // Verify thread idle C was also updated.
+        let updated_c_paths = panel.read_with(&cx, |panel, cx| {
+            let bg_view = panel.background_threads.get(&session_id_c).unwrap();
+            let root_thread = bg_view.read(cx).root_thread(cx).unwrap();
+            root_thread
+                .read(cx)
+                .thread
+                .read(cx)
+                .work_dirs()
+                .cloned()
+                .unwrap()
+        });
+        let mut c_paths_sorted = updated_c_paths.ordered_paths().cloned().collect::<Vec<_>>();
+        c_paths_sorted.sort();
+        assert_eq!(
+            c_paths_sorted,
+            vec![PathBuf::from("/project_a"), PathBuf::from("/project_b")],
+            "Thread C (idle background) work_dirs should include both worktrees after adding /project_b"
+        );
+
+        // Verify the metadata store reflects the new paths for running threads only.
+        cx.run_until_parked();
+        for (label, session_id) in [("thread B", &session_id_b), ("thread A", &session_id_a)] {
+            let metadata_paths = metadata_store.read_with(&cx, |store, _cx| {
+                let metadata = store
+                    .entry(session_id)
+                    .unwrap_or_else(|| panic!("{label} thread metadata should exist"));
+                metadata.folder_paths.clone()
+            });
+            let mut sorted = metadata_paths.ordered_paths().cloned().collect::<Vec<_>>();
+            sorted.sort();
+            assert_eq!(
+                sorted,
+                vec![PathBuf::from("/project_a"), PathBuf::from("/project_b")],
+                "{label} thread metadata folder_paths should include both worktrees"
+            );
+        }
+
+        // Now remove a worktree and verify work_dirs shrink.
+        let worktree_b_id = new_tree.read_with(&cx, |tree, _| tree.id());
+        project.update(&mut cx, |project, cx| {
+            project.remove_worktree(worktree_b_id, cx);
+        });
+        cx.run_until_parked();
+
+        let after_remove_b = panel.read_with(&cx, |panel, cx| {
+            let thread = panel.active_agent_thread(cx).unwrap();
+            thread.read(cx).work_dirs().cloned().unwrap()
+        });
+        assert_eq!(
+            after_remove_b.ordered_paths().collect::<Vec<_>>(),
+            vec![&PathBuf::from("/project_a")],
+            "Thread B work_dirs should revert to only /project_a after removing /project_b"
+        );
+
+        let after_remove_a = panel.read_with(&cx, |panel, cx| {
+            let bg_view = panel.background_threads.get(&session_id_a).unwrap();
+            let root_thread = bg_view.read(cx).root_thread(cx).unwrap();
+            root_thread
+                .read(cx)
+                .thread
+                .read(cx)
+                .work_dirs()
+                .cloned()
+                .unwrap()
+        });
+        assert_eq!(
+            after_remove_a.ordered_paths().collect::<Vec<_>>(),
+            vec![&PathBuf::from("/project_a")],
+            "Thread A work_dirs should revert to only /project_a after removing /project_b"
         );
     }
 }

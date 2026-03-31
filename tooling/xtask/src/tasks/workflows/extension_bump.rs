@@ -145,7 +145,12 @@ fn create_version_label(
 }
 
 fn create_version_tag(tag: &StepOutput, generated_token: StepOutput) -> Step<Use> {
-    named::uses("actions", "github-script", "v7").with(
+    named::uses(
+        "actions",
+        "github-script",
+        "f28e40c7f34bde8b3046d885e986cb6290c5673b", // v7
+    )
+    .with(
         Input::default()
             .add(
                 "script",
@@ -413,7 +418,11 @@ fn enable_automerge_if_staff(
     pull_request_number: StepOutput,
     generated_token: StepOutput,
 ) -> Step<Use> {
-    named::uses("actions", "github-script", "v7")
+    named::uses(
+        "actions",
+        "github-script",
+        "f28e40c7f34bde8b3046d885e986cb6290c5673b", // v7
+    )
         .add_with(("github-token", generated_token.to_string()))
         .add_with((
             "script",

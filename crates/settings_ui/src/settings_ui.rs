@@ -33,7 +33,7 @@ use std::{
     sync::{Arc, LazyLock, RwLock},
     time::Duration,
 };
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{
     Banner, ContextMenu, Divider, DropdownMenu, DropdownStyle, IconButtonShape, KeyBinding,
     KeybindingHint, PopoverMenu, Scrollbars, Switch, Tooltip, TreeViewItem, WithScrollbar,
@@ -524,6 +524,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::SteppingGranularity>(render_dropdown)
         .add_basic_renderer::<settings::NotifyWhenAgentWaiting>(render_dropdown)
         .add_basic_renderer::<settings::NewThreadLocation>(render_dropdown)
+        .add_basic_renderer::<settings::ThinkingBlockDisplay>(render_dropdown)
         .add_basic_renderer::<settings::ImageFileSizeUnit>(render_dropdown)
         .add_basic_renderer::<settings::StatusStyle>(render_dropdown)
         .add_basic_renderer::<settings::EncodingDisplayOptions>(render_dropdown)
@@ -639,7 +640,9 @@ pub fn open_settings_editor(
     // We have to defer this to get the workspace off the stack.
     let path = path.map(ToOwned::to_owned);
     cx.defer(move |cx| {
-        let current_rem_size: f32 = theme::ThemeSettings::get_global(cx).ui_font_size(cx).into();
+        let current_rem_size: f32 = theme_settings::ThemeSettings::get_global(cx)
+            .ui_font_size(cx)
+            .into();
 
         let default_bounds = DEFAULT_ADDITIONAL_WINDOW_SIZE;
         let default_rem_size = 16.0;
@@ -1392,17 +1395,14 @@ impl PartialEq for ActionLink {
 }
 
 fn all_language_names(cx: &App) -> Vec<SharedString> {
-    workspace::AppState::global(cx)
-        .upgrade()
-        .map_or(vec![], |state| {
-            state
-                .languages
-                .language_names()
-                .into_iter()
-                .filter(|name| name.as_ref() != "Zed Keybind Context")
-                .map(Into::into)
-                .collect()
-        })
+    let state = workspace::AppState::global(cx);
+    state
+        .languages
+        .language_names()
+        .into_iter()
+        .filter(|name| name.as_ref() != "Zed Keybind Context")
+        .map(Into::into)
+        .collect()
 }
 
 #[allow(unused)]
@@ -1533,29 +1533,26 @@ impl SettingsWindow {
         })
         .detach();
 
-        if let Some(app_state) = AppState::global(cx).upgrade() {
-            let workspaces: Vec<Entity<Workspace>> = app_state
-                .workspace_store
-                .read(cx)
-                .workspaces()
-                .filter_map(|weak| weak.upgrade())
-                .collect();
+        let app_state = AppState::global(cx);
+        let workspaces: Vec<Entity<Workspace>> = app_state
+            .workspace_store
+            .read(cx)
+            .workspaces()
+            .filter_map(|weak| weak.upgrade())
+            .collect();
 
-            for workspace in workspaces {
-                let project = workspace.read(cx).project().clone();
-                cx.observe_release_in(&project, window, |this, _, window, cx| {
-                    this.fetch_files(window, cx)
-                })
+        for workspace in workspaces {
+            let project = workspace.read(cx).project().clone();
+            cx.observe_release_in(&project, window, |this, _, window, cx| {
+                this.fetch_files(window, cx)
+            })
+            .detach();
+            cx.subscribe_in(&project, window, Self::handle_project_event)
                 .detach();
-                cx.subscribe_in(&project, window, Self::handle_project_event)
-                    .detach();
-                cx.observe_release_in(&workspace, window, |this, _, window, cx| {
-                    this.fetch_files(window, cx)
-                })
-                .detach();
-            }
-        } else {
-            log::error!("App state doesn't exist when creating a new settings window");
+            cx.observe_release_in(&workspace, window, |this, _, window, cx| {
+                this.fetch_files(window, cx)
+            })
+            .detach();
         }
 
         let this_weak = cx.weak_entity();
@@ -3360,9 +3357,7 @@ impl SettingsWindow {
             }
             SettingsUiFile::Project((worktree_id, path)) => {
                 let settings_path = path.join(paths::local_settings_file_relative_path());
-                let Some(app_state) = workspace::AppState::global(cx).upgrade() else {
-                    return;
-                };
+                let app_state = workspace::AppState::global(cx);
 
                 let Some((workspace_window, worktree, corresponding_workspace)) = app_state
                     .workspace_store
@@ -3650,7 +3645,7 @@ impl SettingsWindow {
 
 impl Render for SettingsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let ui_font = theme::setup_ui_font(window, cx);
+        let ui_font = theme_settings::setup_ui_font(window, cx);
 
         client_side_decorations(
             v_flex()
@@ -3743,31 +3738,26 @@ fn all_projects(
     cx: &App,
 ) -> impl Iterator<Item = Entity<Project>> {
     let mut seen_project_ids = std::collections::HashSet::new();
-    workspace::AppState::global(cx)
-        .upgrade()
-        .map(|app_state| {
-            app_state
-                .workspace_store
-                .read(cx)
-                .workspaces()
-                .filter_map(|weak| weak.upgrade())
-                .map(|workspace: Entity<Workspace>| workspace.read(cx).project().clone())
-                .chain(
-                    window
-                        .and_then(|handle| handle.read(cx).ok())
-                        .into_iter()
-                        .flat_map(|multi_workspace| {
-                            multi_workspace
-                                .workspaces()
-                                .iter()
-                                .map(|workspace| workspace.read(cx).project().clone())
-                                .collect::<Vec<_>>()
-                        }),
-                )
-                .filter(move |project| seen_project_ids.insert(project.entity_id()))
-        })
-        .into_iter()
-        .flatten()
+    let app_state = workspace::AppState::global(cx);
+    app_state
+        .workspace_store
+        .read(cx)
+        .workspaces()
+        .filter_map(|weak| weak.upgrade())
+        .map(|workspace: Entity<Workspace>| workspace.read(cx).project().clone())
+        .chain(
+            window
+                .and_then(|handle| handle.read(cx).ok())
+                .into_iter()
+                .flat_map(|multi_workspace| {
+                    multi_workspace
+                        .workspaces()
+                        .iter()
+                        .map(|workspace| workspace.read(cx).project().clone())
+                        .collect::<Vec<_>>()
+                }),
+        )
+        .filter(move |project| seen_project_ids.insert(project.entity_id()))
 }
 
 fn open_user_settings_in_workspace(
@@ -3942,10 +3932,13 @@ impl ProjectSettingsUpdateQueue {
 
         buffer.update(cx, |buffer, cx| {
             let current_text = buffer.text();
-            let new_text = cx
+            if let Some(new_text) = cx
                 .global::<SettingsStore>()
-                .new_text_for_update(current_text, |settings| update(settings, cx));
-            buffer.edit([(0..buffer.len(), new_text)], None, cx);
+                .new_text_for_update(current_text, |settings| update(settings, cx))
+                .log_err()
+            {
+                buffer.edit([(0..buffer.len(), new_text)], None, cx);
+            }
         });
 
         buffer_store
@@ -4410,7 +4403,7 @@ pub mod test {
 
     pub fn register_settings(cx: &mut App) {
         settings::init(cx);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
         editor::init(cx);
         menu::init();
     }
@@ -4721,7 +4714,7 @@ pub mod test {
 
         let app_state = cx.update(|cx| {
             let app_state = AppState::test(cx);
-            AppState::set_global(Arc::downgrade(&app_state), cx);
+            AppState::set_global(app_state.clone(), cx);
             app_state
         });
 
@@ -4895,7 +4888,7 @@ pub mod test {
 
         let app_state = cx.update(|cx| {
             let app_state = AppState::test(cx);
-            AppState::set_global(Arc::downgrade(&app_state), cx);
+            AppState::set_global(app_state.clone(), cx);
             app_state
         });
 
@@ -5075,7 +5068,7 @@ mod project_settings_update_tests {
         cx.update(|cx| {
             let store = settings::SettingsStore::test(cx);
             cx.set_global(store);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
             menu::init();
             let queue = ProjectSettingsUpdateQueue::new(cx);

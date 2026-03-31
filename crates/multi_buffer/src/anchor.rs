@@ -1,6 +1,6 @@
 use crate::{
     ExcerptSummary, MultiBufferDimension, MultiBufferOffset, MultiBufferOffsetUtf16, PathKey,
-    PathKeyIndex,
+    PathKeyIndex, find_diff_state,
 };
 
 use super::{MultiBufferSnapshot, ToOffset, ToPoint};
@@ -125,9 +125,7 @@ impl ExcerptAnchor {
         }
 
         if (self.diff_base_anchor.is_some() || other.diff_base_anchor.is_some())
-            && let Some(base_text) = snapshot
-                .diffs
-                .get(&self.text_anchor.buffer_id)
+            && let Some(base_text) = find_diff_state(&snapshot.diffs, self.text_anchor.buffer_id)
                 .map(|diff| diff.base_text())
         {
             let self_anchor = self.diff_base_anchor.filter(|a| a.is_valid(base_text));
@@ -159,7 +157,7 @@ impl ExcerptAnchor {
         let text_anchor = self.text_anchor().bias_left(&buffer);
         let ret = Self::in_buffer(self.path, text_anchor);
         if let Some(diff_base_anchor) = self.diff_base_anchor {
-            if let Some(diff) = snapshot.diffs.get(&self.text_anchor.buffer_id)
+            if let Some(diff) = find_diff_state(&snapshot.diffs, self.text_anchor.buffer_id)
                 && diff_base_anchor.is_valid(&diff.base_text())
             {
                 ret.with_diff_base_anchor(diff_base_anchor.bias_left(diff.base_text()))
@@ -181,7 +179,7 @@ impl ExcerptAnchor {
         let text_anchor = self.text_anchor().bias_right(&buffer);
         let ret = Self::in_buffer(self.path, text_anchor);
         if let Some(diff_base_anchor) = self.diff_base_anchor {
-            if let Some(diff) = snapshot.diffs.get(&self.text_anchor.buffer_id)
+            if let Some(diff) = find_diff_state(&snapshot.diffs, self.text_anchor.buffer_id)
                 && diff_base_anchor.is_valid(&diff.base_text())
             {
                 ret.with_diff_base_anchor(diff_base_anchor.bias_right(diff.base_text()))

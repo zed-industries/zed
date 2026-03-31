@@ -1,7 +1,10 @@
-use crate::{DEFAULT_THREAD_TITLE, SelectPermissionGranularity};
+use crate::{
+    DEFAULT_THREAD_TITLE, SelectPermissionGranularity,
+    agent_configuration::configure_context_server_modal::default_markdown_style,
+};
 use std::cell::RefCell;
 
-use acp_thread::ContentBlock;
+use acp_thread::{ContentBlock, PlanEntry};
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
 
@@ -163,6 +166,7 @@ impl ThreadFeedbackState {
 
 pub enum AcpThreadViewEvent {
     FirstSendRequested { content: Vec<acp::ContentBlock> },
+    MessageSentOrQueued,
 }
 
 impl EventEmitter<AcpThreadViewEvent> for ThreadView {}
@@ -249,6 +253,7 @@ pub struct ThreadView {
     pub expanded_tool_call_raw_inputs: HashSet<agent_client_protocol::ToolCallId>,
     pub expanded_thinking_blocks: HashSet<(usize, usize)>,
     auto_expanded_thinking_block: Option<(usize, usize)>,
+    user_toggled_thinking_blocks: HashSet<(usize, usize)>,
     pub subagent_scroll_handles: RefCell<HashMap<agent_client_protocol::SessionId, ScrollHandle>>,
     pub edits_expanded: bool,
     pub plan_expanded: bool,
@@ -491,6 +496,7 @@ impl ThreadView {
             expanded_tool_call_raw_inputs: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
             auto_expanded_thinking_block: None,
+            user_toggled_thinking_blocks: HashSet::default(),
             subagent_scroll_handles: RefCell::new(HashMap::default()),
             edits_expanded: false,
             plan_expanded: false,
@@ -530,6 +536,7 @@ impl ThreadView {
         };
 
         this.sync_generating_indicator(cx);
+        this.sync_editor_mode_for_empty_state(cx);
         let list_state_for_scroll = this.list_state.clone();
         let thread_view = cx.entity().downgrade();
 
@@ -903,6 +910,7 @@ impl ThreadView {
                 });
 
         if intercept_first_send {
+            cx.emit(AcpThreadViewEvent::MessageSentOrQueued);
             let content_task = self.resolve_message_contents(&message_editor, cx);
 
             cx.spawn(async move |this, cx| match content_task.await {
@@ -934,6 +942,7 @@ impl ThreadView {
         let has_queued = self.has_queued_messages();
         if is_editor_empty && self.can_fast_track_queue && has_queued {
             self.can_fast_track_queue = false;
+            cx.emit(AcpThreadViewEvent::MessageSentOrQueued);
             self.send_queued_message_at_index(0, true, window, cx);
             return;
         }
@@ -943,6 +952,7 @@ impl ThreadView {
         }
 
         if is_generating {
+            cx.emit(AcpThreadViewEvent::MessageSentOrQueued);
             self.queue_message(message_editor, window, cx);
             return;
         }
@@ -984,6 +994,7 @@ impl ThreadView {
             }
         }
 
+        cx.emit(AcpThreadViewEvent::MessageSentOrQueued);
         self.send_impl(message_editor, window, cx)
     }
 
@@ -2155,7 +2166,14 @@ impl ThreadView {
         let plan = thread.plan();
         let queue_is_empty = !self.has_queued_messages();
 
-        if changed_buffers.is_empty() && plan.is_empty() && queue_is_empty {
+        let subagents_awaiting_permission = self.render_subagents_awaiting_permission(cx);
+        let has_subagents_awaiting = subagents_awaiting_permission.is_some();
+
+        if changed_buffers.is_empty()
+            && plan.is_empty()
+            && queue_is_empty
+            && !has_subagents_awaiting
+        {
             return None;
         }
 
@@ -2183,6 +2201,14 @@ impl ThreadView {
                 blur_radius: px(2.),
                 spread_radius: px(0.),
             }])
+            .when_some(subagents_awaiting_permission, |this, element| {
+                this.child(element)
+            })
+            .when(
+                has_subagents_awaiting
+                    && (!plan.is_empty() || !changed_buffers.is_empty() || !queue_is_empty),
+                |this| this.child(Divider::horizontal().color(DividerColor::Border)),
+            )
             .when(!plan.is_empty(), |this| {
                 this.child(self.render_plan_summary(plan, window, cx))
                     .when(plan_expanded, |parent| {
@@ -2442,6 +2468,119 @@ impl ThreadView {
             )
     }
 
+    fn render_subagents_awaiting_permission(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let awaiting = self.conversation.read(cx).subagents_awaiting_permission(cx);
+
+        if awaiting.is_empty() {
+            return None;
+        }
+
+        let thread = self.thread.read(cx);
+        let entries = thread.entries();
+        let mut subagent_items: Vec<(SharedString, usize)> = Vec::new();
+
+        for (session_id, _) in &awaiting {
+            for (entry_ix, entry) in entries.iter().enumerate() {
+                if let AgentThreadEntry::ToolCall(tool_call) = entry {
+                    if let Some(info) = &tool_call.subagent_session_info {
+                        if &info.session_id == session_id {
+                            let subagent_summary: SharedString = {
+                                let summary_text = tool_call.label.read(cx).source().to_string();
+                                if !summary_text.is_empty() {
+                                    summary_text.into()
+                                } else {
+                                    "Subagent".into()
+                                }
+                            };
+                            subagent_items.push((subagent_summary, entry_ix));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if subagent_items.is_empty() {
+            return None;
+        }
+
+        let item_count = subagent_items.len();
+
+        Some(
+            v_flex()
+                .child(
+                    h_flex()
+                        .py_1()
+                        .px_2()
+                        .w_full()
+                        .gap_1()
+                        .border_b_1()
+                        .border_color(cx.theme().colors().border)
+                        .child(
+                            Label::new("Subagents Awaiting Permission:")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .child(Label::new(item_count.to_string()).size(LabelSize::Small)),
+                )
+                .child(
+                    v_flex().children(subagent_items.into_iter().enumerate().map(
+                        |(ix, (label, entry_ix))| {
+                            let is_last = ix == item_count - 1;
+                            let group = format!("group-{}", entry_ix);
+
+                            h_flex()
+                                .cursor_pointer()
+                                .id(format!("subagent-permission-{}", entry_ix))
+                                .group(&group)
+                                .p_1()
+                                .pl_2()
+                                .min_w_0()
+                                .w_full()
+                                .gap_1()
+                                .justify_between()
+                                .bg(cx.theme().colors().editor_background)
+                                .hover(|s| s.bg(cx.theme().colors().element_hover))
+                                .when(!is_last, |this| {
+                                    this.border_b_1().border_color(cx.theme().colors().border)
+                                })
+                                .child(
+                                    h_flex()
+                                        .gap_1p5()
+                                        .child(
+                                            Icon::new(IconName::Circle)
+                                                .size(IconSize::XSmall)
+                                                .color(Color::Warning),
+                                        )
+                                        .child(
+                                            Label::new(label)
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted)
+                                                .truncate(),
+                                        ),
+                                )
+                                .child(
+                                    div().visible_on_hover(&group).child(
+                                        Label::new("Scroll to Subagent")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted)
+                                            .truncate(),
+                                    ),
+                                )
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.list_state.scroll_to(ListOffset {
+                                        item_ix: entry_ix,
+                                        offset_in_item: px(0.0),
+                                    });
+                                    cx.notify();
+                                }))
+                        },
+                    )),
+                )
+                .into_any(),
+        )
+    }
+
     fn render_message_queue_summary(
         &self,
         _window: &mut Window,
@@ -2659,6 +2798,76 @@ impl ThreadView {
                 Some(element)
             }))
             .into_any_element()
+    }
+
+    fn render_completed_plan(
+        &self,
+        entries: &[PlanEntry],
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        v_flex()
+            .px_5()
+            .py_1p5()
+            .w_full()
+            .child(
+                v_flex()
+                    .w_full()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(self.tool_card_border_color(cx))
+                    .child(
+                        h_flex()
+                            .px_2()
+                            .py_1()
+                            .gap_1()
+                            .bg(self.tool_card_header_bg(cx))
+                            .border_b_1()
+                            .border_color(self.tool_card_border_color(cx))
+                            .child(
+                                Label::new("Completed Plan")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new(format!(
+                                    "— {} {}",
+                                    entries.len(),
+                                    if entries.len() == 1 { "step" } else { "steps" }
+                                ))
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                            ),
+                    )
+                    .child(
+                        v_flex().children(entries.iter().enumerate().map(|(index, entry)| {
+                            h_flex()
+                                .py_1()
+                                .px_2()
+                                .gap_1p5()
+                                .when(index < entries.len() - 1, |this| {
+                                    this.border_b_1().border_color(cx.theme().colors().border)
+                                })
+                                .child(
+                                    Icon::new(IconName::TodoComplete)
+                                        .size(IconSize::Small)
+                                        .color(Color::Success),
+                                )
+                                .child(
+                                    div()
+                                        .max_w_full()
+                                        .overflow_x_hidden()
+                                        .text_xs()
+                                        .text_color(cx.theme().colors().text_muted)
+                                        .child(MarkdownElement::new(
+                                            entry.content.clone(),
+                                            default_markdown_style(window, cx),
+                                        )),
+                                )
+                        })),
+                    ),
+            )
+            .into_any()
     }
 
     fn render_edits_summary(
@@ -2923,31 +3132,6 @@ impl ThreadView {
         } else {
             (IconName::Maximize, "Expand Message Editor")
         };
-
-        if v2_empty_state {
-            self.message_editor.update(cx, |editor, cx| {
-                editor.set_mode(
-                    EditorMode::Full {
-                        scale_ui_elements_with_buffer_font_size: false,
-                        show_active_line_background: false,
-                        sizing_behavior: SizingBehavior::Default,
-                    },
-                    cx,
-                );
-            });
-        } else {
-            self.message_editor.update(cx, |editor, cx| {
-                editor.set_mode(
-                    EditorMode::AutoHeight {
-                        min_lines: AgentSettings::get_global(cx).message_editor_min_lines,
-                        max_lines: Some(
-                            AgentSettings::get_global(cx).set_message_editor_max_lines(),
-                        ),
-                    },
-                    cx,
-                );
-            });
-        }
 
         v_flex()
             .on_action(cx.listener(Self::expand_message_editor))
@@ -3225,29 +3409,14 @@ impl ThreadView {
     fn render_token_usage(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let thread = self.thread.read(cx);
         let usage = thread.token_usage()?;
-        let is_generating = thread.status() != ThreadStatus::Idle;
         let show_split = self.supports_split_token_display(cx);
 
-        let separator_color = Color::Custom(cx.theme().colors().text_muted.opacity(0.5));
-        let token_label = |text: String, animation_id: &'static str| {
-            Label::new(text)
-                .size(LabelSize::Small)
-                .color(Color::Muted)
-                .map(|label| {
-                    if is_generating {
-                        label
-                            .with_animation(
-                                animation_id,
-                                Animation::new(Duration::from_secs(2))
-                                    .repeat()
-                                    .with_easing(pulsating_between(0.3, 0.8)),
-                                |label, delta| label.alpha(delta),
-                            )
-                            .into_any()
-                    } else {
-                        label.into_any_element()
-                    }
-                })
+        let progress_color = |ratio: f32| -> Hsla {
+            if ratio >= 0.85 {
+                cx.theme().status().warning
+            } else {
+                cx.theme().colors().text_muted
+            }
         };
 
         let used = crate::text_thread_editor::humanize_token_count(usage.used_tokens);
@@ -3262,6 +3431,10 @@ impl ThreadView {
         } else {
             0.0
         };
+
+        let ring_size = px(16.0);
+        let stroke_width = px(2.);
+
         let percentage = format!("{}%", (progress_ratio * 100.0).round() as u32);
 
         let tooltip_separator_color = Color::Custom(cx.theme().colors().text_disabled.opacity(0.6));
@@ -3301,8 +3474,6 @@ impl ThreadView {
         let output_max_label = crate::text_thread_editor::humanize_token_count(max_output_tokens);
 
         let build_tooltip = {
-            let input_max_label = input_max_label.clone();
-            let output_max_label = output_max_label.clone();
             move |_window: &mut Window, cx: &mut App| {
                 let percentage = percentage.clone();
                 let used = used.clone();
@@ -3334,17 +3505,26 @@ impl ThreadView {
         };
 
         if show_split {
-            let input = crate::text_thread_editor::humanize_token_count(usage.input_tokens);
-            let input_max = input_max_label;
-            let output = crate::text_thread_editor::humanize_token_count(usage.output_tokens);
-            let output_max = output_max_label;
+            let input_max_raw = usage.max_tokens.saturating_sub(max_output_tokens);
+            let output_max_raw = max_output_tokens;
+
+            let input_ratio = if input_max_raw > 0 {
+                usage.input_tokens as f32 / input_max_raw as f32
+            } else {
+                0.0
+            };
+            let output_ratio = if output_max_raw > 0 {
+                usage.output_tokens as f32 / output_max_raw as f32
+            } else {
+                0.0
+            };
 
             Some(
                 h_flex()
                     .id("split_token_usage")
                     .flex_shrink_0()
-                    .gap_1()
-                    .mr_1p5()
+                    .gap_1p5()
+                    .mr_1()
                     .child(
                         h_flex()
                             .gap_0p5()
@@ -3353,16 +3533,15 @@ impl ThreadView {
                                     .size(IconSize::XSmall)
                                     .color(Color::Muted),
                             )
-                            .child(token_label(input, "input-tokens-label"))
                             .child(
-                                Label::new("/")
-                                    .size(LabelSize::Small)
-                                    .color(separator_color),
-                            )
-                            .child(
-                                Label::new(input_max)
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
+                                CircularProgress::new(
+                                    usage.input_tokens as f32,
+                                    input_max_raw as f32,
+                                    ring_size,
+                                    cx,
+                                )
+                                .stroke_width(stroke_width)
+                                .progress_color(progress_color(input_ratio)),
                             ),
                     )
                     .child(
@@ -3373,28 +3552,21 @@ impl ThreadView {
                                     .size(IconSize::XSmall)
                                     .color(Color::Muted),
                             )
-                            .child(token_label(output, "output-tokens-label"))
                             .child(
-                                Label::new("/")
-                                    .size(LabelSize::Small)
-                                    .color(separator_color),
-                            )
-                            .child(
-                                Label::new(output_max)
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
+                                CircularProgress::new(
+                                    usage.output_tokens as f32,
+                                    output_max_raw as f32,
+                                    ring_size,
+                                    cx,
+                                )
+                                .stroke_width(stroke_width)
+                                .progress_color(progress_color(output_ratio)),
                             ),
                     )
                     .hoverable_tooltip(build_tooltip)
                     .into_any_element(),
             )
         } else {
-            let progress_color = if progress_ratio >= 0.85 {
-                cx.theme().status().warning
-            } else {
-                cx.theme().colors().text_muted
-            };
-
             Some(
                 h_flex()
                     .id("circular_progress_tokens")
@@ -3404,11 +3576,11 @@ impl ThreadView {
                         CircularProgress::new(
                             usage.used_tokens as f32,
                             usage.max_tokens as f32,
-                            px(16.0),
+                            ring_size,
                             cx,
                         )
-                        .stroke_width(px(2.))
-                        .progress_color(progress_color),
+                        .stroke_width(stroke_width)
+                        .progress_color(progress_color(progress_ratio)),
                     )
                     .hoverable_tooltip(build_tooltip)
                     .into_any_element(),
@@ -3996,13 +4168,13 @@ impl Render for TokenUsageTooltip {
         ui::tooltip_container(cx, move |container, cx| {
             container
                 .min_w_40()
+                .child(
+                    Label::new("Context")
+                        .color(Color::Muted)
+                        .size(LabelSize::Small),
+                )
                 .when(!show_split, |this| {
                     this.child(
-                        Label::new("Context")
-                            .color(Color::Muted)
-                            .size(LabelSize::Small),
-                    )
-                    .child(
                         h_flex()
                             .gap_0p5()
                             .child(Label::new(percentage.clone()))
@@ -4418,6 +4590,9 @@ impl ThreadView {
                     cx,
                 )
                 .into_any(),
+            AgentThreadEntry::CompletedPlan(entries) => {
+                self.render_completed_plan(entries, window, cx)
+            }
         };
 
         let is_subagent_output = self.is_subagent()
@@ -4864,6 +5039,27 @@ impl ThreadView {
         })
     }
 
+    pub(crate) fn sync_editor_mode_for_empty_state(&mut self, cx: &mut Context<Self>) {
+        let has_messages = self.list_state.item_count() > 0;
+        let v2_empty_state = cx.has_flag::<AgentV2FeatureFlag>() && !has_messages;
+
+        let mode = if v2_empty_state {
+            EditorMode::Full {
+                scale_ui_elements_with_buffer_font_size: false,
+                show_active_line_background: false,
+                sizing_behavior: SizingBehavior::Default,
+            }
+        } else {
+            EditorMode::AutoHeight {
+                min_lines: AgentSettings::get_global(cx).message_editor_min_lines,
+                max_lines: Some(AgentSettings::get_global(cx).set_message_editor_max_lines()),
+            }
+        };
+        self.message_editor.update(cx, |editor, cx| {
+            editor.set_mode(mode, cx);
+        });
+    }
+
     /// Ensures the list item count includes (or excludes) an extra item for the generating indicator
     pub(crate) fn sync_generating_indicator(&mut self, cx: &App) {
         let is_generating = matches!(self.thread.read(cx).status(), ThreadStatus::Generating);
@@ -4961,9 +5157,13 @@ impl ThreadView {
             .into_any_element()
     }
 
-    /// If the last entry's last chunk is a streaming thought block, auto-expand it.
-    /// Also collapses the previously auto-expanded block when a new one starts.
     pub(crate) fn auto_expand_streaming_thought(&mut self, cx: &mut Context<Self>) {
+        // Only auto-expand thinking blocks in Automatic mode.
+        // AlwaysExpanded shows them open by default; AlwaysCollapsed keeps them closed.
+        if AgentSettings::get_global(cx).thinking_display != ThinkingBlockDisplay::Automatic {
+            return;
+        }
+
         let key = {
             let thread = self.thread.read(cx);
             if thread.status() != ThreadStatus::Generating {
@@ -4984,28 +5184,57 @@ impl ThreadView {
 
         if let Some(key) = key {
             if self.auto_expanded_thinking_block != Some(key) {
-                if let Some(old_key) = self.auto_expanded_thinking_block.replace(key) {
-                    self.expanded_thinking_blocks.remove(&old_key);
-                }
+                self.auto_expanded_thinking_block = Some(key);
                 self.expanded_thinking_blocks.insert(key);
                 cx.notify();
             }
         } else if self.auto_expanded_thinking_block.is_some() {
-            // The last chunk is no longer a thought (model transitioned to responding),
-            // so collapse the previously auto-expanded block.
-            self.collapse_auto_expanded_thinking_block();
+            self.auto_expanded_thinking_block = None;
             cx.notify();
-        }
-    }
-
-    fn collapse_auto_expanded_thinking_block(&mut self) {
-        if let Some(key) = self.auto_expanded_thinking_block.take() {
-            self.expanded_thinking_blocks.remove(&key);
         }
     }
 
     pub(crate) fn clear_auto_expand_tracking(&mut self) {
         self.auto_expanded_thinking_block = None;
+    }
+
+    fn toggle_thinking_block_expansion(&mut self, key: (usize, usize), cx: &mut Context<Self>) {
+        let thinking_display = AgentSettings::get_global(cx).thinking_display;
+
+        match thinking_display {
+            ThinkingBlockDisplay::Automatic => {
+                let is_user_expanded = self.user_toggled_thinking_blocks.contains(&key);
+                let is_in_expanded_set = self.expanded_thinking_blocks.contains(&key);
+
+                if is_user_expanded {
+                    self.user_toggled_thinking_blocks.remove(&key);
+                    self.expanded_thinking_blocks.remove(&key);
+                } else if is_in_expanded_set {
+                    self.user_toggled_thinking_blocks.insert(key);
+                } else {
+                    self.expanded_thinking_blocks.insert(key);
+                    self.user_toggled_thinking_blocks.insert(key);
+                }
+            }
+            ThinkingBlockDisplay::AlwaysExpanded => {
+                if self.user_toggled_thinking_blocks.contains(&key) {
+                    self.user_toggled_thinking_blocks.remove(&key);
+                } else {
+                    self.user_toggled_thinking_blocks.insert(key);
+                }
+            }
+            ThinkingBlockDisplay::AlwaysCollapsed => {
+                if self.user_toggled_thinking_blocks.contains(&key) {
+                    self.user_toggled_thinking_blocks.remove(&key);
+                    self.expanded_thinking_blocks.remove(&key);
+                } else {
+                    self.expanded_thinking_blocks.insert(key);
+                    self.user_toggled_thinking_blocks.insert(key);
+                }
+            }
+        }
+
+        cx.notify();
     }
 
     fn render_thinking_block(
@@ -5021,13 +5250,35 @@ impl ThreadView {
 
         let key = (entry_ix, chunk_ix);
 
-        let is_open = self.expanded_thinking_blocks.contains(&key);
+        let thinking_display = AgentSettings::get_global(cx).thinking_display;
+        let is_user_toggled = self.user_toggled_thinking_blocks.contains(&key);
+        let is_in_expanded_set = self.expanded_thinking_blocks.contains(&key);
+
+        let (is_open, is_constrained) = match thinking_display {
+            ThinkingBlockDisplay::Automatic => {
+                let is_open = is_user_toggled || is_in_expanded_set;
+                let is_constrained = is_in_expanded_set && !is_user_toggled;
+                (is_open, is_constrained)
+            }
+            ThinkingBlockDisplay::AlwaysExpanded => (!is_user_toggled, false),
+            ThinkingBlockDisplay::AlwaysCollapsed => (is_user_toggled, false),
+        };
+
+        let should_auto_scroll = self.auto_expanded_thinking_block == Some(key);
 
         let scroll_handle = self
             .entry_view_state
             .read(cx)
             .entry(entry_ix)
             .and_then(|entry| entry.scroll_handle_for_assistant_message_chunk(chunk_ix));
+
+        if should_auto_scroll {
+            if let Some(ref handle) = scroll_handle {
+                handle.scroll_to_bottom();
+            }
+        }
+
+        let panel_bg = cx.theme().colors().panel_background;
 
         v_flex()
             .gap_1()
@@ -5061,42 +5312,51 @@ impl ThreadView {
                             .opened_icon(IconName::ChevronUp)
                             .closed_icon(IconName::ChevronDown)
                             .visible_on_hover(&card_header_id)
-                            .on_click(cx.listener({
-                                move |this, _event, _window, cx| {
-                                    if is_open {
-                                        this.expanded_thinking_blocks.remove(&key);
-                                    } else {
-                                        this.expanded_thinking_blocks.insert(key);
-                                    }
-                                    cx.notify();
-                                }
-                            })),
+                            .on_click(cx.listener(
+                                move |this, _event: &ClickEvent, _window, cx| {
+                                    this.toggle_thinking_block_expansion(key, cx);
+                                },
+                            )),
                     )
-                    .on_click(cx.listener(move |this, _event, _window, cx| {
-                        if is_open {
-                            this.expanded_thinking_blocks.remove(&key);
-                        } else {
-                            this.expanded_thinking_blocks.insert(key);
-                        }
-                        cx.notify();
+                    .on_click(cx.listener(move |this, _event: &ClickEvent, _window, cx| {
+                        this.toggle_thinking_block_expansion(key, cx);
                     })),
             )
             .when(is_open, |this| {
                 this.child(
                     div()
-                        .id(("thinking-content", chunk_ix))
-                        .ml_1p5()
-                        .pl_3p5()
-                        .border_l_1()
-                        .border_color(self.tool_card_border_color(cx))
-                        .when_some(scroll_handle, |this, scroll_handle| {
-                            this.track_scroll(&scroll_handle)
-                        })
-                        .overflow_hidden()
-                        .child(self.render_markdown(
-                            chunk,
-                            MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
-                        )),
+                        .when(is_constrained, |this| this.relative())
+                        .child(
+                            div()
+                                .id(("thinking-content", chunk_ix))
+                                .ml_1p5()
+                                .pl_3p5()
+                                .border_l_1()
+                                .border_color(self.tool_card_border_color(cx))
+                                .when(is_constrained, |this| this.max_h_64())
+                                .when_some(scroll_handle, |this, scroll_handle| {
+                                    this.track_scroll(&scroll_handle)
+                                })
+                                .overflow_hidden()
+                                .child(self.render_markdown(
+                                    chunk,
+                                    MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
+                                )),
+                        )
+                        .when(is_constrained, |this| {
+                            this.child(
+                                div()
+                                    .absolute()
+                                    .inset_0()
+                                    .size_full()
+                                    .bg(linear_gradient(
+                                        180.,
+                                        linear_color_stop(panel_bg.opacity(0.8), 0.),
+                                        linear_color_stop(panel_bg.opacity(0.), 0.1),
+                                    ))
+                                    .block_mouse_except_scroll(),
+                            )
+                        }),
                 )
             })
             .into_any_element()
@@ -5283,7 +5543,9 @@ impl ThreadView {
                         return false;
                     }
                 }
-                AgentThreadEntry::ToolCall(_) | AgentThreadEntry::AssistantMessage(_) => {}
+                AgentThreadEntry::ToolCall(_)
+                | AgentThreadEntry::AssistantMessage(_)
+                | AgentThreadEntry::CompletedPlan(_) => {}
             }
         }
 
@@ -7490,7 +7752,6 @@ impl ThreadView {
                     this.when(is_expanded, |this| {
                         this.child(self.render_subagent_expanded_content(
                             thread_view,
-                            is_running,
                             tool_call,
                             window,
                             cx,
@@ -7513,7 +7774,6 @@ impl ThreadView {
     fn render_subagent_expanded_content(
         &self,
         thread_view: &Entity<ThreadView>,
-        is_running: bool,
         tool_call: &ToolCall,
         window: &Window,
         cx: &Context<Self>,
@@ -7565,9 +7825,8 @@ impl ThreadView {
             .entry(session_id.clone())
             .or_default()
             .clone();
-        if is_running {
-            scroll_handle.scroll_to_bottom();
-        }
+
+        scroll_handle.scroll_to_bottom();
 
         let rendered_entries: Vec<AnyElement> = entries
             .get(entry_range)
@@ -8015,6 +8274,18 @@ impl ThreadView {
 
     fn render_new_version_callout(&self, version: &SharedString, cx: &mut Context<Self>) -> Div {
         let server_view = self.server_view.clone();
+        let has_version = !version.is_empty();
+        let title = if has_version {
+            "New version available"
+        } else {
+            "Agent update available"
+        };
+        let button_label = if has_version {
+            format!("Update to v{}", version)
+        } else {
+            "Reconnect".to_string()
+        };
+
         v_flex().w_full().justify_end().child(
             h_flex()
                 .p_2()
@@ -8033,10 +8304,10 @@ impl ThreadView {
                                 .color(Color::Accent)
                                 .size(IconSize::Small),
                         )
-                        .child(Label::new("New version available").size(LabelSize::Small)),
+                        .child(Label::new(title).size(LabelSize::Small)),
                 )
                 .child(
-                    Button::new("update-button", format!("Update to v{}", version))
+                    Button::new("update-button", button_label)
                         .label_size(LabelSize::Small)
                         .style(ButtonStyle::Tinted(TintColor::Accent))
                         .on_click(move |_, window, cx| {

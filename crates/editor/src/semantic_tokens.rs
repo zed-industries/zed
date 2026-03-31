@@ -1391,7 +1391,7 @@ mod tests {
     async fn test_theme_override_changes_restyle_semantic_tokens(cx: &mut TestAppContext) {
         use collections::IndexMap;
         use gpui::{Hsla, Rgba, UpdateGlobal as _};
-        use theme::{HighlightStyleContent, ThemeStyleContent};
+        use theme_settings::{HighlightStyleContent, ThemeStyleContent};
 
         init_test(cx, |_| {});
 
@@ -1556,7 +1556,7 @@ mod tests {
     async fn test_per_theme_overrides_restyle_semantic_tokens(cx: &mut TestAppContext) {
         use collections::IndexMap;
         use gpui::{Hsla, Rgba, UpdateGlobal as _};
-        use theme::{HighlightStyleContent, ThemeStyleContent};
+        use theme_settings::{HighlightStyleContent, ThemeStyleContent};
         use ui::ActiveTheme as _;
 
         init_test(cx, |_| {});

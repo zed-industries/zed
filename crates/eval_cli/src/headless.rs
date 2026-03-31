@@ -122,6 +122,7 @@ pub fn init(cx: &mut App) -> Arc<AgentCliAppState> {
         prompt_builder,
         languages.clone(),
         true,
+        true,
         cx,
     );
 

@@ -411,9 +411,9 @@ fn appearance_page() -> SettingsPage {
                                         settings::ThemeSelection::Static(_) => return,
                                         settings::ThemeSelection::Dynamic { mode, light, dark } => {
                                             match mode {
-                                                theme::ThemeAppearanceMode::Light => light.clone(),
-                                                theme::ThemeAppearanceMode::Dark => dark.clone(),
-                                                theme::ThemeAppearanceMode::System => dark.clone(), // no cx, can't determine correct choice
+                                                theme_settings::ThemeAppearanceMode::Light => light.clone(),
+                                                theme_settings::ThemeAppearanceMode::Dark => dark.clone(),
+                                                theme_settings::ThemeAppearanceMode::System => dark.clone(), // no cx, can't determine correct choice
                                             }
                                         },
                                     };
@@ -581,9 +581,9 @@ fn appearance_page() -> SettingsPage {
                                         settings::IconThemeSelection::Static(_) => return,
                                         settings::IconThemeSelection::Dynamic { mode, light, dark } => {
                                             match mode {
-                                                theme::ThemeAppearanceMode::Light => light.clone(),
-                                                theme::ThemeAppearanceMode::Dark => dark.clone(),
-                                                theme::ThemeAppearanceMode::System => dark.clone(), // no cx, can't determine correct choice
+                                                theme_settings::ThemeAppearanceMode::Light => light.clone(),
+                                                theme_settings::ThemeAppearanceMode::Dark => dark.clone(),
+                                                theme_settings::ThemeAppearanceMode::System => dark.clone(), // no cx, can't determine correct choice
                                             }
                                         },
                                     };
@@ -802,7 +802,8 @@ fn appearance_page() -> SettingsPage {
                                 }
                                 settings::BufferLineHeightDiscriminants::Custom => {
                                     let custom_value =
-                                        theme::BufferLineHeight::from(*settings_value).value();
+                                        theme_settings::BufferLineHeight::from(*settings_value)
+                                            .value();
                                     settings::BufferLineHeight::Custom(custom_value)
                                 }
                             };
@@ -1473,7 +1474,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn multibuffer_section() -> [SettingsPageItem; 6] {
+    fn multibuffer_section() -> [SettingsPageItem; 7] {
         [
             SettingsPageItem::SectionHeader("Multibuffer"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1548,6 +1549,21 @@ fn editor_page() -> SettingsPage {
                     pick: |settings_content| settings_content.editor.diff_view_style.as_ref(),
                     write: |settings_content, value| {
                         settings_content.editor.diff_view_style = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Minimum Split Diff Width",
+                description: "The minimum width (in columns) at which the split diff view is used. When the editor is narrower, the diff view automatically switches to unified mode. Set to 0 to disable.",
+                field: Box::new(SettingField {
+                    json_path: Some("minimum_split_diff_width"),
+                    pick: |settings_content| {
+                        settings_content.editor.minimum_split_diff_width.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content.editor.minimum_split_diff_width = value;
                     },
                 }),
                 metadata: None,
@@ -7317,6 +7333,28 @@ fn ai_page(cx: &App) -> SettingsPage {
                             .agent
                             .get_or_insert_default()
                             .expand_terminal_card = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Thinking Display",
+                description: "How thinking blocks should be displayed by default. 'Automatic' auto-expands with a height constraint during streaming. 'Always Expanded' shows full content. 'Always Collapsed' keeps them collapsed.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.thinking_display"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()?
+                            .thinking_display
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .thinking_display = value;
                     },
                 }),
                 metadata: None,
