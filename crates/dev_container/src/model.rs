@@ -1282,7 +1282,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
     async fn update_remote_user_uid(
         &self,
         image: DockerInspect,
-        override_tag: Option<&str>,
+        _override_tag: Option<&str>,
     ) -> Result<DockerInspect, DevContainerError> {
         Ok(image)
     }
