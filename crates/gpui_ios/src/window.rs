@@ -155,6 +155,9 @@ struct IosWindowState {
     /// the scroll event position for trackpad scrolling, since the trackpad pan
     /// recognizer's locationInView: may not reflect the actual pointer position.
     pointer_position: Option<Point<Pixels>>,
+    /// Whether the current pan gesture is from the trackpad (true) or direct
+    /// touch (false). Set at GESTURE_STATE_BEGAN from numberOfTouches.
+    pan_is_trackpad: bool,
 }
 
 impl IosWindowState {
@@ -264,6 +267,7 @@ impl IosWindow {
             callbacks: IosWindowCallbacks::default(),
             momentum: None,
             pointer_position: None,
+            pan_is_trackpad: false,
         }));
 
         // Store a Weak in the view's ivar. The view calls back into us via
@@ -2380,28 +2384,33 @@ extern "C" fn handle_pan_gesture(this: &Object, _sel: Sel, recognizer: *mut Obje
         let zero = CGPoint { x: 0.0, y: 0.0 };
         let _: () = msg_send![recognizer, setTranslation: zero inView: view];
 
-        // For trackpad/mouse scroll (0 direct touches), use the last known
-        // pointer position from the hover gesture. The trackpad pan recognizer's
-        // locationInView: doesn't reliably track the pointer during scrolling.
+        // For trackpad/mouse scroll, use the last known pointer position from
+        // the hover gesture. The trackpad pan recognizer's locationInView:
+        // doesn't reliably track the pointer during scrolling.
+        //
+        // We check numberOfTouches only at BEGAN to determine whether this is
+        // a trackpad or touch gesture. At ENDED, numberOfTouches is always 0
+        // (fingers lifted), so we can't distinguish there — use the flag instead.
         let num_touches: usize = msg_send![recognizer, numberOfTouches];
-        let position = if num_touches == 0 {
+        let is_trackpad = if gesture_state == GESTURE_STATE_BEGAN {
+            let trackpad = num_touches == 0;
+            state_rc.borrow_mut().pan_is_trackpad = trackpad;
+            trackpad
+        } else {
+            state_rc.borrow().pan_is_trackpad
+        };
+        let location: CGPoint = msg_send![recognizer, locationInView: view];
+        let gesture_position = Point {
+            x: gpui::px(location.x as f32),
+            y: gpui::px(location.y as f32),
+        };
+        let position = if is_trackpad {
             state_rc
                 .borrow()
                 .pointer_position
-                .unwrap_or_else(|| {
-                    let location: CGPoint =
-                        unsafe { msg_send![recognizer, locationInView: view] };
-                    Point {
-                        x: gpui::px(location.x as f32),
-                        y: gpui::px(location.y as f32),
-                    }
-                })
+                .unwrap_or(gesture_position)
         } else {
-            let location: CGPoint = msg_send![recognizer, locationInView: view];
-            Point {
-                x: gpui::px(location.x as f32),
-                y: gpui::px(location.y as f32),
-            }
+            gesture_position
         };
         let modifiers = state_rc.borrow().current_modifiers;
 
