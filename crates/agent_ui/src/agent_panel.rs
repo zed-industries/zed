@@ -1996,42 +1996,15 @@ impl AgentPanel {
     fn update_thread_work_dirs(&self, cx: &mut Context<Self>) {
         let new_work_dirs = self.project.read(cx).default_path_list(cx);
 
-        // Only update the active thread and still-running background threads.
-        // Idle background threads have finished their work against the old
-        // worktree set and shouldn't have their metadata rewritten.
-        let mut root_threads: Vec<Entity<AcpThread>> = Vec::new();
-
         if let Some(conversation_view) = self.active_conversation_view() {
-            if let Some(connected) = conversation_view.read(cx).as_connected() {
-                for thread_view in connected.threads.values() {
-                    let thread = &thread_view.read(cx).thread;
-                    if thread.read(cx).parent_session_id().is_none() {
-                        root_threads.push(thread.clone());
-                    }
-                }
-            }
+            conversation_view.update(cx, |conversation_view, cx| {
+                conversation_view.set_work_dirs(new_work_dirs.clone(), cx);
+            });
         }
 
         for conversation_view in self.background_threads.values() {
-            let Some(connected) = conversation_view.read(cx).as_connected() else {
-                continue;
-            };
-            for thread_view in connected.threads.values() {
-                let thread = &thread_view.read(cx).thread;
-                let thread_ref = thread.read(cx);
-                if thread_ref.parent_session_id().is_some() {
-                    continue;
-                }
-                if thread_ref.status() != acp_thread::ThreadStatus::Generating {
-                    continue;
-                }
-                root_threads.push(thread.clone());
-            }
-        }
-
-        for thread in &root_threads {
-            thread.update(cx, |thread, cx| {
-                thread.set_work_dirs(new_work_dirs.clone(), cx);
+            conversation_view.update(cx, |conversation_view, cx| {
+                conversation_view.set_work_dirs(new_work_dirs.clone(), cx);
             });
         }
     }
@@ -6407,12 +6380,6 @@ mod tests {
         send_message(&panel, &mut cx);
         let session_id_c = active_session_id(&panel, &cx);
 
-        // Snapshot thread C's initial work_dirs before adding worktrees.
-        let initial_c_paths = panel.read_with(&cx, |panel, cx| {
-            let thread = panel.active_agent_thread(cx).unwrap();
-            thread.read(cx).work_dirs().cloned().unwrap()
-        });
-
         // Open thread B — thread C (idle, non-loadable) is retained in background.
         let connection_b = StubAgentConnection::new().with_agent_id("agent-b".into());
         open_thread_with_custom_connection(&panel, connection_b.clone(), &mut cx);
@@ -6489,8 +6456,8 @@ mod tests {
             "Thread A work_dirs should include both worktrees after adding /project_b"
         );
 
-        // Verify thread C  was NOT updated.
-        let unchanged_c_paths = panel.read_with(&cx, |panel, cx| {
+        // Verify thread idle C was also updated.
+        let updated_c_paths = panel.read_with(&cx, |panel, cx| {
             let bg_view = panel.background_threads.get(&session_id_c).unwrap();
             let root_thread = bg_view.read(cx).root_thread(cx).unwrap();
             root_thread
@@ -6501,9 +6468,12 @@ mod tests {
                 .cloned()
                 .unwrap()
         });
+        let mut c_paths_sorted = updated_c_paths.ordered_paths().cloned().collect::<Vec<_>>();
+        c_paths_sorted.sort();
         assert_eq!(
-            unchanged_c_paths, initial_c_paths,
-            "Thread C (idle background) work_dirs should not change when worktrees change"
+            c_paths_sorted,
+            vec![PathBuf::from("/project_a"), PathBuf::from("/project_b")],
+            "Thread C (idle background) work_dirs should include both worktrees after adding /project_b"
         );
 
         // Verify the metadata store reflects the new paths for running threads only.

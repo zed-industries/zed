@@ -294,6 +294,14 @@ impl Conversation {
         });
         cx.notify();
     }
+
+    fn set_work_dirs(&mut self, work_dirs: PathList, cx: &mut Context<Self>) {
+        for thread in self.threads.values() {
+            thread.update(cx, |thread, cx| {
+                thread.set_work_dirs(work_dirs.clone(), cx);
+            });
+        }
+    }
 }
 
 pub enum AcpServerViewEvent {
@@ -401,6 +409,14 @@ impl ConversationView {
         }
         cx.emit(AcpServerViewEvent::ActiveThreadChanged);
         cx.notify();
+    }
+
+    pub fn set_work_dirs(&mut self, work_dirs: PathList, cx: &mut Context<Self>) {
+        if let Some(connected) = self.as_connected() {
+            connected.conversation.update(cx, |conversation, cx| {
+                conversation.set_work_dirs(work_dirs.clone(), cx);
+            });
+        }
     }
 }
 
