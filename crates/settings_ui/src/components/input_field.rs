@@ -12,6 +12,7 @@ pub struct SettingsInputField {
     initial_text: Option<String>,
     placeholder: Option<&'static str>,
     confirm: Option<Rc<dyn Fn(Option<String>, &mut Window, &mut App)>>,
+    confirm_on_blur: bool,
     tab_index: Option<isize>,
     use_buffer_font: bool,
     display_confirm_button: bool,
@@ -28,6 +29,7 @@ impl SettingsInputField {
             initial_text: None,
             placeholder: None,
             confirm: None,
+            confirm_on_blur: false,
             tab_index: None,
             use_buffer_font: false,
             display_confirm_button: false,
@@ -58,6 +60,11 @@ impl SettingsInputField {
         confirm: impl Fn(Option<String>, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.confirm = Some(Rc::new(confirm));
+        self
+    }
+
+    pub fn confirm_on_blur(mut self) -> Self {
+        self.confirm_on_blur = true;
         self
     }
 
@@ -113,6 +120,8 @@ impl RenderOnce for SettingsInputField {
             window.use_keyed_state(id, cx, {
                 let initial_text = self.initial_text.clone();
                 let placeholder = self.placeholder;
+                let confirm = self.confirm.clone();
+                let confirm_on_blur = self.confirm_on_blur;
                 move |window, cx| {
                     let mut editor = Editor::single_line(window, cx);
                     if let Some(text) = initial_text {
@@ -123,6 +132,17 @@ impl RenderOnce for SettingsInputField {
                         editor.set_placeholder_text(placeholder, window, cx);
                     }
                     editor.set_text_style_refinement(styles);
+                    if confirm_on_blur {
+                        cx.on_focus_out(&editor.focus_handle(cx), window, move |this, _, window, cx| {
+                            let Some(confirm) = confirm.as_ref() else {
+                                return;
+                            };
+                            let new_value = this.text(cx);
+                            let new_value = (!new_value.is_empty()).then_some(new_value);
+                            confirm(new_value, window, cx);
+                        })
+                        .detach();
+                    }
                     editor
                 }
             })
@@ -130,6 +150,8 @@ impl RenderOnce for SettingsInputField {
             window.use_state(cx, {
                 let initial_text = self.initial_text.clone();
                 let placeholder = self.placeholder;
+                let confirm = self.confirm.clone();
+                let confirm_on_blur = self.confirm_on_blur;
                 move |window, cx| {
                     let mut editor = Editor::single_line(window, cx);
                     if let Some(text) = initial_text {
@@ -140,6 +162,17 @@ impl RenderOnce for SettingsInputField {
                         editor.set_placeholder_text(placeholder, window, cx);
                     }
                     editor.set_text_style_refinement(styles);
+                    if confirm_on_blur {
+                        cx.on_focus_out(&editor.focus_handle(cx), window, move |this, _, window, cx| {
+                            let Some(confirm) = confirm.as_ref() else {
+                                return;
+                            };
+                            let new_value = this.text(cx);
+                            let new_value = (!new_value.is_empty()).then_some(new_value);
+                            confirm(new_value, window, cx);
+                        })
+                        .detach();
+                    }
                     editor
                 }
             })

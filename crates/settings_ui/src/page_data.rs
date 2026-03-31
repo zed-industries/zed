@@ -12,10 +12,12 @@ use ui::IntoElement;
 use crate::{
     ActionLink, DynamicItem, PROJECT, SettingField, SettingItem, SettingsFieldMetadata,
     SettingsPage, SettingsPageItem, SubPageLink, USER, active_language, all_language_names,
+    extension_settings_contributions,
     pages::{
         open_audio_test_window, render_edit_prediction_setup_page,
         render_tool_permissions_setup_page,
     },
+    render_extension_settings_page,
 };
 
 const DEFAULT_STRING: String = String::new();
@@ -2978,6 +2980,28 @@ fn languages_and_tools_page(cx: &App) -> SettingsPage {
             .collect()
     }
 
+    fn extensions_list_section(cx: &App) -> Box<[SettingsPageItem]> {
+        let contributions = extension_settings_contributions(cx);
+        if contributions.is_empty() {
+            return Box::default();
+        }
+
+        std::iter::once(SettingsPageItem::SectionHeader("Extensions"))
+            .chain(contributions.into_iter().map(|contribution| {
+                let json_path = format!("extensions.{}", contribution.manifest.id);
+                SettingsPageItem::SubPageLink(SubPageLink {
+                    title: contribution.manifest.name.clone().into(),
+                    r#type: crate::SubPageType::Other,
+                    description: contribution.manifest.description.clone().map(Into::into),
+                    json_path: Some(json_path.leak()),
+                    in_json: true,
+                    files: USER | PROJECT,
+                    render: render_extension_settings_page,
+                })
+            }))
+            .collect()
+    }
+
     SettingsPage {
         title: "Languages & Tools",
         items: {
@@ -2989,6 +3013,7 @@ fn languages_and_tools_page(cx: &App) -> SettingsPage {
                 lsp_pull_diagnostics_section(),
                 lsp_highlights_section(),
                 languages_list_section(cx),
+                extensions_list_section(cx),
             )
         },
     }

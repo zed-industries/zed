@@ -3,16 +3,19 @@ mod page_data;
 pub mod pages;
 
 use anyhow::{Context as _, Result};
-use editor::{Editor, EditorEvent};
+use editor::{Editor, EditorElement, EditorEvent, EditorStyle};
+use extension::ExtensionEvents;
+use extension_host::ExtensionStore;
 use futures::{StreamExt, channel::mpsc};
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    Action, App, AsyncApp, ClipboardItem, DEFAULT_ADDITIONAL_WINDOW_SIZE, Div, Entity, FocusHandle,
-    Focusable, Global, KeyContext, ListState, ReadGlobal as _, ScrollHandle, Stateful,
-    Subscription, Task, Tiling, TitlebarOptions, UniformListScrollHandle, WeakEntity, Window,
-    WindowBounds, WindowHandle, WindowOptions, actions, div, list, point, prelude::*, px,
-    uniform_list,
+    Action, App, AsyncApp, ClipboardItem, DEFAULT_ADDITIONAL_WINDOW_SIZE, Div, ElementId, Entity,
+    FocusHandle, Focusable, Global, KeyContext, ListState, ReadGlobal as _, ScrollHandle,
+    Stateful, Subscription, Task, TextStyle, Tiling, TitlebarOptions,
+    UniformListScrollHandle, WeakEntity, Window, WindowBounds, WindowHandle, WindowOptions,
+    actions, div, list, point, prelude::*, px, uniform_list,
 };
+use heck::ToTitleCase as _;
 
 use language::Buffer;
 use platform_title_bar::PlatformTitleBar;
@@ -35,9 +38,9 @@ use std::{
 };
 use theme_settings::ThemeSettings;
 use ui::{
-    Banner, ContextMenu, Divider, DropdownMenu, DropdownStyle, IconButtonShape, KeyBinding,
-    KeybindingHint, PopoverMenu, Scrollbars, Switch, Tooltip, TreeViewItem, WithScrollbar,
-    prelude::*,
+    Banner, ButtonSize, ContextMenu, Divider, DropdownMenu, DropdownStyle, IconButtonShape,
+    IconPosition, KeyBinding, KeybindingHint, PopoverMenu, Scrollbars, Switch, Tooltip,
+    TreeViewItem, WithScrollbar, prelude::*,
 };
 
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
@@ -734,6 +737,8 @@ pub struct SettingsWindow {
     opening_link: bool,
     search_bar: Entity<Editor>,
     search_task: Option<Task<()>>,
+    extension_settings_editors: RefCell<HashMap<ExtensionSettingsEditorKey, Entity<Editor>>>,
+    extension_settings_page_modes: RefCell<HashMap<Arc<str>, ExtensionSettingsPageMode>>,
     /// Cached settings file buffers to avoid repeated disk I/O on each settings change
     project_setting_file_buffers: HashMap<ProjectPath, Entity<Buffer>>,
     /// Index into navbar_entries
@@ -1405,12 +1410,103 @@ fn all_language_names(cx: &App) -> Vec<SharedString> {
         .collect()
 }
 
+pub(crate) fn extension_settings_contributions(
+    cx: &App,
+) -> Vec<extension_host::ContributedExtensionSettings> {
+    #[cfg(test)]
+    if let Some(override_contributions) = cx.try_global::<TestExtensionSettingsContributions>() {
+        return override_contributions.0.clone();
+    }
+
+    let Some(store) = ExtensionStore::try_global(cx) else {
+        return Vec::new();
+    };
+
+    let mut contributions = store
+        .read(cx)
+        .extension_settings_contributions()
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    contributions.sort_by(|left, right| {
+        left.manifest
+            .name
+            .cmp(&right.manifest.name)
+            .then_with(|| left.manifest.id.cmp(&right.manifest.id))
+    });
+    contributions
+}
+
+#[cfg(test)]
+struct TestExtensionSettingsContributions(Vec<extension_host::ContributedExtensionSettings>);
+
+#[cfg(test)]
+impl Global for TestExtensionSettingsContributions {}
+
 #[allow(unused)]
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 enum SettingsUiFile {
     User,                                // Uses all settings.
     Project((WorktreeId, Arc<RelPath>)), // Has a special name, and special set of settings
     Server(&'static str),                // Uses a special name, and the user settings
+}
+
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+struct ExtensionSettingsEditorKey {
+    extension_id: Arc<str>,
+    file: SettingsUiFile,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum ExtensionSettingsPageMode {
+    Typed(ExtensionFormSchema),
+    RawFallback { reason: SharedString },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ExtensionFormSchema {
+    items: Vec<ExtensionFormItem>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum ExtensionFormItem {
+    Section(ExtensionFormSection),
+    Field(ExtensionFormField),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ExtensionFormSection {
+    title: SharedString,
+    description: Option<SharedString>,
+    items: Vec<ExtensionFormItem>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ExtensionFormField {
+    label: SharedString,
+    description: Option<SharedString>,
+    path: Arc<[Arc<str>]>,
+    kind: ExtensionFormFieldKind,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum ExtensionFormFieldKind {
+    Boolean,
+    String,
+    StringEnum(Arc<[SharedString]>),
+    StringArray,
+    Integer {
+        minimum: Option<i64>,
+        maximum: Option<i64>,
+    },
+    Number {
+        minimum: Option<f64>,
+        maximum: Option<f64>,
+    },
+    RawJsonFallback {
+        schema: serde_json::Value,
+        reason: SharedString,
+    },
 }
 
 impl SettingsUiFile {
@@ -1457,6 +1553,1541 @@ impl SettingsUiFile {
             SettingsUiFile::User => USER,
             SettingsUiFile::Project(_) => PROJECT,
             SettingsUiFile::Server(_) => SERVER,
+        }
+    }
+}
+
+fn render_json_editor(editor: &Entity<Editor>, cx: &App) -> AnyElement {
+    let settings = ThemeSettings::get_global(cx);
+    let text_style = TextStyle {
+        color: cx.theme().colors().text,
+        font_family: settings.buffer_font.family.clone(),
+        font_fallbacks: settings.buffer_font.fallbacks.clone(),
+        font_size: settings.buffer_font_size(cx).into(),
+        font_weight: settings.buffer_font.weight,
+        line_height: relative(settings.buffer_line_height.value()),
+        ..Default::default()
+    };
+
+    div()
+        .p_2()
+        .rounded_md()
+        .border_1()
+        .border_color(cx.theme().colors().border_variant)
+        .bg(cx.theme().colors().editor_background)
+        .child(EditorElement::new(
+            editor,
+            EditorStyle {
+                background: cx.theme().colors().editor_background,
+                local_player: cx.theme().players().local(),
+                text: text_style,
+                syntax: cx.theme().syntax().clone(),
+                ..Default::default()
+            },
+        ))
+        .into_any_element()
+}
+
+fn schema_error(reason: impl Into<SharedString>) -> ExtensionSettingsPageMode {
+    ExtensionSettingsPageMode::RawFallback {
+        reason: reason.into(),
+    }
+}
+
+fn ensure_supported_schema_keys(
+    object: &serde_json::Map<String, serde_json::Value>,
+    allowed: &[&str],
+    context: &str,
+) -> Result<(), SharedString> {
+    for key in object.keys() {
+        if !allowed.contains(&key.as_str()) {
+            return Err(
+                format!("Unsupported schema keyword `{key}` in {context}; falling back to raw JSON.")
+                    .into(),
+            );
+        }
+    }
+    Ok(())
+}
+
+fn schema_property_label(key: &str, schema: &serde_json::Map<String, serde_json::Value>) -> SharedString {
+    schema
+        .get("title")
+        .and_then(|title| title.as_str().map(|title| SharedString::from(title.to_string())))
+        .unwrap_or_else(|| key.to_title_case().into())
+}
+
+fn raw_array_fallback_kind(
+    property_schema: &serde_json::Value,
+    reason: impl Into<SharedString>,
+) -> ExtensionFormFieldKind {
+    ExtensionFormFieldKind::RawJsonFallback {
+        schema: property_schema.clone(),
+        reason: reason.into(),
+    }
+}
+
+fn compile_string_array_field_kind(
+    key: &str,
+    property_schema: &serde_json::Value,
+    property_object: &serde_json::Map<String, serde_json::Value>,
+) -> ExtensionFormFieldKind {
+    for combinator in ["oneOf", "anyOf", "allOf", "not"] {
+        if property_object.contains_key(combinator) {
+            return raw_array_fallback_kind(
+                property_schema,
+                format!(
+                    "Property `{key}` uses array schema combinator `{combinator}`, which is not supported in typed mode."
+                ),
+            );
+        }
+    }
+
+    for key_name in property_object.keys() {
+        if !["type", "title", "description", "default", "items"].contains(&key_name.as_str()) {
+            return raw_array_fallback_kind(
+                property_schema,
+                format!(
+                    "Property `{key}` uses unsupported array keyword `{key_name}` and will fall back to raw JSON."
+                ),
+            );
+        }
+    }
+
+    let Some(items_schema) = property_object.get("items") else {
+        return raw_array_fallback_kind(
+            property_schema,
+            format!("Property `{key}` is missing `items` and will fall back to raw JSON."),
+        );
+    };
+    let Some(items_object) = items_schema.as_object() else {
+        return raw_array_fallback_kind(
+            property_schema,
+            format!("Property `{key}` uses a non-object `items` schema and will fall back to raw JSON."),
+        );
+    };
+
+    for combinator in ["oneOf", "anyOf", "allOf", "not"] {
+        if items_object.contains_key(combinator) {
+            return raw_array_fallback_kind(
+                property_schema,
+                format!(
+                    "Property `{key}` uses unsupported array item combinator `{combinator}` and will fall back to raw JSON."
+                ),
+            );
+        }
+    }
+
+    for key_name in items_object.keys() {
+        if !["type", "title", "description", "default"].contains(&key_name.as_str()) {
+            return raw_array_fallback_kind(
+                property_schema,
+                format!(
+                    "Property `{key}` uses unsupported array item keyword `{key_name}` and will fall back to raw JSON."
+                ),
+            );
+        }
+    }
+
+    let Some(item_type_value) = items_object.get("type") else {
+        return raw_array_fallback_kind(
+            property_schema,
+            format!("Property `{key}` array items are missing `type` and will fall back to raw JSON."),
+        );
+    };
+    let Some(item_type) = item_type_value.as_str() else {
+        return raw_array_fallback_kind(
+            property_schema,
+            format!("Property `{key}` array items must declare a string `type`; falling back to raw JSON."),
+        );
+    };
+
+    match item_type {
+        "string" => ExtensionFormFieldKind::StringArray,
+        "object" | "array" => raw_array_fallback_kind(
+            property_schema,
+            format!(
+                "Property `{key}` uses array items of type `{item_type}`, which are not supported in typed mode."
+            ),
+        ),
+        other => raw_array_fallback_kind(
+            property_schema,
+            format!(
+                "Property `{key}` uses array items of type `{other}`, which are not supported in typed mode."
+            ),
+        ),
+    }
+}
+
+fn compile_extension_form_schema(
+    schema: &serde_json::Value,
+    path: &[Arc<str>],
+    is_root: bool,
+) -> Result<Vec<ExtensionFormItem>, SharedString> {
+    let Some(object) = schema.as_object() else {
+        return Err("Schema must be a JSON object.".into());
+    };
+
+    ensure_supported_schema_keys(
+        object,
+        &[
+            "$schema",
+            "type",
+            "title",
+            "description",
+            "default",
+            "properties",
+            "additionalProperties",
+            "required",
+            "enum",
+            "minimum",
+            "maximum",
+        ],
+        if is_root { "root schema" } else { "schema node" },
+    )?;
+
+    if object.contains_key("oneOf")
+        || object.contains_key("anyOf")
+        || object.contains_key("allOf")
+        || object.contains_key("not")
+    {
+        return Err("Schema combinators are not supported in typed mode.".into());
+    }
+
+    let Some(type_value) = object.get("type") else {
+        return Err("Every supported schema node must declare a `type`.".into());
+    };
+    let Some(type_name) = type_value.as_str() else {
+        if let Some(type_values) = type_value.as_array() {
+            let formatted = serde_json::Value::Array(type_values.clone()).to_string();
+            return Err(
+                format!(
+                    "Union types are not supported in typed mode. Found `type: {formatted}`{}",
+                    if is_root { " at the root schema." } else { "." }
+                )
+                .into(),
+            );
+        }
+        return Err("Every supported schema node must declare a string `type`.".into());
+    };
+
+    match type_name {
+        "object" => {
+            let additional_properties = object.get("additionalProperties");
+            if additional_properties.is_some_and(|value| !matches!(value, serde_json::Value::Bool(false)))
+            {
+                return Err(
+                    "Object schemas with `additionalProperties` are not supported in typed mode."
+                        .into(),
+                );
+            }
+
+            let Some(properties) = object.get("properties") else {
+                return Err("Object schemas must declare `properties`.".into());
+            };
+            let serde_json::Value::Object(properties) = properties else {
+                return Err("Object schemas must declare `properties`.".into());
+            };
+
+            let mut items = Vec::with_capacity(properties.len());
+            for (key, value) in properties {
+                let Some(property_object) = value.as_object() else {
+                    return Err(format!("Property `{key}` must be a JSON object schema.").into());
+                };
+                let property_label = schema_property_label(key, property_object);
+                let mut child_path = path.to_vec();
+                child_path.push(Arc::<str>::from(key.as_str()));
+                let Some(property_type_value) = property_object.get("type") else {
+                    return Err(format!("Property `{key}` is missing `type`.").into());
+                };
+                let Some(property_type) = property_type_value.as_str() else {
+                    if let Some(type_values) = property_type_value.as_array() {
+                        let formatted = serde_json::Value::Array(type_values.clone()).to_string();
+                        return Err(
+                            format!(
+                                "Property `{key}` uses a union type `{formatted}`, which is not supported in typed mode."
+                            )
+                            .into(),
+                        );
+                    }
+                    return Err(
+                        format!("Property `{key}` must declare a string `type`.").into(),
+                    );
+                };
+
+                if property_object.contains_key("enum") {
+                    if property_type != "string" {
+                        return Err(
+                            format!("Property `{key}` uses `enum` with a non-string type.").into(),
+                        );
+                    }
+                    let Some(enum_values) = property_object.get("enum") else {
+                        return Err(format!("Property `{key}` has an invalid `enum`.").into());
+                    };
+                    let serde_json::Value::Array(enum_values) = enum_values else {
+                        return Err(format!("Property `{key}` has an invalid `enum`.").into());
+                    };
+                    let mut labels = Vec::with_capacity(enum_values.len());
+                    for enum_value in enum_values {
+                        let Some(enum_value) = enum_value.as_str() else {
+                            return Err(
+                                format!("Property `{key}` has a non-string enum value.").into(),
+                            );
+                        };
+                        labels.push(SharedString::from(enum_value.to_string()));
+                    }
+                    items.push(ExtensionFormItem::Field(ExtensionFormField {
+                        label: property_label,
+                        description: property_object
+                            .get("description")
+                            .and_then(|value| {
+                                value
+                                    .as_str()
+                                    .map(|value| SharedString::from(value.to_string()))
+                            }),
+                        path: Arc::from(child_path),
+                        kind: ExtensionFormFieldKind::StringEnum(Arc::from(labels)),
+                    }));
+                    continue;
+                }
+
+                match property_type {
+                    "boolean" => items.push(ExtensionFormItem::Field(ExtensionFormField {
+                        label: property_label,
+                        description: property_object
+                            .get("description")
+                            .and_then(|value| {
+                                value
+                                    .as_str()
+                                    .map(|value| SharedString::from(value.to_string()))
+                            }),
+                        path: Arc::from(child_path),
+                        kind: ExtensionFormFieldKind::Boolean,
+                    })),
+                    "string" => items.push(ExtensionFormItem::Field(ExtensionFormField {
+                        label: property_label,
+                        description: property_object
+                            .get("description")
+                            .and_then(|value| {
+                                value
+                                    .as_str()
+                                    .map(|value| SharedString::from(value.to_string()))
+                            }),
+                        path: Arc::from(child_path),
+                        kind: ExtensionFormFieldKind::String,
+                    })),
+                    "integer" => items.push(ExtensionFormItem::Field(ExtensionFormField {
+                        label: property_label,
+                        description: property_object
+                            .get("description")
+                            .and_then(|value| {
+                                value
+                                    .as_str()
+                                    .map(|value| SharedString::from(value.to_string()))
+                            }),
+                        path: Arc::from(child_path),
+                        kind: ExtensionFormFieldKind::Integer {
+                            minimum: property_object.get("minimum").and_then(|value| value.as_i64()),
+                            maximum: property_object.get("maximum").and_then(|value| value.as_i64()),
+                        },
+                    })),
+                    "number" => items.push(ExtensionFormItem::Field(ExtensionFormField {
+                        label: property_label,
+                        description: property_object
+                            .get("description")
+                            .and_then(|value| {
+                                value
+                                    .as_str()
+                                    .map(|value| SharedString::from(value.to_string()))
+                            }),
+                        path: Arc::from(child_path),
+                        kind: ExtensionFormFieldKind::Number {
+                            minimum: property_object.get("minimum").and_then(|value| value.as_f64()),
+                            maximum: property_object.get("maximum").and_then(|value| value.as_f64()),
+                        },
+                    })),
+                    "array" => items.push(ExtensionFormItem::Field(ExtensionFormField {
+                        label: property_label,
+                        description: property_object
+                            .get("description")
+                            .and_then(|value| {
+                                value
+                                    .as_str()
+                                    .map(|value| SharedString::from(value.to_string()))
+                            }),
+                        path: Arc::from(child_path),
+                        kind: compile_string_array_field_kind(key, value, property_object),
+                    })),
+                    "object" => {
+                        let section_items =
+                            compile_extension_form_schema(value, &child_path, false)?;
+                        items.push(ExtensionFormItem::Section(ExtensionFormSection {
+                            title: property_label,
+                            description: property_object
+                                .get("description")
+                                .and_then(|value| {
+                                    value
+                                        .as_str()
+                                        .map(|value| SharedString::from(value.to_string()))
+                                }),
+                            items: section_items,
+                        }));
+                    }
+                    other => {
+                        return Err(
+                            format!("Property `{key}` uses unsupported type `{other}`.").into(),
+                        );
+                    }
+                }
+            }
+
+            let _ = is_root;
+            Ok(items)
+        }
+        "array" => Err("Array schemas are not supported in typed mode.".into()),
+        other => Err(format!("Unsupported root schema type `{other}`.").into()),
+    }
+}
+
+fn compile_extension_settings_page_mode(schema: &serde_json::Value) -> ExtensionSettingsPageMode {
+    match compile_extension_form_schema(schema, &[], true) {
+        Ok(items) => ExtensionSettingsPageMode::Typed(ExtensionFormSchema { items }),
+        Err(reason) => schema_error(reason),
+    }
+}
+
+fn extension_value_at_path<'a>(
+    root: &'a serde_json::Value,
+    path: &[Arc<str>],
+) -> Option<&'a serde_json::Value> {
+    let mut current = root;
+    for segment in path {
+        current = current.as_object()?.get(segment.as_ref())?;
+    }
+    Some(current)
+}
+
+fn extension_value_container_mut<'a>(
+    root: &'a mut serde_json::Value,
+    path: &[Arc<str>],
+) -> &'a mut serde_json::Map<String, serde_json::Value> {
+    if !root.is_object() {
+        *root = serde_json::Value::Object(Default::default());
+    }
+
+    let mut current = root.as_object_mut().expect("root should be an object");
+    for segment in path {
+        let entry = current
+            .entry(segment.to_string())
+            .or_insert_with(|| serde_json::Value::Object(Default::default()));
+        if !entry.is_object() {
+            *entry = serde_json::Value::Object(Default::default());
+        }
+        current = entry.as_object_mut().expect("nested value should be an object");
+    }
+    current
+}
+
+fn set_extension_value_at_path(
+    root: &mut serde_json::Value,
+    path: &[Arc<str>],
+    value: serde_json::Value,
+) {
+    let (parents, field_name) = path.split_at(path.len().saturating_sub(1));
+    if let Some(field_name) = field_name.first() {
+        extension_value_container_mut(root, parents).insert(field_name.to_string(), value);
+    }
+}
+
+fn remove_extension_value_at_path(root: &mut serde_json::Value, path: &[Arc<str>]) -> bool {
+    fn remove_from(
+        current: &mut serde_json::Value,
+        path: &[Arc<str>],
+    ) -> bool {
+        let Some((head, tail)) = path.split_first() else {
+            return current
+                .as_object()
+                .is_some_and(serde_json::Map::is_empty);
+        };
+        let Some(object) = current.as_object_mut() else {
+            return false;
+        };
+
+        if tail.is_empty() {
+            object.remove(head.as_ref());
+            return object.is_empty();
+        }
+
+        let should_prune_child = object
+            .get_mut(head.as_ref())
+            .is_some_and(|child| remove_from(child, tail));
+        if should_prune_child {
+            object.remove(head.as_ref());
+        }
+        object.is_empty()
+    }
+
+    remove_from(root, path)
+}
+
+fn extension_field_source_value<'a>(
+    field: &ExtensionFormField,
+    effective_root: &'a serde_json::Value,
+    default_root: &'a serde_json::Value,
+) -> Option<&'a serde_json::Value> {
+    extension_value_at_path(effective_root, field.path.as_ref())
+        .or_else(|| extension_value_at_path(default_root, field.path.as_ref()))
+}
+
+fn validate_typed_extension_form_data(
+    items: &[ExtensionFormItem],
+    effective_root: &serde_json::Value,
+    default_root: &serde_json::Value,
+) -> Result<(), SharedString> {
+    for item in items {
+        match item {
+            ExtensionFormItem::Section(section) => {
+                validate_typed_extension_form_data(&section.items, effective_root, default_root)?;
+            }
+            ExtensionFormItem::Field(field) => {
+                let Some(value) = extension_field_source_value(field, effective_root, default_root)
+                else {
+                    return Err(
+                        format!(
+                            "Typed settings require a value for `{}` in the effective settings or defaults.",
+                            field.label
+                        )
+                        .into(),
+                    );
+                };
+
+                let matches_kind = match &field.kind {
+                    ExtensionFormFieldKind::Boolean => value.is_boolean(),
+                    ExtensionFormFieldKind::String => value.is_string(),
+                    ExtensionFormFieldKind::StringEnum(variants) => value
+                        .as_str()
+                        .is_some_and(|value| {
+                            variants.iter().any(|variant| variant.as_ref() == value)
+                        }),
+                    ExtensionFormFieldKind::Integer { .. } => {
+                        value.as_i64().is_some() || value.as_u64().is_some()
+                    }
+                    ExtensionFormFieldKind::Number { .. } => value.as_f64().is_some(),
+                    ExtensionFormFieldKind::StringArray => value.as_array().is_some_and(|items| {
+                        items.iter().all(|item| item.as_str().is_some())
+                    }),
+                    ExtensionFormFieldKind::RawJsonFallback { .. } => true,
+                };
+
+                if !matches_kind {
+                    return Err(
+                        format!(
+                            "Current data for `{}` does not match the supported typed schema.",
+                            field.label
+                        )
+                        .into(),
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn render_extension_enum_dropdown(
+    id: impl Into<ElementId>,
+    current_value: SharedString,
+    options: Arc<[SharedString]>,
+    on_change: impl Fn(SharedString, &mut Window, &mut App) + 'static,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let id: ElementId = id.into();
+    let current_value_for_menu = current_value.clone();
+    let on_change = Rc::new(on_change);
+    let menu = window.use_keyed_state((id.clone(), "menu"), cx, |window, cx| {
+        ContextMenu::new(window, cx, move |mut menu, _, _| {
+            for option in options.iter() {
+                let option = option.clone();
+                let current_value = current_value_for_menu.clone();
+                let on_change = on_change.clone();
+                menu = menu.toggleable_entry(
+                    option.to_string(),
+                    option == current_value,
+                    IconPosition::End,
+                    None,
+                    move |window, cx| {
+                        on_change(option.clone(), window, cx);
+                    },
+                );
+            }
+            menu
+        })
+    });
+
+    DropdownMenu::new(
+        id,
+        current_value.to_string(),
+        menu,
+    )
+    .trigger_size(ButtonSize::Medium)
+    .style(DropdownStyle::Outlined)
+    .offset(gpui::Point {
+        x: px(0.0),
+        y: px(2.0),
+    })
+    .into_any_element()
+}
+
+fn render_extension_array_empty_state(cx: &mut Context<SettingsWindow>) -> AnyElement {
+    h_flex()
+        .p_2()
+        .rounded_md()
+        .border_1()
+        .border_dashed()
+        .border_color(cx.theme().colors().border_variant)
+        .child(
+            Label::new("No items configured")
+                .size(LabelSize::Small)
+                .color(Color::Disabled),
+        )
+        .into_any_element()
+}
+
+fn render_extension_field_raw_json_editor(
+    id: impl Into<ElementId>,
+    initial_text: String,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<Editor> {
+    let id: ElementId = id.into();
+    let editor = window.use_keyed_state(id, cx, |window, cx| {
+        let mut editor = Editor::auto_height(3, 12, window, cx);
+        editor.set_text(initial_text.clone(), window, cx);
+        editor.set_show_gutter(false, cx);
+        editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
+        editor
+    });
+
+    let current_text = editor.read(cx).text(cx);
+    if current_text != initial_text && !editor.read(cx).is_focused(window) {
+        editor.update(cx, |editor, cx| {
+            editor.set_text(initial_text, window, cx);
+        });
+    }
+
+    editor
+}
+
+fn render_extension_string_array_field(
+    extension_id: &Arc<str>,
+    field: &ExtensionFormField,
+    values: Vec<String>,
+    current_layer_has_value: bool,
+    settings_window: WeakEntity<SettingsWindow>,
+    _window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) -> AnyElement {
+    let field_id = format!(
+        "extension-settings-array-{}-{}",
+        extension_id,
+        field.path
+            .iter()
+            .map(|segment| segment.as_ref())
+            .collect::<Vec<_>>()
+            .join("-")
+    );
+
+    v_flex()
+        .gap_2()
+        .px_8()
+        .py_4()
+        .border_b_1()
+        .border_color(cx.theme().colors().border_variant)
+        .child(
+            h_flex()
+                .justify_between()
+                .items_start()
+                .gap_4()
+                .child(
+                    v_flex()
+                        .gap_1()
+                        .min_w_0()
+                        .child(Label::new(field.label.clone()))
+                        .when_some(field.description.as_ref(), |this, description| {
+                            this.child(
+                                Label::new(description.clone())
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                        }),
+                )
+                .when(current_layer_has_value, |this| {
+                    let settings_window = settings_window.clone();
+                    this.child(
+                        IconButton::new(format!("{field_id}-reset"), IconName::Undo)
+                            .icon_color(Color::Muted)
+                            .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::text("Reset for this file"))
+                            .on_click({
+                                let extension_id = extension_id.clone();
+                                let path = field.path.clone();
+                                let settings_window = settings_window.clone();
+                                move |_, window, cx| {
+                                    settings_window
+                                        .update(cx, |this, cx| {
+                                            this.reset_typed_extension_setting_value(
+                                                extension_id.clone(),
+                                                path.clone(),
+                                                window,
+                                                cx,
+                                            );
+                                        })
+                                        .ok();
+                                }
+                            }),
+                    )
+                }),
+        )
+        .child(
+            v_flex()
+                .mt_2()
+                .gap_1p5()
+                .when(values.is_empty(), |this| {
+                    this.child(render_extension_array_empty_state(cx))
+                })
+                .children(values.iter().enumerate().map(|(index, value)| {
+                    let row_values = values.clone();
+                    let value_for_row = value.clone();
+                    let delete_id = format!("{field_id}-delete-{index}");
+                    let input_id = format!("{field_id}-item-{index}");
+
+                    SettingsInputField::new()
+                        .with_id(input_id)
+                        .with_initial_text(value_for_row.clone())
+                        .tab_index(0)
+                        .with_buffer_font()
+                        .display_clear_button()
+                        .display_confirm_button()
+                        .confirm_on_blur()
+                        .action_slot(
+                            IconButton::new(delete_id, IconName::Trash)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Muted)
+                                .tooltip(Tooltip::text("Remove item"))
+                                .on_click({
+                                    let extension_id = extension_id.clone();
+                                    let path = field.path.clone();
+                                    let values = row_values.clone();
+                                    let settings_window = settings_window.clone();
+                                    move |_, window, cx| {
+                                        let mut next_values = values.clone();
+                                        if index < next_values.len() {
+                                            next_values.remove(index);
+                                        }
+                                        settings_window
+                                            .update(cx, |this, cx| {
+                                                this.set_typed_extension_setting_value(
+                                                    extension_id.clone(),
+                                                    path.clone(),
+                                                    serde_json::Value::Array(
+                                                        next_values
+                                                            .into_iter()
+                                                            .map(serde_json::Value::String)
+                                                            .collect(),
+                                                    ),
+                                                    window,
+                                                    cx,
+                                                );
+                                            })
+                                            .ok();
+                                    }
+                                }),
+                        )
+                        .on_confirm({
+                            let extension_id = extension_id.clone();
+                            let path = field.path.clone();
+                            let values = row_values.clone();
+                            let settings_window = settings_window.clone();
+                            move |new_value, window, cx| {
+                                let trimmed = new_value
+                                    .unwrap_or_default()
+                                    .trim()
+                                    .to_string();
+                                let mut next_values = values.clone();
+                                if index >= next_values.len() {
+                                    return;
+                                }
+                                if trimmed.is_empty() {
+                                    next_values.remove(index);
+                                } else {
+                                    next_values[index] = trimmed;
+                                }
+
+                                settings_window
+                                    .update(cx, |this, cx| {
+                                        this.set_typed_extension_setting_value(
+                                            extension_id.clone(),
+                                            path.clone(),
+                                            serde_json::Value::Array(
+                                                next_values
+                                                    .into_iter()
+                                                    .map(serde_json::Value::String)
+                                                    .collect(),
+                                            ),
+                                            window,
+                                            cx,
+                                        );
+                                    })
+                                    .ok();
+                            }
+                        })
+                        .into_any_element()
+                }))
+                .child(
+                    SettingsInputField::new()
+                        .with_id(format!("{field_id}-new-item"))
+                        .with_placeholder("Add item…")
+                        .tab_index(0)
+                        .with_buffer_font()
+                        .display_clear_button()
+                        .display_confirm_button()
+                        .clear_on_confirm()
+                        .on_confirm({
+                            let extension_id = extension_id.clone();
+                            let path = field.path.clone();
+                            let values = values.clone();
+                            let settings_window = settings_window.clone();
+                            move |new_value, window, cx| {
+                                let trimmed = new_value
+                                    .unwrap_or_default()
+                                    .trim()
+                                    .to_string();
+                                if trimmed.is_empty() {
+                                    return;
+                                }
+                                let mut next_values = values.clone();
+                                next_values.push(trimmed);
+                                settings_window
+                                    .update(cx, |this, cx| {
+                                        this.set_typed_extension_setting_value(
+                                            extension_id.clone(),
+                                            path.clone(),
+                                            serde_json::Value::Array(
+                                                next_values
+                                                    .into_iter()
+                                                    .map(serde_json::Value::String)
+                                                    .collect(),
+                                            ),
+                                            window,
+                                            cx,
+                                        );
+                                    })
+                                    .ok();
+                            }
+                        })
+                        .into_any_element(),
+                ),
+        )
+        .into_any_element()
+}
+
+fn render_extension_raw_fallback_field(
+    extension_id: &Arc<str>,
+    field: &ExtensionFormField,
+    schema: &serde_json::Value,
+    reason: SharedString,
+    effective_root: &serde_json::Value,
+    default_root: &serde_json::Value,
+    current_layer_has_value: bool,
+    settings_window: WeakEntity<SettingsWindow>,
+    window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) -> AnyElement {
+    let field_id = format!(
+        "extension-settings-raw-field-{}-{}",
+        extension_id,
+        field.path
+            .iter()
+            .map(|segment| segment.as_ref())
+            .collect::<Vec<_>>()
+            .join("-")
+    );
+    let value = extension_field_source_value(field, effective_root, default_root)
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let initial_text = serde_json::to_string_pretty(&value).unwrap_or_else(|_| "null".to_string());
+    let editor = render_extension_field_raw_json_editor(
+        format!("{field_id}-editor"),
+        initial_text,
+        window,
+        cx,
+    );
+
+    v_flex()
+        .gap_2()
+        .px_8()
+        .py_4()
+        .border_b_1()
+        .border_color(cx.theme().colors().border_variant)
+        .child(
+            h_flex()
+                .justify_between()
+                .items_start()
+                .gap_4()
+                .child(
+                    v_flex()
+                        .gap_1()
+                        .min_w_0()
+                        .child(Label::new(field.label.clone()))
+                        .when_some(field.description.as_ref(), |this, description| {
+                            this.child(
+                                Label::new(description.clone())
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                        }),
+                )
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            Button::new(format!("{field_id}-save"), "Save")
+                                .style(ButtonStyle::Outlined)
+                                .on_click({
+                                    let extension_id = extension_id.clone();
+                                    let path = field.path.clone();
+                                    let schema = schema.clone();
+                                    let editor = editor.clone();
+                                    let settings_window = settings_window.clone();
+                                    move |_, window, cx| {
+                                        let text = editor.read(cx).text(cx);
+                                        let value =
+                                            match serde_json_lenient::from_str::<serde_json::Value>(&text)
+                                            {
+                                                Ok(value) => value,
+                                                Err(error) => {
+                                                    settings_window
+                                                        .update(cx, |this, cx| {
+                                                            this.regex_validation_error =
+                                                                Some(error.to_string());
+                                                            cx.notify();
+                                                        })
+                                                        .ok();
+                                                    return;
+                                                }
+                                            };
+                                        let validator = match jsonschema::validator_for(&schema) {
+                                            Ok(validator) => validator,
+                                            Err(error) => {
+                                                settings_window
+                                                    .update(cx, |this, cx| {
+                                                        this.regex_validation_error =
+                                                            Some(error.to_string());
+                                                        cx.notify();
+                                                    })
+                                                    .ok();
+                                                return;
+                                            }
+                                        };
+                                        if let Err(error) = validator.validate(&value) {
+                                            settings_window
+                                                .update(cx, |this, cx| {
+                                                    this.regex_validation_error =
+                                                        Some(error.to_string());
+                                                    cx.notify();
+                                                })
+                                                .ok();
+                                            return;
+                                        }
+
+                                        settings_window
+                                            .update(cx, |this, cx| {
+                                                this.set_typed_extension_setting_value(
+                                                    extension_id.clone(),
+                                                    path.clone(),
+                                                    value.clone(),
+                                                    window,
+                                                    cx,
+                                                );
+                                            })
+                                            .ok();
+                                    }
+                                }),
+                        )
+                        .when(current_layer_has_value, |this| {
+                            let settings_window = settings_window.clone();
+                            this.child(
+                                IconButton::new(format!("{field_id}-reset"), IconName::Undo)
+                                    .icon_color(Color::Muted)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(Tooltip::text("Reset for this file"))
+                                    .on_click({
+                                        let extension_id = extension_id.clone();
+                                        let path = field.path.clone();
+                                        let settings_window = settings_window.clone();
+                                        move |_, window, cx| {
+                                            settings_window
+                                                .update(cx, |this, cx| {
+                                                    this.reset_typed_extension_setting_value(
+                                                        extension_id.clone(),
+                                                        path.clone(),
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })
+                                                .ok();
+                                        }
+                                    }),
+                            )
+                        }),
+                ),
+        )
+        .child(
+            Banner::new().severity(Severity::Warning).child(
+                v_flex()
+                    .my_0p5()
+                    .gap_0p5()
+                    .child(Label::new("Typed controls are not available for this field"))
+                    .child(Label::new(reason).size(LabelSize::Small).color(Color::Muted)),
+            ),
+        )
+        .child(render_json_editor(&editor, cx))
+        .into_any_element()
+}
+
+fn render_extension_form_item(
+    this: &SettingsWindow,
+    extension_id: &Arc<str>,
+    item: &ExtensionFormItem,
+    effective_root: &serde_json::Value,
+    current_file_root: Option<&serde_json::Value>,
+    default_root: &serde_json::Value,
+    window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) -> AnyElement {
+    match item {
+        ExtensionFormItem::Section(section) => v_flex()
+            .gap_3()
+            .child(SettingsSectionHeader::new(section.title.clone()).no_padding(true))
+            .when_some(section.description.as_ref(), |this, description| {
+                this.child(Label::new(description.clone()).size(LabelSize::Small).color(Color::Muted))
+            })
+            .children(section.items.iter().map(|item| {
+                render_extension_form_item(
+                    this,
+                    extension_id,
+                    item,
+                    effective_root,
+                    current_file_root,
+                    default_root,
+                    window,
+                    cx,
+                )
+            }))
+            .into_any_element(),
+        ExtensionFormItem::Field(field) => {
+            let settings_window = cx.entity().downgrade();
+            let current_layer_has_value = current_file_root
+                .and_then(|value| extension_value_at_path(value, field.path.as_ref()))
+                .is_some();
+            let display_value = extension_field_source_value(field, effective_root, default_root)
+                .expect("typed form data should be prevalidated");
+            let control_id = format!(
+                "extension-settings-{}-{}",
+                extension_id,
+                field.path
+                    .iter()
+                    .map(|segment| segment.as_ref())
+                    .collect::<Vec<_>>()
+                    .join("-")
+            );
+
+            let control = match &field.kind {
+                ExtensionFormFieldKind::Boolean => {
+                    let settings_window = settings_window.clone();
+                    let is_selected = display_value.as_bool().unwrap_or(false);
+                    Switch::new(
+                        control_id.clone(),
+                        if is_selected {
+                            ToggleState::Selected
+                        } else {
+                            ToggleState::Unselected
+                        },
+                    )
+                    .tab_index(0_isize)
+                    .on_click({
+                        let extension_id = extension_id.clone();
+                        let path = field.path.clone();
+                        move |state, window, cx| {
+                            let value = serde_json::Value::Bool(*state == ToggleState::Selected);
+                            settings_window
+                                .update(cx, |this, cx| {
+                                    this.set_typed_extension_setting_value(
+                                        extension_id.clone(),
+                                        path.clone(),
+                                        value,
+                                        window,
+                                        cx,
+                                    );
+                                })
+                                .ok();
+                        }
+                    })
+                    .into_any_element()
+                }
+                ExtensionFormFieldKind::String => {
+                    let settings_window = settings_window.clone();
+                    SettingsInputField::new()
+                    .with_id(control_id.clone())
+                    .with_initial_text(display_value.as_str().unwrap_or_default().to_string())
+                    .confirm_on_blur()
+                    .display_confirm_button()
+                    .display_clear_button()
+                    .on_confirm({
+                        let extension_id = extension_id.clone();
+                        let path = field.path.clone();
+                        move |value, window, cx| {
+                            settings_window
+                                .update(cx, |this, cx| {
+                                    this.set_typed_extension_setting_value(
+                                        extension_id.clone(),
+                                        path.clone(),
+                                        serde_json::Value::String(value.unwrap_or_default()),
+                                        window,
+                                        cx,
+                                    );
+                                })
+                                .ok();
+                        }
+                    })
+                    .into_any_element()
+                }
+                ExtensionFormFieldKind::StringEnum(options) => {
+                    let settings_window = settings_window.clone();
+                    render_extension_enum_dropdown(
+                        control_id.clone(),
+                        SharedString::from(display_value.as_str().unwrap_or_default().to_string()),
+                        options.clone(),
+                        {
+                            let extension_id = extension_id.clone();
+                            let path = field.path.clone();
+                            move |value, window, cx| {
+                                settings_window
+                                    .update(cx, |this, cx| {
+                                        this.set_typed_extension_setting_value(
+                                            extension_id.clone(),
+                                            path.clone(),
+                                            serde_json::Value::String(value.to_string()),
+                                            window,
+                                            cx,
+                                        );
+                                    })
+                                    .ok();
+                            }
+                        },
+                        window,
+                        cx,
+                    )
+                }
+                ExtensionFormFieldKind::StringArray => {
+                    let values = display_value
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|value| value.as_str().map(ToOwned::to_owned))
+                        .collect::<Vec<_>>();
+                    return render_extension_string_array_field(
+                        extension_id,
+                        field,
+                        values,
+                        current_layer_has_value,
+                        settings_window,
+                        window,
+                        cx,
+                    );
+                }
+                ExtensionFormFieldKind::RawJsonFallback { schema, reason } => {
+                    return render_extension_raw_fallback_field(
+                        extension_id,
+                        field,
+                        schema,
+                        reason.clone(),
+                        effective_root,
+                        default_root,
+                        current_layer_has_value,
+                        settings_window,
+                        window,
+                        cx,
+                    );
+                }
+                ExtensionFormFieldKind::Integer { minimum, maximum } => {
+                    let settings_window = settings_window.clone();
+                    let value = display_value
+                        .as_i64()
+                        .or_else(|| display_value.as_u64().map(|value| value as i64))
+                        .unwrap_or_default();
+
+                    let mut field = NumberField::new(control_id.clone(), value, window, cx)
+                        .mode(NumberFieldMode::Edit, cx)
+                        .tab_index(0)
+                        .on_change({
+                            let extension_id = extension_id.clone();
+                            let path = field.path.clone();
+                            move |value, window, cx| {
+                                settings_window
+                                    .update(cx, |this, cx| {
+                                        this.set_typed_extension_setting_value(
+                                            extension_id.clone(),
+                                            path.clone(),
+                                            serde_json::Value::Number((*value).into()),
+                                            window,
+                                            cx,
+                                        );
+                                    })
+                                    .ok();
+                            }
+                        });
+
+                    if let Some(minimum) = minimum {
+                        field = field.min(*minimum);
+                    }
+                    if let Some(maximum) = maximum {
+                        field = field.max(*maximum);
+                    }
+                    field.into_any_element()
+                }
+                ExtensionFormFieldKind::Number { minimum, maximum } => {
+                    let settings_window = settings_window.clone();
+                    let value = display_value.as_f64().unwrap_or_default();
+                    let mut field = NumberField::new(control_id.clone(), value, window, cx)
+                        .mode(NumberFieldMode::Edit, cx)
+                        .tab_index(0)
+                        .on_change({
+                            let extension_id = extension_id.clone();
+                            let path = field.path.clone();
+                            move |value, window, cx| {
+                                let number = serde_json::Number::from_f64(*value)
+                                    .expect("typed form should only emit finite numbers");
+                                settings_window
+                                    .update(cx, |this, cx| {
+                                        this.set_typed_extension_setting_value(
+                                            extension_id.clone(),
+                                            path.clone(),
+                                            serde_json::Value::Number(number),
+                                            window,
+                                            cx,
+                                        );
+                                    })
+                                    .ok();
+                            }
+                        });
+
+                    if let Some(minimum) = minimum {
+                        field = field.min(*minimum);
+                    }
+                    if let Some(maximum) = maximum {
+                        field = field.max(*maximum);
+                    }
+                    field.into_any_element()
+                }
+            };
+
+            v_flex()
+                .gap_2()
+                .px_8()
+                .py_4()
+                .border_b_1()
+                .border_color(cx.theme().colors().border_variant)
+                .child(
+                    h_flex()
+                        .justify_between()
+                        .items_start()
+                        .gap_4()
+                        .child(
+                            v_flex()
+                                .gap_1()
+                                .min_w_0()
+                                .child(Label::new(field.label.clone()))
+                                .when_some(field.description.as_ref(), |this, description| {
+                                    this.child(
+                                        Label::new(description.clone())
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                }),
+                        )
+                        .child(
+                            h_flex()
+                                .items_center()
+                                .gap_2()
+                                .child(control)
+                                .when(current_layer_has_value, |this| {
+                                    let settings_window = settings_window.clone();
+                                    this.child(
+                                        IconButton::new(
+                                            format!("{control_id}-reset"),
+                                            IconName::Undo,
+                                        )
+                                        .icon_color(Color::Muted)
+                                        .icon_size(IconSize::Small)
+                                        .tooltip(Tooltip::text("Reset for this file"))
+                                        .on_click({
+                                            let extension_id = extension_id.clone();
+                                            let path = field.path.clone();
+                                            move |_, window, cx| {
+                                                settings_window
+                                                    .update(cx, |this, cx| {
+                                                        this.reset_typed_extension_setting_value(
+                                                            extension_id.clone(),
+                                                            path.clone(),
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    })
+                                                    .ok();
+                                            }
+                                        }),
+                                    )
+                                }),
+                        ),
+                )
+                .into_any_element()
+        }
+    }
+}
+
+fn render_raw_extension_settings_page(
+    this: &SettingsWindow,
+    contribution: &extension_host::ContributedExtensionSettings,
+    extension_id: &Arc<str>,
+    reason: Option<SharedString>,
+    window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) -> AnyElement {
+    let editor = this.extension_settings_editor(extension_id.clone(), window, cx);
+
+    v_flex()
+        .gap_4()
+        .child(
+            v_flex()
+                .px_8()
+                .gap_1()
+                .child(Headline::new(contribution.manifest.name.clone()).size(HeadlineSize::Small))
+                .when_some(contribution.manifest.description.as_ref(), |this, description| {
+                    this.child(Label::new(description.clone()).color(Color::Muted))
+                })
+                .child(
+                    Label::new(
+                        "Editing this page only changes the current settings file layer. Inherited values are not copied into the file.",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                ),
+        )
+        .when_some(reason, |this, reason| {
+            this.child(
+                div().px_8().child(
+                    Banner::new().severity(Severity::Warning).child(
+                        v_flex()
+                            .my_0p5()
+                            .gap_0p5()
+                            .child(Label::new("Typed controls are not available for this schema"))
+                            .child(Label::new(reason).size(LabelSize::Small).color(Color::Muted)),
+                    ),
+                ),
+            )
+        })
+        .when_some(this.regex_validation_error.as_ref(), |this, error| {
+            this.child(
+                div().px_8().child(
+                    Banner::new().severity(Severity::Warning).child(
+                        v_flex()
+                            .my_0p5()
+                            .gap_0p5()
+                            .child(Label::new("Settings validation failed"))
+                            .child(Label::new(error.clone()).size(LabelSize::Small).color(Color::Muted)),
+                    ),
+                ),
+            )
+        })
+        .child(
+            v_flex()
+                .px_8()
+                .gap_2()
+                .child(
+                    h_flex()
+                        .justify_between()
+                        .items_center()
+                        .child(Label::new("Current File Value"))
+                        .child(
+                            Button::new(
+                                format!("save-extension-settings-{}", contribution.manifest.id),
+                                format!("Save to {} Settings", this.current_file.setting_type()),
+                            )
+                            .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                            .on_click(cx.listener({
+                                let extension_id = extension_id.clone();
+                                move |this, _, window, cx| {
+                                    this.save_extension_settings(extension_id.clone(), window, cx);
+                                }
+                            })),
+                        ),
+                )
+                .child(render_json_editor(&editor, cx)),
+        )
+        .into_any_element()
+}
+
+pub(crate) fn render_extension_settings_page(
+    this: &SettingsWindow,
+    _scroll_handle: &ScrollHandle,
+    window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) -> AnyElement {
+    let Some(extension_id) = this.active_extension_settings_id() else {
+        return div().into_any_element();
+    };
+    let Some(contribution) = this.extension_settings_contribution(extension_id.as_ref(), cx) else {
+        return div()
+            .child(
+                Banner::new().severity(Severity::Warning).child(
+                    v_flex()
+                        .my_0p5()
+                        .gap_0p5()
+                        .child(Label::new("Extension settings are not available."))
+                        .child(
+                            Label::new(
+                                "The extension may have been removed or no longer contributes settings.",
+                            )
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                        ),
+                ),
+            )
+            .into_any_element();
+    };
+    let page_mode = this.extension_settings_page_mode(&contribution);
+    let default_root = &contribution.default_settings;
+
+    if !default_root.is_object() {
+        return render_raw_extension_settings_page(
+            this,
+            &contribution,
+            &extension_id,
+            Some("Typed controls require `default_settings` to be an object.".into()),
+            window,
+            cx,
+        );
+    }
+
+    let effective_root = this.extension_settings_effective_root(
+        extension_id.as_ref(),
+        default_root,
+        cx,
+    );
+    if !effective_root.is_object() {
+        return render_raw_extension_settings_page(
+            this,
+            &contribution,
+            &extension_id,
+            Some("Typed controls require the effective settings value to be an object.".into()),
+            window,
+            cx,
+        );
+    }
+
+    let current_file_root = this.extension_settings_current_file_root(extension_id.as_ref(), cx);
+    if current_file_root
+        .as_ref()
+        .is_some_and(|value| !value.is_object())
+    {
+        return render_raw_extension_settings_page(
+            this,
+            &contribution,
+            &extension_id,
+            Some("The current settings file contains a non-object value for this extension.".into()),
+            window,
+            cx,
+        );
+    }
+
+    match page_mode {
+        ExtensionSettingsPageMode::RawFallback { reason } => render_raw_extension_settings_page(
+            this,
+            &contribution,
+            &extension_id,
+            Some(reason),
+            window,
+            cx,
+        ),
+        ExtensionSettingsPageMode::Typed(form) => {
+            if let Err(reason) =
+                validate_typed_extension_form_data(&form.items, &effective_root, default_root)
+            {
+                return render_raw_extension_settings_page(
+                    this,
+                    &contribution,
+                    &extension_id,
+                    Some(reason),
+                    window,
+                    cx,
+                );
+            }
+
+            v_flex()
+                .gap_4()
+                .child(
+                    v_flex()
+                        .px_8()
+                        .gap_1()
+                        .child(
+                            Headline::new(contribution.manifest.name.clone())
+                                .size(HeadlineSize::Small),
+                        )
+                        .when_some(contribution.manifest.description.as_ref(), |this, description| {
+                            this.child(Label::new(description.clone()).color(Color::Muted))
+                        })
+                        .child(
+                            Label::new(
+                                "Changes apply only to the current settings file. Use reset to remove an override from this layer.",
+                            )
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                        ),
+                )
+                .when_some(this.regex_validation_error.as_ref(), |this, error| {
+                    this.child(
+                        div().px_8().child(
+                            Banner::new().severity(Severity::Warning).child(
+                                v_flex()
+                                    .my_0p5()
+                                    .gap_0p5()
+                                    .child(Label::new("Failed to update extension settings"))
+                                    .child(
+                                        Label::new(error.clone())
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    ),
+                            ),
+                        ),
+                    )
+                })
+                .children(form.items.iter().map(|item| {
+                    render_extension_form_item(
+                        this,
+                        &extension_id,
+                        item,
+                        &effective_root,
+                        current_file_root.as_ref(),
+                        default_root,
+                        window,
+                        cx,
+                    )
+                }))
+                .into_any_element()
         }
     }
 }
@@ -1515,6 +3146,15 @@ impl SettingsWindow {
             cx.notify();
         })
         .detach();
+
+        if let Some(extension_events) = ExtensionEvents::try_global(cx) {
+            cx.subscribe_in(&extension_events, window, |this, _, event, window, cx| {
+                if matches!(event, extension::Event::ExtensionsInstalledChanged) {
+                    this.rebuild_pages(window, cx);
+                }
+            })
+            .detach();
+        }
 
         cx.on_window_closed(|cx, _window_id| {
             if let Some(existing_window) = cx
@@ -1640,6 +3280,8 @@ impl SettingsWindow {
             navbar_scroll_handle: UniformListScrollHandle::default(),
             search_bar,
             search_task: None,
+            extension_settings_editors: RefCell::new(HashMap::default()),
+            extension_settings_page_modes: RefCell::new(HashMap::default()),
             filter_table: vec![],
             has_query: false,
             content_handles: vec![],
@@ -1693,6 +3335,334 @@ impl SettingsWindow {
             }
             _ => {}
         }
+    }
+
+    fn active_extension_settings_id(&self) -> Option<Arc<str>> {
+        self.sub_page_stack
+            .last()?
+            .link
+            .json_path?
+            .strip_prefix("extensions.")
+            .map(Arc::<str>::from)
+    }
+
+    fn extension_settings_contribution(
+        &self,
+        extension_id: &str,
+        cx: &App,
+    ) -> Option<extension_host::ContributedExtensionSettings> {
+        ExtensionStore::try_global(cx)?
+            .read(cx)
+            .extension_settings_contributions()
+            .get(extension_id)
+            .cloned()
+    }
+
+    fn extension_settings_editor_text(
+        &self,
+        extension_id: &str,
+        file: &SettingsUiFile,
+        cx: &App,
+    ) -> String {
+        let value = SettingsStore::global(cx)
+            .extension_settings_for_file(file.to_settings(), extension_id)
+            .cloned()
+            .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
+
+        serde_json::to_string_pretty(&value).unwrap_or_else(|_| "{}".to_string())
+    }
+
+    fn extension_settings_editor(
+        &self,
+        extension_id: Arc<str>,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) -> Entity<Editor> {
+        let key = ExtensionSettingsEditorKey {
+            extension_id: extension_id.clone(),
+            file: self.current_file.clone(),
+        };
+
+        if let Some(editor) = self.extension_settings_editors.borrow().get(&key).cloned() {
+            return editor;
+        }
+
+        let text =
+            self.extension_settings_editor_text(extension_id.as_ref(), &self.current_file, cx);
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::auto_height(6, 24, window, cx);
+            editor.set_text(text, window, cx);
+            editor.set_show_gutter(false, cx);
+            editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
+            editor
+        });
+
+        self.extension_settings_editors
+            .borrow_mut()
+            .insert(key, editor.clone());
+        editor
+    }
+
+    fn save_extension_settings(
+        &mut self,
+        extension_id: Arc<str>,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) {
+        let key = ExtensionSettingsEditorKey {
+            extension_id: extension_id.clone(),
+            file: self.current_file.clone(),
+        };
+        let Some(editor) = self.extension_settings_editors.borrow().get(&key).cloned() else {
+            return;
+        };
+        let Some(contribution) = self.extension_settings_contribution(extension_id.as_ref(), cx)
+        else {
+            self.regex_validation_error =
+                Some("The extension settings contribution is no longer available.".to_string());
+            cx.notify();
+            return;
+        };
+
+        let text = editor.read(cx).text(cx);
+        let value = match serde_json_lenient::from_str::<serde_json::Value>(&text) {
+            Ok(value) => value,
+            Err(error) => {
+                self.regex_validation_error = Some(error.to_string());
+                cx.notify();
+                return;
+            }
+        };
+
+        let validator = match jsonschema::validator_for(&contribution.settings_schema) {
+            Ok(validator) => validator,
+            Err(error) => {
+                self.regex_validation_error = Some(error.to_string());
+                cx.notify();
+                return;
+            }
+        };
+
+        if let Err(error) = validator.validate(&value) {
+            self.regex_validation_error = Some(error.to_string());
+            cx.notify();
+            return;
+        }
+
+        self.regex_validation_error = None;
+        let current_file = self.current_file.clone();
+        let value_to_write = value.clone();
+        let extension_id_for_write = extension_id.clone();
+        if let Err(error) = self.update_settings_file_from_window(
+            current_file,
+            None,
+            window,
+            cx,
+            move |settings, _| {
+                settings
+                    .project
+                    .extensions
+                    .0
+                    .insert(extension_id_for_write.clone(), value_to_write.clone());
+            },
+        ) {
+            self.regex_validation_error = Some(error.to_string());
+        }
+        cx.notify();
+    }
+
+    fn extension_settings_page_mode(
+        &self,
+        contribution: &extension_host::ContributedExtensionSettings,
+    ) -> ExtensionSettingsPageMode {
+        if let Some(mode) = self
+            .extension_settings_page_modes
+            .borrow()
+            .get(&contribution.manifest.id)
+            .cloned()
+        {
+            return mode;
+        }
+
+        let mode = compile_extension_settings_page_mode(&contribution.settings_schema);
+        self.extension_settings_page_modes
+            .borrow_mut()
+            .insert(contribution.manifest.id.clone(), mode.clone());
+        mode
+    }
+
+    fn extension_settings_effective_root(
+        &self,
+        extension_id: &str,
+        default_settings: &serde_json::Value,
+        cx: &App,
+    ) -> serde_json::Value {
+        let location = match &self.current_file {
+            SettingsUiFile::User => None,
+            SettingsUiFile::Project((worktree_id, path)) => Some(settings::SettingsLocation {
+                worktree_id: *worktree_id,
+                path: path.as_ref(),
+            }),
+            SettingsUiFile::Server(_) => None,
+        };
+
+        SettingsStore::global(cx)
+            .extension_settings(location, extension_id)
+            .unwrap_or_else(|| default_settings.clone())
+    }
+
+    fn extension_settings_current_file_root(
+        &self,
+        extension_id: &str,
+        cx: &App,
+    ) -> Option<serde_json::Value> {
+        SettingsStore::global(cx)
+            .extension_settings_for_file(self.current_file.to_settings(), extension_id)
+            .cloned()
+    }
+
+    fn clear_extension_settings_cached_state(&self, extension_id: &Arc<str>) {
+        self.extension_settings_editors.borrow_mut().remove(&ExtensionSettingsEditorKey {
+            extension_id: extension_id.clone(),
+            file: self.current_file.clone(),
+        });
+    }
+
+    fn set_typed_extension_setting_value(
+        &mut self,
+        extension_id: Arc<str>,
+        path: Arc<[Arc<str>]>,
+        value: serde_json::Value,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) {
+        let current_file = self.current_file.clone();
+        let extension_id_for_write = extension_id.clone();
+        let path_for_write = path.clone();
+        let value_for_write = value.clone();
+
+        match self.update_settings_file_from_window(
+            current_file,
+            None,
+            window,
+            cx,
+            move |settings, _| {
+                let root = settings
+                    .project
+                    .extensions
+                    .0
+                    .entry(extension_id_for_write.clone())
+                    .or_insert_with(|| serde_json::Value::Object(Default::default()));
+                set_extension_value_at_path(root, &path_for_write, value_for_write.clone());
+            },
+        ) {
+            Ok(()) => {
+                self.regex_validation_error = None;
+                self.clear_extension_settings_cached_state(&extension_id);
+            }
+            Err(error) => {
+                self.regex_validation_error = Some(error.to_string());
+            }
+        }
+        cx.notify();
+    }
+
+    fn reset_typed_extension_setting_value(
+        &mut self,
+        extension_id: Arc<str>,
+        path: Arc<[Arc<str>]>,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) {
+        let current_file = self.current_file.clone();
+        let extension_id_for_write = extension_id.clone();
+        let path_for_write = path.clone();
+
+        match self.update_settings_file_from_window(
+            current_file,
+            None,
+            window,
+            cx,
+            move |settings, _| {
+                let should_remove_extension = settings
+                    .project
+                    .extensions
+                    .0
+                    .get_mut(extension_id_for_write.as_ref())
+                    .is_some_and(|root| remove_extension_value_at_path(root, &path_for_write));
+
+                if should_remove_extension {
+                    settings
+                        .project
+                        .extensions
+                        .0
+                        .remove(extension_id_for_write.as_ref());
+                }
+            },
+        ) {
+            Ok(()) => {
+                self.regex_validation_error = None;
+                self.clear_extension_settings_cached_state(&extension_id);
+            }
+            Err(error) => {
+                self.regex_validation_error = Some(error.to_string());
+            }
+        }
+        cx.notify();
+    }
+
+    fn update_settings_file_from_window(
+        &mut self,
+        file: SettingsUiFile,
+        file_name: Option<&'static str>,
+        _window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+        update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
+    ) -> Result<()> {
+        telemetry::event!("Settings Change", setting = file_name, type = file.setting_type());
+
+        match file {
+            SettingsUiFile::Project((worktree_id, rel_path)) => {
+                let rel_path = rel_path.join(paths::local_settings_file_relative_path());
+                self.update_project_setting_file_from_window(worktree_id, rel_path, update, cx)
+            }
+            SettingsUiFile::User => {
+                SettingsStore::global(cx).update_settings_file(<dyn fs::Fs>::global(cx), update);
+                Ok(())
+            }
+            SettingsUiFile::Server(_) => unimplemented!(),
+        }
+    }
+
+    fn update_project_setting_file_from_window(
+        &mut self,
+        worktree_id: WorktreeId,
+        rel_path: Arc<RelPath>,
+        update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
+        cx: &mut Context<SettingsWindow>,
+    ) -> Result<()> {
+        let Some((worktree, project)) =
+            all_projects(self.original_window.as_ref(), cx).find_map(|project| {
+                project
+                    .read(cx)
+                    .worktree_for_id(worktree_id, cx)
+                    .zip(Some(project))
+            })
+        else {
+            anyhow::bail!("Could not find project with worktree id: {}", worktree_id);
+        };
+
+        let entry = ProjectSettingsUpdateEntry {
+            worktree_id,
+            rel_path,
+            settings_window: cx.entity().downgrade(),
+            project: project.downgrade(),
+            worktree: worktree.downgrade(),
+            update: Box::new(update),
+        };
+
+        ProjectSettingsUpdateQueue::enqueue(cx, entry);
+        Ok(())
     }
 
     fn toggle_navbar_entry(&mut self, nav_entry_index: usize) {
@@ -2134,6 +4104,17 @@ impl SettingsWindow {
         self.update_matches(cx);
 
         cx.notify();
+    }
+
+    fn rebuild_pages(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) {
+        self.pages.clear();
+        self.navbar_entries.clear();
+        self.navbar_focus_subscriptions.clear();
+        self.content_handles.clear();
+        self.sub_page_stack.clear();
+        self.extension_settings_page_modes.borrow_mut().clear();
+        self.build_ui(window, cx);
+        self.build_search_index();
     }
 
     #[track_caller]
@@ -4363,6 +6344,7 @@ pub mod test {
                 has_query: false,
                 content_handles: Vec::default(),
                 search_task: None,
+                extension_settings_editors: RefCell::new(HashMap::default()),
                 sub_page_stack: Vec::default(),
                 opening_link: false,
                 focus_handle: cx.focus_handle(),
@@ -4383,6 +6365,7 @@ pub mod test {
                 list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
                 shown_errors: HashSet::default(),
                 regex_validation_error: None,
+                extension_settings_page_modes: RefCell::new(HashMap::default()),
             }
         }
     }
@@ -4403,6 +6386,194 @@ pub mod test {
         theme_settings::init(theme::LoadThemes::JustBase, cx);
         editor::init(cx);
         menu::init();
+    }
+
+    #[gpui::test]
+    fn test_extension_settings_page_data(cx: &mut App) {
+        use serde_json::json;
+
+        register_settings(cx);
+        workspace::AppState::set_global(workspace::AppState::test(cx), cx);
+        cx.set_global(TestExtensionSettingsContributions(vec![
+            extension_host::ContributedExtensionSettings {
+                manifest: Arc::new(extension::ExtensionManifest {
+                    id: "test-extension".into(),
+                    name: "Test Extension".into(),
+                    version: "0.1.0".into(),
+                    schema_version: extension::SchemaVersion::ZERO,
+                    description: Some("Extension settings page".into()),
+                    repository: None,
+                    authors: Vec::new(),
+                    lib: Default::default(),
+                    themes: Vec::new(),
+                    icon_themes: Vec::new(),
+                    languages: Vec::new(),
+                    grammars: Default::default(),
+                    language_servers: Default::default(),
+                    context_servers: Default::default(),
+                    agent_servers: Default::default(),
+                    slash_commands: Default::default(),
+                    snippets: None,
+                    capabilities: Vec::new(),
+                    debug_adapters: Default::default(),
+                    debug_locators: Default::default(),
+                    language_model_providers: Default::default(),
+                }),
+                settings_schema: json!({"type": "object"}),
+                default_settings: json!({"enabled": true}),
+            },
+        ]));
+
+        let pages = page_data::settings_data(cx);
+        let page = pages
+            .iter()
+            .find(|page| page.title == "Languages & Tools")
+            .expect("languages page should exist");
+
+        assert!(
+            page.items
+                .iter()
+                .any(|item| { matches!(item, SettingsPageItem::SectionHeader("Extensions")) })
+        );
+        assert!(page.items.iter().any(|item| {
+            matches!(
+                item,
+                SettingsPageItem::SubPageLink(SubPageLink {
+                    json_path: Some("extensions.test-extension"),
+                    ..
+                })
+            )
+        }));
+    }
+
+    #[test]
+    fn test_compile_extension_settings_page_mode_accepts_supported_schema() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean",
+                    "description": "Enable the extension"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "count": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10
+                },
+                "ratio": {
+                    "type": "number"
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["off", "on"]
+                },
+                "paths": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "nested": {
+                    "type": "object",
+                    "properties": {
+                        "verbose": {
+                            "type": "boolean"
+                        }
+                    },
+                    "additionalProperties": false
+                }
+            },
+            "additionalProperties": false
+        });
+
+        match compile_extension_settings_page_mode(&schema) {
+            ExtensionSettingsPageMode::Typed(form) => {
+                assert_eq!(form.items.len(), 7);
+                assert!(form.items.iter().any(|item| matches!(
+                    item,
+                    ExtensionFormItem::Field(ExtensionFormField {
+                        kind: ExtensionFormFieldKind::StringArray,
+                        ..
+                    })
+                )));
+            }
+            ExtensionSettingsPageMode::RawFallback { reason } => {
+                panic!("expected typed mode, got raw fallback: {reason}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_compile_extension_settings_page_mode_uses_field_raw_fallback_for_unsupported_array() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "number"
+                    }
+                }
+            }
+        });
+
+        match compile_extension_settings_page_mode(&schema) {
+            ExtensionSettingsPageMode::Typed(form) => {
+                assert!(form.items.iter().any(|item| matches!(
+                    item,
+                    ExtensionFormItem::Field(ExtensionFormField {
+                        kind: ExtensionFormFieldKind::RawJsonFallback { .. },
+                        ..
+                    })
+                )));
+            }
+            ExtensionSettingsPageMode::RawFallback { reason } => {
+                panic!("expected typed mode with field fallback, got raw fallback: {reason}")
+            }
+        }
+    }
+
+    #[test]
+    fn test_compile_extension_settings_page_mode_rejects_root_array_schema() {
+        let schema = serde_json::json!({
+            "type": "array",
+            "items": {
+                "type": "string"
+            }
+        });
+
+        match compile_extension_settings_page_mode(&schema) {
+            ExtensionSettingsPageMode::Typed(_) => {
+                panic!("expected raw fallback for unsupported root array schema")
+            }
+            ExtensionSettingsPageMode::RawFallback { .. } => {}
+        }
+    }
+
+    #[test]
+    fn test_extension_value_helpers_update_and_prune_nested_paths() {
+        let mut value = serde_json::json!({});
+        let path: Arc<[Arc<str>]> = Arc::from([
+            Arc::<str>::from("nested"),
+            Arc::<str>::from("child"),
+            Arc::<str>::from("enabled"),
+        ]);
+
+        set_extension_value_at_path(
+            &mut value,
+            path.as_ref(),
+            serde_json::json!(true),
+        );
+        assert_eq!(
+            extension_value_at_path(&value, path.as_ref()),
+            Some(&serde_json::json!(true))
+        );
+
+        assert!(remove_extension_value_at_path(&mut value, path.as_ref()));
+        assert_eq!(value, serde_json::json!({}));
     }
 
     fn parse(input: &'static str, window: &mut Window, cx: &mut App) -> SettingsWindow {
@@ -4490,6 +6661,8 @@ pub mod test {
             has_query: false,
             content_handles: vec![],
             search_task: None,
+            extension_settings_editors: RefCell::new(HashMap::default()),
+            extension_settings_page_modes: RefCell::new(HashMap::default()),
             focus_handle: cx.focus_handle(),
             navbar_focus_handle: NonFocusableHandle::new(
                 NAVBAR_CONTAINER_TAB_INDEX,
