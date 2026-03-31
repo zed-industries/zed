@@ -1265,9 +1265,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 }),
                         )
                         .end_slot(secondary_actions)
-                        .when(self.selected_index != ix, |this| {
-                            this.show_end_slot_on_hover()
-                        })
+                        .show_end_slot_on_hover()
                         .into_any_element(),
                 )
             }
@@ -1361,9 +1359,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 .tooltip(Tooltip::text(tooltip_path)),
                         )
                         .end_slot(secondary_actions)
-                        .when(self.selected_index != ix, |this| {
-                            this.show_end_slot_on_hover()
-                        })
+                        .show_end_slot_on_hover()
                         .into_any_element(),
                 )
             }
@@ -1498,9 +1494,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 .tooltip(Tooltip::text(tooltip_path)),
                         )
                         .end_slot(secondary_actions)
-                        .when(self.selected_index != ix, |this| {
-                            this.show_end_slot_on_hover()
-                        })
+                        .show_end_slot_on_hover()
                         .into_any_element(),
                 )
             }
