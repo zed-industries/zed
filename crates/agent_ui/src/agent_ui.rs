@@ -429,7 +429,8 @@ pub fn init(
     })
     .detach();
 
-    maybe_backfill_editor_layout(fs, is_new_install, cx);
+    // TODO: remove this field when we're ready remove the feature flag
+    maybe_backfill_editor_layout(fs, is_new_install, false, cx);
 
     cx.observe_flag::<AgentV2FeatureFlag, _>(|is_enabled, cx| {
         SettingsStore::update_global(cx, |store, cx| {
@@ -457,10 +458,13 @@ pub fn init(
     .detach();
 }
 
-fn maybe_backfill_editor_layout(fs: Arc<dyn Fs>, is_new_install: bool, cx: &mut App) {
-    // Flags come after initialization, so this should always guard against backfilling
-    // when running in nightly, but allows us to test the logic.
-    if !cx.has_flag::<AgentV2FeatureFlag>() {
+fn maybe_backfill_editor_layout(
+    fs: Arc<dyn Fs>,
+    is_new_install: bool,
+    should_run: bool,
+    cx: &mut App,
+) {
+    if !should_run {
         return;
     }
 
@@ -837,7 +841,7 @@ mod tests {
                     .is_none()
             );
 
-            maybe_backfill_editor_layout(fs.clone(), false, cx);
+            maybe_backfill_editor_layout(fs.clone(), false, true, cx);
         });
 
         cx.run_until_parked();
@@ -856,7 +860,7 @@ mod tests {
         let fs = setup_backfill_test(cx).await;
 
         cx.update(|cx| {
-            maybe_backfill_editor_layout(fs.clone(), true, cx);
+            maybe_backfill_editor_layout(fs.clone(), true, true, cx);
         });
 
         cx.run_until_parked();
@@ -878,7 +882,7 @@ mod tests {
         let fs = setup_backfill_test(cx).await;
 
         cx.update(|cx| {
-            maybe_backfill_editor_layout(fs.clone(), false, cx);
+            maybe_backfill_editor_layout(fs.clone(), false, true, cx);
         });
 
         cx.run_until_parked();
@@ -886,7 +890,7 @@ mod tests {
         let after_first = fs.load(paths::settings_file().as_path()).await.unwrap();
 
         cx.update(|cx| {
-            maybe_backfill_editor_layout(fs.clone(), false, cx);
+            maybe_backfill_editor_layout(fs.clone(), false, true, cx);
         });
 
         cx.run_until_parked();
