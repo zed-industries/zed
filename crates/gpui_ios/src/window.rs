@@ -151,6 +151,10 @@ struct IosWindowState {
     /// Active momentum scroll state, set when a two-finger touch pan ends with
     /// enough velocity. Cleared when momentum decays or a new gesture begins.
     momentum: Option<MomentumState>,
+    /// Last known pointer position from the hover gesture recognizer. Used as
+    /// the scroll event position for trackpad scrolling, since the trackpad pan
+    /// recognizer's locationInView: may not reflect the actual pointer position.
+    pointer_position: Option<Point<Pixels>>,
 }
 
 impl IosWindowState {
@@ -259,6 +263,7 @@ impl IosWindow {
             renderer,
             callbacks: IosWindowCallbacks::default(),
             momentum: None,
+            pointer_position: None,
         }));
 
         // Store a Weak in the view's ivar. The view calls back into us via
@@ -2277,6 +2282,7 @@ extern "C" fn handle_hover_gesture(this: &Object, _sel: Sel, recognizer: *mut Ob
         };
 
         let modifiers = state_rc.borrow().current_modifiers;
+        state_rc.borrow_mut().pointer_position = Some(position);
 
         match gesture_state {
             GESTURE_STATE_BEGAN | GESTURE_STATE_CHANGED => {
@@ -2374,10 +2380,28 @@ extern "C" fn handle_pan_gesture(this: &Object, _sel: Sel, recognizer: *mut Obje
         let zero = CGPoint { x: 0.0, y: 0.0 };
         let _: () = msg_send![recognizer, setTranslation: zero inView: view];
 
-        let location: CGPoint = msg_send![recognizer, locationInView: view];
-        let position = Point {
-            x: gpui::px(location.x as f32),
-            y: gpui::px(location.y as f32),
+        // For trackpad/mouse scroll (0 direct touches), use the last known
+        // pointer position from the hover gesture. The trackpad pan recognizer's
+        // locationInView: doesn't reliably track the pointer during scrolling.
+        let num_touches: usize = msg_send![recognizer, numberOfTouches];
+        let position = if num_touches == 0 {
+            state_rc
+                .borrow()
+                .pointer_position
+                .unwrap_or_else(|| {
+                    let location: CGPoint =
+                        unsafe { msg_send![recognizer, locationInView: view] };
+                    Point {
+                        x: gpui::px(location.x as f32),
+                        y: gpui::px(location.y as f32),
+                    }
+                })
+        } else {
+            let location: CGPoint = msg_send![recognizer, locationInView: view];
+            Point {
+                x: gpui::px(location.x as f32),
+                y: gpui::px(location.y as f32),
+            }
         };
         let modifiers = state_rc.borrow().current_modifiers;
 
