@@ -247,6 +247,7 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             migrations::m_2026_03_16::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2026_03_16,
         ),
+        MigrationType::Json(migrations::m_2026_03_31::remove_text_thread_settings),
     ];
     run_migrations(text, migrations)
 }
@@ -940,8 +941,7 @@ mod tests {
                     "foo": "bar"
                 },
                 "edit_predictions": {
-                    "enabled_in_text_threads": false,
-                }
+                    }
             }"#,
             ),
         );
@@ -4478,6 +4478,111 @@ mod tests {
                 "#
                 .unindent(),
             ),
+        );
+    }
+
+    #[test]
+    fn test_remove_text_thread_settings() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_03_31::remove_text_thread_settings,
+            )],
+            r#"{
+    "agent": {
+        "default_model": {
+            "provider": "anthropic",
+            "model": "claude-sonnet"
+        },
+        "default_view": "text_thread"
+    },
+    "edit_predictions": {
+        "mode": "eager",
+        "enabled_in_text_threads": true
+    },
+    "slash_commands": {
+        "cargo_workspace": {
+            "enabled": true
+        }
+    }
+}"#,
+            Some(
+                r#"{
+    "agent": {
+        "default_model": {
+            "provider": "anthropic",
+            "model": "claude-sonnet"
+        }
+    },
+    "edit_predictions": {
+        "mode": "eager"
+    }
+}"#,
+            ),
+        );
+    }
+
+    #[test]
+    fn test_remove_text_thread_settings_only_default_view() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_03_31::remove_text_thread_settings,
+            )],
+            r#"{
+    "agent": {
+        "default_model": "claude-sonnet",
+        "default_view": "thread"
+    }
+}"#,
+            Some(
+                r#"{
+    "agent": {
+        "default_model": "claude-sonnet"
+    }
+}"#,
+            ),
+        );
+    }
+
+    #[test]
+    fn test_remove_text_thread_settings_only_slash_commands() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_03_31::remove_text_thread_settings,
+            )],
+            r#"{
+    "slash_commands": {
+        "cargo_workspace": {
+            "enabled": true
+        }
+    },
+    "vim_mode": true
+}"#,
+            Some(
+                r#"{
+    "vim_mode": true
+}"#,
+            ),
+        );
+    }
+
+    #[test]
+    fn test_remove_text_thread_settings_none_present() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_03_31::remove_text_thread_settings,
+            )],
+            r#"{
+    "agent": {
+        "default_model": {
+            "provider": "anthropic",
+            "model": "claude-sonnet"
+        }
+    },
+    "edit_predictions": {
+        "mode": "eager"
+    }
+}"#,
+            None,
         );
     }
 }
