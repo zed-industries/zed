@@ -1315,6 +1315,10 @@ impl GitGraph {
             editor.set_text_style_refinement(Default::default());
         });
 
+        if query.as_str().is_empty() {
+            self.search_state.state = QueryState::Empty;
+        }
+
         let (request_tx, request_rx) = smol::channel::unbounded::<Oid>();
 
         repo.update(cx, |repo, cx| {
