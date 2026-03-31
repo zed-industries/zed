@@ -1,0 +1,41 @@
+interface slash-command {
+    use common.{range};
+
+    /// A slash command for use in the Assistant.
+    record slash-command {
+        /// The name of the slash command.
+        name: string,
+        /// The description of the slash command.
+        description: string,
+        /// The tooltip text to display for the run button.
+        tooltip-text: string,
+        /// Whether this slash command requires an argument.
+        requires-argument: bool,
+    }
+
+    /// The output of a slash command.
+    record slash-command-output {
+        /// The text produced by the slash command.
+        text: string,
+        /// The list of sections to show in the slash command placeholder.
+        sections: list<slash-command-output-section>,
+    }
+
+    /// A section in the slash command output.
+    record slash-command-output-section {
+        /// The range this section occupies.
+        range: range,
+        /// The label to display in the placeholder for this section.
+        label: string,
+    }
+
+    /// A completion for a slash command argument.
+    record slash-command-argument-completion {
+        /// The label to display for this completion.
+        label: string,
+        /// The new text that should be inserted into the command when this completion is accepted.
+        new-text: string,
+        /// Whether the command should be run when accepting this completion.
+        run-command: bool,
+    }
+}

@@ -142,6 +142,8 @@ pub trait Extension: Send + Sync + 'static {
         project: Arc<dyn ProjectDelegate>,
     ) -> Result<Option<ContextServerConfiguration>>;
 
+    async fn settings_contribution(&self) -> Result<Option<ExtensionSettingsContribution>>;
+
     async fn suggest_docs_packages(&self, provider: Arc<str>) -> Result<Vec<String>>;
 
     async fn index_docs(

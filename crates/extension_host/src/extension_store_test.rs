@@ -733,6 +733,33 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     .await
     .unwrap();
 
+    extension_store.read_with(cx, |store, _| {
+        let contribution = store
+            .extension_settings_contributions()
+            .get(test_extension_id)
+            .expect("settings contribution should be registered");
+        assert_eq!(
+            contribution.default_settings,
+            json!({
+                "enabled": true,
+                "nested": {
+                    "value": 1
+                }
+            })
+        );
+    });
+    cx.update(|cx| {
+        assert_eq!(
+            SettingsStore::global(cx).extension_settings(None, test_extension_id),
+            Some(json!({
+                "enabled": true,
+                "nested": {
+                    "value": 1
+                }
+            }))
+        );
+    });
+
     let mut fake_servers = language_registry.register_fake_lsp_server(
         LanguageServerName("gleam".into()),
         lsp::ServerCapabilities {

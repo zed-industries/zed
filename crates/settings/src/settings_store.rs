@@ -36,14 +36,15 @@ use crate::{
     LanguageToSettingsMap, LspSettings, LspSettingsMap, SemanticTokenRules, ThemeName,
     UserSettingsContentExt, VsCodeSettings, WorktreeId,
     settings_content::{
-        ExtensionsSettingsContent, ProjectSettingsContent, RootUserSettings, SettingsContent,
-        UserSettingsContent, merge_from::MergeFrom,
+        ExtensionSettingsMap, ExtensionsSettingsContent, ProjectSettingsContent, RootUserSettings,
+        SettingsContent, UserSettingsContent, merge_from::MergeFrom,
     },
 };
 
 use settings_json::{infer_json_indent_size, update_value_in_json_text};
 
 pub const LSP_SETTINGS_SCHEMA_URL_PREFIX: &str = "zed://schemas/settings/lsp/";
+pub const EXTENSION_SETTINGS_SCHEMA_URL_PREFIX: &str = "zed://schemas/settings/extensions/";
 
 pub trait SettingsKey: 'static + Send + Sync {
     /// The name of a key within the JSON file from which this setting should
@@ -149,6 +150,7 @@ pub struct SettingsStore {
     global_settings: Option<Box<SettingsContent>>,
 
     extension_settings: Option<Box<SettingsContent>>,
+    extension_settings_content: ExtensionsSettingsContent,
     server_settings: Option<Box<SettingsContent>>,
 
     language_semantic_token_rules: HashMap<SharedString, SemanticTokenRules>,
@@ -276,6 +278,7 @@ pub struct SettingsJsonSchemaParams<'a> {
     pub theme_names: &'a [SharedString],
     pub icon_theme_names: &'a [SharedString],
     pub lsp_adapter_names: &'a [String],
+    pub extension_setting_ids: &'a [String],
 }
 
 impl SettingsStore {
@@ -304,6 +307,7 @@ impl SettingsStore {
             server_settings: None,
             user_settings: None,
             extension_settings: None,
+            extension_settings_content: ExtensionsSettingsContent::default(),
             language_semantic_token_rules: HashMap::default(),
 
             merged_settings: default_settings,
@@ -1015,13 +1019,14 @@ impl SettingsStore {
         content: ExtensionsSettingsContent,
         cx: &mut App,
     ) -> Result<()> {
-        self.extension_settings = Some(Box::new(SettingsContent {
-            project: ProjectSettingsContent {
-                all_languages: content.all_languages,
-                ..Default::default()
-            },
-            ..Default::default()
-        }));
+        if let Some(all_languages) = content.all_languages {
+            self.extension_settings_content.all_languages = Some(all_languages);
+        }
+        if let Some(extensions) = content.extensions {
+            self.extension_settings_content.extensions = Some(extensions);
+        }
+
+        self.rebuild_extension_settings_layer();
         self.recompute_values(None, cx);
         Ok(())
     }
@@ -1080,6 +1085,7 @@ impl SettingsStore {
         }
 
         generator.subschema_for::<LspSettings>();
+        generator.subschema_for::<ExtensionSettingsMap>();
 
         let lsp_settings_definition = generator
             .definitions()
@@ -1126,6 +1132,7 @@ impl SettingsStore {
                 })
             });
         }
+
     }
 
     pub fn json_schema(params: &SettingsJsonSchemaParams) -> Value {
@@ -1164,9 +1171,9 @@ impl SettingsStore {
             });
         }
 
-        generator
-            .root_schema_for::<UserSettingsContent>()
-            .to_value()
+        let mut schema = generator.root_schema_for::<UserSettingsContent>().to_value();
+        Self::patch_extension_settings_schema(&mut schema, params);
+        schema
     }
 
     /// Generate JSON schema for project settings, including only settings valid
@@ -1180,9 +1187,116 @@ impl SettingsStore {
         ProjectSettingsContent::json_schema(&mut generator);
         Self::configure_schema_generator(&mut generator, params);
 
-        generator
-            .root_schema_for::<ProjectSettingsContent>()
-            .to_value()
+        let mut schema = generator.root_schema_for::<ProjectSettingsContent>().to_value();
+        Self::patch_extension_settings_schema(&mut schema, params);
+        schema
+    }
+
+    fn patch_extension_settings_schema(schema: &mut Value, params: &SettingsJsonSchemaParams) {
+        let extension_schema = json_schema!({
+            "type": "object",
+            "errorMessage": "No installed extension with this id contributes settings.",
+            "properties": params.extension_setting_ids.iter().map(|extension_id| {
+                (
+                    extension_id.clone(),
+                    serde_json::json!({
+                        "$ref": format!("{EXTENSION_SETTINGS_SCHEMA_URL_PREFIX}{extension_id}")
+                    }),
+                )
+            }).collect::<serde_json::Map<_, _>>(),
+            "additionalProperties": false,
+        })
+        .to_value();
+
+        let Some(root) = schema.as_object_mut() else {
+            return;
+        };
+
+        let defs = root
+            .entry("$defs".to_string())
+            .or_insert_with(|| Value::Object(Default::default()));
+        if let Some(definitions) = defs.as_object_mut() {
+            definitions.insert("ExtensionSettingsMap".to_string(), extension_schema);
+        }
+
+        if let Some(properties) = root.get_mut("properties").and_then(Value::as_object_mut) {
+            properties.insert(
+                "extensions".to_string(),
+                serde_json::json!({
+                    "$ref": "#/$defs/ExtensionSettingsMap"
+                }),
+            );
+        }
+    }
+
+    fn rebuild_extension_settings_layer(&mut self) {
+        let all_languages = self
+            .extension_settings_content
+            .all_languages
+            .clone()
+            .unwrap_or_default();
+        let extensions = self
+            .extension_settings_content
+            .extensions
+            .clone()
+            .unwrap_or_default();
+
+        if all_languages == Default::default() && extensions == Default::default() {
+            self.extension_settings = None;
+            return;
+        }
+
+        self.extension_settings = Some(Box::new(SettingsContent {
+            project: ProjectSettingsContent {
+                all_languages,
+                extensions,
+                ..Default::default()
+            },
+            ..Default::default()
+        }));
+    }
+
+    fn content_for_path(
+        &self,
+        path: Option<SettingsLocation<'_>>,
+    ) -> std::borrow::Cow<'_, SettingsContent> {
+        let Some(path) = path else {
+            return std::borrow::Cow::Borrowed(self.merged_settings.as_ref());
+        };
+
+        let mut merged = self.merged_settings.as_ref().clone();
+        for ((worktree_id, settings_path), settings) in &self.local_settings {
+            if *worktree_id == path.worktree_id && path.path.starts_with(settings_path.as_ref()) {
+                merged.merge_from(settings);
+            }
+        }
+
+        std::borrow::Cow::Owned(merged)
+    }
+
+    pub fn extension_settings(
+        &self,
+        path: Option<SettingsLocation<'_>>,
+        extension_id: &str,
+    ) -> Option<Value> {
+        self.content_for_path(path)
+            .project
+            .extensions
+            .0
+            .get(extension_id)
+            .cloned()
+    }
+
+    pub fn extension_settings_for_file<'a>(
+        &'a self,
+        file: SettingsFile,
+        extension_id: &str,
+    ) -> Option<&'a Value> {
+        self.get_content_for_file(file)?
+            .project
+            .extensions
+            .0
+            .get(extension_id)
     }
 
     fn recompute_values(
@@ -1507,6 +1621,7 @@ mod tests {
     };
 
     use super::*;
+    use serde_json::json;
     use unindent::Unindent;
     use util::rel_path::rel_path;
 
@@ -2464,6 +2579,7 @@ mod tests {
                 "rust-analyzer".to_string(),
                 "typescript-language-server".to_string(),
             ],
+            extension_setting_ids: &[],
         });
 
         let properties = schema
@@ -2515,6 +2631,7 @@ mod tests {
                 "rust-analyzer".to_string(),
                 "typescript-language-server".to_string(),
             ],
+            extension_setting_ids: &[],
         });
 
         let properties = schema
@@ -2563,6 +2680,7 @@ mod tests {
             theme_names: &["One Dark".into()],
             icon_theme_names: &["Zed Icons".into()],
             lsp_adapter_names: &["rust-analyzer".to_string()],
+            extension_setting_ids: &[],
         };
 
         let user_schema = SettingsStore::json_schema(&params);
@@ -2575,5 +2693,188 @@ mod tests {
 
         assert!(user_schema_str.contains("\"auto_update\""));
         assert!(!project_schema_str.contains("\"auto_update\""));
+    }
+
+    #[gpui::test]
+    fn test_extension_settings_precedence_and_deep_merge(cx: &mut App) {
+        let mut store = SettingsStore::test(cx);
+        let worktree_id = WorktreeId::from_usize(1);
+        let path = RelPath::empty().into_arc();
+
+        store
+            .set_extension_settings(
+                ExtensionsSettingsContent {
+                    all_languages: None,
+                    extensions: Some(ExtensionSettingsMap(
+                        [(
+                            Arc::<str>::from("test-extension"),
+                            json!({
+                                "nested": {
+                                    "default_only": 1,
+                                    "override_me": "default"
+                                },
+                                "leaf": {
+                                    "default": true
+                                }
+                            }),
+                        )]
+                        .into_iter()
+                        .collect(),
+                    )),
+                },
+                cx,
+            )
+            .unwrap();
+
+        store
+            .set_user_settings(
+                r#"{
+                    "extensions": {
+                        "test-extension": {
+                            "nested": {
+                                "user_only": true,
+                                "override_me": "user"
+                            },
+                            "leaf": "user"
+                        }
+                    }
+                }"#,
+                cx,
+            )
+            .unwrap();
+
+        store
+            .set_local_settings(
+                worktree_id,
+                LocalSettingsPath::InWorktree(path.clone()),
+                LocalSettingsKind::Settings,
+                Some(
+                    r#"{
+                        "extensions": {
+                            "test-extension": {
+                                "nested": {
+                                    "project_only": 2
+                                },
+                                "leaf": {
+                                    "project": true
+                                }
+                            }
+                        }
+                    }"#,
+                ),
+                cx,
+            )
+            .unwrap();
+
+        assert_eq!(
+            store.extension_settings(None, "test-extension"),
+            Some(json!({
+                "nested": {
+                    "default_only": 1,
+                    "override_me": "user",
+                    "user_only": true
+                },
+                "leaf": "user"
+            }))
+        );
+
+        assert_eq!(
+            store.extension_settings(
+                Some(SettingsLocation {
+                    worktree_id,
+                    path: path.as_ref(),
+                }),
+                "test-extension",
+            ),
+            Some(json!({
+                "nested": {
+                    "default_only": 1,
+                    "override_me": "user",
+                    "user_only": true,
+                    "project_only": 2
+                },
+                "leaf": {
+                    "project": true
+                }
+            }))
+        );
+    }
+
+    #[gpui::test]
+    fn test_extension_settings_schema_generation(cx: &mut App) {
+        SettingsStore::test(cx);
+
+        let params = SettingsJsonSchemaParams {
+            language_names: &["Rust".to_string()],
+            font_names: &["Zed Mono".to_string()],
+            theme_names: &["One Dark".into()],
+            icon_theme_names: &["Zed Icons".into()],
+            lsp_adapter_names: &["rust-analyzer".to_string()],
+            extension_setting_ids: &["test-extension".to_string()],
+        };
+
+        let user_schema = SettingsStore::json_schema(&params);
+        let project_schema = SettingsStore::project_json_schema(&params);
+
+        let expected_ref = json!("zed://schemas/settings/extensions/test-extension");
+        assert_eq!(
+            user_schema.pointer("/$defs/ExtensionSettingsMap/properties/test-extension/$ref"),
+            Some(&expected_ref)
+        );
+        assert_eq!(
+            project_schema.pointer("/$defs/ExtensionSettingsMap/properties/test-extension/$ref"),
+            Some(&expected_ref)
+        );
+    }
+
+    #[gpui::test]
+    fn test_extension_settings_project_overrides_user_string_array(cx: &mut App) {
+        let mut store = SettingsStore::test(cx);
+        let worktree_id = WorktreeId::from_usize(7);
+        let path = RelPath::empty().into_arc();
+
+        store
+            .set_user_settings(
+                r#"{
+                    "extensions": {
+                        "intl-lens": {
+                            "localePaths": ["user-path"]
+                        }
+                    }
+                }"#,
+                cx,
+            )
+            .unwrap();
+
+        store
+            .set_local_settings(
+                worktree_id,
+                LocalSettingsPath::InWorktree(path.clone()),
+                LocalSettingsKind::Settings,
+                Some(
+                    r#"{
+                        "extensions": {
+                            "intl-lens": {
+                                "localePaths": ["project-path"]
+                            }
+                        }
+                    }"#,
+                ),
+                cx,
+            )
+            .unwrap();
+
+        assert_eq!(
+            store.extension_settings(
+                Some(SettingsLocation {
+                    worktree_id,
+                    path: path.as_ref(),
+                }),
+                "intl-lens",
+            ),
+            Some(json!({
+                "localePaths": ["project-path"]
+            }))
+        );
     }
 }

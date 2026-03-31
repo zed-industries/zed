@@ -280,8 +280,10 @@ pub struct UserSettingsContent {
     pub profiles: IndexMap<String, SettingsContent>,
 }
 
+#[derive(Debug, Default, Clone)]
 pub struct ExtensionsSettingsContent {
-    pub all_languages: AllLanguageSettingsContent,
+    pub all_languages: Option<AllLanguageSettingsContent>,
+    pub extensions: Option<ExtensionSettingsMap>,
 }
 
 /// Base key bindings scheme. Base keymaps can be overridden with user keymaps.

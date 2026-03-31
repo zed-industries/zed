@@ -7,9 +7,9 @@ use async_trait::async_trait;
 use dap::{DebugRequest, StartDebuggingRequestArgumentsRequest};
 use extension::{
     CodeLabel, Command, Completion, ContextServerConfiguration, DebugAdapterBinary,
-    DebugTaskDefinition, ExtensionCapability, ExtensionHostProxy, KeyValueStoreDelegate,
-    ProjectDelegate, SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, Symbol,
-    WorktreeDelegate,
+    DebugTaskDefinition, ExtensionCapability, ExtensionHostProxy, ExtensionSettingsContribution,
+    KeyValueStoreDelegate, ProjectDelegate, SlashCommand, SlashCommandArgumentCompletion,
+    SlashCommandOutput, Symbol, WorktreeDelegate,
 };
 use fs::Fs;
 use futures::future::LocalBoxFuture;
@@ -104,7 +104,7 @@ impl extension::Extension for WasmExtension {
                     .await?
                     .map_err(|err| store.data().extension_error(err))?;
 
-                Ok(command.into())
+                Ok(command)
             }
             .boxed()
         })
@@ -259,18 +259,11 @@ impl extension::Extension for WasmExtension {
         self.call(|extension, store| {
             async move {
                 let labels = extension
-                    .call_labels_for_completions(
-                        store,
-                        &language_server_id,
-                        completions.into_iter().map(Into::into).collect(),
-                    )
+                    .call_labels_for_completions(store, &language_server_id, completions)
                     .await?
                     .map_err(|err| store.data().extension_error(err))?;
 
-                Ok(labels
-                    .into_iter()
-                    .map(|label| label.map(Into::into))
-                    .collect())
+                Ok(labels)
             }
             .boxed()
         })
@@ -285,18 +278,11 @@ impl extension::Extension for WasmExtension {
         self.call(|extension, store| {
             async move {
                 let labels = extension
-                    .call_labels_for_symbols(
-                        store,
-                        &language_server_id,
-                        symbols.into_iter().map(Into::into).collect(),
-                    )
+                    .call_labels_for_symbols(store, &language_server_id, symbols)
                     .await?
                     .map_err(|err| store.data().extension_error(err))?;
 
-                Ok(labels
-                    .into_iter()
-                    .map(|label| label.map(Into::into))
-                    .collect())
+                Ok(labels)
             }
             .boxed()
         })
@@ -311,11 +297,11 @@ impl extension::Extension for WasmExtension {
         self.call(|extension, store| {
             async move {
                 let completions = extension
-                    .call_complete_slash_command_argument(store, &command.into(), &arguments)
+                    .call_complete_slash_command_argument(store, &command, &arguments)
                     .await?
                     .map_err(|err| store.data().extension_error(err))?;
 
-                Ok(completions.into_iter().map(Into::into).collect())
+                Ok(completions)
             }
             .boxed()
         })
@@ -337,11 +323,11 @@ impl extension::Extension for WasmExtension {
                 };
 
                 let output = extension
-                    .call_run_slash_command(store, &command.into(), &arguments, resource)
+                    .call_run_slash_command(store, &command, &arguments, resource)
                     .await?
                     .map_err(|err| store.data().extension_error(err))?;
 
-                Ok(output.into())
+                Ok(output)
             }
             .boxed()
         })
@@ -360,7 +346,7 @@ impl extension::Extension for WasmExtension {
                     .call_context_server_command(store, context_server_id.clone(), project_resource)
                     .await?
                     .map_err(|err| store.data().extension_error(err))?;
-                anyhow::Ok(command.into())
+                anyhow::Ok(command)
             }
             .boxed()
         })
@@ -387,9 +373,16 @@ impl extension::Extension for WasmExtension {
                     return Ok(None);
                 };
 
-                Ok(Some(configuration.try_into()?))
+                Ok(Some(configuration))
             }
             .boxed()
+        })
+        .await?
+    }
+
+    async fn settings_contribution(&self) -> Result<Option<ExtensionSettingsContribution>> {
+        self.call(|extension, store| {
+            async move { extension.call_settings_contribution(store).await }.boxed()
         })
         .await?
     }
@@ -449,7 +442,6 @@ impl extension::Extension for WasmExtension {
                     .call_get_dap_binary(store, dap_name, config, user_installed_path, resource)
                     .await?
                     .map_err(|err| store.data().extension_error(err))?;
-                let dap_binary = dap_binary.try_into()?;
                 Ok(dap_binary)
             }
             .boxed()
@@ -467,7 +459,7 @@ impl extension::Extension for WasmExtension {
                     .call_dap_request_kind(store, dap_name, config)
                     .await?
                     .map_err(|err| store.data().extension_error(err))?;
-                Ok(kind.into())
+                Ok(kind)
             }
             .boxed()
         })

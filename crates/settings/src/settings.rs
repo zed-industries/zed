@@ -44,9 +44,10 @@ pub use keymap_file::{
 pub use settings_file::*;
 pub use settings_json::*;
 pub use settings_store::{
-    DefaultSemanticTokenRules, InvalidSettingsError, LSP_SETTINGS_SCHEMA_URL_PREFIX,
-    LocalSettingsKind, LocalSettingsPath, MigrationStatus, Settings, SettingsFile,
-    SettingsJsonSchemaParams, SettingsKey, SettingsLocation, SettingsParseResult, SettingsStore,
+    DefaultSemanticTokenRules, EXTENSION_SETTINGS_SCHEMA_URL_PREFIX, InvalidSettingsError,
+    LSP_SETTINGS_SCHEMA_URL_PREFIX, LocalSettingsKind, LocalSettingsPath, MigrationStatus,
+    Settings, SettingsFile, SettingsJsonSchemaParams, SettingsKey, SettingsLocation,
+    SettingsParseResult, SettingsStore,
 };
 
 pub use vscode_import::{VsCodeSettings, VsCodeSettingsSource};

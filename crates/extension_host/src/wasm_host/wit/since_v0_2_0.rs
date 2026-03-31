@@ -6,7 +6,7 @@ use semver::Version;
 use std::sync::{Arc, OnceLock};
 use wasmtime::component::{Linker, Resource};
 
-use super::{latest, since_v0_6_0};
+use super::{since_v0_6_0, since_v0_8_0 as latest};
 
 pub const MIN_VERSION: Version = Version::new(0, 2, 0);
 

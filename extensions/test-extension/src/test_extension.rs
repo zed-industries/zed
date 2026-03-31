@@ -140,6 +140,31 @@ impl zed::Extension for TestExtension {
         }
     }
 
+    fn settings_contribution(&mut self) -> Option<zed::ExtensionSettingsContribution> {
+        Some(zed::ExtensionSettingsContribution {
+            settings_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "enabled": { "type": "boolean" },
+                    "nested": {
+                        "type": "object",
+                        "properties": {
+                            "value": { "type": "integer" }
+                        },
+                        "additionalProperties": false
+                    }
+                },
+                "additionalProperties": false
+            }),
+            default_settings: serde_json::json!({
+                "enabled": true,
+                "nested": {
+                    "value": 1
+                }
+            }),
+        })
+    }
+
     fn language_server_command(
         &mut self,
         language_server_id: &LanguageServerId,

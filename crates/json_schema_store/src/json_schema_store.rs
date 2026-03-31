@@ -2,6 +2,7 @@ use std::sync::{Arc, LazyLock};
 
 use anyhow::{Context as _, Result};
 use collections::HashMap;
+use extension_host::ExtensionStore;
 use gpui::{App, AsyncApp, BorrowAppContext as _, Entity, Task, WeakEntity};
 use language::{
     LanguageRegistry, LanguageServerName, LspAdapterDelegate,
@@ -230,6 +231,10 @@ async fn resolve_dynamic_schema(
     let languages = lsp_store.read_with(cx, |lsp_store, _| lsp_store.languages.clone());
     let (schema_name, rest) = path.split_once('/').unzip();
     let schema_name = schema_name.unwrap_or(path);
+    let extension_settings_contributions = cx.update(|cx| {
+        ExtensionStore::try_global(cx)
+            .map(|store| store.read(cx).extension_settings_contributions().clone())
+    });
 
     let schema = match schema_name {
         "settings" if rest.is_some_and(|r| r.starts_with("lsp/")) => {
@@ -308,6 +313,18 @@ async fn resolve_dynamic_schema(
                 })
             })
         }
+        "settings" if rest.is_some_and(|r| r.starts_with("extensions/")) => {
+            let extension_id = rest
+                .and_then(|r| r.strip_prefix("extensions/"))
+                .context("Invalid extension settings schema path")?;
+
+            extension_settings_contributions
+                .context("Extension store is not available")?
+                .get(extension_id)
+                .with_context(|| format!("No extension settings schema for {extension_id}"))?
+                .settings_schema
+                .clone()
+        }
         "settings" => {
             let mut lsp_adapter_names: Vec<String> = languages
                 .all_lsp_adapters()
@@ -351,6 +368,15 @@ async fn resolve_dynamic_schema(
                 }
                 let icon_theme_names = icon_theme_names.as_slice();
                 let theme_names = theme_names.as_slice();
+                let extension_setting_ids = extension_settings_contributions
+                    .as_ref()
+                    .map(|contributions| {
+                        contributions
+                            .keys()
+                            .map(|extension_id| extension_id.to_string())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
 
                 settings::SettingsStore::json_schema(&settings::SettingsJsonSchemaParams {
                     language_names,
@@ -358,6 +384,7 @@ async fn resolve_dynamic_schema(
                     theme_names,
                     icon_theme_names,
                     lsp_adapter_names: &lsp_adapter_names,
+                    extension_setting_ids: &extension_setting_ids,
                 })
             })
         }
@@ -373,6 +400,15 @@ async fn resolve_dynamic_schema(
                 .into_iter()
                 .map(|name| name.to_string())
                 .collect::<Vec<_>>();
+            let extension_setting_ids = extension_settings_contributions
+                .as_ref()
+                .map(|contributions| {
+                    contributions
+                        .keys()
+                        .map(|extension_id| extension_id.to_string())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
 
             settings::SettingsStore::project_json_schema(&settings::SettingsJsonSchemaParams {
                 language_names,
@@ -383,6 +419,7 @@ async fn resolve_dynamic_schema(
                 font_names: &[],
                 theme_names: &[],
                 icon_theme_names: &[],
+                extension_setting_ids: &extension_setting_ids,
             })
         }
         "debug_tasks" => {

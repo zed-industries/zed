@@ -6025,6 +6025,7 @@ dependencies = [
  "gpui",
  "gpui_tokio",
  "http_client",
+ "jsonschema",
  "language",
  "language_extension",
  "log",
@@ -9127,6 +9128,7 @@ dependencies = [
  "collections",
  "dap",
  "extension",
+ "extension_host",
  "gpui",
  "language",
  "parking_lot",
@@ -15817,6 +15819,8 @@ dependencies = [
  "edit_prediction",
  "edit_prediction_ui",
  "editor",
+ "extension",
+ "extension_host",
  "feature_flags",
  "fs",
  "futures 0.3.31",
@@ -15824,6 +15828,7 @@ dependencies = [
  "gpui",
  "heck 0.5.0",
  "itertools 0.14.0",
+ "jsonschema",
  "language",
  "log",
  "menu",
@@ -15839,6 +15844,7 @@ dependencies = [
  "search",
  "serde",
  "serde_json",
+ "serde_json_lenient",
  "settings",
  "shell_command_parser",
  "strum 0.27.2",
@@ -22303,7 +22309,7 @@ dependencies = [
 
 [[package]]
 name = "zed_extension_api"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -22335,7 +22341,8 @@ dependencies = [
 name = "zed_test_extension"
 version = "0.1.0"
 dependencies = [
- "zed_extension_api 0.8.0",
+ "serde_json",
+ "zed_extension_api 0.9.0",
 ]
 
 [[package]]

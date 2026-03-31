@@ -1,6 +1,6 @@
 use crate::wasm_host::{WasmState, wit::ToWasmtimeResult};
 use ::http_client::{AsyncBody, HttpRequestExt};
-use ::settings::{Settings, WorktreeId};
+use ::settings::{Settings, SettingsStore, WorktreeId};
 use anyhow::{Context as _, Result, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
@@ -37,14 +37,13 @@ use self::zed::extension::lsp::{
 };
 use self::zed::extension::slash_command::SlashCommandOutputSection;
 
-pub const MIN_VERSION: Version = Version::new(0, 8, 0);
-#[allow(dead_code)]
-pub const MAX_VERSION: Version = Version::new(0, 8, 0);
+pub const MIN_VERSION: Version = Version::new(0, 9, 0);
+pub const MAX_VERSION: Version = Version::new(0, 9, 0);
 
 wasmtime::component::bindgen!({
     async: true,
     trappable_imports: true,
-    path: "../extension_api/wit/since_v0.8.0",
+    path: "../extension_api/wit/since_v0.9.0",
     with: {
          "worktree": ExtensionWorktree,
          "project": ExtensionProject,
@@ -57,7 +56,7 @@ pub use self::zed::extension::*;
 
 mod settings {
     #![allow(dead_code)]
-    include!(concat!(env!("OUT_DIR"), "/since_v0.8.0/settings.rs"));
+    include!(concat!(env!("OUT_DIR"), "/since_v0.9.0/settings.rs"));
 }
 
 pub type ExtensionWorktree = Arc<dyn WorktreeDelegate>;
@@ -85,6 +84,17 @@ impl From<Command> for extension::Command {
             args: value.args,
             env: value.env,
         }
+    }
+}
+
+impl TryFrom<ExtensionSettingsContribution> for extension::ExtensionSettingsContribution {
+    type Error = anyhow::Error;
+
+    fn try_from(value: ExtensionSettingsContribution) -> Result<Self, Self::Error> {
+        Ok(Self {
+            settings_schema: serde_json::from_str(&value.settings_schema)?,
+            default_settings: serde_json::from_str(&value.default_settings)?,
+        })
     }
 }
 
@@ -598,6 +608,7 @@ impl HostWorktree for WasmState {
 }
 
 impl common::Host for WasmState {}
+impl extension_settings::Host for WasmState {}
 
 impl http_client::Host for WasmState {
     async fn fetch(
@@ -1003,6 +1014,16 @@ impl ExtensionImports for WasmState {
                                 bail!("remote context server settings not supported in 0.6.0")
                             }
                         }
+                    }
+                    "extensions" => {
+                        let Some(extension_id) = key else {
+                            bail!("missing extension settings key");
+                        };
+                        let settings = cx
+                            .global::<SettingsStore>()
+                            .extension_settings(location, &extension_id)
+                            .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
+                        Ok(serde_json::to_string(&settings)?)
                     }
                     _ => {
                         bail!("Unknown settings category: {}", category);

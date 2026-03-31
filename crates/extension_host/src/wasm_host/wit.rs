@@ -8,6 +8,7 @@ mod since_v0_4_0;
 mod since_v0_5_0;
 mod since_v0_6_0;
 mod since_v0_8_0;
+mod since_v0_9_0;
 use dap::DebugRequest;
 use extension::{DebugTaskDefinition, KeyValueStoreDelegate, WorktreeDelegate};
 use gpui::BackgroundExecutor;
@@ -16,12 +17,10 @@ use lsp::LanguageServerName;
 use release_channel::ReleaseChannel;
 use task::{DebugScenario, SpawnInTerminal, TaskTemplate, ZedDebugConfig};
 
-use crate::wasm_host::wit::since_v0_6_0::dap::StartDebuggingRequestArgumentsRequest;
-
 use super::{WasmState, wasm_engine};
 use anyhow::{Context as _, Result, anyhow};
 use semver::Version;
-use since_v0_8_0 as latest;
+use since_v0_9_0 as latest;
 use std::{ops::RangeInclusive, path::PathBuf, sync::Arc};
 use wasmtime::{
     Store,
@@ -96,6 +95,7 @@ pub fn authorize_access_to_unreleased_wasm_api_version(
 }
 
 pub enum Extension {
+    V0_9_0(since_v0_9_0::Extension),
     V0_8_0(since_v0_8_0::Extension),
     V0_6_0(since_v0_6_0::Extension),
     V0_5_0(since_v0_5_0::Extension),
@@ -126,6 +126,15 @@ impl Extension {
                 latest::Extension::instantiate_async(store, component, latest::linker(executor))
                     .await
                     .context("failed to instantiate wasm extension")?;
+            Ok(Self::V0_9_0(extension))
+        } else if version >= since_v0_8_0::MIN_VERSION {
+            let extension = since_v0_8_0::Extension::instantiate_async(
+                store,
+                component,
+                since_v0_8_0::linker(executor),
+            )
+            .await
+            .context("failed to instantiate wasm extension")?;
             Ok(Self::V0_8_0(extension))
         } else if version >= since_v0_6_0::MIN_VERSION {
             let extension = since_v0_6_0::Extension::instantiate_async(
@@ -213,6 +222,7 @@ impl Extension {
 
     pub async fn call_init_extension(&self, store: &mut Store<WasmState>) -> Result<()> {
         match self {
+            Extension::V0_9_0(ext) => ext.call_init_extension(store).await,
             Extension::V0_8_0(ext) => ext.call_init_extension(store).await,
             Extension::V0_6_0(ext) => ext.call_init_extension(store).await,
             Extension::V0_5_0(ext) => ext.call_init_extension(store).await,
@@ -232,40 +242,44 @@ impl Extension {
         language_server_id: &LanguageServerName,
         language_name: &LanguageName,
         resource: Resource<Arc<dyn WorktreeDelegate>>,
-    ) -> Result<Result<Command, String>> {
+    ) -> Result<Result<extension::Command, String>> {
         match self {
-            Extension::V0_8_0(ext) => {
-                ext.call_language_server_command(store, &language_server_id.0, resource)
-                    .await
-            }
-            Extension::V0_6_0(ext) => {
-                ext.call_language_server_command(store, &language_server_id.0, resource)
-                    .await
-            }
-            Extension::V0_5_0(ext) => {
-                ext.call_language_server_command(store, &language_server_id.0, resource)
-                    .await
-            }
-            Extension::V0_4_0(ext) => {
-                ext.call_language_server_command(store, &language_server_id.0, resource)
-                    .await
-            }
-            Extension::V0_3_0(ext) => {
-                ext.call_language_server_command(store, &language_server_id.0, resource)
-                    .await
-            }
+            Extension::V0_9_0(ext) => Ok(ext
+                .call_language_server_command(store, &language_server_id.0, resource)
+                .await?
+                .map(Into::into)),
+            Extension::V0_8_0(ext) => Ok(ext
+                .call_language_server_command(store, &language_server_id.0, resource)
+                .await?
+                .map(Into::into)),
+            Extension::V0_6_0(ext) => Ok(ext
+                .call_language_server_command(store, &language_server_id.0, resource)
+                .await?
+                .map(|command| since_v0_8_0::Command::from(command).into())),
+            Extension::V0_5_0(ext) => Ok(ext
+                .call_language_server_command(store, &language_server_id.0, resource)
+                .await?
+                .map(|command| since_v0_8_0::Command::from(command).into())),
+            Extension::V0_4_0(ext) => Ok(ext
+                .call_language_server_command(store, &language_server_id.0, resource)
+                .await?
+                .map(|command| since_v0_8_0::Command::from(command).into())),
+            Extension::V0_3_0(ext) => Ok(ext
+                .call_language_server_command(store, &language_server_id.0, resource)
+                .await?
+                .map(|command| since_v0_8_0::Command::from(command).into())),
             Extension::V0_2_0(ext) => Ok(ext
                 .call_language_server_command(store, &language_server_id.0, resource)
                 .await?
-                .map(|command| command.into())),
+                .map(|command| since_v0_8_0::Command::from(command).into())),
             Extension::V0_1_0(ext) => Ok(ext
                 .call_language_server_command(store, &language_server_id.0, resource)
                 .await?
-                .map(|command| command.into())),
+                .map(|command| since_v0_8_0::Command::from(command).into())),
             Extension::V0_0_6(ext) => Ok(ext
                 .call_language_server_command(store, &language_server_id.0, resource)
                 .await?
-                .map(|command| command.into())),
+                .map(|command| since_v0_8_0::Command::from(command).into())),
             Extension::V0_0_4(ext) => Ok(ext
                 .call_language_server_command(
                     store,
@@ -276,7 +290,11 @@ impl Extension {
                     resource,
                 )
                 .await?
-                .map(|command| command.into())),
+                .map(|command| extension::Command {
+                    command: command.command.into(),
+                    args: command.args,
+                    env: command.env,
+                })),
             Extension::V0_0_1(ext) => Ok(ext
                 .call_language_server_command(
                     store,
@@ -288,7 +306,11 @@ impl Extension {
                     resource,
                 )
                 .await?
-                .map(|command| command.into())),
+                .map(|command| extension::Command {
+                    command: command.command.into(),
+                    args: command.args,
+                    env: command.env,
+                })),
         }
     }
 
@@ -300,6 +322,14 @@ impl Extension {
         resource: Resource<Arc<dyn WorktreeDelegate>>,
     ) -> Result<Result<Option<String>, String>> {
         match self {
+            Extension::V0_9_0(ext) => {
+                ext.call_language_server_initialization_options(
+                    store,
+                    &language_server_id.0,
+                    resource,
+                )
+                .await
+            }
             Extension::V0_8_0(ext) => {
                 ext.call_language_server_initialization_options(
                     store,
@@ -397,6 +427,14 @@ impl Extension {
         resource: Resource<Arc<dyn WorktreeDelegate>>,
     ) -> Result<Result<Option<String>, String>> {
         match self {
+            Extension::V0_9_0(ext) => {
+                ext.call_language_server_workspace_configuration(
+                    store,
+                    &language_server_id.0,
+                    resource,
+                )
+                .await
+            }
             Extension::V0_8_0(ext) => {
                 ext.call_language_server_workspace_configuration(
                     store,
@@ -472,6 +510,14 @@ impl Extension {
         resource: Resource<Arc<dyn WorktreeDelegate>>,
     ) -> Result<Option<String>> {
         match self {
+            Extension::V0_9_0(ext) => {
+                ext.call_language_server_initialization_options_schema(
+                    store,
+                    &language_server_id.0,
+                    resource,
+                )
+                .await
+            }
             Extension::V0_8_0(ext) => {
                 ext.call_language_server_initialization_options_schema(
                     store,
@@ -499,6 +545,14 @@ impl Extension {
         resource: Resource<Arc<dyn WorktreeDelegate>>,
     ) -> Result<Option<String>> {
         match self {
+            Extension::V0_9_0(ext) => {
+                ext.call_language_server_workspace_configuration_schema(
+                    store,
+                    &language_server_id.0,
+                    resource,
+                )
+                .await
+            }
             Extension::V0_8_0(ext) => {
                 ext.call_language_server_workspace_configuration_schema(
                     store,
@@ -527,6 +581,15 @@ impl Extension {
         resource: Resource<Arc<dyn WorktreeDelegate>>,
     ) -> Result<Result<Option<String>, String>> {
         match self {
+            Extension::V0_9_0(ext) => {
+                ext.call_language_server_additional_initialization_options(
+                    store,
+                    &language_server_id.0,
+                    &target_language_server_id.0,
+                    resource,
+                )
+                .await
+            }
             Extension::V0_8_0(ext) => {
                 ext.call_language_server_additional_initialization_options(
                     store,
@@ -580,6 +643,15 @@ impl Extension {
         resource: Resource<Arc<dyn WorktreeDelegate>>,
     ) -> Result<Result<Option<String>, String>> {
         match self {
+            Extension::V0_9_0(ext) => {
+                ext.call_language_server_additional_workspace_configuration(
+                    store,
+                    &language_server_id.0,
+                    &target_language_server_id.0,
+                    resource,
+                )
+                .await
+            }
             Extension::V0_8_0(ext) => {
                 ext.call_language_server_additional_workspace_configuration(
                     store,
@@ -629,14 +701,10 @@ impl Extension {
         &self,
         store: &mut Store<WasmState>,
         language_server_id: &LanguageServerName,
-        completions: Vec<latest::Completion>,
-    ) -> Result<Result<Vec<Option<CodeLabel>>, String>> {
+        completions: Vec<extension::Completion>,
+    ) -> Result<Result<Vec<Option<extension::CodeLabel>>, String>> {
         match self {
-            Extension::V0_8_0(ext) => {
-                ext.call_labels_for_completions(store, &language_server_id.0, &completions)
-                    .await
-            }
-            Extension::V0_6_0(ext) => Ok(ext
+            Extension::V0_9_0(ext) => Ok(ext
                 .call_labels_for_completions(
                     store,
                     &language_server_id.0,
@@ -647,84 +715,130 @@ impl Extension {
                     labels
                         .into_iter()
                         .map(|label| label.map(Into::into))
+                        .collect()
+                })),
+            Extension::V0_8_0(ext) => {
+                let completions = completions.into_iter().map(Into::into).collect::<Vec<_>>();
+                Ok(ext
+                    .call_labels_for_completions(store, &language_server_id.0, &completions)
+                    .await?
+                    .map(|labels| {
+                        labels
+                            .into_iter()
+                            .map(|label| label.map(Into::into))
+                            .collect()
+                    }))
+            }
+            Extension::V0_6_0(ext) => Ok(ext
+                .call_labels_for_completions(
+                    store,
+                    &language_server_id.0,
+                    &completions
+                        .into_iter()
+                        .map(|completion| since_v0_8_0::Completion::from(completion).into())
+                        .collect::<Vec<_>>(),
+                )
+                .await?
+                .map(|labels| {
+                    labels
+                        .into_iter()
+                        .map(|label| label.map(|label| since_v0_8_0::CodeLabel::from(label).into()))
                         .collect()
                 })),
             Extension::V0_5_0(ext) => Ok(ext
                 .call_labels_for_completions(
                     store,
                     &language_server_id.0,
-                    &completions.into_iter().map(Into::into).collect::<Vec<_>>(),
+                    &completions
+                        .into_iter()
+                        .map(|completion| since_v0_8_0::Completion::from(completion).into())
+                        .collect::<Vec<_>>(),
                 )
                 .await?
                 .map(|labels| {
                     labels
                         .into_iter()
-                        .map(|label| label.map(Into::into))
+                        .map(|label| label.map(|label| since_v0_8_0::CodeLabel::from(label).into()))
                         .collect()
                 })),
             Extension::V0_4_0(ext) => Ok(ext
                 .call_labels_for_completions(
                     store,
                     &language_server_id.0,
-                    &completions.into_iter().map(Into::into).collect::<Vec<_>>(),
+                    &completions
+                        .into_iter()
+                        .map(|completion| since_v0_8_0::Completion::from(completion).into())
+                        .collect::<Vec<_>>(),
                 )
                 .await?
                 .map(|labels| {
                     labels
                         .into_iter()
-                        .map(|label| label.map(Into::into))
+                        .map(|label| label.map(|label| since_v0_8_0::CodeLabel::from(label).into()))
                         .collect()
                 })),
             Extension::V0_3_0(ext) => Ok(ext
                 .call_labels_for_completions(
                     store,
                     &language_server_id.0,
-                    &completions.into_iter().map(Into::into).collect::<Vec<_>>(),
+                    &completions
+                        .into_iter()
+                        .map(|completion| since_v0_8_0::Completion::from(completion).into())
+                        .collect::<Vec<_>>(),
                 )
                 .await?
                 .map(|labels| {
                     labels
                         .into_iter()
-                        .map(|label| label.map(Into::into))
+                        .map(|label| label.map(|label| since_v0_8_0::CodeLabel::from(label).into()))
                         .collect()
                 })),
             Extension::V0_2_0(ext) => Ok(ext
                 .call_labels_for_completions(
                     store,
                     &language_server_id.0,
-                    &completions.into_iter().map(Into::into).collect::<Vec<_>>(),
+                    &completions
+                        .into_iter()
+                        .map(|completion| since_v0_8_0::Completion::from(completion).into())
+                        .collect::<Vec<_>>(),
                 )
                 .await?
                 .map(|labels| {
                     labels
                         .into_iter()
-                        .map(|label| label.map(Into::into))
+                        .map(|label| label.map(|label| since_v0_8_0::CodeLabel::from(label).into()))
                         .collect()
                 })),
             Extension::V0_1_0(ext) => Ok(ext
                 .call_labels_for_completions(
                     store,
                     &language_server_id.0,
-                    &completions.into_iter().map(Into::into).collect::<Vec<_>>(),
+                    &completions
+                        .into_iter()
+                        .map(|completion| since_v0_8_0::Completion::from(completion).into())
+                        .collect::<Vec<_>>(),
                 )
                 .await?
                 .map(|labels| {
                     labels
                         .into_iter()
-                        .map(|label| label.map(Into::into))
+                        .map(|label| label.map(|label| since_v0_8_0::CodeLabel::from(label).into()))
                         .collect()
                 })),
             Extension::V0_0_6(ext) => Ok(ext
                 .call_labels_for_completions(
                     store,
                     &language_server_id.0,
-                    &completions.into_iter().map(Into::into).collect::<Vec<_>>(),
+                    &completions
+                        .into_iter()
+                        .map(|completion| since_v0_8_0::Completion::from(completion).into())
+                        .collect::<Vec<_>>(),
                 )
                 .await?
                 .map(|labels| {
                     labels
                         .into_iter()
-                        .map(|label| label.map(Into::into))
+                        .map(|label| label.map(|label| since_v0_8_0::CodeLabel::from(label).into()))
                         .collect()
                 })),
             Extension::V0_0_1(_) | Extension::V0_0_4(_) => Ok(Ok(Vec::new())),
@@ -735,14 +849,10 @@ impl Extension {
         &self,
         store: &mut Store<WasmState>,
         language_server_id: &LanguageServerName,
-        symbols: Vec<latest::Symbol>,
-    ) -> Result<Result<Vec<Option<CodeLabel>>, String>> {
+        symbols: Vec<extension::Symbol>,
+    ) -> Result<Result<Vec<Option<extension::CodeLabel>>, String>> {
         match self {
-            Extension::V0_8_0(ext) => {
-                ext.call_labels_for_symbols(store, &language_server_id.0, &symbols)
-                    .await
-            }
-            Extension::V0_6_0(ext) => Ok(ext
+            Extension::V0_9_0(ext) => Ok(ext
                 .call_labels_for_symbols(
                     store,
                     &language_server_id.0,
@@ -753,84 +863,130 @@ impl Extension {
                     labels
                         .into_iter()
                         .map(|label| label.map(Into::into))
+                        .collect()
+                })),
+            Extension::V0_8_0(ext) => {
+                let symbols = symbols.into_iter().map(Into::into).collect::<Vec<_>>();
+                Ok(ext
+                    .call_labels_for_symbols(store, &language_server_id.0, &symbols)
+                    .await?
+                    .map(|labels| {
+                        labels
+                            .into_iter()
+                            .map(|label| label.map(Into::into))
+                            .collect()
+                    }))
+            }
+            Extension::V0_6_0(ext) => Ok(ext
+                .call_labels_for_symbols(
+                    store,
+                    &language_server_id.0,
+                    &symbols
+                        .into_iter()
+                        .map(|symbol| since_v0_8_0::Symbol::from(symbol).into())
+                        .collect::<Vec<_>>(),
+                )
+                .await?
+                .map(|labels| {
+                    labels
+                        .into_iter()
+                        .map(|label| label.map(|label| since_v0_8_0::CodeLabel::from(label).into()))
                         .collect()
                 })),
             Extension::V0_5_0(ext) => Ok(ext
                 .call_labels_for_symbols(
                     store,
                     &language_server_id.0,
-                    &symbols.into_iter().map(Into::into).collect::<Vec<_>>(),
+                    &symbols
+                        .into_iter()
+                        .map(|symbol| since_v0_8_0::Symbol::from(symbol).into())
+                        .collect::<Vec<_>>(),
                 )
                 .await?
                 .map(|labels| {
                     labels
                         .into_iter()
-                        .map(|label| label.map(Into::into))
+                        .map(|label| label.map(|label| since_v0_8_0::CodeLabel::from(label).into()))
                         .collect()
                 })),
             Extension::V0_4_0(ext) => Ok(ext
                 .call_labels_for_symbols(
                     store,
                     &language_server_id.0,
-                    &symbols.into_iter().map(Into::into).collect::<Vec<_>>(),
+                    &symbols
+                        .into_iter()
+                        .map(|symbol| since_v0_8_0::Symbol::from(symbol).into())
+                        .collect::<Vec<_>>(),
                 )
                 .await?
                 .map(|labels| {
                     labels
                         .into_iter()
-                        .map(|label| label.map(Into::into))
+                        .map(|label| label.map(|label| since_v0_8_0::CodeLabel::from(label).into()))
                         .collect()
                 })),
             Extension::V0_3_0(ext) => Ok(ext
                 .call_labels_for_symbols(
                     store,
                     &language_server_id.0,
-                    &symbols.into_iter().map(Into::into).collect::<Vec<_>>(),
+                    &symbols
+                        .into_iter()
+                        .map(|symbol| since_v0_8_0::Symbol::from(symbol).into())
+                        .collect::<Vec<_>>(),
                 )
                 .await?
                 .map(|labels| {
                     labels
                         .into_iter()
-                        .map(|label| label.map(Into::into))
+                        .map(|label| label.map(|label| since_v0_8_0::CodeLabel::from(label).into()))
                         .collect()
                 })),
             Extension::V0_2_0(ext) => Ok(ext
                 .call_labels_for_symbols(
                     store,
                     &language_server_id.0,
-                    &symbols.into_iter().map(Into::into).collect::<Vec<_>>(),
+                    &symbols
+                        .into_iter()
+                        .map(|symbol| since_v0_8_0::Symbol::from(symbol).into())
+                        .collect::<Vec<_>>(),
                 )
                 .await?
                 .map(|labels| {
                     labels
                         .into_iter()
-                        .map(|label| label.map(Into::into))
+                        .map(|label| label.map(|label| since_v0_8_0::CodeLabel::from(label).into()))
                         .collect()
                 })),
             Extension::V0_1_0(ext) => Ok(ext
                 .call_labels_for_symbols(
                     store,
                     &language_server_id.0,
-                    &symbols.into_iter().map(Into::into).collect::<Vec<_>>(),
+                    &symbols
+                        .into_iter()
+                        .map(|symbol| since_v0_8_0::Symbol::from(symbol).into())
+                        .collect::<Vec<_>>(),
                 )
                 .await?
                 .map(|labels| {
                     labels
                         .into_iter()
-                        .map(|label| label.map(Into::into))
+                        .map(|label| label.map(|label| since_v0_8_0::CodeLabel::from(label).into()))
                         .collect()
                 })),
             Extension::V0_0_6(ext) => Ok(ext
                 .call_labels_for_symbols(
                     store,
                     &language_server_id.0,
-                    &symbols.into_iter().map(Into::into).collect::<Vec<_>>(),
+                    &symbols
+                        .into_iter()
+                        .map(|symbol| since_v0_8_0::Symbol::from(symbol).into())
+                        .collect::<Vec<_>>(),
                 )
                 .await?
                 .map(|labels| {
                     labels
                         .into_iter()
-                        .map(|label| label.map(Into::into))
+                        .map(|label| label.map(|label| since_v0_8_0::CodeLabel::from(label).into()))
                         .collect()
                 })),
             Extension::V0_0_1(_) | Extension::V0_0_4(_) => Ok(Ok(Vec::new())),
@@ -840,38 +996,42 @@ impl Extension {
     pub async fn call_complete_slash_command_argument(
         &self,
         store: &mut Store<WasmState>,
-        command: &SlashCommand,
+        command: &extension::SlashCommand,
         arguments: &[String],
-    ) -> Result<Result<Vec<SlashCommandArgumentCompletion>, String>> {
+    ) -> Result<Result<Vec<extension::SlashCommandArgumentCompletion>, String>> {
         match self {
-            Extension::V0_8_0(ext) => {
-                ext.call_complete_slash_command_argument(store, command, arguments)
-                    .await
-            }
-            Extension::V0_6_0(ext) => {
-                ext.call_complete_slash_command_argument(store, command, arguments)
-                    .await
-            }
-            Extension::V0_5_0(ext) => {
-                ext.call_complete_slash_command_argument(store, command, arguments)
-                    .await
-            }
-            Extension::V0_4_0(ext) => {
-                ext.call_complete_slash_command_argument(store, command, arguments)
-                    .await
-            }
-            Extension::V0_3_0(ext) => {
-                ext.call_complete_slash_command_argument(store, command, arguments)
-                    .await
-            }
-            Extension::V0_2_0(ext) => {
-                ext.call_complete_slash_command_argument(store, command, arguments)
-                    .await
-            }
-            Extension::V0_1_0(ext) => {
-                ext.call_complete_slash_command_argument(store, command, arguments)
-                    .await
-            }
+            Extension::V0_9_0(ext) => Ok(ext
+                .call_complete_slash_command_argument(store, &command.clone().into(), arguments)
+                .await?
+                .map(|completions| completions.into_iter().map(Into::into).collect())),
+            Extension::V0_8_0(ext) => Ok(ext
+                .call_complete_slash_command_argument(store, &command.clone().into(), arguments)
+                .await?
+                .map(|completions| completions.into_iter().map(Into::into).collect())),
+            Extension::V0_6_0(ext) => Ok(ext
+                .call_complete_slash_command_argument(store, &command.clone().into(), arguments)
+                .await?
+                .map(|completions| completions.into_iter().map(Into::into).collect())),
+            Extension::V0_5_0(ext) => Ok(ext
+                .call_complete_slash_command_argument(store, &command.clone().into(), arguments)
+                .await?
+                .map(|completions| completions.into_iter().map(Into::into).collect())),
+            Extension::V0_4_0(ext) => Ok(ext
+                .call_complete_slash_command_argument(store, &command.clone().into(), arguments)
+                .await?
+                .map(|completions| completions.into_iter().map(Into::into).collect())),
+            Extension::V0_3_0(ext) => Ok(ext
+                .call_complete_slash_command_argument(store, &command.clone().into(), arguments)
+                .await?
+                .map(|completions| completions.into_iter().map(Into::into).collect())),
+            Extension::V0_2_0(ext) => Ok(ext
+                .call_complete_slash_command_argument(store, &command.clone().into(), arguments)
+                .await?
+                .map(|completions| completions.into_iter().map(Into::into).collect())),
+            Extension::V0_1_0(ext) => Ok(ext
+                .call_complete_slash_command_argument(store, &command.clone().into(), arguments)
+                .await?
+                .map(|completions| completions.into_iter().map(Into::into).collect())),
             Extension::V0_0_1(_) | Extension::V0_0_4(_) | Extension::V0_0_6(_) => {
                 Ok(Ok(Vec::new()))
             }
@@ -881,39 +1041,43 @@ impl Extension {
     pub async fn call_run_slash_command(
         &self,
         store: &mut Store<WasmState>,
-        command: &SlashCommand,
+        command: &extension::SlashCommand,
         arguments: &[String],
         resource: Option<Resource<Arc<dyn WorktreeDelegate>>>,
-    ) -> Result<Result<SlashCommandOutput, String>> {
+    ) -> Result<Result<extension::SlashCommandOutput, String>> {
         match self {
-            Extension::V0_8_0(ext) => {
-                ext.call_run_slash_command(store, command, arguments, resource)
-                    .await
-            }
-            Extension::V0_6_0(ext) => {
-                ext.call_run_slash_command(store, command, arguments, resource)
-                    .await
-            }
-            Extension::V0_5_0(ext) => {
-                ext.call_run_slash_command(store, command, arguments, resource)
-                    .await
-            }
-            Extension::V0_4_0(ext) => {
-                ext.call_run_slash_command(store, command, arguments, resource)
-                    .await
-            }
-            Extension::V0_3_0(ext) => {
-                ext.call_run_slash_command(store, command, arguments, resource)
-                    .await
-            }
-            Extension::V0_2_0(ext) => {
-                ext.call_run_slash_command(store, command, arguments, resource)
-                    .await
-            }
-            Extension::V0_1_0(ext) => {
-                ext.call_run_slash_command(store, command, arguments, resource)
-                    .await
-            }
+            Extension::V0_9_0(ext) => Ok(ext
+                .call_run_slash_command(store, &command.clone().into(), arguments, resource)
+                .await?
+                .map(Into::into)),
+            Extension::V0_8_0(ext) => Ok(ext
+                .call_run_slash_command(store, &command.clone().into(), arguments, resource)
+                .await?
+                .map(Into::into)),
+            Extension::V0_6_0(ext) => Ok(ext
+                .call_run_slash_command(store, &command.clone().into(), arguments, resource)
+                .await?
+                .map(Into::into)),
+            Extension::V0_5_0(ext) => Ok(ext
+                .call_run_slash_command(store, &command.clone().into(), arguments, resource)
+                .await?
+                .map(Into::into)),
+            Extension::V0_4_0(ext) => Ok(ext
+                .call_run_slash_command(store, &command.clone().into(), arguments, resource)
+                .await?
+                .map(Into::into)),
+            Extension::V0_3_0(ext) => Ok(ext
+                .call_run_slash_command(store, &command.clone().into(), arguments, resource)
+                .await?
+                .map(Into::into)),
+            Extension::V0_2_0(ext) => Ok(ext
+                .call_run_slash_command(store, &command.clone().into(), arguments, resource)
+                .await?
+                .map(Into::into)),
+            Extension::V0_1_0(ext) => Ok(ext
+                .call_run_slash_command(store, &command.clone().into(), arguments, resource)
+                .await?
+                .map(Into::into)),
             Extension::V0_0_1(_) | Extension::V0_0_4(_) | Extension::V0_0_6(_) => {
                 anyhow::bail!("`run_slash_command` not available prior to v0.1.0");
             }
@@ -925,32 +1089,36 @@ impl Extension {
         store: &mut Store<WasmState>,
         context_server_id: Arc<str>,
         project: Resource<ExtensionProject>,
-    ) -> Result<Result<Command, String>> {
+    ) -> Result<Result<extension::Command, String>> {
         match self {
-            Extension::V0_8_0(ext) => {
-                ext.call_context_server_command(store, &context_server_id, project)
-                    .await
-            }
-            Extension::V0_6_0(ext) => {
-                ext.call_context_server_command(store, &context_server_id, project)
-                    .await
-            }
-            Extension::V0_5_0(ext) => {
-                ext.call_context_server_command(store, &context_server_id, project)
-                    .await
-            }
-            Extension::V0_4_0(ext) => {
-                ext.call_context_server_command(store, &context_server_id, project)
-                    .await
-            }
-            Extension::V0_3_0(ext) => {
-                ext.call_context_server_command(store, &context_server_id, project)
-                    .await
-            }
-            Extension::V0_2_0(ext) => Ok(ext
+            Extension::V0_9_0(ext) => Ok(ext
                 .call_context_server_command(store, &context_server_id, project)
                 .await?
                 .map(Into::into)),
+            Extension::V0_8_0(ext) => Ok(ext
+                .call_context_server_command(store, &context_server_id, project)
+                .await?
+                .map(Into::into)),
+            Extension::V0_6_0(ext) => Ok(ext
+                .call_context_server_command(store, &context_server_id, project)
+                .await?
+                .map(|command| since_v0_8_0::Command::from(command).into())),
+            Extension::V0_5_0(ext) => Ok(ext
+                .call_context_server_command(store, &context_server_id, project)
+                .await?
+                .map(|command| since_v0_8_0::Command::from(command).into())),
+            Extension::V0_4_0(ext) => Ok(ext
+                .call_context_server_command(store, &context_server_id, project)
+                .await?
+                .map(|command| since_v0_8_0::Command::from(command).into())),
+            Extension::V0_3_0(ext) => Ok(ext
+                .call_context_server_command(store, &context_server_id, project)
+                .await?
+                .map(|command| since_v0_8_0::Command::from(command).into())),
+            Extension::V0_2_0(ext) => Ok(ext
+                .call_context_server_command(store, &context_server_id, project)
+                .await?
+                .map(|command| since_v0_8_0::Command::from(command).into())),
             Extension::V0_0_1(_)
             | Extension::V0_0_4(_)
             | Extension::V0_0_6(_)
@@ -965,19 +1133,47 @@ impl Extension {
         store: &mut Store<WasmState>,
         context_server_id: Arc<str>,
         project: Resource<ExtensionProject>,
-    ) -> Result<Result<Option<ContextServerConfiguration>, String>> {
+    ) -> Result<Result<Option<extension::ContextServerConfiguration>, String>> {
         match self {
+            Extension::V0_9_0(ext) => {
+                let result = ext
+                    .call_context_server_configuration(store, &context_server_id, project)
+                    .await?;
+                Ok(match result {
+                    Ok(Some(configuration)) => Ok(Some(configuration.try_into()?)),
+                    Ok(None) => Ok(None),
+                    Err(error) => Err(error),
+                })
+            }
             Extension::V0_8_0(ext) => {
-                ext.call_context_server_configuration(store, &context_server_id, project)
-                    .await
+                let result = ext
+                    .call_context_server_configuration(store, &context_server_id, project)
+                    .await?;
+                Ok(match result {
+                    Ok(Some(configuration)) => Ok(Some(configuration.try_into()?)),
+                    Ok(None) => Ok(None),
+                    Err(error) => Err(error),
+                })
             }
             Extension::V0_6_0(ext) => {
-                ext.call_context_server_configuration(store, &context_server_id, project)
-                    .await
+                let result = ext
+                    .call_context_server_configuration(store, &context_server_id, project)
+                    .await?;
+                Ok(match result {
+                    Ok(Some(configuration)) => Ok(Some(configuration.try_into()?)),
+                    Ok(None) => Ok(None),
+                    Err(error) => Err(error),
+                })
             }
             Extension::V0_5_0(ext) => {
-                ext.call_context_server_configuration(store, &context_server_id, project)
-                    .await
+                let result = ext
+                    .call_context_server_configuration(store, &context_server_id, project)
+                    .await?;
+                Ok(match result {
+                    Ok(Some(configuration)) => Ok(Some(configuration.try_into()?)),
+                    Ok(None) => Ok(None),
+                    Err(error) => Err(error),
+                })
             }
             Extension::V0_0_1(_)
             | Extension::V0_0_4(_)
@@ -997,6 +1193,7 @@ impl Extension {
         provider: &str,
     ) -> Result<Result<Vec<String>, String>> {
         match self {
+            Extension::V0_9_0(ext) => ext.call_suggest_docs_packages(store, provider).await,
             Extension::V0_8_0(ext) => ext.call_suggest_docs_packages(store, provider).await,
             Extension::V0_6_0(ext) => ext.call_suggest_docs_packages(store, provider).await,
             Extension::V0_5_0(ext) => ext.call_suggest_docs_packages(store, provider).await,
@@ -1018,6 +1215,10 @@ impl Extension {
         kv_store: Resource<Arc<dyn KeyValueStoreDelegate>>,
     ) -> Result<Result<(), String>> {
         match self {
+            Extension::V0_9_0(ext) => {
+                ext.call_index_docs(store, provider, package_name, kv_store)
+                    .await
+            }
             Extension::V0_8_0(ext) => {
                 ext.call_index_docs(store, provider, package_name, kv_store)
                     .await
@@ -1059,8 +1260,22 @@ impl Extension {
         task: DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         resource: Resource<Arc<dyn WorktreeDelegate>>,
-    ) -> Result<Result<DebugAdapterBinary, String>> {
+    ) -> Result<Result<extension::DebugAdapterBinary, String>> {
         match self {
+            Extension::V0_9_0(ext) => {
+                let dap_binary = ext
+                    .call_get_dap_binary(
+                        store,
+                        &adapter_name,
+                        &task.try_into()?,
+                        user_installed_path.as_ref().and_then(|p| p.to_str()),
+                        resource,
+                    )
+                    .await?
+                    .map_err(|e| anyhow!("{e:?}"))?;
+
+                Ok(Ok(dap_binary.try_into()?))
+            }
             Extension::V0_8_0(ext) => {
                 let dap_binary = ext
                     .call_get_dap_binary(
@@ -1073,7 +1288,7 @@ impl Extension {
                     .await?
                     .map_err(|e| anyhow!("{e:?}"))?;
 
-                Ok(Ok(dap_binary))
+                Ok(Ok(dap_binary.try_into()?))
             }
             Extension::V0_6_0(ext) => {
                 let dap_binary = ext
@@ -1087,7 +1302,7 @@ impl Extension {
                     .await?
                     .map_err(|e| anyhow!("{e:?}"))?;
 
-                Ok(Ok(dap_binary))
+                Ok(Ok(dap_binary.try_into()?))
             }
             Extension::V0_5_0(_)
             | Extension::V0_4_0(_)
@@ -1107,8 +1322,18 @@ impl Extension {
         store: &mut Store<WasmState>,
         adapter_name: Arc<str>,
         config: serde_json::Value,
-    ) -> Result<Result<StartDebuggingRequestArgumentsRequest, String>> {
+    ) -> Result<Result<extension::StartDebuggingRequestArgumentsRequest, String>> {
         match self {
+            Extension::V0_9_0(ext) => {
+                let config =
+                    serde_json::to_string(&config).context("Adapter config is not a valid JSON")?;
+                let dap_binary = ext
+                    .call_dap_request_kind(store, &adapter_name, &config)
+                    .await?
+                    .map_err(|e| anyhow!("{e:?}"))?;
+
+                Ok(Ok(dap_binary.into()))
+            }
             Extension::V0_8_0(ext) => {
                 let config =
                     serde_json::to_string(&config).context("Adapter config is not a valid JSON")?;
@@ -1117,7 +1342,7 @@ impl Extension {
                     .await?
                     .map_err(|e| anyhow!("{e:?}"))?;
 
-                Ok(Ok(dap_binary))
+                Ok(Ok(dap_binary.into()))
             }
             Extension::V0_6_0(ext) => {
                 let config =
@@ -1127,7 +1352,7 @@ impl Extension {
                     .await?
                     .map_err(|e| anyhow!("{e:?}"))?;
 
-                Ok(Ok(dap_binary))
+                Ok(Ok(dap_binary.into()))
             }
             Extension::V0_5_0(_)
             | Extension::V0_4_0(_)
@@ -1148,6 +1373,15 @@ impl Extension {
         config: ZedDebugConfig,
     ) -> Result<Result<DebugScenario, String>> {
         match self {
+            Extension::V0_9_0(ext) => {
+                let config = config.into();
+                let dap_binary = ext
+                    .call_dap_config_to_scenario(store, &config)
+                    .await?
+                    .map_err(|e| anyhow!("{e:?}"))?;
+
+                Ok(Ok(dap_binary.try_into()?))
+            }
             Extension::V0_8_0(ext) => {
                 let config = config.into();
                 let dap_binary = ext
@@ -1188,6 +1422,20 @@ impl Extension {
         debug_adapter_name: String,
     ) -> Result<Option<DebugScenario>> {
         match self {
+            Extension::V0_9_0(ext) => {
+                let build_config_template = build_config_template.into();
+                let dap_binary = ext
+                    .call_dap_locator_create_scenario(
+                        store,
+                        &locator_name,
+                        &build_config_template,
+                        &resolved_label,
+                        &debug_adapter_name,
+                    )
+                    .await?;
+
+                Ok(dap_binary.map(TryInto::try_into).transpose()?)
+            }
             Extension::V0_8_0(ext) => {
                 let build_config_template = build_config_template.into();
                 let dap_binary = ext
@@ -1236,6 +1484,15 @@ impl Extension {
         resolved_build_task: SpawnInTerminal,
     ) -> Result<Result<DebugRequest, String>> {
         match self {
+            Extension::V0_9_0(ext) => {
+                let build_config_template = resolved_build_task.try_into()?;
+                let dap_request = ext
+                    .call_run_dap_locator(store, &locator_name, &build_config_template)
+                    .await?
+                    .map_err(|e| anyhow!("{e:?}"))?;
+
+                Ok(Ok(dap_request.into()))
+            }
             Extension::V0_8_0(ext) => {
                 let build_config_template = resolved_build_task.try_into()?;
                 let dap_request = ext
@@ -1264,6 +1521,29 @@ impl Extension {
             | Extension::V0_0_1(_) => {
                 anyhow::bail!("`run_dap_locator` not available prior to v0.6.0");
             }
+        }
+    }
+
+    pub async fn call_settings_contribution(
+        &self,
+        store: &mut Store<WasmState>,
+    ) -> Result<Option<extension::ExtensionSettingsContribution>> {
+        match self {
+            Extension::V0_9_0(ext) => ext
+                .call_settings_contribution(store)
+                .await?
+                .map(TryInto::try_into)
+                .transpose(),
+            Extension::V0_8_0(_)
+            | Extension::V0_6_0(_)
+            | Extension::V0_5_0(_)
+            | Extension::V0_4_0(_)
+            | Extension::V0_3_0(_)
+            | Extension::V0_2_0(_)
+            | Extension::V0_1_0(_)
+            | Extension::V0_0_6(_)
+            | Extension::V0_0_4(_)
+            | Extension::V0_0_1(_) => Ok(None),
         }
     }
 }

@@ -1,4 +1,4 @@
-use super::{latest, since_v0_6_0};
+use super::{since_v0_6_0, since_v0_8_0 as latest};
 use crate::wasm_host::WasmState;
 use crate::wasm_host::wit::since_v0_0_4;
 use anyhow::Result;

@@ -302,7 +302,8 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
                         settings
                             .set_extension_settings(
                                 settings::ExtensionsSettingsContent {
-                                    all_languages: language_settings.clone(),
+                                    all_languages: Some(language_settings.clone()),
+                                    extensions: None,
                                 },
                                 cx,
                             )

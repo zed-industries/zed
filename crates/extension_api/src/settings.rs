@@ -1,11 +1,13 @@
 //! Provides access to Zed settings.
 
-#[path = "../wit/since_v0.8.0/settings.rs"]
+#[path = "../wit/since_v0.9.0/settings.rs"]
 mod types;
 
 use crate::{Project, Result, SettingsLocation, Worktree, wit};
 use serde_json;
 pub use types::*;
+
+pub struct ExtensionSettings;
 
 impl LanguageSettings {
     /// Returns the [`LanguageSettings`] for the given language.
@@ -33,6 +35,35 @@ impl ContextServerSettings {
                 Some(worktree_id),
             )?;
             if settings != global_setting {
+                return Ok(settings);
+            }
+        }
+
+        Ok(global_setting)
+    }
+}
+
+impl ExtensionSettings {
+    /// Returns the effective extension settings for the given worktree.
+    pub fn for_worktree<T: serde::de::DeserializeOwned>(
+        extension_id: &str,
+        worktree: &Worktree,
+    ) -> Result<T> {
+        get_settings("extensions", Some(extension_id), Some(worktree.id()))
+    }
+
+    /// Returns the effective extension settings for the given project.
+    pub fn for_project<T: serde::Serialize + serde::de::DeserializeOwned>(
+        extension_id: &str,
+        project: &Project,
+    ) -> Result<T> {
+        let global_setting: T = get_settings("extensions", Some(extension_id), None)?;
+
+        for worktree_id in project.worktree_ids() {
+            let settings = get_settings("extensions", Some(extension_id), Some(worktree_id))?;
+            if serde_json::to_value(&settings).map_err(|err| err.to_string())?
+                != serde_json::to_value(&global_setting).map_err(|err| err.to_string())?
+            {
                 return Ok(settings);
             }
         }

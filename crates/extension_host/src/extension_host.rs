@@ -15,8 +15,8 @@ use collections::{BTreeMap, BTreeSet, HashSet, btree_map};
 pub use extension::ExtensionManifest;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{
-    ExtensionContextServerProxy, ExtensionDebugAdapterProviderProxy, ExtensionEvents,
-    ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy,
+    Extension as _, ExtensionContextServerProxy, ExtensionDebugAdapterProviderProxy,
+    ExtensionEvents, ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy,
     ExtensionLanguageServerProxy, ExtensionSlashCommandProxy, ExtensionSnippetProxy,
     ExtensionThemeProxy,
 };
@@ -123,9 +123,17 @@ pub struct ExtensionStore {
     pub modified_extensions: HashSet<Arc<str>>,
     pub wasm_host: Arc<WasmHost>,
     pub wasm_extensions: Vec<(Arc<ExtensionManifest>, WasmExtension)>,
+    pub extension_settings_contributions: BTreeMap<Arc<str>, ContributedExtensionSettings>,
     pub tasks: Vec<Task<()>>,
     pub remote_clients: Vec<WeakEntity<RemoteClient>>,
     pub ssh_registered_tx: UnboundedSender<()>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ContributedExtensionSettings {
+    pub manifest: Arc<ExtensionManifest>,
+    pub settings_schema: serde_json::Value,
+    pub default_settings: serde_json::Value,
 }
 
 #[derive(Clone, Copy)]
@@ -233,6 +241,83 @@ impl ExtensionStore {
         cx.global::<GlobalExtensionStore>().0.clone()
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_global_for_test(store: Entity<Self>, cx: &mut App) {
+        cx.set_global(GlobalExtensionStore(store));
+    }
+
+    pub fn extension_settings_contributions(
+        &self,
+    ) -> &BTreeMap<Arc<str>, ContributedExtensionSettings> {
+        &self.extension_settings_contributions
+    }
+
+    fn validate_settings_contribution(
+        manifest: &Arc<ExtensionManifest>,
+        contribution: extension::ExtensionSettingsContribution,
+    ) -> Option<ContributedExtensionSettings> {
+        let validator = jsonschema::validator_for(&contribution.settings_schema)
+            .with_context(|| {
+                format!(
+                    "failed to compile settings schema for extension {}",
+                    manifest.id
+                )
+            })
+            .log_err()?;
+
+        if let Err(error) = validator.validate(&contribution.default_settings) {
+            log::error!(
+                "Ignoring settings contribution for extension {}: default settings failed validation: {}",
+                manifest.id,
+                error
+            );
+            return None;
+        }
+
+        Some(ContributedExtensionSettings {
+            manifest: manifest.clone(),
+            settings_schema: contribution.settings_schema,
+            default_settings: contribution.default_settings,
+        })
+    }
+
+    fn refresh_extension_settings(
+        cx: &mut Context<Self>,
+        settings: settings::ExtensionSettingsMap,
+    ) {
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_extension_settings(
+                    settings::ExtensionsSettingsContent {
+                        all_languages: None,
+                        extensions: Some(settings),
+                    },
+                    cx,
+                )
+                .log_err();
+        });
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_extension_settings_contributions_for_test(
+        &mut self,
+        contributions: BTreeMap<Arc<str>, ContributedExtensionSettings>,
+        cx: &mut Context<Self>,
+    ) {
+        self.extension_settings_contributions = contributions;
+        Self::refresh_extension_settings(
+            cx,
+            settings::ExtensionSettingsMap(
+                self.extension_settings_contributions
+                    .iter()
+                    .map(|(extension_id, contribution)| {
+                        (extension_id.clone(), contribution.default_settings.clone())
+                    })
+                    .collect(),
+            ),
+        );
+    }
+
     pub fn new(
         extensions_dir: PathBuf,
         build_dir: Option<PathBuf>,
@@ -269,6 +354,7 @@ impl ExtensionStore {
                 cx,
             ),
             wasm_extensions: Vec::new(),
+            extension_settings_contributions: Default::default(),
             fs,
             http_client,
             telemetry,
@@ -1216,6 +1302,9 @@ impl ExtensionStore {
 
         self.wasm_extensions
             .retain(|(extension, _)| !extensions_to_unload.contains(&extension.id));
+        for extension_id in &extensions_to_unload {
+            self.extension_settings_contributions.remove(extension_id);
+        }
         self.proxy.remove_user_themes(themes_to_remove);
         self.proxy.remove_icon_themes(icon_themes_to_remove);
         self.proxy
@@ -1381,6 +1470,7 @@ impl ExtensionStore {
             .await;
 
             let mut wasm_extensions = Vec::new();
+            let mut extension_settings_contributions = BTreeMap::new();
             for extension in extension_entries {
                 if extension.manifest.lib.kind.is_none() {
                     continue;
@@ -1398,6 +1488,24 @@ impl ExtensionStore {
 
                 match wasm_extension {
                     Ok(wasm_extension) => {
+                        match wasm_extension.settings_contribution().await {
+                            Ok(Some(contribution)) => {
+                                if let Some(contribution) = Self::validate_settings_contribution(
+                                    &extension.manifest,
+                                    contribution,
+                                ) {
+                                    extension_settings_contributions
+                                        .insert(extension.manifest.id.clone(), contribution);
+                                }
+                            }
+                            Ok(None) => {}
+                            Err(error) => {
+                                log::error!(
+                                    "Failed to load settings contribution for extension {}: {error:#}",
+                                    extension.manifest.id
+                                );
+                            }
+                        }
                         wasm_extensions.push((extension.manifest.clone(), wasm_extension))
                     }
                     Err(e) => {
@@ -1474,6 +1582,19 @@ impl ExtensionStore {
                 }
 
                 this.wasm_extensions.extend(wasm_extensions);
+                this.extension_settings_contributions
+                    .extend(extension_settings_contributions);
+                Self::refresh_extension_settings(
+                    cx,
+                    settings::ExtensionSettingsMap(
+                        this.extension_settings_contributions
+                            .iter()
+                            .map(|(extension_id, contribution)| {
+                                (extension_id.clone(), contribution.default_settings.clone())
+                            })
+                            .collect(),
+                    ),
+                );
                 this.proxy.set_extensions_loaded();
                 this.proxy.reload_current_theme(cx);
                 this.proxy.reload_current_icon_theme(cx);

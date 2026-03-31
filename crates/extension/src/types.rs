@@ -15,6 +15,15 @@ pub use slash_command::*;
 /// A list of environment variables.
 pub type EnvVars = Vec<(String, String)>;
 
+/// Schema-driven settings contribution for an extension.
+#[derive(Debug, Clone)]
+pub struct ExtensionSettingsContribution {
+    /// JSON schema describing the extension settings.
+    pub settings_schema: serde_json::Value,
+    /// Default settings value for the extension.
+    pub default_settings: serde_json::Value,
+}
+
 /// A command.
 pub struct Command {
     /// The command to execute.

@@ -1,0 +1,9 @@
+interface extension-settings {
+    /// Schema-driven settings contribution for an extension.
+    record extension-settings-contribution {
+        /// JSON schema represented as a JSON string.
+        settings-schema: string,
+        /// Default settings represented as a JSON string.
+        default-settings: string,
+    }
+}

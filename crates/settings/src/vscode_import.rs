@@ -506,6 +506,7 @@ impl VsCodeSettings {
             terminal: None,
             dap: Default::default(),
             context_servers: self.context_servers(),
+            extensions: Default::default(),
             context_server_timeout: None,
             load_direnv: None,
             slash_commands: None,

@@ -57,6 +57,15 @@ pub mod lsp {
 /// A result returned from a Zed extension.
 pub type Result<T, E = String> = core::result::Result<T, E>;
 
+/// Extension-contributed settings metadata.
+#[derive(Debug, Clone)]
+pub struct ExtensionSettingsContribution {
+    /// JSON schema describing the settings shape.
+    pub settings_schema: serde_json::Value,
+    /// Default settings value for the extension.
+    pub default_settings: serde_json::Value,
+}
+
 /// Updates the installation status for the given language server.
 pub fn set_language_server_installation_status(
     language_server_id: &LanguageServerId,
@@ -195,6 +204,11 @@ pub trait Extension: Send + Sync {
         _project: &Project,
     ) -> Result<Option<ContextServerConfiguration>> {
         Ok(None)
+    }
+
+    /// Returns the settings contribution for this extension.
+    fn settings_contribution(&mut self) -> Option<ExtensionSettingsContribution> {
+        None
     }
 
     /// Returns a list of package names as suggestions to be included in the
@@ -355,7 +369,7 @@ pub static ZED_API_VERSION: [u8; 6] = *include_bytes!(concat!(env!("OUT_DIR"), "
 mod wit {
     wit_bindgen::generate!({
         skip: ["init-extension"],
-        path: "./wit/since_v0.8.0",
+        path: "./wit/since_v0.9.0",
     });
 }
 
@@ -505,6 +519,14 @@ impl wit::Guest for Component {
     ) -> Result<Option<ContextServerConfiguration>, String> {
         let context_server_id = ContextServerId(context_server_id);
         extension().context_server_configuration(&context_server_id, project)
+    }
+
+    fn settings_contribution() -> Option<wit::ExtensionSettingsContribution> {
+        let contribution = extension().settings_contribution()?;
+        Some(wit::ExtensionSettingsContribution {
+            settings_schema: serde_json::to_string(&contribution.settings_schema).ok()?,
+            default_settings: serde_json::to_string(&contribution.default_settings).ok()?,
+        })
     }
 
     fn suggest_docs_packages(provider: String) -> Result<Vec<String>, String> {

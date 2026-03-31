@@ -21,6 +21,11 @@ use crate::{
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct LspSettingsMap(pub HashMap<Arc<str>, LspSettings>);
 
+#[with_fallible_options]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(transparent)]
+pub struct ExtensionSettingsMap(pub HashMap<Arc<str>, serde_json::Value>);
+
 impl IntoIterator for LspSettingsMap {
     type Item = (Arc<str>, LspSettings);
     type IntoIter = std::collections::hash_map::IntoIter<Arc<str>, LspSettings>;
@@ -68,6 +73,10 @@ pub struct ProjectSettingsContent {
     /// Settings for context servers used for AI-related features.
     #[serde(default)]
     pub context_servers: HashMap<Arc<str>, ContextServerSettingsContent>,
+
+    /// Schema-driven settings contributed by installed extensions.
+    #[serde(default)]
+    pub extensions: ExtensionSettingsMap,
 
     /// Default timeout in seconds for context server tool calls.
     /// Can be overridden per-server in context_servers configuration.
