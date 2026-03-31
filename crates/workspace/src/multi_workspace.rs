@@ -613,15 +613,22 @@ impl MultiWorkspace {
         self.cycle_workspace(-1, window, cx);
     }
 
-    pub(crate) fn serialize(&mut self, cx: &mut App) {
-        let window_id = self.window_id;
-        let state = crate::persistence::model::MultiWorkspaceState {
-            active_workspace_id: self.workspace().read(cx).database_id(),
-            sidebar_open: self.sidebar_open,
-            sidebar_state: self.sidebar.as_ref().and_then(|s| s.serialized_state(cx)),
-        };
-        let kvp = db::kvp::KeyValueStore::global(cx);
-        self._serialize_task = Some(cx.background_spawn(async move {
+    pub(crate) fn serialize(&mut self, cx: &mut Context<Self>) {
+        self._serialize_task = Some(cx.spawn(async move |this, cx| {
+            let Some((window_id, state)) = this
+                .read_with(cx, |this, cx| {
+                    let state = crate::persistence::model::MultiWorkspaceState {
+                        active_workspace_id: this.workspace().read(cx).database_id(),
+                        sidebar_open: this.sidebar_open,
+                        sidebar_state: this.sidebar.as_ref().and_then(|s| s.serialized_state(cx)),
+                    };
+                    (this.window_id, state)
+                })
+                .ok()
+            else {
+                return;
+            };
+            let kvp = cx.update(|cx| db::kvp::KeyValueStore::global(cx));
             crate::persistence::write_multi_workspace_state(&kvp, window_id, state).await;
         }));
     }
