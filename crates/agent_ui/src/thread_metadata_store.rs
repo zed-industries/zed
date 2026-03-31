@@ -47,7 +47,9 @@ fn migrate_thread_metadata(cx: &mut App) {
     cx.spawn(async move |cx| {
         let existing_entries = db.list_ids()?.into_iter().collect::<HashSet<_>>();
 
-        let to_migrate = store.read_with(cx, |_store, cx| {
+        let is_first_migration = existing_entries.is_empty();
+
+        let mut to_migrate = store.read_with(cx, |_store, cx| {
             ThreadStore::global(cx)
                 .read(cx)
                 .entries()
@@ -63,7 +65,7 @@ fn migrate_thread_metadata(cx: &mut App) {
                         updated_at: entry.updated_at,
                         created_at: entry.created_at,
                         folder_paths: entry.folder_paths,
-                        archived: true,
+                        archived: !is_first_migration,
                     })
                 })
                 .collect::<Vec<_>>()
@@ -71,6 +73,24 @@ fn migrate_thread_metadata(cx: &mut App) {
 
         if to_migrate.is_empty() {
             return anyhow::Ok(());
+        }
+
+        // On the first migration (no entries in DB yet), keep the 5 most
+        // recent threads per project unarchived; archive the rest.
+        if is_first_migration {
+            let mut per_project: HashMap<PathList, Vec<&mut ThreadMetadata>> = HashMap::default();
+            for entry in &mut to_migrate {
+                per_project
+                    .entry(entry.folder_paths.clone())
+                    .or_default()
+                    .push(entry);
+            }
+            for entries in per_project.values_mut() {
+                entries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+                for entry in entries.iter_mut().skip(5) {
+                    entry.archived = true;
+                }
+            }
         }
 
         log::info!("Migrating {} thread store entries", to_migrate.len());
@@ -1033,6 +1053,100 @@ mod tests {
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].session_id.0.as_ref(), "existing-session");
     }
+
+    #[gpui::test]
+    async fn test_migrate_thread_metadata_archives_beyond_five_most_recent_per_project(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            ThreadStore::init_global(cx);
+            ThreadMetadataStore::init_global(cx);
+        });
+
+        let project_a_paths = PathList::new(&[Path::new("/project-a")]);
+        let project_b_paths = PathList::new(&[Path::new("/project-b")]);
+        let now = Utc::now();
+
+        // Create 7 threads for project A and 3 for project B
+        let mut threads_to_save = Vec::new();
+        for i in 0..7 {
+            threads_to_save.push((
+                format!("a-session-{i}"),
+                format!("Thread A{i}"),
+                project_a_paths.clone(),
+                now + chrono::Duration::seconds(i as i64),
+            ));
+        }
+        for i in 0..3 {
+            threads_to_save.push((
+                format!("b-session-{i}"),
+                format!("Thread B{i}"),
+                project_b_paths.clone(),
+                now + chrono::Duration::seconds(i as i64),
+            ));
+        }
+
+        for (session_id, title, paths, updated_at) in &threads_to_save {
+            let save_task = cx.update(|cx| {
+                let thread_store = ThreadStore::global(cx);
+                let session_id = session_id.to_string();
+                let title = title.to_string();
+                let paths = paths.clone();
+                thread_store.update(cx, |store, cx| {
+                    store.save_thread(
+                        acp::SessionId::new(session_id),
+                        make_db_thread(&title, *updated_at),
+                        paths,
+                        cx,
+                    )
+                })
+            });
+            save_task.await.unwrap();
+            cx.run_until_parked();
+        }
+
+        cx.update(|cx| migrate_thread_metadata(cx));
+        cx.run_until_parked();
+
+        let list = cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            store.read(cx).entries().collect::<Vec<_>>()
+        });
+
+        assert_eq!(list.len(), 10);
+
+        // Project A: 5 most recent should be unarchived, 2 oldest should be archived
+        let mut project_a_entries: Vec<_> = list
+            .iter()
+            .filter(|m| m.folder_paths == project_a_paths)
+            .collect();
+        assert_eq!(project_a_entries.len(), 7);
+        project_a_entries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+
+        for entry in &project_a_entries[..5] {
+            assert!(
+                !entry.archived,
+                "Expected {} to be unarchived (top 5 most recent)",
+                entry.session_id.0
+            );
+        }
+        for entry in &project_a_entries[5..] {
+            assert!(
+                entry.archived,
+                "Expected {} to be archived (older than top 5)",
+                entry.session_id.0
+            );
+        }
+
+        // Project B: all 3 should be unarchived (under the limit)
+        let project_b_entries: Vec<_> = list
+            .iter()
+            .filter(|m| m.folder_paths == project_b_paths)
+            .collect();
+        assert_eq!(project_b_entries.len(), 3);
+        assert!(project_b_entries.iter().all(|m| !m.archived));
+    }
+
     #[gpui::test]
     async fn test_empty_thread_metadata_deleted_when_thread_released(cx: &mut TestAppContext) {
         cx.update(|cx| {
