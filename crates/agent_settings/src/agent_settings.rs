@@ -1227,7 +1227,9 @@ mod tests {
         project::DisableAiSettings::register(cx);
         AgentSettings::register(cx);
 
-        // The default settings now match the agent layout.
+        // Test defaults are editor layout; switch to agent V2.
+        set_agent_v2_defaults(cx);
+
         // Should be Agent with an empty user layout (user hasn't customized).
         let layout = AgentSettings::get_layout(cx);
         let WindowLayout::Agent(Some(user_layout)) = layout else {
