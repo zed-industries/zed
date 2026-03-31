@@ -307,8 +307,6 @@ pub struct Sidebar {
     /// derivation, since the panel may transiently return `None` while
     /// loading. User actions may write directly for immediate feedback.
     focused_thread: Option<acp::SessionId>,
-    agent_panel_visible: bool,
-    active_thread_is_draft: bool,
     hovered_thread_index: Option<usize>,
     collapsed_groups: HashSet<PathList>,
     expanded_groups: HashMap<PathList, usize>,
@@ -406,8 +404,6 @@ impl Sidebar {
             contents: SidebarContents::default(),
             selection: None,
             focused_thread: None,
-            agent_panel_visible: false,
-            active_thread_is_draft: false,
             hovered_thread_index: None,
             collapsed_groups: HashSet::new(),
             expanded_groups: HashMap::new(),
@@ -427,6 +423,23 @@ impl Sidebar {
         self.multi_workspace
             .upgrade()
             .map_or(false, |mw| mw.read(cx).workspace() == workspace)
+    }
+
+    fn agent_panel_visible(&self, cx: &App) -> bool {
+        self.multi_workspace.upgrade().map_or(false, |mw| {
+            let workspace = mw.read(cx).workspace();
+            AgentPanel::is_visible(&workspace, cx)
+        })
+    }
+
+    fn active_thread_is_draft(&self, cx: &App) -> bool {
+        self.multi_workspace
+            .upgrade()
+            .and_then(|mw| {
+                let workspace = mw.read(cx).workspace();
+                workspace.read(cx).panel::<AgentPanel>(cx)
+            })
+            .map_or(false, |panel| panel.read(cx).active_thread_is_draft(cx))
     }
 
     fn subscribe_to_workspace(
@@ -486,9 +499,6 @@ impl Sidebar {
 
         if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
             self.subscribe_to_agent_panel(&agent_panel, window, cx);
-            if self.is_active_workspace(workspace, cx) {
-                self.agent_panel_visible = AgentPanel::is_visible(workspace, cx);
-            }
             self.observe_draft_editor(cx);
         }
     }
@@ -544,12 +554,7 @@ impl Sidebar {
                     return;
                 }
 
-                let is_visible = AgentPanel::is_visible(&workspace, cx);
-
-                if this.agent_panel_visible != is_visible {
-                    this.agent_panel_visible = is_visible;
-                    cx.notify();
-                }
+                cx.notify();
             })
             .detach();
         }
@@ -648,18 +653,8 @@ impl Sidebar {
 
         let query = self.filter_editor.read(cx).text(cx);
 
-        // Re-derive agent_panel_visible from the active workspace so it stays
-        // correct after workspace switches.
-        self.agent_panel_visible = active_workspace
-            .as_ref()
-            .map_or(false, |ws| AgentPanel::is_visible(ws, cx));
-
-        // Derive active_thread_is_draft BEFORE focused_thread so we can
-        // use it as a guard below.
-        self.active_thread_is_draft = active_workspace
-            .as_ref()
-            .and_then(|ws| ws.read(cx).panel::<AgentPanel>(cx))
-            .map_or(false, |panel| panel.read(cx).active_thread_is_draft(cx));
+        let agent_panel_visible = self.agent_panel_visible(cx);
+        let active_thread_is_draft = self.active_thread_is_draft(cx);
 
         // Derive focused_thread from the active workspace's agent panel.
         // Only update when the panel gives us a positive signal — if the
@@ -674,7 +669,7 @@ impl Sidebar {
                     .active_conversation_view()
                     .and_then(|cv| cv.read(cx).parent_id(cx))
             });
-        if panel_focused.is_some() && !self.active_thread_is_draft {
+        if panel_focused.is_some() && !active_thread_is_draft {
             self.focused_thread = panel_focused;
         }
 
@@ -947,8 +942,8 @@ impl Sidebar {
                     entries.push(thread.into());
                 }
             } else {
-                let is_draft_for_workspace = self.agent_panel_visible
-                    && self.active_thread_is_draft
+                let is_draft_for_workspace = agent_panel_visible
+                    && active_thread_is_draft
                     && self.focused_thread.is_none()
                     && is_active;
 
@@ -2653,8 +2648,8 @@ impl Sidebar {
         let thread_workspace = thread.workspace.clone();
 
         let is_hovered = self.hovered_thread_index == Some(ix);
-        let is_selected =
-            self.agent_panel_visible && self.focused_thread.as_ref() == Some(&metadata.session_id);
+        let is_selected = self.agent_panel_visible(cx)
+            && self.focused_thread.as_ref() == Some(&metadata.session_id);
         let is_running = matches!(
             thread.status,
             AgentThreadStatus::Running | AgentThreadStatus::WaitingForConfirmation
@@ -2950,7 +2945,8 @@ impl Sidebar {
         is_selected: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let is_active = is_active_draft && self.agent_panel_visible && self.active_thread_is_draft;
+        let is_active =
+            is_active_draft && self.agent_panel_visible(cx) && self.active_thread_is_draft(cx);
 
         let label: SharedString = if is_active {
             self.active_draft_text(cx)

@@ -2143,9 +2143,9 @@ async fn test_new_thread_button_works_after_adding_folder(cx: &mut TestAppContex
 
     // The "New Thread" button should NOT be in "active/draft" state
     // because the panel has a thread with messages.
-    sidebar.read_with(cx, |sidebar, _cx| {
+    sidebar.read_with(cx, |sidebar, cx| {
         assert!(
-            !sidebar.active_thread_is_draft,
+            !sidebar.active_thread_is_draft(cx),
             "Panel has a thread with messages, so it should not be a draft"
         );
     });
@@ -2175,9 +2175,9 @@ async fn test_new_thread_button_works_after_adding_folder(cx: &mut TestAppContex
     // The "New Thread" button must still be clickable (not stuck in
     // "active/draft" state). Verify that `active_thread_is_draft` is
     // false — the panel still has the old thread with messages.
-    sidebar.read_with(cx, |sidebar, _cx| {
+    sidebar.read_with(cx, |sidebar, cx| {
         assert!(
-            !sidebar.active_thread_is_draft,
+            !sidebar.active_thread_is_draft(cx),
             "After adding a folder the panel still has a thread with messages, \
                  so active_thread_is_draft should be false"
         );
@@ -2193,9 +2193,9 @@ async fn test_new_thread_button_works_after_adding_folder(cx: &mut TestAppContex
 
     // After creating a new thread, the panel should now be in draft
     // state (no messages on the new thread).
-    sidebar.read_with(cx, |sidebar, _cx| {
+    sidebar.read_with(cx, |sidebar, cx| {
         assert!(
-            sidebar.active_thread_is_draft,
+            sidebar.active_thread_is_draft(cx),
             "After creating a new thread the panel should be in draft state"
         );
     });
@@ -2247,13 +2247,13 @@ async fn test_cmd_n_shows_new_thread_entry(cx: &mut TestAppContext) {
         "After Cmd-N the sidebar should show a highlighted New Thread entry"
     );
 
-    sidebar.read_with(cx, |sidebar, _cx| {
+    sidebar.read_with(cx, |sidebar, cx| {
         assert!(
             sidebar.focused_thread.is_none(),
             "focused_thread should be cleared after Cmd-N"
         );
         assert!(
-            sidebar.active_thread_is_draft,
+            sidebar.active_thread_is_draft(cx),
             "the new blank thread should be a draft"
         );
     });
@@ -2383,13 +2383,13 @@ async fn test_cmd_n_shows_new_thread_entry_in_absorbed_worktree(cx: &mut TestApp
              a highlighted New Thread entry under the main repo header"
     );
 
-    sidebar.read_with(cx, |sidebar, _cx| {
+    sidebar.read_with(cx, |sidebar, cx| {
         assert!(
             sidebar.focused_thread.is_none(),
             "focused_thread should be cleared after Cmd-N"
         );
         assert!(
-            sidebar.active_thread_is_draft,
+            sidebar.active_thread_is_draft(cx),
             "the new blank thread should be a draft"
         );
     });
@@ -4881,7 +4881,8 @@ mod property_test {
             }
             Operation::ToggleAgentPanel => {
                 let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
-                let panel_open = sidebar.read_with(cx, |sidebar, _cx| sidebar.agent_panel_visible);
+                let panel_open =
+                    sidebar.read_with(cx, |sidebar, cx| sidebar.agent_panel_visible(cx));
                 workspace.update_in(cx, |workspace, window, cx| {
                     if panel_open {
                         workspace.close_panel::<AgentPanel>(window, cx);
@@ -5130,32 +5131,24 @@ mod property_test {
         };
 
         let workspace = multi_workspace.read(cx).workspace();
-        let panel_actually_visible = AgentPanel::is_visible(&workspace, cx);
-        let panel_active_session_id =
-            workspace
-                .read(cx)
-                .panel::<AgentPanel>(cx)
-                .and_then(|panel| {
-                    panel
-                        .read(cx)
-                        .active_conversation_view()
-                        .and_then(|cv| cv.read(cx).parent_id(cx))
-                });
 
-        // TODO: Remove this state entirely
-        anyhow::ensure!(
-            sidebar.agent_panel_visible == panel_actually_visible,
-            "sidebar.agent_panel_visible ({}) does not match AgentPanel::is_visible ({})",
-            sidebar.agent_panel_visible,
-            panel_actually_visible,
-        );
-
-        // TODO: Remove these checks, the focused_thread should _always_ be Some(item-in-the-list) after
-        // update_entries. if the activated workspace's agent panel has an active thread, this item should
-        // match the one in the list. There may be a slight delay, where a thread is loading so the agent panel
-        // returns None initially, and the focused_thread is often optimistically set to the thread the agent panel
-        // is going to be
-        if sidebar.agent_panel_visible && !sidebar.active_thread_is_draft {
+        // TODO: The focused_thread should _always_ be Some(item-in-the-list) after
+        // update_entries. If the activated workspace's agent panel has an active thread,
+        // this item should match the one in the list. There may be a slight delay where
+        // a thread is loading so the agent panel returns None initially, and the
+        // focused_thread is often optimistically set to the thread the agent panel is
+        // going to be.
+        if sidebar.agent_panel_visible(cx) && !sidebar.active_thread_is_draft(cx) {
+            let panel_active_session_id =
+                workspace
+                    .read(cx)
+                    .panel::<AgentPanel>(cx)
+                    .and_then(|panel| {
+                        panel
+                            .read(cx)
+                            .active_conversation_view()
+                            .and_then(|cv| cv.read(cx).parent_id(cx))
+                    });
             if let Some(panel_session_id) = panel_active_session_id {
                 anyhow::ensure!(
                     sidebar.focused_thread.as_ref() == Some(&panel_session_id),
