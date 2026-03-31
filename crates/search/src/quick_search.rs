@@ -1519,7 +1519,7 @@ pub struct QuickSearchDelegate {
     selected_index: usize,
     cancel_flag: Arc<std::sync::atomic::AtomicBool>,
     last_selection_change_time: Option<std::time::Instant>,
-    last_confirm_time: Option<std::time::Instant>,
+    last_click: Option<(usize, std::time::Instant)>,
     search_options: SearchOptions,
     search_in_progress: bool,
     pending_initial_query: RefCell<Option<String>>,
@@ -1558,7 +1558,7 @@ impl QuickSearchDelegate {
             selected_index: 0,
             cancel_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             last_selection_change_time: None,
-            last_confirm_time: None,
+            last_click: None,
             search_options: SearchOptions::from_settings(&EditorSettings::get_global(cx).search),
             search_in_progress: false,
             pending_initial_query: RefCell::new(initial_query),
@@ -2202,6 +2202,10 @@ impl PickerDelegate for QuickSearchDelegate {
         self.selected_index
     }
 
+    fn hover_to_select(&self) -> bool {
+        false
+    }
+
     fn set_selected_index(
         &mut self,
         ix: usize,
@@ -2359,17 +2363,21 @@ impl PickerDelegate for QuickSearchDelegate {
 
         if is_click {
             let is_double_click = self
-                .last_confirm_time
-                .map(|t| now.duration_since(t).as_millis() < DOUBLE_CLICK_THRESHOLD_MS)
+                .last_click
+                .map(|(ix, t)| {
+                    ix == self.selected_index
+                        && now.duration_since(t).as_millis() < DOUBLE_CLICK_THRESHOLD_MS
+                })
                 .unwrap_or(false);
-            self.last_confirm_time = Some(now);
+            self.last_click = Some((self.selected_index, now));
 
             if !is_double_click {
                 return;
             }
         }
 
-        let Some(selected_match) = self.matches.get(self.selected_index) else {
+        let effective_index = self.selected_index;
+        let Some(selected_match) = self.matches.get(effective_index) else {
             return;
         };
 
