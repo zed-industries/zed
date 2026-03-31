@@ -2337,7 +2337,7 @@ async fn test_draft_with_server_session_shows_as_draft(cx: &mut TestAppContext) 
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, &project, cx);
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
 
     let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
 
