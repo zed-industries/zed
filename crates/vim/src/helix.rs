@@ -7,7 +7,8 @@ mod surround;
 
 use editor::display_map::DisplaySnapshot;
 use editor::{
-    DisplayPoint, Editor, EditorSettings, HideMouseCursorOrigin, ModalCursorMode, MultiBufferOffset, SelectionEffects, ToOffset, ToPoint, movement
+    DisplayPoint, Editor, EditorSettings, HideMouseCursorOrigin, ModalCursorMode,
+    MultiBufferOffset, SelectionEffects, ToOffset, ToPoint, movement,
 };
 use gpui::actions;
 use gpui::{Context, Window};

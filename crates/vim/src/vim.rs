@@ -2087,7 +2087,7 @@ impl Vim {
             cursor_offset: match (self.mode.is_helix(), self.mode.is_visual()) {
                 (true, _) => ModalCursorMode::Helix,
                 (_, true) => ModalCursorMode::Vim,
-                (_ , _) => ModalCursorMode::None
+                (_, _) => ModalCursorMode::None,
             },
             line_mode: matches!(self.mode, Mode::VisualLine),
             hide_edit_predictions: !matches!(self.mode, Mode::Insert | Mode::Replace),
