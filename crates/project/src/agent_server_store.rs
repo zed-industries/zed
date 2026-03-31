@@ -968,8 +968,7 @@ impl AgentServerStore {
         self.external_agents.get_mut(name).and_then(|entry| {
             entry
                 .server
-                .as_any_mut()
-                .downcast_ref::<LocalExtensionArchiveAgent>()
+                .downcast_mut::<LocalExtensionArchiveAgent>()
                 .map(|ext_agent| ext_agent.extension_id.clone())
         })
     }
