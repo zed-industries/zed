@@ -8,6 +8,7 @@ use cloud_llm_client::{
     EditPredictionRejectReason, EditPredictionRejection, RejectEditPredictionsBody,
     predict_edits_v3::{PredictEditsV3Request, PredictEditsV3Response},
 };
+use db::AppDatabase;
 use settings::EditPredictionDataCollectionChoice;
 
 use futures::{
@@ -2388,6 +2389,7 @@ fn init_test_with_fake_client(
     cx: &mut TestAppContext,
 ) -> (Entity<EditPredictionStore>, RequestChannels) {
     cx.update(move |cx| {
+        cx.set_global(AppDatabase::test_new());
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
         zlog::init_test();
@@ -2709,6 +2711,7 @@ async fn test_edit_prediction_no_spurious_trailing_newline(cx: &mut TestAppConte
 
 fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
+        cx.set_global(AppDatabase::test_new());
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
     });
