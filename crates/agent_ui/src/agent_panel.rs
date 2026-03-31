@@ -2707,15 +2707,12 @@ impl AgentPanel {
         })?;
 
         new_window_handle.update(cx, |multi_workspace, window, cx| {
-<<<<<<< HEAD
-            multi_workspace.activate(new_workspace.clone(), cx);
-
-            new_workspace.update(cx, |workspace, cx| {
-                workspace.run_git_worktree_tasks(window, cx);
-            })
-=======
             multi_workspace.activate(new_workspace.clone(), window, cx);
->>>>>>> origin
+
+            // todo! this is where we should run the task git hooks
+            // new_workspace.update(cx, |workspace, cx| {
+            //     workspace.run_git_worktree_tasks(window, cx);
+            // })
         })?;
 
         this.update_in(cx, |this, window, cx| {

@@ -6,7 +6,6 @@ use serde_json::json;
 use settings::SettingsLocation;
 use std::path::Path;
 use std::sync::Arc;
-use task::WorktreeTaskDefinition;
 use util::rel_path::rel_path;
 
 use project::task_store::{TaskSettingsLocation, TaskStore};

@@ -176,7 +176,6 @@ fn resolve_static_schema(path: &str) -> Option<String> {
         "tsconfig" => Some(TSCONFIG_SCHEMA.to_string()),
         "package_json" => Some(PACKAGE_JSON_SCHEMA.to_string()),
         "tasks" => Some(TASKS_SCHEMA.clone()),
-        "worktrees" => Some(WORKTREES_SCHEMA.clone()),
         "snippets" => Some(SNIPPETS_SCHEMA.clone()),
         "jsonc" => Some(JSONC_SCHEMA.clone()),
         "keymap" => Some(KEYMAP_SCHEMA.clone()),
@@ -461,10 +460,6 @@ pub fn all_schema_file_associations(
                 paths::local_debug_file_relative_path()
             ],
             "url": format!("{SCHEMA_URI_PREFIX}debug_tasks"),
-        },
-        {
-            "fileMatch": [paths::local_worktrees_file_relative_path()],
-            "url": format!("{SCHEMA_URI_PREFIX}worktrees"),
         },
         {
             "fileMatch": [

@@ -671,7 +671,6 @@ impl LocalSettingsKind {
             proto::LocalSettingsKind::Tasks => Self::Tasks,
             proto::LocalSettingsKind::Editorconfig => Self::Editorconfig,
             proto::LocalSettingsKind::Debug => Self::Debug,
-            proto::LocalSettingsKind::Worktrees => Self::Worktrees,
         }
     }
 
@@ -681,7 +680,6 @@ impl LocalSettingsKind {
             Self::Tasks => proto::LocalSettingsKind::Tasks,
             Self::Editorconfig => proto::LocalSettingsKind::Editorconfig,
             Self::Debug => proto::LocalSettingsKind::Debug,
-            Self::Worktrees => proto::LocalSettingsKind::Worktrees,
         }
     }
 }
