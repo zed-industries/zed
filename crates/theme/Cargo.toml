@@ -10,7 +10,7 @@ workspace = true
 
 [features]
 default = []
-test-support = ["gpui/test-support"]
+test-support = ["gpui/test-support", "syntax_theme/test-support"]
 
 [lib]
 path = "src/theme.rs"
@@ -21,6 +21,7 @@ anyhow.workspace = true
 collections.workspace = true
 derive_more.workspace = true
 gpui.workspace = true
+syntax_theme.workspace = true
 palette = { workspace = true, default-features = false, features = ["std"] }
 parking_lot.workspace = true
 refineable.workspace = true

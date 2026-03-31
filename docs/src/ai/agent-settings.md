@@ -140,19 +140,6 @@ Specify a custom temperature for a provider and/or model:
 
 Note that some of these settings are also surfaced in the Agent Panel's settings UI, which you can access either via the `agent: open settings` action or by the dropdown menu on the top-right corner of the panel.
 
-### Default View
-
-Use the `default_view` setting to change the default view of the Agent Panel.
-You can choose between `thread` (the default) and `text_thread`:
-
-```json [settings]
-{
-  "agent": {
-    "default_view": "text_thread"
-  }
-}
-```
-
 ### Font Size
 
 Use the `agent_ui_font_size` setting to change the font size of rendered agent responses in the panel.

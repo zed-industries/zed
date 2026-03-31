@@ -60,6 +60,25 @@ pub const GRAPH_CHUNK_SIZE: usize = 1000;
 /// Default value for the `git.worktree_directory` setting.
 pub const DEFAULT_WORKTREE_DIRECTORY: &str = "../worktrees";
 
+/// Determine the original (main) repository's working directory.
+///
+/// For linked worktrees, `common_dir` differs from `repository_dir` and
+/// points to the main repo's `.git` directory, so we can derive the main
+/// repo's working directory from it. For normal repos and submodules,
+/// `common_dir` equals `repository_dir`, and the original repo is simply
+/// `work_directory` itself.
+pub fn original_repo_path(
+    work_directory: &Path,
+    common_dir: &Path,
+    repository_dir: &Path,
+) -> PathBuf {
+    if common_dir != repository_dir {
+        original_repo_path_from_common_dir(common_dir)
+    } else {
+        work_directory.to_path_buf()
+    }
+}
+
 /// Given the git common directory (from `commondir()`), derive the original
 /// repository's working directory.
 ///

@@ -289,9 +289,11 @@ struct LocalRepositoryEntry {
     dot_git_abs_path: Arc<Path>,
     /// Absolute path to the "commondir" for this repository.
     ///
-    /// This is always a directory. For a normal repository, this is the same as dot_git_abs_path,
-    /// but in the case of a submodule or a worktree it is the path to the "parent" .git directory
-    /// from which the submodule/worktree was derived.
+    /// This is always a directory. For a normal repository, this is the same as
+    /// `dot_git_abs_path`. For a linked worktree, this is the main repo's `.git`
+    /// directory (resolved from the worktree's `commondir` file). For a submodule,
+    /// this equals `repository_dir_abs_path` (submodules don't have a `commondir`
+    /// file).
     common_dir_abs_path: Arc<Path>,
     /// Absolute path to the directory holding the repository's state.
     ///
