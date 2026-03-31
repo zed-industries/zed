@@ -1317,6 +1317,7 @@ impl GitGraph {
 
         if query.as_str().is_empty() {
             self.search_state.state = QueryState::Empty;
+            cx.notify();
             return;
         }
 
