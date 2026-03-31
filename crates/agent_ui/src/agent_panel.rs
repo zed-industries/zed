@@ -743,6 +743,7 @@ pub struct AgentPanel {
     agent_navigation_menu_handle: PopoverMenuHandle<ContextMenu>,
     agent_navigation_menu: Option<Entity<ContextMenu>>,
     _extension_subscription: Option<Subscription>,
+    _project_subscription: Subscription,
     zoomed: bool,
     pending_serialization: Option<Task<Result<()>>>,
     onboarding: Entity<AgentPanelOnboarding>,
@@ -1051,6 +1052,16 @@ impl AgentPanel {
             );
             store
         });
+        let _project_subscription =
+            cx.subscribe(&project, |this, _project, event, cx| match event {
+                project::Event::WorktreeAdded(_)
+                | project::Event::WorktreeRemoved(_)
+                | project::Event::WorktreeOrderChanged => {
+                    this.update_thread_work_dirs(cx);
+                }
+                _ => {}
+            });
+
         let mut panel = Self {
             workspace_id,
             active_view,
@@ -1074,6 +1085,7 @@ impl AgentPanel {
             agent_navigation_menu_handle: PopoverMenuHandle::default(),
             agent_navigation_menu: None,
             _extension_subscription: extension_subscription,
+            _project_subscription,
             zoomed: false,
             pending_serialization: None,
             onboarding,
@@ -1979,6 +1991,56 @@ impl AgentPanel {
         }
 
         views
+    }
+
+    fn update_thread_work_dirs(&self, cx: &mut Context<Self>) {
+        let new_work_dirs = self.project.read(cx).default_path_list(cx);
+
+        let conversation_views: Vec<Entity<ConversationView>> = self
+            .active_conversation_view()
+            .cloned()
+            .into_iter()
+            .chain(self.background_threads.values().cloned())
+            .collect();
+
+        // Only update root threads. Subagent threads don't own their
+        // work_dirs
+        let mut root_threads: Vec<Entity<AcpThread>> = Vec::new();
+        for conversation_view in &conversation_views {
+            if let Some(connected) = conversation_view.read(cx).as_connected() {
+                for thread_view in connected.threads.values() {
+                    let thread = &thread_view.read(cx).thread;
+                    if thread.read(cx).parent_session_id().is_none() {
+                        root_threads.push(thread.clone());
+                    }
+                }
+            }
+        }
+
+        for thread in &root_threads {
+            thread.update(cx, |thread, _cx| {
+                thread.set_work_dirs(new_work_dirs.clone());
+            });
+        }
+
+        if let Some(metadata_store) =
+            crate::thread_metadata_store::ThreadMetadataStore::try_global(cx)
+        {
+            metadata_store.update(cx, |store, cx| {
+                for thread in &root_threads {
+                    let is_archived = store
+                        .entry(thread.read(cx).session_id())
+                        .map(|t| t.archived)
+                        .unwrap_or(false);
+                    let metadata = crate::thread_metadata_store::ThreadMetadata::from_thread(
+                        is_archived,
+                        thread,
+                        cx,
+                    );
+                    store.save(metadata, cx);
+                }
+            });
+        }
     }
 
     fn retain_running_thread(&mut self, old_view: ActiveView, cx: &mut Context<Self>) {
@@ -6303,6 +6365,167 @@ mod tests {
                 id: CODEX_ID.into()
             },
             "the new worktree workspace should use the same agent (Codex) that was selected in the original panel",
+        );
+    }
+
+    #[gpui::test]
+    async fn test_work_dirs_update_when_worktrees_change(cx: &mut TestAppContext) {
+        use crate::thread_metadata_store::ThreadMetadataStore;
+
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        // Set up a project with one worktree.
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project_a", json!({ "file.txt": "" }))
+            .await;
+        let project = Project::test(fs.clone(), [Path::new("/project_a")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+        let mut cx = VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let panel = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+            cx.new(|cx| AgentPanel::new(workspace, text_thread_store, None, window, cx))
+        });
+
+        // Open thread A and send a message. With empty next_prompt_updates it
+        // stays generating, so opening B will move A to background_threads.
+        let connection_a = StubAgentConnection::new().with_agent_id("agent-a".into());
+        open_thread_with_custom_connection(&panel, connection_a.clone(), &mut cx);
+        send_message(&panel, &mut cx);
+        let session_id_a = active_session_id(&panel, &cx);
+
+        // Open thread B — thread A (generating) is retained in the background.
+        let connection_b = StubAgentConnection::new().with_agent_id("agent-b".into());
+        open_thread_with_custom_connection(&panel, connection_b.clone(), &mut cx);
+        send_message(&panel, &mut cx);
+        let session_id_b = active_session_id(&panel, &cx);
+
+        let metadata_store = cx.update(|_, cx| ThreadMetadataStore::global(cx));
+
+        panel.read_with(&cx, |panel, _cx| {
+            assert!(
+                panel.background_threads.contains_key(&session_id_a),
+                "Thread A should be in background_threads"
+            );
+        });
+
+        // Verify initial work_dirs for thread B contain only /project_a.
+        let initial_b_paths = panel.read_with(&cx, |panel, cx| {
+            let thread = panel.active_agent_thread(cx).unwrap();
+            thread.read(cx).work_dirs().cloned().unwrap()
+        });
+        assert_eq!(
+            initial_b_paths.ordered_paths().collect::<Vec<_>>(),
+            vec![&PathBuf::from("/project_a")],
+            "Thread B should initially have only /project_a"
+        );
+
+        // Now add a second worktree to the project.
+        fs.insert_tree("/project_b", json!({ "other.txt": "" }))
+            .await;
+        let (new_tree, _) = project
+            .update(&mut cx, |project, cx| {
+                project.find_or_create_worktree("/project_b", true, cx)
+            })
+            .await
+            .unwrap();
+        cx.read(|cx| new_tree.read(cx).as_local().unwrap().scan_complete())
+            .await;
+        cx.run_until_parked();
+
+        // Verify thread B's (active) work_dirs now include both worktrees.
+        let updated_b_paths = panel.read_with(&cx, |panel, cx| {
+            let thread = panel.active_agent_thread(cx).unwrap();
+            thread.read(cx).work_dirs().cloned().unwrap()
+        });
+        let mut b_paths_sorted = updated_b_paths.ordered_paths().cloned().collect::<Vec<_>>();
+        b_paths_sorted.sort();
+        assert_eq!(
+            b_paths_sorted,
+            vec![PathBuf::from("/project_a"), PathBuf::from("/project_b")],
+            "Thread B work_dirs should include both worktrees after adding /project_b"
+        );
+
+        // Verify thread A's (background) work_dirs are also updated.
+        let updated_a_paths = panel.read_with(&cx, |panel, cx| {
+            let bg_view = panel.background_threads.get(&session_id_a).unwrap();
+            let root_thread = bg_view.read(cx).root_thread(cx).unwrap();
+            root_thread
+                .read(cx)
+                .thread
+                .read(cx)
+                .work_dirs()
+                .cloned()
+                .unwrap()
+        });
+        let mut a_paths_sorted = updated_a_paths.ordered_paths().cloned().collect::<Vec<_>>();
+        a_paths_sorted.sort();
+        assert_eq!(
+            a_paths_sorted,
+            vec![PathBuf::from("/project_a"), PathBuf::from("/project_b")],
+            "Thread A work_dirs should include both worktrees after adding /project_b"
+        );
+
+        // Verify the metadata store reflects the new paths for both threads.
+        cx.run_until_parked();
+        for (label, session_id) in [("thread B", &session_id_b), ("thread A", &session_id_a)] {
+            let metadata_paths = metadata_store.read_with(&cx, |store, _cx| {
+                let metadata = store
+                    .entry(session_id)
+                    .unwrap_or_else(|| panic!("{label} thread metadata should exist"));
+                metadata.folder_paths.clone()
+            });
+            let mut sorted = metadata_paths.ordered_paths().cloned().collect::<Vec<_>>();
+            sorted.sort();
+            assert_eq!(
+                sorted,
+                vec![PathBuf::from("/project_a"), PathBuf::from("/project_b")],
+                "{label} thread metadata folder_paths should include both worktrees"
+            );
+        }
+
+        // Now remove a worktree and verify work_dirs shrink.
+        let worktree_b_id = new_tree.read_with(&cx, |tree, _| tree.id());
+        project.update(&mut cx, |project, cx| {
+            project.remove_worktree(worktree_b_id, cx);
+        });
+        cx.run_until_parked();
+
+        let after_remove_b = panel.read_with(&cx, |panel, cx| {
+            let thread = panel.active_agent_thread(cx).unwrap();
+            thread.read(cx).work_dirs().cloned().unwrap()
+        });
+        assert_eq!(
+            after_remove_b.ordered_paths().collect::<Vec<_>>(),
+            vec![&PathBuf::from("/project_a")],
+            "Thread B work_dirs should revert to only /project_a after removing /project_b"
+        );
+
+        let after_remove_a = panel.read_with(&cx, |panel, cx| {
+            let bg_view = panel.background_threads.get(&session_id_a).unwrap();
+            let root_thread = bg_view.read(cx).root_thread(cx).unwrap();
+            root_thread
+                .read(cx)
+                .thread
+                .read(cx)
+                .work_dirs()
+                .cloned()
+                .unwrap()
+        });
+        assert_eq!(
+            after_remove_a.ordered_paths().collect::<Vec<_>>(),
+            vec![&PathBuf::from("/project_a")],
+            "Thread A work_dirs should revert to only /project_a after removing /project_b"
         );
     }
 }

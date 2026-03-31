@@ -222,6 +222,11 @@ impl ThreadMetadataStore {
         self.threads.keys().cloned()
     }
 
+    /// Returns the metadata for a specific thread, if it exists.
+    pub fn entry(&self, session_id: &acp::SessionId) -> Option<&ThreadMetadata> {
+        self.threads.get(session_id)
+    }
+
     /// Returns all threads.
     pub fn entries(&self) -> impl Iterator<Item = ThreadMetadata> + '_ {
         self.threads.values().cloned()

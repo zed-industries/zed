@@ -417,7 +417,7 @@ enum ServerState {
 pub struct ConnectedServerState {
     auth_state: AuthState,
     active_id: Option<acp::SessionId>,
-    threads: HashMap<acp::SessionId, Entity<ThreadView>>,
+    pub(crate) threads: HashMap<acp::SessionId, Entity<ThreadView>>,
     connection: Rc<dyn AgentConnection>,
     history: Option<Entity<ThreadHistory>>,
     conversation: Entity<Conversation>,

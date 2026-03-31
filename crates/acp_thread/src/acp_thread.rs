@@ -1288,6 +1288,10 @@ impl AcpThread {
         self.work_dirs.as_ref()
     }
 
+    pub fn set_work_dirs(&mut self, work_dirs: PathList) {
+        self.work_dirs = Some(work_dirs);
+    }
+
     pub fn status(&self) -> ThreadStatus {
         if self.running_turn.is_some() {
             ThreadStatus::Generating
