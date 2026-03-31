@@ -2162,14 +2162,12 @@ async fn test_new_thread_button_works_after_adding_folder(cx: &mut TestAppContex
         .expect("should add worktree");
     cx.run_until_parked();
 
-    // The workspace path_list is now [project-a, project-b]. The old
-    // thread was stored under [project-a], so it no longer appears in
-    // the sidebar list for this workspace.
-    let entries = visible_entries_as_strings(&sidebar, cx);
-    assert!(
-        !entries.iter().any(|e| e.contains("Hello")),
-        "Thread stored under the old path_list should not appear: {:?}",
-        entries
+    // The workspace path_list is now [project-a, project-b]. The active
+    // thread's metadata was re-saved with the new paths by the agent panel's
+    // project subscription, so it stays visible under the updated group.
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["v [project-a, project-b]", "  Hello *",]
     );
 
     // The "New Thread" button must still be clickable (not stuck in
