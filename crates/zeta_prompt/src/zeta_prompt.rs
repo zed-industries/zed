@@ -226,20 +226,7 @@ pub fn prompt_input_contains_special_tokens(input: &ZetaPromptInput, format: Zet
 
 /// Checks if `text` contains `token` at the start of a line.
 ///
-/// Tokens like `"=======\n"` are used as line-level delimiters in the prompt format,
-/// so they should only be considered a match when they appear at the beginning of a line,
-/// not when they're embedded within a line (e.g. `// =======`).
-fn text_contains_line_start_token(text: &str, token: &str) -> bool {
-    let mut start = 0;
-    while let Some(pos) = text[start..].find(token) {
-        let abs_pos = start + pos;
-        if abs_pos == 0 || text.as_bytes()[abs_pos - 1] == b'\n' {
-            return true;
-        }
-        start = abs_pos + 1;
-    }
-    false
-}
+
 
 pub fn format_zeta_prompt(input: &ZetaPromptInput, format: ZetaFormat) -> Option<String> {
     format_prompt_with_budget_for_format(input, format, MAX_PROMPT_TOKENS)
@@ -5313,27 +5300,7 @@ mod tests {
         assert_eq!(apply_edit(excerpt, &output1), "new content\n");
     }
 
-    #[test]
-    fn test_text_contains_line_start_token() {
-        let sep = "=======\n";
-
-        // Token at start of text
-        assert!(text_contains_line_start_token("=======\nfoo", sep));
-
-        // Token at start of a line (after newline)
-        assert!(text_contains_line_start_token("foo\n=======\nbar", sep));
-
-        // Token embedded within a line should NOT match
-        assert!(!text_contains_line_start_token("// =======\n", sep));
-        assert!(!text_contains_line_start_token("foo // =======\nbar", sep));
-
-        // No match at all
-        assert!(!text_contains_line_start_token("======\n", sep));
-        assert!(!text_contains_line_start_token("hello world", sep));
-
-        // Token preceded by non-newline character
-        assert!(!text_contains_line_start_token("x=======\n", sep));
-    }
+    
 
     #[test]
     fn test_special_tokens_not_triggered_by_comment_separator() {
