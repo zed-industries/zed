@@ -155,7 +155,7 @@ async fn spawn_and_read_fd(
 #[cfg(windows)]
 async fn capture_windows(
     shell_path: &Path,
-    _args: &[String],
+    args: &[String],
     directory: &Path,
 ) -> Result<collections::HashMap<String, String>> {
     use std::process::Stdio;
@@ -173,7 +173,7 @@ async fn capture_windows(
             .unwrap_or_else(|| value.to_owned())
     };
     let mut cmd = crate::command::new_command(shell_path);
-    // Ignore user-provided shell args - use our own commands for env capture.
+    cmd.args(args);
     let cmd = match shell_kind {
         ShellKind::Csh
         | ShellKind::Tcsh
