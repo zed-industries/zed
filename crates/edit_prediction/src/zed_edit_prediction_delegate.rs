@@ -10,7 +10,7 @@ use fs::Fs;
 use gpui::{App, Entity, prelude::*};
 use language::{Buffer, ToPoint as _};
 use project::Project;
-use settings::update_settings_file;
+use settings::{EditPredictionDataCollectionChoice, update_settings_file};
 
 use crate::{BufferEditPrediction, EditPredictionStore};
 
@@ -101,7 +101,11 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
                 .edit_predictions
                 .get_or_insert_default();
 
-            edit_predictions.allow_data_collection = Some(!is_currently_enabled);
+            edit_predictions.allow_data_collection = Some(if is_currently_enabled {
+                EditPredictionDataCollectionChoice::No
+            } else {
+                EditPredictionDataCollectionChoice::Yes
+            });
         });
     }
 

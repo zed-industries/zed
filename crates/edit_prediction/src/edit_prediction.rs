@@ -36,7 +36,8 @@ use release_channel::AppVersion;
 use semver::Version;
 use serde::de::DeserializeOwned;
 use settings::{
-    EditPredictionPromptFormat, EditPredictionProvider, Settings as _, update_settings_file,
+    EditPredictionDataCollectionChoice, EditPredictionPromptFormat, EditPredictionProvider,
+    Settings as _, update_settings_file,
 };
 use std::collections::{VecDeque, hash_map};
 use std::env;
@@ -2648,21 +2649,23 @@ impl EditPredictionStore {
             return true;
         }
 
-        if let Some(value) = all_language_settings(None, cx)
+        match all_language_settings(None, cx)
             .edit_predictions
             .allow_data_collection
         {
-            return value;
+            EditPredictionDataCollectionChoice::Yes => true,
+            EditPredictionDataCollectionChoice::No => false,
+            EditPredictionDataCollectionChoice::Default => {
+                // Fall back to the legacy KV entry for users who have not yet set
+                // the new setting explicitly via the toggle or settings.json.
+                KeyValueStore::global(cx)
+                    .read_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE)
+                    .log_err()
+                    .flatten()
+                    .as_deref()
+                    == Some("true")
+            }
         }
-
-        // Fall back to the legacy KV entry for users who have not yet set
-        // the new setting explicitly via the toggle or settings.json.
-        KeyValueStore::global(cx)
-            .read_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE)
-            .log_err()
-            .flatten()
-            .as_deref()
-            == Some("true")
     }
 
     pub fn shown_predictions(&self) -> impl DoubleEndedIterator<Item = &EditPrediction> {

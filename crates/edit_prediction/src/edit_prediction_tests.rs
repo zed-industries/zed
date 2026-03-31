@@ -8,6 +8,7 @@ use cloud_llm_client::{
     EditPredictionRejectReason, EditPredictionRejection, RejectEditPredictionsBody,
     predict_edits_v3::{PredictEditsV3Request, PredictEditsV3Response},
 };
+use settings::EditPredictionDataCollectionChoice;
 
 use futures::{
     AsyncReadExt, FutureExt, StreamExt,
@@ -3367,7 +3368,7 @@ async fn test_data_collection_setting_overrides_kv_store(cx: &mut TestAppContext
                 .all_languages
                 .edit_predictions
                 .get_or_insert_default()
-                .allow_data_collection = Some(false);
+                .allow_data_collection = Some(EditPredictionDataCollectionChoice::No);
         });
     });
 
@@ -3396,7 +3397,7 @@ async fn test_data_collection_enabled_via_setting(cx: &mut TestAppContext) {
                 .all_languages
                 .edit_predictions
                 .get_or_insert_default()
-                .allow_data_collection = Some(true);
+                .allow_data_collection = Some(EditPredictionDataCollectionChoice::Yes);
         });
     });
 
@@ -3443,7 +3444,7 @@ async fn test_toggle_data_collection_from_kv_enabled_state(cx: &mut TestAppConte
 
     // Simulate what toggle_data_collection does: capture the resolved current
     // state, then write its inverse. With the fix, is_currently_enabled = true,
-    // so allow_data_collection becomes Some(false).
+    // so allow_data_collection becomes Some(No).
     let is_currently_enabled = cx.update(|cx| ep_store.read(cx).is_data_collection_enabled(cx));
     cx.update_global::<SettingsStore, _>(|settings, cx| {
         settings.update_user_settings(cx, |content| {
@@ -3452,7 +3453,11 @@ async fn test_toggle_data_collection_from_kv_enabled_state(cx: &mut TestAppConte
                 .all_languages
                 .edit_predictions
                 .get_or_insert_default()
-                .allow_data_collection = Some(!is_currently_enabled);
+                .allow_data_collection = Some(if is_currently_enabled {
+                EditPredictionDataCollectionChoice::No
+            } else {
+                EditPredictionDataCollectionChoice::Yes
+            });
         });
     });
 
