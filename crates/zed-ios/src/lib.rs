@@ -611,6 +611,9 @@ mod ios {
                     }));
                 }
 
+                // Store AsyncApp handle for FFI entry points (e.g. background persist).
+                store_async_app(cx);
+
                 // Initialize connection tracking and show the landing screen.
                 crate::connection_landing::init_active_connections(cx);
                 if let Err(err) = crate::connection_landing::ConnectionLanding::open(cx) {
@@ -839,6 +842,27 @@ mod ios {
         // Manager multi-window) would open additional workspaces here.
         log::info!("[zed-ios] ios_open_window called");
     }
+
+    pub fn ios_will_resign_active() {
+        log::info!("[zed-ios] app will resign active — persisting sessions");
+        ASYNC_APP.with(|cell| {
+            if let Some(ref async_cx) = *cell.borrow() {
+                async_cx.update(|cx| {
+                    crate::connection_landing::persist_sessions_for_background(cx);
+                });
+            }
+        });
+    }
+
+    thread_local! {
+        static ASYNC_APP: RefCell<Option<gpui::AsyncApp>> = RefCell::new(None);
+    }
+
+    /// Store the AsyncApp handle for use by FFI entry points that need App access.
+    fn store_async_app(cx: &App) {
+        let async_cx = cx.to_async();
+        ASYNC_APP.with(|cell| *cell.borrow_mut() = Some(async_cx));
+    }
 }
 
 /// Main entry point called by AppDelegate.swift after UIApplicationMain.
@@ -880,6 +904,18 @@ pub unsafe extern "C" fn zed_ios_close_window(_scene_id: *const std::ffi::c_char
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zed_ios_build_menus(builder: *mut std::ffi::c_void) {
     unsafe { gpui_ios::build_ios_menus(builder) }
+}
+
+/// Called by AppDelegate or SceneDelegate when the app is about to enter
+/// the background. Persists active SSH sessions so they can be restored
+/// on next launch.
+///
+/// # Safety
+/// Called from Swift via C FFI. Must be called on the main thread.
+#[unsafe(no_mangle)]
+pub extern "C" fn zed_ios_will_resign_active() {
+    #[cfg(target_os = "ios")]
+    ios::ios_will_resign_active();
 }
 
 // Submodules — uncomment as implemented:

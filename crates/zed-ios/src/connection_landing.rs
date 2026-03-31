@@ -153,6 +153,86 @@ pub fn init_active_connections(cx: &mut App) {
     });
 }
 
+// ─── Session persistence (eager reconnect) ──────────────────────────────────
+
+const ACTIVE_SESSIONS_KVP_KEY: &str = "ios_active_sessions";
+
+/// A snapshot of one host's open project paths, persisted to KVP so we can
+/// reconnect on next launch.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct PersistedHostSession {
+    host: String,
+    username: String,
+    port: u16,
+    paths: Vec<String>,
+}
+
+/// Build a snapshot of currently active sessions from the global registry.
+fn snapshot_active_sessions(cx: &App) -> Vec<PersistedHostSession> {
+    let Some(active) = cx.try_global::<ActiveConnections>() else {
+        return Vec::new();
+    };
+    active
+        .hosts
+        .iter()
+        .map(|hc| PersistedHostSession {
+            host: hc.host.clone(),
+            username: hc.username.clone(),
+            port: hc.port,
+            paths: hc.workspaces.iter().map(|w| w.path.clone()).collect(),
+        })
+        .collect()
+}
+
+/// Persist the current active sessions to the KVP store.
+fn persist_active_sessions(cx: &App) {
+    let sessions = snapshot_active_sessions(cx);
+    let db = db::kvp::KeyValueStore::global(cx);
+    cx.background_spawn(async move {
+        match serde_json::to_string(&sessions) {
+            Ok(json) => {
+                if let Err(error) = db
+                    .write_kvp(ACTIVE_SESSIONS_KVP_KEY.to_string(), json)
+                    .await
+                {
+                    log::error!("[zed-ios] failed to persist active sessions: {error:#}");
+                }
+            }
+            Err(error) => {
+                log::error!("[zed-ios] failed to serialize active sessions: {error:#}");
+            }
+        }
+    })
+    .detach();
+}
+
+/// Load persisted sessions from KVP. Returns an empty vec on any error.
+fn load_persisted_sessions(cx: &App) -> Vec<PersistedHostSession> {
+    let db = db::kvp::KeyValueStore::global(cx);
+    match db.read_kvp(ACTIVE_SESSIONS_KVP_KEY) {
+        Ok(Some(json)) => serde_json::from_str(&json).unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+/// Clear persisted sessions (e.g. when user explicitly disconnects all).
+#[allow(dead_code)]
+fn clear_persisted_sessions(cx: &App) {
+    let db = db::kvp::KeyValueStore::global(cx);
+    cx.background_spawn(async move {
+        db.delete_kvp(ACTIVE_SESSIONS_KVP_KEY.to_string())
+            .await
+            .log_err();
+    })
+    .detach();
+}
+
+/// Called when the app is about to enter the background. Persists the
+/// current active sessions so they can be restored on next launch.
+pub fn persist_sessions_for_background(cx: &App) {
+    persist_active_sessions(cx);
+}
+
 // ─── Workspace switcher status bar item ──────────────────────────────────────
 
 /// Status bar item that shows the current project path, a back arrow to return
@@ -312,30 +392,35 @@ fn return_to_landing(window: &mut Window, cx: &mut App) {
     landing.focus_handle(cx).focus(window, cx);
 }
 
-/// Create a fresh MultiWorkspace containing all the given workspaces,
-/// activate the target one, and set it as the window root.
+/// Ensure all given workspaces are in the window's MultiWorkspace and
+/// activate the target one. If no MultiWorkspace root exists yet, one is
+/// created. This preserves workspaces from other hosts that are already
+/// in the MultiWorkspace.
 fn show_multi_workspace(
     window: &mut Window,
     cx: &mut App,
     all_workspaces: &[Entity<workspace::Workspace>],
     active: &Entity<workspace::Workspace>,
 ) {
-    let first = all_workspaces[0].clone();
-    let active = active.clone();
-    window.replace_root(cx, |window, cx| {
-        let mut multi = workspace::MultiWorkspace::new(first, window, cx);
-        let mut active_idx = 0;
-        for (i, ws) in all_workspaces.iter().enumerate().skip(1) {
-            multi.add_workspace(ws.clone(), cx);
-            if *ws == active {
-                active_idx = i;
+    if let Some(Some(multi)) = window.root::<workspace::MultiWorkspace>() {
+        multi.update(cx, |multi, cx| {
+            for ws in all_workspaces {
+                multi.add_workspace(ws.clone(), cx);
             }
-        }
-        if active_idx > 0 {
-            multi.activate_index(active_idx, window, cx);
-        }
-        multi
-    });
+            multi.activate(active.clone(), cx);
+        });
+    } else {
+        let first = all_workspaces[0].clone();
+        let active = active.clone();
+        window.replace_root(cx, |window, cx| {
+            let mut multi = workspace::MultiWorkspace::new(first, window, cx);
+            for ws in all_workspaces.iter().skip(1) {
+                multi.add_workspace(ws.clone(), cx);
+            }
+            multi.activate(active, cx);
+            multi
+        });
+    }
 }
 
 /// On-disk representation of a saved SSH host.
@@ -409,7 +494,7 @@ fn save_host_entries(entries: &[SavedHostEntry]) {
 /// Status of a saved host connection.
 enum ConnectionStatus {
     Disconnected,
-    Connecting,
+    Connecting(Option<SharedString>),
     /// This exact host+path has an active workspace.
     Connected,
     /// The host has an active SSH connection, but this path isn't open yet.
@@ -579,7 +664,7 @@ impl ConnectionLanding {
             }
         }
 
-        Self {
+        let mut landing = Self {
             focus_handle: cx.focus_handle(),
             mode: LandingMode::Default,
             editing_hosts: false,
@@ -592,16 +677,167 @@ impl ConnectionLanding {
             project_path_editor,
             password_prompt: None,
             error_detail: None,
+        };
+
+        // Kick off auto-reconnect only on fresh launch (no active connections).
+        let has_active = cx
+            .try_global::<ActiveConnections>()
+            .map_or(false, |ac| !ac.hosts.is_empty());
+        if !has_active {
+            let sessions = load_persisted_sessions(cx);
+            if !sessions.is_empty() {
+                landing.start_auto_connect(sessions, window, cx);
+            }
         }
+
+        landing
     }
 
-    /// Open the connection landing screen in a new window.
+    /// Open the connection landing screen in a new window. Auto-connect
+    /// is triggered from `new()` if there are persisted sessions.
     pub fn open(cx: &mut App) -> anyhow::Result<()> {
         cx.open_window(WindowOptions::default(), |window, cx| {
             let landing = cx.new(|cx| Self::new(window, cx));
             landing.focus_handle(cx).focus(window, cx);
             landing
         })?;
+        Ok(())
+    }
+
+    /// Attempt to re-establish SSH connections for all persisted sessions.
+    /// Does NOT open any workspaces or navigate away from the landing screen.
+    /// The user taps a project path to open it once the host shows "Connected".
+    fn start_auto_connect(
+        &mut self,
+        sessions: Vec<PersistedHostSession>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let landing_window = window.window_handle();
+
+        for session in sessions {
+            let password = self
+                .saved_hosts
+                .iter()
+                .find(|h| {
+                    h.host.as_ref() == session.host
+                        && h.username.as_ref() == session.username
+                        && h.port == session.port
+                })
+                .and_then(|h| h.password.clone());
+
+            // Mark all matching saved_hosts as Connecting.
+            for saved in &mut self.saved_hosts {
+                if saved.host.as_ref() == session.host
+                    && saved.username.as_ref() == session.username
+                    && saved.port == session.port
+                {
+                    saved.status = ConnectionStatus::Connecting(None);
+                }
+            }
+
+
+            let host = session.host.clone();
+            let username = session.username.clone();
+            let port = session.port;
+            let delegate = Arc::new(IosRemoteClientDelegate {
+                window: landing_window,
+                show_status_in_ui: false,
+            });
+
+            let connection_options = SshConnectionOptions {
+                host: host.clone().into(),
+                username: Some(username.clone()),
+                port: Some(port),
+                password,
+                ..Default::default()
+            };
+
+            cx.spawn(async move |this, cx| {
+                log::info!(
+                    "[zed-ios] auto-connect: connecting to {}@{}:{}",
+                    username,
+                    host,
+                    port
+                );
+
+                let result = Self::auto_connect_host(connection_options, delegate, cx).await;
+
+                let _ = this.update(cx, |this, cx| {
+                    match result {
+                        Ok(()) => {
+                            log::info!(
+                                "[zed-ios] auto-connect: connected to {}@{}",
+                                username,
+                                host
+                            );
+                            for saved in &mut this.saved_hosts {
+                                if saved.host.as_ref() == host
+                                    && saved.username.as_ref() == username
+                                    && saved.port == port
+                                {
+                                    saved.status = ConnectionStatus::HostConnected;
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            let error_message = format!("{error:#}");
+                            log::error!(
+                                "[zed-ios] auto-connect: failed {}@{}: {error_message}",
+                                username,
+                                host
+                            );
+                            for saved in &mut this.saved_hosts {
+                                if saved.host.as_ref() == host
+                                    && saved.username.as_ref() == username
+                                    && saved.port == port
+                                {
+                                    saved.status = ConnectionStatus::Error(
+                                        SharedString::from(error_message.clone()),
+                                    );
+                                }
+                            }
+                        }
+                    }
+
+                    cx.notify();
+                });
+                cx.refresh();
+            })
+            .detach();
+        }
+
+        cx.notify();
+    }
+
+    /// Establish an SSH connection to a host without opening any workspaces.
+    /// The connection is registered in `ActiveConnections` so the landing
+    /// screen shows "Connected" status. The user then taps a project path
+    /// to open it (which reuses the existing connection via Case 2).
+    async fn auto_connect_host(
+        connection_options: SshConnectionOptions,
+        delegate: Arc<dyn remote::RemoteClientDelegate>,
+        cx: &mut AsyncApp,
+    ) -> anyhow::Result<()> {
+        let connection =
+            remote::RusshRemoteConnection::new(connection_options.clone(), delegate.clone(), cx)
+                .await?;
+        let remote_connection: Arc<dyn remote::RemoteConnection> = Arc::new(connection);
+
+        let host_str = connection_options.host.to_string();
+        let username_str = connection_options.username.clone().unwrap_or_default();
+        let port_val = connection_options.port.unwrap_or(22);
+
+        cx.update(|cx| {
+            active_connections_mut(cx).hosts.push(HostConnection {
+                remote_connection,
+                workspaces: Vec::new(),
+                host: host_str,
+                username: username_str,
+                port: port_val,
+            });
+        });
+
         Ok(())
     }
 
@@ -869,7 +1105,7 @@ impl ConnectionLanding {
 
             // Case 2: Host connected but new path → create workspace on shared connection.
             let remote_connection = active.remote_connection.clone();
-            host.status = ConnectionStatus::Connecting;
+            host.status = ConnectionStatus::Connecting(None);
             cx.notify();
 
             let app_state = match crate::ios::app_state() {
@@ -887,6 +1123,7 @@ impl ConnectionLanding {
             let landing_window = window.window_handle();
             let delegate = Arc::new(IosRemoteClientDelegate {
                 window: landing_window,
+                show_status_in_ui: true,
             });
             let host_str = host.host.to_string();
             let username_str = host.username.to_string();
@@ -936,6 +1173,7 @@ impl ConnectionLanding {
                         if !updated {
                             cx.update(|cx| Self::navigate_to_landing(landing_window, cx));
                         }
+                        cx.refresh();
                     }
                 }
             })
@@ -944,7 +1182,7 @@ impl ConnectionLanding {
         }
 
         // Case 3: Host not connected → full connect flow.
-        host.status = ConnectionStatus::Connecting;
+        host.status = ConnectionStatus::Connecting(None);
         cx.notify();
 
         let connection_options = SshConnectionOptions {
@@ -970,6 +1208,7 @@ impl ConnectionLanding {
         let landing_window = window.window_handle();
         let delegate = Arc::new(IosRemoteClientDelegate {
             window: landing_window,
+            show_status_in_ui: true,
         });
 
         cx.spawn(async move |this, cx| {
@@ -1011,6 +1250,7 @@ impl ConnectionLanding {
                 if !updated {
                     cx.update(|cx| Self::navigate_to_landing(landing_window, cx));
                 }
+                cx.refresh();
             }
         })
         .detach();
@@ -1134,6 +1374,9 @@ impl ConnectionLanding {
                             .find(|hc| !hc.workspaces.is_empty())
                             .map(|hc| hc.workspaces.iter().map(|w| w.workspace.clone()).collect());
 
+                        // Persist updated session state (fewer or no workspaces).
+                        persist_active_sessions(cx);
+
                         if let Some(workspaces) = remaining {
                             let target = workspaces[0].clone();
                             landing_window
@@ -1198,6 +1441,7 @@ impl ConnectionLanding {
             }
 
             Self::subscribe_project_closed(landing_window, &project, cx);
+            persist_active_sessions(cx);
         })?;
 
         log::info!("[zed-ios] added workspace to existing host connection");
@@ -1241,11 +1485,9 @@ impl ConnectionLanding {
         )
         .await?;
 
-        // 3. Create MultiWorkspace, register in ActiveConnections, replace_root.
+        // 3. Activate workspace, register in ActiveConnections.
         landing_window.update(cx, |_, window, cx| {
-            window.replace_root(cx, |window, cx| {
-                workspace::MultiWorkspace::new(workspace_entity.clone(), window, cx)
-            });
+            Self::activate_workspace_in_window(&workspace_entity, window, cx);
 
             active_connections_mut(cx).hosts.push(HostConnection {
                 remote_connection,
@@ -1260,6 +1502,7 @@ impl ConnectionLanding {
             });
 
             Self::subscribe_project_closed(landing_window, &project, cx);
+            persist_active_sessions(cx);
         })?;
 
         log::info!("[zed-ios] remote project opened successfully");
@@ -1267,6 +1510,25 @@ impl ConnectionLanding {
     }
 
     /// Replace the window root with a fresh ConnectionLanding screen.
+    /// Activate a workspace in the window. If a MultiWorkspace already exists
+    /// as the root, add the workspace to it. Otherwise, replace the root
+    /// (landing screen) with a new MultiWorkspace.
+    fn activate_workspace_in_window(
+        workspace_entity: &Entity<workspace::Workspace>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        if let Some(Some(multi)) = window.root::<workspace::MultiWorkspace>() {
+            multi.update(cx, |multi, cx| {
+                multi.activate(workspace_entity.clone(), cx);
+            });
+        } else {
+            window.replace_root(cx, |window, cx| {
+                workspace::MultiWorkspace::new(workspace_entity.clone(), window, cx)
+            });
+        }
+    }
+
     fn navigate_to_landing(window: AnyWindowHandle, cx: &mut App) {
         window
             .update(cx, |_, window, cx| {
@@ -1557,25 +1819,55 @@ impl ConnectionLanding {
                         ConnectionStatus::Connected | ConnectionStatus::HostConnected
                     )
                 });
-                let has_connecting = indices
+                let connecting_status = indices.iter().find_map(|&i| {
+                    if let ConnectionStatus::Connecting(detail) = &self.saved_hosts[i].status {
+                        Some(detail.clone())
+                    } else {
+                        None
+                    }
+                });
+                let has_error = indices
                     .iter()
-                    .any(|&i| matches!(self.saved_hosts[i].status, ConnectionStatus::Connecting));
+                    .any(|&i| matches!(self.saved_hosts[i].status, ConnectionStatus::Error(_)));
 
-                let (group_icon_color, group_status_label, group_status_color) = if has_connecting {
-                    (
-                        Color::Warning,
-                        "Connecting\u{2026}".to_string(),
-                        Color::Default,
-                    )
-                } else if host_has_connection {
-                    (
-                        Color::Default,
-                        format!("Connected ({open_count}/{total_count})"),
-                        Color::Default,
-                    )
-                } else {
-                    (Color::Muted, "Disconnected".to_string(), Color::Muted)
-                };
+                #[derive(Clone, Copy)]
+                enum GroupIndicator {
+                    Spinner,
+                    GreenDot,
+                    RedDot,
+                    None,
+                }
+
+                let (group_icon_color, group_status_label, group_status_color, indicator) =
+                    if host_has_connection {
+                        (
+                            Color::Default,
+                            format!("Connected ({open_count}/{total_count})"),
+                            Color::Default,
+                            GroupIndicator::GreenDot,
+                        )
+                    } else if connecting_status.is_some() {
+                        (
+                            Color::Muted,
+                            "Connecting\u{2026}".to_string(),
+                            Color::Default,
+                            GroupIndicator::Spinner,
+                        )
+                    } else if has_error {
+                        (
+                            Color::Error,
+                            "Error".to_string(),
+                            Color::Error,
+                            GroupIndicator::RedDot,
+                        )
+                    } else {
+                        (
+                            Color::Muted,
+                            "Disconnected".to_string(),
+                            Color::Muted,
+                            GroupIndicator::None,
+                        )
+                    };
 
                 if !first_group {
                     list = list.child(div().h_2());
@@ -1623,9 +1915,37 @@ impl ConnectionLanding {
                         )
                         .child(div().flex_grow())
                         .child(
-                            Label::new(group_status_label)
-                                .size(LabelSize::XSmall)
-                                .color(group_status_color),
+                            h_flex()
+                                .gap_1p5()
+                                .items_center()
+                                .child(
+                                    Label::new(group_status_label)
+                                        .size(LabelSize::XSmall)
+                                        .color(group_status_color),
+                                )
+                                .map(|this| {
+                                    let status_colors = cx.theme().status();
+                                    match indicator {
+                                        GroupIndicator::Spinner => this.child(
+                                            Icon::new(IconName::ArrowCircle)
+                                                .size(IconSize::XSmall)
+                                                .color(Color::Warning),
+                                        ),
+                                        GroupIndicator::GreenDot => this.child(
+                                            div()
+                                                .size(px(8.))
+                                                .rounded_full()
+                                                .bg(status_colors.success),
+                                        ),
+                                        GroupIndicator::RedDot => this.child(
+                                            div()
+                                                .size(px(8.))
+                                                .rounded_full()
+                                                .bg(status_colors.error),
+                                        ),
+                                        GroupIndicator::None => this,
+                                    }
+                                }),
                         )
                         .when(editing, |this| {
                             this.child(
@@ -1648,7 +1968,7 @@ impl ConnectionLanding {
 
                 // Project path sub-entries.
                 for (sub_idx, &index) in indices.iter().enumerate() {
-                    group_container = group_container.child(div().mx_4().h_px().bg(border));
+                    group_container = group_container.child(div().h_px().bg(border));
                     group_container =
                         group_container.child(self.render_project_entry(index, sub_idx, cx));
                 }
@@ -1695,6 +2015,11 @@ impl ConnectionLanding {
                 msg.clone()
             }
         });
+        let connecting_detail = if let ConnectionStatus::Connecting(detail) = &host.status {
+            detail.clone()
+        } else {
+            None
+        };
         let is_editing = self.editing_hosts;
         let is_connectable = !is_editing
             && !is_error
@@ -1712,8 +2037,7 @@ impl ConnectionLanding {
             .id(SharedString::from(format!("project-{index}-{sub_index}")))
             .tab_index(index as isize)
             .w_full()
-            .pl_11()
-            .pr_4()
+            .px_4()
             .py_2()
             .flex()
             .items_center()
@@ -1775,6 +2099,23 @@ impl ConnectionLanding {
                 h_flex()
                     .gap_2()
                     .items_center()
+                    .when_some(connecting_detail, |this, detail| {
+                        this.child(
+                            h_flex()
+                                .gap_1p5()
+                                .items_center()
+                                .child(
+                                    Label::new(SharedString::from(format!("{detail}\u{2026}")))
+                                        .size(LabelSize::XSmall)
+                                        .color(Color::Muted),
+                                )
+                                .child(
+                                    Icon::new(IconName::ArrowCircle)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Muted),
+                                ),
+                        )
+                    })
                     .when_some(truncated_error, |this, msg| {
                         this.child(Label::new(msg).size(LabelSize::XSmall).color(Color::Muted))
                     })
@@ -2097,6 +2438,9 @@ impl gpui::Focusable for ConnectionLanding {
 
 struct IosRemoteClientDelegate {
     window: AnyWindowHandle,
+    /// When true, `set_status` updates the landing screen UI.
+    /// Disabled for auto-reconnect (flashes too fast to be useful).
+    show_status_in_ui: bool,
 }
 
 impl remote::RemoteClientDelegate for IosRemoteClientDelegate {
@@ -2143,9 +2487,28 @@ impl remote::RemoteClientDelegate for IosRemoteClientDelegate {
         )))
     }
 
-    fn set_status(&self, status: Option<&str>, _cx: &mut AsyncApp) {
+    fn set_status(&self, status: Option<&str>, cx: &mut AsyncApp) {
         if let Some(status) = status {
             log::info!("[zed-ios] SSH status: {status}");
+        }
+        if !self.show_status_in_ui {
+            return;
+        }
+        let status_shared = status.map(|s| SharedString::from(s.to_owned()));
+        let result = self.window.update(cx, |_, window, cx| {
+            if let Some(Some(landing)) = window.root::<ConnectionLanding>() {
+                landing.update(cx, |landing, cx| {
+                    for host in &mut landing.saved_hosts {
+                        if let ConnectionStatus::Connecting(_) = &host.status {
+                            host.status = ConnectionStatus::Connecting(status_shared.clone());
+                        }
+                    }
+                    cx.notify();
+                });
+            }
+        });
+        if let Err(error) = result {
+            log::error!("[zed-ios] failed to update SSH status: {error:#}");
         }
     }
 }

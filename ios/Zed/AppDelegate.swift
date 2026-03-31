@@ -21,6 +21,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         UISceneConfiguration(name: "Default Configuration", sessionRole: connectingSceneSession.role)
     }
 
+    // MARK: App Lifecycle
+
+    func applicationWillResignActive(_ application: UIApplication) {
+        zed_ios_will_resign_active()
+    }
+
     // MARK: iPadOS Menu Bar (Stage Manager / external keyboard)
 
     /// Populate the iPadOS menu bar with Zed's menu structure.

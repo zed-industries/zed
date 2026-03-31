@@ -16,4 +16,8 @@ void zed_ios_close_window(const char *scene_id);
 /// builder is a UIMenuBuilder* passed as void* to avoid ObjC in the C header.
 void zed_ios_build_menus(void *builder);
 
+/// Persist active SSH sessions before the app enters the background.
+/// Called from applicationWillResignActive or sceneDidEnterBackground.
+void zed_ios_will_resign_active(void);
+
 #endif /* ZedApp_Bridging_Header_h */
