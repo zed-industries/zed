@@ -479,15 +479,12 @@ fn maybe_backfill_editor_layout(
             AgentSettings::backfill_editor_layout(fs, cx);
         }
 
-        db::write_and_log(cx, {
-            let kvp = kvp.clone();
-            move || async move {
-                kvp.write_kvp(
-                    PARALLEL_AGENT_LAYOUT_BACKFILL_KEY.to_string(),
-                    "1".to_string(),
-                )
-                .await
-            }
+        db::write_and_log(cx, move || async move {
+            kvp.write_kvp(
+                PARALLEL_AGENT_LAYOUT_BACKFILL_KEY.to_string(),
+                "1".to_string(),
+            )
+            .await
         });
     }
 }
