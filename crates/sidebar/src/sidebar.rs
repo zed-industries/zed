@@ -2401,13 +2401,17 @@ impl Sidebar {
     }
 
     fn mru_threads_for_switcher(&self, _cx: &App) -> Vec<ThreadSwitcherEntry> {
+        let mut current_header_label: Option<SharedString> = None;
         let mut current_header_workspace: Option<Entity<Workspace>> = None;
         let mut entries: Vec<ThreadSwitcherEntry> = self
             .contents
             .entries
             .iter()
             .filter_map(|entry| match entry {
-                ListEntry::ProjectHeader { workspace, .. } => {
+                ListEntry::ProjectHeader {
+                    label, workspace, ..
+                } => {
+                    current_header_label = Some(label.clone());
                     current_header_workspace = Some(workspace.clone());
                     None
                 }
@@ -2437,8 +2441,16 @@ impl Sidebar {
                         status: thread.status,
                         metadata: thread.metadata.clone(),
                         workspace,
-                        worktree_name: thread.worktrees.first().map(|wt| wt.name.clone()),
-
+                        project_name: current_header_label.clone(),
+                        worktrees: thread
+                            .worktrees
+                            .iter()
+                            .map(|wt| ThreadItemWorktreeInfo {
+                                name: wt.name.clone(),
+                                full_path: wt.full_path.clone(),
+                                highlight_positions: Vec::new(),
+                            })
+                            .collect(),
                         diff_stats: thread.diff_stats,
                         is_title_generating: thread.is_title_generating,
                         notified,
