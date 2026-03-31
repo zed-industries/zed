@@ -34,7 +34,7 @@ use git::{
     repository::{
         Branch, CommitDetails, CommitDiff, CommitFile, CommitOptions, DiffType, FetchOptions,
         GitRepository, GitRepositoryCheckpoint, GraphCommitData, InitialGraphCommitData, LogOrder,
-        LogSource, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
+        LogSource, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode, SearchCommitArgs,
         UpstreamTrackingStatus, Worktree as GitWorktree,
     },
     stash::{GitStash, StashEntry},
@@ -1532,13 +1532,17 @@ impl GitStore {
             } else if let UpdatedGitRepository {
                 new_work_directory_abs_path: Some(work_directory_abs_path),
                 dot_git_abs_path: Some(dot_git_abs_path),
-                repository_dir_abs_path: Some(_repository_dir_abs_path),
+                repository_dir_abs_path: Some(repository_dir_abs_path),
                 common_dir_abs_path: Some(common_dir_abs_path),
                 ..
             } = update
             {
-                let original_repo_abs_path: Arc<Path> =
-                    git::repository::original_repo_path_from_common_dir(common_dir_abs_path).into();
+                let original_repo_abs_path: Arc<Path> = git::repository::original_repo_path(
+                    work_directory_abs_path,
+                    common_dir_abs_path,
+                    repository_dir_abs_path,
+                )
+                .into();
                 let id = RepositoryId(next_repository_id.fetch_add(1, atomic::Ordering::Release));
                 let is_trusted = TrustedWorktrees::try_get_global(cx)
                     .map(|trusted_worktrees| {
@@ -3706,6 +3710,25 @@ impl RepositorySnapshot {
         }
     }
 
+    /// The main worktree is the original checkout that other worktrees were
+    /// created from.
+    ///
+    /// For example, if you had both `~/code/zed` and `~/code/worktrees/zed-2`,
+    /// then `~/code/zed` is the main worktree and `~/code/worktrees/zed-2` is a linked worktree.
+    ///
+    /// Submodules also return `true` here, since they are not linked worktrees.
+    pub fn is_main_worktree(&self) -> bool {
+        self.work_directory_abs_path == self.original_repo_abs_path
+    }
+
+    /// Returns true if this repository is a linked worktree, that is, one that
+    /// was created from another worktree.
+    ///
+    /// Returns `false` for both the main worktree and submodules.
+    pub fn is_linked_worktree(&self) -> bool {
+        !self.is_main_worktree()
+    }
+
     pub fn linked_worktrees(&self) -> &[GitWorktree] {
         &self.linked_worktrees
     }
@@ -4551,6 +4574,32 @@ impl Repository {
         log_order: LogOrder,
     ) -> Option<&InitialGitGraphData> {
         self.initial_graph_data.get(&(log_source, log_order))
+    }
+
+    pub fn search_commits(
+        &mut self,
+        log_source: LogSource,
+        search_args: SearchCommitArgs,
+        request_tx: smol::channel::Sender<Oid>,
+        cx: &mut Context<Self>,
+    ) {
+        let repository_state = self.repository_state.clone();
+
+        cx.background_spawn(async move {
+            let repo_state = repository_state.await;
+
+            match repo_state {
+                Ok(RepositoryState::Local(LocalRepositoryState { backend, .. })) => {
+                    backend
+                        .search_commits(log_source, search_args, request_tx)
+                        .await
+                        .log_err();
+                }
+                Ok(RepositoryState::Remote(_)) => {}
+                Err(_) => {}
+            };
+        })
+        .detach();
     }
 
     pub fn graph_data(

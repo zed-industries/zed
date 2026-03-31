@@ -13,9 +13,6 @@ members = [
     "crates/anthropic",
     "crates/askpass",
     "crates/assets",
-    "crates/assistant_slash_command",
-    "crates/assistant_slash_commands",
-    "crates/assistant_text_thread",
     "crates/audio",
     "crates/auto_update",
     "crates/auto_update_helper",
@@ -65,7 +62,6 @@ members = [
     "crates/editor",
     "crates/encoding_selector",
     "crates/etw_tracing",
-    "crates/eval",
     "crates/eval_cli",
     "crates/eval_utils",
     "crates/explorer_command_injector",
@@ -87,6 +83,7 @@ members = [
     "crates/git_ui",
     "crates/go_to_line",
     "crates/google_ai",
+    "crates/grammars",
     "crates/gpui",
     "crates/gpui_linux",
     "crates/gpui_macos",
@@ -108,6 +105,7 @@ members = [
     "crates/json_schema_store",
     "crates/keymap_editor",
     "crates/language",
+    "crates/language_core",
     "crates/language_extension",
     "crates/language_model",
     "crates/language_models",
@@ -186,6 +184,7 @@ members = [
     "crates/sum_tree",
     "crates/svg_preview",
     "crates/system_specs",
+    "crates/syntax_theme",
     "crates/tab_switcher",
     "crates/task",
     "crates/tasks_ui",
@@ -196,6 +195,7 @@ members = [
     "crates/text",
     "crates/theme",
     "crates/theme_extension",
+    "crates/theme_settings",
     "crates/theme_importer",
     "crates/theme_selector",
     "crates/time_format",
@@ -234,7 +234,6 @@ members = [
     "extensions/glsl",
     "extensions/html",
     "extensions/proto",
-    "extensions/slash-commands-example",
     "extensions/test-extension",
 
     #
@@ -268,9 +267,6 @@ ai_onboarding = { path = "crates/ai_onboarding" }
 anthropic = { path = "crates/anthropic" }
 askpass = { path = "crates/askpass" }
 assets = { path = "crates/assets" }
-assistant_text_thread = { path = "crates/assistant_text_thread" }
-assistant_slash_command = { path = "crates/assistant_slash_command" }
-assistant_slash_commands = { path = "crates/assistant_slash_commands" }
 audio = { path = "crates/audio" }
 auto_update = { path = "crates/auto_update" }
 auto_update_ui = { path = "crates/auto_update_ui" }
@@ -330,6 +326,7 @@ git_hosting_providers = { path = "crates/git_hosting_providers" }
 git_ui = { path = "crates/git_ui" }
 go_to_line = { path = "crates/go_to_line" }
 google_ai = { path = "crates/google_ai" }
+grammars = { path = "crates/grammars" }
 gpui = { path = "crates/gpui", default-features = false }
 gpui_linux = { path = "crates/gpui_linux", default-features = false }
 gpui_macos = { path = "crates/gpui_macos", default-features = false }
@@ -354,6 +351,7 @@ journal = { path = "crates/journal" }
 json_schema_store = { path = "crates/json_schema_store" }
 keymap_editor = { path = "crates/keymap_editor" }
 language = { path = "crates/language" }
+language_core = { path = "crates/language_core" }
 language_extension = { path = "crates/language_extension" }
 language_model = { path = "crates/language_model" }
 language_models = { path = "crates/language_models" }
@@ -431,6 +429,7 @@ streaming_diff = { path = "crates/streaming_diff" }
 sum_tree = { path = "crates/sum_tree" }
 codestral = { path = "crates/codestral" }
 system_specs = { path = "crates/system_specs" }
+syntax_theme = { path = "crates/syntax_theme" }
 tab_switcher = { path = "crates/tab_switcher" }
 task = { path = "crates/task" }
 tasks_ui = { path = "crates/tasks_ui" }
@@ -441,6 +440,7 @@ terminal_view = { path = "crates/terminal_view" }
 text = { path = "crates/text" }
 theme = { path = "crates/theme" }
 theme_extension = { path = "crates/theme_extension" }
+theme_settings = { path = "crates/theme_settings" }
 theme_selector = { path = "crates/theme_selector" }
 time_format = { path = "crates/time_format" }
 platform_title_bar = { path = "crates/platform_title_bar" }
@@ -492,7 +492,7 @@ ashpd = { version = "0.13", default-features = false, features = [
 ] }
 async-channel = "2.5.0"
 async-compat = "0.2.1"
-async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
+async-compression = { version = "0.4", features = ["bzip2", "gzip", "futures-io"] }
 async-dispatcher = "0.1"
 async-fs = "2.1"
 async-lock = "2.1"
@@ -676,7 +676,7 @@ rsa = "0.9.6"
 runtimelib = { version = "1.4.0", default-features = false, features = [
     "async-dispatcher-runtime", "aws-lc-rs"
 ] }
-rust-embed = { version = "8.4", features = ["include-exclude"] }
+rust-embed = { version = "8.11", features = ["include-exclude"] }
 rustc-hash = "2.1.0"
 rustls = { version = "0.23.26" }
 rustls-platform-verifier = "0.5.0"
@@ -752,7 +752,7 @@ tree-sitter-md = { git = "https://github.com/tree-sitter-grammars/tree-sitter-ma
 tree-sitter-python = "0.25"
 tree-sitter-regex = "0.24"
 tree-sitter-ruby = "0.23"
-tree-sitter-rust = "0.24.1"
+tree-sitter-rust = "0.24.2"
 tree-sitter-typescript = { git = "https://github.com/zed-industries/tree-sitter-typescript", rev = "e2c53597d6a5d9cf7bbe8dccde576fe1e46c5899" } # https://github.com/tree-sitter/tree-sitter-typescript/pull/347
 tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "baff0b51c64ef6a1fb1f8390f3ad6015b83ec13a" }
 tracing = "0.1.40"
@@ -806,6 +806,7 @@ features = [
     "Win32_Graphics_Direct3D_Fxc",
     "Win32_Graphics_DirectComposition",
     "Win32_Graphics_DirectWrite",
+    "Win32_Graphics_DirectManipulation",
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Dxgi",
     "Win32_Graphics_Dxgi_Common",
@@ -837,6 +838,7 @@ features = [
     "Win32_UI_HiDpi",
     "Win32_UI_Input_Ime",
     "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Input_Pointer",
     "Win32_UI_Shell",
     "Win32_UI_Shell_Common",
     "Win32_UI_Shell_PropertiesSystem",
@@ -850,9 +852,9 @@ notify = { git = "https://github.com/zed-industries/notify.git", rev = "ce58c24c
 notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "ce58c24cad542c28e04ced02e20325a4ec28a31d" }
 windows-capture = { git = "https://github.com/zed-industries/windows-capture.git", rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }
 calloop = { git = "https://github.com/zed-industries/calloop" }
-livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "c1209aa155cbf4543383774f884a46ae7e53ee2e" }
-libwebrtc = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "c1209aa155cbf4543383774f884a46ae7e53ee2e" }
-webrtc-sys = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "c1209aa155cbf4543383774f884a46ae7e53ee2e" }
+livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "147fbca3d4b592d96d33f5e6a84b59fc0b5d9bf1" }
+libwebrtc = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "147fbca3d4b592d96d33f5e6a84b59fc0b5d9bf1" }
+webrtc-sys = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "147fbca3d4b592d96d33f5e6a84b59fc0b5d9bf1" }
 
 [profile.dev]
 split-debuginfo = "unpacked"

@@ -24,6 +24,7 @@ use gpui::{
     actions, anchored, deferred, div,
 };
 use language::{Language, LanguageConfig, ToOffset as _};
+
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{CompletionDisplayOptions, Project};
 use settings::{
@@ -541,8 +542,9 @@ impl KeymapEditor {
         let _keymap_subscription =
             cx.observe_global_in::<KeymapEventChannel>(window, Self::on_keymap_changed);
         let table_interaction_state = cx.new(|cx| {
-            TableInteractionState::new(cx)
-                .with_custom_scrollbar(ui::Scrollbars::for_settings::<editor::EditorSettings>())
+            TableInteractionState::new(cx).with_custom_scrollbar(ui::Scrollbars::for_settings::<
+                editor::EditorSettingsScrollbarProxy,
+            >())
         });
 
         let keystroke_editor = cx.new(|cx| {
@@ -2183,7 +2185,7 @@ impl Render for KeymapEditor {
                                             .cloned()
                                             .unwrap_or_default()
                                             .into_any_element(),
-                                        |binding| ui::KeyBinding::from_keystrokes(binding.keystrokes.clone(), binding.source).into_any_element()
+                                        |binding| ui::KeyBinding::from_keystrokes(binding.keystrokes.clone(), binding.source == KeybindSource::Vim).into_any_element()
                                     );
 
                                     let action_arguments = match binding.action().arguments.clone()
@@ -2405,9 +2407,10 @@ impl RenderOnce for SyntaxHighlightedText {
             }
 
             let mut run_style = text_style.clone();
-            if let Some(highlight_style) = highlight_id.style(syntax_theme) {
+            if let Some(highlight_style) = syntax_theme.get(highlight_id).cloned() {
                 run_style = run_style.highlight(highlight_style);
             }
+
             // add the highlighted range
             runs.push(run_style.to_run(highlight_range.len()));
             offset = highlight_range.end;
@@ -3429,7 +3432,7 @@ impl ActionArgumentsEditor {
 
 impl Render for ActionArgumentsEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let settings = theme::ThemeSettings::get_global(cx);
+        let settings = theme_settings::ThemeSettings::get_global(cx);
         let colors = cx.theme().colors();
 
         let border_color = if self.is_loading {

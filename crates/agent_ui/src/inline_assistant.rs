@@ -257,12 +257,8 @@ impl InlineAssistant {
             return;
         }
 
-        let Some(inline_assist_target) = Self::resolve_inline_assist_target(
-            workspace,
-            workspace.panel::<AgentPanel>(cx),
-            window,
-            cx,
-        ) else {
+        let Some(inline_assist_target) = Self::resolve_inline_assist_target(workspace, window, cx)
+        else {
             return;
         };
 
@@ -1570,7 +1566,6 @@ impl InlineAssistant {
 
     fn resolve_inline_assist_target(
         workspace: &mut Workspace,
-        agent_panel: Option<Entity<AgentPanel>>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<InlineAssistTarget> {
@@ -1588,20 +1583,7 @@ impl InlineAssistant {
             return Some(InlineAssistTarget::Terminal(terminal_view));
         }
 
-        let text_thread_editor = agent_panel
-            .and_then(|panel| panel.read(cx).active_text_thread_editor())
-            .and_then(|editor| {
-                let editor = &editor.read(cx).editor().clone();
-                if editor.read(cx).is_focused(window) {
-                    Some(editor.clone())
-                } else {
-                    None
-                }
-            });
-
-        if let Some(text_thread_editor) = text_thread_editor {
-            Some(InlineAssistTarget::Editor(text_thread_editor))
-        } else if let Some(workspace_editor) = workspace
+        if let Some(workspace_editor) = workspace
             .active_item(cx)
             .and_then(|item| item.act_as::<Editor>(cx))
         {
@@ -2061,29 +2043,28 @@ fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultiBufferSnapshot) {
     }
 }
 
-#[cfg(any(test, feature = "unit-eval"))]
-#[cfg_attr(not(test), allow(dead_code))]
-pub mod test {
-
-    use std::sync::Arc;
-
+#[cfg(all(test, feature = "unit-eval"))]
+pub mod evals {
+    use crate::InlineAssistant;
     use agent::ThreadStore;
     use client::{Client, UserStore};
     use editor::{Editor, MultiBuffer, MultiBufferOffset};
+    use eval_utils::{EvalOutput, NoProcessor};
     use fs::FakeFs;
     use futures::channel::mpsc;
     use gpui::{AppContext, TestAppContext, UpdateGlobal as _};
     use language::Buffer;
+    use language_model::{LanguageModelRegistry, SelectedModel};
     use project::Project;
     use prompt_store::PromptBuilder;
     use smol::stream::StreamExt as _;
+    use std::str::FromStr;
+    use std::sync::Arc;
     use util::test::marked_text_ranges;
     use workspace::Workspace;
 
-    use crate::InlineAssistant;
-
     #[derive(Debug)]
-    pub enum InlineAssistantOutput {
+    enum InlineAssistantOutput {
         Success {
             completion: Option<String>,
             description: Option<String>,
@@ -2101,7 +2082,7 @@ pub mod test {
         },
     }
 
-    pub fn run_inline_assistant_test<SetupF, TestF>(
+    fn run_inline_assistant_test<SetupF, TestF>(
         base_buffer: String,
         prompt: String,
         setup: SetupF,
@@ -2232,18 +2213,6 @@ pub mod test {
             }
         }
     }
-}
-
-#[cfg(any(test, feature = "unit-eval"))]
-#[cfg_attr(not(test), allow(dead_code))]
-pub mod evals {
-    use std::str::FromStr;
-
-    use eval_utils::{EvalOutput, NoProcessor};
-    use gpui::TestAppContext;
-    use language_model::{LanguageModelRegistry, SelectedModel};
-
-    use crate::inline_assistant::test::{InlineAssistantOutput, run_inline_assistant_test};
 
     #[test]
     #[cfg_attr(not(feature = "unit-eval"), ignore)]

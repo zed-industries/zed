@@ -2,6 +2,7 @@ use crate::askpass_modal::AskPassModal;
 use crate::commit_modal::CommitModal;
 use crate::commit_tooltip::CommitTooltip;
 use crate::commit_view::CommitView;
+use crate::git_panel_settings::GitPanelScrollbarAccessor;
 use crate::project_diff::{self, BranchDiff, Diff, ProjectDiff};
 use crate::remote_output::{self, RemoteAction, SuccessMessage};
 use crate::{branch_picker, picker_prompt, render_remote_button};
@@ -12,7 +13,6 @@ use crate::{
 use agent_settings::AgentSettings;
 use anyhow::Context as _;
 use askpass::AskPassDelegate;
-use cloud_llm_client::CompletionIntent;
 use collections::{BTreeMap, HashMap, HashSet};
 use db::kvp::KeyValueStore;
 use editor::{
@@ -20,6 +20,7 @@ use editor::{
     actions::ExpandAllDiffHunks,
 };
 use editor::{EditorStyle, RewrapOptions};
+use feature_flags::{FeatureFlagAppExt as _, GitGraphFeatureFlag};
 use file_icons::FileIcons;
 use futures::StreamExt as _;
 use git::commit::ParsedCommitMessage;
@@ -44,7 +45,8 @@ use gpui::{
 use itertools::Itertools;
 use language::{Buffer, File};
 use language_model::{
-    ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
+    CompletionIntent, ConfiguredModel, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, Role,
 };
 use menu;
 use multi_buffer::ExcerptInfo;
@@ -65,7 +67,7 @@ use std::ops::Range;
 use std::path::Path;
 use std::{sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use time::OffsetDateTime;
 use ui::{
     ButtonLike, Checkbox, CommonAnimationExt, ContextMenu, ElevationIndex, IndentGuideColors,
@@ -258,7 +260,6 @@ pub enum Event {
 
 #[derive(Serialize, Deserialize)]
 struct SerializedGitPanel {
-    width: Option<Pixels>,
     #[serde(default)]
     amend_pending: bool,
     #[serde(default)]
@@ -645,7 +646,6 @@ pub struct GitPanel {
     tracked_count: usize,
     tracked_staged_count: usize,
     update_visible_entries_task: Task<()>,
-    width: Option<Pixels>,
     pub(crate) workspace: WeakEntity<Workspace>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     modal_open: bool,
@@ -832,7 +832,6 @@ impl GitPanel {
                 tracked_count: 0,
                 tracked_staged_count: 0,
                 update_visible_entries_task: Task::ready(()),
-                width: None,
                 show_placeholders: false,
                 local_committer: None,
                 local_committer_task: None,
@@ -925,7 +924,6 @@ impl GitPanel {
     }
 
     fn serialize(&mut self, cx: &mut Context<Self>) {
-        let width = self.width;
         let amend_pending = self.amend_pending;
         let signoff_enabled = self.signoff_enabled;
         let kvp = KeyValueStore::global(cx);
@@ -952,7 +950,6 @@ impl GitPanel {
                     kvp.write_kvp(
                         serialization_key,
                         serde_json::to_string(&SerializedGitPanel {
-                            width,
                             amend_pending,
                             signoff_enabled,
                         })?,
@@ -4524,7 +4521,7 @@ impl GitPanel {
 
     fn render_previous_commit(
         &self,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
         let active_repository = self.active_repository.as_ref()?;
@@ -4532,6 +4529,7 @@ impl GitPanel {
         let commit = branch.most_recent_commit.as_ref()?.clone();
         let workspace = self.workspace.clone();
         let this = cx.entity();
+        let can_open_git_graph = cx.has_flag::<GitGraphFeatureFlag>();
 
         Some(
             h_flex()
@@ -4609,7 +4607,7 @@ impl GitPanel {
                                     ),
                             )
                         })
-                        .when(window.is_action_available(&Open, cx), |this| {
+                        .when(can_open_git_graph, |this| {
                             this.child(
                                 panel_icon_button("git-graph-button", IconName::GitGraph)
                                     .icon_size(IconSize::Small)
@@ -4888,7 +4886,7 @@ impl GitPanel {
                         }),
                     )
                     .custom_scrollbars(
-                        Scrollbars::for_settings::<GitPanelSettings>()
+                        Scrollbars::for_settings::<GitPanelScrollbarAccessor>()
                             .tracked_scroll_handle(&self.scroll_handle)
                             .with_track_along(
                                 ScrollAxes::Horizontal,
@@ -5564,7 +5562,6 @@ impl GitPanel {
 
             if let Some(serialized_panel) = serialized_panel {
                 panel.update(cx, |panel, cx| {
-                    panel.width = serialized_panel.width;
                     panel.amend_pending = serialized_panel.amend_pending;
                     panel.signoff_enabled = serialized_panel.signoff_enabled;
                     cx.notify();
@@ -5793,15 +5790,8 @@ impl Panel for GitPanel {
         });
     }
 
-    fn size(&self, _: &Window, cx: &App) -> Pixels {
-        self.width
-            .unwrap_or_else(|| GitPanelSettings::get_global(cx).default_width)
-    }
-
-    fn set_size(&mut self, size: Option<Pixels>, _: &mut Window, cx: &mut Context<Self>) {
-        self.width = size;
-        self.serialize(cx);
-        cx.notify();
+    fn default_size(&self, _: &Window, cx: &App) -> Pixels {
+        GitPanelSettings::get_global(cx).default_width
     }
 
     fn icon(&self, _: &Window, cx: &App) -> Option<ui::IconName> {
@@ -5829,7 +5819,7 @@ impl Panel for GitPanel {
     }
 
     fn activation_priority(&self) -> u32 {
-        2
+        3
     }
 }
 
@@ -6502,7 +6492,7 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            theme::init(LoadThemes::JustBase, cx);
+            theme_settings::init(LoadThemes::JustBase, cx);
             editor::init(cx);
             crate::init(cx);
         });

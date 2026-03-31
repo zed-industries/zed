@@ -69,7 +69,7 @@ impl FeatureFlag for UpdatePlanToolFeatureFlag {
     const NAME: &'static str = "update-plan-tool";
 
     fn enabled_for_staff() -> bool {
-        true
+        false
     }
 }
 

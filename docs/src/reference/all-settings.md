@@ -3462,12 +3462,6 @@ Non-negative `integer` values
 - Setting: `regex`
 - Default: `false`
 
-### Search On Input
-
-- Description: Whether to search on input in project search.
-- Setting: `search_on_input`
-- Default: `true`
-
 ### Center On Match
 
 - Description: Whether to center the cursor on each search match when navigating.

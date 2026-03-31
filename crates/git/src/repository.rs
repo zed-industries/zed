@@ -50,11 +50,34 @@ pub const REMOTE_CANCELLED_BY_USER: &str = "Operation cancelled by user";
 /// %x00 - Null byte separator, used to split up commit data
 static GRAPH_COMMIT_FORMAT: &str = "--format=%H%x00%P%x00%D";
 
+/// Used to get commits that match with a search
+/// %H - Full commit hash
+static SEARCH_COMMIT_FORMAT: &str = "--format=%H";
+
 /// Number of commits to load per chunk for the git graph.
 pub const GRAPH_CHUNK_SIZE: usize = 1000;
 
 /// Default value for the `git.worktree_directory` setting.
 pub const DEFAULT_WORKTREE_DIRECTORY: &str = "../worktrees";
+
+/// Determine the original (main) repository's working directory.
+///
+/// For linked worktrees, `common_dir` differs from `repository_dir` and
+/// points to the main repo's `.git` directory, so we can derive the main
+/// repo's working directory from it. For normal repos and submodules,
+/// `common_dir` equals `repository_dir`, and the original repo is simply
+/// `work_directory` itself.
+pub fn original_repo_path(
+    work_directory: &Path,
+    common_dir: &Path,
+    repository_dir: &Path,
+) -> PathBuf {
+    if common_dir != repository_dir {
+        original_repo_path_from_common_dir(common_dir)
+    } else {
+        work_directory.to_path_buf()
+    }
+}
 
 /// Given the git common directory (from `commondir()`), derive the original
 /// repository's working directory.
@@ -623,6 +646,11 @@ impl LogSource {
     }
 }
 
+pub struct SearchCommitArgs {
+    pub query: SharedString,
+    pub case_sensitive: bool,
+}
+
 pub trait GitRepository: Send + Sync {
     fn reload_index(&self);
 
@@ -875,6 +903,13 @@ pub trait GitRepository: Send + Sync {
         request_tx: Sender<Vec<Arc<InitialGraphCommitData>>>,
     ) -> BoxFuture<'_, Result<()>>;
 
+    fn search_commits(
+        &self,
+        log_source: LogSource,
+        search_args: SearchCommitArgs,
+        request_tx: Sender<Oid>,
+    ) -> BoxFuture<'_, Result<()>>;
+
     fn commit_data_reader(&self) -> Result<CommitDataReader>;
 
     fn set_trusted(&self, trusted: bool);
@@ -1046,7 +1081,6 @@ impl GitRepository for RealGitRepository {
                 let git = git_binary?;
                 let output = git
                     .build_command(&[
-                        "--no-optional-locks",
                         "show",
                         "--no-patch",
                         "--format=%H%x00%B%x00%at%x00%ae%x00%an%x00",
@@ -1084,7 +1118,6 @@ impl GitRepository for RealGitRepository {
             let git = git_binary?;
             let show_output = git
                 .build_command(&[
-                    "--no-optional-locks",
                     "show",
                     "--format=",
                     "-z",
@@ -1105,7 +1138,7 @@ impl GitRepository for RealGitRepository {
             let parent_sha = format!("{}^", commit);
 
             let mut cat_file_process = git
-                .build_command(&["--no-optional-locks", "cat-file", "--batch=%(objectsize)"])
+                .build_command(&["cat-file", "--batch=%(objectsize)"])
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -1417,11 +1450,7 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let git = git_binary?;
                 let mut process = git
-                    .build_command(&[
-                        "--no-optional-locks",
-                        "cat-file",
-                        "--batch-check=%(objectname)",
-                    ])
+                    .build_command(&["cat-file", "--batch-check=%(objectname)"])
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped())
@@ -1495,7 +1524,6 @@ impl GitRepository for RealGitRepository {
         };
 
         let mut args = vec![
-            OsString::from("--no-optional-locks"),
             OsString::from("diff-tree"),
             OsString::from("-r"),
             OsString::from("-z"),
@@ -1612,7 +1640,7 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let git = git_binary?;
                 let output = git
-                    .build_command(&["--no-optional-locks", "worktree", "list", "--porcelain"])
+                    .build_command(&["worktree", "list", "--porcelain"])
                     .output()
                     .await?;
                 if output.status.success() {
@@ -1634,7 +1662,6 @@ impl GitRepository for RealGitRepository {
     ) -> BoxFuture<'_, Result<()>> {
         let git_binary = self.git_binary();
         let mut args = vec![
-            OsString::from("--no-optional-locks"),
             OsString::from("worktree"),
             OsString::from("add"),
             OsString::from("-b"),
@@ -1668,11 +1695,7 @@ impl GitRepository for RealGitRepository {
 
         self.executor
             .spawn(async move {
-                let mut args: Vec<OsString> = vec![
-                    "--no-optional-locks".into(),
-                    "worktree".into(),
-                    "remove".into(),
-                ];
+                let mut args: Vec<OsString> = vec!["worktree".into(), "remove".into()];
                 if force {
                     args.push("--force".into());
                 }
@@ -1690,7 +1713,6 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 let args: Vec<OsString> = vec![
-                    "--no-optional-locks".into(),
                     "worktree".into(),
                     "move".into(),
                     "--".into(),
@@ -1833,7 +1855,7 @@ impl GitRepository for RealGitRepository {
                     commit_delimiter
                 );
 
-                let mut args = vec!["--no-optional-locks", "log", "--follow", &format_string];
+                let mut args = vec!["log", "--follow", &format_string];
 
                 let skip_str;
                 let limit_str;
@@ -2709,6 +2731,61 @@ impl GitRepository for RealGitRepository {
         .boxed()
     }
 
+    fn search_commits(
+        &self,
+        log_source: LogSource,
+        search_args: SearchCommitArgs,
+        request_tx: Sender<Oid>,
+    ) -> BoxFuture<'_, Result<()>> {
+        let git_binary = self.git_binary();
+
+        async move {
+            let git = git_binary?;
+
+            let mut args = vec!["log", SEARCH_COMMIT_FORMAT, log_source.get_arg()?];
+
+            args.push("--fixed-strings");
+
+            if !search_args.case_sensitive {
+                args.push("--regexp-ignore-case");
+            }
+
+            args.push("--grep");
+            args.push(search_args.query.as_str());
+
+            let mut command = git.build_command(&args);
+            command.stdout(Stdio::piped());
+            command.stderr(Stdio::null());
+
+            let mut child = command.spawn()?;
+            let stdout = child.stdout.take().context("failed to get stdout")?;
+            let mut reader = BufReader::new(stdout);
+
+            let mut line_buffer = String::new();
+
+            loop {
+                line_buffer.clear();
+                let bytes_read = reader.read_line(&mut line_buffer).await?;
+
+                if bytes_read == 0 {
+                    break;
+                }
+
+                let sha = line_buffer.trim_end_matches('\n');
+
+                if let Ok(oid) = Oid::from_str(sha)
+                    && request_tx.send(oid).await.is_err()
+                {
+                    break;
+                }
+            }
+
+            child.status().await?;
+            Ok(())
+        }
+        .boxed()
+    }
+
     fn commit_data_reader(&self) -> Result<CommitDataReader> {
         let git_binary = self.git_binary()?;
 
@@ -2741,7 +2818,7 @@ async fn run_commit_data_reader(
     request_rx: smol::channel::Receiver<CommitDataRequest>,
 ) -> Result<()> {
     let mut process = git
-        .build_command(&["--no-optional-locks", "cat-file", "--batch"])
+        .build_command(&["cat-file", "--batch"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -2855,7 +2932,6 @@ fn parse_initial_graph_output<'a>(
 
 fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
     let mut args = vec![
-        OsString::from("--no-optional-locks"),
         OsString::from("status"),
         OsString::from("--porcelain=v1"),
         OsString::from("--untracked-files=all"),
@@ -3039,6 +3115,7 @@ impl GitBinary {
         let mut command = new_command(&self.git_binary_path);
         command.current_dir(&self.working_directory);
         command.args(["-c", "core.fsmonitor=false"]);
+        command.arg("--no-optional-locks");
         command.arg("--no-pager");
 
         if !self.is_trusted {

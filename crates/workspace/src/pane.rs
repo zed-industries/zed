@@ -42,13 +42,15 @@ use std::{
     },
     time::Duration,
 };
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{
     ContextMenu, ContextMenuEntry, ContextMenuItem, DecoratedIcon, IconButtonShape, IconDecoration,
     IconDecorationKind, Indicator, PopoverMenu, PopoverMenuHandle, Tab, TabBar, TabPosition,
     Tooltip, prelude::*, right_click_menu,
 };
-use util::{ResultExt, debug_panic, maybe, paths::PathStyle, truncate_and_remove_front};
+use util::{
+    ResultExt, debug_panic, maybe, paths::PathStyle, serde::default_true, truncate_and_remove_front,
+};
 
 /// A selected entry in e.g. project panel.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -229,13 +231,41 @@ split_structs!(
     SplitVertical => "Splits the pane vertically."
 );
 
+/// Activates the previous item in the pane.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = pane)]
+#[serde(deny_unknown_fields, default)]
+pub struct ActivatePreviousItem {
+    /// Whether to wrap from the first item to the last item.
+    #[serde(default = "default_true")]
+    pub wrap_around: bool,
+}
+
+impl Default for ActivatePreviousItem {
+    fn default() -> Self {
+        Self { wrap_around: true }
+    }
+}
+
+/// Activates the next item in the pane.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = pane)]
+#[serde(deny_unknown_fields, default)]
+pub struct ActivateNextItem {
+    /// Whether to wrap from the last item to the first item.
+    #[serde(default = "default_true")]
+    pub wrap_around: bool,
+}
+
+impl Default for ActivateNextItem {
+    fn default() -> Self {
+        Self { wrap_around: true }
+    }
+}
+
 actions!(
     pane,
     [
-        /// Activates the previous item in the pane.
-        ActivatePreviousItem,
-        /// Activates the next item in the pane.
-        ActivateNextItem,
         /// Activates the last item in the pane.
         ActivateLastItem,
         /// Switches to the alternate file.
@@ -473,6 +503,9 @@ pub struct NavigationEntry {
     pub data: Option<Arc<dyn Any + Send + Sync>>,
     pub timestamp: usize,
     pub is_preview: bool,
+    /// Row position for Neovim-style deduplication. When set, entries with the
+    /// same item and row are considered duplicates and deduplicated.
+    pub row: Option<u32>,
 }
 
 #[derive(Clone)]
@@ -1474,14 +1507,14 @@ impl Pane {
 
     pub fn activate_previous_item(
         &mut self,
-        _: &ActivatePreviousItem,
+        action: &ActivatePreviousItem,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let mut index = self.active_item_index;
         if index > 0 {
             index -= 1;
-        } else if !self.items.is_empty() {
+        } else if action.wrap_around && !self.items.is_empty() {
             index = self.items.len() - 1;
         }
         self.activate_item(index, true, true, window, cx);
@@ -1489,14 +1522,14 @@ impl Pane {
 
     pub fn activate_next_item(
         &mut self,
-        _: &ActivateNextItem,
+        action: &ActivateNextItem,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let mut index = self.active_item_index;
         if index + 1 < self.items.len() {
             index += 1;
-        } else {
+        } else if action.wrap_around {
             index = 0;
         }
         self.activate_item(index, true, true, window, cx);
@@ -2846,12 +2879,13 @@ impl Pane {
             }))
             .on_aux_click(
                 cx.listener(move |pane: &mut Self, event: &ClickEvent, window, cx| {
-                    if !event.is_middle_click() {
+                    if !event.is_middle_click() || is_pinned {
                         return;
                     }
 
                     pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
                         .detach_and_log_err(cx);
+                    cx.stop_propagation();
                 }),
             )
             .on_drag(
@@ -4510,7 +4544,12 @@ impl Render for Pane {
 }
 
 impl ItemNavHistory {
-    pub fn push<D: 'static + Any + Send + Sync>(&mut self, data: Option<D>, cx: &mut App) {
+    pub fn push<D: 'static + Any + Send + Sync>(
+        &mut self,
+        data: Option<D>,
+        row: Option<u32>,
+        cx: &mut App,
+    ) {
         if self
             .item
             .upgrade()
@@ -4518,7 +4557,7 @@ impl ItemNavHistory {
         {
             let is_preview_item = self.history.0.lock().preview_item_id == Some(self.item.id());
             self.history
-                .push(data, self.item.clone(), is_preview_item, cx);
+                .push(data, self.item.clone(), is_preview_item, row, cx);
         }
     }
 
@@ -4526,9 +4565,10 @@ impl ItemNavHistory {
         let is_preview_item = self.history.0.lock().preview_item_id == Some(self.item.id());
         NavigationEntry {
             item: self.item.clone(),
-            data: data,
-            timestamp: 0, // not used
+            data,
+            timestamp: 0,
             is_preview: is_preview_item,
+            row: None,
         }
     }
 
@@ -4632,12 +4672,22 @@ impl NavHistory {
         data: Option<D>,
         item: Arc<dyn WeakItemHandle + Send + Sync>,
         is_preview: bool,
+        row: Option<u32>,
         cx: &mut App,
     ) {
         let state = &mut *self.0.lock();
+        let new_item_id = item.id();
+
+        let is_same_location =
+            |entry: &NavigationEntry| entry.item.id() == new_item_id && entry.row == row;
+
         match state.mode {
             NavigationMode::Disabled => {}
             NavigationMode::Normal | NavigationMode::ReopeningClosedItem => {
+                state
+                    .backward_stack
+                    .retain(|entry| !is_same_location(entry));
+
                 if state.backward_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
                     state.backward_stack.pop_front();
                 }
@@ -4646,10 +4696,13 @@ impl NavHistory {
                     data: data.map(|data| Arc::new(data) as Arc<dyn Any + Send + Sync>),
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
                     is_preview,
+                    row,
                 });
                 state.forward_stack.clear();
             }
             NavigationMode::GoingBack => {
+                state.forward_stack.retain(|entry| !is_same_location(entry));
+
                 if state.forward_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
                     state.forward_stack.pop_front();
                 }
@@ -4658,9 +4711,14 @@ impl NavHistory {
                     data: data.map(|data| Arc::new(data) as Arc<dyn Any + Send + Sync>),
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
                     is_preview,
+                    row,
                 });
             }
             NavigationMode::GoingForward => {
+                state
+                    .backward_stack
+                    .retain(|entry| !is_same_location(entry));
+
                 if state.backward_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
                     state.backward_stack.pop_front();
                 }
@@ -4669,6 +4727,7 @@ impl NavHistory {
                     data: data.map(|data| Arc::new(data) as Arc<dyn Any + Send + Sync>),
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
                     is_preview,
+                    row,
                 });
             }
             NavigationMode::ClosingItem if is_preview => return,
@@ -4681,6 +4740,7 @@ impl NavHistory {
                     data: data.map(|data| Arc::new(data) as Arc<dyn Any + Send + Sync>),
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
                     is_preview,
+                    row,
                 });
             }
         }
@@ -6830,6 +6890,79 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_middle_click_pinned_tab_does_not_close(cx: &mut TestAppContext) {
+        use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseUpEvent};
+
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.pin_tab_at(
+                pane.index_for_item_id(item_a.item_id()).unwrap(),
+                window,
+                cx,
+            );
+        });
+        assert_item_labels(&pane, ["A!", "B*"], cx);
+        cx.run_until_parked();
+
+        let tab_a_bounds = cx
+            .debug_bounds("TAB-0")
+            .expect("Tab A (index 1) should have debug bounds");
+        let tab_b_bounds = cx
+            .debug_bounds("TAB-1")
+            .expect("Tab B (index 2) should have debug bounds");
+
+        cx.simulate_event(MouseDownEvent {
+            position: tab_a_bounds.center(),
+            button: MouseButton::Middle,
+            modifiers: Modifiers::default(),
+            click_count: 1,
+            first_mouse: false,
+        });
+
+        cx.run_until_parked();
+
+        cx.simulate_event(MouseUpEvent {
+            position: tab_a_bounds.center(),
+            button: MouseButton::Middle,
+            modifiers: Modifiers::default(),
+            click_count: 1,
+        });
+
+        cx.run_until_parked();
+
+        cx.simulate_event(MouseDownEvent {
+            position: tab_b_bounds.center(),
+            button: MouseButton::Middle,
+            modifiers: Modifiers::default(),
+            click_count: 1,
+            first_mouse: false,
+        });
+
+        cx.run_until_parked();
+
+        cx.simulate_event(MouseUpEvent {
+            position: tab_b_bounds.center(),
+            button: MouseButton::Middle,
+            modifiers: Modifiers::default(),
+            click_count: 1,
+        });
+
+        cx.run_until_parked();
+
+        assert_item_labels(&pane, ["A*!"], cx);
+    }
+
+    #[gpui::test]
     async fn test_add_item_with_new_item(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
@@ -8482,11 +8615,56 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_activate_item_with_wrap_around(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+        add_labeled_item(&pane, "C", false, cx);
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_next_item(&ActivateNextItem { wrap_around: false }, window, cx);
+        });
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_next_item(&ActivateNextItem::default(), window, cx);
+        });
+        assert_item_labels(&pane, ["A*", "B", "C"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_previous_item(&ActivatePreviousItem { wrap_around: false }, window, cx);
+        });
+        assert_item_labels(&pane, ["A*", "B", "C"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_previous_item(&ActivatePreviousItem::default(), window, cx);
+        });
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_previous_item(&ActivatePreviousItem { wrap_around: false }, window, cx);
+        });
+        assert_item_labels(&pane, ["A", "B*", "C"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_next_item(&ActivateNextItem { wrap_around: false }, window, cx);
+        });
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+    }
+
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            theme::init(LoadThemes::JustBase, cx);
+            theme_settings::init(LoadThemes::JustBase, cx);
         });
     }
 

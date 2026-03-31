@@ -199,12 +199,21 @@ async function handleMessage(message, prettier) {
         ? resolvedConfig.plugins
         : params.options.plugins;
 
+    const rangeOptions = {};
+    if (params.options.rangeStart != null) {
+      rangeOptions.rangeStart = params.options.rangeStart;
+    }
+    if (params.options.rangeEnd != null) {
+      rangeOptions.rangeEnd = params.options.rangeEnd;
+    }
+
     const options = {
       ...(params.options.prettierOptions || prettier.config),
       ...resolvedConfig,
       plugins,
       parser: params.options.parser,
       filepath: params.options.filepath,
+      ...rangeOptions
     };
     process.stderr.write(
       `Resolved config: ${JSON.stringify(resolvedConfig)}, will format file '${

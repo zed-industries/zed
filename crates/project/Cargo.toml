@@ -92,6 +92,7 @@ terminal.workspace = true
 text.workspace = true
 toml.workspace = true
 url.workspace = true
+percent-encoding.workspace = true
 util.workspace = true
 watch.workspace = true
 wax.workspace = true
