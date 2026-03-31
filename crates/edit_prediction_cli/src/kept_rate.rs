@@ -2,34 +2,22 @@ use crate::word_diff::tokenize;
 use similar::{DiffTag, TextDiff};
 use std::collections::HashMap;
 
-/// Per-token annotation for debug/visualization of kept rate results.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenAnnotation {
-    /// Token is shared context (present in base, predicted, and final).
     Context,
-    /// Token is new in the prediction and was kept in the final result.
     Kept,
-    /// Token is new in the prediction but was discarded in the final result.
     Discarded,
 }
 
-/// Result of `compute_kept_rate`.
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct KeptRateResult {
-    /// Number of characters in predicted tokens that are not three-way context.
     pub predicted_new_chars: usize,
-    /// Number of characters in final tokens that are not three-way context.
     pub final_new_chars: usize,
-    /// Characters from the prediction's new tokens that were kept in the final.
     pub kept_chars: usize,
-    /// Characters from the prediction's new tokens that were discarded.
     pub discarded_chars: usize,
-    /// Characters in predicted that are three-way shared context.
     pub context_chars: usize,
-    /// `kept_chars / predicted_new_chars`, or 1.0 when both sides have zero new chars.
     pub kept_rate: f64,
-    /// One annotation per predicted token (same order as `tokenize(predicted)`).
     pub token_annotations: Vec<TokenAnnotation>,
 }
 
@@ -200,9 +188,7 @@ fn lcs_keep_masks(a: &[&str], b: &[&str]) -> (Vec<bool>, Vec<bool>) {
     (keep_a, keep_b)
 }
 
-fn lcs_keep_mask(a: &[&str], b: &[&str]) -> Vec<bool> {
-    lcs_keep_masks(a, b).0
-}
+
 
 fn collect_unmasked_tokens<'a>(tokens: &[&'a str], mask: &[bool]) -> Vec<&'a str> {
     tokens
@@ -220,18 +206,6 @@ fn sum_masked_chars(tokens: &[&str], mask: &[bool], masked_value: bool) -> usize
         .sum()
 }
 
-/// Compute kept rate by comparing predicted vs final full texts, excluding
-/// three-way shared context (tokens unchanged across base, predicted, and
-/// final).
-///
-/// Context is defined as tokens in predicted that are present in BOTH base
-/// and final (via independent LCS computations). This ensures that tokens
-/// the prediction should have deleted (in base, in predicted, but not in
-/// final) are NOT treated as context and count against the prediction.
-///
-/// The result includes per-token annotations for debug visualization:
-/// each predicted token is labelled [`TokenAnnotation::Context`],
-/// [`TokenAnnotation::Kept`], or [`TokenAnnotation::Discarded`].
 pub fn compute_kept_rate(base: &str, predicted: &str, final_text: &str) -> KeptRateResult {
     if base == predicted && predicted == final_text {
         let predicted_tokens = tokenize(predicted);
@@ -251,8 +225,7 @@ pub fn compute_kept_rate(base: &str, predicted: &str, final_text: &str) -> KeptR
     let predicted_tokens = tokenize(predicted);
     let final_tokens = tokenize(final_text);
 
-    // Context in predicted: tokens matched in BOTH base and final.
-    let (pred_base_mask, _base_pred_mask) = lcs_keep_masks(&predicted_tokens, &base_tokens);
+    let (pred_base_mask, _) = lcs_keep_masks(&predicted_tokens, &base_tokens);
     let (pred_final_mask, final_pred_mask) = lcs_keep_masks(&predicted_tokens, &final_tokens);
     let context_mask: Vec<bool> = pred_base_mask
         .iter()
@@ -262,8 +235,7 @@ pub fn compute_kept_rate(base: &str, predicted: &str, final_text: &str) -> KeptR
 
     let stripped_predicted = collect_unmasked_tokens(&predicted_tokens, &context_mask);
 
-    // Context in final: tokens matched in BOTH base and predicted.
-    let (final_base_mask, _base_final_mask) = lcs_keep_masks(&final_tokens, &base_tokens);
+    let (final_base_mask, _) = lcs_keep_masks(&final_tokens, &base_tokens);
     let final_context_mask: Vec<bool> = final_base_mask
         .iter()
         .zip(final_pred_mask.iter())
@@ -275,7 +247,7 @@ pub fn compute_kept_rate(base: &str, predicted: &str, final_text: &str) -> KeptR
     let keep_mask = if stripped_predicted == stripped_final {
         vec![true; stripped_predicted.len()]
     } else {
-        lcs_keep_mask(&stripped_predicted, &stripped_final)
+        lcs_keep_masks(&stripped_predicted, &stripped_final).0
     };
 
     let predicted_new_chars = sum_masked_chars(&predicted_tokens, &context_mask, false);
@@ -326,74 +298,47 @@ mod test_kept_rate {
     use super::*;
 
     #[test]
-    fn test_lcs_keep_mask_subsequence() {
-        let a = vec!["a", "b", "c", "d", "e"];
-        let b = vec!["a", "c", "e"];
-        let mask = lcs_keep_mask(&a, &b);
-        assert_eq!(mask, vec![true, false, true, false, true]);
+    fn test_lcs_keep_masks() {
+        let (a_mask, b_mask) = lcs_keep_masks(&["a", "b", "c", "d", "e"], &["a", "c", "e"]);
+        assert_eq!(a_mask, vec![true, false, true, false, true]);
+        assert_eq!(b_mask, vec![true, true, true]);
+
+        let (a_mask, b_mask) = lcs_keep_masks(&[], &["x"]);
+        assert!(a_mask.is_empty());
+        assert_eq!(b_mask, vec![false]);
     }
 
     #[test]
-    fn test_lcs_keep_mask_tokens() {
-        let mask = lcs_keep_mask(&["alpha", "beta", "gamma"], &["alpha", "gamma"]);
-        assert_eq!(mask, vec![true, false, true]);
+    fn test_rate_extremes() {
+        let no_change = compute_kept_rate("foo bar", "foo bar", "foo bar");
+        assert!((no_change.kept_rate - 1.0).abs() < 1e-6);
+        assert_eq!(no_change.predicted_new_chars, 0);
+        assert!(
+            no_change
+                .token_annotations
+                .iter()
+                .all(|&annotation| annotation == TokenAnnotation::Context)
+        );
+
+        let accepted = compute_kept_rate("old", "new", "new");
+        assert!((accepted.kept_rate - 1.0).abs() < 1e-6);
+
+        let discarded = compute_kept_rate("old", "old", "new");
+        assert!((discarded.kept_rate - 0.0).abs() < 1e-6);
     }
 
     #[test]
-    fn test_lcs_keep_masks_returns_both_sides() {
-        let (a_mask, b_mask) = lcs_keep_masks(&["alpha", "beta", "gamma"], &["alpha", "gamma"]);
-        assert_eq!(a_mask, vec![true, false, true]);
-        assert_eq!(b_mask, vec![true, true]);
-    }
+    fn test_pure_addition() {
+        let kept = compute_kept_rate("", "brand new line\n", "brand new line\n");
+        assert_eq!(kept.kept_chars, kept.predicted_new_chars);
+        assert!(
+            kept.token_annotations
+                .iter()
+                .all(|&annotation| annotation == TokenAnnotation::Kept)
+        );
 
-    #[test]
-    fn test_lcs_keep_mask_empty_a() {
-        let mask = lcs_keep_mask(&[], &["x"]);
-        assert!(mask.is_empty());
-    }
-
-    #[test]
-    fn test_lcs_keep_mask_empty_b() {
-        let mask = lcs_keep_mask(&["x"], &[]);
-        assert_eq!(mask, vec![false]);
-    }
-
-    #[test]
-    fn test_identical_prediction_and_final() {
-        let base = "old line\n";
-        let predicted = "new line\n";
-        let final_text = "new line\n";
-        let result = compute_kept_rate(base, predicted, final_text);
-        assert!((result.kept_rate - 1.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn test_pure_addition_identical() {
-        let base = "";
-        let predicted = "brand new line\n";
-        let final_text = "brand new line\n";
-        let result = compute_kept_rate(base, predicted, final_text);
-        assert_eq!(result.kept_chars, result.predicted_new_chars);
-        assert!((result.kept_rate - 1.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn test_pure_addition_discarded() {
-        let base = "";
-        let predicted = "brand new line\n";
-        let final_text = "something completely different\n";
-        let result = compute_kept_rate(base, predicted, final_text);
-        assert!(result.kept_chars < result.predicted_new_chars);
-    }
-
-    #[test]
-    fn test_rename_base_chars_excluded() {
-        let base = "    foo(old_name)\n";
-        let predicted = "    foo(new_name)\n";
-        let final_text = "    foo(new_name)\n";
-        let result = compute_kept_rate(base, predicted, final_text);
-        assert_eq!(result.predicted_new_chars, "new_name".len());
-        assert!((result.kept_rate - 1.0).abs() < 1e-6);
+        let discarded = compute_kept_rate("", "brand new line\n", "something completely different\n");
+        assert!(discarded.kept_chars < discarded.predicted_new_chars);
     }
 
     #[test]
@@ -423,30 +368,16 @@ mod test_kept_rate {
 
     #[test]
     fn test_empty_prediction() {
-        let base = "old line\n";
-        let predicted = "";
-        let final_text = "new line\n";
-        let result = compute_kept_rate(base, predicted, final_text);
+        let result = compute_kept_rate("old line\n", "", "new line\n");
         assert!((result.kept_rate - 0.0).abs() < 1e-6);
     }
 
     #[test]
     fn test_partial_kept() {
-        let base = "old\n";
-        let predicted = "alpha\nbeta\ngamma\n";
-        let final_text = "alpha\ngamma\n";
-        let result = compute_kept_rate(base, predicted, final_text);
+        let result = compute_kept_rate("old\n", "alpha\nbeta\ngamma\n", "alpha\ngamma\n");
         assert!(result.kept_chars > 0);
         assert!(result.discarded_chars > 0);
         assert!(result.kept_rate > 0.0 && result.kept_rate < 1.0);
-    }
-
-    #[test]
-    fn test_no_change() {
-        let text = "unchanged line\n";
-        let result = compute_kept_rate(text, text, text);
-        assert!((result.kept_rate - 1.0).abs() < 1e-6);
-        assert_eq!(result.predicted_new_chars, 0);
     }
 
     #[test]
@@ -463,67 +394,20 @@ mod test_kept_rate {
     }
 
     #[test]
-    fn test_raw_strings() {
-        let result = compute_kept_rate("hello world", "hello brave new world", "hello new world");
-        assert!(result.kept_chars > 0);
-        assert!(result.discarded_chars > 0);
-        assert!(result.kept_rate > 0.0 && result.kept_rate < 1.0);
-    }
-
-    #[test]
-    fn test_all_same() {
-        let result = compute_kept_rate("foo bar", "foo bar", "foo bar");
-        assert!((result.kept_rate - 1.0).abs() < 1e-6);
-        assert_eq!(result.predicted_new_chars, 0);
-    }
-
-    #[test]
-    fn test_pred_eq_final() {
-        let result = compute_kept_rate("old", "new", "new");
-        assert!((result.kept_rate - 1.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn test_pred_eq_base() {
-        let result = compute_kept_rate("old", "old", "new");
-        assert!((result.kept_rate - 0.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn test_annotations_length_matches_tokens() {
-        let base = "    foo(old_name)\n";
-        let predicted = "    foo(new_name)\n";
-        let final_text = "    foo(new_name)\n";
-        let result = compute_kept_rate(base, predicted, final_text);
-        let predicted_tokens = tokenize(predicted);
-        assert_eq!(result.token_annotations.len(), predicted_tokens.len());
-    }
-
-    #[test]
     fn test_annotations_rename() {
         let base = "    foo(old_name)\n";
         let predicted = "    foo(new_name)\n";
         let final_text = "    foo(new_name)\n";
         let result = compute_kept_rate(base, predicted, final_text);
-        let predicted_tokens = tokenize(predicted);
 
-        for (i, (&token, &ann)) in predicted_tokens
-            .iter()
-            .zip(result.token_annotations.iter())
-            .enumerate()
-        {
+        assert_eq!(result.predicted_new_chars, "new_name".len());
+        assert_eq!(result.token_annotations.len(), tokenize(predicted).len());
+
+        for (&token, &annotation) in tokenize(predicted).iter().zip(&result.token_annotations) {
             if token == "new_name" {
-                assert_eq!(
-                    ann,
-                    TokenAnnotation::Kept,
-                    "token {i} '{token}' should be Kept"
-                );
+                assert_eq!(annotation, TokenAnnotation::Kept);
             } else {
-                assert_eq!(
-                    ann,
-                    TokenAnnotation::Context,
-                    "token {i} '{token}' should be Context"
-                );
+                assert_eq!(annotation, TokenAnnotation::Context);
             }
         }
     }
@@ -536,101 +420,32 @@ mod test_kept_rate {
         let result = compute_kept_rate(base, predicted, final_text);
         let predicted_tokens = tokenize(predicted);
 
-        let eprintln_idx = predicted_tokens
+        let eprintln_index = predicted_tokens
             .iter()
-            .position(|&t| t == "eprintln")
+            .position(|&token| token == "eprintln")
             .expect("eprintln token not found");
 
-        for i in 0..eprintln_idx {
-            assert_eq!(
-                result.token_annotations[i],
-                TokenAnnotation::Context,
-                "token {i} '{}' should be Context",
-                predicted_tokens[i]
-            );
+        for annotation in &result.token_annotations[..eprintln_index] {
+            assert_eq!(*annotation, TokenAnnotation::Context);
         }
 
         assert_eq!(
-            result.token_annotations[eprintln_idx],
-            TokenAnnotation::Kept
+            &result.token_annotations[eprintln_index..=eprintln_index + 10],
+            &[
+                TokenAnnotation::Kept,
+                TokenAnnotation::Kept,
+                TokenAnnotation::Kept,
+                TokenAnnotation::Kept,
+                TokenAnnotation::Discarded,
+                TokenAnnotation::Discarded,
+                TokenAnnotation::Discarded,
+                TokenAnnotation::Discarded,
+                TokenAnnotation::Kept,
+                TokenAnnotation::Kept,
+                TokenAnnotation::Kept,
+            ]
         );
-        assert_eq!(
-            result.token_annotations[eprintln_idx + 1],
-            TokenAnnotation::Kept
-        );
-        assert_eq!(
-            result.token_annotations[eprintln_idx + 2],
-            TokenAnnotation::Kept
-        );
-        assert_eq!(
-            result.token_annotations[eprintln_idx + 3],
-            TokenAnnotation::Kept
-        );
-        assert_eq!(
-            result.token_annotations[eprintln_idx + 4],
-            TokenAnnotation::Discarded
-        );
-        assert_eq!(
-            result.token_annotations[eprintln_idx + 5],
-            TokenAnnotation::Discarded
-        );
-        assert_eq!(
-            result.token_annotations[eprintln_idx + 6],
-            TokenAnnotation::Discarded
-        );
-        assert_eq!(
-            result.token_annotations[eprintln_idx + 7],
-            TokenAnnotation::Discarded
-        );
-        assert_eq!(
-            result.token_annotations[eprintln_idx + 8],
-            TokenAnnotation::Kept
-        );
-        assert_eq!(
-            result.token_annotations[eprintln_idx + 9],
-            TokenAnnotation::Kept
-        );
-        assert_eq!(
-            result.token_annotations[eprintln_idx + 10],
-            TokenAnnotation::Kept
-        );
-
-        assert_eq!(
-            *result
-                .token_annotations
-                .last()
-                .expect("missing trailing annotation"),
-            TokenAnnotation::Context
-        );
-    }
-
-    #[test]
-    fn test_annotations_all_context_when_no_change() {
-        let text = "unchanged line\n";
-        let result = compute_kept_rate(text, text, text);
-        assert!(
-            result
-                .token_annotations
-                .iter()
-                .all(|&a| a == TokenAnnotation::Context)
-        );
-    }
-
-    #[test]
-    fn test_annotations_no_context_when_all_new() {
-        let result = compute_kept_rate("", "brand new", "brand new");
-        assert!(
-            result
-                .token_annotations
-                .iter()
-                .all(|&a| a != TokenAnnotation::Context)
-        );
-        assert!(
-            result
-                .token_annotations
-                .iter()
-                .all(|&a| a == TokenAnnotation::Kept)
-        );
+        assert_eq!(result.token_annotations.last(), Some(&TokenAnnotation::Context));
     }
 
     #[test]

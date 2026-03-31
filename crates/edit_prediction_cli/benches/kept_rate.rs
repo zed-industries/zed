@@ -25,7 +25,6 @@ fn localized_rename_inputs(line_count: usize) -> (String, String, String) {
         .expect("expected needle in synthetic input");
     let end = offset + needle.len();
 
-    base.replace_range(offset..end, needle);
     predicted.replace_range(offset..end, prediction);
     final_text.replace_range(offset..end, accepted);
 

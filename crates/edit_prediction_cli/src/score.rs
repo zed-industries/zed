@@ -187,7 +187,6 @@ pub async fn run_scoring(
             prediction.actual_cursor.as_ref(),
         );
 
-        // Compute kept_rate: how much of the prediction's new content was kept in the final text.
         let kept_rate = best_expected_text.map(|final_text| {
             metrics::compute_kept_rate(original_text, &actual_text, final_text).kept_rate
         });
