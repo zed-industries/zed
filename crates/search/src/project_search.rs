@@ -1,12 +1,8 @@
 use crate::{
-    BufferSearchBar, FocusSearch, HighlightKey, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll,
-    ReplaceNext, SearchOption, SearchOptions, SearchSource, SelectNextMatch, SelectPreviousMatch,
-    ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex, ToggleReplace, ToggleWholeWord,
-    buffer_search::Deploy,
-    search_bar::{
+    BufferSearchBar, REPLACE_PLACEHOLDER, INCLUDE_PLACEHOLDER, EXCLUDE_PLACEHOLDER, FocusSearch, HighlightKey, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOption, SearchOptions, SearchSource, SelectNextMatch, SelectPreviousMatch, ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex, ToggleReplace, ToggleWholeWord, buffer_search::Deploy, search_bar::{
         ActionButtonState, HistoryNavigationDirection, alignment_element, input_base_styles,
         render_action_button, render_text_input, should_navigate_history,
-    },
+    }
 };
 use anyhow::Context as _;
 use collections::HashMap;
@@ -959,7 +955,7 @@ impl ProjectSearchView {
         );
         let replacement_editor = cx.new(|cx| {
             let mut editor = Editor::auto_height(1, 4, window, cx);
-            editor.set_placeholder_text("Replace in project…", window, cx);
+            editor.set_placeholder_text(REPLACE_PLACEHOLDER, window, cx);
             if let Some(text) = replacement_text {
                 editor.set_text(text, window, cx);
             }
@@ -989,7 +985,7 @@ impl ProjectSearchView {
 
         let included_files_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Include: crates/**/*.toml", window, cx);
+            editor.set_placeholder_text(INCLUDE_PLACEHOLDER, window, cx);
 
             editor
         });
@@ -1002,7 +998,7 @@ impl ProjectSearchView {
 
         let excluded_files_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Exclude: vendor/*, *.lock", window, cx);
+            editor.set_placeholder_text(EXCLUDE_PLACEHOLDER, *.lock", window, cx);
 
             editor
         });

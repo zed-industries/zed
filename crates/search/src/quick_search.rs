@@ -64,10 +64,6 @@ const CLICK_THRESHOLD_MS: u128 = 50;
 const DOUBLE_CLICK_THRESHOLD_MS: u128 = 300;
 const SEARCH_RESULTS_BATCH_SIZE: usize = 256;
 
-const REPLACE_PLACEHOLDER: &str = "Replace in project…";
-const INCLUDE_PLACEHOLDER: &str = "Include: e.g. src/**/*.rs";
-const EXCLUDE_PLACEHOLDER: &str = "Exclude: e.g. vendor/*, *.lock";
-
 struct StackedLayoutState {
     results_height: Pixels,
     preview_height: Pixels,
