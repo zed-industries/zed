@@ -13,8 +13,8 @@ use gpui::{
 };
 use language::LanguageRegistry;
 use markdown::{
-    CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownFont, MarkdownOptions,
-    MarkdownStyle,
+    CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownFont,
+    MarkdownOptions, MarkdownStyle,
 };
 use settings::Settings;
 use theme_settings::ThemeSettings;

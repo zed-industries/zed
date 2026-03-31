@@ -382,14 +382,16 @@ impl AcpTools {
                                     ..Default::default()
                                 },
                             )
-                            .code_block_renderer(CodeBlockRenderer::Default {
-                                copy_button_visibility: if expanded {
-                                    CopyButtonVisibility::VisibleOnHover
-                                } else {
-                                    CopyButtonVisibility::Hidden
+                            .code_block_renderer(
+                                CodeBlockRenderer::Default {
+                                    copy_button_visibility: if expanded {
+                                        CopyButtonVisibility::VisibleOnHover
+                                    } else {
+                                        CopyButtonVisibility::Hidden
+                                    },
+                                    border: false,
                                 },
-                                border: false,
-                            }),
+                            ),
                         ),
                     )
                 },
