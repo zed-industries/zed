@@ -854,9 +854,8 @@ impl AgentServerStore {
             let mut metadata = HashMap::default();
 
             for (name, mut entry) in previous_entries.drain() {
-                if let Some(agent) = entry.server.downcast_mut::<RemoteExternalAgentServer>() {
-                    new_version_available_txs
-                        .insert(name.clone(), agent.new_version_available_tx.take());
+                if let Some(tx) = entry.server.take_new_version_available_tx() {
+                    new_version_available_txs.insert(name.clone(), tx);
                 }
 
                 metadata.insert(name, (entry.icon, entry.display_name, entry.source));
@@ -887,9 +886,7 @@ impl AgentServerStore {
                         upstream_client: upstream_client.clone(),
                         worktree_store: worktree_store.clone(),
                         name: agent_id.clone(),
-                        new_version_available_tx: new_version_available_txs
-                            .remove(&agent_id)
-                            .flatten(),
+                        new_version_available_tx: new_version_available_txs.remove(&agent_id),
                     };
                     (
                         agent_id,
@@ -958,13 +955,10 @@ impl AgentServerStore {
         mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |this, _| {
-            if let Some(agent) = this.external_agents.get_mut(&*envelope.payload.name)
-                && let Some(agent) = agent.server.downcast_mut::<RemoteExternalAgentServer>()
-                && let Some(new_version_available_tx) = &mut agent.new_version_available_tx
+            if let Some(entry) = this.external_agents.get_mut(&*envelope.payload.name)
+                && let Some(mut tx) = entry.server.take_new_version_available_tx()
             {
-                new_version_available_tx
-                    .send(Some(envelope.payload.version))
-                    .ok();
+                tx.send(Some(envelope.payload.version)).ok();
             }
         });
         Ok(())
@@ -990,6 +984,14 @@ struct RemoteExternalAgentServer {
 }
 
 impl ExternalAgentServer for RemoteExternalAgentServer {
+    fn take_new_version_available_tx(&mut self) -> Option<watch::Sender<Option<String>>> {
+        self.new_version_available_tx.take()
+    }
+
+    fn set_new_version_available_tx(&mut self, tx: watch::Sender<Option<String>>) {
+        self.new_version_available_tx = Some(tx);
+    }
+
     fn get_command(
         &mut self,
         extra_env: HashMap<String, String>,
