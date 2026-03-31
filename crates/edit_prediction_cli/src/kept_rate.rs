@@ -132,10 +132,7 @@ fn lcs_keep_masks(a: &[&str], b: &[&str]) -> (Vec<bool>, Vec<bool>) {
         return (keep_a, keep_b);
     }
 
-    let dense_region_dp_cell_count = (a_mid.len() as u128 + 1) * (b_mid.len() as u128 + 1);
-    if dense_region_dp_cell_count >= DENSE_REGION_DP_CELL_THRESHOLD as u128
-        && should_use_diff_alignment(a_mid, b_mid)
-    {
+    if should_use_diff_alignment(a_mid, b_mid) {
         let a_mid_start = prefix_len;
         let b_mid_start = prefix_len;
         mark_equal_diff_ranges(
@@ -187,8 +184,6 @@ fn lcs_keep_masks(a: &[&str], b: &[&str]) -> (Vec<bool>, Vec<bool>) {
 
     (keep_a, keep_b)
 }
-
-
 
 fn collect_unmasked_tokens<'a>(tokens: &[&'a str], mask: &[bool]) -> Vec<&'a str> {
     tokens
@@ -244,11 +239,7 @@ pub fn compute_kept_rate(base: &str, predicted: &str, final_text: &str) -> KeptR
 
     let stripped_final = collect_unmasked_tokens(&final_tokens, &final_context_mask);
 
-    let keep_mask = if stripped_predicted == stripped_final {
-        vec![true; stripped_predicted.len()]
-    } else {
-        lcs_keep_masks(&stripped_predicted, &stripped_final).0
-    };
+    let keep_mask = lcs_keep_masks(&stripped_predicted, &stripped_final).0;
 
     let predicted_new_chars = sum_masked_chars(&predicted_tokens, &context_mask, false);
     let final_new_chars = sum_masked_chars(&final_tokens, &final_context_mask, false);
@@ -337,7 +328,8 @@ mod test_kept_rate {
                 .all(|&annotation| annotation == TokenAnnotation::Kept)
         );
 
-        let discarded = compute_kept_rate("", "brand new line\n", "something completely different\n");
+        let discarded =
+            compute_kept_rate("", "brand new line\n", "something completely different\n");
         assert!(discarded.kept_chars < discarded.predicted_new_chars);
     }
 
@@ -445,7 +437,10 @@ mod test_kept_rate {
                 TokenAnnotation::Kept,
             ]
         );
-        assert_eq!(result.token_annotations.last(), Some(&TokenAnnotation::Context));
+        assert_eq!(
+            result.token_annotations.last(),
+            Some(&TokenAnnotation::Context)
+        );
     }
 
     #[test]
