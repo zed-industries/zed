@@ -481,7 +481,7 @@ impl ThreadMetadataStore {
                 let updated_at = Utc::now();
 
                 let created_at = existing_thread
-                    .and_then(|t| t.created_at.clone())
+                    .and_then(|t| t.created_at)
                     .unwrap_or_else(|| updated_at);
 
                 let agent_id = thread_ref.connection().agent_id();
