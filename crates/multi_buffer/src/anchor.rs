@@ -119,8 +119,7 @@ impl Anchor {
             }
             if (self.diff_base_anchor.is_some() || other.diff_base_anchor.is_some())
                 && let Some(base_text) = snapshot
-                    .diffs
-                    .get(&excerpt.buffer_id)
+                    .diff_state(excerpt.buffer_id)
                     .map(|diff| diff.base_text())
             {
                 let self_anchor = self.diff_base_anchor.filter(|a| a.is_valid(base_text));
@@ -155,8 +154,7 @@ impl Anchor {
                 text_anchor: self.text_anchor.bias_left(&excerpt.buffer),
                 diff_base_anchor: self.diff_base_anchor.map(|a| {
                     if let Some(base_text) = snapshot
-                        .diffs
-                        .get(&excerpt.buffer_id)
+                        .diff_state(excerpt.buffer_id)
                         .map(|diff| diff.base_text())
                         && a.is_valid(&base_text)
                     {
@@ -178,8 +176,7 @@ impl Anchor {
                 text_anchor: self.text_anchor.bias_right(&excerpt.buffer),
                 diff_base_anchor: self.diff_base_anchor.map(|a| {
                     if let Some(base_text) = snapshot
-                        .diffs
-                        .get(&excerpt.buffer_id)
+                        .diff_state(excerpt.buffer_id)
                         .map(|diff| diff.base_text())
                         && a.is_valid(&base_text)
                     {

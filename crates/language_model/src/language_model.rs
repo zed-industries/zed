@@ -857,16 +857,6 @@ pub enum ConfigurationViewTargetAgent {
     Other(SharedString),
 }
 
-#[derive(PartialEq, Eq)]
-pub enum LanguageModelProviderTosView {
-    /// When there are some past interactions in the Agent Panel.
-    ThreadEmptyState,
-    /// When there are no past interactions in the Agent Panel.
-    ThreadFreshStart,
-    TextThreadPopup,
-    Configuration,
-}
-
 pub trait LanguageModelProviderState: 'static {
     type ObservableEntity;
 

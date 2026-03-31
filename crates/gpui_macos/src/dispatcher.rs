@@ -1,7 +1,7 @@
 use dispatch2::{DispatchQueue, DispatchQueueGlobalPriority, DispatchTime, GlobalQueueIdentifier};
 use gpui::{
-    GLOBAL_THREAD_TIMINGS, PlatformDispatcher, Priority, RunnableMeta, RunnableVariant,
-    THREAD_TIMINGS, TaskTiming, ThreadTaskTimings,
+    GLOBAL_THREAD_TIMINGS, PlatformDispatcher, Priority, RunnableMeta, RunnableVariant, TaskTiming,
+    ThreadTaskTimings, add_task_timing,
 };
 use mach2::{
     kern_return::KERN_SUCCESS,
@@ -42,25 +42,7 @@ impl PlatformDispatcher for MacDispatcher {
     }
 
     fn get_current_thread_timings(&self) -> ThreadTaskTimings {
-        THREAD_TIMINGS.with(|timings| {
-            let timings = timings.lock();
-            let thread_name = timings.thread_name.clone();
-            let total_pushed = timings.total_pushed;
-            let timings = &timings.timings;
-
-            let mut vec = Vec::with_capacity(timings.len());
-
-            let (s1, s2) = timings.as_slices();
-            vec.extend_from_slice(s1);
-            vec.extend_from_slice(s2);
-
-            ThreadTaskTimings {
-                thread_name,
-                thread_id: std::thread::current().id(),
-                timings: vec,
-                total_pushed,
-            }
-        })
+        gpui::profiler::get_current_thread_task_timings()
     }
 
     fn is_main_thread(&self) -> bool {
@@ -204,33 +186,16 @@ extern "C" fn trampoline(context: *mut c_void) {
     let location = runnable.metadata().location;
 
     let start = Instant::now();
-    let timing = TaskTiming {
+    let mut timing = TaskTiming {
         location,
         start,
         end: None,
     };
 
-    THREAD_TIMINGS.with(|timings| {
-        let mut timings = timings.lock();
-        let timings = &mut timings.timings;
-        if let Some(last_timing) = timings.iter_mut().rev().next() {
-            if last_timing.location == timing.location {
-                return;
-            }
-        }
-
-        timings.push_back(timing);
-    });
+    add_task_timing(timing);
 
     runnable.run();
-    let end = Instant::now();
 
-    THREAD_TIMINGS.with(|timings| {
-        let mut timings = timings.lock();
-        let timings = &mut timings.timings;
-        let Some(last_timing) = timings.iter_mut().rev().next() else {
-            return;
-        };
-        last_timing.end = Some(end);
-    });
+    timing.end = Some(Instant::now());
+    add_task_timing(timing);
 }

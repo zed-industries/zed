@@ -299,6 +299,13 @@
   //
   // Default: split
   "diff_view_style": "split",
+  // The minimum width (in em-widths) at which the split diff view is used.
+  // When the editor is narrower than this, the diff view automatically
+  // switches to unified mode and switches back when the editor is wide
+  // enough. Set to 0 to disable automatic switching.
+  //
+  // Default: 100
+  "minimum_split_diff_width": 100,
   // Show method signatures in the editor, when inside parentheses.
   "auto_signature_help": false,
   // Whether to show the signature help after completion or a bracket pair inserted.
@@ -943,12 +950,16 @@
     "button": true,
     // Where to dock the agent panel. Can be 'left', 'right' or 'bottom'.
     "dock": "right",
+    // Whether the agent panel should use flexible (proportional) sizing.
+    //
+    // Default: true
+    "flexible": true,
+    // Where to position the sidebar. Can be 'left' or 'right'.
+    "sidebar_side": "left",
     // Default width when the agent panel is docked to the left or right.
     "default_width": 640,
     // Default height when the agent panel is docked to the bottom.
     "default_height": 320,
-    // The view to use by default (thread, or text_thread)
-    "default_view": "thread",
     // The default model to use when creating new threads.
     "default_model": {
       // The provider to use.
@@ -1104,6 +1115,10 @@
     //
     // Default: true
     "expand_terminal_card": true,
+    // How thinking blocks should be displayed by default in the agent panel.
+    //
+    // Default: automatic
+    "thinking_display": "automatic",
     // Whether clicking the stop button on a running terminal tool should also cancel the agent's generation.
     // Note that this only applies to the stop button, not to ctrl+c inside the terminal.
     //
@@ -1597,9 +1612,6 @@
       "prompt_format": "infer",
       "max_output_tokens": 64,
     },
-    // Whether edit predictions are enabled when editing text threads in the agent panel.
-    // This setting has no effect if globally disabled.
-    "enabled_in_text_threads": true,
     // Controls whether Zed may collect training data when using Zed's Edit Predictions.
     // Data is only captured when the project is detected as open source.
     // Possible values:
@@ -1623,6 +1635,8 @@
   "status_bar": {
     // Whether to show the status bar.
     "experimental.show": true,
+    // Whether to show the name of the active file in the status bar.
+    "show_active_file": false,
     // Whether to show the active language button in the status bar.
     "active_language_button": true,
     // Whether to show the cursor position button in the status bar.
@@ -1651,6 +1665,10 @@
     "shell": "system",
     // Where to dock terminals panel. Can be `left`, `right`, `bottom`.
     "dock": "bottom",
+    // Whether the terminal panel should use flexible (proportional) sizing.
+    //
+    // Default: true
+    "flexible": true,
     // Default width when the terminal is docked to the left or right.
     "default_width": 640,
     // Default height when the terminal is docked to the bottom.
@@ -2034,7 +2052,7 @@
       "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "..."],
     },
     "Elixir": {
-      "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "..."],
+      "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "!emmet-language-server", "..."],
     },
     "Elm": {
       "tab_size": 4,

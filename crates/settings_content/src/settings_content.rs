@@ -483,22 +483,6 @@ pub enum DockPosition {
     Right,
 }
 
-/// Settings for slash commands.
-#[with_fallible_options]
-#[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema, MergeFrom, PartialEq, Eq)]
-pub struct SlashCommandSettings {
-    /// Settings for the `/cargo-workspace` slash command.
-    pub cargo_workspace: Option<CargoWorkspaceCommandSettings>,
-}
-
-/// Settings for the `/cargo-workspace` slash command.
-#[with_fallible_options]
-#[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema, MergeFrom, PartialEq, Eq)]
-pub struct CargoWorkspaceCommandSettings {
-    /// Whether `/cargo-workspace` is enabled.
-    pub enabled: Option<bool>,
-}
-
 /// Configuration of voice calls in Zed.
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
@@ -1133,15 +1117,15 @@ pub struct WhichKeySettingsContent {
     pub delay_ms: Option<u64>,
 }
 
+// An ExtendingVec in the settings can only accumulate new values.
+//
+// This is useful for things like private files where you only want
+// to allow new values to be added.
+//
+// Consider using a HashMap<String, bool> instead of this type
+// (like auto_install_extensions) so that user settings files can both add
+// and remove values from the set.
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-/// An ExtendingVec in the settings can only accumulate new values.
-///
-/// This is useful for things like private files where you only want
-/// to allow new values to be added.
-///
-/// Consider using a HashMap<String, bool> instead of this type
-/// (like auto_install_extensions) so that user settings files can both add
-/// and remove values from the set.
 pub struct ExtendingVec<T>(pub Vec<T>);
 
 impl<T> Into<Vec<T>> for ExtendingVec<T> {
@@ -1161,10 +1145,10 @@ impl<T: Clone> merge_from::MergeFrom for ExtendingVec<T> {
     }
 }
 
-/// A SaturatingBool in the settings can only ever be set to true,
-/// later attempts to set it to false will be ignored.
-///
-/// Used by `disable_ai`.
+// A SaturatingBool in the settings can only ever be set to true,
+// later attempts to set it to false will be ignored.
+//
+// Used by `disable_ai`.
 #[derive(Debug, Default, Copy, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SaturatingBool(pub bool);
 

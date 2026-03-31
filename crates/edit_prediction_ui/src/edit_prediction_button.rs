@@ -1357,14 +1357,19 @@ async fn open_disabled_globs_setting_in_editor(
             let settings = cx.global::<SettingsStore>();
 
             // Ensure that we always have "edit_predictions { "disabled_globs": [] }"
-            let edits = settings.edits_for_update(&text, |file| {
-                file.project
-                    .all_languages
-                    .edit_predictions
-                    .get_or_insert_with(Default::default)
-                    .disabled_globs
-                    .get_or_insert_with(Vec::new);
-            });
+            let Some(edits) = settings
+                .edits_for_update(&text, |file| {
+                    file.project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_with(Default::default)
+                        .disabled_globs
+                        .get_or_insert_with(Vec::new);
+                })
+                .log_err()
+            else {
+                return;
+            };
 
             if !edits.is_empty() {
                 item.edit(
@@ -1418,9 +1423,9 @@ pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
 
     providers.push(EditPredictionProvider::Zed);
 
-    if let Some(app_state) = workspace::AppState::global(cx).upgrade()
-        && copilot::GlobalCopilotAuth::try_get_or_init(app_state, cx)
-            .is_some_and(|copilot| copilot.0.read(cx).is_authenticated())
+    let app_state = workspace::AppState::global(cx);
+    if copilot::GlobalCopilotAuth::try_get_or_init(app_state, cx)
+        .is_some_and(|copilot| copilot.0.read(cx).is_authenticated())
     {
         providers.push(EditPredictionProvider::Copilot);
     };

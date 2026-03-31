@@ -308,6 +308,7 @@ impl VsCodeSettings {
             completion_menu_scrollbar: None,
             completion_detail_alignment: None,
             diff_view_style: None,
+            minimum_split_diff_width: None,
         }
     }
 
@@ -508,7 +509,6 @@ impl VsCodeSettings {
             context_servers: self.context_servers(),
             context_server_timeout: None,
             load_direnv: None,
-            slash_commands: None,
             git_hosting_providers: None,
             disable_ai: None,
         }
@@ -769,6 +769,7 @@ impl VsCodeSettings {
     fn status_bar_settings_content(&self) -> Option<StatusBarSettingsContent> {
         skip_default(StatusBarSettingsContent {
             show: self.read_bool("workbench.statusBar.visible"),
+            show_active_file: None,
             active_language_button: None,
             cursor_position_button: None,
             line_endings_button: None,
@@ -880,6 +881,7 @@ impl VsCodeSettings {
             scroll_multiplier: None,
             toolbar: None,
             show_count_badge: None,
+            flexible: None,
         })
     }
 

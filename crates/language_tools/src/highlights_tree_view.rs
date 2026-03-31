@@ -9,6 +9,7 @@ use gpui::{
     Task, UniformListScrollHandle, WeakEntity, Window, actions, div, rems, uniform_list,
 };
 use language::ToOffset;
+
 use menu::{SelectNext, SelectPrevious};
 use std::{mem, ops::Range};
 use theme::ActiveTheme;
@@ -419,12 +420,12 @@ impl HighlightsTreeView {
 
             for capture in captures {
                 let highlight_id = highlight_maps[capture.grammar_index].get(capture.index);
-                let Some(style) = highlight_id.style(&syntax_theme) else {
+                let Some(style) = syntax_theme.get(highlight_id).cloned() else {
                     continue;
                 };
 
-                let theme_key = highlight_id
-                    .name(&syntax_theme)
+                let theme_key = syntax_theme
+                    .get_capture_name(highlight_id)
                     .map(|theme_key| SharedString::from(theme_key.to_string()));
 
                 let capture_name = grammars[capture.grammar_index]

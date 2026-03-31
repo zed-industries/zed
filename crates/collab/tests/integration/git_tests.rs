@@ -401,16 +401,19 @@ async fn test_linked_worktrees_sync(
                 path: PathBuf::from(path!("/project")),
                 ref_name: Some("refs/heads/main".into()),
                 sha: "aaa111".into(),
+                is_main: false,
             });
             state.worktrees.push(GitWorktree {
                 path: PathBuf::from(path!("/project/feature-branch")),
                 ref_name: Some("refs/heads/feature-branch".into()),
                 sha: "bbb222".into(),
+                is_main: false,
             });
             state.worktrees.push(GitWorktree {
                 path: PathBuf::from(path!("/project/bugfix-branch")),
                 ref_name: Some("refs/heads/bugfix-branch".into()),
                 sha: "ccc333".into(),
+                is_main: false,
             });
         })
         .unwrap();
@@ -480,6 +483,7 @@ async fn test_linked_worktrees_sync(
                 path: PathBuf::from(path!("/project/hotfix-branch")),
                 ref_name: Some("refs/heads/hotfix-branch".into()),
                 sha: "ddd444".into(),
+                is_main: false,
             });
         })
         .unwrap();

@@ -7,10 +7,8 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use settings::{Settings as _, SettingsStore, update_settings_file};
 use std::sync::Arc;
-use theme::{
-    Appearance, IconThemeName, IconThemeSelection, SystemAppearance, ThemeMeta, ThemeRegistry,
-    ThemeSettings,
-};
+use theme::{Appearance, SystemAppearance, ThemeMeta, ThemeRegistry};
+use theme_settings::{IconThemeName, IconThemeSelection, ThemeSettings};
 use ui::{ListItem, ListItemSpacing, prelude::*, v_flex};
 use util::ResultExt;
 use workspace::{ModalView, ui::HighlightedLabel};
@@ -176,7 +174,7 @@ impl PickerDelegate for IconThemeSelectorDelegate {
         let appearance = Appearance::from(window.appearance());
 
         update_settings_file(self.fs.clone(), cx, move |settings, _| {
-            theme::set_icon_theme(settings, theme_name, appearance);
+            theme_settings::set_icon_theme(settings, theme_name, appearance);
         });
 
         self.selector

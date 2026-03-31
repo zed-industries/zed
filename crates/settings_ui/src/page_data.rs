@@ -411,9 +411,9 @@ fn appearance_page() -> SettingsPage {
                                         settings::ThemeSelection::Static(_) => return,
                                         settings::ThemeSelection::Dynamic { mode, light, dark } => {
                                             match mode {
-                                                theme::ThemeAppearanceMode::Light => light.clone(),
-                                                theme::ThemeAppearanceMode::Dark => dark.clone(),
-                                                theme::ThemeAppearanceMode::System => dark.clone(), // no cx, can't determine correct choice
+                                                theme_settings::ThemeAppearanceMode::Light => light.clone(),
+                                                theme_settings::ThemeAppearanceMode::Dark => dark.clone(),
+                                                theme_settings::ThemeAppearanceMode::System => dark.clone(), // no cx, can't determine correct choice
                                             }
                                         },
                                     };
@@ -581,9 +581,9 @@ fn appearance_page() -> SettingsPage {
                                         settings::IconThemeSelection::Static(_) => return,
                                         settings::IconThemeSelection::Dynamic { mode, light, dark } => {
                                             match mode {
-                                                theme::ThemeAppearanceMode::Light => light.clone(),
-                                                theme::ThemeAppearanceMode::Dark => dark.clone(),
-                                                theme::ThemeAppearanceMode::System => dark.clone(), // no cx, can't determine correct choice
+                                                theme_settings::ThemeAppearanceMode::Light => light.clone(),
+                                                theme_settings::ThemeAppearanceMode::Dark => dark.clone(),
+                                                theme_settings::ThemeAppearanceMode::System => dark.clone(), // no cx, can't determine correct choice
                                             }
                                         },
                                     };
@@ -802,7 +802,8 @@ fn appearance_page() -> SettingsPage {
                                 }
                                 settings::BufferLineHeightDiscriminants::Custom => {
                                     let custom_value =
-                                        theme::BufferLineHeight::from(*settings_value).value();
+                                        theme_settings::BufferLineHeight::from(*settings_value)
+                                            .value();
                                     settings::BufferLineHeight::Custom(custom_value)
                                 }
                             };
@@ -1473,7 +1474,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn multibuffer_section() -> [SettingsPageItem; 6] {
+    fn multibuffer_section() -> [SettingsPageItem; 7] {
         [
             SettingsPageItem::SectionHeader("Multibuffer"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1548,6 +1549,21 @@ fn editor_page() -> SettingsPage {
                     pick: |settings_content| settings_content.editor.diff_view_style.as_ref(),
                     write: |settings_content, value| {
                         settings_content.editor.diff_view_style = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Minimum Split Diff Width",
+                description: "The minimum width (in columns) at which the split diff view is used. When the editor is narrower, the diff view automatically switches to unified mode. Set to 0 to disable.",
+                field: Box::new(SettingField {
+                    json_path: Some("minimum_split_diff_width"),
+                    pick: |settings_content| {
+                        settings_content.editor.minimum_split_diff_width.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content.editor.minimum_split_diff_width = value;
                     },
                 }),
                 metadata: None,
@@ -3327,7 +3343,7 @@ fn search_and_files_page() -> SettingsPage {
 }
 
 fn window_and_layout_page() -> SettingsPage {
-    fn status_bar_section() -> [SettingsPageItem; 9] {
+    fn status_bar_section() -> [SettingsPageItem; 10] {
         [
             SettingsPageItem::SectionHeader("Status Bar"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -3467,6 +3483,28 @@ fn window_and_layout_page() -> SettingsPage {
                     pick: |settings_content| settings_content.debugger.as_ref()?.button.as_ref(),
                     write: |settings_content, value| {
                         settings_content.debugger.get_or_insert_default().button = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Active File Name",
+                description: "Show the name of the active file in the status bar.",
+                field: Box::new(SettingField {
+                    json_path: Some("status_bar.show_active_file"),
+                    pick: |settings_content| {
+                        settings_content
+                            .status_bar
+                            .as_ref()?
+                            .show_active_file
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .status_bar
+                            .get_or_insert_default()
+                            .show_active_file = value;
                     },
                 }),
                 metadata: None,
@@ -7301,6 +7339,28 @@ fn ai_page(cx: &App) -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
+                title: "Thinking Display",
+                description: "How thinking blocks should be displayed by default. 'Automatic' auto-expands with a height constraint during streaming. 'Always Expanded' shows full content. 'Always Collapsed' keeps them collapsed.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.thinking_display"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()?
+                            .thinking_display
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .thinking_display = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
                 title: "Cancel Generation On Terminal Stop",
                 description: "Whether clicking the stop button on a running terminal tool should also cancel the agent's generation. Note that this only applies to the stop button, not to ctrl+c inside the terminal.",
                 field: Box::new(SettingField {
@@ -7410,61 +7470,33 @@ fn ai_page(cx: &App) -> SettingsPage {
         ]
     }
 
-    fn edit_prediction_display_sub_section() -> [SettingsPageItem; 2] {
-        [
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Display Mode",
-                description: "When to show edit predictions previews in buffer. The eager mode displays them inline, while the subtle mode displays them only when holding a modifier key.",
-                field: Box::new(SettingField {
-                    json_path: Some("edit_prediction.display_mode"),
-                    pick: |settings_content| {
-                        settings_content
-                            .project
-                            .all_languages
-                            .edit_predictions
-                            .as_ref()?
-                            .mode
-                            .as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .project
-                            .all_languages
-                            .edit_predictions
-                            .get_or_insert_default()
-                            .mode = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
+    fn edit_prediction_display_sub_section() -> [SettingsPageItem; 1] {
+        [SettingsPageItem::SettingItem(SettingItem {
+            title: "Display Mode",
+            description: "When to show edit predictions previews in buffer. The eager mode displays them inline, while the subtle mode displays them only when holding a modifier key.",
+            field: Box::new(SettingField {
+                json_path: Some("edit_prediction.display_mode"),
+                pick: |settings_content| {
+                    settings_content
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .mode
+                        .as_ref()
+                },
+                write: |settings_content, value| {
+                    settings_content
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .mode = value;
+                },
             }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Display In Text Threads",
-                description: "Whether edit predictions are enabled when editing text threads in the agent panel.",
-                field: Box::new(SettingField {
-                    json_path: Some("edit_prediction.in_text_threads"),
-                    pick: |settings_content| {
-                        settings_content
-                            .project
-                            .all_languages
-                            .edit_predictions
-                            .as_ref()?
-                            .enabled_in_text_threads
-                            .as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .project
-                            .all_languages
-                            .edit_predictions
-                            .get_or_insert_default()
-                            .enabled_in_text_threads = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-        ]
+            metadata: None,
+            files: USER,
+        })]
     }
 
     SettingsPage {

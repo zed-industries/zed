@@ -25,7 +25,6 @@ pub(crate) fn extension_auto_bump() -> Workflow {
                 Push::default()
                     .add_branch("main")
                     .add_path("extensions/**")
-                    .add_path("!extensions/slash-commands-example/**")
                     .add_path("!extensions/test-extension/**")
                     .add_path("!extensions/workflows/**")
                     .add_path("!extensions/*.md"),
@@ -42,12 +41,11 @@ fn detect_changed_extensions() -> NamedJob {
         CHANGED_FILES="$(git diff --name-only "$COMPARE_REV" "$GITHUB_SHA")"
     "#};
 
-    let filter_new_and_removed = indoc! {r#"
-        # Filter out newly added or entirely removed extensions
+    let filter_newly_added = indoc! {r#"
+        # Filter out newly added extensions
         FILTERED="[]"
         for ext in $(echo "$EXTENSIONS_JSON" | jq -r '.[]'); do
-            if git show HEAD~1:"$ext/extension.toml" >/dev/null 2>&1 && \
-               [ -f "$ext/extension.toml" ]; then
+            if git show HEAD~1:"$ext/extension.toml" >/dev/null 2>&1; then
                 FILTERED=$(echo "$FILTERED" | jq -c --arg e "$ext" '. + [$e]')
             fi
         done
@@ -58,7 +56,7 @@ fn detect_changed_extensions() -> NamedJob {
         "{preamble}{detect}{filter}",
         preamble = preamble,
         detect = DETECT_CHANGED_EXTENSIONS_SCRIPT,
-        filter = filter_new_and_removed,
+        filter = filter_newly_added,
     );
 
     let step = named::bash(script).id("detect");
