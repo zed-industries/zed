@@ -785,6 +785,9 @@ impl QuickSearch {
                     .bg(cx.theme().colors().border)
                     .hover(|style| style.bg(cx.theme().colors().border_focused)),
             })
+            .on_mouse_down(MouseButton::Left, |_, window, _cx| {
+                window.prevent_default();
+            })
             .on_drag(
                 VerticalResizeDrag {
                     side,
@@ -1099,6 +1102,9 @@ impl QuickSearch {
             .cursor_row_resize()
             .bg(cx.theme().colors().border)
             .hover(|style| style.bg(cx.theme().colors().border_focused))
+            .on_mouse_down(MouseButton::Left, |_, window, _cx| {
+                window.prevent_default();
+            })
             .on_drag(
                 ResizeDrag {
                     mouse_start_y: window.mouse_position().y,
@@ -1209,6 +1215,9 @@ impl QuickSearch {
             .cursor_col_resize()
             .bg(cx.theme().colors().border)
             .hover(|style| style.bg(cx.theme().colors().border_focused))
+            .on_mouse_down(MouseButton::Left, |_, window, _cx| {
+                window.prevent_default();
+            })
             .on_drag(
                 TelescopePreviewResizeDrag {
                     mouse_start_x: window.mouse_position().x,
@@ -1255,6 +1264,9 @@ impl QuickSearch {
                         .right_0(),
                     ResizeSide::End => this,
                 }
+            })
+            .on_mouse_down(MouseButton::Left, |_, window, _cx| {
+                window.prevent_default();
             })
             .on_drag(
                 TelescopeHeightResizeDrag {
@@ -2372,6 +2384,7 @@ impl PickerDelegate for QuickSearchDelegate {
             self.last_click = Some((self.selected_index, now));
 
             if !is_double_click {
+                cx.focus_self(window);
                 return;
             }
         }
