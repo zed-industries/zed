@@ -408,13 +408,18 @@ pub(crate) fn get_remote_dir_from_config(
 #[cfg(test)]
 mod test {
     use std::{
+        collections::HashMap,
         ffi::OsStr,
         process::{ExitStatus, Output},
     };
 
     use crate::{
         command_json::deserialize_json_output,
-        docker::{Docker, DockerInspect, DockerPs, get_remote_dir_from_config},
+        devcontainer_json::MountDefinition,
+        docker::{
+            Docker, DockerComposeConfig, DockerComposeService, DockerComposeVolume, DockerInspect,
+            DockerPs, get_remote_dir_from_config,
+        },
     };
 
     #[test]
@@ -766,5 +771,128 @@ mod test {
 
         assert!(target_dir.is_ok());
         assert_eq!(target_dir.unwrap(), "/workspaces/cli/".to_string());
+    }
+
+    #[test]
+    fn should_deserialize_docker_compose_config() {
+        let given_config = r#"
+    {
+        "name": "devcontainer",
+        "networks": {
+        "default": {
+            "name": "devcontainer_default",
+            "ipam": {}
+        }
+        },
+        "services": {
+            "app": {
+                "command": [
+                "sleep",
+                "infinity"
+                ],
+                "depends_on": {
+                "db": {
+                    "condition": "service_started",
+                    "restart": true,
+                    "required": true
+                }
+                },
+                "entrypoint": null,
+                "environment": {
+                "POSTGRES_DB": "postgres",
+                "POSTGRES_HOSTNAME": "localhost",
+                "POSTGRES_PASSWORD": "postgres",
+                "POSTGRES_PORT": "5432",
+                "POSTGRES_USER": "postgres"
+                },
+                "image": "mcr.microsoft.com/devcontainers/rust:2-1-bookworm",
+                "network_mode": "service:db",
+                "volumes": [
+                {
+                    "type": "bind",
+                    "source": "/path/to",
+                    "target": "/workspaces",
+                    "bind": {
+                    "create_host_path": true
+                    }
+                }
+                ]
+            },
+            "db": {
+                "command": null,
+                "entrypoint": null,
+                "environment": {
+                "POSTGRES_DB": "postgres",
+                "POSTGRES_HOSTNAME": "localhost",
+                "POSTGRES_PASSWORD": "postgres",
+                "POSTGRES_PORT": "5432",
+                "POSTGRES_USER": "postgres"
+                },
+                "image": "postgres:14.1",
+                "networks": {
+                "default": null
+                },
+                "restart": "unless-stopped",
+                "volumes": [
+                {
+                    "type": "volume",
+                    "source": "postgres-data",
+                    "target": "/var/lib/postgresql/data",
+                    "volume": {}
+                }
+                ]
+            }
+        },
+        "volumes": {
+        "postgres-data": {
+            "name": "devcontainer_postgres-data"
+        }
+        }
+    }
+                "#;
+
+        let docker_compose_config: DockerComposeConfig =
+            serde_json_lenient::from_str(given_config).unwrap();
+
+        let expected_config = DockerComposeConfig {
+            name: Some("devcontainer".to_string()),
+            services: HashMap::from([
+                (
+                    "app".to_string(),
+                    DockerComposeService {
+                        image: Some(
+                            "mcr.microsoft.com/devcontainers/rust:2-1-bookworm".to_string(),
+                        ),
+                        volumes: vec![MountDefinition {
+                            mount_type: Some("bind".to_string()),
+                            source: "/path/to".to_string(),
+                            target: "/workspaces".to_string(),
+                        }],
+                        network_mode: Some("service:db".to_string()),
+                        ..Default::default()
+                    },
+                ),
+                (
+                    "db".to_string(),
+                    DockerComposeService {
+                        image: Some("postgres:14.1".to_string()),
+                        volumes: vec![MountDefinition {
+                            mount_type: Some("volume".to_string()),
+                            source: "postgres-data".to_string(),
+                            target: "/var/lib/postgresql/data".to_string(),
+                        }],
+                        ..Default::default()
+                    },
+                ),
+            ]),
+            volumes: HashMap::from([(
+                "postgres-data".to_string(),
+                DockerComposeVolume {
+                    name: "devcontainer_postgres-data".to_string(),
+                },
+            )]),
+        };
+
+        assert_eq!(docker_compose_config, expected_config);
     }
 }
