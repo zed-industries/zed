@@ -241,25 +241,58 @@ pub fn persist_sessions_for_background(cx: &App) {
 pub struct WorkspaceSwitcher {
     current_path: SharedString,
     host_label: SharedString,
+    host: String,
+    username: String,
+    port: u16,
 }
 
 impl WorkspaceSwitcher {
-    pub fn new(path: &str, host: &str, username: &str) -> Self {
-        let short_path = path
-            .strip_prefix("~/")
-            .or_else(|| path.strip_prefix('/'))
+    pub fn new(path: &str, host: &str, username: &str, port: u16) -> Self {
+        let short_path = std::path::Path::new(path)
+            .file_name()
+            .and_then(|n| n.to_str())
             .unwrap_or(path);
         Self {
             current_path: SharedString::from(short_path.to_string()),
             host_label: SharedString::from(format!("{username}@{host}")),
+            host: host.to_string(),
+            username: username.to_string(),
+            port,
         }
     }
 }
 
+/// A menu entry for the workspace switcher: either an already-open workspace
+/// or a saved project path that can be opened on the existing connection.
+enum SwitcherEntry {
+    Open {
+        path: SharedString,
+        workspace: Entity<workspace::Workspace>,
+        all_workspaces: Vec<Entity<workspace::Workspace>>,
+    },
+    Saved {
+        path: SharedString,
+        remote_connection: Arc<dyn remote::RemoteConnection>,
+        host: String,
+        username: String,
+        port: u16,
+    },
+}
+
 impl Render for WorkspaceSwitcher {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let current_path = self.current_path.clone();
         let host_label = self.host_label.clone();
+        let host = self.host.clone();
+        let username = self.username.clone();
+        let port = self.port;
+
+        // Collect open workspace paths for this host.
+        let open_paths: Vec<String> = cx
+            .try_global::<ActiveConnections>()
+            .and_then(|ac| ac.find_by_host(&host, &username, port))
+            .map(|hc| hc.workspaces.iter().map(|w| w.path.clone()).collect())
+            .unwrap_or_default();
 
         h_flex()
             .gap_1()
@@ -285,9 +318,9 @@ impl Render for WorkspaceSwitcher {
                                     .gap_1p5()
                                     .items_center()
                                     .child(
-                                        Icon::new(IconName::Folder)
+                                        Icon::new(IconName::FolderOpen)
                                             .size(IconSize::Small)
-                                            .color(Color::Muted),
+                                            .color(Color::Accent),
                                     )
                                     .child(
                                         Label::new(current_path)
@@ -299,35 +332,63 @@ impl Render for WorkspaceSwitcher {
                     .anchor(gpui::Corner::BottomLeft)
                     .menu({
                         let host_label = host_label.clone();
+                        let host = host.clone();
+                        let username = username.clone();
                         move |window, cx| {
-                            // Collect workspace info before borrowing cx mutably.
-                            let entries: Vec<(
-                                SharedString,
-                                Entity<workspace::Workspace>,
-                                Vec<Entity<workspace::Workspace>>,
-                            )> = cx
-                                .try_global::<ActiveConnections>()
-                                .map(|active_conns| {
-                                    active_conns
-                                        .hosts
+                            let mut entries: Vec<SwitcherEntry> = Vec::new();
+
+                            // Add open workspaces.
+                            if let Some(active) = cx.try_global::<ActiveConnections>() {
+                                if let Some(hc) =
+                                    active.find_by_host(&host, &username, port)
+                                {
+                                    let all: Vec<_> = hc
+                                        .workspaces
                                         .iter()
-                                        .flat_map(|hc| {
-                                            let all: Vec<_> = hc
-                                                .workspaces
-                                                .iter()
-                                                .map(|w| w.workspace.clone())
-                                                .collect();
-                                            hc.workspaces.iter().map(move |entry| {
-                                                (
-                                                    SharedString::from(entry.path.clone()),
-                                                    entry.workspace.clone(),
-                                                    all.clone(),
-                                                )
-                                            })
-                                        })
-                                        .collect()
-                                })
-                                .unwrap_or_default();
+                                        .map(|w| w.workspace.clone())
+                                        .collect();
+                                    for entry in &hc.workspaces {
+                                        entries.push(SwitcherEntry::Open {
+                                            path: SharedString::from(entry.path.clone()),
+                                            workspace: entry.workspace.clone(),
+                                            all_workspaces: all.clone(),
+                                        });
+                                    }
+                                }
+                            }
+
+                            // Add saved but not-yet-open project paths.
+                            let saved_hosts = load_saved_host_entries();
+                            let remote_connection = cx
+                                .try_global::<ActiveConnections>()
+                                .and_then(|ac| ac.find_by_host(&host, &username, port))
+                                .map(|hc| hc.remote_connection.clone());
+
+                            if let Some(remote_connection) = remote_connection {
+                                for saved in &saved_hosts {
+                                    if saved.host == host
+                                        && saved.username == username
+                                        && saved.port == port
+                                    {
+                                        let path =
+                                            saved.project_path.as_deref().unwrap_or("");
+                                        let already_open =
+                                            open_paths.iter().any(|p| p == path);
+                                        if !already_open && !path.is_empty() {
+                                            entries.push(SwitcherEntry::Saved {
+                                                path: SharedString::from(
+                                                    path.to_string(),
+                                                ),
+                                                remote_connection:
+                                                    remote_connection.clone(),
+                                                host: host.clone(),
+                                                username: username.clone(),
+                                                port,
+                                            });
+                                        }
+                                    }
+                                }
+                            }
 
                             if entries.is_empty() {
                                 return None;
@@ -335,37 +396,87 @@ impl Render for WorkspaceSwitcher {
 
                             let menu = ContextMenu::build(window, cx, |mut menu, _window, _cx| {
                                 menu = menu.header(host_label.clone());
-                                for (path_label, workspace, all_workspaces) in entries {
-                                    menu = menu.custom_entry(
-                                        {
-                                            let path_label = path_label.clone();
-                                            move |_window, _cx| {
-                                                h_flex()
-                                                    .gap_2()
-                                                    .child(
-                                                        Icon::new(IconName::Folder)
-                                                            .size(IconSize::Small)
-                                                            .color(Color::Muted),
-                                                    )
-                                                    .child(
-                                                        Label::new(path_label.clone())
-                                                            .size(LabelSize::Small),
-                                                    )
-                                                    .into_any_element()
-                                            }
-                                        },
-                                        {
-                                            let workspace = workspace.clone();
-                                            move |window, cx| {
-                                                show_multi_workspace(
-                                                    window,
-                                                    cx,
-                                                    &all_workspaces,
-                                                    &workspace,
-                                                );
-                                            }
-                                        },
-                                    );
+                                for entry in entries {
+                                    match entry {
+                                        SwitcherEntry::Open {
+                                            path,
+                                            workspace,
+                                            all_workspaces,
+                                        } => {
+                                            menu = menu.custom_entry(
+                                                {
+                                                    let path = path.clone();
+                                                    move |_window, _cx| {
+                                                        h_flex()
+                                                            .gap_2()
+                                                            .child(
+                                                                Icon::new(IconName::FolderOpen)
+                                                                    .size(IconSize::Small)
+                                                                    .color(Color::Accent),
+                                                            )
+                                                            .child(
+                                                                Label::new(path.clone())
+                                                                    .size(LabelSize::Small),
+                                                            )
+                                                            .into_any_element()
+                                                    }
+                                                },
+                                                {
+                                                    let workspace = workspace.clone();
+                                                    move |window, cx| {
+                                                        show_multi_workspace(
+                                                            window,
+                                                            cx,
+                                                            &all_workspaces,
+                                                            &workspace,
+                                                        );
+                                                    }
+                                                },
+                                            );
+                                        }
+                                        SwitcherEntry::Saved {
+                                            path,
+                                            remote_connection,
+                                            host,
+                                            username,
+                                            port,
+                                        } => {
+                                            menu = menu.custom_entry(
+                                                {
+                                                    let path = path.clone();
+                                                    move |_window, _cx| {
+                                                        h_flex()
+                                                            .gap_2()
+                                                            .child(
+                                                                Icon::new(IconName::Folder)
+                                                                    .size(IconSize::Small)
+                                                                    .color(Color::Muted),
+                                                            )
+                                                            .child(
+                                                                Label::new(path.clone())
+                                                                    .size(LabelSize::Small)
+                                                                    .color(Color::Muted),
+                                                            )
+                                                            .into_any_element()
+                                                    }
+                                                },
+                                                {
+                                                    let path = path.to_string();
+                                                    move |window, cx| {
+                                                        open_saved_path(
+                                                            window,
+                                                            cx,
+                                                            remote_connection.clone(),
+                                                            path.clone(),
+                                                            host.clone(),
+                                                            username.clone(),
+                                                            port,
+                                                        );
+                                                    }
+                                                },
+                                            );
+                                        }
+                                    }
                                 }
                                 menu
                             });
@@ -421,6 +532,50 @@ fn show_multi_workspace(
             multi
         });
     }
+}
+
+/// Open a saved (not yet connected) project path on an existing host connection.
+/// Called from the workspace switcher menu.
+fn open_saved_path(
+    window: &mut Window,
+    cx: &mut App,
+    remote_connection: Arc<dyn remote::RemoteConnection>,
+    path: String,
+    host: String,
+    username: String,
+    port: u16,
+) {
+    let app_state = match crate::ios::app_state() {
+        Some(state) => state,
+        None => {
+            log::error!("[zed-ios] app_state not available for opening saved path");
+            return;
+        }
+    };
+    let landing_window = window.window_handle();
+    let delegate = Arc::new(IosRemoteClientDelegate {
+        window: landing_window,
+        show_status_in_ui: false,
+    });
+
+    cx.spawn(async move |cx| {
+        let result = ConnectionLanding::add_workspace_for_path(
+            landing_window,
+            remote_connection,
+            path,
+            host,
+            username,
+            port,
+            delegate,
+            app_state,
+            cx,
+        )
+        .await;
+        if let Err(error) = result {
+            log::error!("[zed-ios] failed to open saved path: {error:#}");
+        }
+    })
+    .detach();
 }
 
 /// On-disk representation of a saved SSH host.
@@ -1264,6 +1419,7 @@ impl ConnectionLanding {
         path: &str,
         host: &str,
         username: &str,
+        port: u16,
         delegate: Arc<dyn remote::RemoteClientDelegate>,
         app_state: Arc<workspace::AppState>,
         cx: &mut AsyncApp,
@@ -1320,7 +1476,7 @@ impl ConnectionLanding {
                 workspace::Workspace::new(None, project.clone(), app_state.clone(), window, cx)
             });
 
-            let switcher = cx.new(|_cx| WorkspaceSwitcher::new(path, host, username));
+            let switcher = cx.new(|_cx| WorkspaceSwitcher::new(path, host, username, port));
             let suffix = cx.new(|_cx| StatusBarSuffix);
             workspace.update(cx, |ws, cx| {
                 ws.set_status_bar_prefix(switcher.into(), cx);
@@ -1416,6 +1572,7 @@ impl ConnectionLanding {
             &path,
             &host,
             &username,
+            port,
             delegate,
             app_state,
             cx,
@@ -1479,6 +1636,7 @@ impl ConnectionLanding {
             &path,
             &host_str,
             &username_str,
+            port_val,
             delegate,
             app_state,
             cx,
