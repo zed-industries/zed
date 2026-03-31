@@ -3309,10 +3309,24 @@ impl Sidebar {
     }
 
     fn render_sidebar_bottom_bar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let on_right = self.side(cx) == SidebarSide::Right;
         let is_archive = matches!(self.view, SidebarView::Archive(..));
+        let show_import_button = is_archive && !self.should_render_acp_import_onboarding(cx);
+        let on_right = self.side(cx) == SidebarSide::Right;
+
         let action_buttons = h_flex()
             .gap_1()
+            .when(on_right, |this| this.flex_row_reverse())
+            .when(show_import_button, |this| {
+                this.child(
+                    IconButton::new("thread-import", IconName::ThreadImport)
+                        .icon_size(IconSize::Small)
+                        .tooltip(Tooltip::text("Import ACP Threads"))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.show_archive(window, cx);
+                            this.show_thread_import_modal(window, cx);
+                        })),
+                )
+            })
             .child(
                 IconButton::new("archive", IconName::Archive)
                     .icon_size(IconSize::Small)
@@ -3325,21 +3339,16 @@ impl Sidebar {
                     })),
             )
             .child(self.render_recent_projects_button(cx));
-        let border_color = cx.theme().colors().border;
-        let toggle_button = self.render_sidebar_toggle_button(cx);
 
-        let bar = h_flex()
+        h_flex()
             .p_1()
             .gap_1()
+            .when(on_right, |this| this.flex_row_reverse())
             .justify_between()
             .border_t_1()
-            .border_color(border_color);
-
-        if on_right {
-            bar.child(action_buttons).child(toggle_button)
-        } else {
-            bar.child(toggle_button).child(action_buttons)
-        }
+            .border_color(cx.theme().colors().border)
+            .child(self.render_sidebar_toggle_button(cx))
+            .child(action_buttons)
     }
 
     fn active_workspace(&self, cx: &App) -> Option<Entity<Workspace>> {
@@ -3409,7 +3418,7 @@ impl Sidebar {
         v_flex()
             .min_w_0()
             .w_full()
-            .p_1p5()
+            .p_2()
             .border_t_1()
             .border_color(cx.theme().colors().border)
             .bg(linear_gradient(
@@ -3437,8 +3446,8 @@ impl Sidebar {
                     .style(ButtonStyle::OutlinedCustom(cx.theme().colors().border))
                     .label_size(LabelSize::Small)
                     .start_icon(
-                        Icon::new(IconName::ArrowDown)
-                            .size(IconSize::XSmall)
+                        Icon::new(IconName::ThreadImport)
+                            .size(IconSize::Small)
                             .color(Color::Muted),
                     )
                     .on_click(cx.listener(|this, _, window, cx| {
@@ -3467,9 +3476,6 @@ impl Sidebar {
         let Some(agent_panel) = active_workspace.read(cx).panel::<AgentPanel>(cx) else {
             return;
         };
-        let Some(agent_registry_store) = AgentRegistryStore::try_global(cx) else {
-            return;
-        };
 
         let agent_server_store = active_workspace
             .read(cx)
@@ -3484,9 +3490,6 @@ impl Sidebar {
             ThreadsArchiveView::new(
                 agent_connection_store.clone(),
                 agent_server_store.clone(),
-                agent_registry_store.downgrade(),
-                active_workspace.downgrade(),
-                self.multi_workspace.clone(),
                 window,
                 cx,
             )
