@@ -35,15 +35,7 @@ fn main() {
         cx.activate(true);
         cx.on_action(quit);
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
-        cx.set_menus(vec![Menu {
-            name: "Zed".into(),
-            items: vec![MenuItem::Action {
-                name: "Quit".into(),
-                action: Box::new(Quit),
-                os_action: None,
-                checked: false,
-            }],
-        }]);
+        cx.set_menus([Menu::new("Zed").items([MenuItem::action("Quit", Quit)])]);
 
         let livekit_url = std::env::var("LIVEKIT_URL").unwrap_or("http://localhost:7880".into());
         let livekit_key = std::env::var("LIVEKIT_KEY").unwrap_or("devkey".into());
@@ -255,7 +247,7 @@ impl LivekitWindow {
         } else {
             let room = self.room.clone();
             cx.spawn_in(window, async move |this, cx| {
-                let (publication, stream) = room
+                let (publication, stream, _input_lag_us) = room
                     .publish_local_microphone_track("test_user".to_string(), false, cx)
                     .await
                     .unwrap();

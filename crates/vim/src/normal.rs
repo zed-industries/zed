@@ -731,10 +731,10 @@ impl Vim {
                     .collect::<Vec<_>>();
                 editor.edit_with_autoindent(edits, cx);
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.move_cursors_with(&mut |map, cursor, _| {
-                        let previous_line = map.start_of_relative_buffer_row(cursor, -1);
+                    s.move_with(&mut |map, selection| {
+                        let previous_line = map.start_of_relative_buffer_row(selection.start, -1);
                         let insert_point = motion::end_of_line(map, false, previous_line, 1);
-                        (insert_point, SelectionGoal::None)
+                        selection.collapse_to(insert_point, SelectionGoal::None)
                     });
                 });
             });
@@ -750,14 +750,19 @@ impl Vim {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
         self.update_editor(cx, |_, editor, cx| {
-            let text_layout_details = editor.text_layout_details(window, cx);
             editor.transact(window, cx, |editor, window, cx| {
                 let selections = editor.selections.all::<Point>(&editor.display_snapshot(cx));
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
 
                 let selection_end_rows: BTreeSet<u32> = selections
                     .into_iter()
-                    .map(|selection| selection.end.row)
+                    .map(|selection| {
+                        if !selection.is_empty() && selection.end.column == 0 {
+                            selection.end.row.saturating_sub(1)
+                        } else {
+                            selection.end.row
+                        }
+                    })
                     .collect();
                 let edits = selection_end_rows
                     .into_iter()
@@ -772,14 +777,17 @@ impl Vim {
                     })
                     .collect::<Vec<_>>();
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.maybe_move_cursors_with(&mut |map, cursor, goal| {
-                        Motion::CurrentLine.move_point(
-                            map,
-                            cursor,
-                            goal,
-                            None,
-                            &text_layout_details,
-                        )
+                    s.move_with(&mut |map, selection| {
+                        let current_line = if !selection.is_empty() && selection.end.column() == 0 {
+                            // If this is an insert after a selection to the end of the line, the
+                            // cursor needs to be bumped back, because it'll be at the start of the
+                            // *next* line.
+                            map.start_of_relative_buffer_row(selection.end, -1)
+                        } else {
+                            selection.end
+                        };
+                        let insert_point = motion::end_of_line(map, false, current_line, 1);
+                        selection.collapse_to(insert_point, SelectionGoal::None)
                     });
                 });
                 editor.edit_with_autoindent(edits, cx);
@@ -949,17 +957,16 @@ impl Vim {
             let current_line = point.row;
             let percentage = current_line as f32 / lines as f32;
             let modified = if buffer.is_dirty() { " [modified]" } else { "" };
-            vim.status_label = Some(
+            vim.set_status_label(
                 format!(
                     "{}{} {} lines --{:.0}%--",
                     filename,
                     modified,
                     lines,
                     percentage * 100.0,
-                )
-                .into(),
+                ),
+                cx,
             );
-            cx.notify();
         });
     }
 

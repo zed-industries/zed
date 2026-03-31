@@ -12,7 +12,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
     DefaultAgentView, DockPosition, LanguageModelParameters, LanguageModelSelection,
-    NotifyWhenAgentWaiting, RegisterSetting, Settings, ToolPermissionMode,
+    NewThreadLocation, NotifyWhenAgentWaiting, RegisterSetting, Settings, SidebarDockPosition,
+    SidebarSide, ToolPermissionMode,
 };
 
 pub use crate::agent_profile::*;
@@ -26,6 +27,7 @@ pub struct AgentSettings {
     pub enabled: bool,
     pub button: bool,
     pub dock: DockPosition,
+    pub sidebar_side: SidebarDockPosition,
     pub default_width: Pixels,
     pub default_height: Pixels,
     pub default_model: Option<LanguageModelSelection>,
@@ -51,6 +53,7 @@ pub struct AgentSettings {
     pub message_editor_min_lines: usize,
     pub show_turn_stats: bool,
     pub tool_permissions: ToolPermissions,
+    pub new_thread_location: NewThreadLocation,
 }
 
 impl AgentSettings {
@@ -74,6 +77,17 @@ impl AgentSettings {
             return setting.temperature;
         }
         return None;
+    }
+
+    pub fn sidebar_side(&self) -> SidebarSide {
+        match self.sidebar_side {
+            SidebarDockPosition::Left => SidebarSide::Left,
+            SidebarDockPosition::Right => SidebarSide::Right,
+            SidebarDockPosition::FollowAgent => match self.dock {
+                DockPosition::Right => SidebarSide::Right,
+                _ => SidebarSide::Left,
+            },
+        }
     }
 
     pub fn set_message_editor_max_lines(&self) -> usize {
@@ -406,6 +420,7 @@ impl Settings for AgentSettings {
             enabled: agent.enabled.unwrap(),
             button: agent.button.unwrap(),
             dock: agent.dock.unwrap(),
+            sidebar_side: agent.sidebar_side.unwrap(),
             default_width: px(agent.default_width.unwrap()),
             default_height: px(agent.default_height.unwrap()),
             default_model: Some(agent.default_model.unwrap()),
@@ -438,6 +453,7 @@ impl Settings for AgentSettings {
             message_editor_min_lines: agent.message_editor_min_lines.unwrap(),
             show_turn_stats: agent.show_turn_stats.unwrap(),
             tool_permissions: compile_tool_permissions(agent.tool_permissions),
+            new_thread_location: agent.new_thread_location.unwrap_or_default(),
         }
     }
 }

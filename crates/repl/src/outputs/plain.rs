@@ -22,12 +22,12 @@ use alacritty_terminal::{
     term::Config,
     vte::ansi::Processor,
 };
-use gpui::{Bounds, ClipboardItem, Entity, FontStyle, TextStyle, WhiteSpace, canvas, size};
+use gpui::{Bounds, ClipboardItem, Entity, FontStyle, Pixels, TextStyle, WhiteSpace, canvas, size};
 use language::Buffer;
 use settings::Settings as _;
 use terminal::terminal_settings::TerminalSettings;
 use terminal_view::terminal_element::TerminalElement;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{IntoElement, prelude::*};
 
 use crate::outputs::OutputContent;
@@ -275,7 +275,7 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
         });
         cx.add_empty_window()
     }

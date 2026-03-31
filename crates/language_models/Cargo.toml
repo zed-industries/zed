@@ -20,7 +20,6 @@ aws-credential-types = { workspace = true, features = ["hardcoded-credentials"] 
 aws_http_client.workspace = true
 base64.workspace = true
 bedrock = { workspace = true, features = ["schemars"] }
-chrono.workspace = true
 client.workspace = true
 cloud_api_types.workspace = true
 cloud_llm_client.workspace = true
@@ -48,6 +47,7 @@ menu.workspace = true
 mistral = { workspace = true, features = ["schemars"] }
 ollama = { workspace = true, features = ["schemars"] }
 open_ai = { workspace = true, features = ["schemars"] }
+opencode = { workspace = true, features = ["schemars"] }
 open_router = { workspace = true, features = ["schemars"] }
 partial-json-fixer.workspace = true
 release_channel.workspace = true
@@ -68,7 +68,6 @@ vercel = { workspace = true, features = ["schemars"] }
 x_ai = { workspace = true, features = ["schemars"] }
 
 [dev-dependencies]
-editor = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
-project = { workspace = true, features = ["test-support"] }
+

@@ -1,4 +1,4 @@
-use acp_thread::SUBAGENT_SESSION_ID_META_KEY;
+use acp_thread::{SUBAGENT_SESSION_INFO_META_KEY, SubagentSessionInfo};
 use agent_client_protocol as acp;
 use anyhow::Result;
 use gpui::{App, SharedString, Task};
@@ -10,20 +10,32 @@ use std::sync::Arc;
 
 use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
 
-/// Spawns an agent to perform a delegated task.
+/// Spawn a sub-agent for a well-scoped task.
 ///
-/// Use this tool when you want to:
-/// - Run multiple tasks in parallel.
-/// - Delegate a self-contained task where you only need the final outcome.
+/// ### Designing delegated subtasks
+/// - An agent does not see your conversation history. Include all relevant context (file paths, requirements, constraints) in the message.
+/// - Subtasks must be concrete, well-defined, and self-contained.
+/// - Delegated subtasks must materially advance the main task.
+/// - Do not duplicate work between your work and delegated subtasks.
+/// - Do not use this tool for tasks you could accomplish directly with one or two tool calls.
+/// - When you delegate work, focus on coordinating and synthesizing results instead of duplicating the same work yourself.
+/// - Avoid issuing multiple delegate calls for the same unresolved subproblem unless the new delegated task is genuinely different and necessary.
+/// - Narrow the delegated ask to the concrete output you need next.
+/// - For code-edit subtasks, decompose work so each delegated task has a disjoint write set.
+/// - When sending a follow-up using an existing agent session_id, the agent already has the context from the previous turn. Send only a short, direct message. Do NOT repeat the original task or context.
 ///
-/// You will receive only the agent's final message as output.
+/// ### Parallel delegation patterns
+/// - Run multiple independent information-seeking subtasks in parallel when you have distinct questions that can be answered independently.
+/// - Split implementation into disjoint codebase slices and spawn multiple agents for them in parallel when the write scopes do not overlap.
+/// - When a plan has multiple independent steps, prefer delegating those steps in parallel rather than serializing them unnecessarily.
+/// - Reuse the returned session_id when you want to follow up on the same delegated subproblem instead of creating a duplicate session.
 ///
-/// **New session** (no session_id): Creates a new agent that does NOT see your conversation history. Include all relevant context (file paths, requirements, constraints) in the message.
-///
-/// **Follow-up** (with session_id): Sends a follow-up to an existing agent session. The agent already has full context, so send only a short, direct message — do NOT repeat the original task or context. Examples: "Also update the tests", "Fix the compile error in foo.rs", "Retry".
-///
-/// - If spawning multiple agents that might write to the filesystem, provide guidance on how to avoid conflicts (e.g. assign each to different directories).
+/// ### Output
+/// - You will receive only the agent's final message as output.
+/// - Successful calls return a session_id that you can use for follow-up messages.
+/// - Error results may also include a session_id if a session was already created.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub struct SpawnAgentToolInput {
     /// Short label displayed in the UI while the agent runs (e.g., "Researching alternatives")
     pub label: String,
@@ -34,26 +46,46 @@ pub struct SpawnAgentToolInput {
     pub session_id: Option<acp::SessionId>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
+#[serde(rename_all = "snake_case")]
 pub enum SpawnAgentToolOutput {
     Success {
         session_id: acp::SessionId,
         output: String,
+        session_info: SubagentSessionInfo,
     },
     Error {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[serde(default)]
         session_id: Option<acp::SessionId>,
         error: String,
+        session_info: Option<SubagentSessionInfo>,
     },
 }
 
 impl From<SpawnAgentToolOutput> for LanguageModelToolResultContent {
     fn from(output: SpawnAgentToolOutput) -> Self {
-        serde_json::to_string(&output)
+        match output {
+            SpawnAgentToolOutput::Success {
+                session_id,
+                output,
+                session_info: _, // Don't show this to the model
+            } => serde_json::to_string(
+                &serde_json::json!({ "session_id": session_id, "output": output }),
+            )
             .unwrap_or_else(|e| format!("Failed to serialize spawn_agent output: {e}"))
-            .into()
+            .into(),
+            SpawnAgentToolOutput::Error {
+                session_id,
+                error,
+                session_info: _, // Don't show this to the model
+            } => serde_json::to_string(
+                &serde_json::json!({ "session_id": session_id, "error": error }),
+            )
+            .unwrap_or_else(|e| format!("Failed to serialize spawn_agent output: {e}"))
+            .into(),
+        }
     }
 }
 
@@ -106,9 +138,10 @@ impl AgentTool for SpawnAgentTool {
                 .map_err(|e| SpawnAgentToolOutput::Error {
                     session_id: None,
                     error: format!("Failed to receive tool input: {e}"),
+                    session_info: None,
                 })?;
 
-            let (subagent, subagent_session_id) = cx.update(|cx| {
+            let (subagent, mut session_info) = cx.update(|cx| {
                 let subagent = if let Some(session_id) = input.session_id {
                     self.environment.resume_subagent(session_id, cx)
                 } else {
@@ -117,44 +150,73 @@ impl AgentTool for SpawnAgentTool {
                 let subagent = subagent.map_err(|err| SpawnAgentToolOutput::Error {
                     session_id: None,
                     error: err.to_string(),
+                    session_info: None,
                 })?;
-                let subagent_session_id = subagent.id();
+                let session_info = SubagentSessionInfo {
+                    session_id: subagent.id(),
+                    message_start_index: subagent.num_entries(cx),
+                    message_end_index: None,
+                };
 
-                event_stream.subagent_spawned(subagent_session_id.clone());
-                let meta = acp::Meta::from_iter([(
-                    SUBAGENT_SESSION_ID_META_KEY.into(),
-                    subagent_session_id.to_string().into(),
-                )]);
-                event_stream.update_fields_with_meta(acp::ToolCallUpdateFields::new(), Some(meta));
+                event_stream.subagent_spawned(subagent.id());
+                event_stream.update_fields_with_meta(
+                    acp::ToolCallUpdateFields::new(),
+                    Some(acp::Meta::from_iter([(
+                        SUBAGENT_SESSION_INFO_META_KEY.into(),
+                        serde_json::json!(&session_info),
+                    )])),
+                );
 
-                Ok((subagent, subagent_session_id))
+                Ok((subagent, session_info))
             })?;
 
-            match subagent.send(input.message, cx).await {
-                Ok(output) => {
-                    event_stream.update_fields(
-                        acp::ToolCallUpdateFields::new().content(vec![output.clone().into()]),
-                    );
+            let send_result = subagent.send(input.message, cx).await;
+
+            let status = if send_result.is_ok() {
+                "completed"
+            } else {
+                "error"
+            };
+            telemetry::event!(
+                "Subagent Completed",
+                subagent_session = session_info.session_id.to_string(),
+                status,
+            );
+
+            session_info.message_end_index =
+                cx.update(|cx| Some(subagent.num_entries(cx).saturating_sub(1)));
+
+            let meta = Some(acp::Meta::from_iter([(
+                SUBAGENT_SESSION_INFO_META_KEY.into(),
+                serde_json::json!(&session_info),
+            )]));
+
+            let (output, result) = match send_result {
+                Ok(output) => (
+                    output.clone(),
                     Ok(SpawnAgentToolOutput::Success {
-                        session_id: subagent_session_id,
+                        session_id: session_info.session_id.clone(),
+                        session_info,
                         output,
-                    })
-                }
+                    }),
+                ),
                 Err(e) => {
                     let error = e.to_string();
-                    // workaround for now because the agent loop will always mark this as ToolCallStatus::Failed
-                    let canceled = error == "User canceled";
-                    event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
-                        acp::ToolCallContent::Content(acp::Content::new(error.clone()).meta(
-                            acp::Meta::from_iter([("cancelled".into(), canceled.into())]),
-                        )),
-                    ]));
-                    Err(SpawnAgentToolOutput::Error {
-                        session_id: Some(subagent_session_id),
-                        error,
-                    })
+                    (
+                        error.clone(),
+                        Err(SpawnAgentToolOutput::Error {
+                            session_id: Some(session_info.session_id.clone()),
+                            error,
+                            session_info: Some(session_info),
+                        }),
+                    )
                 }
-            }
+            };
+            event_stream.update_fields_with_meta(
+                acp::ToolCallUpdateFields::new().content(vec![output.into()]),
+                meta,
+            );
+            result
         })
     }
 
@@ -165,25 +227,29 @@ impl AgentTool for SpawnAgentTool {
         event_stream: ToolCallEventStream,
         _cx: &mut App,
     ) -> Result<()> {
-        let session_id = match &output {
-            SpawnAgentToolOutput::Success { session_id, .. } => Some(session_id),
-            SpawnAgentToolOutput::Error { session_id, .. } => session_id.as_ref(),
+        let (content, session_info) = match output {
+            SpawnAgentToolOutput::Success {
+                output,
+                session_info,
+                ..
+            } => (output.into(), Some(session_info)),
+            SpawnAgentToolOutput::Error {
+                error,
+                session_info,
+                ..
+            } => (error.into(), session_info),
         };
 
-        if let Some(session_id) = session_id {
-            event_stream.subagent_spawned(session_id.clone());
-            let meta = acp::Meta::from_iter([(
-                SUBAGENT_SESSION_ID_META_KEY.into(),
-                session_id.to_string().into(),
-            )]);
-            event_stream.update_fields_with_meta(acp::ToolCallUpdateFields::new(), Some(meta));
-        }
-
-        let content = match &output {
-            SpawnAgentToolOutput::Success { output, .. } => output.into(),
-            SpawnAgentToolOutput::Error { error, .. } => error.into(),
-        };
-        event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![content]));
+        let meta = session_info.map(|session_info| {
+            acp::Meta::from_iter([(
+                SUBAGENT_SESSION_INFO_META_KEY.into(),
+                serde_json::json!(&session_info),
+            )])
+        });
+        event_stream.update_fields_with_meta(
+            acp::ToolCallUpdateFields::new().content(vec![content]),
+            meta,
+        );
 
         Ok(())
     }

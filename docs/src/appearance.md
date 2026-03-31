@@ -15,11 +15,13 @@ Here's how to make Zed feel like home:
 
 1. **Pick a theme**: Press {#kb theme_selector::Toggle} to open the Theme Selector. Arrow through the list to preview themes in real time, and press Enter to apply.
 
-2. **Choose an icon theme**: Run `icon theme selector: toggle` from the command palette to browse icon themes.
+2. **Toggle light/dark mode quickly**: Press {#kb theme::ToggleMode}. If you currently use a static `"theme": "..."` value, the first toggle converts it to dynamic mode settings with default themes.
 
-3. **Set your font**: Open the Settings Editor with {#kb zed::OpenSettings} and search for `buffer_font_family`. Set it to your preferred coding font.
+3. **Choose an icon theme**: Run `icon theme selector: toggle` from the command palette to browse icon themes.
 
-4. **Adjust font size**: In the same Settings Editor, search for `buffer_font_size` and `ui_font_size` to tweak the editor and interface text sizes.
+4. **Set your font**: Open the Settings Editor with {#kb zed::OpenSettings} and search for `buffer_font_family`. Set it to your preferred coding font.
+
+5. **Adjust font size**: In the same Settings Editor, search for `buffer_font_size` and `ui_font_size` to tweak the editor and interface text sizes.
 
 That's it. You now have a personalized Zed setup.
 

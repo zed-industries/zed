@@ -17,7 +17,7 @@ use multi_buffer::{
 };
 use project::InlayId;
 use std::{
-    cmp,
+    cmp, iter,
     ops::{Add, AddAssign, Range, Sub, SubAssign},
     sync::Arc,
 };
@@ -546,8 +546,11 @@ impl InlayMap {
     pub fn new(buffer: MultiBufferSnapshot) -> (Self, InlaySnapshot) {
         let version = 0;
         let snapshot = InlaySnapshot {
-            buffer: buffer.clone(),
-            transforms: SumTree::from_iter(Some(Transform::Isomorphic(buffer.text_summary())), ()),
+            transforms: SumTree::from_iter(
+                iter::once(Transform::Isomorphic(buffer.text_summary())),
+                (),
+            ),
+            buffer,
             version,
         };
 
@@ -2224,7 +2227,7 @@ mod tests {
     fn init_test(cx: &mut App) {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
     }
 
     /// Helper to create test highlights for an inlay

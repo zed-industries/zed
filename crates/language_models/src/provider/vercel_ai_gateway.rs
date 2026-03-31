@@ -385,6 +385,10 @@ impl LanguageModel for VercelAiGatewayLanguageModel {
         }
     }
 
+    fn supports_streaming_tools(&self) -> bool {
+        true
+    }
+
     fn supports_split_token_display(&self) -> bool {
         true
     }

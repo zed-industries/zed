@@ -29,7 +29,8 @@ use project::search_history::SearchHistoryCursor;
 use project::{Project, ProjectPath};
 use settings::Settings;
 use text::{Anchor, Point, ToOffset};
-use theme::{ActiveTheme, ThemeSettings};
+use theme::ActiveTheme;
+use theme_settings::ThemeSettings;
 use ui::Divider;
 use ui::{
     ButtonLike, ContextMenu, IconButton, IconName, KeyBinding, ListItem, ListItemSpacing,
@@ -499,7 +500,7 @@ impl QuickSearch {
                 if result.is_none() {
                     result = match direction {
                         HistoryDirection::Next => history.next(cursor),
-                        HistoryDirection::Previous => history.previous(cursor),
+                        HistoryDirection::Previous => history.previous(cursor, &query_text),
                     }
                     .map(str::to_string);
                 }
@@ -507,7 +508,7 @@ impl QuickSearch {
                 if result.as_deref() == Some(query_text.as_str()) {
                     result = match direction {
                         HistoryDirection::Next => history.next(cursor),
-                        HistoryDirection::Previous => history.previous(cursor),
+                        HistoryDirection::Previous => history.previous(cursor, &query_text),
                     }
                     .map(str::to_string);
                 }
@@ -2460,7 +2461,7 @@ impl PickerDelegate for QuickSearchDelegate {
                     let chunk_len = chunk.text.len();
                     let syntax_style = chunk
                         .syntax_highlight_id
-                        .and_then(|id| id.style(&syntax_theme));
+                        .and_then(|id| syntax_theme.get(id).copied());
 
                     let style = if is_match {
                         let mut style = syntax_style.unwrap_or_default();

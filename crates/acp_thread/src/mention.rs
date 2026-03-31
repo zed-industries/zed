@@ -60,6 +60,9 @@ pub enum MentionUri {
     GitDiff {
         base_ref: String,
     },
+    MergeConflict {
+        file_path: String,
+    },
 }
 
 impl MentionUri {
@@ -215,6 +218,9 @@ impl MentionUri {
                     let base_ref =
                         single_query_param(&url, "base")?.unwrap_or_else(|| "main".to_string());
                     Ok(Self::GitDiff { base_ref })
+                } else if path.starts_with("/agent/merge-conflict") {
+                    let file_path = single_query_param(&url, "path")?.unwrap_or_default();
+                    Ok(Self::MergeConflict { file_path })
                 } else {
                     bail!("invalid zed url: {:?}", input);
                 }
@@ -245,12 +251,54 @@ impl MentionUri {
                 }
             }
             MentionUri::GitDiff { base_ref } => format!("Branch Diff ({})", base_ref),
+            MentionUri::MergeConflict { file_path } => {
+                let name = Path::new(file_path)
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy();
+                format!("Merge Conflict ({name})")
+            }
             MentionUri::Selection {
                 abs_path: path,
                 line_range,
                 ..
             } => selection_name(path.as_deref(), line_range),
             MentionUri::Fetch { url } => url.to_string(),
+        }
+    }
+
+    pub fn tooltip_text(&self) -> Option<SharedString> {
+        match self {
+            MentionUri::File { abs_path } | MentionUri::Directory { abs_path } => {
+                Some(abs_path.to_string_lossy().into_owned().into())
+            }
+            MentionUri::Symbol {
+                abs_path,
+                line_range,
+                ..
+            } => Some(
+                format!(
+                    "{}:{}-{}",
+                    abs_path.display(),
+                    line_range.start(),
+                    line_range.end()
+                )
+                .into(),
+            ),
+            MentionUri::Selection {
+                abs_path: Some(path),
+                line_range,
+                ..
+            } => Some(
+                format!(
+                    "{}:{}-{}",
+                    path.display(),
+                    line_range.start(),
+                    line_range.end()
+                )
+                .into(),
+            ),
+            _ => None,
         }
     }
 
@@ -271,6 +319,7 @@ impl MentionUri {
             MentionUri::Selection { .. } => IconName::Reader.path().into(),
             MentionUri::Fetch { .. } => IconName::ToolWeb.path().into(),
             MentionUri::GitDiff { .. } => IconName::GitBranch.path().into(),
+            MentionUri::MergeConflict { .. } => IconName::GitMergeConflict.path().into(),
         }
     }
 
@@ -372,6 +421,11 @@ impl MentionUri {
             MentionUri::GitDiff { base_ref } => {
                 let mut url = Url::parse("zed:///agent/git-diff").unwrap();
                 url.query_pairs_mut().append_pair("base", base_ref);
+                url
+            }
+            MentionUri::MergeConflict { file_path } => {
+                let mut url = Url::parse("zed:///agent/merge-conflict").unwrap();
+                url.query_pairs_mut().append_pair("path", file_path);
                 url
             }
         }

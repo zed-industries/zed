@@ -5,7 +5,7 @@ use gpui::{
 };
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use settings::{Settings, SettingsStore};
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{FluentBuilder, TintColor, prelude::*};
 use workspace::WorkspaceSettings;
 

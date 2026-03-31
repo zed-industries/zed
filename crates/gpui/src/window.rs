@@ -560,12 +560,20 @@ pub enum WindowControlArea {
 pub struct HitboxId(u64);
 
 impl HitboxId {
-    /// Checks if the hitbox with this ID is currently hovered. Except when handling
+    /// Checks if the hitbox with this ID is currently hovered. Returns `false` during keyboard
+    /// input modality so that keyboard navigation suppresses hover highlights. Except when handling
     /// `ScrollWheelEvent`, this is typically what you want when determining whether to handle mouse
     /// events or paint hover styles.
     ///
     /// See [`Hitbox::is_hovered`] for details.
     pub fn is_hovered(self, window: &Window) -> bool {
+        // If this hitbox has captured the pointer, it's always considered hovered
+        if window.captured_hitbox == Some(self) {
+            return true;
+        }
+        if window.last_input_was_keyboard() {
+            return false;
+        }
         let hit_test = &window.mouse_hit_test;
         for id in hit_test.ids.iter().take(hit_test.hover_hitbox_count) {
             if self == *id {
@@ -604,13 +612,15 @@ pub struct Hitbox {
 }
 
 impl Hitbox {
-    /// Checks if the hitbox is currently hovered. Except when handling `ScrollWheelEvent`, this is
-    /// typically what you want when determining whether to handle mouse events or paint hover
-    /// styles.
+    /// Checks if the hitbox is currently hovered. Returns `false` during keyboard input modality
+    /// so that keyboard navigation suppresses hover highlights. Except when handling
+    /// `ScrollWheelEvent`, this is typically what you want when determining whether to handle mouse
+    /// events or paint hover styles.
     ///
     /// This can return `false` even when the hitbox contains the mouse, if a hitbox in front of
     /// this sets `HitboxBehavior::BlockMouse` (`InteractiveElement::occlude`) or
-    /// `HitboxBehavior::BlockMouseExceptScroll` (`InteractiveElement::block_mouse_except_scroll`).
+    /// `HitboxBehavior::BlockMouseExceptScroll` (`InteractiveElement::block_mouse_except_scroll`),
+    /// or if the current input modality is keyboard (see [`Window::last_input_was_keyboard`]).
     ///
     /// Handling of `ScrollWheelEvent` should typically use `should_handle_scroll` instead.
     /// Concretely, this is due to use-cases like overlays that cause the elements under to be
@@ -726,6 +736,7 @@ pub(crate) struct DeferredDraw {
     parent_node: DispatchNodeId,
     element_id_stack: SmallVec<[ElementId; 32]>,
     text_style_stack: Vec<TextStyleRefinement>,
+    content_mask: Option<ContentMask<Pixels>>,
     rem_size: Pixels,
     element: Option<AnyElement>,
     absolute_offset: Point<Pixels>,
@@ -820,6 +831,11 @@ impl Frame {
         self.deferred_draws.clear();
         self.tab_stops.clear();
         self.focus = None;
+
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            self.debug_bounds.clear();
+        }
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         {
@@ -935,6 +951,7 @@ pub struct Window {
     pub(crate) bounds_observers: SubscriberSet<(), AnyObserver>,
     appearance: WindowAppearance,
     pub(crate) appearance_observers: SubscriberSet<(), AnyObserver>,
+    pub(crate) button_layout_observers: SubscriberSet<(), AnyObserver>,
     active: Rc<Cell<bool>>,
     hovered: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
@@ -951,6 +968,9 @@ pub struct Window {
     pub(crate) pending_input_observers: SubscriberSet<(), AnyObserver>,
     prompt: Option<RenderablePromptHandle>,
     pub(crate) client_inset: Option<Pixels>,
+    /// The hitbox that has captured the pointer, if any.
+    /// While captured, mouse events route to this hitbox regardless of hit testing.
+    captured_hitbox: Option<HitboxId>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     inspector: Option<Entity<Inspector>>,
 }
@@ -1269,6 +1289,14 @@ impl Window {
                     .log_err();
             }
         }));
+        platform_window.on_button_layout_changed(Box::new({
+            let mut cx = cx.to_async();
+            move || {
+                handle
+                    .update(&mut cx, |_, window, cx| window.button_layout_changed(cx))
+                    .log_err();
+            }
+        }));
         platform_window.on_active_status_change(Box::new({
             let mut cx = cx.to_async();
             move |active| {
@@ -1423,6 +1451,7 @@ impl Window {
             bounds_observers: SubscriberSet::new(),
             appearance,
             appearance_observers: SubscriberSet::new(),
+            button_layout_observers: SubscriberSet::new(),
             active,
             hovered,
             needs_present,
@@ -1438,6 +1467,7 @@ impl Window {
             prompt: None,
             client_inset: None,
             image_cache_stack: Vec::new(),
+            captured_hitbox: None,
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector: None,
         })
@@ -1504,6 +1534,22 @@ impl Window {
         mut callback: impl FnMut(&mut Window, &mut App) + 'static,
     ) -> Subscription {
         let (subscription, activate) = self.appearance_observers.insert(
+            (),
+            Box::new(move |window, cx| {
+                callback(window, cx);
+                true
+            }),
+        );
+        activate();
+        subscription
+    }
+
+    /// Registers a callback to be invoked when the window button layout changes.
+    pub fn observe_button_layout_changed(
+        &self,
+        mut callback: impl FnMut(&mut Window, &mut App) + 'static,
+    ) -> Subscription {
+        let (subscription, activate) = self.button_layout_observers.insert(
             (),
             Box::new(move |window, cx| {
                 callback(window, cx);
@@ -1887,7 +1933,12 @@ impl Window {
         })
     }
 
-    fn bounds_changed(&mut self, cx: &mut App) {
+    /// Notify the window that its bounds have changed.
+    ///
+    /// This updates internal state like `viewport_size` and `scale_factor` from
+    /// the platform window, then notifies observers. Normally called automatically
+    /// by the platform's resize callback, but exposed publicly for test infrastructure.
+    pub fn bounds_changed(&mut self, cx: &mut App) {
         self.scale_factor = self.platform_window.scale_factor();
         self.viewport_size = self.platform_window.content_size();
         self.display_id = self.platform_window.display().map(|display| display.id());
@@ -1927,6 +1978,12 @@ impl Window {
         self.appearance = self.platform_window.appearance();
 
         self.appearance_observers
+            .clone()
+            .retain(&(), |callback| callback(self, cx));
+    }
+
+    pub(crate) fn button_layout_changed(&mut self, cx: &mut App) {
+        self.button_layout_observers
             .clone()
             .retain(&(), |callback| callback(self, cx));
     }
@@ -2143,6 +2200,26 @@ impl Window {
         self.mouse_position
     }
 
+    /// Captures the pointer for the given hitbox. While captured, all mouse move and mouse up
+    /// events will be routed to listeners that check this hitbox's `is_hovered` status,
+    /// regardless of actual hit testing. This enables drag operations that continue
+    /// even when the pointer moves outside the element's bounds.
+    ///
+    /// The capture is automatically released on mouse up.
+    pub fn capture_pointer(&mut self, hitbox_id: HitboxId) {
+        self.captured_hitbox = Some(hitbox_id);
+    }
+
+    /// Releases any active pointer capture.
+    pub fn release_pointer(&mut self) {
+        self.captured_hitbox = None;
+    }
+
+    /// Returns the hitbox that has captured the pointer, if any.
+    pub fn captured_hitbox(&self) -> Option<HitboxId> {
+        self.captured_hitbox
+    }
+
     /// The current state of the keyboard's modifiers
     pub fn modifiers(&self) -> Modifiers {
         self.modifiers
@@ -2299,10 +2376,7 @@ impl Window {
         #[cfg(any(feature = "inspector", debug_assertions))]
         let inspector_element = self.prepaint_inspector(_inspector_width, cx);
 
-        let mut sorted_deferred_draws =
-            (0..self.next_frame.deferred_draws.len()).collect::<SmallVec<[_; 8]>>();
-        sorted_deferred_draws.sort_by_key(|ix| self.next_frame.deferred_draws[*ix].priority);
-        self.prepaint_deferred_draws(&sorted_deferred_draws, cx);
+        self.prepaint_deferred_draws(cx);
 
         let mut prompt_element = None;
         let mut active_drag_element = None;
@@ -2331,7 +2405,7 @@ impl Window {
         #[cfg(any(feature = "inspector", debug_assertions))]
         self.paint_inspector(inspector_element, cx);
 
-        self.paint_deferred_draws(&sorted_deferred_draws, cx);
+        self.paint_deferred_draws(cx);
 
         if let Some(mut prompt_element) = prompt_element {
             prompt_element.paint(self, cx);
@@ -2414,54 +2488,80 @@ impl Window {
         None
     }
 
-    fn prepaint_deferred_draws(&mut self, deferred_draw_indices: &[usize], cx: &mut App) {
+    fn prepaint_deferred_draws(&mut self, cx: &mut App) {
         assert_eq!(self.element_id_stack.len(), 0);
 
-        let mut deferred_draws = mem::take(&mut self.next_frame.deferred_draws);
-        for deferred_draw_ix in deferred_draw_indices {
-            let deferred_draw = &mut deferred_draws[*deferred_draw_ix];
-            self.element_id_stack
-                .clone_from(&deferred_draw.element_id_stack);
-            self.text_style_stack
-                .clone_from(&deferred_draw.text_style_stack);
-            self.next_frame
-                .dispatch_tree
-                .set_active_node(deferred_draw.parent_node);
+        let mut completed_draws = Vec::new();
 
-            let prepaint_start = self.prepaint_index();
-            if let Some(element) = deferred_draw.element.as_mut() {
-                self.with_rendered_view(deferred_draw.current_view, |window| {
-                    window.with_rem_size(Some(deferred_draw.rem_size), |window| {
-                        window.with_absolute_element_offset(
-                            deferred_draw.absolute_offset,
-                            |window| {
-                                element.prepaint(window, cx);
-                            },
-                        );
-                    });
-                })
-            } else {
-                self.reuse_prepaint(deferred_draw.prepaint_range.clone());
+        // Process deferred draws in multiple rounds to support nesting.
+        // Each round processes all current deferred draws, which may produce new ones.
+        let mut depth = 0;
+        loop {
+            // Limit maximum nesting depth to prevent infinite loops.
+            assert!(depth < 10, "Exceeded maximum (10) deferred depth");
+            depth += 1;
+            let deferred_count = self.next_frame.deferred_draws.len();
+            if deferred_count == 0 {
+                break;
             }
-            let prepaint_end = self.prepaint_index();
-            deferred_draw.prepaint_range = prepaint_start..prepaint_end;
+
+            // Sort by priority for this round
+            let traversal_order = self.deferred_draw_traversal_order();
+            let mut deferred_draws = mem::take(&mut self.next_frame.deferred_draws);
+
+            for deferred_draw_ix in traversal_order {
+                let deferred_draw = &mut deferred_draws[deferred_draw_ix];
+                self.element_id_stack
+                    .clone_from(&deferred_draw.element_id_stack);
+                self.text_style_stack
+                    .clone_from(&deferred_draw.text_style_stack);
+                self.next_frame
+                    .dispatch_tree
+                    .set_active_node(deferred_draw.parent_node);
+
+                let prepaint_start = self.prepaint_index();
+                if let Some(element) = deferred_draw.element.as_mut() {
+                    self.with_rendered_view(deferred_draw.current_view, |window| {
+                        window.with_rem_size(Some(deferred_draw.rem_size), |window| {
+                            window.with_absolute_element_offset(
+                                deferred_draw.absolute_offset,
+                                |window| {
+                                    element.prepaint(window, cx);
+                                },
+                            );
+                        });
+                    })
+                } else {
+                    self.reuse_prepaint(deferred_draw.prepaint_range.clone());
+                }
+                let prepaint_end = self.prepaint_index();
+                deferred_draw.prepaint_range = prepaint_start..prepaint_end;
+            }
+
+            // Save completed draws and continue with newly added ones
+            completed_draws.append(&mut deferred_draws);
+
+            self.element_id_stack.clear();
+            self.text_style_stack.clear();
         }
-        assert_eq!(
-            self.next_frame.deferred_draws.len(),
-            0,
-            "cannot call defer_draw during deferred drawing"
-        );
-        self.next_frame.deferred_draws = deferred_draws;
-        self.element_id_stack.clear();
-        self.text_style_stack.clear();
+
+        // Restore all completed draws
+        self.next_frame.deferred_draws = completed_draws;
     }
 
-    fn paint_deferred_draws(&mut self, deferred_draw_indices: &[usize], cx: &mut App) {
+    fn paint_deferred_draws(&mut self, cx: &mut App) {
         assert_eq!(self.element_id_stack.len(), 0);
 
+        // Paint all deferred draws in priority order.
+        // Since prepaint has already processed nested deferreds, we just paint them all.
+        if self.next_frame.deferred_draws.len() == 0 {
+            return;
+        }
+
+        let traversal_order = self.deferred_draw_traversal_order();
         let mut deferred_draws = mem::take(&mut self.next_frame.deferred_draws);
-        for deferred_draw_ix in deferred_draw_indices {
-            let mut deferred_draw = &mut deferred_draws[*deferred_draw_ix];
+        for deferred_draw_ix in traversal_order {
+            let mut deferred_draw = &mut deferred_draws[deferred_draw_ix];
             self.element_id_stack
                 .clone_from(&deferred_draw.element_id_stack);
             self.next_frame
@@ -2469,10 +2569,13 @@ impl Window {
                 .set_active_node(deferred_draw.parent_node);
 
             let paint_start = self.paint_index();
+            let content_mask = deferred_draw.content_mask.clone();
             if let Some(element) = deferred_draw.element.as_mut() {
                 self.with_rendered_view(deferred_draw.current_view, |window| {
-                    window.with_rem_size(Some(deferred_draw.rem_size), |window| {
-                        element.paint(window, cx);
+                    window.with_content_mask(content_mask, |window| {
+                        window.with_rem_size(Some(deferred_draw.rem_size), |window| {
+                            element.paint(window, cx);
+                        });
                     })
                 })
             } else {
@@ -2483,6 +2586,13 @@ impl Window {
         }
         self.next_frame.deferred_draws = deferred_draws;
         self.element_id_stack.clear();
+    }
+
+    fn deferred_draw_traversal_order(&mut self) -> SmallVec<[usize; 8]> {
+        let deferred_count = self.next_frame.deferred_draws.len();
+        let mut sorted_indices = (0..deferred_count).collect::<SmallVec<[_; 8]>>();
+        sorted_indices.sort_by_key(|ix| self.next_frame.deferred_draws[*ix].priority);
+        sorted_indices
     }
 
     pub(crate) fn prepaint_index(&self) -> PrepaintStateIndex {
@@ -2536,6 +2646,7 @@ impl Window {
                     parent_node: reused_subtree.refresh_node_id(deferred_draw.parent_node),
                     element_id_stack: deferred_draw.element_id_stack.clone(),
                     text_style_stack: deferred_draw.text_style_stack.clone(),
+                    content_mask: deferred_draw.content_mask.clone(),
                     rem_size: deferred_draw.rem_size,
                     priority: deferred_draw.priority,
                     element: None,
@@ -3019,12 +3130,16 @@ impl Window {
     /// at a later time. The `priority` parameter determines the drawing order relative to other deferred elements,
     /// with higher values being drawn on top.
     ///
+    /// When `content_mask` is provided, the deferred element will be clipped to that region during
+    /// both prepaint and paint. When `None`, no additional clipping is applied.
+    ///
     /// This method should only be called as part of the prepaint phase of element drawing.
     pub fn defer_draw(
         &mut self,
         element: AnyElement,
         absolute_offset: Point<Pixels>,
         priority: usize,
+        content_mask: Option<ContentMask<Pixels>>,
     ) {
         self.invalidator.debug_assert_prepaint();
         let parent_node = self.next_frame.dispatch_tree.active_node_id().unwrap();
@@ -3033,6 +3148,7 @@ impl Window {
             parent_node,
             element_id_stack: self.element_id_stack.clone(),
             text_style_stack: self.text_style_stack.clone(),
+            content_mask,
             rem_size: self.rem_size(),
             priority,
             element: Some(element),
@@ -3278,6 +3394,100 @@ impl Window {
                     transformation: TransformationMatrix::unit(),
                 });
             }
+        }
+        Ok(())
+    }
+
+    /// Paints a monochrome glyph with pre-computed raster bounds.
+    ///
+    /// This is faster than `paint_glyph` because it skips the per-glyph cache lookup.
+    /// Use `ShapedLine::compute_glyph_raster_data` to batch-compute raster bounds during prepaint.
+    pub fn paint_glyph_with_raster_bounds(
+        &mut self,
+        origin: Point<Pixels>,
+        _font_id: FontId,
+        _glyph_id: GlyphId,
+        _font_size: Pixels,
+        color: Hsla,
+        raster_bounds: Bounds<DevicePixels>,
+        params: &RenderGlyphParams,
+    ) -> Result<()> {
+        self.invalidator.debug_assert_paint();
+
+        let element_opacity = self.element_opacity();
+        let scale_factor = self.scale_factor();
+        let glyph_origin = origin.scale(scale_factor);
+
+        if !raster_bounds.is_zero() {
+            let tile = self
+                .sprite_atlas
+                .get_or_insert_with(&params.clone().into(), &mut || {
+                    let (size, bytes) = self.text_system().rasterize_glyph(params)?;
+                    Ok(Some((size, Cow::Owned(bytes))))
+                })?
+                .expect("Callback above only errors or returns Some");
+            let bounds = Bounds {
+                origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
+                size: tile.bounds.size.map(Into::into),
+            };
+            let content_mask = self.content_mask().scale(scale_factor);
+            self.next_frame.scene.insert_primitive(MonochromeSprite {
+                order: 0,
+                pad: 0,
+                bounds,
+                content_mask,
+                color: color.opacity(element_opacity),
+                tile,
+                transformation: TransformationMatrix::unit(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Paints an emoji glyph with pre-computed raster bounds.
+    ///
+    /// This is faster than `paint_emoji` because it skips the per-glyph cache lookup.
+    /// Use `ShapedLine::compute_glyph_raster_data` to batch-compute raster bounds during prepaint.
+    pub fn paint_emoji_with_raster_bounds(
+        &mut self,
+        origin: Point<Pixels>,
+        _font_id: FontId,
+        _glyph_id: GlyphId,
+        _font_size: Pixels,
+        raster_bounds: Bounds<DevicePixels>,
+        params: &RenderGlyphParams,
+    ) -> Result<()> {
+        self.invalidator.debug_assert_paint();
+
+        let scale_factor = self.scale_factor();
+        let glyph_origin = origin.scale(scale_factor);
+
+        if !raster_bounds.is_zero() {
+            let tile = self
+                .sprite_atlas
+                .get_or_insert_with(&params.clone().into(), &mut || {
+                    let (size, bytes) = self.text_system().rasterize_glyph(params)?;
+                    Ok(Some((size, Cow::Owned(bytes))))
+                })?
+                .expect("Callback above only errors or returns Some");
+
+            let bounds = Bounds {
+                origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
+                size: tile.bounds.size.map(Into::into),
+            };
+            let content_mask = self.content_mask().scale(scale_factor);
+            let opacity = self.element_opacity();
+
+            self.next_frame.scene.insert_primitive(PolychromeSprite {
+                order: 0,
+                pad: 0,
+                grayscale: false,
+                bounds,
+                corner_radii: Default::default(),
+                content_mask,
+                tile,
+                opacity,
+            });
         }
         Ok(())
     }
@@ -3883,14 +4093,18 @@ impl Window {
     /// Dispatch a mouse or keyboard event on the window.
     #[profiling::function]
     pub fn dispatch_event(&mut self, event: PlatformInput, cx: &mut App) -> DispatchEventResult {
-        // Track whether this input was keyboard-based for focus-visible styling
+        // Track input modality for focus-visible styling and hover suppression.
+        // Hover is suppressed during keyboard modality so that keyboard navigation
+        // doesn't show hover highlights on the item under the mouse cursor.
+        let old_modality = self.last_input_modality;
         self.last_input_modality = match &event {
-            PlatformInput::KeyDown(_) | PlatformInput::ModifiersChanged(_) => {
-                InputModality::Keyboard
-            }
-            PlatformInput::MouseDown(e) if e.is_focusing() => InputModality::Mouse,
+            PlatformInput::KeyDown(_) => InputModality::Keyboard,
+            PlatformInput::MouseMove(_) | PlatformInput::MouseDown(_) => InputModality::Mouse,
             _ => self.last_input_modality,
         };
+        if self.last_input_modality != old_modality {
+            self.refresh();
+        }
 
         // Handlers may set this to false by calling `stop_propagation`.
         cx.propagate_event = true;
@@ -3931,6 +4145,12 @@ impl Window {
                 self.mouse_position = scroll_wheel.position;
                 self.modifiers = scroll_wheel.modifiers;
                 PlatformInput::ScrollWheel(scroll_wheel)
+            }
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            PlatformInput::Pinch(pinch) => {
+                self.mouse_position = pinch.position;
+                self.modifiers = pinch.modifiers;
+                PlatformInput::Pinch(pinch)
             }
             // Translate dragging and dropping of external files from the operating system
             // to internal drag and drop events.
@@ -4043,6 +4263,11 @@ impl Window {
                 cx.active_drag = None;
                 self.refresh();
             }
+        }
+
+        // Auto-release pointer capture on mouse up
+        if event.is::<MouseUpEvent>() && self.captured_hitbox.is_some() {
+            self.captured_hitbox = None;
         }
     }
 

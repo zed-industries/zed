@@ -7,7 +7,7 @@ license = "GPL-3.0-or-later"
 
 [features]
 test-support = [
-    "client/test-support",
+
     "editor/test-support",
     "gpui/test-support",
     "workspace/test-support",
@@ -40,6 +40,7 @@ settings.workspace = true
 smol.workspace = true
 text.workspace = true
 theme.workspace = true
+theme_settings.workspace = true
 ui.workspace = true
 util.workspace = true
 ui_input.workspace = true
@@ -51,7 +52,6 @@ ztracing.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-client = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }

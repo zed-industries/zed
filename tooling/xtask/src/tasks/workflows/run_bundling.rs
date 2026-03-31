@@ -4,9 +4,7 @@ use crate::tasks::workflows::{
     nix_build::build_nix,
     release::ReleaseBundleJobs,
     runners::{Arch, Platform, ReleaseChannel},
-    steps::{
-        DEFAULT_REPOSITORY_OWNER_GUARD, FluentBuilder, NamedJob, dependant_job, named, use_clang,
-    },
+    steps::{DEFAULT_REPOSITORY_OWNER_GUARD, FluentBuilder, NamedJob, dependant_job, named},
     vars::{assets, bundle_envs},
 };
 
@@ -145,22 +143,22 @@ pub(crate) fn bundle_linux(
     };
     NamedJob {
         name: format!("bundle_linux_{arch}"),
-        job: use_clang(
-            bundle_job(deps)
-                .runs_on(arch.linux_bundler())
-                .envs(bundle_envs(platform)),
-        )
-        .add_step(steps::checkout_repo())
-        .when_some(release_channel, |job, release_channel| {
-            job.add_step(set_release_channel(platform, release_channel))
-        })
-        .add_step(steps::setup_sentry())
-        .map(steps::install_linux_dependencies)
-        .add_step(steps::script("./script/bundle-linux"))
-        .add_step(upload_artifact(&format!("target/release/{artifact_name}")))
-        .add_step(upload_artifact(&format!(
-            "target/{remote_server_artifact_name}"
-        ))),
+        job: bundle_job(deps)
+            .runs_on(arch.linux_bundler())
+            .envs(bundle_envs(platform))
+            .add_env(Env::new("CC", "clang-18"))
+            .add_env(Env::new("CXX", "clang++-18"))
+            .add_step(steps::checkout_repo())
+            .when_some(release_channel, |job, release_channel| {
+                job.add_step(set_release_channel(platform, release_channel))
+            })
+            .add_step(steps::setup_sentry())
+            .map(steps::install_linux_dependencies)
+            .add_step(steps::script("./script/bundle-linux"))
+            .add_step(upload_artifact(&format!("target/release/{artifact_name}")))
+            .add_step(upload_artifact(&format!(
+                "target/{remote_server_artifact_name}"
+            ))),
     }
 }
 

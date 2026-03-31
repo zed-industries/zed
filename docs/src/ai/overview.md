@@ -28,7 +28,7 @@ The [Inline Assistant](./inline-assistant.md) works differently: select code or 
 
 [Edit Prediction](./edit-prediction.md) provides AI code completions on every keystroke. Each keypress sends a request to the prediction provider, which returns single or multi-line suggestions you accept with `tab`.
 
-The default provider is Zeta, Zed's open-source model trained on open data. You can also use GitHub Copilot, Supermaven, or Codestral.
+The default provider is Zeta, Zed's open-source model trained on open data. You can also use GitHub Copilot, or Codestral.
 
 ## Text threads
 

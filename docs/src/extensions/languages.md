@@ -52,7 +52,7 @@ TBD: Document `language_name/config.toml` keys
 
 ## Grammar
 
-Zed uses the [Tree-sitter](https://tree-sitter.github.io) parsing library to provide built-in language-specific features. There are grammars available for many languages, and you can also [develop your own grammar](https://tree-sitter.github.io/tree-sitter/creating-parsers#writing-the-grammar). A growing list of Zed features are built using pattern matching over syntax trees with Tree-sitter queries. As mentioned above, every language that is defined in an extension must specify the name of a Tree-sitter grammar that is used for parsing. These grammars are then registered separately in extensions' `extension.toml` file, like this:
+Zed uses the [Tree-sitter](https://tree-sitter.github.io) parsing library to provide built-in language-specific features. There are grammars available for many languages, and you can also [develop your own grammar](https://tree-sitter.github.io/tree-sitter/creating-parsers/3-writing-the-grammar.html). A growing list of Zed features are built using pattern matching over syntax trees with Tree-sitter queries. As mentioned above, every language that is defined in an extension must specify the name of a Tree-sitter grammar that is used for parsing. These grammars are then registered separately in extensions' `extension.toml` file, like this:
 
 ```toml
 [grammars.gleam]
@@ -434,6 +434,40 @@ The `semantic_tokens` setting accepts the following values:
 - `"combined"`: Use LSP semantic tokens together with tree-sitter highlighting.
 - `"full"`: Use LSP semantic tokens exclusively, replacing tree-sitter highlighting.
 
+#### Extension-Provided Semantic Token Rules
+
+Language extensions can ship default semantic token rules for their language server's custom token types. To do this, place a `semantic_token_rules.json` file in the language directory alongside `config.toml`:
+
+```
+my-extension/
+  languages/
+    my-language/
+      config.toml
+      highlights.scm
+      semantic_token_rules.json
+```
+
+The file uses the same format as the `semantic_token_rules` array in user settings — a JSON array of rule objects:
+
+```json
+[
+  {
+    "token_type": "lifetime",
+    "style": ["lifetime"]
+  },
+  {
+    "token_type": "builtinType",
+    "style": ["type"]
+  },
+  {
+    "token_type": "selfKeyword",
+    "style": ["variable.special"]
+  }
+]
+```
+
+This is useful when a language server reports custom (non-standard) semantic token types that aren't covered by Zed's built-in default rules. Extension-provided rules act as sensible defaults for that language — users can always override them via `semantic_token_rules` in their settings file, and built-in default rules are only used when neither user nor extension rules match.
+
 #### Customizing Semantic Token Styles
 
 Zed supports customizing the styles used for semantic tokens. You can define rules in your settings file, which customize how semantic tokens get mapped to styles in your theme.
@@ -463,7 +497,13 @@ Zed supports customizing the styles used for semantic tokens. You can define rul
 }
 ```
 
-All rules that match a given `token_type` and `token_modifiers` are applied. Earlier rules take precedence. If no rules match, the token is not highlighted. User-defined rules take priority over the default rules.
+All rules that match a given `token_type` and `token_modifiers` are applied. Earlier rules take precedence. If no rules match, the token is not highlighted.
+
+Rules are applied in the following priority order (highest to lowest):
+
+1. **User settings** — rules from `semantic_token_rules` in your settings file.
+2. **Extension rules** — rules from `semantic_token_rules.json` in extension language directories.
+3. **Default rules** — Zed's built-in rules for standard LSP token types.
 
 Each rule in the `semantic_token_rules` array is defined as follows:
 
