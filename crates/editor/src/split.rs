@@ -6,16 +6,19 @@ use std::{
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use collections::HashMap;
 
-use gpui::{Action, AppContext as _, Entity, EventEmitter, Focusable, Subscription, WeakEntity};
+use gpui::{
+    Action, AppContext as _, Entity, EventEmitter, Focusable, Font, Pixels, Subscription,
+    WeakEntity, canvas,
+};
 use itertools::Itertools;
-use language::{Buffer, Capability};
+use language::{Buffer, Capability, HighlightedText};
 use multi_buffer::{
     Anchor, BufferOffset, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer,
     MultiBufferDiffHunk, MultiBufferPoint, MultiBufferSnapshot, PathKey,
 };
 use project::Project;
 use rope::Point;
-use settings::DiffViewStyle;
+use settings::{DiffViewStyle, Settings};
 use text::{Bias, BufferId, OffsetRangeExt as _, Patch, ToPoint as _};
 use ui::{
     App, Context, InteractiveElement as _, IntoElement as _, ParentElement as _, Render,
@@ -29,12 +32,12 @@ use crate::{
 };
 use workspace::{
     ActivatePaneLeft, ActivatePaneRight, Item, ToolbarItemLocation, Workspace,
-    item::{BreadcrumbText, ItemBufferKind, ItemEvent, SaveOptions, TabContentParams},
+    item::{ItemBufferKind, ItemEvent, SaveOptions, TabContentParams},
     searchable::{SearchEvent, SearchToken, SearchableItem, SearchableItemHandle},
 };
 
 use crate::{
-    Autoscroll, Editor, EditorEvent, RenderDiffHunkControlsFn, ToggleSoftWrap,
+    Autoscroll, Editor, EditorEvent, EditorSettings, RenderDiffHunkControlsFn, ToggleSoftWrap,
     actions::{DisableBreakpoint, EditLogBreakpoint, EnableBreakpoint, ToggleBreakpoint},
     display_map::Companion,
 };
@@ -375,6 +378,12 @@ pub struct SplittableEditor {
     workspace: WeakEntity<Workspace>,
     split_state: Entity<SplitEditorState>,
     searched_side: Option<SplitSide>,
+    /// The preferred diff style.
+    diff_view_style: DiffViewStyle,
+    /// True when the current width is below the minimum threshold for split
+    /// mode, regardless of the current diff view style setting.
+    too_narrow_for_split: bool,
+    last_width: Option<Pixels>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -392,6 +401,10 @@ impl SplittableEditor {
 
     pub fn lhs_editor(&self) -> Option<&Entity<Editor>> {
         self.lhs.as_ref().map(|s| &s.editor)
+    }
+
+    pub fn diff_view_style(&self) -> DiffViewStyle {
+        self.diff_view_style
     }
 
     pub fn is_split(&self) -> bool {
@@ -446,6 +459,9 @@ impl SplittableEditor {
             let mut editor =
                 Editor::for_multibuffer(rhs_multibuffer.clone(), Some(project.clone()), window, cx);
             editor.set_expand_all_diff_hunks(cx);
+            editor.disable_runnables();
+            editor.disable_diagnostics(cx);
+            editor.set_minimap_visibility(crate::MinimapVisibility::Disabled, window, cx);
             editor
         });
         // TODO(split-diff) we might want to tag editor events with whether they came from rhs/lhs
@@ -494,12 +510,15 @@ impl SplittableEditor {
         });
         let split_state = cx.new(|cx| SplitEditorState::new(cx));
         Self {
+            diff_view_style: style,
             rhs_editor,
             rhs_multibuffer,
             lhs: None,
             workspace: workspace.downgrade(),
             split_state,
             searched_side: None,
+            too_narrow_for_split: false,
+            last_width: None,
             _subscriptions: subscriptions,
         }
     }
@@ -821,10 +840,19 @@ impl SplittableEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.lhs.is_some() {
-            self.unsplit(window, cx);
-        } else {
-            self.split(window, cx);
+        match self.diff_view_style {
+            DiffViewStyle::Unified => {
+                self.diff_view_style = DiffViewStyle::Split;
+                if !self.too_narrow_for_split {
+                    self.split(window, cx);
+                }
+            }
+            DiffViewStyle::Split => {
+                self.diff_view_style = DiffViewStyle::Unified;
+                if self.is_split() {
+                    self.unsplit(window, cx);
+                }
+            }
         }
     }
 
@@ -1243,6 +1271,35 @@ impl SplittableEditor {
                 });
             }
         });
+    }
+
+    fn width_changed(&mut self, width: Pixels, window: &mut Window, cx: &mut Context<Self>) {
+        self.last_width = Some(width);
+
+        let min_ems = EditorSettings::get_global(cx).minimum_split_diff_width;
+
+        let style = self.rhs_editor.read(cx).create_style(cx);
+        let font_id = window.text_system().resolve_font(&style.text.font());
+        let font_size = style.text.font_size.to_pixels(window.rem_size());
+        let em_advance = window
+            .text_system()
+            .em_advance(font_id, font_size)
+            .unwrap_or(font_size);
+        let min_width = em_advance * min_ems;
+        let is_split = self.lhs.is_some();
+
+        self.too_narrow_for_split = min_ems > 0.0 && width < min_width;
+
+        match self.diff_view_style {
+            DiffViewStyle::Unified => {}
+            DiffViewStyle::Split => {
+                if self.too_narrow_for_split && is_split {
+                    self.unsplit(window, cx);
+                } else if !self.too_narrow_for_split && !is_split {
+                    self.split(window, cx);
+                }
+            }
+        }
     }
 }
 
@@ -1850,7 +1907,7 @@ impl Item for SplittableEditor {
         self.rhs_editor.read(cx).breadcrumb_location(cx)
     }
 
-    fn breadcrumbs(&self, cx: &App) -> Option<Vec<BreadcrumbText>> {
+    fn breadcrumbs(&self, cx: &App) -> Option<(Vec<HighlightedText>, Option<Font>)> {
         self.rhs_editor.read(cx).breadcrumbs(cx)
     }
 
@@ -2037,30 +2094,23 @@ impl Focusable for SplittableEditor {
     }
 }
 
-// impl Item for SplittableEditor {
-//     type Event = EditorEvent;
-
-//     fn tab_content_text(&self, detail: usize, cx: &App) -> ui::SharedString {
-//         self.rhs_editor().tab_content_text(detail, cx)
-//     }
-
-//     fn as_searchable(&self, _this: &Entity<Self>, cx: &App) -> Option<Box<dyn workspace::searchable::SearchableItemHandle>> {
-//         Some(Box::new(self.last_selected_editor().clone()))
-//     }
-// }
-
 impl Render for SplittableEditor {
     fn render(
         &mut self,
         _window: &mut ui::Window,
         cx: &mut ui::Context<Self>,
     ) -> impl ui::IntoElement {
-        let inner = if self.lhs.is_some() {
+        let is_split = self.lhs.is_some();
+        let inner = if is_split {
             let style = self.rhs_editor.read(cx).create_style(cx);
             SplitEditorView::new(cx.entity(), style, self.split_state.clone()).into_any_element()
         } else {
             self.rhs_editor.clone().into_any_element()
         };
+
+        let this = cx.entity().downgrade();
+        let last_width = self.last_width;
+
         div()
             .id("splittable-editor")
             .on_action(cx.listener(Self::toggle_split))
@@ -2074,6 +2124,25 @@ impl Render for SplittableEditor {
             .capture_action(cx.listener(Self::toggle_soft_wrap))
             .size_full()
             .child(inner)
+            .child(
+                canvas(
+                    move |bounds, window, cx| {
+                        let width = bounds.size.width;
+                        if last_width == Some(width) {
+                            return;
+                        }
+                        window.defer(cx, move |window, cx| {
+                            this.update(cx, |this, cx| {
+                                this.width_changed(width, window, cx);
+                            })
+                            .ok();
+                        });
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            )
     }
 }
 
@@ -2113,7 +2182,7 @@ mod tests {
         cx.update(|cx| {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             crate::init(cx);
         });
         let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;

@@ -48,7 +48,6 @@
 /crates/edit_prediction_context/ @zed-industries/ai-team
 /crates/edit_prediction_types/ @zed-industries/ai-team
 /crates/edit_prediction_ui/ @zed-industries/ai-team
-/crates/eval/ @zed-industries/ai-team
 /crates/eval_utils/ @zed-industries/ai-team
 /crates/google_ai/ @zed-industries/ai-team
 /crates/language_model/ @zed-industries/ai-team

@@ -17,7 +17,6 @@ use gpui::{
     EventEmitter, FocusHandle, Focusable, PromptLevel, ScrollHandle, Subscription, Task,
     WeakEntity, Window, canvas,
 };
-use language::Point;
 use log::{debug, info};
 use open_path_prompt::OpenPathDelegate;
 use paths::{global_ssh_config_file, user_ssh_config_file};
@@ -390,7 +389,7 @@ impl ProjectPicker {
     ) -> Entity<Self> {
         let (tx, rx) = oneshot::channel();
         let lister = project::DirectoryLister::Project(project.clone());
-        let delegate = open_path_prompt::OpenPathDelegate::new(tx, lister, false, cx);
+        let delegate = open_path_prompt::OpenPathDelegate::new(tx, lister, false, cx).show_hidden();
 
         let picker = cx.new(|cx| {
             let picker = Picker::uniform_list(delegate, window, cx)
@@ -519,11 +518,15 @@ impl ProjectPicker {
                                         active_editor.update(cx, |editor, cx| {
                                             let row = row.saturating_sub(1);
                                             let col = path.column.unwrap_or(0).saturating_sub(1);
-                                            editor.go_to_singleton_buffer_point(
-                                                Point::new(row, col),
-                                                window,
-                                                cx,
-                                            );
+                                            let Some(buffer) =
+                                                editor.buffer().read(cx).as_singleton()
+                                            else {
+                                                return;
+                                            };
+                                            let buffer_snapshot = buffer.read(cx).snapshot();
+                                            let point =
+                                                buffer_snapshot.point_from_external_input(row, col);
+                                            editor.go_to_singleton_buffer_point(point, window, cx);
                                         });
                                     })
                                     .ok();
@@ -1563,7 +1566,7 @@ impl RemoteServerProjects {
                         project.paths.into_iter().map(PathBuf::from).collect(),
                         app_state,
                         OpenOptions {
-                            replace_window,
+                            requesting_window: replace_window,
                             ..OpenOptions::default()
                         },
                         cx,
@@ -1849,7 +1852,6 @@ impl RemoteServerProjects {
         cx: &mut Context<Self>,
     ) {
         let replace_window = window.window_handle().downcast::<MultiWorkspace>();
-
         let app_state = Arc::downgrade(&app_state);
         cx.spawn_in(window, async move |entity, cx| {
             let (connection, starting_dir) =
@@ -1892,7 +1894,7 @@ impl RemoteServerProjects {
                 vec![starting_dir].into_iter().map(PathBuf::from).collect(),
                 app_state,
                 OpenOptions {
-                    replace_window,
+                    requesting_window: replace_window,
                     ..OpenOptions::default()
                 },
                 cx,
@@ -2117,8 +2119,10 @@ impl RemoteServerProjects {
                                     .child(
                                         Button::new("learn-more", "Learn More")
                                             .label_size(LabelSize::Small)
-                                            .icon(IconName::ArrowUpRight)
-                                            .icon_size(IconSize::XSmall)
+                                            .end_icon(
+                                                Icon::new(IconName::ArrowUpRight)
+                                                    .size(IconSize::XSmall),
+                                            )
                                             .on_click(|_, _, cx| {
                                                 cx.open_url(
                                                     "https://zed.dev/docs/remote-development",

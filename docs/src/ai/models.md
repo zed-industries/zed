@@ -83,9 +83,9 @@ A context window is the maximum span of text and code an LLM can consider at onc
 | Model             | Provider  | Zed-Hosted Context Window |
 | ----------------- | --------- | ------------------------- |
 | Claude Opus 4.5   | Anthropic | 200k                      |
-| Claude Opus 4.6   | Anthropic | 200k                      |
+| Claude Opus 4.6   | Anthropic | 1M                        |
 | Claude Sonnet 4.5 | Anthropic | 200k                      |
-| Claude Sonnet 4.6 | Anthropic | 200k                      |
+| Claude Sonnet 4.6 | Anthropic | 1M                        |
 | Claude Haiku 4.5  | Anthropic | 200k                      |
 | GPT-5.2           | OpenAI    | 400k                      |
 | GPT-5.2 Codex     | OpenAI    | 400k                      |
@@ -94,7 +94,7 @@ A context window is the maximum span of text and code an LLM can consider at onc
 | Gemini 3.1 Pro    | Google    | 200k                      |
 | Gemini 3 Flash    | Google    | 200k                      |
 
-> Context window limits for hosted Sonnet 4.5/4.6 and Gemini 3.1 Pro/3 Pro/Flash may increase in future releases.
+> Context window limits for hosted Gemini 3.1 Pro/3 Pro/Flash may increase in future releases.
 
 Each Agent thread and text thread in Zed maintains its own context window.
 The more prompts, attached files, and responses included in a session, the larger the context window grows.

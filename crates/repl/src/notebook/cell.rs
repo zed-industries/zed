@@ -12,7 +12,7 @@ use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use nbformat::v4::{CellId, CellMetadata, CellType};
 use runtimelib::{JupyterMessage, JupyterMessageContent};
 use settings::Settings as _;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{CommonAnimationExt, IconButtonShape, prelude::*};
 use util::ResultExt;
 

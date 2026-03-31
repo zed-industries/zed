@@ -1,8 +1,5 @@
 use std::ops::Range;
-use std::{
-    cmp::{self, Reverse},
-    sync::Arc,
-};
+use std::{cmp, sync::Arc};
 
 use editor::scroll::ScrollOffset;
 use editor::{Anchor, AnchorRangeExt, Editor, scroll::Autoscroll};
@@ -17,7 +14,8 @@ use language::{Outline, OutlineItem};
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
-use theme::{ActiveTheme, ThemeSettings};
+use theme::ActiveTheme;
+use theme_settings::ThemeSettings;
 use ui::{ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use workspace::{DismissDecision, ModalView};
@@ -183,11 +181,10 @@ impl OutlineView {
 struct OutlineViewDelegate {
     outline_view: WeakEntity<OutlineView>,
     active_editor: Entity<Editor>,
-    outline: Outline<Anchor>,
+    outline: Arc<Outline<Anchor>>,
     selected_match_index: usize,
     prev_scroll_position: Option<Point<ScrollOffset>>,
     matches: Vec<StringMatch>,
-    last_query: String,
 }
 
 enum OutlineRowHighlights {}
@@ -202,12 +199,11 @@ impl OutlineViewDelegate {
     ) -> Self {
         Self {
             outline_view,
-            last_query: Default::default(),
             matches: Default::default(),
             selected_match_index: 0,
             prev_scroll_position: Some(editor.update(cx, |editor, cx| editor.scroll_position(cx))),
             active_editor: editor,
-            outline,
+            outline: Arc::new(outline),
         }
     }
 
@@ -280,67 +276,73 @@ impl PickerDelegate for OutlineViewDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<OutlineViewDelegate>>,
     ) -> Task<()> {
-        let selected_index;
-        if query.is_empty() {
+        let is_query_empty = query.is_empty();
+        if is_query_empty {
             self.restore_active_editor(window, cx);
-            self.matches = self
-                .outline
-                .items
-                .iter()
-                .enumerate()
-                .map(|(index, _)| StringMatch {
-                    candidate_id: index,
-                    score: Default::default(),
-                    positions: Default::default(),
-                    string: Default::default(),
-                })
-                .collect();
-
-            let (buffer, cursor_offset) = self.active_editor.update(cx, |editor, cx| {
-                let buffer = editor.buffer().read(cx).snapshot(cx);
-                let cursor_offset = editor
-                    .selections
-                    .newest::<MultiBufferOffset>(&editor.display_snapshot(cx))
-                    .head();
-                (buffer, cursor_offset)
-            });
-            selected_index = self
-                .outline
-                .items
-                .iter()
-                .enumerate()
-                .map(|(ix, item)| {
-                    let range = item.range.to_offset(&buffer);
-                    let distance_to_closest_endpoint = cmp::min(
-                        (range.start.0 as isize - cursor_offset.0 as isize).abs(),
-                        (range.end.0 as isize - cursor_offset.0 as isize).abs(),
-                    );
-                    let depth = if range.contains(&cursor_offset) {
-                        Some(item.depth)
-                    } else {
-                        None
-                    };
-                    (ix, depth, distance_to_closest_endpoint)
-                })
-                .max_by_key(|(_, depth, distance)| (*depth, Reverse(*distance)))
-                .map(|(ix, _, _)| ix)
-                .unwrap_or(0);
-        } else {
-            self.matches = smol::block_on(
-                self.outline
-                    .search(&query, cx.background_executor().clone()),
-            );
-            selected_index = self
-                .matches
-                .iter()
-                .enumerate()
-                .max_by_key(|(_, m)| OrderedFloat(m.score))
-                .map(|(ix, _)| ix)
-                .unwrap_or(0);
         }
-        self.last_query = query;
-        self.set_selected_index(selected_index, !self.last_query.is_empty(), cx);
-        Task::ready(())
+
+        let outline = self.outline.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let matches = if is_query_empty {
+                outline
+                    .items
+                    .iter()
+                    .enumerate()
+                    .map(|(index, _)| StringMatch {
+                        candidate_id: index,
+                        score: Default::default(),
+                        positions: Default::default(),
+                        string: Default::default(),
+                    })
+                    .collect()
+            } else {
+                outline
+                    .search(&query, cx.background_executor().clone())
+                    .await
+            };
+
+            let _ = this.update(cx, |this, cx| {
+                this.delegate.matches = matches;
+                let selected_index = if is_query_empty {
+                    let (buffer, cursor_offset) =
+                        this.delegate.active_editor.update(cx, |editor, cx| {
+                            let snapshot = editor.display_snapshot(cx);
+                            let cursor_offset = editor
+                                .selections
+                                .newest::<MultiBufferOffset>(&snapshot)
+                                .head();
+                            (snapshot.buffer().clone(), cursor_offset)
+                        });
+                    this.delegate
+                        .matches
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(ix, m)| {
+                            let item = &this.delegate.outline.items[m.candidate_id];
+                            let range = item.range.to_offset(&buffer);
+                            range.contains(&cursor_offset).then_some((ix, item.depth))
+                        })
+                        .max_by_key(|(ix, depth)| (*depth, cmp::Reverse(*ix)))
+                        .map(|(ix, _)| ix)
+                        .unwrap_or(0)
+                } else {
+                    this.delegate
+                        .matches
+                        .iter()
+                        .enumerate()
+                        .max_by(|(ix_a, a), (ix_b, b)| {
+                            OrderedFloat(a.score)
+                                .cmp(&OrderedFloat(b.score))
+                                .then(ix_b.cmp(ix_a))
+                        })
+                        .map(|(ix, _)| ix)
+                        .unwrap_or(0)
+                };
+
+                this.delegate
+                    .set_selected_index(selected_index, !is_query_empty, cx);
+            });
+        })
     }
 
     fn confirm(
@@ -586,6 +588,246 @@ mod tests {
         assert_single_caret_at_row(&editor, expected_first_highlighted_row, cx);
     }
 
+    #[gpui::test]
+    async fn test_outline_empty_query_prefers_deepest_containing_symbol_else_first(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "a.rs": indoc! {"
+                                       // display line 0
+                    struct Outer {     // display line 1
+                        fn top(&self) {// display line 2
+                            let _x = 1;// display line 3
+                        }              // display line 4
+                    }                  // display line 5
+
+                    struct Another;    // display line 7
+                "}
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        project.read_with(cx, |project, _| {
+            project.languages().add(language::rust_lang())
+        });
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = cx.read(|cx| workspace.read(cx).workspace().clone());
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, rel_path("a.rs")), None, true, window, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        set_single_caret_at_row(&editor, 3, cx);
+        let outline_view = open_outline_view(&workspace, cx);
+        cx.run_until_parked();
+        let (selected_candidate_id, expected_deepest_containing_candidate_id) = outline_view
+            .update(cx, |outline_view, cx| {
+                let delegate = &outline_view.delegate;
+                let selected_candidate_id =
+                    delegate.matches[delegate.selected_match_index].candidate_id;
+                let (buffer, cursor_offset) = delegate.active_editor.update(cx, |editor, cx| {
+                    let buffer = editor.buffer().read(cx).snapshot(cx);
+                    let cursor_offset = editor
+                        .selections
+                        .newest::<MultiBufferOffset>(&editor.display_snapshot(cx))
+                        .head();
+                    (buffer, cursor_offset)
+                });
+                let deepest_containing_candidate_id = delegate
+                    .outline
+                    .items
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(ix, item)| {
+                        item.range
+                            .to_offset(&buffer)
+                            .contains(&cursor_offset)
+                            .then_some((ix, item.depth))
+                    })
+                    .max_by(|(ix_a, depth_a), (ix_b, depth_b)| {
+                        depth_a.cmp(depth_b).then(ix_b.cmp(ix_a))
+                    })
+                    .map(|(ix, _)| ix)
+                    .unwrap();
+                (selected_candidate_id, deepest_containing_candidate_id)
+            });
+        assert_eq!(
+            selected_candidate_id, expected_deepest_containing_candidate_id,
+            "Empty query should select the deepest symbol containing the cursor"
+        );
+
+        cx.dispatch_action(menu::Cancel);
+        cx.run_until_parked();
+
+        set_single_caret_at_row(&editor, 0, cx);
+        let outline_view = open_outline_view(&workspace, cx);
+        cx.run_until_parked();
+        let selected_candidate_id = outline_view.read_with(cx, |outline_view, _| {
+            let delegate = &outline_view.delegate;
+            delegate.matches[delegate.selected_match_index].candidate_id
+        });
+        assert_eq!(
+            selected_candidate_id, 0,
+            "Empty query should fall back to the first symbol when cursor is outside all symbol ranges"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_outline_filtered_selection_prefers_first_match_on_score_ties(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "a.rs": indoc! {"
+                    struct A;
+                    impl A {
+                        fn f(&self) {}
+                        fn g(&self) {}
+                    }
+
+                    struct B;
+                    impl B {
+                        fn f(&self) {}
+                        fn g(&self) {}
+                    }
+
+                    struct C;
+                    impl C {
+                        fn f(&self) {}
+                        fn g(&self) {}
+                    }
+                "}
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        project.read_with(cx, |project, _| {
+            project.languages().add(language::rust_lang())
+        });
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = cx.read(|cx| workspace.read(cx).workspace().clone());
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, rel_path("a.rs")), None, true, window, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        assert_single_caret_at_row(&editor, 0, cx);
+        let outline_view = open_outline_view(&workspace, cx);
+        let match_ids = |outline_view: &Entity<Picker<OutlineViewDelegate>>,
+                         cx: &mut VisualTestContext| {
+            outline_view.read_with(cx, |outline_view, _| {
+                let delegate = &outline_view.delegate;
+                let selected_match = &delegate.matches[delegate.selected_match_index];
+                let scored_ids = delegate
+                    .matches
+                    .iter()
+                    .filter(|m| m.score > 0.0)
+                    .map(|m| m.candidate_id)
+                    .collect::<Vec<_>>();
+                (
+                    selected_match.candidate_id,
+                    *scored_ids.first().unwrap(),
+                    *scored_ids.last().unwrap(),
+                    scored_ids.len(),
+                )
+            })
+        };
+
+        outline_view
+            .update_in(cx, |outline_view, window, cx| {
+                outline_view
+                    .delegate
+                    .update_matches("f".to_string(), window, cx)
+            })
+            .await;
+        let (selected_id, first_scored_id, last_scored_id, scored_match_count) =
+            match_ids(&outline_view, cx);
+
+        assert!(
+            scored_match_count > 1,
+            "Expected multiple scored matches for `f` in outline filtering"
+        );
+        assert_eq!(
+            selected_id, first_scored_id,
+            "Filtered query should pick the first scored match when scores tie"
+        );
+        assert_ne!(
+            selected_id, last_scored_id,
+            "Selection should not default to the last scored match"
+        );
+
+        set_single_caret_at_row(&editor, 12, cx);
+        outline_view
+            .update_in(cx, |outline_view, window, cx| {
+                outline_view
+                    .delegate
+                    .update_matches("f".to_string(), window, cx)
+            })
+            .await;
+        let (selected_id, first_scored_id, last_scored_id, scored_match_count) =
+            match_ids(&outline_view, cx);
+
+        assert!(
+            scored_match_count > 1,
+            "Expected multiple scored matches for `f` in outline filtering"
+        );
+        assert_eq!(
+            selected_id, first_scored_id,
+            "Filtered selection should stay score-ordered and not switch based on cursor proximity"
+        );
+        assert_ne!(
+            selected_id, last_scored_id,
+            "Selection should not default to the last scored match"
+        );
+    }
+
     fn open_outline_view(
         workspace: &Entity<Workspace>,
         cx: &mut VisualTestContext,
@@ -632,6 +874,18 @@ mod tests {
                 .map(|r| r.0)
                 .collect()
         })
+    }
+
+    fn set_single_caret_at_row(
+        editor: &Entity<Editor>,
+        buffer_row: u32,
+        cx: &mut VisualTestContext,
+    ) {
+        editor.update_in(cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_ranges([rope::Point::new(buffer_row, 0)..rope::Point::new(buffer_row, 0)])
+            });
+        });
     }
 
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {

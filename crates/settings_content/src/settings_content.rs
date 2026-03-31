@@ -9,6 +9,7 @@ mod project;
 mod serde_helper;
 mod terminal;
 mod theme;
+mod title_bar;
 mod workspace;
 
 pub use agent::*;
@@ -26,6 +27,7 @@ pub use serde_helper::{
 use settings_json::parse_json_with_comments;
 pub use terminal::*;
 pub use theme::*;
+pub use title_bar::*;
 pub use workspace::*;
 
 use collections::{HashMap, IndexMap};
@@ -202,6 +204,13 @@ pub struct SettingsContent {
 
     /// Settings related to Vim mode in Zed.
     pub vim: Option<VimSettingsContent>,
+
+    /// Number of lines to search for modelines at the beginning and end of files.
+    /// Modelines contain editor directives (e.g., vim/emacs settings) that configure
+    /// the editor behavior for specific files.
+    ///
+    /// Default: 5
+    pub modeline_lines: Option<usize>,
 }
 
 impl SettingsContent {
@@ -316,54 +325,10 @@ impl strum::VariantNames for BaseKeymapContent {
     ];
 }
 
-#[with_fallible_options]
-#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
-pub struct TitleBarSettingsContent {
-    /// Whether to show the branch icon beside branch switcher in the title bar.
-    ///
-    /// Default: false
-    pub show_branch_icon: Option<bool>,
-    /// Whether to show onboarding banners in the title bar.
-    ///
-    /// Default: true
-    pub show_onboarding_banner: Option<bool>,
-    /// Whether to show user avatar in the title bar.
-    ///
-    /// Default: true
-    pub show_user_picture: Option<bool>,
-    /// Whether to show the branch name button in the titlebar.
-    ///
-    /// Default: true
-    pub show_branch_name: Option<bool>,
-    /// Whether to show the project host and name in the titlebar.
-    ///
-    /// Default: true
-    pub show_project_items: Option<bool>,
-    /// Whether to show the sign in button in the title bar.
-    ///
-    /// Default: true
-    pub show_sign_in: Option<bool>,
-    /// Whether to show the user menu button in the title bar.
-    ///
-    /// Default: true
-    pub show_user_menu: Option<bool>,
-    /// Whether to show the menus in the title bar.
-    ///
-    /// Default: false
-    pub show_menus: Option<bool>,
-}
-
 /// Configuration of audio in Zed.
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct AudioSettingsContent {
-    /// Opt into the new audio system.
-    ///
-    /// You need to rejoin a call for this setting to apply
-    #[serde(rename = "experimental.rodio_audio")]
-    pub rodio_audio: Option<bool>, // default is false
-    /// Requires 'rodio_audio: true'
-    ///
     /// Automatically increase or decrease you microphone's volume. This affects how
     /// loud you sound to others.
     ///
@@ -373,35 +338,11 @@ pub struct AudioSettingsContent {
     /// compared to other speakers.
     #[serde(rename = "experimental.auto_microphone_volume")]
     pub auto_microphone_volume: Option<bool>,
-    /// Requires 'rodio_audio: true'
-    ///
-    /// Automatically increate or decrease the volume of other call members.
-    /// This only affects how things sound for you.
-    #[serde(rename = "experimental.auto_speaker_volume")]
-    pub auto_speaker_volume: Option<bool>,
-    /// Requires 'rodio_audio: true'
-    ///
     /// Remove background noises. Works great for typing, cars, dogs, AC. Does
     /// not work well on music.
-    #[serde(rename = "experimental.denoise")]
-    pub denoise: Option<bool>,
-    /// Requires 'rodio_audio: true'
-    ///
-    /// Use audio parameters compatible with the previous versions of
-    /// experimental audio and non-experimental audio. When this is false you
-    /// will sound strange to anyone not on the latest experimental audio. In
-    /// the future we will migrate by setting this to false
-    ///
-    /// You need to rejoin a call for this setting to apply
-    #[serde(rename = "experimental.legacy_audio_compatible")]
-    pub legacy_audio_compatible: Option<bool>,
-    /// Requires 'rodio_audio: true'
-    ///
     /// Select specific output audio device.
     #[serde(rename = "experimental.output_audio_device")]
     pub output_audio_device: Option<AudioOutputDeviceName>,
-    /// Requires 'rodio_audio: true'
-    ///
     /// Select specific input audio device.
     #[serde(rename = "experimental.input_audio_device")]
     pub input_audio_device: Option<AudioInputDeviceName>,
@@ -593,6 +534,17 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: icon
     pub status_style: Option<StatusStyle>,
+
+    /// Whether to show file icons in the git panel.
+    ///
+    /// Default: false
+    pub file_icons: Option<bool>,
+
+    /// Whether to show folder icons or chevrons for directories in the git panel.
+    ///
+    /// Default: true
+    pub folder_icons: Option<bool>,
+
     /// How and when the scrollbar should be displayed.
     ///
     /// Default: inherits editor scrollbar settings
@@ -624,6 +576,16 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: true
     pub diff_stats: Option<bool>,
+
+    /// Whether to show a badge on the git panel icon with the count of uncommitted changes.
+    ///
+    /// Default: false
+    pub show_count_badge: Option<bool>,
+
+    /// Whether the git panel should open on startup.
+    ///
+    /// Default: false
+    pub starts_open: Option<bool>,
 }
 
 #[derive(
@@ -671,6 +633,10 @@ pub struct NotificationPanelSettingsContent {
     /// Default: 300
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_width: Option<f32>,
+    /// Whether to show a badge on the notification panel icon with the count of unread notifications.
+    ///
+    /// Default: false
+    pub show_count_badge: Option<bool>,
 }
 
 #[with_fallible_options]
@@ -721,6 +687,10 @@ pub struct FileFinderSettingsContent {
     ///
     /// Default: Smart
     pub include_ignored: Option<IncludeIgnoredContent>,
+    /// Whether to include text channels in file finder results.
+    ///
+    /// Default: false
+    pub include_channels: Option<bool>,
 }
 
 #[derive(
@@ -1163,15 +1133,15 @@ pub struct WhichKeySettingsContent {
     pub delay_ms: Option<u64>,
 }
 
+// An ExtendingVec in the settings can only accumulate new values.
+//
+// This is useful for things like private files where you only want
+// to allow new values to be added.
+//
+// Consider using a HashMap<String, bool> instead of this type
+// (like auto_install_extensions) so that user settings files can both add
+// and remove values from the set.
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-/// An ExtendingVec in the settings can only accumulate new values.
-///
-/// This is useful for things like private files where you only want
-/// to allow new values to be added.
-///
-/// Consider using a HashMap<String, bool> instead of this type
-/// (like auto_install_extensions) so that user settings files can both add
-/// and remove values from the set.
 pub struct ExtendingVec<T>(pub Vec<T>);
 
 impl<T> Into<Vec<T>> for ExtendingVec<T> {
@@ -1191,10 +1161,10 @@ impl<T: Clone> merge_from::MergeFrom for ExtendingVec<T> {
     }
 }
 
-/// A SaturatingBool in the settings can only ever be set to true,
-/// later attempts to set it to false will be ignored.
-///
-/// Used by `disable_ai`.
+// A SaturatingBool in the settings can only ever be set to true,
+// later attempts to set it to false will be ignored.
+//
+// Used by `disable_ai`.
 #[derive(Debug, Default, Copy, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SaturatingBool(pub bool);
 
