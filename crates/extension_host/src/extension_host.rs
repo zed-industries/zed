@@ -17,8 +17,7 @@ use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{
     ExtensionContextServerProxy, ExtensionDebugAdapterProviderProxy, ExtensionEvents,
     ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy,
-    ExtensionLanguageServerProxy, ExtensionSlashCommandProxy, ExtensionSnippetProxy,
-    ExtensionThemeProxy,
+    ExtensionLanguageServerProxy, ExtensionSnippetProxy, ExtensionThemeProxy,
 };
 use fs::{Fs, RemoveOptions};
 use futures::future::join_all;
@@ -55,6 +54,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use task::TaskTemplates;
 use url::Url;
 use util::{ResultExt, paths::RemotePathBuf};
 use wasm_host::{
@@ -1208,9 +1208,6 @@ impl ExtensionStore {
             for locator in extension.manifest.debug_locators.keys() {
                 self.proxy.unregister_debug_locator(locator.clone());
             }
-            for command_name in extension.manifest.slash_commands.keys() {
-                self.proxy.unregister_slash_command(command_name.clone());
-            }
         }
 
         self.wasm_extensions
@@ -1285,19 +1282,11 @@ impl ExtensionStore {
             ]);
 
             // Load semantic token rules if present in the language directory.
-            let rules_path = language_path.join("semantic_token_rules.json");
-            if let Ok(rules_json) = std::fs::read_to_string(&rules_path) {
-                match serde_json_lenient::from_str::<SemanticTokenRules>(&rules_json) {
-                    Ok(rules) => {
-                        semantic_token_rules_to_add.push((language_name.clone(), rules));
-                    }
-                    Err(err) => {
-                        log::error!(
-                            "Failed to parse semantic token rules from {}: {err:#}",
-                            rules_path.display()
-                        );
-                    }
-                }
+            let rules_path = language_path.join(SemanticTokenRules::FILE_NAME);
+            if std::fs::exists(&rules_path).is_ok_and(|exists| exists)
+                && let Some(rules) = SemanticTokenRules::load(&rules_path).log_err()
+            {
+                semantic_token_rules_to_add.push((language_name.clone(), rules));
             }
 
             self.proxy.register_language(
@@ -1306,11 +1295,11 @@ impl ExtensionStore {
                 language.matcher.clone(),
                 language.hidden,
                 Arc::new(move || {
-                    let config = std::fs::read_to_string(language_path.join("config.toml"))?;
-                    let config: LanguageConfig = ::toml::from_str(&config)?;
+                    let config =
+                        LanguageConfig::load(language_path.join(LanguageConfig::FILE_NAME))?;
                     let queries = load_plugin_queries(&language_path);
                     let context_provider =
-                        std::fs::read_to_string(language_path.join("tasks.json"))
+                        std::fs::read_to_string(language_path.join(TaskTemplates::FILE_NAME))
                             .ok()
                             .and_then(|contents| {
                                 let definitions =
@@ -1435,21 +1424,6 @@ impl ExtensionStore {
                                 language.clone(),
                             );
                         }
-                    }
-
-                    for (slash_command_name, slash_command) in &manifest.slash_commands {
-                        this.proxy.register_slash_command(
-                            extension.clone(),
-                            extension::SlashCommand {
-                                name: slash_command_name.to_string(),
-                                description: slash_command.description.to_string(),
-                                // We don't currently expose this as a configurable option, as it currently drives
-                                // the `menu_text` on the `SlashCommand` trait, which is not used for slash commands
-                                // defined in extensions, as they are not able to be added to the menu.
-                                tooltip_text: String::new(),
-                                requires_argument: slash_command.requires_argument,
-                            },
-                        );
                     }
 
                     for id in manifest.context_servers.keys() {
@@ -1580,7 +1554,7 @@ impl ExtensionStore {
                 if !fs_metadata.is_dir {
                     continue;
                 }
-                let language_config_path = language_path.join("config.toml");
+                let language_config_path = language_path.join(LanguageConfig::FILE_NAME);
                 let config = fs.load(&language_config_path).await.with_context(|| {
                     format!("loading language config from {language_config_path:?}")
                 })?;
@@ -1703,7 +1677,7 @@ impl ExtensionStore {
         cx.background_spawn(async move {
             const EXTENSION_TOML: &str = "extension.toml";
             const EXTENSION_WASM: &str = "extension.wasm";
-            const CONFIG_TOML: &str = "config.toml";
+            const CONFIG_TOML: &str = LanguageConfig::FILE_NAME;
 
             if is_dev {
                 let manifest_toml = toml::to_string(&loaded_extension.manifest)?;

@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use async_compression::futures::bufread::GzipDecoder;
+use async_compression::futures::bufread::{BzDecoder, GzipDecoder};
 use futures::{AsyncRead, AsyncSeek, AsyncSeekExt, AsyncWrite, io::BufReader};
 use sha2::{Digest, Sha256};
 
@@ -119,7 +119,7 @@ async fn extract_to_staging(
 
 fn staging_path(parent: &Path, asset_kind: AssetKind) -> Result<PathBuf> {
     match asset_kind {
-        AssetKind::TarGz | AssetKind::Zip => {
+        AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Zip => {
             let dir = tempfile::Builder::new()
                 .prefix(".tmp-github-download-")
                 .tempdir_in(parent)
@@ -141,7 +141,7 @@ fn staging_path(parent: &Path, asset_kind: AssetKind) -> Result<PathBuf> {
 
 async fn cleanup_staging_path(staging_path: &Path, asset_kind: AssetKind) {
     match asset_kind {
-        AssetKind::TarGz | AssetKind::Zip => {
+        AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Zip => {
             if let Err(err) = async_fs::remove_dir_all(staging_path).await {
                 log::warn!("failed to remove staging directory {staging_path:?}: {err:?}");
             }
@@ -155,6 +155,7 @@ async fn cleanup_staging_path(staging_path: &Path, asset_kind: AssetKind) {
 }
 
 async fn finalize_download(staging_path: &Path, destination_path: &Path) -> Result<()> {
+    _ = async_fs::remove_dir_all(destination_path).await;
     async_fs::rename(staging_path, destination_path)
         .await
         .with_context(|| format!("renaming {staging_path:?} to {destination_path:?}"))?;
@@ -169,6 +170,7 @@ async fn stream_response_archive(
 ) -> Result<()> {
     match asset_kind {
         AssetKind::TarGz => extract_tar_gz(destination_path, url, response).await?,
+        AssetKind::TarBz2 => extract_tar_bz2(destination_path, url, response).await?,
         AssetKind::Gz => extract_gz(destination_path, url, response).await?,
         AssetKind::Zip => {
             util::archive::extract_zip(destination_path, response).await?;
@@ -185,6 +187,7 @@ async fn stream_file_archive(
 ) -> Result<()> {
     match asset_kind {
         AssetKind::TarGz => extract_tar_gz(destination_path, url, file_archive).await?,
+        AssetKind::TarBz2 => extract_tar_bz2(destination_path, url, file_archive).await?,
         AssetKind::Gz => extract_gz(destination_path, url, file_archive).await?,
         #[cfg(not(windows))]
         AssetKind::Zip => {
@@ -204,6 +207,20 @@ async fn extract_tar_gz(
     from: impl AsyncRead + Unpin,
 ) -> Result<(), anyhow::Error> {
     let decompressed_bytes = GzipDecoder::new(BufReader::new(from));
+    let archive = async_tar::Archive::new(decompressed_bytes);
+    archive
+        .unpack(&destination_path)
+        .await
+        .with_context(|| format!("extracting {url} to {destination_path:?}"))?;
+    Ok(())
+}
+
+async fn extract_tar_bz2(
+    destination_path: &Path,
+    url: &str,
+    from: impl AsyncRead + Unpin,
+) -> Result<(), anyhow::Error> {
+    let decompressed_bytes = BzDecoder::new(BufReader::new(from));
     let archive = async_tar::Archive::new(decompressed_bytes);
     archive
         .unpack(&destination_path)

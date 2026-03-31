@@ -1,12 +1,12 @@
+use agent_servers::CLAUDE_AGENT_ID;
 use gpui::{
     ClickEvent, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, MouseDownEvent, Render,
     linear_color_stop, linear_gradient,
 };
-use project::agent_server_store::CLAUDE_AGENT_NAME;
 use ui::{TintColor, Vector, VectorName, prelude::*};
 use workspace::{ModalView, Workspace};
 
-use crate::agent_panel::{AgentPanel, AgentType};
+use crate::{Agent, agent_panel::AgentPanel};
 
 macro_rules! claude_agent_onboarding_event {
     ($name:expr) => {
@@ -38,8 +38,8 @@ impl ClaudeCodeOnboardingModal {
             if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                 panel.update(cx, |panel, cx| {
                     panel.new_agent_thread(
-                        AgentType::Custom {
-                            name: CLAUDE_AGENT_NAME.into(),
+                        Agent::Custom {
+                            id: CLAUDE_AGENT_ID.into(),
                         },
                         window,
                         cx,
@@ -201,15 +201,16 @@ impl Render for ClaudeCodeOnboardingModal {
         let copy = "Powered by the Agent Client Protocol, you can now run Claude Agent as\na first-class citizen in Zed's agent panel.";
 
         let open_panel_button = Button::new("open-panel", "Start with Claude Agent")
-            .icon_size(IconSize::Indicator)
             .style(ButtonStyle::Tinted(TintColor::Accent))
             .full_width()
             .on_click(cx.listener(Self::open_panel));
 
         let docs_button = Button::new("add-other-agents", "Add Other Agents")
-            .icon(IconName::ArrowUpRight)
-            .icon_size(IconSize::Indicator)
-            .icon_color(Color::Muted)
+            .end_icon(
+                Icon::new(IconName::ArrowUpRight)
+                    .size(IconSize::Indicator)
+                    .color(Color::Muted),
+            )
             .full_width()
             .on_click(cx.listener(Self::view_docs));
 

@@ -400,7 +400,14 @@ impl OllamaLanguageModel {
             stream: true,
             options: Some(ChatOptions {
                 num_ctx: Some(self.model.max_tokens),
-                stop: Some(request.stop),
+                // Only send stop tokens if explicitly provided. When empty/None,
+                // Ollama will use the model's default stop tokens from its Modelfile.
+                // Sending an empty array would override and disable the defaults.
+                stop: if request.stop.is_empty() {
+                    None
+                } else {
+                    Some(request.stop)
+                },
                 temperature: request.temperature.or(Some(1.0)),
                 ..Default::default()
             }),
@@ -858,9 +865,7 @@ impl ConfigurationView {
                 .child(
                     Button::new("reset-context-window", "Reset")
                         .label_size(LabelSize::Small)
-                        .icon(IconName::Undo)
-                        .icon_size(IconSize::Small)
-                        .icon_position(IconPosition::Start)
+                        .start_icon(Icon::new(IconName::Undo).size(IconSize::Small))
                         .layer(ElevationIndex::ModalSurface)
                         .on_click(
                             cx.listener(|this, _, window, cx| {
@@ -905,9 +910,7 @@ impl ConfigurationView {
                 .child(
                     Button::new("reset-api-url", "Reset API URL")
                         .label_size(LabelSize::Small)
-                        .icon(IconName::Undo)
-                        .icon_size(IconSize::Small)
-                        .icon_position(IconPosition::Start)
+                        .start_icon(Icon::new(IconName::Undo).size(IconSize::Small))
                         .layer(ElevationIndex::ModalSurface)
                         .on_click(
                             cx.listener(|this, _, window, cx| this.reset_api_url(window, cx)),
@@ -949,9 +952,11 @@ impl Render for ConfigurationView {
                                     this.child(
                                         Button::new("ollama-site", "Ollama")
                                             .style(ButtonStyle::Subtle)
-                                            .icon(IconName::ArrowUpRight)
-                                            .icon_size(IconSize::XSmall)
-                                            .icon_color(Color::Muted)
+                                            .end_icon(
+                                                Icon::new(IconName::ArrowUpRight)
+                                                    .size(IconSize::XSmall)
+                                                    .color(Color::Muted),
+                                            )
                                             .on_click(move |_, _, cx| cx.open_url(OLLAMA_SITE))
                                             .into_any_element(),
                                     )
@@ -959,9 +964,11 @@ impl Render for ConfigurationView {
                                     this.child(
                                         Button::new("download_ollama_button", "Download Ollama")
                                             .style(ButtonStyle::Subtle)
-                                            .icon(IconName::ArrowUpRight)
-                                            .icon_size(IconSize::XSmall)
-                                            .icon_color(Color::Muted)
+                                            .end_icon(
+                                                Icon::new(IconName::ArrowUpRight)
+                                                    .size(IconSize::XSmall)
+                                                    .color(Color::Muted),
+                                            )
                                             .on_click(move |_, _, cx| {
                                                 cx.open_url(OLLAMA_DOWNLOAD_URL)
                                             })
@@ -972,9 +979,11 @@ impl Render for ConfigurationView {
                             .child(
                                 Button::new("view-models", "View All Models")
                                     .style(ButtonStyle::Subtle)
-                                    .icon(IconName::ArrowUpRight)
-                                    .icon_size(IconSize::XSmall)
-                                    .icon_color(Color::Muted)
+                                    .end_icon(
+                                        Icon::new(IconName::ArrowUpRight)
+                                            .size(IconSize::XSmall)
+                                            .color(Color::Muted),
+                                    )
                                     .on_click(move |_, _, cx| cx.open_url(OLLAMA_LIBRARY_URL)),
                             ),
                     )
@@ -1005,9 +1014,9 @@ impl Render for ConfigurationView {
                         } else {
                             this.child(
                                 Button::new("retry_ollama_models", "Connect")
-                                    .icon_position(IconPosition::Start)
-                                    .icon_size(IconSize::XSmall)
-                                    .icon(IconName::PlayOutlined)
+                                    .start_icon(
+                                        Icon::new(IconName::PlayOutlined).size(IconSize::XSmall),
+                                    )
                                     .on_click(cx.listener(move |this, _, window, cx| {
                                         this.retry_connection(window, cx)
                                     })),

@@ -43,10 +43,6 @@ Zed's plans offer hosted versions of major LLMs with higher rate limits than dir
 |                        | OpenAI    | Cached Input        | $0.005                       | $0.0055                 |
 | Gemini 3.1 Pro         | Google    | Input               | $2.00                        | $2.20                   |
 |                        | Google    | Output              | $12.00                       | $13.20                  |
-| Gemini 3.1 Pro         | Google    | Input               | $2.00                        | $2.20                   |
-|                        | Google    | Output              | $12.00                       | $13.20                  |
-| Gemini 3 Pro           | Google    | Input               | $2.00                        | $2.20                   |
-|                        | Google    | Output              | $12.00                       | $13.20                  |
 | Gemini 3 Flash         | Google    | Input               | $0.30                        | $0.33                   |
 |                        | Google    | Output              | $2.50                        | $2.75                   |
 | Grok 4                 | X.ai      | Input               | $3.00                        | $3.30                   |
@@ -70,7 +66,8 @@ As of February 19, 2026, Zed Pro serves newer model versions in place of the ret
 - Claude Sonnet 4 → Claude Sonnet 4.5 or Claude Sonnet 4.6
 - Claude Sonnet 3.7 (retired Feb 19) → Claude Sonnet 4.5 or Claude Sonnet 4.6
 - GPT-5.1 and GPT-5 → GPT-5.2 or GPT-5.2 Codex
-- Gemini 2.5 Pro → Gemini 3 Pro or Gemini 3.1 Pro
+- Gemini 2.5 Pro → Gemini 3.1 Pro
+- Gemini 3 Pro → Gemini 3.1 Pro
 - Gemini 2.5 Flash → Gemini 3 Flash
 
 ## Usage {#usage}
@@ -86,21 +83,20 @@ A context window is the maximum span of text and code an LLM can consider at onc
 | Model             | Provider  | Zed-Hosted Context Window |
 | ----------------- | --------- | ------------------------- |
 | Claude Opus 4.5   | Anthropic | 200k                      |
-| Claude Opus 4.6   | Anthropic | 200k                      |
+| Claude Opus 4.6   | Anthropic | 1M                        |
 | Claude Sonnet 4.5 | Anthropic | 200k                      |
-| Claude Sonnet 4.6 | Anthropic | 200k                      |
+| Claude Sonnet 4.6 | Anthropic | 1M                        |
 | Claude Haiku 4.5  | Anthropic | 200k                      |
 | GPT-5.2           | OpenAI    | 400k                      |
 | GPT-5.2 Codex     | OpenAI    | 400k                      |
 | GPT-5 mini        | OpenAI    | 400k                      |
 | GPT-5 nano        | OpenAI    | 400k                      |
 | Gemini 3.1 Pro    | Google    | 200k                      |
-| Gemini 3 Pro      | Google    | 200k                      |
 | Gemini 3 Flash    | Google    | 200k                      |
 
-> Context window limits for hosted Sonnet 4.5/4.6 and Gemini 3.1 Pro/3 Pro/Flash may increase in future releases.
+> Context window limits for hosted Gemini 3.1 Pro/3 Pro/Flash may increase in future releases.
 
-Each Agent thread and text thread in Zed maintains its own context window.
+Each Agent thread in Zed maintains its own context window.
 The more prompts, attached files, and responses included in a session, the larger the context window grows.
 
 Start a new thread for each distinct task to keep context focused.

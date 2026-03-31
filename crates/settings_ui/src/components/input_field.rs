@@ -3,7 +3,7 @@ use std::rc::Rc;
 use editor::Editor;
 use gpui::{AnyElement, ElementId, Focusable, TextStyleRefinement};
 use settings::Settings as _;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{Tooltip, prelude::*, rems};
 
 #[derive(IntoElement)]
