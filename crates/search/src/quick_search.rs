@@ -2517,20 +2517,19 @@ impl PickerDelegate for QuickSearchDelegate {
                                 .flex_none()
                                 .justify_between()
                                 .gap_2()
+                                .text_color(cx.theme().colors().text_muted)
                                 .child(
-                                    div().flex_1().overflow_hidden().child(
-                                        Label::new(path_str)
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted)
-                                            .truncate(),
-                                    ),
+                                    div()
+                                        .flex_1()
+                                        .overflow_hidden()
+                                        .text_ellipsis()
+                                        .whitespace_nowrap()
+                                        .child(path_str),
                                 )
                                 .child(
-                                    div().pr_2().child(
-                                        Label::new(search_match.line_number.to_string())
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted),
-                                    ),
+                                    div()
+                                        .pr_2()
+                                        .child(search_match.line_number.to_string()),
                                 ),
                         ),
                 ),
