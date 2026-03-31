@@ -1,7 +1,7 @@
 use crash_handler::{CrashEventResult, CrashHandler};
 use log::info;
 use minidumper::{Client, LoopAction, MinidumpBinary};
-use release_channel::{RELEASE_CHANNEL, ReleaseChannel};
+use release_channel::RELEASE_CHANNEL;
 use serde::{Deserialize, Serialize};
 
 #[cfg(not(target_os = "windows"))]
