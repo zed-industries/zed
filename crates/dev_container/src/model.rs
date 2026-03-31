@@ -2502,18 +2502,6 @@ mod test {
         Ok((test_dependencies, manifest))
     }
 
-    // Tests needed as I come across them
-    // - portsAttributes should reference ports defined in forwardPorts
-    //   - This can be either a specification (e.g. "db:5432"), a specific port (3000), or a port range (3000-5000)
-    //   - So, we need to do a post-parsing validation there
-    // - overrideFeatureInstallOrder should include only featuers listed
-    // - Shutdownaction can only be none or stopContainer in the non-compose case. Can only be none or stopCompose in the compose case
-    // - (docker compose) service needs to be an actually defined service in the yml file
-    //   - Eh maybe this just becomes a runtime error that we handle appropriately
-    //
-    #[test]
-    fn should_validate_incorrect_shutdown_action_for_devcontainer() {}
-
     #[gpui::test]
     async fn should_get_remote_user_from_devcontainer_if_available(cx: &mut TestAppContext) {
         let (_, devcontainer_manifest) = init_default_devcontainer_manifest(
@@ -6816,7 +6804,7 @@ chmod +x ./install.sh
                             mv "${GOPATH}/bin"/* "${TARGET_GOPATH}/bin/"
                         fi
 
-                        # Install golangci-lint from precompiled binares
+                        # Install golangci-lint from precompiled binaries
                         if [ "$GOLANGCILINT_VERSION" = "latest" ] || [ "$GOLANGCILINT_VERSION" = "" ]; then
                             echo "Installing golangci-lint latest..."
                             curl -fsSL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | \
