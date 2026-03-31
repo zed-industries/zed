@@ -826,8 +826,8 @@ impl MarkdownElement {
             markdown,
             style,
             code_block_renderer: CodeBlockRenderer::Default {
-                copy_button: true,
-                copy_button_on_hover: false,
+                copy_button: false,
+                copy_button_on_hover: true,
                 border: false,
             },
             on_url_click: None,
