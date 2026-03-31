@@ -328,7 +328,7 @@ async fn test_restore_serialized_archive_view_does_not_panic(cx: &mut TestAppCon
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let (sidebar, _panel) = setup_sidebar_with_agent_panel(&multi_workspace, &project, cx);
+    let (sidebar, _panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
     cx.update(|_window, cx| {
         AgentRegistryStore::init_test_global(cx, vec![]);
     });
