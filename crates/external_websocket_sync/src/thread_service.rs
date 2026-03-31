@@ -489,32 +489,50 @@ fn ensure_thread_subscription(
             AcpThreadEvent::Stopped(_) => {
                 flush_streaming_throttle(&thread_id_for_sub);
 
-                // AcpThread calls flush_streaming_text before emitting Stopped, so the
-                // Markdown entity now has the complete buffered text. Send a final
-                // message_added with the full content so the server gets the accumulated
-                // response even though EntryUpdated events during streaming carried empty
-                // content (text was still in the streaming buffer at that point).
+                // AcpThread calls flush_streaming_text before emitting Stopped, so all
+                // Markdown entities now have their complete buffered text. Send corrected
+                // content for ALL entries — EntryUpdated events during streaming carried
+                // incomplete content (text was still in the streaming buffer at that point),
+                // so intermediate text entries were truncated. Re-sending with the now-complete
+                // content is safe: the Go accumulator uses overwrite semantics for known message_ids.
                 let thread = thread_entity.read(cx);
                 let entries = thread.entries();
-                if let Some((final_idx, final_content)) = entries.iter().enumerate().rev().find_map(|(idx, entry)| {
-                    if let acp_thread::AgentThreadEntry::AssistantMessage(msg) = entry {
-                        let content = msg.content_only(cx);
-                        if !content.is_empty() {
-                            return Some((idx, content));
+                for (idx, entry) in entries.iter().enumerate() {
+                    match entry {
+                        acp_thread::AgentThreadEntry::AssistantMessage(msg) => {
+                            let content = msg.content_only(cx);
+                            if !content.is_empty() {
+                                crate::send_websocket_event(SyncEvent::MessageAdded {
+                                    acp_thread_id: thread_id_for_sub.clone(),
+                                    message_id: idx.to_string(),
+                                    role: "assistant".to_string(),
+                                    content,
+                                    entry_type: "text".to_string(),
+                                    tool_name: String::new(),
+                                    tool_status: String::new(),
+                                    timestamp: chrono::Utc::now().timestamp(),
+                                }).log_err();
+                            }
                         }
+                        acp_thread::AgentThreadEntry::ToolCall(tool_call) => {
+                            let content = tool_call.to_markdown(cx);
+                            if !content.is_empty() {
+                                let name = tool_call.label.read(cx).source().to_string();
+                                let status = tool_call.status.to_string();
+                                crate::send_websocket_event(SyncEvent::MessageAdded {
+                                    acp_thread_id: thread_id_for_sub.clone(),
+                                    message_id: idx.to_string(),
+                                    role: "assistant".to_string(),
+                                    content,
+                                    entry_type: "tool_call".to_string(),
+                                    tool_name: name,
+                                    tool_status: status,
+                                    timestamp: chrono::Utc::now().timestamp(),
+                                }).log_err();
+                            }
+                        }
+                        _ => {}
                     }
-                    None
-                }) {
-                    let _ = crate::send_websocket_event(SyncEvent::MessageAdded {
-                        acp_thread_id: thread_id_for_sub.clone(),
-                        message_id: final_idx.to_string(),
-                        role: "assistant".to_string(),
-                        content: final_content,
-                        entry_type: "text".to_string(),
-                        tool_name: String::new(),
-                        tool_status: String::new(),
-                        timestamp: chrono::Utc::now().timestamp(),
-                    });
                 }
 
                 let rid = crate::get_thread_request_id(&thread_id_for_sub)
