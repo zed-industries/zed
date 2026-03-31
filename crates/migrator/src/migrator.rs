@@ -924,6 +924,30 @@ mod tests {
     }
 
     #[test]
+    fn test_rename_assistant() {
+        assert_migrate_settings(
+            r#"{
+                "assistant": {
+                    "foo": "bar"
+                },
+                "edit_predictions": {
+                    "enabled_in_assistant": false,
+                }
+            }"#,
+            Some(
+                r#"{
+                "agent": {
+                    "foo": "bar"
+                },
+                "edit_predictions": {
+                    "enabled_in_text_threads": false,
+                }
+            }"#,
+            ),
+        );
+    }
+
+    #[test]
     fn test_comment_duplicated_agent() {
         assert_migrate_settings(
             r#"{
