@@ -123,6 +123,16 @@ pub trait ExternalAgentServer {
         cx: &mut AsyncApp,
     ) -> Task<Result<AgentServerCommand>>;
 
+    fn version(&self) -> Option<&SharedString> {
+        None
+    }
+
+    fn take_new_version_available_tx(&mut self) -> Option<watch::Sender<Option<String>>> {
+        None
+    }
+
+    fn set_new_version_available_tx(&mut self, _tx: watch::Sender<Option<String>>) {}
+
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
@@ -442,7 +452,19 @@ impl AgentServerStore {
             })
             .unwrap_or_default();
 
-        self.external_agents.clear();
+        // Drain the existing agents, extracting version and notification
+        // channels from versioned agents so we can detect version changes.
+        let mut old_versioned_agents: HashMap<
+            AgentId,
+            (SharedString, watch::Sender<Option<String>>),
+        > = HashMap::default();
+        for (name, mut entry) in self.external_agents.drain() {
+            if let Some(version) = entry.server.version().cloned() {
+                if let Some(tx) = entry.server.take_new_version_available_tx() {
+                    old_versioned_agents.insert(name, (version, tx));
+                }
+            }
+        }
 
         // Insert extension agents before custom/registry so registry entries override extensions.
         for (agent_name, ext_id, targets, env, icon_path, display_name) in extension_agents.iter() {
@@ -527,8 +549,10 @@ impl AgentServerStore {
                                         node_runtime: node_runtime.clone(),
                                         project_environment: project_environment.clone(),
                                         registry_id: Arc::from(name.as_str()),
+                                        version: agent.metadata.version.clone(),
                                         targets: agent.targets.clone(),
                                         env: env.clone(),
+                                        new_version_available_tx: None,
                                     })
                                         as Box<dyn ExternalAgentServer>,
                                     ExternalAgentSource::Registry,
@@ -544,10 +568,12 @@ impl AgentServerStore {
                                     Box::new(LocalRegistryNpxAgent {
                                         node_runtime: node_runtime.clone(),
                                         project_environment: project_environment.clone(),
+                                        version: agent.metadata.version.clone(),
                                         package: agent.package.clone(),
                                         args: agent.args.clone(),
                                         distribution_env: agent.env.clone(),
                                         settings_env: env.clone(),
+                                        new_version_available_tx: None,
                                     })
                                         as Box<dyn ExternalAgentServer>,
                                     ExternalAgentSource::Registry,
@@ -559,6 +585,25 @@ impl AgentServerStore {
                     }
                 }
                 CustomAgentServerSettings::Extension { .. } => {}
+            }
+        }
+
+        // For each rebuilt versioned agent, check if the version changed
+        // compared to the old entry. If so, send the new version through the
+        // stored notification channel to trigger a reconnection. Otherwise,
+        // transfer the channel to the new entry so future updates can use it.
+        for (name, entry) in &mut self.external_agents {
+            let Some((old_version, mut tx)) = old_versioned_agents.remove(name) else {
+                continue;
+            };
+            let Some(new_version) = entry.server.version() else {
+                continue;
+            };
+
+            if new_version != &old_version {
+                tx.send(Some(new_version.to_string())).ok();
+            } else {
+                entry.server.set_new_version_available_tx(tx);
             }
         }
 
@@ -1224,17 +1269,32 @@ struct LocalRegistryArchiveAgent {
     node_runtime: NodeRuntime,
     project_environment: Entity<ProjectEnvironment>,
     registry_id: Arc<str>,
+    version: SharedString,
     targets: HashMap<String, RegistryTargetConfig>,
     env: HashMap<String, String>,
+    new_version_available_tx: Option<watch::Sender<Option<String>>>,
 }
 
 impl ExternalAgentServer for LocalRegistryArchiveAgent {
+    fn version(&self) -> Option<&SharedString> {
+        Some(&self.version)
+    }
+
+    fn take_new_version_available_tx(&mut self) -> Option<watch::Sender<Option<String>>> {
+        self.new_version_available_tx.take()
+    }
+
+    fn set_new_version_available_tx(&mut self, tx: watch::Sender<Option<String>>) {
+        self.new_version_available_tx = Some(tx);
+    }
+
     fn get_command(
         &mut self,
         extra_env: HashMap<String, String>,
-        _new_version_available_tx: Option<watch::Sender<Option<String>>>,
+        new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
     ) -> Task<Result<AgentServerCommand>> {
+        self.new_version_available_tx = new_version_available_tx;
         let fs = self.fs.clone();
         let http_client = self.http_client.clone();
         let node_runtime = self.node_runtime.clone();
@@ -1385,19 +1445,34 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
 struct LocalRegistryNpxAgent {
     node_runtime: NodeRuntime,
     project_environment: Entity<ProjectEnvironment>,
+    version: SharedString,
     package: SharedString,
     args: Vec<String>,
     distribution_env: HashMap<String, String>,
     settings_env: HashMap<String, String>,
+    new_version_available_tx: Option<watch::Sender<Option<String>>>,
 }
 
 impl ExternalAgentServer for LocalRegistryNpxAgent {
+    fn version(&self) -> Option<&SharedString> {
+        Some(&self.version)
+    }
+
+    fn take_new_version_available_tx(&mut self) -> Option<watch::Sender<Option<String>>> {
+        self.new_version_available_tx.take()
+    }
+
+    fn set_new_version_available_tx(&mut self, tx: watch::Sender<Option<String>>) {
+        self.new_version_available_tx = Some(tx);
+    }
+
     fn get_command(
         &mut self,
         extra_env: HashMap<String, String>,
-        _new_version_available_tx: Option<watch::Sender<Option<String>>>,
+        new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
     ) -> Task<Result<AgentServerCommand>> {
+        self.new_version_available_tx = new_version_available_tx;
         let node_runtime = self.node_runtime.clone();
         let project_environment = self.project_environment.downgrade();
         let package = self.package.clone();
@@ -1761,6 +1836,94 @@ impl settings::Settings for AllAgentServersSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent_registry_store::{
+        AgentRegistryStore, RegistryAgent, RegistryAgentMetadata, RegistryNpxAgent,
+    };
+    use crate::worktree_store::{WorktreeIdCounter, WorktreeStore};
+    use gpui::{AppContext as _, TestAppContext};
+    use node_runtime::NodeRuntime;
+    use settings::Settings as _;
+
+    fn make_npx_agent(id: &str, version: &str) -> RegistryAgent {
+        let id = SharedString::from(id.to_string());
+        RegistryAgent::Npx(RegistryNpxAgent {
+            metadata: RegistryAgentMetadata {
+                id: AgentId::new(id.clone()),
+                name: id.clone(),
+                description: SharedString::from(""),
+                version: SharedString::from(version.to_string()),
+                repository: None,
+                website: None,
+                icon_path: None,
+            },
+            package: id,
+            args: Vec::new(),
+            env: HashMap::default(),
+        })
+    }
+
+    fn init_test_settings(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+    }
+
+    fn init_registry(
+        cx: &mut TestAppContext,
+        agents: Vec<RegistryAgent>,
+    ) -> gpui::Entity<AgentRegistryStore> {
+        cx.update(|cx| AgentRegistryStore::init_test_global(cx, agents))
+    }
+
+    fn set_registry_settings(cx: &mut TestAppContext, agent_names: &[&str]) {
+        cx.update(|cx| {
+            AllAgentServersSettings::override_global(
+                AllAgentServersSettings(
+                    agent_names
+                        .iter()
+                        .map(|name| {
+                            (
+                                name.to_string(),
+                                settings::CustomAgentServerSettings::Registry {
+                                    env: HashMap::default(),
+                                    default_mode: None,
+                                    default_model: None,
+                                    favorite_models: Vec::new(),
+                                    default_config_options: HashMap::default(),
+                                    favorite_config_option_values: HashMap::default(),
+                                }
+                                .into(),
+                            )
+                        })
+                        .collect(),
+                ),
+                cx,
+            );
+        });
+    }
+
+    fn create_agent_server_store(cx: &mut TestAppContext) -> gpui::Entity<AgentServerStore> {
+        cx.update(|cx| {
+            let fs: Arc<dyn Fs> = fs::FakeFs::new(cx.background_executor().clone());
+            let worktree_store =
+                cx.new(|cx| WorktreeStore::local(false, fs.clone(), WorktreeIdCounter::get(cx)));
+            let project_environment = cx.new(|cx| {
+                crate::ProjectEnvironment::new(None, worktree_store.downgrade(), None, false, cx)
+            });
+            let http_client = http_client::FakeHttpClient::with_404_response();
+
+            cx.new(|cx| {
+                AgentServerStore::local(
+                    NodeRuntime::unavailable(),
+                    fs,
+                    project_environment,
+                    http_client,
+                    cx,
+                )
+            })
+        })
+    }
 
     #[test]
     fn detects_supported_archive_suffixes() {
@@ -1826,7 +1989,161 @@ mod tests {
 
         assert_eq!(
             error,
-            Some("unsupported archive type in URL: https://example.com/agent.tar.xz".to_string())
+            Some("unsupported archive type in URL: https://example.com/agent.tar.xz".to_string()),
         );
+    }
+
+    #[gpui::test]
+    fn test_version_change_sends_notification(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+        let registry = init_registry(cx, vec![make_npx_agent("test-agent", "1.0.0")]);
+        set_registry_settings(cx, &["test-agent"]);
+        let store = create_agent_server_store(cx);
+
+        // Verify the agent was registered with version 1.0.0.
+        store.read_with(cx, |store, _| {
+            let entry = store
+                .external_agents
+                .get(&AgentId::new("test-agent"))
+                .expect("agent should be registered");
+            assert_eq!(
+                entry.server.version().map(|v| v.to_string()),
+                Some("1.0.0".to_string())
+            );
+        });
+
+        // Set up a watch channel and store the tx on the agent.
+        let (tx, mut rx) = watch::channel::<Option<String>>(None);
+        store.update(cx, |store, _| {
+            let entry = store
+                .external_agents
+                .get_mut(&AgentId::new("test-agent"))
+                .expect("agent should be registered");
+            entry.server.set_new_version_available_tx(tx);
+        });
+
+        // Update the registry to version 2.0.0.
+        registry.update(cx, |store, cx| {
+            store.set_agents(vec![make_npx_agent("test-agent", "2.0.0")], cx);
+        });
+        cx.run_until_parked();
+
+        // The watch channel should have received the new version.
+        assert_eq!(rx.borrow().as_deref(), Some("2.0.0"));
+    }
+
+    #[gpui::test]
+    fn test_same_version_preserves_tx(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+        let registry = init_registry(cx, vec![make_npx_agent("test-agent", "1.0.0")]);
+        set_registry_settings(cx, &["test-agent"]);
+        let store = create_agent_server_store(cx);
+
+        let (tx, mut rx) = watch::channel::<Option<String>>(None);
+        store.update(cx, |store, _| {
+            let entry = store
+                .external_agents
+                .get_mut(&AgentId::new("test-agent"))
+                .expect("agent should be registered");
+            entry.server.set_new_version_available_tx(tx);
+        });
+
+        // "Refresh" the registry with the same version.
+        registry.update(cx, |store, cx| {
+            store.set_agents(vec![make_npx_agent("test-agent", "1.0.0")], cx);
+        });
+        cx.run_until_parked();
+
+        // No notification should have been sent.
+        assert_eq!(rx.borrow().as_deref(), None);
+
+        // The tx should have been transferred to the rebuilt agent entry.
+        store.update(cx, |store, _| {
+            let entry = store
+                .external_agents
+                .get_mut(&AgentId::new("test-agent"))
+                .expect("agent should be registered");
+            assert!(
+                entry.server.take_new_version_available_tx().is_some(),
+                "tx should have been transferred to the rebuilt agent"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_no_tx_stored_does_not_panic_on_version_change(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+        let registry = init_registry(cx, vec![make_npx_agent("test-agent", "1.0.0")]);
+        set_registry_settings(cx, &["test-agent"]);
+        let _store = create_agent_server_store(cx);
+
+        // Update the registry without having stored any tx — should not panic.
+        registry.update(cx, |store, cx| {
+            store.set_agents(vec![make_npx_agent("test-agent", "2.0.0")], cx);
+        });
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn test_multiple_agents_independent_notifications(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+        let registry = init_registry(
+            cx,
+            vec![
+                make_npx_agent("agent-a", "1.0.0"),
+                make_npx_agent("agent-b", "3.0.0"),
+            ],
+        );
+        set_registry_settings(cx, &["agent-a", "agent-b"]);
+        let store = create_agent_server_store(cx);
+
+        let (tx_a, mut rx_a) = watch::channel::<Option<String>>(None);
+        let (tx_b, mut rx_b) = watch::channel::<Option<String>>(None);
+        store.update(cx, |store, _| {
+            store
+                .external_agents
+                .get_mut(&AgentId::new("agent-a"))
+                .expect("agent-a should be registered")
+                .server
+                .set_new_version_available_tx(tx_a);
+            store
+                .external_agents
+                .get_mut(&AgentId::new("agent-b"))
+                .expect("agent-b should be registered")
+                .server
+                .set_new_version_available_tx(tx_b);
+        });
+
+        // Update only agent-a to a new version; agent-b stays the same.
+        registry.update(cx, |store, cx| {
+            store.set_agents(
+                vec![
+                    make_npx_agent("agent-a", "2.0.0"),
+                    make_npx_agent("agent-b", "3.0.0"),
+                ],
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        // agent-a should have received a notification.
+        assert_eq!(rx_a.borrow().as_deref(), Some("2.0.0"));
+
+        // agent-b should NOT have received a notification.
+        assert_eq!(rx_b.borrow().as_deref(), None);
+
+        // agent-b's tx should have been transferred.
+        store.update(cx, |store, _| {
+            assert!(
+                store
+                    .external_agents
+                    .get_mut(&AgentId::new("agent-b"))
+                    .expect("agent-b should be registered")
+                    .server
+                    .take_new_version_available_tx()
+                    .is_some(),
+                "agent-b tx should have been transferred"
+            );
+        });
     }
 }
