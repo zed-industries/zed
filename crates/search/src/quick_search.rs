@@ -17,7 +17,7 @@ use editor::{Editor, EditorEvent, HighlightKey, RowHighlightOptions, SelectionEf
 use gpui::{
     Action, App, AsyncApp, Context, DismissEvent, DragMoveEvent, Entity, EventEmitter, FocusHandle,
     Focusable, Global, HighlightStyle, KeyContext, MouseButton, ParentElement, Render, Styled,
-    StyledText, Subscription, Task, WeakEntity, Window, actions, px,
+    StyledText, Subscription, Task, WeakEntity, Window, actions, px, relative,
 };
 use language::Buffer;
 use menu;
@@ -2512,11 +2512,26 @@ impl PickerDelegate for QuickSearchDelegate {
                                 ),
                         )
                         .child(
-                            div()
+                            h_flex()
+                                .w(relative(0.35))
                                 .flex_none()
-                                .pr_2()
-                                .text_color(cx.theme().colors().text_muted)
-                                .child(format!("{path_str} {}", search_match.line_number)),
+                                .justify_between()
+                                .gap_2()
+                                .child(
+                                    div().flex_1().overflow_hidden().child(
+                                        Label::new(path_str)
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted)
+                                            .truncate(),
+                                    ),
+                                )
+                                .child(
+                                    div().pr_2().child(
+                                        Label::new(search_match.line_number.to_string())
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    ),
+                                ),
                         ),
                 ),
         )
