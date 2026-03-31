@@ -9,7 +9,10 @@ use crate::{
         TabContentParams, TabTooltipContent, WeakItemHandle,
     },
     move_item,
-    notifications::NotifyResultExt,
+    notifications::{
+        NotificationId, NotifyResultExt, show_app_notification,
+        simple_message_notification::MessageNotification,
+    },
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
 };
@@ -4357,16 +4360,47 @@ impl Render for Pane {
             ))
             .on_action(
                 cx.listener(|pane: &mut Self, action: &RevealInProjectPanel, _, cx| {
+                    let active_item = pane.active_item();
                     let entry_id = action
                         .entry_id
                         .map(ProjectEntryId::from_proto)
-                        .or_else(|| pane.active_item()?.project_entry_ids(cx).first().copied());
-                    if let Some(entry_id) = entry_id {
-                        pane.project
-                            .update(cx, |_, cx| {
-                                cx.emit(project::Event::RevealInProjectPanel(entry_id))
-                            })
-                            .ok();
+                        .or_else(|| active_item.as_ref()?.project_entry_ids(cx).first().copied());
+
+                    match entry_id {
+                        Some(entry_id) => {
+                            pane.project
+                                .update(cx, |_, cx| {
+                                    cx.emit(project::Event::RevealInProjectPanel(entry_id))
+                                })
+                                .ok();
+                        }
+                        None => {
+                            // When working with an unsaved buffer, display a
+                            // toast informing the user that the buffer is not
+                            // present in any of the open projects.
+                            pane.project
+                                .update(cx, |_, cx| cx.emit(project::Event::ActivateProjectPanel))
+                                .ok();
+                            let display_name = active_item
+                                .as_ref()
+                                .map(|item| {
+                                    item.tab_tooltip_text(cx)
+                                        .unwrap_or_else(|| item.tab_content_text(0, cx))
+                                })
+                                .unwrap_or_else(|| "Unsave buffer".into());
+                            let notification_id =
+                                NotificationId::Named("ProjectPanel::reveal_entry".into());
+                            show_app_notification(notification_id, cx, move |cx| {
+                                cx.new(|cx| {
+                                    let message = format!(
+                                        "\"{display_name}\" is not part of any open projects."
+                                    );
+
+                                    MessageNotification::new("Reveal in Project Panel", cx)
+                                        .primary_message(message)
+                                })
+                            });
+                        }
                     }
                 }),
             )
