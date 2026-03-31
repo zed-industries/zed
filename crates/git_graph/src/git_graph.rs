@@ -1317,6 +1317,7 @@ impl GitGraph {
 
         if query.as_str().is_empty() {
             self.search_state.state = QueryState::Empty;
+            return;
         }
 
         let (request_tx, request_rx) = smol::channel::unbounded::<Oid>();
