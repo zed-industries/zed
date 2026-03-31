@@ -33,8 +33,6 @@ enum ConfigStatus {
     VariableParsed(DevContainer),
 }
 
-// TODO check on mounts - use relpath to protect from inter-OS path communication
-
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub(crate) struct DockerComposeResources {
     files: Vec<PathBuf>,
@@ -167,12 +165,38 @@ impl DevContainerManifest {
         Ok(())
     }
 
-    // Replaces the remote_env vars in devcontainer.json
-    // Ok, so this only applies at the time of docker run. We can essentially inspect the container
-    // that was built, pull out the env, and combine it with whatever is predefined in the json. Then this will feed
-    // back into docker run with `-e ... -e...` etc. Therefore this will take whatever the data
-    // type of the docker inspect Env is, and spit out a hashmap
-    fn _replace_remote_env_vars(&mut self) {}
+    fn runtime_remote_env(
+        &self,
+        container_env: &HashMap<String, String>,
+    ) -> Result<HashMap<String, String>, DevContainerError> {
+        let mut merged_remote_env = container_env.clone();
+        // HOME is user-specific, and we will often not run as the image user
+        merged_remote_env.remove("HOME");
+        if let Some(remote_env) = self.dev_container().remote_env.clone() {
+            let mut raw = serde_json_lenient::to_string(&remote_env).map_err(|e| {
+                log::error!(
+                    "Unexpected error serializing dev container remote_env: {e} - {:?}",
+                    remote_env
+                );
+                DevContainerError::DevContainerParseFailed
+            })?;
+            for (k, v) in container_env {
+                raw = raw.replace(&format!("${{containerEnv:{k}}}"), v);
+            }
+            let reserialized: HashMap<String, String> = serde_json_lenient::from_str(&raw)
+                .map_err(|e| {
+                    log::error!(
+                        "Unexpected error reserializing dev container remote env: {e} - {:?}",
+                        &raw
+                    );
+                    DevContainerError::DevContainerParseFailed
+                })?;
+            for (k, v) in reserialized {
+                merged_remote_env.insert(k, v);
+            }
+        }
+        Ok(merged_remote_env)
+    }
 
     fn validate_config(&self) -> Result<(), DevContainerError> {
         // TODO
@@ -625,29 +649,28 @@ impl DevContainerManifest {
         };
         let running_container = match build_resources {
             DevContainerBuildResources::DockerCompose(resources) => {
-                dbg!(&resources);
                 self.run_docker_compose(resources).await?
             }
             DevContainerBuildResources::Docker(resources) => {
-                dbg!(&resources);
                 self.run_docker_image(resources).await?
             }
         };
 
-        dbg!(&running_container);
         let remote_user = get_remote_user_from_config(&running_container, self)?;
         let remote_workspace_folder = get_remote_dir_from_config(
             &running_container,
             (&self.local_project_directory.display()).to_string(),
         )?;
 
-        dbg!(&remote_workspace_folder);
+        let remote_env = self.runtime_remote_env(&running_container.config.env_as_map()?)?;
+
         Ok(DevContainerUp {
             _outcome: "todo".to_string(),
             container_id: running_container.id,
             remote_user,
             remote_workspace_folder,
             extension_ids: self.extension_ids(),
+            remote_env,
         })
     }
 
@@ -703,7 +726,6 @@ impl DevContainerManifest {
             return Err(DevContainerError::DevContainerParseFailed);
         };
         let mut docker_compose_resources = self.docker_compose_manifest().await?;
-        dbg!(&docker_compose_resources);
         let supports_buildkit = self.docker_client.supports_compose_buildkit();
 
         let (main_service_name, main_service) =
@@ -902,13 +924,10 @@ impl DevContainerManifest {
         let resources = self.build_merged_resources(built_service_image)?;
 
         let network_mode = main_service.network_mode.as_ref();
-        dbg!(&main_service);
         let network_mode_service = network_mode.and_then(|mode| mode.strip_prefix("service:"));
         let runtime_override_file = self
             .write_runtime_override_file(&main_service_name, network_mode_service, resources)
             .await?;
-
-        dbg!(&runtime_override_file);
 
         docker_compose_resources.files.push(runtime_override_file);
 
@@ -948,7 +967,6 @@ impl DevContainerManifest {
         network_mode_service: Option<&str>,
         resources: DockerBuildResources,
     ) -> Result<DockerComposeConfig, DevContainerError> {
-        dbg!(&network_mode_service);
         let mut runtime_labels = vec![];
 
         if let Some(metadata) = &resources.image.config.labels.metadata {
@@ -975,16 +993,9 @@ impl DevContainerManifest {
                     && mount_type.to_lowercase() == "volume"
                 {
                     Some((
-                        mount
-                            .source
-                            .clone()
-                            // TODO ensure this si done
-                            .replace("${devcontainerId}", "devcontainer123"),
+                        mount.source.clone(),
                         DockerComposeVolume {
-                            name: mount
-                                .source
-                                .clone()
-                                .replace("${devcontainerId}", "devcontainer123"),
+                            name: mount.source.clone(),
                         },
                     ))
                 } else {
@@ -997,14 +1008,8 @@ impl DevContainerManifest {
             .additional_mounts
             .iter()
             .map(|v| MountDefinition {
-                source: v
-                    .source
-                    .clone()
-                    .replace("${devcontainerId}", "devcontainer123"),
-                target: v
-                    .target
-                    .clone()
-                    .replace("${devcontainerId}", "devcontainer123"),
+                source: v.source.clone(),
+                target: v.target.clone(),
                 mount_type: v.mount_type.clone(),
             })
             .collect();
@@ -1049,7 +1054,6 @@ impl DevContainerManifest {
             for port in main_service_ports {
                 // If the main service uses a different service's network bridge, append to that service's ports instead
                 if let Some(network_service_name) = network_mode_service {
-                    dbg!(&port, &network_service_name);
                     if let Some(service) = service_declarations.get_mut(network_service_name) {
                         service.ports.push(format!("{port}:{port}"));
                     } else {
@@ -1298,8 +1302,6 @@ impl DevContainerManifest {
         command.args(["--build-arg", &format!("IMAGE_USER={}", image_user)]);
         command.arg(empty_context_dir.display().to_string());
 
-        dbg!(&command);
-
         let output = self
             .command_runner
             .run_command(&mut command)
@@ -1507,8 +1509,6 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             command.arg(features_build_info.empty_context_dir.display().to_string());
         }
 
-        dbg!(&command);
-
         Ok(command)
     }
 
@@ -1522,8 +1522,6 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             command.args(&["-f", &docker_compose_file.display().to_string()]);
         }
         command.args(&["up", "-d"]);
-
-        dbg!(&command);
 
         let output = self
             .command_runner
@@ -1695,8 +1693,6 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
         command.arg(build_resources.entrypoint_script);
         command.arg("-");
 
-        dbg!(&command);
-
         Ok(command)
     }
 
@@ -1716,8 +1712,6 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
         let build_resources = self.build_resources().await?;
 
         let devcontainer_up = self.run_dev_container(build_resources).await?;
-
-        dbg!(&devcontainer_up);
 
         self.run_remote_scripts(&devcontainer_up, true).await?;
 
@@ -1739,13 +1733,12 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             if let Some(on_create_command) = &config.on_create_command {
                 for (command_name, command) in on_create_command.script_commands() {
                     log::info!("Running on create command {command_name}");
-                    // TODO remote env
                     self.docker_client
                         .run_docker_exec(
                             &devcontainer_up.container_id,
                             &remote_folder,
                             "root",
-                            &HashMap::new(),
+                            &devcontainer_up.remote_env,
                             command,
                         )
                         .await?;
@@ -1754,13 +1747,12 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             if let Some(update_content_command) = &config.update_content_command {
                 for (command_name, command) in update_content_command.script_commands() {
                     log::info!("Running update content command {command_name}");
-                    // TODO remote env
                     self.docker_client
                         .run_docker_exec(
                             &devcontainer_up.container_id,
                             &remote_folder,
                             "root",
-                            &HashMap::new(),
+                            &devcontainer_up.remote_env,
                             command,
                         )
                         .await?;
@@ -1770,51 +1762,45 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             if let Some(post_create_command) = &config.post_create_command {
                 for (command_name, command) in post_create_command.script_commands() {
                     log::info!("Running post create command {command_name}");
-                    // TODO remote env
                     self.docker_client
                         .run_docker_exec(
                             &devcontainer_up.container_id,
                             &remote_folder,
                             &devcontainer_up.remote_user,
-                            &HashMap::new(),
+                            &devcontainer_up.remote_env,
                             command,
                         )
                         .await?;
                 }
-                // user_scripts.push(post_create_command.clone());
             }
             if let Some(post_start_command) = &config.post_start_command {
                 for (command_name, command) in post_start_command.script_commands() {
                     log::info!("Running post start command {command_name}");
-                    // TODO remote env
                     self.docker_client
                         .run_docker_exec(
                             &devcontainer_up.container_id,
                             &remote_folder,
                             &devcontainer_up.remote_user,
-                            &HashMap::new(),
+                            &devcontainer_up.remote_env,
                             command,
                         )
                         .await?;
                 }
-                // user_scripts.push(post_start_command.clone());
             }
         }
         if let Some(post_attach_command) = &config.post_attach_command {
             for (command_name, command) in post_attach_command.script_commands() {
                 log::info!("Running post attach command {command_name}");
-                // TODO remote env
                 self.docker_client
                     .run_docker_exec(
                         &devcontainer_up.container_id,
                         &remote_folder,
                         &devcontainer_up.remote_user,
-                        &HashMap::new(),
+                        &devcontainer_up.remote_env,
                         command,
                     )
                     .await?;
             }
-            // user_scripts.push(post_attach_command.clone());
         }
 
         Ok(())
@@ -1857,12 +1843,15 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
                 (&self.local_project_directory.display()).to_string(),
             )?;
 
+            let remote_env = self.runtime_remote_env(&docker_inspect.config.env_as_map()?)?;
+
             let dev_container_up = DevContainerUp {
                 _outcome: "todo".to_string(),
                 container_id: docker_ps.id,
                 remote_user: remote_user,
                 remote_workspace_folder: remote_folder,
                 extension_ids: self.extension_ids(),
+                remote_env,
             };
 
             self.run_remote_scripts(&dev_container_up, false).await?;
@@ -2543,6 +2532,7 @@ mod test {
                     metadata: Some(vec![metadata]),
                 },
                 image_user: None,
+                env: Vec::new(),
             },
             mounts: None,
             state: None,
@@ -2570,6 +2560,7 @@ mod test {
                     metadata: Some(vec![metadata]),
                 },
                 image_user: None,
+                env: Vec::new(),
             },
             mounts: None,
             state: None,
@@ -3740,7 +3731,10 @@ mod test {
 
               "remoteUser": "node",
 
-              "remoteEnv": {},
+              "remoteEnv": {
+                "PATH": "${containerEnv:PATH}:/some/other/path",
+                "OTHER_ENV": "other_env_value"
+              },
 
               "features": {
                 "ghcr.io/devcontainers/features/docker-in-docker:2": {
@@ -3816,7 +3810,6 @@ RUN echo "export HISTFILE=/home/$USERNAME/commandhistory/.bash_history" >> "/hom
         );
 
         let files = test_dependencies.fs.files();
-        dbg!(&files);
         let feature_dockerfile = files
             .iter()
             .find(|f| {
@@ -4028,7 +4021,24 @@ chmod +x ./install.sh
                 "echo Container started\ntrap \"exit 0\" 15\n/usr/local/share/docker-init.sh\nexec \"$@\"\nwhile sleep 1 & wait $!; do :; done".to_string(),
                 "-".to_string()
             ]
-        )
+        );
+
+        let docker_exec_commands = test_dependencies
+            .docker
+            .exec_commands_recorded
+            .lock()
+            .unwrap();
+
+        assert!(docker_exec_commands.iter().all(|exec| {
+            exec.env
+                == HashMap::from([
+                    ("OTHER_ENV".to_string(), "other_env_value".to_string()),
+                    (
+                        "PATH".to_string(),
+                        "/initial/path:/some/other/path".to_string(),
+                    ),
+                ])
+        }))
     }
 
     #[gpui::test]
@@ -4140,7 +4150,6 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
         let _devcontainer_up = devcontainer_manifest.build_and_run().await.unwrap();
 
         let files = test_dependencies.fs.files();
-        dbg!(&files);
         let feature_dockerfile = files
             .iter()
             .find(|f| {
@@ -4436,7 +4445,6 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
         let _devcontainer_up = devcontainer_manifest.build_and_run().await.unwrap();
 
         let files = test_dependencies.fs.files();
-        dbg!(&files);
 
         let feature_dockerfile = files
             .iter()
@@ -4551,8 +4559,16 @@ ENV DOCKER_BUILDKIT=1
         );
     }
 
+    pub(crate) struct RecordedExecCommand {
+        pub(crate) _container_id: String,
+        pub(crate) _remote_folder: String,
+        pub(crate) _user: String,
+        pub(crate) env: HashMap<String, String>,
+        pub(crate) _inner_command: Command,
+    }
+
     pub(crate) struct FakeDocker {
-        commands_recorded: Vec<Command>,
+        exec_commands_recorded: Mutex<Vec<RecordedExecCommand>>,
         podman: bool,
     }
 
@@ -4560,7 +4576,7 @@ ENV DOCKER_BUILDKIT=1
         pub(crate) fn new() -> Self {
             Self {
                 podman: false,
-                commands_recorded: Vec::new(),
+                exec_commands_recorded: Mutex::new(Vec::new()),
             }
         }
         fn set_podman(&mut self, podman: bool) {
@@ -4582,6 +4598,7 @@ ENV DOCKER_BUILDKIT=1
                                 Value::String("node".to_string()),
                             )])]),
                         },
+                        env: Vec::new(),
                         image_user: Some("root".to_string()),
                     },
                     mounts: None,
@@ -4600,6 +4617,7 @@ ENV DOCKER_BUILDKIT=1
                             )])]),
                         },
                         image_user: Some("root".to_string()),
+                        env: Vec::new(),
                     },
                     mounts: None,
                     state: None,
@@ -4617,6 +4635,7 @@ ENV DOCKER_BUILDKIT=1
                             )])]),
                         },
                         image_user: Some("root".to_string()),
+                        env: vec!["PATH=/initial/path".to_string()],
                     },
                     mounts: None,
                     state: None,
@@ -4634,6 +4653,7 @@ ENV DOCKER_BUILDKIT=1
                             )])]),
                         },
                         image_user: Some("root".to_string()),
+                        env: vec!["PATH=/initial/path".to_string()],
                     },
                     mounts: Some(vec![DockerInspectMount {
                         source: "/path/to/local/project".to_string(),
@@ -4654,12 +4674,12 @@ ENV DOCKER_BUILDKIT=1
                             )])]),
                         },
                         image_user: Some("root".to_string()),
+                        env: Vec::new(),
                     },
                     mounts: None,
                     state: None,
                 });
             }
-            dbg!(&id);
 
             Err(DevContainerError::DockerNotAvailable)
         }
@@ -4714,25 +4734,34 @@ ENV DOCKER_BUILDKIT=1
                     )]),
                 }));
             }
-            dbg!(&config_files);
             Err(DevContainerError::DockerNotAvailable)
         }
         async fn docker_compose_build(
             &self,
-            config_files: &Vec<PathBuf>,
-            project_name: &str,
+            _config_files: &Vec<PathBuf>,
+            _project_name: &str,
         ) -> Result<(), DevContainerError> {
-            dbg!(&config_files, &project_name);
             Ok(())
         }
         async fn run_docker_exec(
             &self,
-            _container_id: &str,
-            _remote_folder: &str,
-            _user: &str,
-            _env: &HashMap<String, String>,
-            _inner_command: Command,
+            container_id: &str,
+            remote_folder: &str,
+            user: &str,
+            env: &HashMap<String, String>,
+            inner_command: Command,
         ) -> Result<(), DevContainerError> {
+            let mut record = self
+                .exec_commands_recorded
+                .lock()
+                .expect("should be available");
+            record.push(RecordedExecCommand {
+                _container_id: container_id.to_string(),
+                _remote_folder: remote_folder.to_string(),
+                _user: user.to_string(),
+                env: env.clone(),
+                _inner_command: inner_command,
+            });
             Ok(())
         }
         async fn start_container(&self, _id: &str) -> Result<(), DevContainerError> {
@@ -6841,7 +6870,6 @@ ENV DOCKER_BUILDKIT=1
                     .unwrap());
             }
 
-            dbg!(&parts.uri.path());
             Ok(http::Response::builder()
                 .status(404)
                 .body(http_client::AsyncBody::default())

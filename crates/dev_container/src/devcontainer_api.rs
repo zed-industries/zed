@@ -57,6 +57,8 @@ pub(crate) struct DevContainerUp {
     pub(crate) remote_workspace_folder: String,
     #[serde(default)]
     pub(crate) extension_ids: Vec<String>,
+    #[serde(default)]
+    pub(crate) remote_env: HashMap<String, String>,
 }
 
 #[derive(Debug)]
@@ -260,6 +262,7 @@ pub async fn start_dev_container_with_config(
             remote_workspace_folder,
             remote_user,
             extension_ids,
+            remote_env,
             ..
         }) => {
             let project_name =
@@ -276,6 +279,7 @@ pub async fn start_dev_container_with_config(
                 use_podman: context.use_podman,
                 remote_user,
                 extension_ids,
+                remote_env: remote_env.into_iter().collect(),
             };
 
             Ok((connection, remote_workspace_folder))

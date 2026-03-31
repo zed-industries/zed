@@ -46,6 +46,23 @@ pub(crate) struct DockerInspectConfig {
     pub(crate) labels: DockerConfigLabels,
     #[serde(rename = "User")]
     pub(crate) image_user: Option<String>,
+    #[serde(default)]
+    pub(crate) env: Vec<String>,
+}
+
+impl DockerInspectConfig {
+    pub(crate) fn env_as_map(&self) -> Result<HashMap<String, String>, DevContainerError> {
+        let mut map = HashMap::new();
+        for env_var in &self.env {
+            let parts: Vec<&str> = env_var.split("=").collect();
+            if parts.len() != 2 {
+                log::error!("Unable to parse {env_var} into and environment key-value");
+                return Err(DevContainerError::DevContainerParseFailed);
+            }
+            map.insert(parts[0].to_string(), parts[1].to_string());
+        }
+        Ok(map)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
