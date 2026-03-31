@@ -5032,41 +5032,10 @@ mod property_test {
 
         let workspaces = multi_workspace.read(cx).workspaces().to_vec();
 
-        // For each workspace, collect the set of canonical repo paths
-        // (original_repo_abs_path) from its root repositories. Two
-        // workspaces that share a canonical repo path are in the same
-        // linked-worktree group.
-        let canonical_repos = |ws: &Entity<Workspace>| -> HashSet<PathBuf> {
-            root_repository_snapshots(ws, cx)
-                .map(|snapshot| snapshot.original_repo_abs_path.to_path_buf())
-                .collect::<HashSet<_>>()
-        };
-
-        // Build a map from canonical repo path → set of workspace
-        // EntityIds that share that repo.
-        let mut repo_to_workspaces: HashMap<PathBuf, HashSet<EntityId>> = HashMap::new();
-        for ws in &workspaces {
-            for repo_path in canonical_repos(ws) {
-                repo_to_workspaces
-                    .entry(repo_path)
-                    .or_default()
-                    .insert(ws.entity_id());
-            }
-        }
-
-        // A workspace participates in a linked-worktree group when it
-        // shares a canonical repo path with at least one other workspace.
-        let in_linked_worktree_group = |ws: &Entity<Workspace>| -> bool {
-            canonical_repos(ws).iter().any(|repo_path| {
-                repo_to_workspaces
-                    .get(repo_path)
-                    .is_some_and(|members| members.len() > 1)
-            })
-        };
-
-        // TODO
-        // Carve-out 1: workspaces with no root paths are not shown
-        // because the sidebar skips empty path lists.
+        // Workspaces with no root paths are not shown because the
+        // sidebar skips empty path lists. All other workspaces should
+        // appear — either via a Thread entry or a NewThread entry for
+        // threadless workspaces.
         let expected_workspaces: HashSet<EntityId> = workspaces
             .iter()
             .filter(|ws| !workspace_path_list(ws, cx).paths().is_empty())
@@ -5080,33 +5049,17 @@ mod property_test {
             .filter_map(|entry| entry.workspace().map(|ws| ws.entity_id()))
             .collect();
 
-        // Check every mismatch between the two sets. Each one must be
-        // explainable by a known carve-out.
         let missing = &expected_workspaces - &sidebar_workspaces;
         let stray = &sidebar_workspaces - &expected_workspaces;
 
-        for entity_id in missing.iter().chain(stray.iter()) {
-            let Some(workspace) = workspaces.iter().find(|ws| ws.entity_id() == *entity_id) else {
-                anyhow::bail!("workspace {entity_id:?} not found in multi-workspace");
-            };
-
-            // TODO
-            // Carve-out 2: when multiple workspaces share a linked-
-            // worktree group, only one representative is shown. Either
-            // side of the relationship (parent or linked worktree) may
-            // be the representative, so both can appear in the diff.
-            anyhow::ensure!(
-                in_linked_worktree_group(workspace),
-                "workspace {:?} (paths {:?}) is in the mismatch but does not \
-                 participate in a linked-worktree group.\n\
-                 Only in sidebar (stray):  {:?}\n\
-                 Only in multi-workspace (missing): {:?}",
-                entity_id,
-                workspace_path_list(workspace, cx).paths(),
-                stray,
-                missing,
-            );
-        }
+        anyhow::ensure!(
+            missing.is_empty() && stray.is_empty(),
+            "sidebar workspaces don't match multi-workspace.\n\
+             Only in multi-workspace (missing): {:?}\n\
+             Only in sidebar (stray): {:?}",
+            missing,
+            stray,
+        );
 
         Ok(())
     }
