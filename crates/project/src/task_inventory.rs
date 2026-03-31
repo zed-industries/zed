@@ -18,11 +18,11 @@ use language::{
     language_settings::language_settings,
 };
 use lsp::{LanguageServerId, LanguageServerName};
-use paths::{debug_task_file_name, task_file_name, worktrees_file_name};
+use paths::{debug_task_file_name, task_file_name};
 use settings::{InvalidSettingsError, parse_json_with_comments};
 use task::{
     DebugScenario, ResolvedTask, SharedTaskContext, TaskContext, TaskId, TaskTemplate,
-    TaskTemplates, TaskVariables, VariableName, WorktreeTasks,
+    TaskTemplates, TaskVariables, VariableName,
 };
 use text::{BufferId, Point, ToPoint};
 use util::{NumericPrefixWithSuffix, ResultExt as _, post_inc, rel_path::RelPath};
@@ -43,7 +43,6 @@ pub struct Inventory {
     last_scheduled_scenarios: VecDeque<(DebugScenario, DebugScenarioContext)>,
     templates_from_settings: InventoryFor<TaskTemplate>,
     scenarios_from_settings: InventoryFor<DebugScenario>,
-    git_worktree_scripts_from_settings: InventoryFor<WorktreeTasks>,
 }
 
 impl std::fmt::Debug for Inventory {
@@ -53,10 +52,6 @@ impl std::fmt::Debug for Inventory {
             .field("last_scheduled_scenarios", &self.last_scheduled_scenarios)
             .field("templates_from_settings", &self.templates_from_settings)
             .field("scenarios_from_settings", &self.scenarios_from_settings)
-            .field(
-                "git_worktree_scripts_from_settings",
-                &self.git_worktree_scripts_from_settings,
-            )
             .finish()
     }
 }
@@ -76,11 +71,6 @@ impl InventoryContents for DebugScenario {
     const GLOBAL_SOURCE_FILE: &'static str = "debug.json";
 
     const LABEL: &'static str = "debug scenarios";
-}
-
-impl InventoryContents for WorktreeTasks {
-    const GLOBAL_SOURCE_FILE: &'static str = "worktrees.json";
-    const LABEL: &'static str = "git worktree scripts";
 }
 
 #[derive(Debug)]
@@ -256,7 +246,6 @@ impl Inventory {
             last_scheduled_scenarios: VecDeque::default(),
             templates_from_settings: InventoryFor::default(),
             scenarios_from_settings: InventoryFor::default(),
-            git_worktree_scripts_from_settings: InventoryFor::default(),
         })
     }
 
@@ -647,22 +636,6 @@ impl Inventory {
         self.templates_from_settings.worktree_scenarios(worktree)
     }
 
-    pub fn list_git_worktree_scripts(
-        &self,
-        worktree: WorktreeId,
-    ) -> Vec<(TaskSourceKind, WorktreeTasks)> {
-        self.worktree_git_worktree_scripts_from_settings(worktree)
-            .collect()
-    }
-
-    fn worktree_git_worktree_scripts_from_settings(
-        &self,
-        worktree: WorktreeId,
-    ) -> impl '_ + Iterator<Item = (TaskSourceKind, WorktreeTasks)> {
-        self.git_worktree_scripts_from_settings
-            .worktree_scenarios(worktree)
-    }
-
     /// Updates in-memory task metadata from the JSON string given.
     /// Will fail if the JSON is not a valid array of objects, but will continue if any object will not parse into a [`TaskTemplate`].
     ///
@@ -860,58 +833,6 @@ impl Inventory {
                 false
             }
         });
-
-        Ok(())
-    }
-
-    pub fn update_file_based_worktree_scripts(
-        &mut self,
-        location: TaskSettingsLocation<'_>,
-        raw_worktree_scripts_json: Option<&str>,
-    ) -> Result<(), InvalidSettingsError> {
-        let worktree_tasks =
-            parse_json_with_comments::<WorktreeTasks>(raw_worktree_scripts_json.unwrap_or("{}"))
-                .map_err(|error| InvalidSettingsError::Worktrees {
-                    path: match &location {
-                        TaskSettingsLocation::Global(path) => path.to_path_buf(),
-                        TaskSettingsLocation::Worktree(settings_location) => settings_location
-                            .path
-                            .as_std_path()
-                            .join(worktrees_file_name()),
-                    },
-                    message: format!(
-                        "Failed to parse worktree scripts file content as a JSON object: {error}"
-                    ),
-                })?;
-
-        let parsed_worktree_scripts = &mut self.git_worktree_scripts_from_settings;
-        match location {
-            TaskSettingsLocation::Global(path) => {
-                if worktree_tasks.is_empty() {
-                    parsed_worktree_scripts.global.remove(path);
-                } else {
-                    parsed_worktree_scripts
-                        .global
-                        .insert(path.to_owned(), vec![worktree_tasks]);
-                }
-            }
-            TaskSettingsLocation::Worktree(location) => {
-                if worktree_tasks.is_empty() {
-                    if let Some(worktree_tasks_by_directory) = parsed_worktree_scripts
-                        .worktree
-                        .get_mut(&location.worktree_id)
-                    {
-                        worktree_tasks_by_directory.remove(location.path);
-                    }
-                } else {
-                    parsed_worktree_scripts
-                        .worktree
-                        .entry(location.worktree_id)
-                        .or_default()
-                        .insert(Arc::from(location.path), vec![worktree_tasks]);
-                }
-            }
-        }
 
         Ok(())
     }

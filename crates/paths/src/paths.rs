@@ -461,13 +461,6 @@ pub fn local_tasks_file_relative_path() -> &'static RelPath {
     *CACHED
 }
 
-/// Returns the relative path to a `worktrees.json` file within a project.
-pub fn local_worktrees_file_relative_path() -> &'static RelPath {
-    static CACHED: LazyLock<&'static RelPath> =
-        LazyLock::new(|| RelPath::unix(".zed/worktrees.json").unwrap());
-    *CACHED
-}
-
 /// Returns the relative path to a `.vscode/tasks.json` file within a project.
 pub fn local_vscode_tasks_file_relative_path() -> &'static RelPath {
     static CACHED: LazyLock<&'static RelPath> =
