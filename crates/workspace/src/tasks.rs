@@ -1,13 +1,14 @@
 use std::process::ExitStatus;
 
 use anyhow::Result;
+use collections::HashSet;
 use gpui::{AppContext, Context, Entity, Task};
 use language::Buffer;
 use project::{TaskSourceKind, WorktreeId};
 use remote::ConnectionState;
 use task::{
     DebugScenario, ResolvedTask, SaveStrategy, SharedTaskContext, SpawnInTerminal, TaskContext,
-    TaskTemplate,
+    TaskHook, TaskTemplate, TaskVariables, VariableName,
 };
 use ui::Window;
 use util::TryFutureExt;
@@ -167,8 +168,9 @@ impl Workspace {
 
     pub fn run_git_worktree_tasks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let project = self.project().clone();
+        let hooks = HashSet::from_iter([TaskHook::CreateGitWorktree]);
 
-        let worktree_tasks: Vec<(WorktreeId, TaskContext, Vec<WorktreeTaskDefinition>)> = {
+        let worktree_tasks: Vec<(WorktreeId, TaskContext, Vec<TaskTemplate>)> = {
             let project = project.read(cx);
             let task_store = project.task_store();
             let Some(inventory) = task_store.read(cx).task_inventory().cloned() else {
@@ -181,14 +183,14 @@ impl Workspace {
                 let worktree_id = worktree.id();
                 let worktree_abs_path = worktree.abs_path();
 
-                let definitions: Vec<WorktreeTaskDefinition> = inventory
+                let templates: Vec<TaskTemplate> = inventory
                     .read(cx)
-                    .list_git_worktree_scripts(worktree_id)
+                    .templates_with_hooks(&hooks, worktree_id)
                     .into_iter()
-                    .flat_map(|(_, scripts)| scripts.setup)
+                    .map(|(_, template)| template)
                     .collect();
 
-                if definitions.is_empty() {
+                if templates.is_empty() {
                     continue;
                 }
 
@@ -203,7 +205,7 @@ impl Workspace {
                     project_env: Default::default(),
                 };
 
-                worktree_tasks.push((worktree_id, task_context, definitions));
+                worktree_tasks.push((worktree_id, task_context, templates));
             }
             worktree_tasks
         };
@@ -214,22 +216,13 @@ impl Workspace {
 
         let task = cx.spawn_in(window, async move |workspace, cx| {
             let mut tasks = Vec::new();
-            for (worktree_id, task_context, definitions) in worktree_tasks {
+            for (worktree_id, task_context, templates) in worktree_tasks {
                 let id_base = format!("worktree_setup_{worktree_id}");
 
                 tasks.push(cx.spawn({
                     let workspace = workspace.clone();
                     async move |cx| {
-                        for definition in definitions {
-                            let task_template = match definition {
-                                WorktreeTaskDefinition::Template { task_template } => task_template,
-                                WorktreeTaskDefinition::InLine(command) => TaskTemplate {
-                                    label: command.to_string(),
-                                    command: command.to_string(),
-                                    ..Default::default()
-                                },
-                            };
-
+                        for task_template in templates {
                             let Some(resolved) =
                                 task_template.resolve_task(&id_base, &task_context)
                             else {

@@ -21,7 +21,7 @@ use lsp::{LanguageServerId, LanguageServerName};
 use paths::{debug_task_file_name, task_file_name};
 use settings::{InvalidSettingsError, parse_json_with_comments};
 use task::{
-    DebugScenario, ResolvedTask, SharedTaskContext, TaskContext, TaskId, TaskTemplate,
+    DebugScenario, ResolvedTask, SharedTaskContext, TaskContext, TaskHook, TaskId, TaskTemplate,
     TaskTemplates, TaskVariables, VariableName,
 };
 use text::{BufferId, Point, ToPoint};
@@ -642,6 +642,19 @@ impl Inventory {
     /// A similar may still resurface in `used_and_current_resolved_tasks` when its [`TaskTemplate`] is resolved again.
     pub fn delete_previously_used(&mut self, id: &TaskId) {
         self.last_scheduled_tasks.retain(|(_, task)| &task.id != id);
+    }
+
+    /// Returns all task templates (worktree and global) that have at least one
+    /// hook in the provided set.
+    pub fn templates_with_hooks(
+        &self,
+        hooks: &HashSet<TaskHook>,
+        worktree: WorktreeId,
+    ) -> Vec<(TaskSourceKind, TaskTemplate)> {
+        self.worktree_templates_from_settings(worktree)
+            .chain(self.global_templates_from_settings())
+            .filter(|(_, template)| !template.hooks.is_disjoint(hooks))
+            .collect()
     }
 
     fn global_templates_from_settings(
