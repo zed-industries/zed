@@ -120,7 +120,13 @@ pub trait Sidebar: Focusable + Render + EventEmitter<SidebarEvent> + Sized {
     }
 
     /// Restore sidebar state from a previously-serialized blob.
-    fn restore_serialized_state(&mut self, _state: &str, _cx: &mut Context<Self>) {}
+    fn restore_serialized_state(
+        &mut self,
+        _state: &str,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+    }
 }
 
 pub trait SidebarHandle: 'static + Send + Sync {
@@ -138,7 +144,7 @@ pub trait SidebarHandle: 'static + Send + Sync {
 
     fn side(&self, cx: &App) -> SidebarSide;
     fn serialized_state(&self, cx: &App) -> Option<String>;
-    fn restore_serialized_state(&self, state: &str, cx: &mut App);
+    fn restore_serialized_state(&self, state: &str, window: &mut Window, cx: &mut App);
 }
 
 #[derive(Clone)]
@@ -205,8 +211,10 @@ impl<T: Sidebar> SidebarHandle for Entity<T> {
         self.read(cx).serialized_state(cx)
     }
 
-    fn restore_serialized_state(&self, state: &str, cx: &mut App) {
-        self.update(cx, |this, cx| this.restore_serialized_state(state, cx))
+    fn restore_serialized_state(&self, state: &str, window: &mut Window, cx: &mut App) {
+        self.update(cx, |this, cx| {
+            this.restore_serialized_state(state, window, cx)
+        })
     }
 }
 

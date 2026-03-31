@@ -8690,9 +8690,9 @@ pub async fn restore_multiworkspace(
     if let Some(sidebar_state) = &state.sidebar_state {
         let sidebar_state = sidebar_state.clone();
         window_handle
-            .update(cx, |multi_workspace, _, cx| {
+            .update(cx, |multi_workspace, window, cx| {
                 if let Some(sidebar) = multi_workspace.sidebar() {
-                    sidebar.restore_serialized_state(&sidebar_state, cx);
+                    sidebar.restore_serialized_state(&sidebar_state, window, cx);
                 }
                 multi_workspace.serialize(cx);
             })

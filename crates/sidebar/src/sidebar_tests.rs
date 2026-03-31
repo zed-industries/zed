@@ -254,10 +254,11 @@ async fn test_serialization_round_trip(cx: &mut TestAppContext) {
     let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
     save_n_test_threads(3, &path_list, cx).await;
 
-    // Set a custom width and collapse the group.
+    // Set a custom width, collapse the group, and expand "View More".
     sidebar.update_in(cx, |sidebar, window, cx| {
         sidebar.set_width(Some(px(420.0)), cx);
         sidebar.toggle_collapse(&path_list, window, cx);
+        sidebar.expanded_groups.insert(path_list.clone(), 2);
     });
     cx.run_until_parked();
 
@@ -270,19 +271,33 @@ async fn test_serialization_round_trip(cx: &mut TestAppContext) {
         cx.update(|window, cx| cx.new(|cx| Sidebar::new(multi_workspace.clone(), window, cx)));
     cx.run_until_parked();
 
-    sidebar2.update(cx, |sidebar, cx| {
-        sidebar.restore_serialized_state(&serialized, cx);
+    sidebar2.update_in(cx, |sidebar, window, cx| {
+        sidebar.restore_serialized_state(&serialized, window, cx);
     });
     cx.run_until_parked();
 
-    // Assert width and collapsed groups match.
-    let (width1, collapsed1) = sidebar.read_with(cx, |s, _| (s.width, s.collapsed_groups.clone()));
-    let (width2, collapsed2) = sidebar2.read_with(cx, |s, _| (s.width, s.collapsed_groups.clone()));
+    // Assert all serialized fields match.
+    let (width1, collapsed1, expanded1) = sidebar.read_with(cx, |s, _| {
+        (
+            s.width,
+            s.collapsed_groups.clone(),
+            s.expanded_groups.clone(),
+        )
+    });
+    let (width2, collapsed2, expanded2) = sidebar2.read_with(cx, |s, _| {
+        (
+            s.width,
+            s.collapsed_groups.clone(),
+            s.expanded_groups.clone(),
+        )
+    });
 
     assert_eq!(width1, width2);
     assert_eq!(collapsed1, collapsed2);
+    assert_eq!(expanded1, expanded2);
     assert_eq!(width1, px(420.0));
     assert!(collapsed1.contains(&path_list));
+    assert_eq!(expanded1.get(&path_list), Some(&2));
 }
 
 #[test]
