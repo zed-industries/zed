@@ -240,6 +240,7 @@ pub enum IconName {
     ThinkingModeOff,
     Thread,
     ThreadFromSummary,
+    ThreadImport,
     ThreadsSidebarLeftClosed,
     ThreadsSidebarLeftOpen,
     ThreadsSidebarRightClosed,
