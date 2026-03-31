@@ -328,6 +328,25 @@ pub struct PanelButtons {
 
 pub(crate) const PANEL_SIZE_STATE_KEY: &str = "dock_panel_size";
 
+fn resize_panel_entry(
+    position: DockPosition,
+    entry: &mut PanelEntry,
+    size: Option<Pixels>,
+    flex: Option<f32>,
+    window: &mut Window,
+    cx: &mut App,
+) -> (&'static str, PanelSizeState) {
+    let size = size.map(|size| size.max(RESIZE_HANDLE_SIZE).round());
+    let use_flex = entry.panel.has_flexible_size(window, cx) && position.axis() == Axis::Horizontal;
+    if use_flex {
+        entry.size_state.flex = flex;
+    } else {
+        entry.size_state.size = size;
+    }
+    entry.panel.size_state_changed(window, cx);
+    (entry.panel.panel_key(), entry.size_state)
+}
+
 impl Dock {
     pub fn new(
         position: DockPosition,
@@ -908,19 +927,10 @@ impl Dock {
         if let Some(index) = self.active_panel_index
             && let Some(entry) = self.panel_entries.get_mut(index)
         {
-            let size = size.map(|size| size.max(RESIZE_HANDLE_SIZE).round());
+            let (panel_key, size_state) =
+                resize_panel_entry(self.position, entry, size, flex, window, cx);
 
-            let use_flex = entry.panel.has_flexible_size(window, cx);
-            if use_flex {
-                entry.size_state.flex = flex;
-            } else {
-                entry.size_state.size = size;
-            }
-
-            let panel_key = entry.panel.panel_key();
-            let size_state = entry.size_state;
             let workspace = self.workspace.clone();
-            entry.panel.size_state_changed(window, cx);
             cx.defer(move |cx| {
                 if let Some(workspace) = workspace.upgrade() {
                     workspace.update(cx, |workspace, cx| {
@@ -939,19 +949,11 @@ impl Dock {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let mut size_states_to_persist = Vec::new();
-
-        for entry in &mut self.panel_entries {
-            let size = size.map(|size| size.max(RESIZE_HANDLE_SIZE).round());
-            let use_flex = entry.panel.has_flexible_size(window, cx);
-            if use_flex {
-                entry.size_state.flex = flex;
-            } else {
-                entry.size_state.size = size;
-            }
-            entry.panel.size_state_changed(window, cx);
-            size_states_to_persist.push((entry.panel.panel_key(), entry.size_state));
-        }
+        let size_states_to_persist: Vec<_> = self
+            .panel_entries
+            .iter_mut()
+            .map(|entry| resize_panel_entry(self.position, entry, size, flex, window, cx))
+            .collect();
 
         let workspace = self.workspace.clone();
         cx.defer(move |cx| {
