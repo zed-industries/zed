@@ -1999,7 +1999,7 @@ impl Sidebar {
         cx: &mut App,
     ) {
         workspace.update(cx, |workspace, cx| {
-            workspace.open_panel::<AgentPanel>(window, cx);
+            workspace.reveal_panel::<AgentPanel>(window, cx);
         });
 
         if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {

@@ -4187,6 +4187,17 @@ impl Workspace {
         }
     }
 
+    /// Open the panel of the given type, dismissing any zoomed items that
+    /// would obscure it (e.g. a zoomed terminal).
+    pub fn reveal_panel<T: Panel>(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let dock_position = self.all_docks().iter().find_map(|dock| {
+            let dock = dock.read(cx);
+            dock.panel_index_for_type::<T>().map(|_| dock.position())
+        });
+        self.dismiss_zoomed_items_to_reveal(dock_position, window, cx);
+        self.open_panel::<T>(window, cx);
+    }
+
     pub fn close_panel<T: Panel>(&self, window: &mut Window, cx: &mut Context<Self>) {
         for dock in self.all_docks().iter() {
             dock.update(cx, |dock, cx| {
