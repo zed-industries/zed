@@ -1890,8 +1890,8 @@ mod tests {
 
     use super::*;
     use editor::{
-        DisplayPoint, Editor, HighlightKey, MultiBuffer, PathKey, SearchSettings,
-        SelectionEffects, SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT,
+        DisplayPoint, Editor, HighlightKey, MultiBuffer, PathKey,
+        SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT, SearchSettings, SelectionEffects,
         display_map::DisplayRow, test::editor_test_context::EditorTestContext,
     };
     use gpui::{Hsla, TestAppContext, UpdateGlobal, VisualTestContext};
@@ -3781,8 +3781,8 @@ mod tests {
             )
         });
         let cx = cx.add_empty_window();
-        let editor = cx
-            .new_window_entity(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
+        let editor =
+            cx.new_window_entity(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
         let search_bar = cx.new_window_entity(|window, cx| {
             let mut search_bar = BufferSearchBar::new(None, window, cx);
             search_bar.set_active_pane_item(Some(&editor), window, cx);
@@ -3835,7 +3835,7 @@ mod tests {
             .advance_clock(SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT + Duration::from_millis(1));
         cx.run_until_parked();
 
-        editor.update(cx, |editor, cx| {
+        editor.update(cx, |editor, _cx| {
             assert!(
                 editor.has_background_highlights(HighlightKey::SelectedTextHighlight),
                 "selection occurrence highlights must be restored after a manual selection"
