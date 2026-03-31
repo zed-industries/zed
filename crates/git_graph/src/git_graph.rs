@@ -1469,6 +1469,19 @@ impl GitGraph {
         self.select_commit_by_sha(oid, cx);
     }
 
+    pub fn set_repo_id(&mut self, repo_id: RepositoryId, cx: &mut Context<Self>) {
+        if repo_id != self.repo_id
+            && self
+                .git_store
+                .read(cx)
+                .repositories()
+                .contains_key(&repo_id)
+        {
+            self.repo_id = repo_id;
+            self.invalidate_state(cx);
+        }
+    }
+
     pub fn select_commit_by_sha(&mut self, sha: impl TryInto<Oid>, cx: &mut Context<Self>) {
         fn inner(this: &mut GitGraph, oid: Oid, cx: &mut Context<GitGraph>) {
             let Some(selected_repository) = this.get_repository(cx) else {
@@ -2904,7 +2917,7 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
         });
     }
 
@@ -3612,6 +3625,116 @@ mod tests {
             commits.len(),
             commit_count_after,
             "initial_graph_data should remain populated after events emitted by initial repository scan"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_graph_data_repopulated_from_cache_after_repo_switch(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project_a"),
+            json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            Path::new("/project_b"),
+            json!({
+                ".git": {},
+                "other.txt": "content",
+            }),
+        )
+        .await;
+
+        let mut rng = StdRng::seed_from_u64(42);
+        let commits = generate_random_commit_dag(&mut rng, 10, false);
+        fs.set_graph_commits(Path::new("/project_a/.git"), commits.clone());
+
+        let project = Project::test(
+            fs.clone(),
+            [Path::new("/project_a"), Path::new("/project_b")],
+            cx,
+        )
+        .await;
+        cx.run_until_parked();
+
+        let (first_repository, second_repository) = project.read_with(cx, |project, cx| {
+            let mut first_repository = None;
+            let mut second_repository = None;
+
+            for repository in project.repositories(cx).values() {
+                let work_directory_abs_path = &repository.read(cx).work_directory_abs_path;
+                if work_directory_abs_path.as_ref() == Path::new("/project_a") {
+                    first_repository = Some(repository.clone());
+                } else if work_directory_abs_path.as_ref() == Path::new("/project_b") {
+                    second_repository = Some(repository.clone());
+                }
+            }
+
+            (
+                first_repository.expect("should have repository for /project_a"),
+                second_repository.expect("should have repository for /project_b"),
+            )
+        });
+        first_repository.update(cx, |repository, cx| repository.set_as_active_repository(cx));
+        cx.run_until_parked();
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+
+        let workspace_weak =
+            multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                first_repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        // Verify initial graph data is loaded
+        let initial_commit_count =
+            git_graph.read_with(&*cx, |graph, _| graph.graph_data.commits.len());
+        assert!(
+            initial_commit_count > 0,
+            "graph data should have been loaded, got 0 commits"
+        );
+
+        git_graph.update(cx, |graph, cx| {
+            graph.set_repo_id(second_repository.read(cx).id, cx)
+        });
+        cx.run_until_parked();
+
+        let commit_count_after_clear =
+            git_graph.read_with(&*cx, |graph, _| graph.graph_data.commits.len());
+        assert_eq!(
+            commit_count_after_clear, 0,
+            "graph_data should be cleared after switching away"
+        );
+
+        git_graph.update(cx, |graph, cx| {
+            graph.set_repo_id(first_repository.read(cx).id, cx)
+        });
+        cx.run_until_parked();
+
+        git_graph.update_in(&mut *cx, |this, window, cx| {
+            this.render(window, cx);
+        });
+        cx.run_until_parked();
+
+        let commit_count_after_switch_back =
+            git_graph.read_with(&*cx, |graph, _| graph.graph_data.commits.len());
+        assert_eq!(
+            initial_commit_count, commit_count_after_switch_back,
+            "graph_data should be repopulated from cache after switching back to the same repo"
         );
     }
 }
