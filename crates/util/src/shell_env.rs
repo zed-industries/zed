@@ -2,14 +2,17 @@ use std::path::Path;
 
 use anyhow::{Context as _, Result};
 use collections::HashMap;
+use serde::Deserialize;
 
 use crate::shell::ShellKind;
 
 fn parse_env_map_from_noisy_output(output: &str) -> Result<collections::HashMap<String, String>> {
-    if let Some(pos) = output.find('{') {
-        return serde_json::from_str(&output[pos..]).with_context(|| {
-            format!("Failed to deserialize environment variables from json: {output}")
-        });
+    for (position, _) in output.match_indices('{') {
+        let candidate = &output[position..];
+        let mut deserializer = serde_json::Deserializer::from_str(candidate);
+        if let Ok(env_map) = HashMap::<String, String>::deserialize(&mut deserializer) {
+            return Ok(env_map);
+        }
     }
     anyhow::bail!("Failed to find JSON in shell output: {output}")
 }
