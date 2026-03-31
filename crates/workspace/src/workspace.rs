@@ -6756,14 +6756,14 @@ impl Workspace {
                                 }
 
                                 if let Some(pane) = recent_pane {
-                                    let clamp = action.clamp;
+                                    let wrap_around = action.wrap_around;
                                     pane.update(cx, |pane, cx| {
                                         let current_index = pane.active_item_index();
                                         let items_len = pane.items_len();
                                         if items_len > 0 {
                                             let next_index = if current_index + 1 < items_len {
                                                 current_index + 1
-                                            } else if !clamp {
+                                            } else if wrap_around {
                                                 0
                                             } else {
                                                 return;
@@ -6800,14 +6800,14 @@ impl Workspace {
                                 }
 
                                 if let Some(pane) = recent_pane {
-                                    let clamp = action.clamp;
+                                    let wrap_around = action.wrap_around;
                                     pane.update(cx, |pane, cx| {
                                         let current_index = pane.active_item_index();
                                         let items_len = pane.items_len();
                                         if items_len > 0 {
                                             let prev_index = if current_index > 0 {
                                                 current_index - 1
-                                            } else if !clamp {
+                                            } else if wrap_around {
                                                 items_len.saturating_sub(1)
                                             } else {
                                                 return;

@@ -48,7 +48,9 @@ use ui::{
     IconDecorationKind, Indicator, PopoverMenu, PopoverMenuHandle, Tab, TabBar, TabPosition,
     Tooltip, prelude::*, right_click_menu,
 };
-use util::{ResultExt, debug_panic, maybe, paths::PathStyle, truncate_and_remove_front};
+use util::{
+    ResultExt, debug_panic, maybe, paths::PathStyle, serde::default_true, truncate_and_remove_front,
+};
 
 /// A selected entry in e.g. project panel.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -230,21 +232,35 @@ split_structs!(
 );
 
 /// Activates the previous item in the pane.
-#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = pane)]
 #[serde(deny_unknown_fields, default)]
 pub struct ActivatePreviousItem {
-    #[serde(default)]
-    pub clamp: bool,
+    /// Whether to wrap from the first item to the last item.
+    #[serde(default = "default_true")]
+    pub wrap_around: bool,
+}
+
+impl Default for ActivatePreviousItem {
+    fn default() -> Self {
+        Self { wrap_around: true }
+    }
 }
 
 /// Activates the next item in the pane.
-#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = pane)]
 #[serde(deny_unknown_fields, default)]
 pub struct ActivateNextItem {
-    #[serde(default)]
-    pub clamp: bool,
+    /// Whether to wrap from the last item to the first item.
+    #[serde(default = "default_true")]
+    pub wrap_around: bool,
+}
+
+impl Default for ActivateNextItem {
+    fn default() -> Self {
+        Self { wrap_around: true }
+    }
 }
 
 actions!(
@@ -1495,7 +1511,7 @@ impl Pane {
         let mut index = self.active_item_index;
         if index > 0 {
             index -= 1;
-        } else if !action.clamp && !self.items.is_empty() {
+        } else if action.wrap_around && !self.items.is_empty() {
             index = self.items.len() - 1;
         }
         self.activate_item(index, true, true, window, cx);
@@ -1510,7 +1526,7 @@ impl Pane {
         let mut index = self.active_item_index;
         if index + 1 < self.items.len() {
             index += 1;
-        } else if !action.clamp {
+        } else if action.wrap_around {
             index = 0;
         }
         self.activate_item(index, true, true, window, cx);
@@ -8469,7 +8485,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_activate_item_with_clamp(cx: &mut TestAppContext) {
+    async fn test_activate_item_with_wrap_around(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, None, cx).await;
@@ -8482,38 +8498,33 @@ mod tests {
         add_labeled_item(&pane, "C", false, cx);
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
 
-        // clamp: true on last item should stay on last item
         pane.update_in(cx, |pane, window, cx| {
-            pane.activate_next_item(&ActivateNextItem { clamp: true }, window, cx);
+            pane.activate_next_item(&ActivateNextItem { wrap_around: false }, window, cx);
         });
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
 
-        // clamp: false (default) on last item should wrap to first
         pane.update_in(cx, |pane, window, cx| {
             pane.activate_next_item(&ActivateNextItem::default(), window, cx);
         });
         assert_item_labels(&pane, ["A*", "B", "C"], cx);
 
-        // clamp: true on first item should stay on first item
         pane.update_in(cx, |pane, window, cx| {
-            pane.activate_previous_item(&ActivatePreviousItem { clamp: true }, window, cx);
+            pane.activate_previous_item(&ActivatePreviousItem { wrap_around: false }, window, cx);
         });
         assert_item_labels(&pane, ["A*", "B", "C"], cx);
 
-        // clamp: false (default) on first item should wrap to last
         pane.update_in(cx, |pane, window, cx| {
             pane.activate_previous_item(&ActivatePreviousItem::default(), window, cx);
         });
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
 
-        // normal navigation still works with clamp
         pane.update_in(cx, |pane, window, cx| {
-            pane.activate_previous_item(&ActivatePreviousItem { clamp: true }, window, cx);
+            pane.activate_previous_item(&ActivatePreviousItem { wrap_around: false }, window, cx);
         });
         assert_item_labels(&pane, ["A", "B*", "C"], cx);
 
         pane.update_in(cx, |pane, window, cx| {
-            pane.activate_next_item(&ActivateNextItem { clamp: true }, window, cx);
+            pane.activate_next_item(&ActivateNextItem { wrap_around: false }, window, cx);
         });
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
     }
