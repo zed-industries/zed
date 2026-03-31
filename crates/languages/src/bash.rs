@@ -1,5 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use collections::HashMap;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate, LspInstaller, Toolchain};
 use lsp::LanguageServerBinary;
 use node_runtime::{NodeRuntime, VersionStrategy};
@@ -39,6 +40,7 @@ impl BashLspAdapter {
 
     async fn get_cached_server_binary(
         container_dir: PathBuf,
+        env: HashMap<String, String>,
         node: &NodeRuntime,
     ) -> Option<lsp::LanguageServerBinary> {
         maybe!(async {
@@ -51,7 +53,7 @@ impl BashLspAdapter {
             );
             Ok(LanguageServerBinary {
                 path: node.binary_path().await?,
-                env: None,
+                env: Some(env),
                 arguments: vec![server_path.into(), "start".into()],
             })
         })
@@ -66,9 +68,10 @@ impl LspInstaller for BashLspAdapter {
     async fn cached_server_binary(
         &self,
         container_dir: std::path::PathBuf,
-        _: &dyn LspAdapterDelegate,
+        delegate: &dyn LspAdapterDelegate,
     ) -> Option<lsp::LanguageServerBinary> {
-        Self::get_cached_server_binary(container_dir, &self.node).await
+        let env = delegate.shell_env().await;
+        Self::get_cached_server_binary(container_dir, env, &self.node).await
     }
 
     async fn check_if_user_installed(
@@ -91,7 +94,7 @@ impl LspInstaller for BashLspAdapter {
         &self,
         version: &Self::BinaryVersion,
         container_dir: &PathBuf,
-        _: &dyn LspAdapterDelegate,
+        delegate: &dyn LspAdapterDelegate,
     ) -> Option<lsp::LanguageServerBinary> {
         let server_path = container_dir
             .join("node_modules")
@@ -110,9 +113,10 @@ impl LspInstaller for BashLspAdapter {
         if should_install_language_server {
             None
         } else {
+            let env = delegate.shell_env().await;
             Some(LanguageServerBinary {
                 path: self.node.binary_path().await.ok()?,
-                env: None,
+                env: Some(env),
                 arguments: vec![server_path.into(), "start".into()],
             })
         }
@@ -133,7 +137,7 @@ impl LspInstaller for BashLspAdapter {
         &self,
         latest_version: Self::BinaryVersion,
         container_dir: std::path::PathBuf,
-        _: &dyn LspAdapterDelegate,
+        delegate: &dyn LspAdapterDelegate,
     ) -> Result<lsp::LanguageServerBinary> {
         let server_path = container_dir
             .join("node_modules")
@@ -146,9 +150,10 @@ impl LspInstaller for BashLspAdapter {
             )
             .await?;
 
+        let env = delegate.shell_env().await;
         Ok(LanguageServerBinary {
             path: self.node.binary_path().await?,
-            env: None,
+            env: Some(env),
             arguments: vec![server_path.into(), "start".into()],
         })
     }
