@@ -1445,7 +1445,7 @@ unsafe fn build_resize_arrow_path(horizontal: bool) -> *mut Object {
 
     let stroke_path: *mut Object = msg_send![class!(UIBezierPath), bezierPath];
 
-    let gap = 2.0f64; // half-gap between the two arrows
+    let gap = 3.5f64; // half-gap between the two arrows
     let depth = 5.0f64; // how far each arrowhead extends from its base
     let spread = 5.5f64; // half-width of the arrowhead
 
@@ -1477,7 +1477,7 @@ unsafe fn build_resize_arrow_path(horizontal: bool) -> *mut Object {
 
     // Stroke the thin path into a filled outline with rounded corners.
     let cg_path: *mut c_void = msg_send![stroke_path, CGPath];
-    let line_width = 2.0f64;
+    let line_width = 2.5f64;
     // kCGLineCapRound = 1, kCGLineJoinRound = 1
     let stroked_cg: *mut c_void = unsafe {
         CGPathCreateCopyByStrokingPath(
