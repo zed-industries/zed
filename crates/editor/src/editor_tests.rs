@@ -19263,16 +19263,16 @@ async fn test_copy_highlight_json_selected_line_range(cx: &mut TestAppContext) {
 
     let mut cx = EditorTestContext::new(cx).await;
 
-    cx.update_editor(|editor, _window, _cx| editor.selections.set_line_mode(true));
     cx.set_state(indoc! {"
         fn main() {
             «let x = 1;
-            let y = 2;ˇ»
+            let yˇ» = 2;
         }
     "});
     setup_rust_syntax_highlighting(&mut cx);
 
     cx.update_editor(|editor, window, cx| {
+        editor.selections.set_line_mode(true);
         editor.copy_highlight_json(&CopyHighlightJson, window, cx);
     });
 
@@ -19303,6 +19303,45 @@ async fn test_copy_highlight_json_selected_line_range(cx: &mut TestAppContext) {
                 {"text": "2", "highlight": "number"},
                 {"text": ";", "highlight": "punctuation.delimiter"},
             ],
+        ])
+    );
+}
+
+#[gpui::test]
+async fn test_copy_highlight_json_single_line(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        fn main() {
+            let ˇx = 1;
+            let y = 2;
+        }
+    "});
+    setup_rust_syntax_highlighting(&mut cx);
+
+    cx.update_editor(|editor, window, cx| {
+        editor.selections.set_line_mode(true);
+        editor.copy_highlight_json(&CopyHighlightJson, window, cx);
+    });
+
+    let clipboard_json: serde_json::Value =
+        serde_json::from_str(&cx.read_from_clipboard().unwrap().text().unwrap()).unwrap();
+    assert_eq!(
+        clipboard_json,
+        json!([
+            [
+                {"text": "    ", "highlight": null},
+                {"text": "let", "highlight": "keyword"},
+                {"text": " ", "highlight": null},
+                {"text": "x", "highlight": "variable"},
+                {"text": " ", "highlight": null},
+                {"text": "=", "highlight": "operator"},
+                {"text": " ", "highlight": null},
+                {"text": "1", "highlight": "number"},
+                {"text": ";", "highlight": "punctuation.delimiter"},
+            ]
         ])
     );
 }

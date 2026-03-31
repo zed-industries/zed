@@ -25028,17 +25028,13 @@ impl Editor {
         let mut selection = self.selections.newest::<Point>(&self.display_snapshot(cx));
         let max_point = snapshot.max_point();
 
-        let range = if selection.is_empty() {
-            Point::new(0, 0)..max_point
-        } else if self.selections.line_mode() {
+        let range = if self.selections.line_mode() {
             selection.start = Point::new(selection.start.row, 0);
-            if !selection.is_empty() && selection.end.column == 0 {
-                selection.end = cmp::min(max_point, selection.end);
-            } else {
-                selection.end = cmp::min(max_point, Point::new(selection.end.row + 1, 0));
-            }
+            selection.end = cmp::min(max_point, Point::new(selection.end.row + 1, 0));
             selection.goal = SelectionGoal::None;
             selection.range()
+        } else if selection.is_empty() {
+            Point::new(0, 0)..max_point
         } else {
             selection.range()
         };
