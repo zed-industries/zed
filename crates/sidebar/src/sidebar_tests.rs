@@ -418,7 +418,7 @@ async fn test_single_workspace_with_saved_threads(cx: &mut TestAppContext) {
         "Add inline diff view".into(),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
         None,
-        path_list.clone(),
+        path_list,
         cx,
     );
     cx.run_until_parked();
@@ -451,7 +451,7 @@ async fn test_workspace_lifecycle(cx: &mut TestAppContext) {
         "Thread A1".into(),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
         None,
-        path_list.clone(),
+        path_list,
         cx,
     );
     cx.run_until_parked();
@@ -1381,7 +1381,7 @@ async fn test_search_matches_regardless_of_case(cx: &mut TestAppContext) {
         "Fix Crash In Project Panel".into(),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
         None,
-        path_list.clone(),
+        path_list,
         cx,
     );
     cx.run_until_parked();
@@ -1708,7 +1708,7 @@ async fn test_search_finds_threads_inside_collapsed_groups(cx: &mut TestAppConte
         "Important thread".into(),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
         None,
-        path_list.clone(),
+        path_list,
         cx,
     );
     cx.run_until_parked();
@@ -1816,7 +1816,7 @@ async fn test_confirm_on_historical_thread_activates_workspace(cx: &mut TestAppC
         "Historical Thread".into(),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 6, 1, 0, 0, 0).unwrap(),
         None,
-        path_list.clone(),
+        path_list,
         cx,
     );
     cx.run_until_parked();
@@ -1878,7 +1878,7 @@ async fn test_click_clears_selection_and_focus_in_restores_it(cx: &mut TestAppCo
         "Thread B".into(),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
         None,
-        path_list.clone(),
+        path_list,
         cx,
     );
 
@@ -4236,7 +4236,7 @@ async fn test_archive_thread_uses_next_threads_own_workspace(cx: &mut TestAppCon
     // it sorts below thread 2. archive_thread will find it as the "next" candidate.
     let thread1_session_id = acp::SessionId::new(Arc::from("thread1-worktree-session"));
     save_thread_metadata(
-        thread1_session_id.clone(),
+        thread1_session_id,
         "Thread 1".into(),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
         None,
@@ -4617,7 +4617,7 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
         "Old Historical Thread".into(),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2023, 6, 1, 0, 0, 0).unwrap(),
         Some(chrono::TimeZone::with_ymd_and_hms(&Utc, 2023, 6, 1, 0, 0, 0).unwrap()),
-        path_list.clone(),
+        path_list,
         cx,
     );
 
@@ -4633,9 +4633,9 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     assert_eq!(
         ids,
         vec![
-            session_id_c.clone(),
-            session_id_a.clone(),
-            session_id_b.clone(),
+            session_id_c,
+            session_id_a,
+            session_id_b,
             session_id_hist,
             session_id_old_hist,
         ],
@@ -4661,7 +4661,7 @@ async fn test_archive_thread_keeps_metadata_but_hides_from_sidebar(cx: &mut Test
         "Thread To Archive".into(),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
         None,
-        path_list.clone(),
+        path_list,
         cx,
     );
     cx.run_until_parked();
@@ -4723,7 +4723,7 @@ async fn test_archived_threads_excluded_from_sidebar_entries(cx: &mut TestAppCon
         "Archived Thread".into(),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
         None,
-        path_list.clone(),
+        path_list,
         cx,
     );
 
