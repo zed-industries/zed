@@ -8788,6 +8788,96 @@ async fn test_cut_line_ends(cx: &mut TestAppContext) {
         fox jumps overˇthe lazy dog"});
 }
 
+fn kill_ring_texts(cx: &mut EditorTestContext) -> Vec<String> {
+    cx.editor(|_, _, cx| {
+        cx.try_global::<KillRingState>()
+            .map(|kill_ring| {
+                kill_ring
+                    .entries
+                    .iter()
+                    .map(|entry| entry.to_paste_data().0)
+                    .collect()
+            })
+            .unwrap_or_default()
+    })
+}
+
+fn selection_mark_mode(cx: &mut EditorTestContext) -> bool {
+    cx.editor(|editor, _, _| editor.selection_mark_mode)
+}
+
+#[gpui::test]
+async fn test_kill_ring_cut_appends_successive_kills(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        alpha ˇbeta
+        gamma"});
+    cx.update_editor(|editor, window, cx| editor.kill_ring_cut(&KillRingCut, window, cx));
+    cx.update_editor(|editor, window, cx| editor.kill_ring_cut(&KillRingCut, window, cx));
+    cx.update_editor(|editor, window, cx| editor.kill_ring_cut(&KillRingCut, window, cx));
+
+    cx.assert_editor_state("alpha ˇ");
+    assert_eq!(kill_ring_texts(&mut cx), vec!["beta\ngamma".to_string()]);
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("beta\ngamma".to_string())
+    );
+
+    cx.update_editor(|editor, window, cx| editor.kill_ring_yank(&KillRingYank, window, cx));
+    cx.assert_editor_state(indoc! {"
+        alpha beta
+        gammaˇ"});
+}
+
+#[gpui::test]
+async fn test_kill_ring_region_actions_share_ring_and_clear_mark(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("one «twoˇ» three");
+    cx.update_editor(|editor, _, _| editor.selection_mark_mode = true);
+    cx.update_editor(|editor, window, cx| editor.kill_ring_save(&KillRingSave, window, cx));
+
+    assert_eq!(kill_ring_texts(&mut cx), vec!["two".to_string()]);
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("two".to_string())
+    );
+    assert!(!selection_mark_mode(&mut cx));
+
+    cx.set_state("alpha ˇbeta");
+    cx.update_editor(|editor, window, cx| editor.kill_ring_cut(&KillRingCut, window, cx));
+    assert_eq!(
+        kill_ring_texts(&mut cx),
+        vec!["beta".to_string(), "two".to_string()]
+    );
+
+    cx.set_state("four «fiveˇ» six");
+    cx.update_editor(|editor, _, _| editor.selection_mark_mode = true);
+    cx.update_editor(|editor, window, cx| {
+        editor.kill_ring_cut_region(&KillRingCutRegion, window, cx)
+    });
+
+    cx.assert_editor_state("four ˇ six");
+    assert_eq!(
+        kill_ring_texts(&mut cx),
+        vec!["five".to_string(), "beta".to_string(), "two".to_string()]
+    );
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("five".to_string())
+    );
+    assert!(!selection_mark_mode(&mut cx));
+
+    cx.set_state("ˇ");
+    cx.update_editor(|editor, window, cx| editor.kill_ring_yank(&KillRingYank, window, cx));
+    cx.assert_editor_state("fiveˇ");
+}
+
 #[gpui::test]
 async fn test_clipboard(cx: &mut TestAppContext) {
     init_test(cx, |_| {});

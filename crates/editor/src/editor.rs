@@ -11417,10 +11417,11 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
+        let allow_append = self.should_append_to_kill_ring(cx);
         self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.move_with(&mut |snapshot, sel| {
+            s.move_with(&mut |map, sel| {
                 if sel.is_empty() {
-                    sel.end = DisplayPoint::new(sel.end.row(), snapshot.line_len(sel.end.row()));
+                    sel.end = movement::line_end(map, sel.end, false);
                 }
                 if sel.is_empty() {
                     sel.end = DisplayPoint::new(sel.end.row() + 1_u32, 0);
@@ -11428,7 +11429,33 @@ impl Editor {
             });
         });
         let item = self.cut_common(false, window, cx);
-        cx.set_global(KillRing(item))
+        self.push_to_kill_ring(item, allow_append, true, cx);
+        self.deactivate_selection_mark_mode(cx);
+    }
+
+    pub fn kill_ring_cut_region(
+        &mut self,
+        _: &KillRingCutRegion,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.has_active_kill_ring_selection(cx) {
+            return;
+        }
+
+        let allow_append = self.should_append_to_kill_ring(cx);
+        let item = self.cut_common(false, window, cx);
+        self.push_to_kill_ring(item, allow_append, true, cx);
+        self.deactivate_selection_mark_mode(cx);
+    }
+
+    pub fn kill_ring_save(&mut self, _: &KillRingSave, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(item) = self.exact_selection_clipboard_item(cx) else {
+            return;
+        };
+
+        self.push_to_kill_ring(item, false, false, cx);
+        self.deactivate_selection_mark_mode(cx);
     }
 
     pub fn kill_ring_yank(
@@ -11437,15 +11464,15 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let (text, metadata) = if let Some(KillRing(item)) = cx.try_global() {
-            if let Some(ClipboardEntry::String(kill_ring)) = item.entries().first() {
-                (kill_ring.text().to_string(), kill_ring.metadata_json())
-            } else {
-                return;
-            }
-        } else {
+        let Some((text, metadata)) = cx
+            .try_global::<KillRingState>()
+            .and_then(KillRingState::latest)
+            .map(KillRingEntry::to_paste_data)
+        else {
             return;
         };
+
+        cx.default_global::<KillRingState>().clear_pending_append();
         self.do_paste(&text, metadata, false, window, cx);
     }
 
@@ -11455,6 +11482,112 @@ impl Editor {
 
     pub fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
         self.do_copy(false, cx);
+    }
+
+    fn has_active_kill_ring_selection(&self, cx: &mut Context<Self>) -> bool {
+        self.selections.line_mode()
+            || self
+                .selections
+                .all::<Point>(&self.display_snapshot(cx))
+                .iter()
+                .any(|selection| !selection.is_empty())
+    }
+
+    fn exact_selection_clipboard_item(&self, cx: &mut Context<Self>) -> Option<ClipboardItem> {
+        let selections = self.selections.all::<Point>(&self.display_snapshot(cx));
+        if !self.selections.line_mode() && !selections.iter().any(|selection| !selection.is_empty())
+        {
+            return None;
+        }
+
+        let buffer = self.buffer.read(cx).read(cx);
+        let mut text = String::new();
+        let mut clipboard_selections = Vec::with_capacity(selections.len());
+        let max_point = buffer.max_point();
+        let mut is_first = true;
+        let mut prev_selection_was_entire_line = false;
+
+        for selection in &selections {
+            let mut start = selection.start;
+            let mut end = selection.end;
+            let is_entire_line = self.selections.line_mode();
+            if is_entire_line {
+                start = Point::new(start.row, 0);
+                let next_line_start = Point::new(end.row + 1, 0);
+                if next_line_start <= max_point {
+                    end = next_line_start;
+                } else {
+                    end = Point::new(end.row, buffer.line_len(MultiBufferRow(end.row)));
+                }
+            }
+
+            if is_first {
+                is_first = false;
+            } else if !prev_selection_was_entire_line {
+                text.push('\n');
+            }
+            prev_selection_was_entire_line = is_entire_line;
+
+            let mut len = 0;
+            for chunk in buffer.text_for_range(start..end) {
+                text.push_str(chunk);
+                len += chunk.len();
+            }
+
+            clipboard_selections.push(ClipboardSelection::for_buffer(
+                len,
+                is_entire_line,
+                start..end,
+                &buffer,
+                self.project.as_ref(),
+                cx,
+            ));
+        }
+
+        Some(ClipboardItem::new_string_with_json_metadata(
+            text,
+            clipboard_selections,
+        ))
+    }
+
+    fn should_append_to_kill_ring(&self, cx: &mut Context<Self>) -> bool {
+        let current_selections = self.selections.disjoint_anchors_arc();
+        self.selections.pending_anchor().is_none()
+            && !current_selections.is_empty()
+            && cx
+                .try_global::<KillRingState>()
+                .is_some_and(|kill_ring| kill_ring.should_append_to_latest(&current_selections))
+    }
+
+    fn push_to_kill_ring(
+        &mut self,
+        item: ClipboardItem,
+        allow_append: bool,
+        set_pending_append: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(entry) = KillRingEntry::from_clipboard_item(&item) else {
+            cx.default_global::<KillRingState>().clear_pending_append();
+            return;
+        };
+
+        let selections = self.selections.disjoint_anchors_arc();
+        let item = cx.default_global::<KillRingState>().push(
+            entry,
+            allow_append,
+            set_pending_append.then_some(selections),
+        );
+
+        if let Some(item) = item {
+            cx.write_to_clipboard(item);
+        }
+    }
+
+    fn deactivate_selection_mark_mode(&mut self, cx: &mut Context<Self>) {
+        if self.selection_mark_mode {
+            self.selection_mark_mode = false;
+            cx.notify();
+        }
     }
 
     fn do_copy(&self, strip_leading_indents: bool, cx: &mut Context<Self>) {
@@ -24280,8 +24413,169 @@ fn collapse_multiline_range(range: Range<Point>) -> Range<Point> {
         range.start..range.start
     }
 }
-pub struct KillRing(ClipboardItem);
-impl Global for KillRing {}
+
+const KILL_RING_MAX: usize = 60;
+
+#[derive(Default)]
+pub struct KillRingState {
+    entries: VecDeque<KillRingEntry>,
+    pending_append: Option<KillRingAppendState>,
+}
+
+impl KillRingState {
+    fn latest(&self) -> Option<&KillRingEntry> {
+        self.entries.front()
+    }
+
+    fn should_append_to_latest(&self, selections: &Arc<[Selection<Anchor>]>) -> bool {
+        self.pending_append
+            .as_ref()
+            .is_some_and(|append_state| append_state.selections.as_ref() == selections.as_ref())
+            && self.latest().is_some()
+    }
+
+    fn clear_pending_append(&mut self) {
+        self.pending_append = None;
+    }
+
+    fn push(
+        &mut self,
+        entry: KillRingEntry,
+        allow_append: bool,
+        next_append_selections: Option<Arc<[Selection<Anchor>]>>,
+    ) -> Option<ClipboardItem> {
+        if entry.is_empty() {
+            self.clear_pending_append();
+            return None;
+        }
+
+        if allow_append
+            && let Some(latest_entry) = self.entries.front_mut()
+            && latest_entry.append(entry.clone())
+        {
+            self.pending_append =
+                next_append_selections.map(|selections| KillRingAppendState { selections });
+            return Some(latest_entry.to_clipboard_item());
+        }
+
+        self.entries.push_front(entry);
+        self.entries.truncate(KILL_RING_MAX);
+        self.pending_append =
+            next_append_selections.map(|selections| KillRingAppendState { selections });
+        self.latest().map(KillRingEntry::to_clipboard_item)
+    }
+}
+
+impl Global for KillRingState {}
+
+#[derive(Clone)]
+struct KillRingAppendState {
+    selections: Arc<[Selection<Anchor>]>,
+}
+
+#[derive(Clone)]
+struct KillRingEntry {
+    selections: Vec<KillRingSelection>,
+}
+
+impl KillRingEntry {
+    fn from_clipboard_item(item: &ClipboardItem) -> Option<Self> {
+        let ClipboardEntry::String(kill_ring) = item.entries().first()? else {
+            return None;
+        };
+
+        let text = kill_ring.text();
+        let clipboard_selections = kill_ring.metadata_json::<Vec<ClipboardSelection>>()?;
+        let selection_count = clipboard_selections.len();
+        let mut offset = 0;
+        let mut selections = Vec::with_capacity(selection_count);
+
+        for (index, clipboard_selection) in clipboard_selections.into_iter().enumerate() {
+            let end = offset + clipboard_selection.len;
+            let selection_text = text.get(offset..end)?.to_string();
+            offset = end;
+            if index + 1 < selection_count && !clipboard_selection.is_entire_line {
+                if text.get(offset..offset + 1)? != "\n" {
+                    return None;
+                }
+                offset += 1;
+            }
+
+            selections.push(KillRingSelection {
+                text: selection_text,
+                metadata: clipboard_selection,
+            });
+        }
+
+        if offset != text.len() {
+            return None;
+        }
+
+        Some(Self { selections })
+    }
+
+    fn is_empty(&self) -> bool {
+        self.selections
+            .iter()
+            .all(|selection| selection.text.is_empty())
+    }
+
+    fn append(&mut self, other: Self) -> bool {
+        if self.selections.len() != other.selections.len() {
+            return false;
+        }
+
+        if self
+            .selections
+            .iter()
+            .zip(other.selections.iter())
+            .any(|(this, other)| this.metadata.is_entire_line != other.metadata.is_entire_line)
+        {
+            return false;
+        }
+
+        for (this, other) in self.selections.iter_mut().zip(other.selections) {
+            this.text.push_str(&other.text);
+            this.metadata.len = this.text.len();
+        }
+
+        true
+    }
+
+    fn to_paste_data(&self) -> (String, Option<Vec<ClipboardSelection>>) {
+        let mut text = String::new();
+        let mut metadata = Vec::with_capacity(self.selections.len());
+        let mut is_first = true;
+        let mut prev_selection_was_entire_line = false;
+
+        for selection in &self.selections {
+            if is_first {
+                is_first = false;
+            } else if !prev_selection_was_entire_line {
+                text.push('\n');
+            }
+            prev_selection_was_entire_line = selection.metadata.is_entire_line;
+            text.push_str(&selection.text);
+
+            let mut selection_metadata = selection.metadata.clone();
+            selection_metadata.len = selection.text.len();
+            metadata.push(selection_metadata);
+        }
+
+        (text, Some(metadata))
+    }
+
+    fn to_clipboard_item(&self) -> ClipboardItem {
+        let (text, metadata) = self.to_paste_data();
+        ClipboardItem::new_string_with_json_metadata(text, metadata.unwrap_or_default())
+    }
+}
+
+#[derive(Clone)]
+struct KillRingSelection {
+    text: String,
+    metadata: ClipboardSelection,
+}
 
 const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
 

@@ -60,8 +60,8 @@
       "alt-backspace": "editor::DeleteToPreviousWordStart", // backward-kill-word
       "alt-delete": "editor::DeleteToPreviousWordStart", // backward-kill-word
       "ctrl-k": "editor::KillRingCut", // kill-line
-      "ctrl-w": "editor::Cut", // kill-region
-      "alt-w": "editor::Copy", // kill-ring-save
+      "ctrl-w": "editor::KillRingCutRegion", // kill-region
+      "alt-w": "editor::KillRingSave", // kill-ring-save
       "ctrl-y": "editor::KillRingYank", // yank
       "ctrl-_": "editor::Undo", // undo
       "ctrl-/": "editor::Undo", // undo

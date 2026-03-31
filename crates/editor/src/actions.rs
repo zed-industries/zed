@@ -622,6 +622,10 @@ actions!(
         JoinLines,
         /// Cuts to kill ring (Emacs-style).
         KillRingCut,
+        /// Cuts the active selection to kill ring (Emacs-style).
+        KillRingCutRegion,
+        /// Saves the active selection to kill ring (Emacs-style).
+        KillRingSave,
         /// Yanks from kill ring (Emacs-style).
         KillRingYank,
         /// Moves cursor down one line.
