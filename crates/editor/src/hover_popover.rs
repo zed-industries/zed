@@ -17,7 +17,7 @@ use gpui::{
 use itertools::Itertools;
 use language::{DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
-use markdown::{Markdown, MarkdownElement, MarkdownStyle};
+use markdown::{CopyButtonVisibility, Markdown, MarkdownElement, MarkdownStyle};
 use multi_buffer::{MultiBufferOffset, ToOffset, ToPoint};
 use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
 use settings::Settings;
@@ -1040,8 +1040,7 @@ impl InfoPopover {
                         .child(
                             MarkdownElement::new(markdown, hover_markdown_style(window, cx))
                                 .code_block_renderer(markdown::CodeBlockRenderer::Default {
-                                    copy_button: false,
-                                    copy_button_on_hover: false,
+                                    copy_button_visibility: CopyButtonVisibility::Hidden,
                                     border: false,
                                 })
                                 .on_url_click(open_markdown_url)
@@ -1155,8 +1154,7 @@ impl DiagnosticPopover {
                                     diagnostics_markdown_style(window, cx),
                                 )
                                 .code_block_renderer(markdown::CodeBlockRenderer::Default {
-                                    copy_button: false,
-                                    copy_button_on_hover: false,
+                                    copy_button_visibility: CopyButtonVisibility::Hidden,
                                     border: false,
                                 })
                                 .on_url_click(

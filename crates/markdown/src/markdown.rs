@@ -270,10 +270,15 @@ pub struct MarkdownOptions {
     pub render_mermaid_diagrams: bool,
 }
 
+pub enum CopyButtonVisibility {
+    Hidden,
+    AlwaysVisible,
+    VisibleOnHover,
+}
+
 pub enum CodeBlockRenderer {
     Default {
-        copy_button: bool,
-        copy_button_on_hover: bool,
+        copy_button_visibility: CopyButtonVisibility,
         border: bool,
     },
     Custom {
@@ -826,8 +831,7 @@ impl MarkdownElement {
             markdown,
             style,
             code_block_renderer: CodeBlockRenderer::Default {
-                copy_button: false,
-                copy_button_on_hover: true,
+                copy_button_visibility: CopyButtonVisibility::VisibleOnHover,
                 border: false,
             },
             on_url_click: None,
@@ -1686,63 +1690,65 @@ impl Element for MarkdownElement {
                         builder.pop_text_style();
 
                         if let CodeBlockRenderer::Default {
-                            copy_button: true, ..
+                            copy_button_visibility, ..
                         } = &self.code_block_renderer
                         {
-                            builder.modify_current_div(|el| {
-                                let content_range = parser::extract_code_block_content_range(
-                                    &parsed_markdown.source()[range.clone()],
-                                );
-                                let content_range = content_range.start + range.start
-                                    ..content_range.end + range.start;
+                            match copy_button_visibility {
+                                CopyButtonVisibility::AlwaysVisible => {
+                                    builder.modify_current_div(|el| {
+                                        let content_range = parser::extract_code_block_content_range(
+                                            &parsed_markdown.source()[range.clone()],
+                                        );
+                                        let content_range = content_range.start + range.start
+                                            ..content_range.end + range.start;
 
-                                let code = parsed_markdown.source()[content_range].to_string();
-                                let codeblock = render_copy_code_block_button(
-                                    range.end,
-                                    code,
-                                    self.markdown.clone(),
-                                );
-                                el.child(
-                                    h_flex()
-                                        .w_4()
-                                        .absolute()
-                                        .top_1p5()
-                                        .right_1p5()
-                                        .justify_end()
-                                        .child(codeblock),
-                                )
-                            });
-                        }
+                                        let code =
+                                            parsed_markdown.source()[content_range].to_string();
+                                        let codeblock = render_copy_code_block_button(
+                                            range.end,
+                                            code,
+                                            self.markdown.clone(),
+                                        );
+                                        el.child(
+                                            h_flex()
+                                                .w_4()
+                                                .absolute()
+                                                .top_1p5()
+                                                .right_1p5()
+                                                .justify_end()
+                                                .child(codeblock),
+                                        )
+                                    });
+                                }
+                                CopyButtonVisibility::VisibleOnHover => {
+                                    builder.modify_current_div(|el| {
+                                        let content_range = parser::extract_code_block_content_range(
+                                            &parsed_markdown.source()[range.clone()],
+                                        );
+                                        let content_range = content_range.start + range.start
+                                            ..content_range.end + range.start;
 
-                        if let CodeBlockRenderer::Default {
-                            copy_button_on_hover: true,
-                            ..
-                        } = &self.code_block_renderer
-                        {
-                            builder.modify_current_div(|el| {
-                                let content_range = parser::extract_code_block_content_range(
-                                    &parsed_markdown.source()[range.clone()],
-                                );
-                                let content_range = content_range.start + range.start
-                                    ..content_range.end + range.start;
-
-                                let code = parsed_markdown.source()[content_range].to_string();
-                                let codeblock = render_copy_code_block_button(
-                                    range.end,
-                                    code,
-                                    self.markdown.clone(),
-                                );
-                                el.child(
-                                    h_flex()
-                                        .w_4()
-                                        .absolute()
-                                        .top_0()
-                                        .right_0()
-                                        .justify_end()
-                                        .visible_on_hover("code_block")
-                                        .child(codeblock),
-                                )
-                            });
+                                        let code =
+                                            parsed_markdown.source()[content_range].to_string();
+                                        let codeblock = render_copy_code_block_button(
+                                            range.end,
+                                            code,
+                                            self.markdown.clone(),
+                                        );
+                                        el.child(
+                                            h_flex()
+                                                .w_4()
+                                                .absolute()
+                                                .top_0()
+                                                .right_0()
+                                                .justify_end()
+                                                .visible_on_hover("code_block")
+                                                .child(codeblock),
+                                        )
+                                    });
+                                }
+                                CopyButtonVisibility::Hidden => {}
+                            }
                         }
 
                         // Pop the parent container.
@@ -2772,8 +2778,7 @@ mod tests {
             |_window, _cx| {
                 MarkdownElement::new(markdown, MarkdownStyle::default()).code_block_renderer(
                     CodeBlockRenderer::Default {
-                        copy_button: false,
-                        copy_button_on_hover: false,
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
                         border: false,
                     },
                 )

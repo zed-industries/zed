@@ -530,8 +530,7 @@ mod tests {
             |_window, _cx| {
                 MarkdownElement::new(markdown, MarkdownStyle::default()).code_block_renderer(
                     CodeBlockRenderer::Default {
-                        copy_button: false,
-                        copy_button_on_hover: false,
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
                         border: false,
                     },
                 )
@@ -591,8 +590,7 @@ mod tests {
             |_window, _cx| {
                 MarkdownElement::new(markdown, MarkdownStyle::default()).code_block_renderer(
                     CodeBlockRenderer::Default {
-                        copy_button: false,
-                        copy_button_on_hover: false,
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
                         border: false,
                     },
                 )

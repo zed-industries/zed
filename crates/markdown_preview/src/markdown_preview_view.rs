@@ -13,7 +13,8 @@ use gpui::{
 };
 use language::LanguageRegistry;
 use markdown::{
-    CodeBlockRenderer, Markdown, MarkdownElement, MarkdownFont, MarkdownOptions, MarkdownStyle,
+    CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownFont, MarkdownOptions,
+    MarkdownStyle,
 };
 use settings::Settings;
 use theme_settings::ThemeSettings;
@@ -593,8 +594,7 @@ impl MarkdownPreviewView {
             MarkdownStyle::themed(MarkdownFont::Editor, window, cx),
         )
         .code_block_renderer(CodeBlockRenderer::Default {
-            copy_button: false,
-            copy_button_on_hover: true,
+            copy_button_visibility: CopyButtonVisibility::VisibleOnHover,
             border: false,
         })
         .scroll_handle(self.scroll_handle.clone())
