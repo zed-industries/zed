@@ -2013,9 +2013,9 @@ impl ConnectionLanding {
                         )
                     } else if has_error {
                         (
-                            Color::Error,
+                            Color::Muted,
                             "Error".to_string(),
-                            Color::Error,
+                            Color::Muted,
                             GroupIndicator::RedDot,
                         )
                     } else {
@@ -2232,21 +2232,36 @@ impl ConnectionLanding {
                 h_flex()
                     .gap_2()
                     .items_center()
-                    .child(
-                        Icon::new(if is_open {
-                            IconName::FolderOpen
-                        } else {
-                            IconName::Folder
-                        })
-                        .size(IconSize::Small)
-                        .color(if is_error {
-                            Color::Error
-                        } else if is_open {
-                            Color::Accent
-                        } else {
-                            Color::Muted
-                        }),
-                    )
+                    .when(!is_error, |this| {
+                        this.child(
+                            Icon::new(if is_open {
+                                IconName::FolderOpen
+                            } else {
+                                IconName::Folder
+                            })
+                            .size(IconSize::Small)
+                            .color(if is_open {
+                                Color::Accent
+                            } else {
+                                Color::Muted
+                            }),
+                        )
+                    })
+                    .when(is_error, |this| {
+                        this.child(
+                            div()
+                                .id(SharedString::from(format!("retry-{index}")))
+                                .cursor_pointer()
+                                .on_click(cx.listener(move |this, _event, window, cx| {
+                                    this.connect_host(index, window, cx);
+                                }))
+                                .child(
+                                    Icon::new(IconName::ArrowCircle)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                ),
+                        )
+                    })
                     .child(
                         Label::new(path_label)
                             .size(LabelSize::Small)
@@ -2280,16 +2295,19 @@ impl ConnectionLanding {
                     .when(is_error && !self.editing_hosts, |this| {
                         this.child(
                             IconButton::new(
-                                SharedString::from(format!("retry-host-{index}")),
-                                IconName::RotateCw,
+                                SharedString::from(format!("dismiss-error-{index}")),
+                                IconName::Close,
                             )
                             .size(ui::ButtonSize::Compact)
                             .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
+                            .icon_color(Color::Error)
                             .style(ButtonStyle::Transparent)
                             .on_click(cx.listener(
-                                move |this, _event, window, cx| {
-                                    this.connect_host(index, window, cx);
+                                move |this, _event, _window, cx| {
+                                    if let Some(host) = this.saved_hosts.get_mut(index) {
+                                        host.status = ConnectionStatus::Disconnected;
+                                        cx.notify();
+                                    }
                                 },
                             )),
                         )
