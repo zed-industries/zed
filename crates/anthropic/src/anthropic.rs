@@ -83,13 +83,6 @@ pub enum Model {
         alias = "claude-sonnet-4-5-thinking-latest"
     )]
     ClaudeSonnet4_5,
-    #[serde(
-        rename = "claude-sonnet-4-5-1m-context",
-        alias = "claude-sonnet-4-5-1m-context-latest",
-        alias = "claude-sonnet-4-5-1m-context-thinking",
-        alias = "claude-sonnet-4-5-1m-context-thinking-latest"
-    )]
-    ClaudeSonnet4_5_1mContext,
     #[default]
     #[serde(
         rename = "claude-sonnet-4-6",
@@ -156,10 +149,6 @@ impl Model {
             return Ok(Self::ClaudeSonnet4_6);
         }
 
-        if id.starts_with("claude-sonnet-4-5-1m-context") {
-            return Ok(Self::ClaudeSonnet4_5_1mContext);
-        }
-
         if id.starts_with("claude-sonnet-4-5") {
             return Ok(Self::ClaudeSonnet4_5);
         }
@@ -187,7 +176,6 @@ impl Model {
             Self::ClaudeOpus4_6 => "claude-opus-4-6-latest",
             Self::ClaudeSonnet4 => "claude-sonnet-4-latest",
             Self::ClaudeSonnet4_5 => "claude-sonnet-4-5-latest",
-            Self::ClaudeSonnet4_5_1mContext => "claude-sonnet-4-5-1m-context-latest",
             Self::ClaudeSonnet4_6 => "claude-sonnet-4-6-latest",
             Self::ClaudeHaiku4_5 => "claude-haiku-4-5-latest",
             Self::Claude3Haiku => "claude-3-haiku-20240307",
@@ -203,7 +191,7 @@ impl Model {
             Self::ClaudeOpus4_5 => "claude-opus-4-5-20251101",
             Self::ClaudeOpus4_6 => "claude-opus-4-6",
             Self::ClaudeSonnet4 => "claude-sonnet-4-20250514",
-            Self::ClaudeSonnet4_5 | Self::ClaudeSonnet4_5_1mContext => "claude-sonnet-4-5-20250929",
+            Self::ClaudeSonnet4_5 => "claude-sonnet-4-5-20250929",
             Self::ClaudeSonnet4_6 => "claude-sonnet-4-6",
             Self::ClaudeHaiku4_5 => "claude-haiku-4-5-20251001",
             Self::Claude3Haiku => "claude-3-haiku-20240307",
@@ -219,7 +207,6 @@ impl Model {
             Self::ClaudeOpus4_6 => "Claude Opus 4.6",
             Self::ClaudeSonnet4 => "Claude Sonnet 4",
             Self::ClaudeSonnet4_5 => "Claude Sonnet 4.5",
-            Self::ClaudeSonnet4_5_1mContext => "Claude Sonnet 4.5 (1M context)",
             Self::ClaudeSonnet4_6 => "Claude Sonnet 4.6",
             Self::ClaudeHaiku4_5 => "Claude Haiku 4.5",
             Self::Claude3Haiku => "Claude 3 Haiku",
@@ -237,7 +224,6 @@ impl Model {
             | Self::ClaudeOpus4_6
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4_5
-            | Self::ClaudeSonnet4_5_1mContext
             | Self::ClaudeSonnet4_6
             | Self::ClaudeHaiku4_5
             | Self::Claude3Haiku => Some(AnthropicModelCacheConfiguration {
@@ -261,9 +247,7 @@ impl Model {
             | Self::ClaudeSonnet4_5
             | Self::ClaudeHaiku4_5
             | Self::Claude3Haiku => 200_000,
-            Self::ClaudeOpus4_6 | Self::ClaudeSonnet4_5_1mContext | Self::ClaudeSonnet4_6 => {
-                1_000_000
-            }
+            Self::ClaudeOpus4_6 | Self::ClaudeSonnet4_6 => 1_000_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -274,7 +258,6 @@ impl Model {
             Self::ClaudeOpus4_5
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4_5
-            | Self::ClaudeSonnet4_5_1mContext
             | Self::ClaudeSonnet4_6
             | Self::ClaudeHaiku4_5 => 64_000,
             Self::ClaudeOpus4_6 => 128_000,
@@ -293,7 +276,6 @@ impl Model {
             | Self::ClaudeOpus4_6
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4_5
-            | Self::ClaudeSonnet4_5_1mContext
             | Self::ClaudeSonnet4_6
             | Self::ClaudeHaiku4_5
             | Self::Claude3Haiku => 1.0,
@@ -325,7 +307,6 @@ impl Model {
                 | Self::ClaudeOpus4_6
                 | Self::ClaudeSonnet4
                 | Self::ClaudeSonnet4_5
-                | Self::ClaudeSonnet4_5_1mContext
                 | Self::ClaudeSonnet4_6
                 | Self::ClaudeHaiku4_5
         )
