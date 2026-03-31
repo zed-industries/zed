@@ -7,8 +7,7 @@ mod surround;
 
 use editor::display_map::DisplaySnapshot;
 use editor::{
-    DisplayPoint, Editor, EditorSettings, HideMouseCursorOrigin, MultiBufferOffset,
-    SelectionEffects, ToOffset, ToPoint, movement,
+    DisplayPoint, Editor, EditorSettings, HideMouseCursorOrigin, ModalCursorMode, MultiBufferOffset, SelectionEffects, ToOffset, ToPoint, movement
 };
 use gpui::actions;
 use gpui::{Context, Window};
@@ -791,6 +790,7 @@ impl Vim {
             let max_point = display_map.buffer_snapshot().max_point();
             let buffer_snapshot = &display_map.buffer_snapshot();
 
+            let mut clamped_to_eof = false;
             for selection in &mut selections {
                 // Start always goes to column 0 of the first selected line
                 let start_row = selection.start.row;
@@ -809,6 +809,7 @@ impl Vim {
 
                 selection.start = Point::new(start_row, 0);
                 selection.end = if end_row > max_point.row {
+                    clamped_to_eof = true;
                     max_point
                 } else {
                     Point::new(end_row, 0)
@@ -819,6 +820,12 @@ impl Vim {
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.select(selections);
             });
+
+            let mode = match clamped_to_eof {
+                true => ModalCursorMode::EOF,
+                false => ModalCursorMode::Helix,
+            };
+            editor.set_cursor_offset(mode);
         });
     }
 
@@ -1999,6 +2006,42 @@ mod test {
         let cursor_y_after =
             cx.update_editor(|editor, _, cx| editor.pixel_position_of_cursor(cx).map(|p| p.y));
         assert_eq!(cursor_y_before, cursor_y_after);
+    }
+
+    // Regression test for: selecting a trailing empty line with repeated `x`.
+    //
+    // In Helix, given a buffer with a trailing newline (creating an empty
+    // final line), pressing `x` from the second-to-last line should first
+    // select that line, then a second `x` should extend to include the
+    // trailing empty line.
+    //
+    // The selection endpoints are identical in both cases (both end at
+    // max_point), so we verify through cursor render position: after the
+    // first `x` the cursor should render on "line two", after the second
+    // `x` it should drop to the empty trailing line (via ModalCursorMode::EOF).
+    #[gpui::test]
+    async fn test_helix_select_line_trailing_empty_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // Buffer has 3 lines: "line one", "line two", "" (trailing newline)
+        cx.set_state("line one\nˇline two\n", Mode::HelixNormal);
+
+        // First x: selects line 2, cursor renders on "line two"
+        cx.simulate_keystrokes("x");
+        cx.assert_state("line one\n«line two\nˇ»", Mode::HelixNormal);
+        let cursor_y_after_first_x =
+            cx.update_editor(|editor, _, cx| editor.pixel_position_of_cursor(cx).map(|p| p.y));
+
+        // Second x: extends to include trailing empty line.
+        // Cursor should move down to the empty line (EOF mode).
+        cx.simulate_keystrokes("x");
+        let cursor_y_after_second_x =
+            cx.update_editor(|editor, _, cx| editor.pixel_position_of_cursor(cx).map(|p| p.y));
+        assert_ne!(
+            cursor_y_after_first_x, cursor_y_after_second_x,
+            "second x should move cursor to trailing empty line"
+        );
     }
 
     #[gpui::test]

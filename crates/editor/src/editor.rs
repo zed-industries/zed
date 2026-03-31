@@ -294,6 +294,10 @@ pub enum ModalCursorMode {
     None,
     Vim,
     Helix,
+    /// Selection reached end-of-file and was clamped to max_point.
+    /// Unlike `Helix`, keeps cursor on the trailing empty line instead of
+    /// moving it up to the previous row.
+    EOF,
 }
 
 impl ModalCursorMode {
