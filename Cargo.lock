@@ -15975,6 +15975,7 @@ dependencies = [
  "gpui",
  "language_model",
  "menu",
+ "platform_title_bar",
  "pretty_assertions",
  "project",
  "prompt_store",

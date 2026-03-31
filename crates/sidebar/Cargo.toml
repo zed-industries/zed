@@ -30,6 +30,7 @@ fs.workspace = true
 git.workspace = true
 gpui.workspace = true
 menu.workspace = true
+platform_title_bar.workspace = true
 project.workspace = true
 recent_projects.workspace = true
 remote.workspace = true
