@@ -2,7 +2,9 @@ use crate::{
     RemoteClientDelegate, RemotePlatform,
     json_log::LogRecord,
     protocol::{MESSAGE_LEN_SIZE, message_len_from_buffer},
-    remote_client::{CommandTemplate, Interactive, RemoteConnection, RemoteConnectionOptions},
+    remote_client::{
+        CommandTemplate, Interactive, RemoteConnection, RemoteConnectionOptions, SshShellChannel,
+    },
     transport::{parse_platform, parse_shell},
     transport::ssh::SshConnectionOptions,
 };
@@ -500,6 +502,112 @@ impl RemoteConnection for RusshRemoteConnection {
     fn has_wsl_interop(&self) -> bool {
         false
     }
+
+    fn open_shell_channel(
+        &self,
+        terminal_type: &str,
+        cols: u32,
+        rows: u32,
+        working_directory: Option<String>,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<SshShellChannel>> {
+        let session = self.session.clone();
+        let term = terminal_type.to_string();
+        let shell = self.remote_shell.clone();
+
+        Tokio::spawn_result(cx, async move {
+            let handle = session.lock().await;
+            let channel = handle.channel_open_session().await?;
+
+            channel
+                .request_pty(true, &term, cols, rows, 0, 0, &[])
+                .await
+                .map_err(|error| anyhow!("request_pty failed: {error}"))?;
+
+            // Always use exec with a login shell so profiles are sourced
+            // and PATH is set correctly. The -l flag makes bash/zsh read
+            // /etc/profile, ~/.profile, ~/.bash_profile, etc.
+            let command = if let Some(directory) = working_directory {
+                format!("cd {} && exec {} -l", shell_escape(&directory), shell)
+            } else {
+                format!("exec {} -l", shell)
+            };
+            channel
+                .exec(true, command.into_bytes())
+                .await
+                .map_err(|error| anyhow!("exec failed: {error}"))?;
+
+            drop(handle);
+
+            let (mut read_half, write_half) = channel.split();
+            let write_half = Arc::new(write_half);
+
+            let (input_tx, input_rx) = smol::channel::bounded::<Vec<u8>>(64);
+            let (resize_tx, resize_rx) = smol::channel::bounded::<(u32, u32)>(4);
+            let (output_tx, output_rx) = smol::channel::bounded::<Vec<u8>>(64);
+            let (exit_tx, exit_rx) = smol::channel::bounded::<Option<u32>>(1);
+
+            // Writer task: user input → SSH channel
+            tokio::spawn({
+                let write_half = write_half.clone();
+                async move {
+                    while let Ok(data) = input_rx.recv().await {
+                        if write_half.data(&data[..]).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+            });
+
+            // Resize task: terminal resize → SSH window-change
+            tokio::spawn({
+                let write_half = write_half.clone();
+                async move {
+                    while let Ok((cols, rows)) = resize_rx.recv().await {
+                        let _ = write_half.window_change(cols, rows, 0, 0).await;
+                    }
+                }
+            });
+
+            // Reader task: SSH channel → output bytes
+            tokio::spawn(async move {
+                while let Some(msg) = read_half.wait().await {
+                    match msg {
+                        russh::ChannelMsg::Data { data } => {
+                            if output_tx.send(data.to_vec()).await.is_err() {
+                                break;
+                            }
+                        }
+                        russh::ChannelMsg::ExtendedData { data, .. } => {
+                            if output_tx.send(data.to_vec()).await.is_err() {
+                                break;
+                            }
+                        }
+                        russh::ChannelMsg::ExitStatus { exit_status } => {
+                            exit_tx.send(Some(exit_status)).await.ok();
+                            break;
+                        }
+                        russh::ChannelMsg::Eof | russh::ChannelMsg::Close => {
+                            exit_tx.send(None).await.ok();
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+            });
+
+            Ok(SshShellChannel {
+                input_tx,
+                resize_tx,
+                output_rx,
+                exit_rx,
+            })
+        })
+    }
+}
+
+fn shell_escape(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 fn handle_stderr_data(data: &[u8]) {

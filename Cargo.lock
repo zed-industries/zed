@@ -23355,6 +23355,8 @@ dependencies = [
  "serde_json",
  "session",
  "settings",
+ "terminal",
+ "terminal_view",
  "theme",
  "theme_selector",
  "theme_settings",

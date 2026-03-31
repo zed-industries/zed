@@ -419,6 +419,97 @@ impl TerminalBuilder {
             child_exited: None,
             keyboard_input_sent: false,
             event_loop_task: Task::ready(Ok(())),
+            ssh_output_rx: None,
+            ssh_exit_rx: None,
+            background_executor: background_executor.clone(),
+            path_style,
+            #[cfg(any(test, feature = "test-support"))]
+            input_log: Vec::new(),
+        };
+
+        Ok(TerminalBuilder {
+            terminal,
+            events_rx,
+        })
+    }
+
+    pub fn new_ssh(
+        input_tx: smol::channel::Sender<Vec<u8>>,
+        resize_tx: smol::channel::Sender<(u32, u32)>,
+        output_rx: smol::channel::Receiver<Vec<u8>>,
+        exit_rx: smol::channel::Receiver<Option<u32>>,
+        title_override: Option<String>,
+        cursor_shape: CursorShape,
+        alternate_scroll: AlternateScroll,
+        max_scroll_history_lines: Option<usize>,
+        window_id: u64,
+        background_executor: &BackgroundExecutor,
+        path_style: PathStyle,
+    ) -> Result<TerminalBuilder> {
+        let default_cursor_style = AlacCursorStyle::from(cursor_shape);
+        let scrolling_history = max_scroll_history_lines
+            .unwrap_or(DEFAULT_SCROLL_HISTORY_LINES)
+            .min(MAX_SCROLL_HISTORY_LINES);
+        let config = Config {
+            scrolling_history,
+            default_cursor_style,
+            ..Config::default()
+        };
+
+        let (events_tx, events_rx) = unbounded();
+        let mut term = Term::new(
+            config.clone(),
+            &TerminalBounds::default(),
+            ZedListener(events_tx),
+        );
+
+        if let AlternateScroll::Off = alternate_scroll {
+            term.unset_private_mode(PrivateMode::Named(NamedPrivateMode::AlternateScroll));
+        }
+
+        let term = Arc::new(FairMutex::new(term));
+
+        let terminal = Terminal {
+            task: None,
+            terminal_type: TerminalType::Ssh { input_tx, resize_tx },
+            completion_tx: None,
+            term,
+            term_config: config,
+            title_override,
+            events: VecDeque::with_capacity(10),
+            last_content: Default::default(),
+            last_mouse: None,
+            matches: Vec::new(),
+
+            selection_head: None,
+            breadcrumb_text: String::new(),
+            scroll_px: px(0.),
+            next_link_id: 0,
+            selection_phase: SelectionPhase::Ended,
+            hyperlink_regex_searches: RegexSearches::default(),
+            vi_mode_enabled: false,
+            is_remote_terminal: true,
+            last_mouse_move_time: Instant::now(),
+            last_hyperlink_search_position: None,
+            mouse_down_hyperlink: None,
+            #[cfg(windows)]
+            shell_program: None,
+            activation_script: Vec::new(),
+            template: CopyTemplate {
+                shell: Shell::System,
+                env: HashMap::default(),
+                cursor_shape,
+                alternate_scroll,
+                max_scroll_history_lines,
+                path_hyperlink_regexes: Vec::default(),
+                path_hyperlink_timeout_ms: 0,
+                window_id,
+            },
+            child_exited: None,
+            keyboard_input_sent: false,
+            event_loop_task: Task::ready(Ok(())),
+            ssh_output_rx: Some(output_rx),
+            ssh_exit_rx: Some(exit_rx),
             background_executor: background_executor.clone(),
             path_style,
             #[cfg(any(test, feature = "test-support"))]
@@ -653,6 +744,8 @@ impl TerminalBuilder {
                 child_exited: None,
                 keyboard_input_sent: false,
                 event_loop_task: Task::ready(Ok(())),
+                ssh_output_rx: None,
+                ssh_exit_rx: None,
                 background_executor,
                 path_style,
                 #[cfg(any(test, feature = "test-support"))]
@@ -754,6 +847,46 @@ impl TerminalBuilder {
             }
             anyhow::Ok(())
         });
+
+        // For SSH terminals, spawn a task that reads output from the SSH channel
+        // and feeds it into the terminal emulator.
+        if let Some(output_rx) = self.terminal.ssh_output_rx.take() {
+            let exit_rx = self.terminal.ssh_exit_rx.take();
+            cx.spawn(async move |terminal, cx| {
+                loop {
+                    futures::select_biased! {
+                        data = output_rx.recv().fuse() => {
+                            match data {
+                                Ok(bytes) => {
+                                    terminal.update(cx, |terminal, cx| {
+                                        terminal.write_ssh_output(&bytes, cx);
+                                    })?;
+                                }
+                                Err(_) => break,
+                            }
+                        }
+                        exit = async {
+                            if let Some(ref rx) = exit_rx {
+                                rx.recv().await.ok()
+                            } else {
+                                futures::future::pending::<Option<Option<u32>>>().await
+                            }
+                        }.fuse() => {
+                            if let Some(status) = exit {
+                                let code = status.map(|s| s as i32);
+                                terminal.update(cx, |terminal, cx| {
+                                    terminal.register_task_finished(code, cx);
+                                })?;
+                            }
+                            break;
+                        }
+                    }
+                }
+                anyhow::Ok(())
+            })
+            .detach();
+        }
+
         self.terminal
     }
 
@@ -846,6 +979,10 @@ enum TerminalType {
         pty_tx: Notifier,
         info: Arc<PtyProcessInfo>,
     },
+    Ssh {
+        input_tx: smol::channel::Sender<Vec<u8>>,
+        resize_tx: smol::channel::Sender<(u32, u32)>,
+    },
     DisplayOnly,
 }
 
@@ -880,6 +1017,8 @@ pub struct Terminal {
     child_exited: Option<ExitStatus>,
     keyboard_input_sent: bool,
     event_loop_task: Task<Result<(), anyhow::Error>>,
+    ssh_output_rx: Option<smol::channel::Receiver<Vec<u8>>>,
+    ssh_exit_rx: Option<smol::channel::Receiver<Option<u32>>>,
     background_executor: BackgroundExecutor,
     path_style: PathStyle,
     #[cfg(any(test, feature = "test-support"))]
@@ -1032,8 +1171,16 @@ impl Terminal {
 
                 self.last_content.terminal_bounds = new_bounds;
 
-                if let TerminalType::Pty { pty_tx, .. } = &self.terminal_type {
-                    pty_tx.0.send(Msg::Resize(new_bounds.into())).ok();
+                match &self.terminal_type {
+                    TerminalType::Pty { pty_tx, .. } => {
+                        pty_tx.0.send(Msg::Resize(new_bounds.into())).ok();
+                    }
+                    TerminalType::Ssh { resize_tx, .. } => {
+                        let cols = new_bounds.num_columns() as u32;
+                        let rows = new_bounds.num_lines() as u32;
+                        resize_tx.send_blocking((cols, rows)).ok();
+                    }
+                    TerminalType::DisplayOnly => {}
                 }
 
                 term.resize(new_bounds);
@@ -1328,6 +1475,20 @@ impl Terminal {
         cx.emit(Event::Wakeup);
     }
 
+    /// Feed SSH PTY output directly into the terminal emulator.
+    /// Unlike `write_output`, this skips LF→CRLF conversion because SSH PTY
+    /// output already contains proper line endings from the remote PTY.
+    pub fn write_ssh_output(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
+        let mut processor = alacritty_terminal::vte::ansi::Processor::<
+            alacritty_terminal::vte::ansi::StdSyncHandler,
+        >::new();
+        {
+            let mut term = self.term.lock();
+            processor.advance(&mut *term, bytes);
+        }
+        cx.emit(Event::Wakeup);
+    }
+
     pub fn total_lines(&self) -> usize {
         self.term.lock_unfair().total_lines()
     }
@@ -1447,16 +1608,22 @@ impl Terminal {
     /// Write the Input payload to the PTY, if applicable.
     /// (This is a no-op for display-only terminals.)
     fn write_to_pty(&self, input: impl Into<Cow<'static, [u8]>>) {
-        if let TerminalType::Pty { pty_tx, .. } = &self.terminal_type {
-            let input = input.into();
-            if log::log_enabled!(log::Level::Debug) {
-                if let Ok(str) = str::from_utf8(&input) {
-                    log::debug!("Writing to PTY: {:?}", str);
-                } else {
-                    log::debug!("Writing to PTY: {:?}", input);
+        let input = input.into();
+        match &self.terminal_type {
+            TerminalType::Pty { pty_tx, .. } => {
+                if log::log_enabled!(log::Level::Debug) {
+                    if let Ok(str) = str::from_utf8(&input) {
+                        log::debug!("Writing to PTY: {:?}", str);
+                    } else {
+                        log::debug!("Writing to PTY: {:?}", input);
+                    }
                 }
+                pty_tx.notify(input);
             }
-            pty_tx.notify(input);
+            TerminalType::Ssh { input_tx, .. } => {
+                input_tx.send_blocking(input.into_owned()).ok();
+            }
+            TerminalType::DisplayOnly => {}
         }
     }
 
@@ -2128,7 +2295,7 @@ impl Terminal {
                 .read()
                 .as_ref()
                 .map(|process| process.cwd.clone()),
-            TerminalType::DisplayOnly => None,
+            TerminalType::Ssh { .. } | TerminalType::DisplayOnly => None,
         }
     }
 
@@ -2179,7 +2346,9 @@ impl Terminal {
                             format!("{process_file} — {process_name}")
                         })
                         .unwrap_or_else(|| "Terminal".to_string()),
-                    TerminalType::DisplayOnly => "Terminal".to_string(),
+                    TerminalType::Ssh { .. } | TerminalType::DisplayOnly => {
+                        "Terminal".to_string()
+                    }
                 }),
         }
     }
@@ -2188,12 +2357,16 @@ impl Terminal {
         if let Some(task) = self.task()
             && task.status == TaskStatus::Running
         {
-            if let TerminalType::Pty { info, .. } = &self.terminal_type {
-                // First kill the foreground process group (the command running in the shell)
-                info.kill_current_process();
-                // Then kill the shell itself so that the terminal exits properly
-                // and wait_for_completed_task can complete
-                info.kill_child_process();
+            match &self.terminal_type {
+                TerminalType::Pty { info, .. } => {
+                    info.kill_current_process();
+                    info.kill_child_process();
+                }
+                TerminalType::Ssh { input_tx, .. } => {
+                    // Send Ctrl-C to the remote shell
+                    input_tx.send_blocking(vec![0x03]).ok();
+                }
+                TerminalType::DisplayOnly => {}
             }
         }
     }
@@ -2201,14 +2374,14 @@ impl Terminal {
     pub fn pid(&self) -> Option<sysinfo::Pid> {
         match &self.terminal_type {
             TerminalType::Pty { info, .. } => info.pid(),
-            TerminalType::DisplayOnly => None,
+            TerminalType::Ssh { .. } | TerminalType::DisplayOnly => None,
         }
     }
 
     pub fn pid_getter(&self) -> Option<&ProcessIdGetter> {
         match &self.terminal_type {
             TerminalType::Pty { info, .. } => Some(info.pid_getter()),
-            TerminalType::DisplayOnly => None,
+            TerminalType::Ssh { .. } | TerminalType::DisplayOnly => None,
         }
     }
 
@@ -2420,18 +2593,27 @@ unsafe fn append_text_to_term(term: &mut Term<ZedListener>, text_lines: &[&str])
 
 impl Drop for Terminal {
     fn drop(&mut self) {
-        if let TerminalType::Pty { pty_tx, info } =
-            std::mem::replace(&mut self.terminal_type, TerminalType::DisplayOnly)
-        {
-            pty_tx.0.send(Msg::Shutdown).ok();
+        match std::mem::replace(&mut self.terminal_type, TerminalType::DisplayOnly) {
+            TerminalType::Pty { pty_tx, info } => {
+                pty_tx.0.send(Msg::Shutdown).ok();
 
-            let timer = self.background_executor.timer(Duration::from_millis(100));
-            self.background_executor
-                .spawn(async move {
-                    timer.await;
-                    info.kill_child_process();
-                })
-                .detach();
+                let timer = self.background_executor.timer(Duration::from_millis(100));
+                self.background_executor
+                    .spawn(async move {
+                        timer.await;
+                        info.kill_child_process();
+                    })
+                    .detach();
+            }
+            TerminalType::Ssh {
+                input_tx,
+                resize_tx,
+            } => {
+                // Closing the senders causes the tokio read/write/resize tasks to exit.
+                input_tx.close();
+                resize_tx.close();
+            }
+            TerminalType::DisplayOnly => {}
         }
     }
 }

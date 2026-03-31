@@ -429,6 +429,7 @@ mod ios {
                 git_ui::init(cx);
                 language_tools::init(cx);
                 vim::init(cx);
+                terminal_view::init(cx);
                 outline_panel::init(cx);
                 language_selector::init(cx);
                 theme_selector::init(cx);
@@ -576,6 +577,14 @@ mod ios {
                             ).log_err();
                         }
                         if let Some(panel) = git_ui::git_panel::GitPanel::load(
+                            workspace_handle.clone(), cx.clone(),
+                        ).await.log_err() {
+                            workspace_handle.update_in(
+                                &mut cx.clone(),
+                                |workspace, window, cx| workspace.add_panel(panel, window, cx),
+                            ).log_err();
+                        }
+                        if let Some(panel) = terminal_view::terminal_panel::TerminalPanel::load(
                             workspace_handle.clone(), cx.clone(),
                         ).await.log_err() {
                             workspace_handle.update_in(

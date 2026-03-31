@@ -56,6 +56,8 @@ search.workspace = true
 semver.workspace = true
 session.workspace = true
 settings = { workspace = true, features = ["force-embed-assets"] }
+terminal.workspace = true
+terminal_view.workspace = true
 theme.workspace = true
 theme_selector.workspace = true
 theme_settings.workspace = true

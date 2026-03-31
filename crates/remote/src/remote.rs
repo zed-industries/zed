@@ -9,7 +9,7 @@ pub use remote_client::OpenWslPath;
 pub use remote_client::{
     CommandTemplate, ConnectionIdentifier, ConnectionState, Interactive, RemoteArch, RemoteClient,
     RemoteClientDelegate, RemoteClientEvent, RemoteConnection, RemoteConnectionOptions, RemoteOs,
-    RemotePlatform, connect,
+    RemotePlatform, SshShellChannel, connect,
 };
 pub use transport::docker::DockerConnectionOptions;
 pub use transport::ssh::{SshConnectionOptions, SshPortForwardOption};

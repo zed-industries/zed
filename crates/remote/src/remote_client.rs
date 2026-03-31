@@ -1342,6 +1342,19 @@ pub struct OpenWslPath {
     pub paths: Vec<PathBuf>,
 }
 
+/// Handle to an interactive SSH shell channel with PTY allocation.
+/// Created by `RemoteConnection::open_shell_channel()` for iPad terminal support.
+pub struct SshShellChannel {
+    /// Send user input (keyboard bytes) to the remote shell.
+    pub input_tx: smol::channel::Sender<Vec<u8>>,
+    /// Send terminal resize events (cols, rows) to the remote PTY.
+    pub resize_tx: smol::channel::Sender<(u32, u32)>,
+    /// Receive output bytes from the remote shell.
+    pub output_rx: smol::channel::Receiver<Vec<u8>>,
+    /// Receive the exit status when the remote shell exits. Yields one value then closes.
+    pub exit_rx: smol::channel::Receiver<Option<u32>>,
+}
+
 #[async_trait(?Send)]
 pub trait RemoteConnection: Send + Sync {
     fn start_proxy(
@@ -1383,6 +1396,19 @@ pub trait RemoteConnection: Send + Sync {
     fn shell(&self) -> String;
     fn default_system_shell(&self) -> String;
     fn has_wsl_interop(&self) -> bool;
+
+    /// Open an interactive shell channel over SSH with PTY allocation.
+    /// Used on iPad where subprocess spawning is prohibited.
+    fn open_shell_channel(
+        &self,
+        _terminal_type: &str,
+        _cols: u32,
+        _rows: u32,
+        _working_directory: Option<String>,
+        _cx: &mut AsyncApp,
+    ) -> Task<Result<SshShellChannel>> {
+        Task::ready(Err(anyhow!("open_shell_channel is not supported by this connection type")))
+    }
 
     #[cfg(any(test, feature = "test-support"))]
     fn simulate_disconnect(&self, _: &AsyncApp) {}

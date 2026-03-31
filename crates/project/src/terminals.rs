@@ -395,6 +395,39 @@ impl Project {
             .await
             .unwrap_or_default();
 
+            #[cfg(target_os = "ios")]
+            let builder = {
+                if let Some(remote_client) = remote_client {
+                    let (connection, host) = cx.update(|cx| {
+                        let client = remote_client.read(cx);
+                        let conn = client
+                            .connection()
+                            .ok_or_else(|| anyhow::anyhow!("No active SSH connection"))?;
+                        let name = client.connection_options().display_name();
+                        anyhow::Ok((conn, name))
+                    })?;
+                    let working_dir = path.as_ref().map(|p| p.display().to_string());
+                    let channel = connection
+                        .open_shell_channel("xterm-256color", 80, 24, working_dir, cx)
+                        .await?;
+                    TerminalBuilder::new_ssh(
+                        channel.input_tx,
+                        channel.resize_tx,
+                        channel.output_rx,
+                        channel.exit_rx,
+                        Some(format!("{host} — Terminal")),
+                        settings.cursor_shape,
+                        settings.alternate_scroll,
+                        settings.max_scroll_history_lines,
+                        0,
+                        cx.background_executor(),
+                        path_style,
+                    )?
+                } else {
+                    anyhow::bail!("Local terminals are not supported on iOS");
+                }
+            };
+            #[cfg(not(target_os = "ios"))]
             let builder = project
                 .update(cx, move |_, cx| {
                     let (shell, env) = {
