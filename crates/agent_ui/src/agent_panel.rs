@@ -22,8 +22,8 @@ use settings::{LanguageModelProviderSetting, LanguageModelSelection};
 
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt as _};
 use zed_actions::agent::{
-    ConflictContent, OpenClaudeAgentOnboardingModal, ReauthenticateAgent,
-    ResolveConflictedFilesWithAgent, ResolveConflictsWithAgent, ReviewBranchDiff,
+    ConflictContent, ReauthenticateAgent, ResolveConflictedFilesWithAgent,
+    ResolveConflictsWithAgent, ReviewBranchDiff,
 };
 
 use crate::{
@@ -43,7 +43,7 @@ use crate::{
 };
 use crate::{
     DEFAULT_THREAD_TITLE,
-    ui::{AcpOnboardingModal, ClaudeCodeOnboardingModal, HoldForDefault},
+    ui::{AcpOnboardingModal, HoldForDefault},
 };
 use crate::{
     ExpandMessageEditor, ThreadHistoryView,
@@ -263,11 +263,6 @@ pub fn init(cx: &mut App) {
                 .register_action(|workspace, _: &OpenAcpOnboardingModal, window, cx| {
                     AcpOnboardingModal::toggle(workspace, window, cx)
                 })
-                .register_action(
-                    |workspace, _: &OpenClaudeAgentOnboardingModal, window, cx| {
-                        ClaudeCodeOnboardingModal::toggle(workspace, window, cx)
-                    },
-                )
                 .register_action(|_workspace, _: &ResetOnboarding, window, cx| {
                     window.dispatch_action(workspace::RestoreBanner.boxed_clone(), cx);
                     window.refresh();
