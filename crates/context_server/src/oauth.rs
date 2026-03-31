@@ -633,6 +633,26 @@ impl TokenResponse {
     }
 }
 
+/// An OAuth token error response (RFC 6749 Section 5.2).
+#[derive(Debug, Deserialize, PartialEq)]
+pub struct OAuthTokenError {
+    pub error: String,
+    #[serde(default)]
+    pub error_description: Option<String>,
+}
+
+impl std::fmt::Display for OAuthTokenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "OAuth token error: {}", self.error)?;
+        if let Some(description) = &self.error_description {
+            write!(f, " ({description})")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for OAuthTokenError {}
+
 /// Build the form-encoded body for an authorization code token exchange.
 pub fn token_exchange_params(
     code: &str,
@@ -792,13 +812,14 @@ pub async fn fetch_auth_server_metadata(
         match fetch_json::<AuthServerMetadataResponse>(http_client, url).await {
             Ok(response) => {
                 let reported_issuer = response.issuer.unwrap_or_else(|| issuer.clone());
-                // if reported_issuer != *issuer {
-                //     bail!(
-                //         "Auth server metadata issuer mismatch: expected {}, got {}",
-                //         issuer,
-                //         reported_issuer
-                //     );
-                // }
+
+                if reported_issuer != *issuer {
+                    bail!(
+                        "Auth server metadata issuer mismatch: expected {}, got {}",
+                        issuer,
+                        reported_issuer
+                    );
+                }
 
                 return Ok(AuthServerMetadata {
                     issuer: reported_issuer,
@@ -1007,11 +1028,12 @@ async fn post_token_request(
     if !response.status().is_success() {
         let mut error_body = String::new();
         response.body_mut().read_to_string(&mut error_body).await?;
-        bail!(
-            "token request failed with status {}: {}",
-            response.status(),
-            error_body
-        );
+        let status = response.status();
+        // Try to parse as an OAuth error response (RFC 6749 Section 5.2).
+        if let Ok(token_error) = serde_json::from_str::<OAuthTokenError>(&error_body) {
+            return Err(token_error.into());
+        }
+        bail!("token request failed with status {status}: {error_body}");
     }
 
     let mut response_body = String::new();
@@ -2520,8 +2542,17 @@ mod tests {
             )
             .await;
 
-            assert!(result.is_err());
-            assert!(result.unwrap_err().to_string().contains("400"));
+            let err = result.unwrap_err();
+            let token_error = err
+                .downcast_ref::<OAuthTokenError>()
+                .expect("expected OAuthTokenError");
+            assert_eq!(
+                *token_error,
+                OAuthTokenError {
+                    error: "invalid_grant".into(),
+                    error_description: None,
+                }
+            );
         });
     }
 

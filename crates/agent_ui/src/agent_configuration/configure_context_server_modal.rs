@@ -407,9 +407,16 @@ fn resolve_context_server_extension(
 enum State {
     Idle,
     Waiting,
-    AuthRequired { server_id: ContextServerId },
-    ClientSecretRequired { server_id: ContextServerId },
-    Authenticating { _server_id: ContextServerId },
+    AuthRequired {
+        server_id: ContextServerId,
+    },
+    ClientSecretRequired {
+        server_id: ContextServerId,
+        error: Option<SharedString>,
+    },
+    Authenticating {
+        server_id: ContextServerId,
+    },
     Error(SharedString),
 }
 
@@ -443,11 +450,14 @@ impl ConfigureContextServerModal {
             Some(ContextServerStatus::AuthRequired) => State::AuthRequired {
                 server_id: server_id.clone(),
             },
-            Some(ContextServerStatus::ClientSecretRequired) => State::ClientSecretRequired {
-                server_id: server_id.clone(),
-            },
+            Some(ContextServerStatus::ClientSecretRequired { error }) => {
+                State::ClientSecretRequired {
+                    server_id: server_id.clone(),
+                    error: error.map(SharedString::from),
+                }
+            }
             Some(ContextServerStatus::Authenticating) => State::Authenticating {
-                _server_id: server_id.clone(),
+                server_id: server_id.clone(),
             },
             Some(ContextServerStatus::Error(error)) => State::Error(error.into()),
 
@@ -603,15 +613,11 @@ impl ConfigureContextServerModal {
     }
 
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut Context<Self>) {
-        if matches!(
-            self.state,
-            State::Waiting
-                | State::AuthRequired { .. }
-                | State::ClientSecretRequired { .. }
-                | State::Authenticating { .. }
-        ) {
+        if matches!(self.state, State::Waiting | State::Authenticating { .. }) {
             return;
         }
+
+        self._auth_subscription = None;
 
         self.state = State::Idle;
         let Some(workspace) = self.workspace.upgrade() else {
@@ -628,7 +634,7 @@ impl ConfigureContextServerModal {
 
         self.state = State::Waiting;
 
-        let existing_server = self.context_server_store.read(cx).get_running_server(&id);
+        let existing_server = self.context_server_store.read(cx).get_server(&id);
         if existing_server.is_some() {
             self.context_server_store.update(cx, |store, cx| {
                 store.stop_server(&id, cx).log_err();
@@ -651,8 +657,11 @@ impl ConfigureContextServerModal {
                         this.state = State::AuthRequired { server_id: id };
                         cx.notify();
                     }
-                    Ok(ContextServerStatus::ClientSecretRequired) => {
-                        this.state = State::ClientSecretRequired { server_id: id };
+                    Ok(ContextServerStatus::ClientSecretRequired { error }) => {
+                        this.state = State::ClientSecretRequired {
+                            server_id: id,
+                            error: error.map(SharedString::from),
+                        };
                         cx.notify();
                     }
                     Err(err) => {
@@ -694,65 +703,33 @@ impl ConfigureContextServerModal {
         cx.emit(DismissEvent);
     }
 
+    fn cancel_authentication(&mut self, server_id: &ContextServerId, cx: &mut Context<Self>) {
+        self._auth_subscription = None;
+        self.context_server_store.update(cx, |store, cx| {
+            store.stop_server(server_id, cx).log_err();
+        });
+        self.state = State::Idle;
+        cx.notify();
+    }
+
     fn authenticate(&mut self, server_id: ContextServerId, cx: &mut Context<Self>) {
         self.context_server_store.update(cx, |store, cx| {
             store.authenticate_server(&server_id, cx).log_err();
         });
-
-        self.state = State::Authenticating {
-            _server_id: server_id.clone(),
-        };
-
-        self._auth_subscription = Some(cx.subscribe(
-            &self.context_server_store,
-            move |this, _, event: &ServerStatusChangedEvent, cx| {
-                if event.server_id != server_id {
-                    return;
-                }
-                match &event.status {
-                    ContextServerStatus::Running => {
-                        this._auth_subscription = None;
-                        this.state = State::Idle;
-                        this.show_configured_context_server_toast(event.server_id.clone(), cx);
-                        cx.emit(DismissEvent);
-                    }
-                    ContextServerStatus::AuthRequired => {
-                        this._auth_subscription = None;
-                        this.state = State::AuthRequired {
-                            server_id: event.server_id.clone(),
-                        };
-                        cx.notify();
-                    }
-                    ContextServerStatus::ClientSecretRequired => {
-                        this._auth_subscription = None;
-                        this.state = State::ClientSecretRequired {
-                            server_id: event.server_id.clone(),
-                        };
-                        cx.notify();
-                    }
-                    ContextServerStatus::Error(error) => {
-                        this._auth_subscription = None;
-                        this.set_error(error.clone(), cx);
-                    }
-                    ContextServerStatus::Authenticating
-                    | ContextServerStatus::Starting
-                    | ContextServerStatus::Stopped => {}
-                }
-            },
-        ));
-
-        cx.notify();
+        self.await_auth_outcome(server_id, cx);
     }
 
     fn submit_client_secret(&mut self, server_id: ContextServerId, cx: &mut Context<Self>) {
         let secret = self.secret_editor.read(cx).text(cx);
-
         self.context_server_store.update(cx, |store, cx| {
             store.submit_client_secret(&server_id, secret, cx).log_err();
         });
+        self.await_auth_outcome(server_id, cx);
+    }
 
+    fn await_auth_outcome(&mut self, server_id: ContextServerId, cx: &mut Context<Self>) {
         self.state = State::Authenticating {
-            _server_id: server_id.clone(),
+            server_id: server_id.clone(),
         };
 
         self._auth_subscription = Some(cx.subscribe(
@@ -775,10 +752,11 @@ impl ConfigureContextServerModal {
                         };
                         cx.notify();
                     }
-                    ContextServerStatus::ClientSecretRequired => {
+                    ContextServerStatus::ClientSecretRequired { error } => {
                         this._auth_subscription = None;
                         this.state = State::ClientSecretRequired {
                             server_id: event.server_id.clone(),
+                            error: error.clone().map(SharedString::from),
                         };
                         cx.notify();
                     }
@@ -986,13 +964,7 @@ impl ConfigureContextServerModal {
 
     fn render_modal_footer(&self, cx: &mut Context<Self>) -> ModalFooter {
         let focus_handle = self.focus_handle(cx);
-        let is_busy = matches!(
-            self.state,
-            State::Waiting
-                | State::AuthRequired { .. }
-                | State::ClientSecretRequired { .. }
-                | State::Authenticating { .. }
-        );
+        let is_busy = matches!(self.state, State::Waiting | State::Authenticating { .. });
 
         ModalFooter::new()
             .start_slot::<Button>(
@@ -1122,6 +1094,7 @@ impl ConfigureContextServerModal {
     fn render_client_secret_required(
         &self,
         server_id: &ContextServerId,
+        error: Option<SharedString>,
         cx: &mut Context<Self>,
     ) -> Div {
         let settings = ThemeSettings::get_global(cx);
@@ -1138,6 +1111,9 @@ impl ConfigureContextServerModal {
         v_flex()
             .w_full()
             .gap_2()
+            .when_some(error, |this, error| {
+                this.child(Self::render_modal_error(error))
+            })
             .child(
                 h_flex()
                     .gap_1p5()
@@ -1158,6 +1134,12 @@ impl ConfigureContextServerModal {
                 h_flex()
                     .w_full()
                     .gap_2()
+                    .capture_action({
+                        let server_id = server_id.clone();
+                        cx.listener(move |this, _: &editor::actions::Newline, _window, cx| {
+                            this.submit_client_secret(server_id.clone(), cx);
+                        })
+                    })
                     .child(div().flex_1().child(EditorElement::new(
                         &self.secret_editor,
                         EditorStyle {
@@ -1179,6 +1161,39 @@ impl ConfigureContextServerModal {
                                 })
                             }),
                     ),
+            )
+    }
+
+    fn render_authenticating(&self, server_id: &ContextServerId, cx: &mut Context<Self>) -> Div {
+        h_flex()
+            .h_8()
+            .gap_2()
+            .justify_center()
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .child(
+                        Icon::new(IconName::LoadCircle)
+                            .size(IconSize::XSmall)
+                            .color(Color::Muted)
+                            .with_rotate_animation(3),
+                    )
+                    .child(
+                        Label::new("Authenticating…")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    ),
+            )
+            .child(
+                Button::new("cancel-authentication", "Cancel")
+                    .style(ButtonStyle::Outlined)
+                    .label_size(LabelSize::Small)
+                    .on_click({
+                        let server_id = server_id.clone();
+                        cx.listener(move |this, _event, _window, cx| {
+                            this.cancel_authentication(&server_id, cx);
+                        })
+                    }),
             )
     }
 
@@ -1241,13 +1256,15 @@ impl Render for ConfigureContextServerModal {
                                             State::AuthRequired { server_id } => {
                                                 self.render_auth_required(&server_id.clone(), cx)
                                             }
-                                            State::ClientSecretRequired { server_id } => self
-                                                .render_client_secret_required(
+                                            State::ClientSecretRequired { server_id, error } => {
+                                                self.render_client_secret_required(
                                                     &server_id.clone(),
+                                                    error.clone(),
                                                     cx,
-                                                ),
-                                            State::Authenticating { .. } => {
-                                                self.render_loading("Authenticating…")
+                                                )
+                                            }
+                                            State::Authenticating { server_id } => {
+                                                self.render_authenticating(&server_id.clone(), cx)
                                             }
                                             State::Error(error) => {
                                                 Self::render_modal_error(error.clone())
@@ -1285,7 +1302,7 @@ fn wait_for_context_server(
         match status {
             ContextServerStatus::Running
             | ContextServerStatus::AuthRequired
-            | ContextServerStatus::ClientSecretRequired => {
+            | ContextServerStatus::ClientSecretRequired { .. } => {
                 if let Some(tx) = tx.lock().take() {
                     let _ = tx.send(Ok(status.clone()));
                 }

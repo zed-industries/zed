@@ -57,9 +57,10 @@ pub enum ContextServerStatus {
     /// should show an "Authenticate" button.
     AuthRequired,
     /// The server has a pre-registered OAuth client_id, but a client_secret
-    /// is needed and not available in settings or the keychain. The UI should
-    /// show a text input to collect it.
-    ClientSecretRequired,
+    /// is needed and not available in settings or the keychain.
+    ClientSecretRequired {
+        error: Option<Arc<str>>,
+    },
     /// The OAuth browser flow is in progress — the user has been redirected
     /// to the authorization server and we're waiting for the callback.
     Authenticating,
@@ -73,8 +74,10 @@ impl ContextServerStatus {
             ContextServerState::Stopped { .. } => ContextServerStatus::Stopped,
             ContextServerState::Error { error, .. } => ContextServerStatus::Error(error.clone()),
             ContextServerState::AuthRequired { .. } => ContextServerStatus::AuthRequired,
-            ContextServerState::ClientSecretRequired { .. } => {
-                ContextServerStatus::ClientSecretRequired
+            ContextServerState::ClientSecretRequired { error, .. } => {
+                ContextServerStatus::ClientSecretRequired {
+                    error: error.clone(),
+                }
             }
             ContextServerState::Authenticating { .. } => ContextServerStatus::Authenticating,
         }
@@ -108,11 +111,12 @@ enum ContextServerState {
         discovery: Arc<OAuthDiscovery>,
     },
     /// A pre-registered client_id is configured but no client_secret was found
-    /// in settings or the keychain. The user needs to provide it interactively.
+    /// in settings or the keychain.
     ClientSecretRequired {
         server: Arc<ContextServer>,
         configuration: Arc<ContextServerConfiguration>,
         discovery: Arc<OAuthDiscovery>,
+        error: Option<Arc<str>>,
     },
     /// The OAuth browser flow is in progress. The user has been redirected
     /// to the authorization server and we're waiting for the callback.
@@ -1027,9 +1031,7 @@ impl ContextServerStore {
             _ => anyhow::bail!("Server is not in AuthRequired state"),
         };
 
-        // Check if the configuration has pre-registered OAuth credentials that
-        // need a client_secret we don't have yet.
-        let needs_secret_prompt = match configuration.as_ref() {
+        let needs_keychain_check = match configuration.as_ref() {
             ContextServerConfiguration::Http {
                 url,
                 oauth: Some(oauth_settings),
@@ -1040,48 +1042,21 @@ impl ContextServerStore {
 
         let id = id.clone();
 
-        if let Some(server_url) = needs_secret_prompt {
-            // Check keychain for the secret asynchronously.
-            let task = cx.spawn({
-                let id = id.clone();
-                let server = server.clone();
-                let configuration = configuration.clone();
-                async move |this, cx| {
+        let task = cx.spawn({
+            let id = id.clone();
+            let server = server.clone();
+            let configuration = configuration.clone();
+            async move |this, cx| {
+                if let Some(server_url) = needs_keychain_check {
                     let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
-                    let keychain_secret =
+                    let has_keychain_secret =
                         Self::load_client_secret(&credentials_provider, &server_url, cx)
                             .await
                             .ok()
-                            .flatten();
+                            .flatten()
+                            .is_some();
 
-                    if keychain_secret.is_some() {
-                        // Secret found in keychain, proceed with OAuth flow.
-                        let result = Self::run_oauth_flow(
-                            this.clone(),
-                            id.clone(),
-                            discovery.clone(),
-                            configuration.clone(),
-                            cx,
-                        )
-                        .await;
-
-                        if let Err(err) = &result {
-                            log::error!("{} OAuth authentication failed: {:?}", id, err);
-                            this.update(cx, |this, cx| {
-                                this.update_server_state(
-                                    id.clone(),
-                                    ContextServerState::AuthRequired {
-                                        server,
-                                        configuration,
-                                        discovery,
-                                    },
-                                    cx,
-                                )
-                            })
-                            .log_err();
-                        }
-                    } else {
-                        // No secret anywhere — prompt the user.
+                    if !has_keychain_secret {
                         this.update(cx, |this, cx| {
                             this.update_server_state(
                                 id.clone(),
@@ -1089,73 +1064,57 @@ impl ContextServerStore {
                                     server,
                                     configuration,
                                     discovery,
+                                    error: None,
                                 },
                                 cx,
                             );
                         })
                         .log_err();
+                        return;
                     }
                 }
-            });
 
-            self.update_server_state(
-                id,
-                ContextServerState::Authenticating {
-                    server,
-                    configuration,
-                    _task: task,
-                },
-                cx,
-            );
-        } else {
-            // No pre-registration, or secret already in settings — proceed directly.
-            let task = cx.spawn({
-                let id = id.clone();
-                let server = server.clone();
-                let configuration = configuration.clone();
-                async move |this, cx| {
-                    let result = Self::run_oauth_flow(
-                        this.clone(),
-                        id.clone(),
-                        discovery.clone(),
-                        configuration.clone(),
-                        cx,
-                    )
-                    .await;
+                let result = Self::run_oauth_flow(
+                    this.clone(),
+                    id.clone(),
+                    discovery.clone(),
+                    configuration.clone(),
+                    cx,
+                )
+                .await;
 
-                    if let Err(err) = &result {
-                        log::error!("{} OAuth authentication failed: {:?}", id, err);
-                        this.update(cx, |this, cx| {
-                            this.update_server_state(
-                                id.clone(),
-                                ContextServerState::AuthRequired {
-                                    server,
-                                    configuration,
-                                    discovery,
-                                },
-                                cx,
-                            )
-                        })
-                        .log_err();
-                    }
+                if let Err(err) = &result {
+                    log::error!("{} OAuth authentication failed: {:?}", id, err);
+                    this.update(cx, |this, cx| {
+                        this.update_server_state(
+                            id.clone(),
+                            ContextServerState::Error {
+                                server,
+                                configuration,
+                                error: format!("{err:#}").into(),
+                            },
+                            cx,
+                        )
+                    })
+                    .log_err();
                 }
-            });
+            }
+        });
 
-            self.update_server_state(
-                id,
-                ContextServerState::Authenticating {
-                    server,
-                    configuration,
-                    _task: task,
-                },
-                cx,
-            );
-        }
+        self.update_server_state(
+            id,
+            ContextServerState::Authenticating {
+                server,
+                configuration,
+                _task: task,
+            },
+            cx,
+        );
 
         Ok(())
     }
 
-    /// Store an interactively-provided client secret and proceed with authentication.
+    /// Store the client secret and proceed with authentication.
     pub fn submit_client_secret(
         &mut self,
         id: &ContextServerId,
@@ -1169,6 +1128,7 @@ impl ContextServerStore {
                 server,
                 configuration,
                 discovery,
+                ..
             } => (server.clone(), configuration.clone(), discovery.clone()),
             _ => anyhow::bail!("Server is not in ClientSecretRequired state"),
         };
@@ -1211,18 +1171,47 @@ impl ContextServerStore {
 
                 if let Err(err) = &result {
                     log::error!("{} OAuth authentication failed: {:?}", id, err);
-                    this.update(cx, |this, cx| {
-                        this.update_server_state(
-                            id.clone(),
-                            ContextServerState::AuthRequired {
-                                server,
-                                configuration,
-                                discovery,
-                            },
-                            cx,
-                        )
-                    })
-                    .log_err();
+
+                    let is_bad_client_credentials = err
+                        .downcast_ref::<oauth::OAuthTokenError>()
+                        .is_some_and(|e| e.error == "unauthorized_client");
+
+                    if is_bad_client_credentials {
+                        // Clear the bad secret from the keychain so the user
+                        // gets a fresh prompt.
+                        let credentials_provider =
+                            cx.update(|cx| zed_credentials_provider::global(cx));
+                        Self::clear_client_secret(&credentials_provider, &server_url, cx)
+                            .await
+                            .log_err();
+
+                        this.update(cx, |this, cx| {
+                            this.update_server_state(
+                                id.clone(),
+                                ContextServerState::ClientSecretRequired {
+                                    server,
+                                    configuration,
+                                    discovery,
+                                    error: Some(format!("{err:#}").into()),
+                                },
+                                cx,
+                            );
+                        })
+                        .log_err();
+                    } else {
+                        this.update(cx, |this, cx| {
+                            this.update_server_state(
+                                id.clone(),
+                                ContextServerState::Error {
+                                    server,
+                                    configuration,
+                                    error: format!("{err:#}").into(),
+                                },
+                                cx,
+                            )
+                        })
+                        .log_err();
+                    }
                 }
             }
         });
@@ -1487,8 +1476,8 @@ impl ContextServerStore {
             if let Err(err) = Self::clear_session(&credentials_provider, &server_url, &cx).await {
                 log::error!("{} failed to clear OAuth session: {}", id, err);
             }
-            // Also clear any interactively-provided client secret so the user
-            // gets a fresh prompt on the next authentication attempt.
+            // Also clear any client secret so the user gets a fresh prompt on
+            // the next authentication attempt.
             Self::clear_client_secret(&credentials_provider, &server_url, &cx)
                 .await
                 .log_err();

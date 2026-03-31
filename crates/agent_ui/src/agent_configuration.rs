@@ -664,8 +664,10 @@ impl AgentConfiguration {
             None
         };
         let auth_required = matches!(server_status, ContextServerStatus::AuthRequired);
-        let client_secret_required =
-            matches!(server_status, ContextServerStatus::ClientSecretRequired);
+        let client_secret_required = matches!(
+            server_status,
+            ContextServerStatus::ClientSecretRequired { .. }
+        );
         let authenticating = matches!(server_status, ContextServerStatus::Authenticating);
         let context_server_store = self.context_server_store.clone();
         let workspace = self.workspace.clone();
@@ -689,7 +691,9 @@ impl AgentConfiguration {
             ContextServerStatus::Error(_) => AiSettingItemStatus::Error,
             ContextServerStatus::Stopped => AiSettingItemStatus::Stopped,
             ContextServerStatus::AuthRequired => AiSettingItemStatus::AuthRequired,
-            ContextServerStatus::ClientSecretRequired => AiSettingItemStatus::ClientSecretRequired,
+            ContextServerStatus::ClientSecretRequired { .. } => {
+                AiSettingItemStatus::ClientSecretRequired
+            }
             ContextServerStatus::Authenticating => AiSettingItemStatus::Authenticating,
         };
 
@@ -931,8 +935,6 @@ impl AgentConfiguration {
                             .label_size(LabelSize::Small)
                             .on_click({
                                 let context_server_id = context_server_id.clone();
-                                let language_registry = language_registry.clone();
-                                let workspace = workspace.clone();
                                 move |_event, window, cx| {
                                     ConfigureContextServerModal::show_modal_for_existing_server(
                                         context_server_id.clone(),

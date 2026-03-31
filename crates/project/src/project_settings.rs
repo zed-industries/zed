@@ -310,9 +310,8 @@ pub struct OAuthClientSettings {
     /// authorization server.
     pub client_id: String,
     /// The OAuth client secret, if this is a confidential client. For security,
-    /// prefer providing this interactively — Zed will prompt and store it in
-    /// the system keychain. Only use this setting when keychain storage is not
-    /// an option.
+    /// prefer providing this interactively; we will prompt and store it in
+    /// the system keychain.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_secret: Option<String>,
 }
