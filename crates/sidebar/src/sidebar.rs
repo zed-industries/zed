@@ -1281,13 +1281,14 @@ impl Sidebar {
     ) -> AnyElement {
         let id_prefix = if is_sticky { "sticky-" } else { "" };
         let id = SharedString::from(format!("{id_prefix}project-header-{ix}"));
+        let disclosure_id = SharedString::from(format!("disclosure-{ix}"));
         let group_name = SharedString::from(format!("{id_prefix}header-group-{ix}"));
 
         let is_collapsed = self.collapsed_groups.contains(path_list);
-        let disclosure_icon = if is_collapsed {
-            IconName::ChevronRight
+        let (disclosure_icon, disclosure_tooltip) = if is_collapsed {
+            (IconName::ChevronRight, "Expand Project")
         } else {
-            IconName::ChevronDown
+            (IconName::ChevronDown, "Collapse Project")
         };
 
         let has_new_thread_entry = self
@@ -1325,8 +1326,8 @@ impl Sidebar {
             .group(&group_name)
             .h(Tab::content_height(cx))
             .w_full()
-            .pl_1p5()
-            .pr_1()
+            .pl(px(5.))
+            .pr_1p5()
             .border_1()
             .map(|this| {
                 if is_selected {
@@ -1339,16 +1340,21 @@ impl Sidebar {
             .hover(|s| s.bg(hover_color))
             .child(
                 h_flex()
+                    .when(!is_active, |this| this.cursor_pointer())
                     .relative()
                     .min_w_0()
                     .w_full()
-                    .gap_1p5()
+                    .gap(px(5.))
                     .child(
-                        h_flex().size_4().flex_none().justify_center().child(
-                            Icon::new(disclosure_icon)
-                                .size(IconSize::Small)
-                                .color(Color::Custom(cx.theme().colors().icon_muted.opacity(0.5))),
-                        ),
+                        IconButton::new(disclosure_id, disclosure_icon)
+                            .shape(ui::IconButtonShape::Square)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Custom(cx.theme().colors().icon_muted.opacity(0.5)))
+                            .tooltip(Tooltip::text(disclosure_tooltip))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.selection = None;
+                                this.toggle_collapse(&path_list_for_toggle, window, cx);
+                            })),
                     )
                     .child(label)
                     .when_some(
@@ -1425,39 +1431,6 @@ impl Sidebar {
                             })),
                         )
                     })
-                    .when(!is_active, |this| {
-                        this.child(
-                            IconButton::new(
-                                SharedString::from(format!(
-                                    "{id_prefix}project-header-open-workspace-{ix}",
-                                )),
-                                IconName::Focus,
-                            )
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .tooltip(Tooltip::text("Activate Workspace"))
-                            .on_click(cx.listener({
-                                move |this, _, window, cx| {
-                                    this.active_entry =
-                                        Some(ActiveEntry::Draft(workspace_for_open.clone()));
-                                    if let Some(multi_workspace) = this.multi_workspace.upgrade() {
-                                        multi_workspace.update(cx, |multi_workspace, cx| {
-                                            multi_workspace.activate(
-                                                workspace_for_open.clone(),
-                                                window,
-                                                cx,
-                                            );
-                                        });
-                                    }
-                                    if AgentPanel::is_visible(&workspace_for_open, cx) {
-                                        workspace_for_open.update(cx, |workspace, cx| {
-                                            workspace.focus_panel::<AgentPanel>(window, cx);
-                                        });
-                                    }
-                                }
-                            })),
-                        )
-                    })
                     .when(show_new_thread_button, |this| {
                         this.child(
                             IconButton::new(
@@ -1483,10 +1456,29 @@ impl Sidebar {
                         )
                     })
             })
-            .on_click(cx.listener(move |this, _, window, cx| {
-                this.selection = None;
-                this.toggle_collapse(&path_list_for_toggle, window, cx);
-            }))
+            .when(!is_active, |this| {
+                this.tooltip(Tooltip::text("Activate Workspace"))
+                    .on_click(cx.listener({
+                        move |this, _, window, cx| {
+                            this.active_entry =
+                                Some(ActiveEntry::Draft(workspace_for_open.clone()));
+                            if let Some(multi_workspace) = this.multi_workspace.upgrade() {
+                                multi_workspace.update(cx, |multi_workspace, cx| {
+                                    multi_workspace.activate(
+                                        workspace_for_open.clone(),
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            }
+                            if AgentPanel::is_visible(&workspace_for_open, cx) {
+                                workspace_for_open.update(cx, |workspace, cx| {
+                                    workspace.focus_panel::<AgentPanel>(window, cx);
+                                });
+                            }
+                        }
+                    }))
+            })
             .into_any_element()
     }
 
@@ -2779,6 +2771,11 @@ impl Sidebar {
 
         let id = SharedString::from(format!("thread-entry-{}", ix));
 
+        let color = cx.theme().colors();
+        let sidebar_bg = color
+            .title_bar_background
+            .blend(color.panel_background.opacity(0.32));
+
         let timestamp = format_history_entry_timestamp(
             self.thread_last_message_sent_or_queued
                 .get(&thread.metadata.session_id)
@@ -2788,6 +2785,7 @@ impl Sidebar {
         );
 
         ThreadItem::new(id, title)
+            .base_bg(sidebar_bg)
             .icon(thread.icon)
             .status(thread.status)
             .when_some(thread.icon_from_external_svg.clone(), |this, svg| {
