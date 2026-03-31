@@ -787,7 +787,7 @@ impl Render for ThreadsArchiveView {
 }
 
 struct ProjectPickerModal {
-    thread: ThreadMetadata,
+    title: SharedString,
     picker: Entity<Picker<ProjectPickerDelegate>>,
     _subscription: Subscription,
 }
@@ -800,8 +800,9 @@ impl ProjectPickerModal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let title: SharedString = thread.title.clone().into();
         let delegate = ProjectPickerDelegate {
-            thread: thread.clone(),
+            thread,
             archive_view,
             workspaces: Vec::new(),
             filtered_workspaces: Vec::new(),
@@ -846,7 +847,7 @@ impl ProjectPickerModal {
         picker.focus_handle(cx).focus(window, cx);
 
         Self {
-            thread,
+            title,
             picker,
             _subscription,
         }
@@ -871,7 +872,7 @@ impl Render for ProjectPickerModal {
             .w(rems(34.))
             .child(
                 v_flex().px_2().py_1().gap_0p5().child(
-                    Label::new(format!("Select a project for \"{}\"", self.thread.title))
+                    Label::new(format!("Select a project for \"{}\"", self.title))
                         .size(LabelSize::Small)
                         .color(Color::Muted),
                 ),
@@ -892,6 +893,24 @@ struct ProjectPickerDelegate {
     filtered_workspaces: Vec<StringMatch>,
     selected_index: usize,
     focus_handle: FocusHandle,
+}
+
+impl ProjectPickerDelegate {
+    fn update_working_and_unarchive(&mut self, paths: PathList, cx: &mut Context<Picker<Self>>) {
+        self.thread.folder_paths = paths.clone();
+        ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+            store.update_working_directories(&self.thread.session_id, paths, cx);
+        });
+
+        self.archive_view
+            .update(cx, |view, cx| {
+                view.selection = None;
+                cx.emit(ThreadsArchiveViewEvent::Unarchive {
+                    thread: self.thread.clone(),
+                });
+            })
+            .log_err();
+    }
 }
 
 impl EventEmitter<DismissEvent> for ProjectPickerDelegate {}
@@ -1002,20 +1021,7 @@ impl PickerDelegate for ProjectPickerDelegate {
             return;
         };
 
-        self.thread.folder_paths = paths.clone();
-        ThreadMetadataStore::global(cx).update(cx, |store, cx| {
-            store.update_working_directories(&self.thread.session_id, paths.clone(), cx);
-        });
-
-        self.archive_view
-            .update(cx, |view, cx| {
-                view.selection = None;
-                cx.emit(ThreadsArchiveViewEvent::Unarchive {
-                    thread: self.thread.clone(),
-                });
-            })
-            .log_err();
-
+        self.update_working_and_unarchive(paths.clone(), cx);
         cx.emit(DismissEvent);
     }
 
@@ -1034,7 +1040,7 @@ impl PickerDelegate for ProjectPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let hit = self.filtered_workspaces.get(ix)?;
@@ -1107,7 +1113,7 @@ impl PickerDelegate for ProjectPickerDelegate {
                     h_flex()
                         .gap_3()
                         .flex_grow()
-                        .child(highlighted_match.render(_window, cx)),
+                        .child(highlighted_match.render(window, cx)),
                 )
                 .tooltip(Tooltip::text(tooltip_path))
                 .into_any_element(),
@@ -1124,15 +1130,13 @@ impl PickerDelegate for ProjectPickerDelegate {
                 .border_color(cx.theme().colors().border_variant)
                 .child(
                     Button::new("open_local_folder", "Open Local Folder").on_click(cx.listener(
-                        move |picker, _, _window, cx| {
+                        move |_picker, _, _window, cx| {
                             let paths_receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
                                 files: false,
                                 directories: true,
                                 multiple: false,
                                 prompt: None,
                             });
-                            let mut thread = picker.delegate.thread.clone();
-                            let archive_view = picker.delegate.archive_view.clone();
                             cx.spawn(async move |this, cx| {
                                 let Ok(Ok(Some(paths))) = paths_receiver.await else {
                                     return;
@@ -1142,26 +1146,9 @@ impl PickerDelegate for ProjectPickerDelegate {
                                 }
 
                                 let work_dirs = PathList::new(&paths);
-                                thread.folder_paths = work_dirs.clone();
 
-                                cx.update(|cx| {
-                                    ThreadMetadataStore::global(cx).update(cx, |store, cx| {
-                                        store.update_working_directories(
-                                            &thread.session_id,
-                                            work_dirs,
-                                            cx,
-                                        );
-                                    });
-
-                                    archive_view
-                                        .update(cx, |view, cx| {
-                                            view.selection = None;
-                                            cx.emit(ThreadsArchiveViewEvent::Unarchive { thread });
-                                        })
-                                        .log_err();
-                                });
-
-                                this.update(cx, |_picker, cx| {
+                                this.update(cx, |picker, cx| {
+                                    picker.delegate.update_working_and_unarchive(work_dirs, cx);
                                     cx.emit(DismissEvent);
                                 })
                                 .log_err();

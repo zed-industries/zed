@@ -325,6 +325,10 @@ impl ThreadMetadataStore {
         work_dirs: PathList,
         cx: &mut Context<Self>,
     ) {
+        if !cx.has_flag::<AgentV2FeatureFlag>() {
+            return;
+        }
+
         if let Some(thread) = self.threads.get(session_id) {
             self.save_internal(ThreadMetadata {
                 folder_paths: work_dirs,
