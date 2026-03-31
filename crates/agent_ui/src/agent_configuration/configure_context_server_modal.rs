@@ -335,7 +335,6 @@ fn context_server_http_input(
     /// The URL of the remote MCP server
     "url": "{url}",{oauth}
     "headers": {{
-
      /// Any headers to send along
      {headers}
     }}
