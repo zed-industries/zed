@@ -119,16 +119,15 @@ impl Editor {
         before.sort_by_key(|a| a.to_offset(&multi_buffer_snapshot));
         after.sort_by_key(|a| a.to_offset(&multi_buffer_snapshot));
 
-        let anchor = if direction == Direction::Next {
-            after
+        let anchor = match direction {
+            Direction::Next => after
                 .into_iter()
                 .chain(before)
-                .find(|anchor| anchor.to_offset(&multi_buffer_snapshot) != selection.head())
-        } else {
-            [before, after]
+                .find(|anchor| anchor.to_offset(&multi_buffer_snapshot) != selection.head()),
+            Direction::Prev => [before, after]
                 .into_iter()
                 .flat_map(|bookmarks| bookmarks.into_iter().rev())
-                .find(|anchor| anchor.to_offset(&multi_buffer_snapshot) != selection.head())
+                .find(|anchor| anchor.to_offset(&multi_buffer_snapshot) != selection.head()),
         };
 
         if let Some(anchor) = anchor {
