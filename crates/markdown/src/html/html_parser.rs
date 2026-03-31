@@ -345,7 +345,10 @@ fn parse_html_node(
                 let mut summary = HtmlParagraph::new();
                 let mut children = Vec::new();
                 for child in node.children.borrow().iter() {
-                    if let NodeData::Element { name: child_name, .. } = &child.data {
+                    if let NodeData::Element {
+                        name: child_name, ..
+                    } = &child.data
+                    {
                         if child_name.local == local_name!("summary") {
                             consume_paragraph(
                                 source_range.clone(),
@@ -710,6 +713,7 @@ fn extract_html_list(
                 &mut content,
                 &ParseHtmlNodeContext {
                     list_item_depth: depth + 1,
+                    details_counter: Cell::new(0),
                 },
             );
 
