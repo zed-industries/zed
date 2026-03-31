@@ -253,7 +253,7 @@ pub async fn start_dev_container_with_config(
         &context,
         environment.clone(),
         actual_config.clone(),
-        Arc::new(context.project_directory.clone().as_ref()),
+        context.project_directory.clone().as_ref(),
     )
     .await
     {

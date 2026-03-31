@@ -243,15 +243,6 @@ pub(crate) fn deserialize_devcontainer_json(json: &str) -> Result<DevContainer, 
 }
 
 impl DevContainer {
-    fn _validate_structure(&self) -> Result<(), DevContainerError> {
-        // TODO
-        Ok(())
-    }
-    fn _validate_features(&self) -> Result<(), DevContainerError> {
-        // TODO
-        Ok(())
-    }
-
     pub(crate) fn build_type(&self) -> DevContainerBuildType {
         if self.image.is_some() {
             return DevContainerBuildType::Image;

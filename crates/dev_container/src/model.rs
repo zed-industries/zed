@@ -62,7 +62,7 @@ impl DevContainerManifest {
         docker_client: Arc<dyn DockerClient>,
         command_runner: Arc<dyn CommandRunner>,
         local_config: DevContainerConfig,
-        local_project_path: Arc<&Path>,
+        local_project_path: &Path,
     ) -> Result<Self, DevContainerError> {
         let config_path = local_project_path.join(local_config.config_path.clone());
         log::info!("parsing devcontainer json found in {:?}", &config_path);
@@ -202,12 +202,8 @@ impl DevContainerManifest {
         Ok(merged_remote_env)
     }
 
-    fn validate_config(&self) -> Result<(), DevContainerError> {
-        // TODO
-        Ok(())
-    }
     fn config_file(&self) -> PathBuf {
-        self.config_directory.join(&self.file_name).clone()
+        self.config_directory.join(&self.file_name)
     }
 
     fn dev_container(&self) -> &DevContainer {
@@ -558,10 +554,7 @@ impl DevContainerManifest {
         use_buildkit: bool,
     ) -> String {
         #[cfg(not(target_os = "windows"))]
-        let update_remote_user_uid = match self.dev_container().update_remote_user_uid {
-            Some(val) => val,
-            None => true,
-        };
+        let update_remote_user_uid = self.dev_container().update_remote_user_uid.unwrap_or(true);
         #[cfg(target_os = "windows")]
         let update_remote_user_uid = false;
         let feature_layers: String = self
@@ -663,11 +656,7 @@ USER $_DEV_CONTAINERS_IMAGE_USER
         };
         let mut mounts = dev_container.mounts.clone().unwrap_or(Vec::new());
 
-        let mut feature_mounts = self
-            .features
-            .iter()
-            .flat_map(|f| f.mounts().clone())
-            .collect();
+        let mut feature_mounts = self.features.iter().flat_map(|f| f.mounts()).collect();
 
         mounts.append(&mut feature_mounts);
 
@@ -1214,7 +1203,6 @@ USER $_DEV_CONTAINERS_IMAGE_USER
             name: None,
             services: service_declarations,
             volumes: config_volumes,
-            ..Default::default()
         };
 
         Ok(new_docker_compose_config)
@@ -1243,7 +1231,7 @@ USER $_DEV_CONTAINERS_IMAGE_USER
                     .is_none_or(|features| features.is_empty())
                 {
                     log::info!("No features to add. Using base image");
-                    return Ok(base_image.clone());
+                    return Ok(base_image);
                 }
             }
             DevContainerBuildType::Dockerfile => {}
@@ -2021,7 +2009,7 @@ pub(crate) async fn read_devcontainer_configuration(
         Arc::new(docker),
         Arc::new(DefaultCommandRunner::new()),
         config,
-        Arc::new(&context.project_directory.as_ref()),
+        &context.project_directory.as_ref(),
     )
     .await?;
     dev_container.parse_nonremote_vars()?;
@@ -2032,7 +2020,7 @@ pub(crate) async fn spawn_dev_container(
     context: &DevContainerContext,
     environment: HashMap<String, String>,
     config: DevContainerConfig,
-    local_project_path: Arc<&Path>,
+    local_project_path: &Path,
 ) -> Result<DevContainerUp, DevContainerError> {
     let docker = if context.use_podman {
         Docker::new("podman")
@@ -2045,13 +2033,10 @@ pub(crate) async fn spawn_dev_container(
         Arc::new(docker),
         Arc::new(DefaultCommandRunner::new()),
         config,
-        local_project_path.clone(),
+        local_project_path,
     )
     .await?;
-    // 2. ensure that object is valid
-    devcontainer_manifest.validate_config()?;
 
-    // 3. Parse built-in variables
     devcontainer_manifest.parse_nonremote_vars()?;
 
     log::info!("Checking for existing container");
@@ -2512,7 +2497,7 @@ mod test {
             docker_client,
             command_runner,
             local_config,
-            Arc::new(&PathBuf::from(TEST_PROJECT_PATH)),
+            &PathBuf::from(TEST_PROJECT_PATH),
         )
         .await?;
 
@@ -3825,8 +3810,6 @@ RUN echo "export HISTFILE=/home/$USERNAME/commandhistory/.bash_history" >> "/hom
             .await
             .unwrap();
 
-        devcontainer_manifest.validate_config().unwrap();
-
         devcontainer_manifest.parse_nonremote_vars().unwrap();
 
         let devcontainer_up = devcontainer_manifest.build_and_run().await.unwrap();
@@ -4170,8 +4153,6 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
     && apt-get autoremove -y && apt-get clean -y
             "#.trim().to_string()).await.unwrap();
 
-        devcontainer_manifest.validate_config().unwrap();
-
         devcontainer_manifest.parse_nonremote_vars().unwrap();
 
         let _devcontainer_up = devcontainer_manifest.build_and_run().await.unwrap();
@@ -4465,8 +4446,6 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
 && apt-get autoremove -y && apt-get clean -y
         "#.trim().to_string()).await.unwrap();
 
-        devcontainer_manifest.validate_config().unwrap();
-
         devcontainer_manifest.parse_nonremote_vars().unwrap();
 
         let _devcontainer_up = devcontainer_manifest.build_and_run().await.unwrap();
@@ -4706,8 +4685,6 @@ RUN echo "export HISTFILE=/home/$USERNAME/commandhistory/.bash_history" >> "/hom
             )
             .await
             .unwrap();
-
-        devcontainer_manifest.validate_config().unwrap();
 
         devcontainer_manifest.parse_nonremote_vars().unwrap();
 

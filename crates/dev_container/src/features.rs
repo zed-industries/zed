@@ -79,11 +79,7 @@ impl FeatureManifest {
         }
     }
     pub(crate) fn container_env(&self) -> HashMap<String, String> {
-        self.feature_json
-            .container_env
-            .as_ref()
-            .map(|hash_map| hash_map.clone())
-            .unwrap_or_default()
+        self.feature_json.container_env.clone().unwrap_or_default()
     }
 
     pub(crate) fn generate_dockerfile_feature_layer(
@@ -238,7 +234,7 @@ pub(crate) fn parse_oci_feature_ref(input: &str) -> Option<OciFeatureRef> {
                 input_lower[..colon].to_string(),
                 input_lower[colon + 1..].to_string(),
             ),
-            _ => (input_lower.clone(), "latest".to_string()),
+            _ => (input_lower, "latest".to_string()),
         }
     };
 
