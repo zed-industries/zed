@@ -92,10 +92,10 @@ async fn save_n_test_threads(count: u32, path_list: &PathList, cx: &mut gpui::Vi
             acp::SessionId::new(Arc::from(format!("thread-{}", i))),
             format!("Thread {}", i + 1).into(),
             chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, i).unwrap(),
+            None,
             path_list.clone(),
             cx,
         )
-        .await;
     }
     cx.run_until_parked();
 }
@@ -109,10 +109,10 @@ async fn save_test_thread_metadata(
         session_id.clone(),
         "Test".into(),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
         path_list,
         cx,
     )
-    .await;
 }
 
 async fn save_named_thread_metadata(
@@ -125,17 +125,18 @@ async fn save_named_thread_metadata(
         acp::SessionId::new(Arc::from(session_id)),
         SharedString::from(title.to_string()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
         path_list.clone(),
         cx,
-    )
-    .await;
+    );
     cx.run_until_parked();
 }
 
-async fn save_thread_metadata(
+fn save_thread_metadata(
     session_id: acp::SessionId,
     title: SharedString,
     updated_at: DateTime<Utc>,
+    created_at: Option<DateTime<Utc>>,
     path_list: PathList,
     cx: &mut TestAppContext,
 ) {
@@ -144,12 +145,12 @@ async fn save_thread_metadata(
         agent_id: agent::ZED_AGENT_ID.clone(),
         title,
         updated_at,
-        created_at: None,
+        created_at,
         folder_paths: path_list,
         archived: false,
     };
     cx.update(|cx| {
-        ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(metadata, cx))
+        ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save_manually(metadata, cx))
     });
     cx.run_until_parked();
 }
@@ -407,19 +408,19 @@ async fn test_single_workspace_with_saved_threads(cx: &mut TestAppContext) {
         acp::SessionId::new(Arc::from("thread-1")),
         "Fix crash in project panel".into(),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 3, 0, 0, 0).unwrap(),
+        None,
         path_list.clone(),
         cx,
-    )
-    .await;
+    );
 
     save_thread_metadata(
         acp::SessionId::new(Arc::from("thread-2")),
         "Add inline diff view".into(),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
+        None,
         path_list.clone(),
         cx,
-    )
-    .await;
+    );
     cx.run_until_parked();
 
     multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
@@ -449,10 +450,10 @@ async fn test_workspace_lifecycle(cx: &mut TestAppContext) {
         acp::SessionId::new(Arc::from("thread-a1")),
         "Thread A1".into(),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
         path_list.clone(),
         cx,
-    )
-    .await;
+    );
     cx.run_until_parked();
 
     multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
@@ -1331,10 +1332,10 @@ async fn test_search_narrows_visible_threads_to_matches(cx: &mut TestAppContext)
             acp::SessionId::new(Arc::from(id)),
             title.into(),
             chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, hour, 0, 0).unwrap(),
+            None,
             path_list.clone(),
             cx,
-        )
-        .await;
+        );
     }
     cx.run_until_parked();
 
@@ -1379,10 +1380,10 @@ async fn test_search_matches_regardless_of_case(cx: &mut TestAppContext) {
         acp::SessionId::new(Arc::from("thread-1")),
         "Fix Crash In Project Panel".into(),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
         path_list.clone(),
         cx,
-    )
-    .await;
+    );
     cx.run_until_parked();
 
     // Lowercase query matches mixed-case title.
@@ -1422,10 +1423,10 @@ async fn test_escape_clears_search_and_restores_full_list(cx: &mut TestAppContex
             acp::SessionId::new(Arc::from(id)),
             title.into(),
             chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, hour, 0, 0).unwrap(),
+            None,
             path_list.clone(),
             cx,
         )
-        .await;
     }
     cx.run_until_parked();
 
@@ -1474,10 +1475,10 @@ async fn test_search_only_shows_workspace_headers_with_matches(cx: &mut TestAppC
             acp::SessionId::new(Arc::from(id)),
             title.into(),
             chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, hour, 0, 0).unwrap(),
+            None,
             path_list_a.clone(),
             cx,
         )
-        .await;
     }
 
     // Add a second workspace.
@@ -1496,10 +1497,10 @@ async fn test_search_only_shows_workspace_headers_with_matches(cx: &mut TestAppC
             acp::SessionId::new(Arc::from(id)),
             title.into(),
             chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, hour, 0, 0).unwrap(),
+            None,
             path_list_b.clone(),
             cx,
         )
-        .await;
     }
     cx.run_until_parked();
 
@@ -1556,10 +1557,10 @@ async fn test_search_matches_workspace_name(cx: &mut TestAppContext) {
             acp::SessionId::new(Arc::from(id)),
             title.into(),
             chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, hour, 0, 0).unwrap(),
+            None,
             path_list_a.clone(),
             cx,
         )
-        .await;
     }
 
     // Add a second workspace.
@@ -1578,10 +1579,10 @@ async fn test_search_matches_workspace_name(cx: &mut TestAppContext) {
             acp::SessionId::new(Arc::from(id)),
             title.into(),
             chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, hour, 0, 0).unwrap(),
+            None,
             path_list_b.clone(),
             cx,
         )
-        .await;
     }
     cx.run_until_parked();
 
@@ -1662,10 +1663,10 @@ async fn test_search_finds_threads_hidden_behind_view_more(cx: &mut TestAppConte
             acp::SessionId::new(Arc::from(format!("thread-{}", i))),
             title.into(),
             chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, i).unwrap(),
+            None,
             path_list.clone(),
             cx,
         )
-        .await;
     }
     cx.run_until_parked();
 
@@ -1706,10 +1707,10 @@ async fn test_search_finds_threads_inside_collapsed_groups(cx: &mut TestAppConte
         acp::SessionId::new(Arc::from("thread-1")),
         "Important thread".into(),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
         path_list.clone(),
         cx,
-    )
-    .await;
+    );
     cx.run_until_parked();
 
     // User focuses the sidebar and collapses the group using keyboard:
@@ -1752,10 +1753,10 @@ async fn test_search_then_keyboard_navigate_and_confirm(cx: &mut TestAppContext)
             acp::SessionId::new(Arc::from(id)),
             title.into(),
             chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, hour, 0, 0).unwrap(),
+            None,
             path_list.clone(),
             cx,
         )
-        .await;
     }
     cx.run_until_parked();
 
@@ -1814,10 +1815,10 @@ async fn test_confirm_on_historical_thread_activates_workspace(cx: &mut TestAppC
         acp::SessionId::new(Arc::from("hist-1")),
         "Historical Thread".into(),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 6, 1, 0, 0, 0).unwrap(),
+        None,
         path_list.clone(),
         cx,
-    )
-    .await;
+    );
     cx.run_until_parked();
     multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
     cx.run_until_parked();
@@ -1867,19 +1868,19 @@ async fn test_click_clears_selection_and_focus_in_restores_it(cx: &mut TestAppCo
         acp::SessionId::new(Arc::from("t-1")),
         "Thread A".into(),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
+        None,
         path_list.clone(),
         cx,
-    )
-    .await;
+    );
 
     save_thread_metadata(
         acp::SessionId::new(Arc::from("t-2")),
         "Thread B".into(),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
         path_list.clone(),
         cx,
-    )
-    .await;
+    );
 
     cx.run_until_parked();
     multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
@@ -4226,10 +4227,10 @@ async fn test_archive_thread_uses_next_threads_own_workspace(cx: &mut TestAppCon
         thread2_session_id.clone(),
         "Thread 2".into(),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
+        None,
         PathList::new(&[std::path::PathBuf::from("/project")]),
         cx,
-    )
-    .await;
+    );
 
     // Save thread 1's metadata with the worktree path and an older timestamp so
     // it sorts below thread 2. archive_thread will find it as the "next" candidate.
@@ -4238,10 +4239,10 @@ async fn test_archive_thread_uses_next_threads_own_workspace(cx: &mut TestAppCon
         thread1_session_id.clone(),
         "Thread 1".into(),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
         PathList::new(&[std::path::PathBuf::from("/wt-feature-a")]),
         cx,
-    )
-    .await;
+    );
 
     cx.run_until_parked();
 
@@ -4439,26 +4440,14 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     open_thread_with_connection(&panel, connection_c, cx);
     send_message(&panel, cx);
     let session_id_c = active_session_id(&panel, cx);
-    cx.update(|_, cx| {
-        ThreadMetadataStore::global(cx).update(cx, |store, cx| {
-            store.save(
-                ThreadMetadata {
-                    session_id: session_id_c.clone(),
-                    agent_id: agent::ZED_AGENT_ID.clone(),
-                    title: "Thread C".into(),
-                    updated_at: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0)
-                        .unwrap(),
-                    created_at: Some(
-                        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
-                    ),
-                    folder_paths: path_list.clone(),
-                    archived: false,
-                },
-                cx,
-            )
-        })
-    });
-    cx.run_until_parked();
+    save_thread_metadata(
+        session_id_c.clone(),
+        "Thread C".into(),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        Some(chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap()),
+        path_list.clone(),
+        cx,
+    );
 
     let connection_b = StubAgentConnection::new();
     connection_b.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
@@ -4467,26 +4456,14 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     open_thread_with_connection(&panel, connection_b, cx);
     send_message(&panel, cx);
     let session_id_b = active_session_id(&panel, cx);
-    cx.update(|_, cx| {
-        ThreadMetadataStore::global(cx).update(cx, |store, cx| {
-            store.save(
-                ThreadMetadata {
-                    session_id: session_id_b.clone(),
-                    agent_id: agent::ZED_AGENT_ID.clone(),
-                    title: "Thread B".into(),
-                    updated_at: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0)
-                        .unwrap(),
-                    created_at: Some(
-                        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
-                    ),
-                    folder_paths: path_list.clone(),
-                    archived: false,
-                },
-                cx,
-            )
-        })
-    });
-    cx.run_until_parked();
+    save_thread_metadata(
+        session_id_b.clone(),
+        "Thread B".into(),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
+        Some(chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap()),
+        path_list.clone(),
+        cx,
+    );
 
     let connection_a = StubAgentConnection::new();
     connection_a.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
@@ -4495,26 +4472,14 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     open_thread_with_connection(&panel, connection_a, cx);
     send_message(&panel, cx);
     let session_id_a = active_session_id(&panel, cx);
-    cx.update(|_, cx| {
-        ThreadMetadataStore::global(cx).update(cx, |store, cx| {
-            store.save(
-                ThreadMetadata {
-                    session_id: session_id_a.clone(),
-                    agent_id: agent::ZED_AGENT_ID.clone(),
-                    title: "Thread A".into(),
-                    updated_at: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 3, 0, 0, 0)
-                        .unwrap(),
-                    created_at: Some(
-                        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 3, 0, 0, 0).unwrap(),
-                    ),
-                    folder_paths: path_list.clone(),
-                    archived: false,
-                },
-                cx,
-            )
-        })
-    });
-    cx.run_until_parked();
+    save_thread_metadata(
+        session_id_a.clone(),
+        "Thread A".into(),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 3, 0, 0, 0).unwrap(),
+        Some(chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 3, 0, 0, 0).unwrap()),
+        path_list.clone(),
+        cx,
+    );
 
     // All three threads are now live. Thread A was opened last, so it's
     // the one being viewed. Opening each thread called record_thread_access,
@@ -4607,26 +4572,14 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
 
     // ── 3. Add a historical thread (no last_accessed_at, no message sent) ──
     // This thread was never opened in a panel — it only exists in metadata.
-    cx.update(|_, cx| {
-        ThreadMetadataStore::global(cx).update(cx, |store, cx| {
-            store.save(
-                ThreadMetadata {
-                    session_id: acp::SessionId::new(Arc::from("thread-historical")),
-                    agent_id: agent::ZED_AGENT_ID.clone(),
-                    title: "Historical Thread".into(),
-                    updated_at: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 6, 1, 0, 0, 0)
-                        .unwrap(),
-                    created_at: Some(
-                        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 6, 1, 0, 0, 0).unwrap(),
-                    ),
-                    folder_paths: path_list.clone(),
-                    archived: false,
-                },
-                cx,
-            )
-        })
-    });
-    cx.run_until_parked();
+    save_thread_metadata(
+        acp::SessionId::new(Arc::from("thread-historical")),
+        "Historical Thread".into(),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 6, 1, 0, 0, 0).unwrap(),
+        Some(chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 6, 1, 0, 0, 0).unwrap()),
+        path_list.clone(),
+        cx,
+    );
 
     sidebar.update_in(cx, |sidebar, window, cx| {
         sidebar.on_toggle_thread_switcher(&ToggleThreadSwitcher::default(), window, cx);
@@ -4659,26 +4612,14 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     // ── 4. Add another historical thread with older created_at ─────────
-    cx.update(|_, cx| {
-        ThreadMetadataStore::global(cx).update(cx, |store, cx| {
-            store.save(
-                ThreadMetadata {
-                    session_id: acp::SessionId::new(Arc::from("thread-old-historical")),
-                    agent_id: agent::ZED_AGENT_ID.clone(),
-                    title: "Old Historical Thread".into(),
-                    updated_at: chrono::TimeZone::with_ymd_and_hms(&Utc, 2023, 6, 1, 0, 0, 0)
-                        .unwrap(),
-                    created_at: Some(
-                        chrono::TimeZone::with_ymd_and_hms(&Utc, 2023, 6, 1, 0, 0, 0).unwrap(),
-                    ),
-                    folder_paths: path_list.clone(),
-                    archived: false,
-                },
-                cx,
-            )
-        })
-    });
-    cx.run_until_parked();
+    save_thread_metadata(
+        acp::SessionId::new(Arc::from("thread-old-historical")),
+        "Old Historical Thread".into(),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2023, 6, 1, 0, 0, 0).unwrap(),
+        Some(chrono::TimeZone::with_ymd_and_hms(&Utc, 2023, 6, 1, 0, 0, 0).unwrap()),
+        path_list.clone(),
+        cx,
+    );
 
     sidebar.update_in(cx, |sidebar, window, cx| {
         sidebar.on_toggle_thread_switcher(&ToggleThreadSwitcher::default(), window, cx);
@@ -4719,10 +4660,10 @@ async fn test_archive_thread_keeps_metadata_but_hides_from_sidebar(cx: &mut Test
         acp::SessionId::new(Arc::from("thread-to-archive")),
         "Thread To Archive".into(),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
         path_list.clone(),
         cx,
-    )
-    .await;
+    );
     cx.run_until_parked();
 
     multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
@@ -4771,22 +4712,25 @@ async fn test_archived_threads_excluded_from_sidebar_entries(cx: &mut TestAppCon
         acp::SessionId::new(Arc::from("visible-thread")),
         "Visible Thread".into(),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
+        None,
         path_list.clone(),
         cx,
-    )
-    .await;
+    );
+
+    let archived_thread_session_id = acp::SessionId::new(Arc::from("archived-thread"));
+    save_thread_metadata(
+        archived_thread_session_id.clone(),
+        "Archived Thread".into(),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
+        path_list.clone(),
+        cx,
+    );
 
     cx.update(|_, cx| {
-        let metadata = ThreadMetadata {
-            session_id: acp::SessionId::new(Arc::from("archived-thread")),
-            agent_id: agent::ZED_AGENT_ID.clone(),
-            title: "Archived Thread".into(),
-            updated_at: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
-            created_at: None,
-            folder_paths: path_list.clone(),
-            archived: true,
-        };
-        ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(metadata, cx));
+        ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+            store.archive(&archived_thread_session_id, cx)
+        })
     });
     cx.run_until_parked();
 
@@ -4962,18 +4906,7 @@ mod property_test {
         let updated_at = chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2024, 1, 1, 0, 0, 0)
             .unwrap()
             + chrono::Duration::seconds(state.thread_counter as i64);
-        let metadata = ThreadMetadata {
-            session_id,
-            agent_id: agent::ZED_AGENT_ID.clone(),
-            title,
-            updated_at,
-            created_at: None,
-            folder_paths: path_list,
-            archived: false,
-        };
-        cx.update(|_, cx| {
-            ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(metadata, cx));
-        });
+        save_thread_metadata(session_id, title, updated_at, None, path_list, cx);
     }
 
     async fn perform_operation(

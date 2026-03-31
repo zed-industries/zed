@@ -1,5 +1,6 @@
 use std::{path::Path, sync::Arc};
 
+use acp_thread::AcpThreadEvent;
 use agent::{ThreadStore, ZED_AGENT_ID};
 use agent_client_protocol as acp;
 use anyhow::Context as _;
@@ -315,7 +316,12 @@ impl ThreadMetadataStore {
         cx.notify();
     }
 
-    pub fn save(&mut self, metadata: ThreadMetadata, cx: &mut Context<Self>) {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn save_manually(&mut self, metadata: ThreadMetadata, cx: &mut Context<Self>) {
+        self.save(metadata, cx)
+    }
+
+    fn save(&mut self, metadata: ThreadMetadata, cx: &mut Context<Self>) {
         if !cx.has_flag::<AgentV2FeatureFlag>() {
             return;
         }
@@ -480,7 +486,7 @@ impl ThreadMetadataStore {
     fn handle_thread_update(
         &mut self,
         thread: Entity<acp_thread::AcpThread>,
-        event: &acp_thread::AcpThreadEvent,
+        event: &AcpThreadEvent,
         cx: &mut Context<Self>,
     ) {
         // Don't track subagent threads in the sidebar.
@@ -1678,7 +1684,7 @@ mod tests {
 
         let paths = PathList::new(&[Path::new("/project-a")]);
         let now = Utc::now();
-        let metadata = make_metadata("session-1", "Thread 1", now, paths.clone());
+        let metadata = make_metadata("session-1", "Thread 1", now, paths);
         let session_id = metadata.session_id.clone();
 
         cx.update(|cx| {
