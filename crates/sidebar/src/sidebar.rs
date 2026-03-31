@@ -84,6 +84,7 @@ const DEFAULT_THREADS_SHOWN: usize = 5;
 
 #[derive(Default, Serialize, Deserialize)]
 struct SerializedSidebar {
+    #[serde(default)]
     width: Option<f32>,
     #[serde(default)]
     collapsed_groups: Vec<SerializedPathList>,
