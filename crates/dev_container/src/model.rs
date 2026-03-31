@@ -145,12 +145,16 @@ impl DevContainerManifest {
                 &self
                     .remote_workspace_folder()
                     .map(|path| path.display().to_string())
-                    .unwrap_or_default(),
+                    .unwrap_or_default()
+                    .replace('\\', "/"),
             )
-            .replace("${localWorkspaceFolder}", &self.local_workspace_folder());
+            .replace(
+                "${localWorkspaceFolder}",
+                &self.local_workspace_folder().replace('\\', "/"),
+            );
         for (k, v) in &self.local_environment {
             let find = format!("${{localEnv:{k}}}");
-            replaced_content = replaced_content.replace(&find, &v);
+            replaced_content = replaced_content.replace(&find, &v.replace('\\', "/"));
         }
 
         Ok(replaced_content)
@@ -1194,6 +1198,15 @@ impl DevContainerManifest {
         Ok(image)
     }
 
+    #[cfg(target_os = "windows")]
+    async fn update_remote_user_uid(
+        &self,
+        image: DockerInspect,
+        override_tag: Option<&str>,
+    ) -> Result<DockerInspect, DevContainerError> {
+        Ok(image)
+    }
+    #[cfg(not(target_os = "windows"))]
     async fn update_remote_user_uid(
         &self,
         image: DockerInspect,
