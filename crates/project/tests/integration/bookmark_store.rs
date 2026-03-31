@@ -87,7 +87,7 @@ mod integration {
         project
             .update(cx, |project, cx| {
                 project.bookmark_store().update(cx, |store, cx| {
-                    store.with_serialized_bookmarks(serialized, cx)
+                    store.load_serialized_bookmarks(serialized, cx)
                 })
             })
             .await

@@ -6225,7 +6225,10 @@ impl Workspace {
         match self.workspace_location(cx) {
             WorkspaceLocation::Location(location, paths) => {
                 let bookmarks = self.project.update(cx, |project, cx| {
-                    project.bookmark_store().read(cx).all_serialized_bookmarks(cx)
+                    project
+                        .bookmark_store()
+                        .read(cx)
+                        .all_serialized_bookmarks(cx)
                 });
 
                 let breakpoints = self.project.update(cx, |project, cx| {
@@ -6463,7 +6466,7 @@ impl Workspace {
             project
                 .update(cx, |project, cx| {
                     project.bookmark_store().update(cx, |bookmark_store, cx| {
-                        bookmark_store.with_serialized_bookmarks(serialized_workspace.bookmarks, cx)
+                        bookmark_store.load_serialized_bookmarks(serialized_workspace.bookmarks, cx)
                     })
                 })
                 .await
