@@ -49,6 +49,7 @@ use util::{ResultExt as _, paths::PathMatcher, rel_path::RelPath};
 use workspace::{
     DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace, WorkspaceId,
+    confirmation_dialog::ConfirmationDialog,
     item::{Item, ItemEvent, ItemHandle, SaveOptions},
     searchable::{CollapseDirection, Direction, SearchEvent, SearchableItem, SearchableItemHandle},
 };
@@ -1183,18 +1184,23 @@ impl ProjectSearchView {
             let should_prompt_to_save = !skip_save_on_close && !will_autosave && is_dirty;
 
             let should_search = if should_prompt_to_save {
-                let options = &["Save", "Don't Save", "Cancel"];
-                let result_channel = this.update_in(cx, |_, window, cx| {
-                    window.prompt(
-                        gpui::PromptLevel::Warning,
-                        "Project search buffer contains unsaved edits. Do you want to save it?",
-                        None,
-                        options,
-                        cx,
-                    )
-                })?;
-                let result = result_channel.await?;
-                let should_save = result == 0;
+                let answer_task = this
+                    .update_in(cx, |this, window, cx| {
+                        this.workspace.update(cx, |workspace, cx| {
+                        ConfirmationDialog::show(
+                            workspace,
+                            "Project search buffer contains unsaved edits. Do you want to save it?",
+                            None::<String>,
+                            vec!["Save", "Don't Save", "Cancel"],
+                            true,
+                            window,
+                            cx,
+                        )
+                    })
+                    })?
+                    .unwrap_or_else(|_| Task::ready(Some(0)));
+                let answer = answer_task.await;
+                let should_save = answer == Some(0);
                 if should_save {
                     this.update_in(cx, |this, window, cx| {
                         this.save(
@@ -1211,7 +1217,7 @@ impl ProjectSearchView {
                     .log_err();
                 }
 
-                result != 2
+                answer != Some(2)
             } else {
                 true
             };
