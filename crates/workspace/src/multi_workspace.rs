@@ -324,6 +324,9 @@ impl MultiWorkspace {
     }
 
     pub fn multi_workspace_enabled(&self, cx: &App) -> bool {
+        if cfg!(target_os = "ios") {
+            return false;
+        }
         cx.has_flag::<AgentV2FeatureFlag>() && !DisableAiSettings::get_global(cx).disable_ai
     }
 

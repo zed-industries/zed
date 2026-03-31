@@ -518,8 +518,8 @@ impl Platform for IosPlatform {
         ))
     }
 
-    fn set_cursor_style(&self, _style: CursorStyle) {
-        // UIPointerStyle is set per UIPointerInteraction region in Phase 1.3.
+    fn set_cursor_style(&self, style: CursorStyle) {
+        crate::window::set_cursor_style(style);
     }
 
     fn should_auto_hide_scrollbars(&self) -> bool {

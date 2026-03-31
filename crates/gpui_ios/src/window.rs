@@ -396,6 +396,18 @@ impl IosWindow {
             let _: () = msg_send![view, addGestureRecognizer: hover];
             let _: () = msg_send![hover, release];
 
+            // UIPointerInteraction — provides custom pointer shapes (resize,
+            // I-beam, etc.) when a trackpad/mouse is connected. The view itself
+            // acts as the delegate (see register_metal_view_class).
+            let pointer_interaction: *mut Object =
+                msg_send![class!(UIPointerInteraction), alloc];
+            let pointer_interaction: *mut Object =
+                msg_send![pointer_interaction, initWithDelegate: view];
+            let _: () = msg_send![view, addInteraction: pointer_interaction];
+            POINTER_INTERACTION.with(|cell| {
+                *cell.borrow_mut() = Some(pointer_interaction);
+            });
+
             // Trackpad secondary click (right-click). UITapGestureRecognizer with
             // buttonMaskRequired = UIEventButtonMaskSecondary (1 << 1 = 2) fires on
             // two-finger trackpad click or Control+click. We restrict
@@ -776,6 +788,39 @@ thread_local! {
     /// the velocity decays to zero or a new gesture starts.
     static MOMENTUM_WINDOW: RefCell<Option<Weak<RefCell<IosWindowState>>>> =
         RefCell::new(None);
+
+    /// Current cursor style set by GPUI's rendering pipeline. The
+    /// UIPointerInteraction delegate reads this to return the appropriate
+    /// UIPointerStyle. Updated by `set_cursor_style`.
+    static CURRENT_CURSOR_STYLE: RefCell<gpui::CursorStyle> =
+        RefCell::new(gpui::CursorStyle::Arrow);
+
+    /// The UIPointerInteraction object attached to the Metal view. Retained
+    /// here so we can call `invalidate` when the cursor style changes.
+    static POINTER_INTERACTION: RefCell<Option<*mut Object>> = RefCell::new(None);
+}
+
+/// Update the cursor style and invalidate the UIPointerInteraction so iOS
+/// re-queries the delegate for the new pointer appearance.
+pub fn set_cursor_style(style: gpui::CursorStyle) {
+    let changed = CURRENT_CURSOR_STYLE.with(|cell| {
+        let old = *cell.borrow();
+        if old != style {
+            *cell.borrow_mut() = style;
+            true
+        } else {
+            false
+        }
+    });
+    if changed {
+        POINTER_INTERACTION.with(|cell| {
+            if let Some(interaction) = *cell.borrow() {
+                unsafe {
+                    let _: () = msg_send![interaction, invalidate];
+                }
+            }
+        });
+    }
 }
 
 /// Cancel any in-flight momentum scroll. Returns true if momentum was active.
@@ -1067,6 +1112,11 @@ fn register_metal_view_class() -> &'static Class {
             decl.add_protocol(protocol);
         }
 
+        // Conform to UIPointerInteractionDelegate for custom pointer shapes.
+        if let Some(protocol) = Protocol::get("UIPointerInteractionDelegate") {
+            decl.add_protocol(protocol);
+        }
+
         unsafe {
             decl.add_method(
                 sel!(layoutSubviews),
@@ -1231,10 +1281,233 @@ fn register_metal_view_class() -> &'static Class {
                 keyboard_did_hide as extern "C" fn(&Object, Sel, *mut Object),
             );
 
+            // UIPointerInteractionDelegate — returns a UIPointerStyle based on
+            // the current GPUI cursor style.
+            decl.add_method(
+                sel!(pointerInteraction:regionForRequest:defaultRegion:),
+                pointer_interaction_region
+                    as extern "C" fn(
+                        &Object,
+                        Sel,
+                        *mut Object,
+                        *mut Object,
+                        *mut Object,
+                    ) -> *mut Object,
+            );
+            decl.add_method(
+                sel!(pointerInteraction:styleForRegion:),
+                pointer_interaction_style
+                    as extern "C" fn(&Object, Sel, *mut Object, *mut Object) -> *mut Object,
+            );
+
         }
 
         decl.register()
     })
+}
+
+// ─── UIPointerInteractionDelegate ────────────────────────────────────────────
+
+/// `pointerInteraction:regionForRequest:defaultRegion:` — returns a small
+/// region centered on the pointer's current position so the custom shape
+/// renders at the cursor, not at the center of the view.
+extern "C" fn pointer_interaction_region(
+    _this: &Object,
+    _sel: Sel,
+    _interaction: *mut Object,
+    request: *mut Object,
+    default_region: *mut Object,
+) -> *mut Object {
+    let style = CURRENT_CURSOR_STYLE.with(|cell| *cell.borrow());
+    // Only override the region for custom shapes (resize cursors).
+    // For default/nil styles, return the default region so UIKit handles it.
+    let needs_custom_region = matches!(
+        style,
+        gpui::CursorStyle::ResizeLeftRight
+            | gpui::CursorStyle::ResizeLeft
+            | gpui::CursorStyle::ResizeRight
+            | gpui::CursorStyle::ResizeColumn
+            | gpui::CursorStyle::ResizeUpDown
+            | gpui::CursorStyle::ResizeUp
+            | gpui::CursorStyle::ResizeDown
+            | gpui::CursorStyle::ResizeRow
+    );
+    if !needs_custom_region {
+        return default_region;
+    }
+    unsafe {
+        // UIPointerRegionRequest.location gives the pointer position in the view.
+        let location: CGPoint = msg_send![request, location];
+        let size = 1.0f64;
+        let rect = CGRect {
+            origin: CGPoint {
+                x: location.x - size / 2.0,
+                y: location.y - size / 2.0,
+            },
+            size: CGSize {
+                width: size,
+                height: size,
+            },
+        };
+        msg_send![class!(UIPointerRegion), regionWithRect: rect identifier: std::ptr::null::<Object>()]
+    }
+}
+
+/// `pointerInteraction:styleForRegion:` — called by UIKit when the pointer
+/// enters a region. Returns a UIPointerStyle matching the current GPUI cursor.
+extern "C" fn pointer_interaction_style(
+    _this: &Object,
+    _sel: Sel,
+    _interaction: *mut Object,
+    _region: *mut Object,
+) -> *mut Object {
+    let style = CURRENT_CURSOR_STYLE.with(|cell| *cell.borrow());
+    unsafe { cursor_style_to_pointer_style(style) }
+}
+
+/// Map a GPUI CursorStyle to a UIPointerStyle.
+///
+/// UIPointerStyle.system(shape:) covers the common cases. For shapes iOS
+/// doesn't have a direct equivalent, we fall back to the default automatic
+/// style (nil → UIKit chooses based on the element under the pointer).
+unsafe fn cursor_style_to_pointer_style(style: gpui::CursorStyle) -> *mut Object {
+    // UIPointerStyle +systemPointerStyle (iOS 15+) is not yet available via
+    // the objc crate. Use +styleWithShape:constrainedAxes: with
+    // UIPointerShape.
+    //
+    // UIAxis: horizontal = 1, vertical = 2, both = 3
+    const AXIS_HORIZONTAL: isize = 1;
+    const AXIS_VERTICAL: isize = 2;
+
+    match style {
+        gpui::CursorStyle::IBeam | gpui::CursorStyle::IBeamCursorForVerticalLayout => {
+            // UIPointerShape.verticalBeam / .beam(preferredLength:)
+            let shape: *mut Object =
+                msg_send![class!(UIPointerShape), beamWithPreferredLength: 20.0f64
+                    axis: AXIS_VERTICAL];
+            msg_send![class!(UIPointerStyle), styleWithShape: shape constrainedAxes: 0isize]
+        }
+        gpui::CursorStyle::ResizeLeftRight
+        | gpui::CursorStyle::ResizeLeft
+        | gpui::CursorStyle::ResizeRight
+        | gpui::CursorStyle::ResizeColumn => {
+            let path = resize_arrow_path(true);
+            let shape: *mut Object = msg_send![class!(UIPointerShape), shapeWithPath: path];
+            msg_send![class!(UIPointerStyle), styleWithShape: shape constrainedAxes: AXIS_VERTICAL]
+        }
+        gpui::CursorStyle::ResizeUpDown
+        | gpui::CursorStyle::ResizeUp
+        | gpui::CursorStyle::ResizeDown
+        | gpui::CursorStyle::ResizeRow => {
+            let path = resize_arrow_path(false);
+            let shape: *mut Object = msg_send![class!(UIPointerShape), shapeWithPath: path];
+            msg_send![class!(UIPointerStyle), styleWithShape: shape constrainedAxes: AXIS_HORIZONTAL]
+        }
+        gpui::CursorStyle::PointingHand => {
+            // Return nil → UIKit uses the default pointer, which automatically
+            // morphs into a "highlight" over tappable elements.
+            std::ptr::null_mut()
+        }
+        gpui::CursorStyle::None => {
+            msg_send![class!(UIPointerStyle), hiddenPointerStyle]
+        }
+        // For Arrow, Crosshair, OpenHand, ClosedHand, and others that don't
+        // have a direct UIPointerShape equivalent, return nil so UIKit uses
+        // the default automatic pointer.
+        _ => std::ptr::null_mut(),
+    }
+}
+
+/// Return a cached UIBezierPath for a double-headed resize arrow.
+/// `horizontal` = true for ↔ (left-right), false for ↕ (up-down).
+unsafe fn resize_arrow_path(horizontal: bool) -> *mut Object {
+    thread_local! {
+        static H_PATH: RefCell<Option<*mut Object>> = RefCell::new(None);
+        static V_PATH: RefCell<Option<*mut Object>> = RefCell::new(None);
+    }
+    let slot = if horizontal { &H_PATH } else { &V_PATH };
+    slot.with(|cell| {
+        if let Some(cached) = *cell.borrow() {
+            return cached;
+        }
+        let path = build_resize_arrow_path(horizontal);
+        *cell.borrow_mut() = Some(path);
+        path
+    })
+}
+
+/// Build a UIBezierPath for a double-headed resize arrow, centered at origin.
+/// Dimensions: ~20pt along the arrow axis, ~10pt for the arrowheads.
+unsafe fn build_resize_arrow_path(horizontal: bool) -> *mut Object {
+    // Build a thin stroke path, then convert it to a filled outline with
+    // rounded joins and caps baked in. UIPointerShape uses the path as a
+    // filled shape, so stroke attributes on UIBezierPath are ignored.
+
+    let stroke_path: *mut Object = msg_send![class!(UIBezierPath), bezierPath];
+
+    let gap = 2.0f64; // half-gap between the two arrows
+    let depth = 5.0f64; // how far each arrowhead extends from its base
+    let spread = 5.5f64; // half-width of the arrowhead
+
+    if horizontal {
+        let base_r = gap;
+        let tip_r = gap + depth;
+        let _: () = msg_send![stroke_path, moveToPoint: CGPoint { x: base_r, y: -spread }];
+        let _: () = msg_send![stroke_path, addLineToPoint: CGPoint { x: tip_r, y: 0.0 }];
+        let _: () = msg_send![stroke_path, addLineToPoint: CGPoint { x: base_r, y: spread }];
+
+        let base_l = -gap;
+        let tip_l = -(gap + depth);
+        let _: () = msg_send![stroke_path, moveToPoint: CGPoint { x: base_l, y: -spread }];
+        let _: () = msg_send![stroke_path, addLineToPoint: CGPoint { x: tip_l, y: 0.0 }];
+        let _: () = msg_send![stroke_path, addLineToPoint: CGPoint { x: base_l, y: spread }];
+    } else {
+        let base_d = gap;
+        let tip_d = gap + depth;
+        let _: () = msg_send![stroke_path, moveToPoint: CGPoint { x: -spread, y: base_d }];
+        let _: () = msg_send![stroke_path, addLineToPoint: CGPoint { x: 0.0, y: tip_d }];
+        let _: () = msg_send![stroke_path, addLineToPoint: CGPoint { x: spread, y: base_d }];
+
+        let base_u = -gap;
+        let tip_u = -(gap + depth);
+        let _: () = msg_send![stroke_path, moveToPoint: CGPoint { x: -spread, y: base_u }];
+        let _: () = msg_send![stroke_path, addLineToPoint: CGPoint { x: 0.0, y: tip_u }];
+        let _: () = msg_send![stroke_path, addLineToPoint: CGPoint { x: spread, y: base_u }];
+    }
+
+    // Stroke the thin path into a filled outline with rounded corners.
+    let cg_path: *mut c_void = msg_send![stroke_path, CGPath];
+    let line_width = 2.0f64;
+    // kCGLineCapRound = 1, kCGLineJoinRound = 1
+    let stroked_cg: *mut c_void = unsafe {
+        CGPathCreateCopyByStrokingPath(
+            cg_path,
+            std::ptr::null(),
+            line_width,
+            1, // kCGLineCapRound
+            1, // kCGLineJoinRound
+            4.0,
+        )
+    };
+
+    let result: *mut Object =
+        msg_send![class!(UIBezierPath), bezierPathWithCGPath: stroked_cg];
+    let _: *mut Object = msg_send![result, retain];
+    unsafe { CGPathRelease(stroked_cg) };
+
+    result
+}
+
+unsafe extern "C" {
+    fn CGPathCreateCopyByStrokingPath(
+        path: *mut c_void,
+        transform: *const c_void,
+        line_width: f64,
+        line_cap: i32,
+        line_join: i32,
+        miter_limit: f64,
+    ) -> *mut c_void;
+    fn CGPathRelease(path: *mut c_void);
 }
 
 /// Called by UIKit after it measures the view — on initial layout, rotation,
