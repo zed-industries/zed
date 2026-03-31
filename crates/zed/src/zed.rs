@@ -1202,6 +1202,8 @@ fn register_actions(
             }
         });
     }
+
+    workspace.register_action(sidebar::dump_workspace_info);
 }
 
 fn initialize_pane(

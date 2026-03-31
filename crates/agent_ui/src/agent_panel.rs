@@ -1908,6 +1908,14 @@ impl AgentPanel {
         }
     }
 
+    pub fn workspace_id(&self) -> Option<WorkspaceId> {
+        self.workspace_id
+    }
+
+    pub fn background_threads(&self) -> &HashMap<acp::SessionId, Entity<ConversationView>> {
+        &self.background_threads
+    }
+
     pub fn active_conversation_view(&self) -> Option<&Entity<ConversationView>> {
         match &self.active_view {
             ActiveView::AgentThread { conversation_view } => Some(conversation_view),
