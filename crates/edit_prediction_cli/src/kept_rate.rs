@@ -1,7 +1,6 @@
 use crate::word_diff::tokenize;
-use similar::{DiffTag, TextDiff};
-use std::collections::HashMap;
 
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenAnnotation {
     Context,
@@ -22,34 +21,8 @@ pub struct KeptRateResult {
     pub token_annotations: Vec<TokenAnnotation>,
 }
 
-const DENSE_REGION_DP_CELL_THRESHOLD: usize = 200_000;
-const HIGH_MATCH_DENSITY_NUMERATOR: u128 = 1;
-const HIGH_MATCH_DENSITY_DENOMINATOR: u128 = 32;
-
 fn dp_index(width: usize, row: usize, column: usize) -> usize {
     row * width + column
-}
-
-#[cold]
-fn should_use_diff_alignment(a: &[&str], b: &[&str]) -> bool {
-    let dp_cell_count = (a.len() as u128 + 1) * (b.len() as u128 + 1);
-    if dp_cell_count < DENSE_REGION_DP_CELL_THRESHOLD as u128 {
-        return false;
-    }
-
-    let mut counts_by_token = HashMap::new();
-    for &token in a {
-        *counts_by_token.entry(token).or_insert(0usize) += 1;
-    }
-
-    let mut match_pairs = 0u128;
-    for &token in b {
-        if let Some(&count) = counts_by_token.get(token) {
-            match_pairs += count as u128;
-        }
-    }
-
-    match_pairs * HIGH_MATCH_DENSITY_DENOMINATOR >= dp_cell_count * HIGH_MATCH_DENSITY_NUMERATOR
 }
 
 /// Return boolean masks over `a` and `b` where `true` means the token is part
@@ -103,23 +76,6 @@ fn lcs_keep_masks(a: &[&str], b: &[&str]) -> (Vec<bool>, Vec<bool>) {
     let b_mid = &b[prefix_len..b.len() - suffix_len];
 
     if a_mid.is_empty() || b_mid.is_empty() {
-        return (keep_a, keep_b);
-    }
-
-    if should_use_diff_alignment(a_mid, b_mid) {
-        let diff = TextDiff::from_slices(a_mid, b_mid);
-        for operation in diff.ops() {
-            if operation.tag() != DiffTag::Equal {
-                continue;
-            }
-
-            for index in operation.old_range() {
-                keep_a[index + prefix_len] = true;
-            }
-            for index in operation.new_range() {
-                keep_b[index + prefix_len] = true;
-            }
-        }
         return (keep_a, keep_b);
     }
 

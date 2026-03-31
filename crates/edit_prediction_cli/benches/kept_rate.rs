@@ -12,7 +12,7 @@ fn repeated_function_lines(line_count: usize) -> String {
 }
 
 fn localized_rename_inputs(line_count: usize) -> (String, String, String) {
-    let mut base = repeated_function_lines(line_count);
+    let base = repeated_function_lines(line_count);
     let mut predicted = base.clone();
     let mut final_text = base.clone();
 
