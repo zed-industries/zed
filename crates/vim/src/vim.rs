@@ -449,7 +449,10 @@ pub fn init(cx: &mut App) {
                 );
             } else {
                 // If no count is provided, go to the next tab.
-                window.dispatch_action(workspace::pane::ActivateNextItem::default().boxed_clone(), cx);
+                window.dispatch_action(
+                    workspace::pane::ActivateNextItem::default().boxed_clone(),
+                    cx,
+                );
             }
         });
 
@@ -473,7 +476,10 @@ pub fn init(cx: &mut App) {
                 }
             } else {
                 // No count provided, go to the previous tab.
-                window.dispatch_action(workspace::pane::ActivatePreviousItem::default().boxed_clone(), cx);
+                window.dispatch_action(
+                    workspace::pane::ActivatePreviousItem::default().boxed_clone(),
+                    cx,
+                );
             }
         });
     })

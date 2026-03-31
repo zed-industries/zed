@@ -1661,7 +1661,11 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         }),
         VimCommand::new(("bn", "ext"), workspace::ActivateNextItem::default()).count(),
         VimCommand::new(("bN", "ext"), workspace::ActivatePreviousItem::default()).count(),
-        VimCommand::new(("bp", "revious"), workspace::ActivatePreviousItem::default()).count(),
+        VimCommand::new(
+            ("bp", "revious"),
+            workspace::ActivatePreviousItem::default(),
+        )
+        .count(),
         VimCommand::new(("bf", "irst"), workspace::ActivateItem(0)),
         VimCommand::new(("br", "ewind"), workspace::ActivateItem(0)),
         VimCommand::new(("bl", "ast"), workspace::ActivateLastItem),
@@ -1670,7 +1674,11 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::new(("new", ""), workspace::NewFileSplitHorizontal),
         VimCommand::new(("vne", "w"), workspace::NewFileSplitVertical),
         VimCommand::new(("tabn", "ext"), workspace::ActivateNextItem::default()).count(),
-        VimCommand::new(("tabp", "revious"), workspace::ActivatePreviousItem::default()).count(),
+        VimCommand::new(
+            ("tabp", "revious"),
+            workspace::ActivatePreviousItem::default(),
+        )
+        .count(),
         VimCommand::new(("tabN", "ext"), workspace::ActivatePreviousItem::default()).count(),
         VimCommand::new(
             ("tabc", "lose"),
