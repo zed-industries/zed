@@ -744,7 +744,6 @@ USER $_DEV_CONTAINERS_IMAGE_USER
         let remote_env = self.runtime_remote_env(&running_container.config.env_as_map()?)?;
 
         Ok(DevContainerUp {
-            _outcome: "todo".to_string(),
             container_id: running_container.id,
             remote_user,
             remote_workspace_folder,
@@ -1933,7 +1932,6 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             let remote_env = self.runtime_remote_env(&docker_inspect.config.env_as_map()?)?;
 
             let dev_container_up = DevContainerUp {
-                _outcome: "todo".to_string(),
                 container_id: docker_ps.id,
                 remote_user: remote_user,
                 remote_workspace_folder: remote_folder,

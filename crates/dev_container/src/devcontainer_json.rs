@@ -156,7 +156,7 @@ impl LifecycleScriptInternal {
 }
 
 #[derive(Clone, Debug, Serialize, Eq, PartialEq)]
-pub struct LifecyleScript {
+pub struct LifecycleScript {
     scripts: HashMap<String, LifecycleScriptInternal>,
 }
 
@@ -222,12 +222,12 @@ pub(crate) struct DevContainer {
     pub(crate) docker_compose_file: Option<Vec<String>>,
     pub(crate) service: Option<String>,
     run_services: Option<Vec<String>>,
-    pub(crate) initialize_command: Option<LifecyleScript>,
-    pub(crate) on_create_command: Option<LifecyleScript>,
-    pub(crate) update_content_command: Option<LifecyleScript>,
-    pub(crate) post_create_command: Option<LifecyleScript>,
-    pub(crate) post_start_command: Option<LifecyleScript>,
-    pub(crate) post_attach_command: Option<LifecyleScript>,
+    pub(crate) initialize_command: Option<LifecycleScript>,
+    pub(crate) on_create_command: Option<LifecycleScript>,
+    pub(crate) update_content_command: Option<LifecycleScript>,
+    pub(crate) post_create_command: Option<LifecycleScript>,
+    pub(crate) post_start_command: Option<LifecycleScript>,
+    pub(crate) post_attach_command: Option<LifecycleScript>,
     wait_for: Option<LifecycleCommand>,
     host_requirements: Option<HostRequirements>,
 }
@@ -282,7 +282,7 @@ impl<'de> Deserialize<'de> for ZedCustomizationsWrapper {
     }
 }
 
-impl LifecyleScript {
+impl LifecycleScript {
     fn from_map(args: HashMap<String, Vec<String>>) -> Self {
         Self {
             scripts: args
@@ -348,7 +348,7 @@ impl LifecyleScript {
     }
 }
 
-impl<'de> Deserialize<'de> for LifecyleScript {
+impl<'de> Deserialize<'de> for LifecycleScript {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -359,7 +359,7 @@ impl<'de> Deserialize<'de> for LifecyleScript {
         struct LifecycleScriptVisitor;
 
         impl<'de> Visitor<'de> for LifecycleScriptVisitor {
-            type Value = LifecyleScript;
+            type Value = LifecycleScript;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
                 formatter.write_str("a string, an array of strings, or a map of arrays")
@@ -369,7 +369,7 @@ impl<'de> Deserialize<'de> for LifecyleScript {
             where
                 E: de::Error,
             {
-                Ok(LifecyleScript::from_str(value))
+                Ok(LifecycleScript::from_str(value))
             }
 
             fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
@@ -380,7 +380,7 @@ impl<'de> Deserialize<'de> for LifecyleScript {
                 while let Some(elem) = seq.next_element()? {
                     array.push(elem);
                 }
-                Ok(LifecyleScript::from_args(array))
+                Ok(LifecycleScript::from_args(array))
             }
 
             fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
@@ -405,7 +405,7 @@ impl<'de> Deserialize<'de> for LifecyleScript {
                     };
                     result.insert(key, script_args);
                 }
-                Ok(LifecyleScript::from_map(result))
+                Ok(LifecycleScript::from_map(result))
             }
         }
 
@@ -570,7 +570,7 @@ mod test {
         devcontainer_api::DevContainerError,
         devcontainer_json::{
             ContainerBuild, DevContainer, DevContainerBuildType, FeatureOptions, ForwardPort,
-            HostRequirements, LifecycleCommand, LifecyleScript, MountDefinition, OnAutoForward,
+            HostRequirements, LifecycleCommand, LifecycleScript, MountDefinition, OnAutoForward,
             PortAttributeProtocol, PortAttributes, ShutdownAction, UserEnvProbe, ZedCustomization,
             ZedCustomizationsWrapper, deserialize_devcontainer_json,
         },
@@ -814,12 +814,12 @@ mod test {
                     ("MYVAR1".to_string(), "myvarvalue".to_string()),
                     ("MYVAR2".to_string(), "myvarothervalue".to_string())
                 ])),
-                initialize_command: Some(LifecyleScript::from_args(vec![
+                initialize_command: Some(LifecycleScript::from_args(vec![
                     "echo".to_string(),
                     "initialize_command".to_string()
                 ])),
-                on_create_command: Some(LifecyleScript::from_str("echo on_create_command")),
-                update_content_command: Some(LifecyleScript::from_map(HashMap::from([
+                on_create_command: Some(LifecycleScript::from_str("echo on_create_command")),
+                update_content_command: Some(LifecycleScript::from_map(HashMap::from([
                     (
                         "first".to_string(),
                         vec!["echo".to_string(), "update_content_command".to_string()]
@@ -829,12 +829,12 @@ mod test {
                         vec!["echo".to_string(), "update_content_command".to_string()]
                     )
                 ]))),
-                post_create_command: Some(LifecyleScript::from_str("echo post_create_command")),
-                post_start_command: Some(LifecyleScript::from_args(vec![
+                post_create_command: Some(LifecycleScript::from_str("echo post_create_command")),
+                post_start_command: Some(LifecycleScript::from_args(vec![
                     "echo".to_string(),
                     "post_start_command".to_string()
                 ])),
-                post_attach_command: Some(LifecyleScript::from_map(HashMap::from([
+                post_attach_command: Some(LifecycleScript::from_map(HashMap::from([
                     (
                         "something".to_string(),
                         vec!["echo".to_string(), "post_attach_command".to_string()]
@@ -1028,12 +1028,12 @@ mod test {
                     ("MYVAR1".to_string(), "myvarvalue".to_string()),
                     ("MYVAR2".to_string(), "myvarothervalue".to_string())
                 ])),
-                initialize_command: Some(LifecyleScript::from_args(vec![
+                initialize_command: Some(LifecycleScript::from_args(vec![
                     "echo".to_string(),
                     "initialize_command".to_string()
                 ])),
-                on_create_command: Some(LifecyleScript::from_str("echo on_create_command")),
-                update_content_command: Some(LifecyleScript::from_map(HashMap::from([
+                on_create_command: Some(LifecycleScript::from_str("echo on_create_command")),
+                update_content_command: Some(LifecycleScript::from_map(HashMap::from([
                     (
                         "first".to_string(),
                         vec!["echo".to_string(), "update_content_command".to_string()]
@@ -1043,12 +1043,12 @@ mod test {
                         vec!["echo".to_string(), "update_content_command".to_string()]
                     )
                 ]))),
-                post_create_command: Some(LifecyleScript::from_str("echo post_create_command")),
-                post_start_command: Some(LifecyleScript::from_args(vec![
+                post_create_command: Some(LifecycleScript::from_str("echo post_create_command")),
+                post_start_command: Some(LifecycleScript::from_args(vec![
                     "echo".to_string(),
                     "post_start_command".to_string()
                 ])),
-                post_attach_command: Some(LifecyleScript::from_map(HashMap::from([
+                post_attach_command: Some(LifecycleScript::from_map(HashMap::from([
                     (
                         "something".to_string(),
                         vec!["echo".to_string(), "post_attach_command".to_string()]
@@ -1256,12 +1256,12 @@ mod test {
                     ("MYVAR1".to_string(), "myvarvalue".to_string()),
                     ("MYVAR2".to_string(), "myvarothervalue".to_string())
                 ])),
-                initialize_command: Some(LifecyleScript::from_args(vec![
+                initialize_command: Some(LifecycleScript::from_args(vec![
                     "echo".to_string(),
                     "initialize_command".to_string()
                 ])),
-                on_create_command: Some(LifecyleScript::from_str("echo on_create_command")),
-                update_content_command: Some(LifecyleScript::from_map(HashMap::from([
+                on_create_command: Some(LifecycleScript::from_str("echo on_create_command")),
+                update_content_command: Some(LifecycleScript::from_map(HashMap::from([
                     (
                         "first".to_string(),
                         vec!["echo".to_string(), "update_content_command".to_string()]
@@ -1271,12 +1271,12 @@ mod test {
                         vec!["echo".to_string(), "update_content_command".to_string()]
                     )
                 ]))),
-                post_create_command: Some(LifecyleScript::from_str("echo post_create_command")),
-                post_start_command: Some(LifecyleScript::from_args(vec![
+                post_create_command: Some(LifecycleScript::from_str("echo post_create_command")),
+                post_start_command: Some(LifecycleScript::from_args(vec![
                     "echo".to_string(),
                     "post_start_command".to_string()
                 ])),
-                post_attach_command: Some(LifecyleScript::from_map(HashMap::from([
+                post_attach_command: Some(LifecycleScript::from_map(HashMap::from([
                     (
                         "something".to_string(),
                         vec!["echo".to_string(), "post_attach_command".to_string()]

@@ -1565,7 +1565,7 @@ fn dispatch_apply_templates(
             };
 
             if files.project_files.contains(&Arc::from(
-                RelPath::unix(".devcontainer/devcontainer.json").unwrap(), // TOOD unwrap
+                RelPath::unix(".devcontainer/devcontainer.json").unwrap(),
             )) {
                 let Some(workspace_task) = workspace
                     .update_in(cx, |workspace, window, cx| {
