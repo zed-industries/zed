@@ -180,7 +180,7 @@ impl ThreadMetadata {
 pub struct ThreadMetadataStore {
     db: ThreadMetadataDb,
     threads: HashMap<acp::SessionId, ThreadMetadata>,
-    threads_by_paths: HashMap<PathList, Vec<ThreadMetadata>>,
+    threads_by_paths: HashMap<PathList, HashSet<acp::SessionId>>,
     reload_task: Option<Shared<Task<()>>>,
     session_subscriptions: HashMap<acp::SessionId, Subscription>,
     pending_thread_ops_tx: smol::channel::Sender<DbOperation>,
@@ -189,14 +189,14 @@ pub struct ThreadMetadataStore {
 
 #[derive(Debug, PartialEq)]
 enum DbOperation {
-    Insert(ThreadMetadata),
+    Upsert(ThreadMetadata),
     Delete(acp::SessionId),
 }
 
 impl DbOperation {
     fn id(&self) -> &acp::SessionId {
         match self {
-            DbOperation::Insert(thread) => &thread.session_id,
+            DbOperation::Upsert(thread) => &thread.session_id,
             DbOperation::Delete(session_id) => session_id,
         }
     }
@@ -248,12 +248,12 @@ impl ThreadMetadataStore {
     }
 
     /// Returns all threads.
-    pub fn entries(&self) -> impl Iterator<Item = ThreadMetadata> + '_ {
-        self.threads.values().cloned()
+    pub fn entries(&self) -> impl Iterator<Item = &ThreadMetadata> + '_ {
+        self.threads.values()
     }
 
     /// Returns all archived threads.
-    pub fn archived_entries(&self) -> impl Iterator<Item = ThreadMetadata> + '_ {
+    pub fn archived_entries(&self) -> impl Iterator<Item = &ThreadMetadata> + '_ {
         self.entries().filter(|t| t.archived)
     }
 
@@ -261,13 +261,13 @@ impl ThreadMetadataStore {
     pub fn entries_for_path(
         &self,
         path_list: &PathList,
-    ) -> impl Iterator<Item = ThreadMetadata> + '_ {
+    ) -> impl Iterator<Item = &ThreadMetadata> + '_ {
         self.threads_by_paths
             .get(path_list)
             .into_iter()
             .flatten()
+            .filter_map(|s| self.threads.get(s))
             .filter(|s| !s.archived)
-            .cloned()
     }
 
     fn reload(&mut self, cx: &mut Context<Self>) -> Shared<Task<()>> {
@@ -291,7 +291,7 @@ impl ThreadMetadataStore {
                         this.threads_by_paths
                             .entry(row.folder_paths.clone())
                             .or_default()
-                            .push(row.clone());
+                            .insert(row.session_id.clone());
                         this.threads.insert(row.session_id.clone(), row);
                     }
 
@@ -310,10 +310,9 @@ impl ThreadMetadataStore {
         }
 
         for metadata in metadata {
-            self.pending_thread_ops_tx
-                .try_send(DbOperation::Insert(metadata))
-                .log_err();
+            self.save_internal(metadata);
         }
+        cx.notify();
     }
 
     pub fn save(&mut self, metadata: ThreadMetadata, cx: &mut Context<Self>) {
@@ -321,8 +320,29 @@ impl ThreadMetadataStore {
             return;
         }
 
+        self.save_internal(metadata);
+        cx.notify();
+    }
+
+    fn save_internal(&mut self, metadata: ThreadMetadata) {
+        // If the folder paths have changed, we need to clear the old entry
+        if let Some(thread) = self.threads.get(&metadata.session_id)
+            && thread.folder_paths != metadata.folder_paths
+            && let Some(session_ids) = self.threads_by_paths.get_mut(&thread.folder_paths)
+        {
+            session_ids.remove(&metadata.session_id);
+        }
+
+        self.threads
+            .insert(metadata.session_id.clone(), metadata.clone());
+
+        self.threads_by_paths
+            .entry(metadata.folder_paths.clone())
+            .or_default()
+            .insert(metadata.session_id.clone());
+
         self.pending_thread_ops_tx
-            .try_send(DbOperation::Insert(metadata))
+            .try_send(DbOperation::Upsert(metadata))
             .log_err();
     }
 
@@ -345,13 +365,10 @@ impl ThreadMetadataStore {
         }
 
         if let Some(thread) = self.threads.get(session_id) {
-            self.save(
-                ThreadMetadata {
-                    archived,
-                    ..thread.clone()
-                },
-                cx,
-            );
+            self.save_internal(ThreadMetadata {
+                archived,
+                ..thread.clone()
+            });
             cx.notify();
         }
     }
@@ -361,9 +378,16 @@ impl ThreadMetadataStore {
             return;
         }
 
+        if let Some(thread) = self.threads.get(&session_id)
+            && let Some(session_ids) = self.threads_by_paths.get_mut(&thread.folder_paths)
+        {
+            session_ids.remove(&session_id);
+        }
+        self.threads.remove(&session_id);
         self.pending_thread_ops_tx
             .try_send(DbOperation::Delete(session_id))
             .log_err();
+        cx.notify();
     }
 
     fn new(db: ThreadMetadataDb, cx: &mut Context<Self>) -> Self {
@@ -406,9 +430,9 @@ impl ThreadMetadataStore {
         .detach();
 
         let (tx, rx) = smol::channel::unbounded();
-        let _db_operations_task = cx.spawn({
+        let _db_operations_task = cx.background_spawn({
             let db = db.clone();
-            async move |this, cx| {
+            async move {
                 while let Ok(first_update) = rx.recv().await {
                     let mut updates = vec![first_update];
                     while let Ok(update) = rx.try_recv() {
@@ -417,7 +441,7 @@ impl ThreadMetadataStore {
                     let updates = Self::dedup_db_operations(updates);
                     for operation in updates {
                         match operation {
-                            DbOperation::Insert(metadata) => {
+                            DbOperation::Upsert(metadata) => {
                                 db.save(metadata).await.log_err();
                             }
                             DbOperation::Delete(session_id) => {
@@ -425,8 +449,6 @@ impl ThreadMetadataStore {
                             }
                         }
                     }
-
-                    this.update(cx, |this, cx| this.reload(cx)).ok();
                 }
             }
         });
@@ -688,6 +710,17 @@ mod tests {
         }
     }
 
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            ThreadMetadataStore::init_global(cx);
+            ThreadStore::init_global(cx);
+        });
+        cx.run_until_parked();
+    }
+
     #[gpui::test]
     async fn test_store_initializes_cache_from_database(cx: &mut TestAppContext) {
         let first_paths = PathList::new(&[Path::new("/project-a")]);
@@ -756,12 +789,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_store_cache_updates_after_save_and_delete(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let settings_store = settings::SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            cx.update_flags(true, vec!["agent-v2".to_string()]);
-            ThreadMetadataStore::init_global(cx);
-        });
+        init_test(cx);
 
         let first_paths = PathList::new(&[Path::new("/project-a")]);
         let second_paths = PathList::new(&[Path::new("/project-b")]);
@@ -881,10 +909,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_migrate_thread_metadata_migrates_only_missing_threads(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            ThreadStore::init_global(cx);
-            ThreadMetadataStore::init_global(cx);
-        });
+        init_test(cx);
 
         let project_a_paths = PathList::new(&[Path::new("/project-a")]);
         let project_b_paths = PathList::new(&[Path::new("/project-b")]);
@@ -959,7 +984,7 @@ mod tests {
 
         let list = cx.update(|cx| {
             let store = ThreadMetadataStore::global(cx);
-            store.read(cx).entries().collect::<Vec<_>>()
+            store.read(cx).entries().cloned().collect::<Vec<_>>()
         });
 
         assert_eq!(list.len(), 3);
@@ -999,10 +1024,7 @@ mod tests {
     async fn test_migrate_thread_metadata_noops_when_all_threads_already_exist(
         cx: &mut TestAppContext,
     ) {
-        cx.update(|cx| {
-            ThreadStore::init_global(cx);
-            ThreadMetadataStore::init_global(cx);
-        });
+        init_test(cx);
 
         let project_paths = PathList::new(&[Path::new("/project-a")]);
         let existing_updated_at = Utc::now();
@@ -1047,7 +1069,7 @@ mod tests {
 
         let list = cx.update(|cx| {
             let store = ThreadMetadataStore::global(cx);
-            store.read(cx).entries().collect::<Vec<_>>()
+            store.read(cx).entries().cloned().collect::<Vec<_>>()
         });
 
         assert_eq!(list.len(), 1);
@@ -1058,10 +1080,7 @@ mod tests {
     async fn test_migrate_thread_metadata_archives_beyond_five_most_recent_per_project(
         cx: &mut TestAppContext,
     ) {
-        cx.update(|cx| {
-            ThreadStore::init_global(cx);
-            ThreadMetadataStore::init_global(cx);
-        });
+        init_test(cx);
 
         let project_a_paths = PathList::new(&[Path::new("/project-a")]);
         let project_b_paths = PathList::new(&[Path::new("/project-b")]);
@@ -1110,7 +1129,7 @@ mod tests {
 
         let list = cx.update(|cx| {
             let store = ThreadMetadataStore::global(cx);
-            store.read(cx).entries().collect::<Vec<_>>()
+            store.read(cx).entries().cloned().collect::<Vec<_>>()
         });
 
         assert_eq!(list.len(), 10);
@@ -1149,13 +1168,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_empty_thread_metadata_deleted_when_thread_released(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let settings_store = settings::SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            cx.update_flags(true, vec!["agent-v2".to_string()]);
-            ThreadStore::init_global(cx);
-            ThreadMetadataStore::init_global(cx);
-        });
+        init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, None::<&Path>, cx).await;
@@ -1205,13 +1218,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_nonempty_thread_metadata_preserved_when_thread_released(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let settings_store = settings::SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            cx.update_flags(true, vec!["agent-v2".to_string()]);
-            ThreadStore::init_global(cx);
-            ThreadMetadataStore::init_global(cx);
-        });
+        init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, None::<&Path>, cx).await;
@@ -1257,13 +1264,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_subagent_threads_excluded_from_sidebar_metadata(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let settings_store = settings::SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            cx.update_flags(true, vec!["agent-v2".to_string()]);
-            ThreadStore::init_global(cx);
-            ThreadMetadataStore::init_global(cx);
-        });
+        init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, None::<&Path>, cx).await;
@@ -1321,7 +1322,7 @@ mod tests {
         // List all metadata from the store cache.
         let list = cx.update(|cx| {
             let store = ThreadMetadataStore::global(cx);
-            store.read(cx).entries().collect::<Vec<_>>()
+            store.read(cx).entries().cloned().collect::<Vec<_>>()
         });
 
         // The subagent thread should NOT appear in the sidebar metadata.
@@ -1342,7 +1343,7 @@ mod tests {
         let now = Utc::now();
 
         let operations = vec![
-            DbOperation::Insert(make_metadata(
+            DbOperation::Upsert(make_metadata(
                 "session-1",
                 "First Thread",
                 now,
@@ -1369,12 +1370,12 @@ mod tests {
         let new_metadata = make_metadata("session-1", "New Title", later, PathList::default());
 
         let deduped = ThreadMetadataStore::dedup_db_operations(vec![
-            DbOperation::Insert(old_metadata),
-            DbOperation::Insert(new_metadata.clone()),
+            DbOperation::Upsert(old_metadata),
+            DbOperation::Upsert(new_metadata.clone()),
         ]);
 
         assert_eq!(deduped.len(), 1);
-        assert_eq!(deduped[0], DbOperation::Insert(new_metadata));
+        assert_eq!(deduped[0], DbOperation::Upsert(new_metadata));
     }
 
     #[test]
@@ -1384,23 +1385,18 @@ mod tests {
         let metadata1 = make_metadata("session-1", "First Thread", now, PathList::default());
         let metadata2 = make_metadata("session-2", "Second Thread", now, PathList::default());
         let deduped = ThreadMetadataStore::dedup_db_operations(vec![
-            DbOperation::Insert(metadata1.clone()),
-            DbOperation::Insert(metadata2.clone()),
+            DbOperation::Upsert(metadata1.clone()),
+            DbOperation::Upsert(metadata2.clone()),
         ]);
 
         assert_eq!(deduped.len(), 2);
-        assert!(deduped.contains(&DbOperation::Insert(metadata1)));
-        assert!(deduped.contains(&DbOperation::Insert(metadata2)));
+        assert!(deduped.contains(&DbOperation::Upsert(metadata1)));
+        assert!(deduped.contains(&DbOperation::Upsert(metadata2)));
     }
 
     #[gpui::test]
     async fn test_archive_and_unarchive_thread(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let settings_store = settings::SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            cx.update_flags(true, vec!["agent-v2".to_string()]);
-            ThreadMetadataStore::init_global(cx);
-        });
+        init_test(cx);
 
         let paths = PathList::new(&[Path::new("/project-a")]);
         let now = Utc::now();
@@ -1486,12 +1482,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_entries_for_path_excludes_archived(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let settings_store = settings::SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            cx.update_flags(true, vec!["agent-v2".to_string()]);
-            ThreadMetadataStore::init_global(cx);
-        });
+        init_test(cx);
 
         let paths = PathList::new(&[Path::new("/project-a")]);
         let now = Utc::now();
@@ -1551,12 +1542,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_save_all_persists_multiple_threads(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let settings_store = settings::SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            cx.update_flags(true, vec!["agent-v2".to_string()]);
-            ThreadMetadataStore::init_global(cx);
-        });
+        init_test(cx);
 
         let paths = PathList::new(&[Path::new("/project-a")]);
         let now = Utc::now();
@@ -1604,12 +1590,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_archived_flag_persists_across_reload(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let settings_store = settings::SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            cx.update_flags(true, vec!["agent-v2".to_string()]);
-            ThreadMetadataStore::init_global(cx);
-        });
+        init_test(cx);
 
         let paths = PathList::new(&[Path::new("/project-a")]);
         let now = Utc::now();
@@ -1668,12 +1649,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_archive_nonexistent_thread_is_noop(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let settings_store = settings::SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            cx.update_flags(true, vec!["agent-v2".to_string()]);
-            ThreadMetadataStore::init_global(cx);
-        });
+        init_test(cx);
 
         cx.run_until_parked();
 
@@ -1693,6 +1669,40 @@ mod tests {
             assert!(store.is_empty());
             assert_eq!(store.entries().count(), 0);
             assert_eq!(store.archived_entries().count(), 0);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_save_followed_by_archiving_without_parking(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let paths = PathList::new(&[Path::new("/project-a")]);
+        let now = Utc::now();
+        let metadata = make_metadata("session-1", "Thread 1", now, paths.clone());
+        let session_id = metadata.session_id.clone();
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            store.update(cx, |store, cx| {
+                store.save(metadata.clone(), cx);
+                store.archive(&session_id, cx);
+            });
+        });
+
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            let store = store.read(cx);
+
+            let entries: Vec<ThreadMetadata> = store.entries().cloned().collect();
+            pretty_assertions::assert_eq!(
+                entries,
+                vec![ThreadMetadata {
+                    archived: true,
+                    ..metadata
+                }]
+            );
         });
     }
 }

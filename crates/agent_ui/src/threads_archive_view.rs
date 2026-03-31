@@ -214,6 +214,7 @@ impl ThreadsArchiveView {
             .archived_entries()
             .sorted_by_cached_key(|t| t.created_at.unwrap_or(t.updated_at))
             .rev()
+            .cloned()
             .collect::<Vec<_>>();
 
         let query = self.filter_editor.read(cx).text(cx).to_lowercase();

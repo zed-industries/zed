@@ -824,6 +824,7 @@ impl Sidebar {
                     let mut workspace_rows = thread_store
                         .read(cx)
                         .entries_for_path(&ws_path_list)
+                        .cloned()
                         .peekable();
                     if workspace_rows.peek().is_none() {
                         let worktrees =
@@ -872,7 +873,11 @@ impl Sidebar {
                     });
 
                 for worktree_path_list in linked_worktree_queries {
-                    for row in thread_store.read(cx).entries_for_path(&worktree_path_list) {
+                    for row in thread_store
+                        .read(cx)
+                        .entries_for_path(&worktree_path_list)
+                        .cloned()
+                    {
                         if !seen_session_ids.insert(row.session_id.clone()) {
                             continue;
                         }
