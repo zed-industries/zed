@@ -4674,6 +4674,13 @@ impl EditorElement {
                 .display_snapshot
                 .point_to_display_point(start_point, Bias::Left)
                 .row();
+            if rows
+                .last()
+                .is_some_and(|last| last.sticky_row == sticky_row)
+            {
+                continue;
+            }
+
             let end_row = snapshot
                 .display_snapshot
                 .point_to_display_point(end_point, Bias::Left)
