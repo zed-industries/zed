@@ -55,7 +55,7 @@ fn migrate_thread_metadata(cx: &mut App) {
                 .read(cx)
                 .entries()
                 .filter_map(|entry| {
-                    if existing_entries.contains(&entry.id.0) || entry.folder_paths.is_empty() {
+                    if existing_entries.contains(&entry.id.0) {
                         return None;
                     }
 
@@ -314,6 +314,21 @@ impl ThreadMetadataStore {
         self.pending_thread_ops_tx
             .try_send(DbOperation::Upsert(metadata))
             .log_err();
+    }
+
+    pub fn update_working_directories(
+        &mut self,
+        session_id: &acp::SessionId,
+        work_dirs: PathList,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(thread) = self.threads.get(session_id) {
+            self.save_internal(ThreadMetadata {
+                folder_paths: work_dirs,
+                ..thread.clone()
+            });
+            cx.notify();
+        }
     }
 
     pub fn archive(&mut self, session_id: &acp::SessionId, cx: &mut Context<Self>) {
