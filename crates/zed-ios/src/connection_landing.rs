@@ -516,9 +516,9 @@ fn show_multi_workspace(
     if let Some(Some(multi)) = window.root::<workspace::MultiWorkspace>() {
         multi.update(cx, |multi, cx| {
             for ws in all_workspaces {
-                multi.add_workspace(ws.clone(), cx);
+                multi.add(ws.clone(), window, cx);
             }
-            multi.activate(active.clone(), cx);
+            multi.activate(active.clone(), window, cx);
         });
     } else {
         let first = all_workspaces[0].clone();
@@ -526,9 +526,9 @@ fn show_multi_workspace(
         window.replace_root(cx, |window, cx| {
             let mut multi = workspace::MultiWorkspace::new(first, window, cx);
             for ws in all_workspaces.iter().skip(1) {
-                multi.add_workspace(ws.clone(), cx);
+                multi.add(ws.clone(), window, cx);
             }
-            multi.activate(active, cx);
+            multi.activate(active, window, cx);
             multi
         });
     }
@@ -1678,7 +1678,7 @@ impl ConnectionLanding {
     ) {
         if let Some(Some(multi)) = window.root::<workspace::MultiWorkspace>() {
             multi.update(cx, |multi, cx| {
-                multi.activate(workspace_entity.clone(), cx);
+                multi.activate(workspace_entity.clone(), window, cx);
             });
         } else {
             window.replace_root(cx, |window, cx| {
