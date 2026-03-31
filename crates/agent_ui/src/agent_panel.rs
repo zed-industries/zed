@@ -2030,27 +2030,8 @@ impl AgentPanel {
         }
 
         for thread in &root_threads {
-            thread.update(cx, |thread, _cx| {
-                thread.set_work_dirs(new_work_dirs.clone());
-            });
-        }
-
-        if let Some(metadata_store) =
-            crate::thread_metadata_store::ThreadMetadataStore::try_global(cx)
-        {
-            metadata_store.update(cx, |store, cx| {
-                for thread in &root_threads {
-                    let is_archived = store
-                        .entry(thread.read(cx).session_id())
-                        .map(|t| t.archived)
-                        .unwrap_or(false);
-                    let metadata = crate::thread_metadata_store::ThreadMetadata::from_thread(
-                        is_archived,
-                        thread,
-                        cx,
-                    );
-                    store.save(metadata, cx);
-                }
+            thread.update(cx, |thread, cx| {
+                thread.set_work_dirs(new_work_dirs.clone(), cx);
             });
         }
     }

@@ -202,7 +202,8 @@ impl Conversation {
                 | AcpThreadEvent::Refusal
                 | AcpThreadEvent::AvailableCommandsUpdated(_)
                 | AcpThreadEvent::ModeUpdated(_)
-                | AcpThreadEvent::ConfigOptionsUpdated(_) => {}
+                | AcpThreadEvent::ConfigOptionsUpdated(_)
+                | AcpThreadEvent::WorkingDirectoriesUpdated => {}
             }
         });
         self.subscriptions.push(subscription);
@@ -1455,6 +1456,9 @@ impl ConversationView {
             }
             AcpThreadEvent::ConfigOptionsUpdated(_) => {
                 // The watch task in ConfigOptionsView handles rebuilding selectors
+                cx.notify();
+            }
+            AcpThreadEvent::WorkingDirectoriesUpdated => {
                 cx.notify();
             }
         }

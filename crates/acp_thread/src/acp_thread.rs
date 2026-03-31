@@ -1095,6 +1095,7 @@ pub enum AcpThreadEvent {
     AvailableCommandsUpdated(Vec<acp::AvailableCommand>),
     ModeUpdated(acp::SessionModeId),
     ConfigOptionsUpdated(Vec<acp::SessionConfigOption>),
+    WorkingDirectoriesUpdated,
 }
 
 impl EventEmitter<AcpThreadEvent> for AcpThread {}
@@ -1288,8 +1289,9 @@ impl AcpThread {
         self.work_dirs.as_ref()
     }
 
-    pub fn set_work_dirs(&mut self, work_dirs: PathList) {
+    pub fn set_work_dirs(&mut self, work_dirs: PathList, cx: &mut Context<Self>) {
         self.work_dirs = Some(work_dirs);
+        cx.emit(AcpThreadEvent::WorkingDirectoriesUpdated)
     }
 
     pub fn status(&self) -> ThreadStatus {

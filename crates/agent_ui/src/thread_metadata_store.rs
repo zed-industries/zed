@@ -427,7 +427,7 @@ impl ThreadMetadataStore {
 
             weak_store
                 .update(cx, |this, cx| {
-                    let subscription = cx.subscribe(&thread_entity, Self::handle_thread_update);
+                    let subscription = cx.subscribe(&thread_entity, Self::handle_thread_event);
                     this.session_subscriptions
                         .insert(thread.session_id().clone(), subscription);
                 })
@@ -483,7 +483,7 @@ impl ThreadMetadataStore {
         ops.into_values().collect()
     }
 
-    fn handle_thread_update(
+    fn handle_thread_event(
         &mut self,
         thread: Entity<acp_thread::AcpThread>,
         event: &AcpThreadEvent,
@@ -495,17 +495,18 @@ impl ThreadMetadataStore {
         }
 
         match event {
-            acp_thread::AcpThreadEvent::NewEntry
-            | acp_thread::AcpThreadEvent::TitleUpdated
-            | acp_thread::AcpThreadEvent::EntryUpdated(_)
-            | acp_thread::AcpThreadEvent::EntriesRemoved(_)
-            | acp_thread::AcpThreadEvent::ToolAuthorizationRequested(_)
-            | acp_thread::AcpThreadEvent::ToolAuthorizationReceived(_)
-            | acp_thread::AcpThreadEvent::Retry(_)
-            | acp_thread::AcpThreadEvent::Stopped(_)
-            | acp_thread::AcpThreadEvent::Error
-            | acp_thread::AcpThreadEvent::LoadError(_)
-            | acp_thread::AcpThreadEvent::Refusal => {
+            AcpThreadEvent::NewEntry
+            | AcpThreadEvent::TitleUpdated
+            | AcpThreadEvent::EntryUpdated(_)
+            | AcpThreadEvent::EntriesRemoved(_)
+            | AcpThreadEvent::ToolAuthorizationRequested(_)
+            | AcpThreadEvent::ToolAuthorizationReceived(_)
+            | AcpThreadEvent::Retry(_)
+            | AcpThreadEvent::Stopped(_)
+            | AcpThreadEvent::Error
+            | AcpThreadEvent::LoadError(_)
+            | AcpThreadEvent::Refusal
+            | AcpThreadEvent::WorkingDirectoriesUpdated => {
                 let is_archived = self
                     .threads
                     .get(thread.read(cx).session_id())
@@ -514,7 +515,12 @@ impl ThreadMetadataStore {
                 let metadata = ThreadMetadata::from_thread(is_archived, &thread, cx);
                 self.save(metadata, cx);
             }
-            _ => {}
+            AcpThreadEvent::TokenUsageUpdated
+            | AcpThreadEvent::SubagentSpawned(_)
+            | AcpThreadEvent::PromptCapabilitiesUpdated
+            | AcpThreadEvent::AvailableCommandsUpdated(_)
+            | AcpThreadEvent::ModeUpdated(_)
+            | AcpThreadEvent::ConfigOptionsUpdated(_) => {}
         }
     }
 }
