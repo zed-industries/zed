@@ -5043,6 +5043,7 @@ mod tests {
                 app_state.client.clone(),
                 prompt_builder.clone(),
                 app_state.languages.clone(),
+                true,
                 false,
                 cx,
             );
