@@ -90,7 +90,11 @@ pub enum MultiWorkspaceEvent {
     WorkspaceRemoved(EntityId),
 }
 
-pub trait Sidebar: Focusable + Render + Sized {
+pub enum SidebarEvent {
+    SerializeNeeded,
+}
+
+pub trait Sidebar: Focusable + Render + EventEmitter<SidebarEvent> + Sized {
     fn width(&self, cx: &App) -> Pixels;
     fn set_width(&mut self, width: Option<Pixels>, cx: &mut Context<Self>);
     fn has_notifications(&self, cx: &App) -> bool;
@@ -109,6 +113,14 @@ pub trait Sidebar: Focusable + Render + Sized {
         _cx: &mut Context<Self>,
     ) {
     }
+
+    /// Return an opaque JSON blob of sidebar-specific state to persist.
+    fn serialized_state(&self, _cx: &App) -> Option<String> {
+        None
+    }
+
+    /// Restore sidebar state from a previously-serialized blob.
+    fn restore_serialized_state(&mut self, _state: &str, _cx: &mut Context<Self>) {}
 }
 
 pub trait SidebarHandle: 'static + Send + Sync {
@@ -125,6 +137,8 @@ pub trait SidebarHandle: 'static + Send + Sync {
     fn is_threads_list_view_active(&self, cx: &App) -> bool;
 
     fn side(&self, cx: &App) -> SidebarSide;
+    fn serialized_state(&self, cx: &App) -> Option<String>;
+    fn restore_serialized_state(&self, state: &str, cx: &mut App);
 }
 
 #[derive(Clone)]
@@ -185,6 +199,14 @@ impl<T: Sidebar> SidebarHandle for Entity<T> {
 
     fn side(&self, cx: &App) -> SidebarSide {
         self.read(cx).side(cx)
+    }
+
+    fn serialized_state(&self, cx: &App) -> Option<String> {
+        self.read(cx).serialized_state(cx)
+    }
+
+    fn restore_serialized_state(&self, state: &str, cx: &mut App) {
+        self.update(cx, |this, cx| this.restore_serialized_state(state, cx))
     }
 }
 
@@ -258,6 +280,12 @@ impl MultiWorkspace {
         self._subscriptions
             .push(cx.observe(&sidebar, |_this, _, cx| {
                 cx.notify();
+            }));
+        self._subscriptions
+            .push(cx.subscribe(&sidebar, |this, _, event, cx| match event {
+                SidebarEvent::SerializeNeeded => {
+                    this.serialize(cx);
+                }
             }));
         self.sidebar = Some(Box::new(sidebar));
     }
@@ -585,11 +613,12 @@ impl MultiWorkspace {
         self.cycle_workspace(-1, window, cx);
     }
 
-    fn serialize(&mut self, cx: &mut App) {
+    pub(crate) fn serialize(&mut self, cx: &mut App) {
         let window_id = self.window_id;
         let state = crate::persistence::model::MultiWorkspaceState {
             active_workspace_id: self.workspace().read(cx).database_id(),
             sidebar_open: self.sidebar_open,
+            sidebar_state: self.sidebar.as_ref().and_then(|s| s.serialized_state(cx)),
         };
         let kvp = db::kvp::KeyValueStore::global(cx);
         self._serialize_task = Some(cx.background_spawn(async move {
@@ -940,9 +969,15 @@ impl Render for MultiWorkspace {
                                     if let Some(sidebar) = this.sidebar.as_mut() {
                                         sidebar.set_width(None, cx);
                                     }
+                                    this.serialize(cx);
                                 })
                                 .ok();
                                 cx.stop_propagation();
+                            } else {
+                                weak.update(cx, |this, cx| {
+                                    this.serialize(cx);
+                                })
+                                .ok();
                             }
                         })
                         .occlude(),

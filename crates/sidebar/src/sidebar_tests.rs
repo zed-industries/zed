@@ -244,6 +244,47 @@ fn visible_entries_as_strings(
     })
 }
 
+#[gpui::test]
+async fn test_serialization_round_trip(cx: &mut TestAppContext) {
+    let project = init_test_project("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
+    save_n_test_threads(3, &path_list, cx).await;
+
+    // Set a custom width and collapse the group.
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.set_width(Some(px(420.0)), cx);
+        sidebar.toggle_collapse(&path_list, window, cx);
+    });
+    cx.run_until_parked();
+
+    // Capture the serialized state from the first sidebar.
+    let serialized = sidebar.read_with(cx, |sidebar, cx| sidebar.serialized_state(cx));
+    let serialized = serialized.expect("serialized_state should return Some");
+
+    // Create a fresh sidebar and restore into it.
+    let sidebar2 =
+        cx.update(|window, cx| cx.new(|cx| Sidebar::new(multi_workspace.clone(), window, cx)));
+    cx.run_until_parked();
+
+    sidebar2.update(cx, |sidebar, cx| {
+        sidebar.restore_serialized_state(&serialized, cx);
+    });
+    cx.run_until_parked();
+
+    // Assert width and collapsed groups match.
+    let (width1, collapsed1) = sidebar.read_with(cx, |s, _| (s.width, s.collapsed_groups.clone()));
+    let (width2, collapsed2) = sidebar2.read_with(cx, |s, _| (s.width, s.collapsed_groups.clone()));
+
+    assert_eq!(width1, width2);
+    assert_eq!(collapsed1, collapsed2);
+    assert_eq!(width1, px(420.0));
+    assert!(collapsed1.contains(&path_list));
+}
+
 #[test]
 fn test_clean_mention_links() {
     // Simple mention link

@@ -29,7 +29,7 @@ pub use crate::notifications::NotificationFrame;
 pub use dock::Panel;
 pub use multi_workspace::{
     CloseWorkspaceSidebar, DraggedSidebar, FocusWorkspaceSidebar, MultiWorkspace,
-    MultiWorkspaceEvent, NextWorkspace, PreviousWorkspace, Sidebar, SidebarHandle,
+    MultiWorkspaceEvent, NextWorkspace, PreviousWorkspace, Sidebar, SidebarEvent, SidebarHandle,
     SidebarRenderState, SidebarSide, ToggleWorkspaceSidebar, sidebar_side_context_menu,
 };
 pub use path_list::{PathList, SerializedPathList};
@@ -8683,6 +8683,18 @@ pub async fn restore_multiworkspace(
         window_handle
             .update(cx, |multi_workspace, _, cx| {
                 multi_workspace.open_sidebar(cx);
+            })
+            .ok();
+    }
+
+    if let Some(sidebar_state) = &state.sidebar_state {
+        let sidebar_state = sidebar_state.clone();
+        window_handle
+            .update(cx, |multi_workspace, _, cx| {
+                if let Some(sidebar) = multi_workspace.sidebar() {
+                    sidebar.restore_serialized_state(&sidebar_state, cx);
+                }
+                multi_workspace.serialize(cx);
             })
             .ok();
     }
