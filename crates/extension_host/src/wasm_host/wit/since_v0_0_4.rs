@@ -29,7 +29,9 @@ pub type ExtensionWorktree = Arc<dyn WorktreeDelegate>;
 pub fn linker(executor: &BackgroundExecutor) -> &'static Linker<WasmState> {
     static LINKER: OnceLock<Linker<WasmState>> = OnceLock::new();
     LINKER.get_or_init(|| {
-        super::new_linker(executor, |linker| Extension::add_to_linker::<_, WasmState>(linker, |s| s))
+        super::new_linker(executor, |linker| {
+            Extension::add_to_linker::<_, WasmState>(linker, |s| s)
+        })
     })
 }
 
