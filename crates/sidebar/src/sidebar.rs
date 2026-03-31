@@ -109,6 +109,44 @@ enum SidebarView {
 }
 
 #[derive(Clone, Debug)]
+enum ActiveEntry {
+    Thread {
+        session_id: acp::SessionId,
+        workspace: Entity<Workspace>,
+    },
+    Draft(Entity<Workspace>),
+}
+
+impl ActiveEntry {
+    fn workspace(&self) -> &Entity<Workspace> {
+        match self {
+            ActiveEntry::Thread { workspace, .. } => workspace,
+            ActiveEntry::Draft(workspace) => workspace,
+        }
+    }
+
+    fn is_active_thread(&self, session_id: &acp::SessionId) -> bool {
+        matches!(self, ActiveEntry::Thread { session_id: id, .. } if id == session_id)
+    }
+
+    fn matches_entry(&self, entry: &ListEntry) -> bool {
+        match (self, entry) {
+            (ActiveEntry::Thread { session_id, .. }, ListEntry::Thread(thread)) => {
+                thread.metadata.session_id == *session_id
+            }
+            (
+                ActiveEntry::Draft(workspace),
+                ListEntry::NewThread {
+                    workspace: entry_workspace,
+                    ..
+                },
+            ) => workspace == entry_workspace,
+            _ => false,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 struct ActiveThreadInfo {
     session_id: acp::SessionId,
     title: SharedString,
@@ -185,7 +223,6 @@ enum ListEntry {
     NewThread {
         path_list: PathList,
         workspace: Entity<Workspace>,
-        is_active_draft: bool,
         worktrees: Vec<WorktreeInfo>,
     },
 }
@@ -322,11 +359,8 @@ pub struct Sidebar {
     ///
     /// Note: This is NOT the same as the active item.
     selection: Option<usize>,
-    /// Derived from the active panel's thread in `rebuild_contents`.
-    /// Only updated when the panel returns `Some` — never cleared by
-    /// derivation, since the panel may transiently return `None` while
-    /// loading. User actions may write directly for immediate feedback.
-    focused_thread: Option<acp::SessionId>,
+    /// Tracks which sidebar entry is currently active (highlighted).
+    active_entry: Option<ActiveEntry>,
     hovered_thread_index: Option<usize>,
     collapsed_groups: HashSet<PathList>,
     expanded_groups: HashMap<PathList, usize>,
@@ -423,7 +457,7 @@ impl Sidebar {
             list_state: ListState::new(0, gpui::ListAlignment::Top, px(1000.)),
             contents: SidebarContents::default(),
             selection: None,
-            focused_thread: None,
+            active_entry: None,
             hovered_thread_index: None,
             collapsed_groups: HashSet::new(),
             expanded_groups: HashMap::new(),
@@ -443,27 +477,14 @@ impl Sidebar {
         cx.emit(workspace::SidebarEvent::SerializeNeeded);
     }
 
+    fn active_entry_workspace(&self) -> Option<&Entity<Workspace>> {
+        self.active_entry.as_ref().map(|entry| entry.workspace())
+    }
+
     fn is_active_workspace(&self, workspace: &Entity<Workspace>, cx: &App) -> bool {
         self.multi_workspace
             .upgrade()
             .map_or(false, |mw| mw.read(cx).workspace() == workspace)
-    }
-
-    fn agent_panel_visible(&self, cx: &App) -> bool {
-        self.multi_workspace.upgrade().map_or(false, |mw| {
-            let workspace = mw.read(cx).workspace();
-            AgentPanel::is_visible(&workspace, cx)
-        })
-    }
-
-    fn active_thread_is_draft(&self, cx: &App) -> bool {
-        self.multi_workspace
-            .upgrade()
-            .and_then(|mw| {
-                let workspace = mw.read(cx).workspace();
-                workspace.read(cx).panel::<AgentPanel>(cx)
-            })
-            .map_or(false, |panel| panel.read(cx).active_thread_is_draft(cx))
     }
 
     fn subscribe_to_workspace(
@@ -543,7 +564,13 @@ impl Sidebar {
                         .active_conversation_view()
                         .is_some_and(|cv| cv.read(cx).parent_id(cx).is_none());
                     if is_new_draft {
-                        this.focused_thread = None;
+                        if let Some(active_workspace) = this
+                            .multi_workspace
+                            .upgrade()
+                            .map(|mw| mw.read(cx).workspace().clone())
+                        {
+                            this.active_entry = Some(ActiveEntry::Draft(active_workspace));
+                        }
                     }
                     this.observe_draft_editor(cx);
                     this.update_entries(cx);
@@ -677,24 +704,38 @@ impl Sidebar {
 
         let query = self.filter_editor.read(cx).text(cx);
 
-        let agent_panel_visible = self.agent_panel_visible(cx);
-        let active_thread_is_draft = self.active_thread_is_draft(cx);
-
-        // Derive focused_thread from the active workspace's agent panel.
-        // Only update when the panel gives us a positive signal — if the
-        // panel returns None (e.g. still loading after a thread activation),
-        // keep the previous value so eager writes from user actions survive.
-        let panel_focused = active_workspace
-            .as_ref()
-            .and_then(|ws| ws.read(cx).panel::<AgentPanel>(cx))
-            .and_then(|panel| {
-                panel
+        // Derive active_entry from the active workspace's agent panel.
+        // Draft is checked first because a conversation can have a session_id
+        // before any messages are sent. However, a thread that's still loading
+        // also appears as a "draft" (no messages yet), so when we already have
+        // an eager Thread write for this workspace we preserve it. A session_id
+        // on a non-draft is a positive Thread signal. The remaining case
+        // (conversation exists, not draft, no session_id) is a genuine
+        // mid-load — keep the previous value.
+        if let Some(active_ws) = &active_workspace {
+            if let Some(panel) = active_ws.read(cx).panel::<AgentPanel>(cx) {
+                if panel.read(cx).active_thread_is_draft(cx)
+                    || panel.read(cx).active_conversation_view().is_none()
+                {
+                    let preserving_thread =
+                        matches!(&self.active_entry, Some(ActiveEntry::Thread { .. }))
+                            && self.active_entry_workspace() == Some(active_ws);
+                    if !preserving_thread {
+                        self.active_entry = Some(ActiveEntry::Draft(active_ws.clone()));
+                    }
+                } else if let Some(session_id) = panel
                     .read(cx)
                     .active_conversation_view()
                     .and_then(|cv| cv.read(cx).parent_id(cx))
-            });
-        if panel_focused.is_some() && !active_thread_is_draft {
-            self.focused_thread = panel_focused;
+                {
+                    self.active_entry = Some(ActiveEntry::Thread {
+                        session_id,
+                        workspace: active_ws.clone(),
+                    });
+                }
+                // else: conversation exists, not a draft, but no session_id
+                // yet — thread is mid-load. Keep previous value.
+            }
         }
 
         let previous = mem::take(&mut self.contents);
@@ -966,10 +1007,9 @@ impl Sidebar {
                     entries.push(thread.into());
                 }
             } else {
-                let is_draft_for_workspace = agent_panel_visible
-                    && active_thread_is_draft
-                    && self.focused_thread.is_none()
-                    && is_active;
+                let is_draft_for_workspace = is_active
+                    && matches!(&self.active_entry, Some(ActiveEntry::Draft(_)))
+                    && self.active_entry_workspace() == Some(representative_workspace);
 
                 project_header_indices.push(entries.len());
                 entries.push(ListEntry::ProjectHeader {
@@ -989,11 +1029,9 @@ impl Sidebar {
                 // Emit "New Thread" entries for threadless workspaces
                 // and active drafts, right after the header.
                 for (workspace, worktrees) in &threadless_workspaces {
-                    let is_draft = is_draft_for_workspace && workspace == representative_workspace;
                     entries.push(ListEntry::NewThread {
                         path_list: path_list.clone(),
                         workspace: workspace.clone(),
-                        is_active_draft: is_draft,
                         worktrees: worktrees.clone(),
                     });
                 }
@@ -1007,7 +1045,6 @@ impl Sidebar {
                     entries.push(ListEntry::NewThread {
                         path_list: path_list.clone(),
                         workspace: representative_workspace.clone(),
-                        is_active_draft: true,
                         worktrees,
                     });
                 }
@@ -1033,10 +1070,9 @@ impl Sidebar {
                         let is_promoted = thread.status == AgentThreadStatus::Running
                             || thread.status == AgentThreadStatus::WaitingForConfirmation
                             || notified_threads.contains(session_id)
-                            || self
-                                .focused_thread
-                                .as_ref()
-                                .is_some_and(|id| id == session_id);
+                            || self.active_entry.as_ref().is_some_and(|active| {
+                                active.matches_entry(&ListEntry::Thread(thread.clone()))
+                            });
                         if is_promoted {
                             promoted_threads.insert(session_id.clone());
                         }
@@ -1135,6 +1171,11 @@ impl Sidebar {
         let is_group_header_after_first =
             ix > 0 && matches!(entry, ListEntry::ProjectHeader { .. });
 
+        let is_active = self
+            .active_entry
+            .as_ref()
+            .is_some_and(|active| active.matches_entry(entry));
+
         let rendered = match entry {
             ListEntry::ProjectHeader {
                 path_list,
@@ -1143,7 +1184,7 @@ impl Sidebar {
                 highlight_positions,
                 has_running_threads,
                 waiting_thread_count,
-                is_active,
+                is_active: is_active_group,
             } => self.render_project_header(
                 ix,
                 false,
@@ -1153,11 +1194,11 @@ impl Sidebar {
                 highlight_positions,
                 *has_running_threads,
                 *waiting_thread_count,
-                *is_active,
+                *is_active_group,
                 is_selected,
                 cx,
             ),
-            ListEntry::Thread(thread) => self.render_thread(ix, thread, is_selected, cx),
+            ListEntry::Thread(thread) => self.render_thread(ix, thread, is_active, is_selected, cx),
             ListEntry::ViewMore {
                 path_list,
                 is_fully_expanded,
@@ -1165,13 +1206,12 @@ impl Sidebar {
             ListEntry::NewThread {
                 path_list,
                 workspace,
-                is_active_draft,
                 worktrees,
             } => self.render_new_thread(
                 ix,
                 path_list,
                 workspace,
-                *is_active_draft,
+                is_active,
                 worktrees,
                 is_selected,
                 cx,
@@ -1391,7 +1431,8 @@ impl Sidebar {
                             .tooltip(Tooltip::text("Activate Workspace"))
                             .on_click(cx.listener({
                                 move |this, _, window, cx| {
-                                    this.focused_thread = None;
+                                    this.active_entry =
+                                        Some(ActiveEntry::Draft(workspace_for_open.clone()));
                                     if let Some(multi_workspace) = this.multi_workspace.upgrade() {
                                         multi_workspace.update(cx, |multi_workspace, cx| {
                                             multi_workspace.activate(
@@ -1987,10 +2028,13 @@ impl Sidebar {
             return;
         };
 
-        // Set focused_thread eagerly so the sidebar highlight updates
+        // Set active_entry eagerly so the sidebar highlight updates
         // immediately, rather than waiting for a deferred AgentPanel
         // event which can race with ActiveWorkspaceChanged clearing it.
-        self.focused_thread = Some(metadata.session_id.clone());
+        self.active_entry = Some(ActiveEntry::Thread {
+            session_id: metadata.session_id.clone(),
+            workspace: workspace.clone(),
+        });
         self.record_thread_access(&metadata.session_id);
 
         multi_workspace.update(cx, |multi_workspace, cx| {
@@ -2010,6 +2054,7 @@ impl Sidebar {
         cx: &mut Context<Self>,
     ) {
         let target_session_id = metadata.session_id.clone();
+        let workspace_for_entry = workspace.clone();
 
         let activated = target_window
             .update(cx, |multi_workspace, window, cx| {
@@ -2030,7 +2075,10 @@ impl Sidebar {
                 .and_then(|sidebar| sidebar.downcast::<Self>().ok())
             {
                 target_sidebar.update(cx, |sidebar, cx| {
-                    sidebar.focused_thread = Some(target_session_id.clone());
+                    sidebar.active_entry = Some(ActiveEntry::Thread {
+                        session_id: target_session_id.clone(),
+                        workspace: workspace_for_entry.clone(),
+                    });
                     sidebar.record_thread_access(&target_session_id);
                     sidebar.update_entries(cx);
                 });
@@ -2296,7 +2344,11 @@ impl Sidebar {
         // nearest thread within the same project group. We never cross group
         // boundaries — if the group has no other threads, clear focus and open
         // a blank new thread in the panel instead.
-        if self.focused_thread.as_ref() == Some(session_id) {
+        if self
+            .active_entry
+            .as_ref()
+            .is_some_and(|e| e.is_active_thread(session_id))
+        {
             let current_pos = self.contents.entries.iter().position(|entry| {
                 matches!(entry, ListEntry::Thread(t) if &t.metadata.session_id == session_id)
             });
@@ -2360,7 +2412,12 @@ impl Sidebar {
                     ThreadEntryWorkspace::Open(ws) => Some(ws.clone()),
                     ThreadEntryWorkspace::Closed(_) => group_workspace,
                 };
-                self.focused_thread = Some(next_metadata.session_id.clone());
+                if let Some(ref ws) = target_workspace {
+                    self.active_entry = Some(ActiveEntry::Thread {
+                        session_id: next_metadata.session_id.clone(),
+                        workspace: ws.clone(),
+                    });
+                }
                 self.record_thread_access(&next_metadata.session_id);
 
                 if let Some(workspace) = target_workspace {
@@ -2379,8 +2436,8 @@ impl Sidebar {
                     }
                 }
             } else {
-                self.focused_thread = None;
                 if let Some(workspace) = &group_workspace {
+                    self.active_entry = Some(ActiveEntry::Draft(workspace.clone()));
                     if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
                         agent_panel.update(cx, |panel, cx| {
                             panel.new_thread(&NewThread, window, cx);
@@ -2543,11 +2600,13 @@ impl Sidebar {
 
         let weak_multi_workspace = self.multi_workspace.clone();
 
-        let original_metadata = self
-            .focused_thread
-            .as_ref()
-            .and_then(|focused_id| entries.iter().find(|e| &e.session_id == focused_id))
-            .map(|e| e.metadata.clone());
+        let original_metadata = match &self.active_entry {
+            Some(ActiveEntry::Thread { session_id, .. }) => entries
+                .iter()
+                .find(|e| &e.session_id == session_id)
+                .map(|e| e.metadata.clone()),
+            _ => None,
+        };
         let original_workspace = self
             .multi_workspace
             .upgrade()
@@ -2569,7 +2628,10 @@ impl Sidebar {
                             mw.activate(workspace.clone(), window, cx);
                         });
                     }
-                    this.focused_thread = Some(metadata.session_id.clone());
+                    this.active_entry = Some(ActiveEntry::Thread {
+                        session_id: metadata.session_id.clone(),
+                        workspace: workspace.clone(),
+                    });
                     this.update_entries(cx);
                     Self::load_agent_thread_in_workspace(workspace, metadata, false, window, cx);
                     let focus = thread_switcher.focus_handle(cx);
@@ -2585,7 +2647,10 @@ impl Sidebar {
                         });
                     }
                     this.record_thread_access(&metadata.session_id);
-                    this.focused_thread = Some(metadata.session_id.clone());
+                    this.active_entry = Some(ActiveEntry::Thread {
+                        session_id: metadata.session_id.clone(),
+                        workspace: workspace.clone(),
+                    });
                     this.update_entries(cx);
                     Self::load_agent_thread_in_workspace(workspace, metadata, false, window, cx);
                     this.dismiss_thread_switcher(cx);
@@ -2602,7 +2667,12 @@ impl Sidebar {
                         }
                     }
                     if let Some(metadata) = &original_metadata {
-                        this.focused_thread = Some(metadata.session_id.clone());
+                        if let Some(original_ws) = &original_workspace {
+                            this.active_entry = Some(ActiveEntry::Thread {
+                                session_id: metadata.session_id.clone(),
+                                workspace: original_ws.clone(),
+                            });
+                        }
                         this.update_entries(cx);
                         if let Some(original_ws) = &original_workspace {
                             Self::load_agent_thread_in_workspace(
@@ -2651,7 +2721,10 @@ impl Sidebar {
                     mw.activate(workspace.clone(), window, cx);
                 });
             }
-            self.focused_thread = Some(metadata.session_id.clone());
+            self.active_entry = Some(ActiveEntry::Thread {
+                session_id: metadata.session_id.clone(),
+                workspace: workspace.clone(),
+            });
             self.update_entries(cx);
             Self::load_agent_thread_in_workspace(&workspace, &metadata, false, window, cx);
         }
@@ -2663,6 +2736,7 @@ impl Sidebar {
         &self,
         ix: usize,
         thread: &ThreadEntry,
+        is_active: bool,
         is_focused: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -2675,8 +2749,7 @@ impl Sidebar {
         let thread_workspace = thread.workspace.clone();
 
         let is_hovered = self.hovered_thread_index == Some(ix);
-        let is_selected = self.agent_panel_visible(cx)
-            && self.focused_thread.as_ref() == Some(&metadata.session_id);
+        let is_selected = is_active;
         let is_running = matches!(
             thread.status,
             AgentThreadStatus::Running | AgentThreadStatus::WaitingForConfirmation
@@ -2943,11 +3016,7 @@ impl Sidebar {
             return;
         };
 
-        // Clear focused_thread immediately so no existing thread stays
-        // highlighted while the new blank thread is being shown. Without this,
-        // if the target workspace is already active (so ActiveWorkspaceChanged
-        // never fires), the previous thread's highlight would linger.
-        self.focused_thread = None;
+        self.active_entry = Some(ActiveEntry::Draft(workspace.clone()));
 
         multi_workspace.update(cx, |multi_workspace, cx| {
             multi_workspace.activate(workspace.clone(), window, cx);
@@ -2968,14 +3037,11 @@ impl Sidebar {
         ix: usize,
         _path_list: &PathList,
         workspace: &Entity<Workspace>,
-        is_active_draft: bool,
+        is_active: bool,
         worktrees: &[WorktreeInfo],
         is_selected: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let is_active =
-            is_active_draft && self.agent_panel_visible(cx) && self.active_thread_is_draft(cx);
-
         let label: SharedString = if is_active {
             self.active_draft_text(cx)
                 .unwrap_or_else(|| DEFAULT_THREAD_TITLE.into())

@@ -30,6 +30,28 @@ fn init_test(cx: &mut TestAppContext) {
     });
 }
 
+#[track_caller]
+fn assert_active_thread(sidebar: &Sidebar, session_id: &acp::SessionId, msg: &str) {
+    assert!(
+        sidebar
+            .active_entry
+            .as_ref()
+            .is_some_and(|e| e.is_active_thread(session_id)),
+        "{msg}: expected active_entry to be Thread({session_id:?}), got {:?}",
+        sidebar.active_entry,
+    );
+}
+
+#[track_caller]
+fn assert_active_draft(sidebar: &Sidebar, workspace: &Entity<Workspace>, msg: &str) {
+    assert!(
+        matches!(&sidebar.active_entry, Some(ActiveEntry::Draft(ws)) if ws == workspace),
+        "{msg}: expected active_entry to be Draft for workspace {:?}, got {:?}",
+        workspace.entity_id(),
+        sidebar.active_entry,
+    );
+}
+
 fn has_thread_entry(sidebar: &Sidebar, session_id: &acp::SessionId) -> bool {
     sidebar
         .contents
@@ -1979,10 +2001,10 @@ async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
 
     // ── 1. Initial state: focused thread derived from active panel ─────
     sidebar.read_with(cx, |sidebar, _cx| {
-        assert_eq!(
-            sidebar.focused_thread.as_ref(),
-            Some(&session_id_a),
-            "The active panel's thread should be focused on startup"
+        assert_active_thread(
+            sidebar,
+            &session_id_a,
+            "The active panel's thread should be focused on startup",
         );
     });
 
@@ -2005,10 +2027,10 @@ async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     sidebar.read_with(cx, |sidebar, _cx| {
-        assert_eq!(
-            sidebar.focused_thread.as_ref(),
-            Some(&session_id_a),
-            "After clicking a thread, it should be the focused thread"
+        assert_active_thread(
+            sidebar,
+            &session_id_a,
+            "After clicking a thread, it should be the focused thread",
         );
         assert!(
             has_thread_entry(sidebar, &session_id_a),
@@ -2060,10 +2082,10 @@ async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     sidebar.read_with(cx, |sidebar, _cx| {
-        assert_eq!(
-            sidebar.focused_thread.as_ref(),
-            Some(&session_id_b),
-            "Clicking a thread in another workspace should focus that thread"
+        assert_active_thread(
+            sidebar,
+            &session_id_b,
+            "Clicking a thread in another workspace should focus that thread",
         );
         assert!(
             has_thread_entry(sidebar, &session_id_b),
@@ -2078,10 +2100,10 @@ async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     sidebar.read_with(cx, |sidebar, _cx| {
-        assert_eq!(
-            sidebar.focused_thread.as_ref(),
-            Some(&session_id_a),
-            "Switching workspace should seed focused_thread from the new active panel"
+        assert_active_thread(
+            sidebar,
+            &session_id_a,
+            "Switching workspace should seed focused_thread from the new active panel",
         );
         assert!(
             has_thread_entry(sidebar, &session_id_a),
@@ -2104,10 +2126,10 @@ async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
     // This prevents running threads in background workspaces from causing
     // the selection highlight to jump around.
     sidebar.read_with(cx, |sidebar, _cx| {
-        assert_eq!(
-            sidebar.focused_thread.as_ref(),
-            Some(&session_id_a),
-            "Opening a thread in a non-active panel should not change focused_thread"
+        assert_active_thread(
+            sidebar,
+            &session_id_a,
+            "Opening a thread in a non-active panel should not change focused_thread",
         );
     });
 
@@ -2117,10 +2139,10 @@ async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     sidebar.read_with(cx, |sidebar, _cx| {
-        assert_eq!(
-            sidebar.focused_thread.as_ref(),
-            Some(&session_id_a),
-            "Defocusing the sidebar should not change focused_thread"
+        assert_active_thread(
+            sidebar,
+            &session_id_a,
+            "Defocusing the sidebar should not change focused_thread",
         );
     });
 
@@ -2135,10 +2157,10 @@ async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     sidebar.read_with(cx, |sidebar, _cx| {
-        assert_eq!(
-            sidebar.focused_thread.as_ref(),
-            Some(&session_id_b2),
-            "Switching workspace should seed focused_thread from the new active panel"
+        assert_active_thread(
+            sidebar,
+            &session_id_b2,
+            "Switching workspace should seed focused_thread from the new active panel",
         );
         assert!(
             has_thread_entry(sidebar, &session_id_b2),
@@ -2158,10 +2180,10 @@ async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     sidebar.read_with(cx, |sidebar, _cx| {
-        assert_eq!(
-            sidebar.focused_thread.as_ref(),
-            Some(&session_id_b2),
-            "Focusing the agent panel thread should set focused_thread"
+        assert_active_thread(
+            sidebar,
+            &session_id_b2,
+            "Focusing the agent panel thread should set focused_thread",
         );
         assert!(
             has_thread_entry(sidebar, &session_id_b2),
@@ -2199,10 +2221,11 @@ async fn test_new_thread_button_works_after_adding_folder(cx: &mut TestAppContex
 
     // The "New Thread" button should NOT be in "active/draft" state
     // because the panel has a thread with messages.
-    sidebar.read_with(cx, |sidebar, cx| {
+    sidebar.read_with(cx, |sidebar, _cx| {
         assert!(
-            !sidebar.active_thread_is_draft(cx),
-            "Panel has a thread with messages, so it should not be a draft"
+            matches!(&sidebar.active_entry, Some(ActiveEntry::Thread { .. })),
+            "Panel has a thread with messages, so active_entry should be Thread, got {:?}",
+            sidebar.active_entry,
         );
     });
 
@@ -2229,11 +2252,12 @@ async fn test_new_thread_button_works_after_adding_folder(cx: &mut TestAppContex
     // The "New Thread" button must still be clickable (not stuck in
     // "active/draft" state). Verify that `active_thread_is_draft` is
     // false — the panel still has the old thread with messages.
-    sidebar.read_with(cx, |sidebar, cx| {
+    sidebar.read_with(cx, |sidebar, _cx| {
         assert!(
-            !sidebar.active_thread_is_draft(cx),
+            matches!(&sidebar.active_entry, Some(ActiveEntry::Thread { .. })),
             "After adding a folder the panel still has a thread with messages, \
-                 so active_thread_is_draft should be false"
+                 so active_entry should be Thread, got {:?}",
+            sidebar.active_entry,
         );
     });
 
@@ -2247,10 +2271,11 @@ async fn test_new_thread_button_works_after_adding_folder(cx: &mut TestAppContex
 
     // After creating a new thread, the panel should now be in draft
     // state (no messages on the new thread).
-    sidebar.read_with(cx, |sidebar, cx| {
-        assert!(
-            sidebar.active_thread_is_draft(cx),
-            "After creating a new thread the panel should be in draft state"
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert_active_draft(
+            sidebar,
+            &workspace,
+            "After creating a new thread active_entry should be Draft",
         );
     });
 }
@@ -2301,14 +2326,59 @@ async fn test_cmd_n_shows_new_thread_entry(cx: &mut TestAppContext) {
         "After Cmd-N the sidebar should show a highlighted New Thread entry"
     );
 
-    sidebar.read_with(cx, |sidebar, cx| {
-        assert!(
-            sidebar.focused_thread.is_none(),
-            "focused_thread should be cleared after Cmd-N"
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert_active_draft(
+            sidebar,
+            &workspace,
+            "active_entry should be Draft after Cmd-N",
         );
-        assert!(
-            sidebar.active_thread_is_draft(cx),
-            "the new blank thread should be a draft"
+    });
+}
+
+#[gpui::test]
+async fn test_draft_with_server_session_shows_as_draft(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, &project, cx);
+
+    let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
+
+    // Create a saved thread so the workspace has history.
+    let connection = StubAgentConnection::new();
+    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+        acp::ContentChunk::new("Done".into()),
+    )]);
+    open_thread_with_connection(&panel, connection, cx);
+    send_message(&panel, cx);
+    let saved_session_id = active_session_id(&panel, cx);
+    save_test_thread_metadata(&saved_session_id, path_list.clone(), cx).await;
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["v [my-project]", "  Hello *"]
+    );
+
+    // Open a new draft thread via a server connection. This gives the
+    // conversation a parent_id (session assigned by the server) but
+    // no messages have been sent, so active_thread_is_draft() is true.
+    let draft_connection = StubAgentConnection::new();
+    open_thread_with_connection(&panel, draft_connection, cx);
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["v [my-project]", "  [+ New Thread]", "  Hello *"],
+        "Draft with a server session should still show as [+ New Thread]"
+    );
+
+    let workspace = multi_workspace.read_with(cx, |mw, _cx| mw.workspace().clone());
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert_active_draft(
+            sidebar,
+            &workspace,
+            "Draft with server session should be Draft, not Thread",
         );
     });
 }
@@ -2437,14 +2507,11 @@ async fn test_cmd_n_shows_new_thread_entry_in_absorbed_worktree(cx: &mut TestApp
              a highlighted New Thread entry under the main repo header"
     );
 
-    sidebar.read_with(cx, |sidebar, cx| {
-        assert!(
-            sidebar.focused_thread.is_none(),
-            "focused_thread should be cleared after Cmd-N"
-        );
-        assert!(
-            sidebar.active_thread_is_draft(cx),
-            "the new blank thread should be a draft"
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert_active_draft(
+            sidebar,
+            &worktree_workspace,
+            "active_entry should be Draft after Cmd-N",
         );
     });
 }
@@ -3894,8 +3961,8 @@ async fn test_activate_archived_thread_reuses_workspace_in_another_window(cx: &m
         "should activate the window that already owns the matching workspace"
     );
     sidebar.read_with(cx_a, |sidebar, _| {
-            assert_eq!(
-                sidebar.focused_thread, None,
+            assert!(
+                !matches!(&sidebar.active_entry, Some(ActiveEntry::Thread { session_id: id, .. }) if id == &session_id),
                 "source window's sidebar should not eagerly claim focus for a thread opened in another window"
             );
         });
@@ -3970,16 +4037,16 @@ async fn test_activate_archived_thread_reuses_workspace_in_another_window_with_t
         "should activate the window that already owns the matching workspace"
     );
     sidebar_a.read_with(cx_a, |sidebar, _| {
-            assert_eq!(
-                sidebar.focused_thread, None,
+            assert!(
+                !matches!(&sidebar.active_entry, Some(ActiveEntry::Thread { session_id: id, .. }) if id == &session_id),
                 "source window's sidebar should not eagerly claim focus for a thread opened in another window"
             );
         });
     sidebar_b.read_with(cx_b, |sidebar, _| {
-        assert_eq!(
-            sidebar.focused_thread.as_ref(),
-            Some(&session_id),
-            "target window's sidebar should eagerly focus the activated archived thread"
+        assert_active_thread(
+            sidebar,
+            &session_id,
+            "target window's sidebar should eagerly focus the activated archived thread",
         );
     });
 }
@@ -4031,10 +4098,10 @@ async fn test_activate_archived_thread_prefers_current_window_for_matching_paths
         "should keep activation in the current window when it already has a matching workspace"
     );
     sidebar_a.read_with(cx_a, |sidebar, _| {
-        assert_eq!(
-            sidebar.focused_thread.as_ref(),
-            Some(&session_id),
-            "current window's sidebar should eagerly focus the activated archived thread"
+        assert_active_thread(
+            sidebar,
+            &session_id,
+            "current window's sidebar should eagerly focus the activated archived thread",
         );
     });
     assert_eq!(
@@ -4188,13 +4255,13 @@ async fn test_archive_thread_uses_next_threads_own_workspace(cx: &mut TestAppCon
 
     // The sidebar should track T2 as the focused thread (derived from the
     // main panel's active view).
-    let focused = sidebar.read_with(cx, |s, _| s.focused_thread.clone());
-    assert_eq!(
-        focused,
-        Some(thread2_session_id.clone()),
-        "focused thread should be Thread 2 before archiving: {:?}",
-        focused
-    );
+    sidebar.read_with(cx, |s, _| {
+        assert_active_thread(
+            s,
+            &thread2_session_id,
+            "focused thread should be Thread 2 before archiving",
+        );
+    });
 
     // Archive thread 2.
     sidebar.update_in(cx, |sidebar, window, cx| {
@@ -4816,6 +4883,7 @@ mod property_test {
         SaveWorktreeThread { worktree_index: usize },
         DeleteThread { index: usize },
         ToggleAgentPanel,
+        CreateDraftThread,
         AddWorkspace,
         OpenWorktreeAsWorkspace { worktree_index: usize },
         RemoveWorkspace { index: usize },
@@ -4824,16 +4892,17 @@ mod property_test {
     }
 
     // Distribution (out of 20 slots):
-    //   SaveThread:              5 slots (25%)
-    //   SaveWorktreeThread:      2 slots (10%)
-    //   DeleteThread:            2 slots (10%)
-    //   ToggleAgentPanel:        2 slots (10%)
-    //   AddWorkspace:            1 slot  (5%)
-    //   OpenWorktreeAsWorkspace: 1 slot  (5%)
-    //   RemoveWorkspace:         1 slot  (5%)
-    //   SwitchWorkspace:         2 slots (10%)
-    //   AddLinkedWorktree:       4 slots (20%)
-    const DISTRIBUTION_SLOTS: u32 = 20;
+    //   SaveThread:              5 slots (~23%)
+    //   SaveWorktreeThread:      2 slots (~9%)
+    //   DeleteThread:            2 slots (~9%)
+    //   ToggleAgentPanel:        2 slots (~9%)
+    //   CreateDraftThread:       2 slots (~9%)
+    //   AddWorkspace:            1 slot  (~5%)
+    //   OpenWorktreeAsWorkspace: 1 slot  (~5%)
+    //   RemoveWorkspace:         1 slot  (~5%)
+    //   SwitchWorkspace:         2 slots (~9%)
+    //   AddLinkedWorktree:       4 slots (~18%)
+    const DISTRIBUTION_SLOTS: u32 = 22;
 
     impl TestState {
         fn generate_operation(&self, raw: u32) -> Operation {
@@ -4857,24 +4926,25 @@ mod property_test {
                     workspace_index: extra % workspace_count,
                 },
                 9..=10 => Operation::ToggleAgentPanel,
-                11 if !self.unopened_worktrees.is_empty() => Operation::OpenWorktreeAsWorkspace {
+                11..=12 => Operation::CreateDraftThread,
+                13 if !self.unopened_worktrees.is_empty() => Operation::OpenWorktreeAsWorkspace {
                     worktree_index: extra % self.unopened_worktrees.len(),
                 },
-                11 => Operation::AddWorkspace,
-                12 if workspace_count > 1 => Operation::RemoveWorkspace {
+                13 => Operation::AddWorkspace,
+                14 if workspace_count > 1 => Operation::RemoveWorkspace {
                     index: extra % workspace_count,
                 },
-                12 => Operation::AddWorkspace,
-                13..=14 => Operation::SwitchWorkspace {
+                14 => Operation::AddWorkspace,
+                15..=16 => Operation::SwitchWorkspace {
                     index: extra % workspace_count,
                 },
-                15..=19 if !self.main_repo_indices.is_empty() => {
+                17..=21 if !self.main_repo_indices.is_empty() => {
                     let main_index = self.main_repo_indices[extra % self.main_repo_indices.len()];
                     Operation::AddLinkedWorktree {
                         workspace_index: main_index,
                     }
                 }
-                15..=19 => Operation::SaveThread {
+                17..=21 => Operation::SaveThread {
                     workspace_index: extra % workspace_count,
                 },
                 _ => unreachable!(),
@@ -4910,7 +4980,7 @@ mod property_test {
         operation: Operation,
         state: &mut TestState,
         multi_workspace: &Entity<MultiWorkspace>,
-        sidebar: &Entity<Sidebar>,
+        _sidebar: &Entity<Sidebar>,
         cx: &mut gpui::VisualTestContext,
     ) {
         match operation {
@@ -4936,13 +5006,26 @@ mod property_test {
             Operation::ToggleAgentPanel => {
                 let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
                 let panel_open =
-                    sidebar.read_with(cx, |sidebar, cx| sidebar.agent_panel_visible(cx));
+                    workspace.read_with(cx, |_, cx| AgentPanel::is_visible(&workspace, cx));
                 workspace.update_in(cx, |workspace, window, cx| {
                     if panel_open {
                         workspace.close_panel::<AgentPanel>(window, cx);
                     } else {
                         workspace.open_panel::<AgentPanel>(window, cx);
                     }
+                });
+            }
+            Operation::CreateDraftThread => {
+                let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+                let panel =
+                    workspace.read_with(cx, |workspace, cx| workspace.panel::<AgentPanel>(cx));
+                if let Some(panel) = panel {
+                    let connection = StubAgentConnection::new();
+                    open_thread_with_connection(&panel, connection, cx);
+                    cx.run_until_parked();
+                }
+                workspace.update_in(cx, |workspace, window, cx| {
+                    workspace.focus_panel::<AgentPanel>(window, cx);
                 });
             }
             Operation::AddWorkspace => {
@@ -5184,34 +5267,59 @@ mod property_test {
             anyhow::bail!("sidebar should still have an associated multi-workspace");
         };
 
-        let workspace = multi_workspace.read(cx).workspace();
+        let active_workspace = multi_workspace.read(cx).workspace();
 
-        // TODO: The focused_thread should _always_ be Some(item-in-the-list) after
-        // update_entries. If the activated workspace's agent panel has an active thread,
-        // this item should match the one in the list. There may be a slight delay where
-        // a thread is loading so the agent panel returns None initially, and the
-        // focused_thread is often optimistically set to the thread the agent panel is
-        // going to be.
-        if sidebar.agent_panel_visible(cx) && !sidebar.active_thread_is_draft(cx) {
-            let panel_active_session_id =
-                workspace
-                    .read(cx)
-                    .panel::<AgentPanel>(cx)
-                    .and_then(|panel| {
-                        panel
-                            .read(cx)
-                            .active_conversation_view()
-                            .and_then(|cv| cv.read(cx).parent_id(cx))
-                    });
-            if let Some(panel_session_id) = panel_active_session_id {
-                anyhow::ensure!(
-                    sidebar.focused_thread.as_ref() == Some(&panel_session_id),
-                    "agent panel is visible with active session {:?} but sidebar focused_thread is {:?}",
-                    panel_session_id,
-                    sidebar.focused_thread,
-                );
-            }
+        // 1. active_entry must always be Some after rebuild_contents.
+        let entry = sidebar
+            .active_entry
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("active_entry must always be Some"))?;
+
+        // 2. The entry's workspace must agree with the multi-workspace's
+        //    active workspace.
+        anyhow::ensure!(
+            entry.workspace().entity_id() == active_workspace.entity_id(),
+            "active_entry workspace ({:?}) != active workspace ({:?})",
+            entry.workspace().entity_id(),
+            active_workspace.entity_id(),
+        );
+
+        // 3. The entry must match the agent panel's current state.
+        let panel = active_workspace.read(cx).panel::<AgentPanel>(cx).unwrap();
+        if panel.read(cx).active_thread_is_draft(cx) {
+            anyhow::ensure!(
+                matches!(entry, ActiveEntry::Draft(_)),
+                "panel shows a draft but active_entry is {:?}",
+                entry,
+            );
+        } else if let Some(session_id) = panel
+            .read(cx)
+            .active_conversation_view()
+            .and_then(|cv| cv.read(cx).parent_id(cx))
+        {
+            anyhow::ensure!(
+                matches!(entry, ActiveEntry::Thread { session_id: id, .. } if id == &session_id),
+                "panel has session {:?} but active_entry is {:?}",
+                session_id,
+                entry,
+            );
         }
+
+        // 4. Exactly one entry in sidebar contents must be uniquely
+        //    identified by the active_entry.
+        let matching_count = sidebar
+            .contents
+            .entries
+            .iter()
+            .filter(|e| entry.matches_entry(e))
+            .count();
+        anyhow::ensure!(
+            matching_count == 1,
+            "expected exactly 1 sidebar entry matching active_entry {:?}, found {}",
+            entry,
+            matching_count,
+        );
+
         Ok(())
     }
 
