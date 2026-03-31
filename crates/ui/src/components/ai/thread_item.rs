@@ -43,14 +43,17 @@ pub struct ThreadItem {
     selected: bool,
     focused: bool,
     hovered: bool,
+    rounded: bool,
     added: Option<usize>,
     removed: Option<usize>,
     project_paths: Option<Arc<[PathBuf]>>,
+    project_name: Option<SharedString>,
     worktrees: Vec<ThreadItemWorktreeInfo>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_hover: Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>,
     action_slot: Option<AnyElement>,
     tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
+    base_bg: Option<Hsla>,
 }
 
 impl ThreadItem {
@@ -71,15 +74,18 @@ impl ThreadItem {
             selected: false,
             focused: false,
             hovered: false,
+            rounded: false,
             added: None,
             removed: None,
 
             project_paths: None,
+            project_name: None,
             worktrees: Vec::new(),
             on_click: None,
             on_hover: Box::new(|_, _, _| {}),
             action_slot: None,
             tooltip: None,
+            base_bg: None,
         }
     }
 
@@ -158,6 +164,11 @@ impl ThreadItem {
         self
     }
 
+    pub fn project_name(mut self, name: impl Into<SharedString>) -> Self {
+        self.project_name = Some(name.into());
+        self
+    }
+
     pub fn worktrees(mut self, worktrees: Vec<ThreadItemWorktreeInfo>) -> Self {
         self.worktrees = worktrees;
         self
@@ -165,6 +176,11 @@ impl ThreadItem {
 
     pub fn hovered(mut self, hovered: bool) -> Self {
         self.hovered = hovered;
+        self
+    }
+
+    pub fn rounded(mut self, rounded: bool) -> Self {
+        self.rounded = rounded;
         self
     }
 
@@ -190,14 +206,21 @@ impl ThreadItem {
         self.tooltip = Some(Box::new(tooltip));
         self
     }
+
+    pub fn base_bg(mut self, color: Hsla) -> Self {
+        self.base_bg = Some(color);
+        self
+    }
 }
 
 impl RenderOnce for ThreadItem {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let color = cx.theme().colors();
-        let base_bg = color
+        let sidebar_base_bg = color
             .title_bar_background
             .blend(color.panel_background.opacity(0.2));
+
+        let base_bg = self.base_bg.unwrap_or(sidebar_base_bg);
 
         let base_bg = if self.selected {
             color.element_active
@@ -335,6 +358,7 @@ impl RenderOnce for ThreadItem {
             }
         });
 
+        let has_project_name = self.project_name.is_some();
         let has_project_paths = project_paths.is_some();
         let has_worktree = !self.worktrees.is_empty();
         let has_timestamp = !self.timestamp.is_empty();
@@ -353,6 +377,7 @@ impl RenderOnce for ThreadItem {
             .border_1()
             .border_color(gpui::transparent_black())
             .when(self.focused, |s| s.border_color(color.border_focused))
+            .when(self.rounded, |s| s.rounded_sm())
             .hover(|s| s.bg(hover_color))
             .on_hover(self.on_hover)
             .child(
@@ -393,7 +418,11 @@ impl RenderOnce for ThreadItem {
                     }),
             )
             .when(
-                has_project_paths || has_worktree || has_diff_stats || has_timestamp,
+                has_project_name
+                    || has_project_paths
+                    || has_worktree
+                    || has_diff_stats
+                    || has_timestamp,
                 |this| {
                     // Collect all full paths for the shared tooltip.
                     let worktree_tooltip: SharedString = self
@@ -413,13 +442,16 @@ impl RenderOnce for ThreadItem {
                     // "olivetti" produce a single chip. Highlight positions
                     // come from the first occurrence.
                     let mut seen_names: Vec<SharedString> = Vec::new();
-                    let mut worktree_chips: Vec<AnyElement> = Vec::new();
+                    let mut worktree_labels: Vec<AnyElement> = Vec::new();
+
                     for wt in self.worktrees {
                         if seen_names.contains(&wt.name) {
                             continue;
                         }
+
                         let chip_index = seen_names.len();
                         seen_names.push(wt.name.clone());
+
                         let label = if wt.highlight_positions.is_empty() {
                             Label::new(wt.name)
                                 .size(LabelSize::Small)
@@ -433,7 +465,8 @@ impl RenderOnce for ThreadItem {
                         };
                         let tooltip_title = worktree_tooltip_title;
                         let tooltip_meta = worktree_tooltip.clone();
-                        worktree_chips.push(
+
+                        worktree_labels.push(
                             h_flex()
                                 .id(format!("{}-worktree-{chip_index}", self.id.clone()))
                                 .gap_0p5()
@@ -460,6 +493,15 @@ impl RenderOnce for ThreadItem {
                             .min_w_0()
                             .gap_1p5()
                             .child(icon_container()) // Icon Spacing
+                            .when_some(self.project_name, |this, name| {
+                                this.child(
+                                    Label::new(name).size(LabelSize::Small).color(Color::Muted),
+                                )
+                            })
+                            .when(
+                                has_project_name && (has_project_paths || has_worktree),
+                                |this| this.child(dot_separator()),
+                            )
                             .when_some(project_paths, |this, paths| {
                                 this.child(
                                     Label::new(paths)
@@ -471,16 +513,16 @@ impl RenderOnce for ThreadItem {
                             .when(has_project_paths && has_worktree, |this| {
                                 this.child(dot_separator())
                             })
-                            .children(worktree_chips)
+                            .children(worktree_labels)
                             .when(
-                                (has_project_paths || has_worktree)
+                                (has_project_name || has_project_paths || has_worktree)
                                     && (has_diff_stats || has_timestamp),
                                 |this| this.child(dot_separator()),
                             )
                             .when(has_diff_stats, |this| {
                                 this.child(
                                     DiffStat::new(diff_stat_id, added_count, removed_count)
-                                        .tooltip("Unreviewed changes"),
+                                        .tooltip("Unreviewed Changes"),
                                 )
                             })
                             .when(has_diff_stats && has_timestamp, |this| {
