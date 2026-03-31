@@ -378,7 +378,11 @@ pub struct SplittableEditor {
     workspace: WeakEntity<Workspace>,
     split_state: Entity<SplitEditorState>,
     searched_side: Option<SplitSide>,
-    width_collapsed: bool,
+    // The preferred diff style.
+    diff_view_style: DiffViewStyle,
+    /// True when the current width is below the minimum threshold for split
+    /// mode, regardless of the current diff view style setting.
+    too_narrow_for_split: bool,
     last_width: Option<Pixels>,
     _subscriptions: Vec<Subscription>,
 }
@@ -399,12 +403,12 @@ impl SplittableEditor {
         self.lhs.as_ref().map(|s| &s.editor)
     }
 
-    pub fn is_split(&self) -> bool {
-        self.lhs.is_some()
+    pub fn diff_view_style(&self) -> DiffViewStyle {
+        self.diff_view_style
     }
 
-    pub fn is_width_collapsed(&self) -> bool {
-        self.width_collapsed
+    pub fn is_split(&self) -> bool {
+        self.lhs.is_some()
     }
 
     pub fn set_render_diff_hunk_controls(
@@ -506,13 +510,14 @@ impl SplittableEditor {
         });
         let split_state = cx.new(|cx| SplitEditorState::new(cx));
         Self {
+            diff_view_style: style,
             rhs_editor,
             rhs_multibuffer,
             lhs: None,
             workspace: workspace.downgrade(),
             split_state,
             searched_side: None,
-            width_collapsed: false,
+            too_narrow_for_split: false,
             last_width: None,
             _subscriptions: subscriptions,
         }
@@ -835,11 +840,19 @@ impl SplittableEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.width_collapsed = false;
-        if self.lhs.is_some() {
-            self.unsplit(window, cx);
-        } else {
-            self.split(window, cx);
+        match self.diff_view_style {
+            DiffViewStyle::Unified => {
+                self.diff_view_style = DiffViewStyle::Split;
+                if !self.too_narrow_for_split {
+                    self.split(window, cx);
+                }
+            }
+            DiffViewStyle::Split => {
+                self.diff_view_style = DiffViewStyle::Unified;
+                if self.is_split() {
+                    self.unsplit(window, cx);
+                }
+            }
         }
     }
 
@@ -2056,13 +2069,7 @@ impl SplittableEditor {
     fn width_changed(&mut self, width: Pixels, window: &mut Window, cx: &mut Context<Self>) {
         self.last_width = Some(width);
 
-        let settings = EditorSettings::get_global(cx);
-        if settings.diff_view_style != DiffViewStyle::Split {
-            return;
-        }
-        let Some(min_ems) = settings.minimum_split_diff_width else {
-            return;
-        };
+        let min_ems = EditorSettings::get_global(cx).minimum_split_diff_width;
 
         let style = self.rhs_editor.read(cx).create_style(cx);
         let font_id = window.text_system().resolve_font(&style.text.font());
@@ -2074,12 +2081,17 @@ impl SplittableEditor {
         let min_width = em_advance * min_ems;
         let is_split = self.lhs.is_some();
 
-        if is_split && width < min_width {
-            self.width_collapsed = true;
-            self.unsplit(window, cx);
-        } else if !is_split && self.width_collapsed && width >= min_width {
-            self.width_collapsed = false;
-            self.split(window, cx);
+        self.too_narrow_for_split = min_ems > 0.0 && width < min_width;
+
+        match self.diff_view_style {
+            DiffViewStyle::Unified => {}
+            DiffViewStyle::Split => {
+                if self.too_narrow_for_split && is_split {
+                    self.unsplit(window, cx);
+                } else if !self.too_narrow_for_split && !is_split {
+                    self.split(window, cx);
+                }
+            }
         }
     }
 }

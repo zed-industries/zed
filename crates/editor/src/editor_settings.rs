@@ -60,7 +60,7 @@ pub struct EditorSettings {
     pub completion_menu_scrollbar: ShowScrollbar,
     pub completion_detail_alignment: CompletionDetailAlignment,
     pub diff_view_style: DiffViewStyle,
-    pub minimum_split_diff_width: Option<f32>,
+    pub minimum_split_diff_width: f32,
 }
 #[derive(Debug, Clone)]
 pub struct Jupyter {
