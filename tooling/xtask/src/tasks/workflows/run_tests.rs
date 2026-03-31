@@ -15,7 +15,7 @@ use crate::tasks::workflows::{
 };
 
 use super::{
-    runners::{self, Platform},
+    runners::{self, Arch, Platform},
     steps::{self, FluentBuilder, NamedJob, named, release_job},
 };
 
@@ -48,9 +48,10 @@ pub(crate) fn run_tests() -> Workflow {
     let mut jobs = vec![
         orchestrate,
         check_style(),
-        should_run_tests.guard(clippy(Platform::Windows)),
-        should_run_tests.guard(clippy(Platform::Linux)),
-        should_run_tests.guard(clippy(Platform::Mac)),
+        should_run_tests.guard(clippy(Platform::Windows, None)),
+        should_run_tests.guard(clippy(Platform::Linux, None)),
+        should_run_tests.guard(clippy(Platform::Mac, None)),
+        should_run_tests.guard(clippy(Platform::Mac, Some(Arch::X86_64))),
         should_run_tests.guard(run_platform_tests(Platform::Windows)),
         should_run_tests.guard(run_platform_tests(Platform::Linux)),
         should_run_tests.guard(run_platform_tests(Platform::Mac)),
@@ -489,7 +490,12 @@ fn check_workspace_binaries() -> NamedJob {
     ))
 }
 
-pub(crate) fn clippy(platform: Platform) -> NamedJob {
+pub(crate) fn clippy(platform: Platform, arch: Option<Arch>) -> NamedJob {
+    let target = arch.map(|arch| match (platform, arch) {
+        (Platform::Mac, Arch::X86_64) => "x86_64-apple-darwin",
+        (Platform::Mac, Arch::AARCH64) => "aarch64-apple-darwin",
+        _ => unimplemented!("cross-arch clippy not supported for {platform}/{arch}"),
+    });
     let runner = match platform {
         Platform::Windows => runners::WINDOWS_DEFAULT,
         Platform::Linux => runners::LINUX_DEFAULT,
@@ -507,16 +513,20 @@ pub(crate) fn clippy(platform: Platform) -> NamedJob {
             platform == Platform::Linux,
             steps::install_linux_dependencies,
         )
+        .when_some(target, |this, target| {
+            this.add_step(steps::install_rustup_target(target))
+        })
         .add_step(steps::setup_sccache(platform))
-        .add_step(steps::clippy(platform))
+        .add_step(steps::clippy(platform, target))
         .add_step(steps::show_sccache_stats(platform));
     if platform == Platform::Linux {
         job = use_clang(job);
     }
-    NamedJob {
-        name: format!("clippy_{platform}"),
-        job,
-    }
+    let name = match arch {
+        Some(arch) => format!("clippy_{platform}_{arch}"),
+        None => format!("clippy_{platform}"),
+    };
+    NamedJob { name, job }
 }
 
 pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {

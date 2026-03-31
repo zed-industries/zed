@@ -45,6 +45,7 @@ pub(crate) struct WebWindowMutableState {
 pub(crate) struct WebWindowInner {
     pub(crate) browser_window: web_sys::Window,
     pub(crate) canvas: web_sys::HtmlCanvasElement,
+    pub(crate) input_element: web_sys::HtmlInputElement,
     pub(crate) has_device_pixel_support: bool,
     pub(crate) is_mac: bool,
     pub(crate) state: RefCell<WebWindowMutableState>,
@@ -53,6 +54,7 @@ pub(crate) struct WebWindowInner {
     pub(crate) pressed_button: Cell<Option<MouseButton>>,
     pub(crate) last_physical_size: Cell<(u32, u32)>,
     pub(crate) notify_scale: Cell<bool>,
+    pub(crate) is_composing: Cell<bool>,
     mql_handle: RefCell<Option<MqlHandle>>,
     pending_physical_size: Cell<Option<(u32, u32)>>,
 }
@@ -89,7 +91,7 @@ impl WebWindow {
         let max_texture_dimension = context.device.limits().max_texture_dimension_2d;
         let has_device_pixel_support = check_device_pixel_support();
 
-        canvas.set_tab_index(0);
+        canvas.set_tab_index(-1);
 
         let style = canvas.style();
         style
@@ -114,7 +116,21 @@ impl WebWindow {
         body.append_child(&canvas)
             .map_err(|e| anyhow::anyhow!("Failed to append canvas to body: {e:?}"))?;
 
-        canvas.focus().ok();
+        let input_element: web_sys::HtmlInputElement = document
+            .create_element("input")
+            .map_err(|e| anyhow::anyhow!("Failed to create input element: {e:?}"))?
+            .dyn_into()
+            .map_err(|e| anyhow::anyhow!("Created element is not an input: {e:?}"))?;
+        let input_style = input_element.style();
+        input_style.set_property("position", "fixed").ok();
+        input_style.set_property("top", "0").ok();
+        input_style.set_property("left", "0").ok();
+        input_style.set_property("width", "1px").ok();
+        input_style.set_property("height", "1px").ok();
+        input_style.set_property("opacity", "0").ok();
+        body.append_child(&input_element)
+            .map_err(|e| anyhow::anyhow!("Failed to append input to body: {e:?}"))?;
+        input_element.focus().ok();
 
         let device_size = Size {
             width: DevicePixels(0),
@@ -124,6 +140,7 @@ impl WebWindow {
         let renderer_config = WgpuSurfaceConfig {
             size: device_size,
             transparent: false,
+            preferred_present_mode: None,
         };
 
         let renderer = WgpuRenderer::new_from_canvas(context, &canvas, renderer_config)?;
@@ -155,6 +172,7 @@ impl WebWindow {
         let inner = Rc::new(WebWindowInner {
             browser_window,
             canvas,
+            input_element,
             has_device_pixel_support,
             is_mac,
             state: RefCell::new(mutable_state),
@@ -163,6 +181,7 @@ impl WebWindow {
             pressed_button: Cell::new(None),
             last_physical_size: Cell::new((0, 0)),
             notify_scale: Cell::new(false),
+            is_composing: Cell::new(false),
             mql_handle: RefCell::new(None),
             pending_physical_size: Cell::new(None),
         });
@@ -387,6 +406,16 @@ impl WebWindowInner {
             .ok();
 
         Some(closure)
+    }
+
+    pub(crate) fn with_input_handler<R>(
+        &self,
+        f: impl FnOnce(&mut PlatformInputHandler) -> R,
+    ) -> Option<R> {
+        let mut handler = self.state.borrow_mut().input_handler.take()?;
+        let result = f(&mut handler);
+        self.state.borrow_mut().input_handler = Some(handler);
+        Some(result)
     }
 
     pub(crate) fn register_appearance_change(

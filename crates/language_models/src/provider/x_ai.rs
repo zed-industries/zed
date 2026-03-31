@@ -288,6 +288,10 @@ impl LanguageModel for XAiLanguageModel {
         self.model.max_output_tokens()
     }
 
+    fn supports_split_token_display(&self) -> bool {
+        true
+    }
+
     fn count_tokens(
         &self,
         request: LanguageModelRequest,

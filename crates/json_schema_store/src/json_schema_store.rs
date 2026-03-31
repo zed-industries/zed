@@ -22,11 +22,6 @@ static TASKS_SCHEMA: LazyLock<String> = LazyLock::new(|| {
         .expect("TaskTemplates schema should serialize")
 });
 
-static WORKTREES_SCHEMA: LazyLock<String> = LazyLock::new(|| {
-    serde_json::to_string(&task::WorktreeTasks::generate_json_schema())
-        .expect("WorktreeTasks schema should serialize")
-});
-
 static SNIPPETS_SCHEMA: LazyLock<String> = LazyLock::new(|| {
     serde_json::to_string(&snippet_provider::format::VsSnippetsFile::generate_json_schema())
         .expect("VsSnippetsFile schema should serialize")

@@ -5,7 +5,7 @@ use gpui::{
     Styled, SystemWindowTab, SystemWindowTabController, Window, WindowId, actions, canvas, div,
 };
 
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{
     Color, ContextMenu, DynamicSpacing, IconButton, IconButtonShape, IconName, IconSize, Label,
     LabelSize, Tab, h_flex, prelude::*, right_click_menu,

@@ -60,6 +60,8 @@ use git::{
     repository::{InitialGraphCommitData, RepoPath, repo_path},
     status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
+#[cfg(feature = "test-support")]
+use util::normalize_path;
 
 #[cfg(feature = "test-support")]
 use smol::io::AsyncReadExt;
@@ -76,6 +78,7 @@ pub enum PathEventKind {
     Removed,
     Created,
     Changed,
+    Rescan,
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -643,9 +646,12 @@ impl Fs for RealFs {
                             code == libc::ENOSYS
                                 || code == libc::ENOTSUP
                                 || code == libc::EOPNOTSUPP
+                                || code == libc::EINVAL
                         }) =>
                     {
                         // For case when filesystem or kernel does not support atomic no-overwrite rename.
+                        // EINVAL is returned by FUSE-based filesystems (e.g. NTFS via ntfs-3g)
+                        // that don't support RENAME_NOREPLACE.
                         true
                     }
                     Err(error) => return Err(error.into()),
@@ -1735,6 +1741,10 @@ impl FakeFs {
 
     pub fn buffered_event_count(&self) -> usize {
         self.state.lock().buffered_events.len()
+    }
+
+    pub fn clear_buffered_events(&self) {
+        self.state.lock().buffered_events.clear();
     }
 
     pub fn flush_events(&self, count: usize) {
@@ -2875,10 +2885,6 @@ impl Fs for FakeFs {
     fn as_fake(&self) -> Arc<FakeFs> {
         self.this.upgrade().unwrap()
     }
-}
-
-pub fn normalize_path(path: &Path) -> PathBuf {
-    util::normalize_path(path)
 }
 
 pub async fn copy_recursive<'a>(

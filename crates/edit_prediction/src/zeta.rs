@@ -365,10 +365,10 @@ pub fn request_prediction_with_zeta(
     });
 
     cx.spawn(async move |this, cx| {
-        let request_duration = cx.background_executor().now() - request_start;
         let Some((id, prediction)) = handle_api_response(&this, request_task.await, cx)? else {
             return Ok(None);
         };
+        let request_duration = cx.background_executor().now() - request_start;
 
         let Some(Prediction {
             prompt_input: inputs,
