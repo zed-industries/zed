@@ -4720,9 +4720,9 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     assert_eq!(
         ids,
         vec![
-            session_id_c,
-            session_id_a,
             session_id_b,
+            session_id_a,
+            session_id_c,
             session_id_hist,
             session_id_old_hist,
         ],
