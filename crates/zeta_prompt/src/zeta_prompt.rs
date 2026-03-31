@@ -211,22 +211,14 @@ pub struct RelatedExcerpt {
 }
 
 pub fn prompt_input_contains_special_tokens(input: &ZetaPromptInput, format: ZetaFormat) -> bool {
-    special_tokens_for_format(format)
-        .iter()
-        .any(|token| {
-            if let Some(line_token) = token.strip_suffix('\n') {
-                // Token ends with \n - check if any line in the excerpt equals this token
-                input.cursor_excerpt.lines().any(|line| line == line_token)
-            } else {
-                // Token doesn't end with \n - use original substring check
-                input.cursor_excerpt.contains(token)            
-            }
-        })
+    special_tokens_for_format(format).iter().any(|token| {
+        if let Some(line_token) = token.strip_suffix('\n') {
+            input.cursor_excerpt.lines().any(|line| line == line_token)
+        } else {
+            input.cursor_excerpt.contains(token)
+        }
+    })
 }
-
-/// Checks if `text` contains `token` at the start of a line.
-///
-
 
 pub fn format_zeta_prompt(input: &ZetaPromptInput, format: ZetaFormat) -> Option<String> {
     format_prompt_with_budget_for_format(input, format, MAX_PROMPT_TOKENS)
@@ -5299,8 +5291,6 @@ mod tests {
         assert_eq!(apply_edit(excerpt, &output1), apply_edit(excerpt, &output2));
         assert_eq!(apply_edit(excerpt, &output1), "new content\n");
     }
-
-    
 
     #[test]
     fn test_special_tokens_not_triggered_by_comment_separator() {
