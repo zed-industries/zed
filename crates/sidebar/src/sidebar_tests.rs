@@ -323,6 +323,41 @@ async fn test_serialization_round_trip(cx: &mut TestAppContext) {
     assert_eq!(expanded1.get(&path_list), Some(&2));
 }
 
+#[gpui::test]
+async fn test_restore_serialized_archive_view_does_not_panic(cx: &mut TestAppContext) {
+    // A regression test to ensure that restoring a serialized archive view does not panic.
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, _panel) = setup_sidebar_with_agent_panel(&multi_workspace, &project, cx);
+    cx.update(|_window, cx| {
+        AgentRegistryStore::init_test_global(cx, vec![]);
+    });
+
+    let serialized = serde_json::to_string(&SerializedSidebar {
+        width: Some(400.0),
+        collapsed_groups: Vec::new(),
+        expanded_groups: Vec::new(),
+        active_view: SerializedSidebarView::Archive,
+    })
+    .expect("serialization should succeed");
+
+    multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        if let Some(sidebar) = multi_workspace.sidebar() {
+            sidebar.restore_serialized_state(&serialized, window, cx);
+        }
+    });
+    cx.run_until_parked();
+
+    // After the deferred `show_archive` runs, the view should be Archive.
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert!(
+            matches!(sidebar.view, SidebarView::Archive(_)),
+            "expected sidebar view to be Archive after restore, got ThreadList"
+        );
+    });
+}
+
 #[test]
 fn test_clean_mention_links() {
     // Simple mention link
