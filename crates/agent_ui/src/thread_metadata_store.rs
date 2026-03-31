@@ -81,6 +81,9 @@ fn migrate_thread_metadata(cx: &mut App) {
         if is_first_migration {
             let mut per_project: HashMap<PathList, Vec<&mut ThreadMetadata>> = HashMap::default();
             for entry in &mut to_migrate {
+                if entry.folder_paths.is_empty() {
+                    continue;
+                }
                 per_project
                     .entry(entry.folder_paths.clone())
                     .or_default()
