@@ -378,7 +378,7 @@ pub struct SplittableEditor {
     workspace: WeakEntity<Workspace>,
     split_state: Entity<SplitEditorState>,
     searched_side: Option<SplitSide>,
-    // The preferred diff style.
+    /// The preferred diff style.
     diff_view_style: DiffViewStyle,
     /// True when the current width is below the minimum threshold for split
     /// mode, regardless of the current diff view style setting.
@@ -1272,6 +1272,35 @@ impl SplittableEditor {
             }
         });
     }
+
+    fn width_changed(&mut self, width: Pixels, window: &mut Window, cx: &mut Context<Self>) {
+        self.last_width = Some(width);
+
+        let min_ems = EditorSettings::get_global(cx).minimum_split_diff_width;
+
+        let style = self.rhs_editor.read(cx).create_style(cx);
+        let font_id = window.text_system().resolve_font(&style.text.font());
+        let font_size = style.text.font_size.to_pixels(window.rem_size());
+        let em_advance = window
+            .text_system()
+            .em_advance(font_id, font_size)
+            .unwrap_or(font_size);
+        let min_width = em_advance * min_ems;
+        let is_split = self.lhs.is_some();
+
+        self.too_narrow_for_split = min_ems > 0.0 && width < min_width;
+
+        match self.diff_view_style {
+            DiffViewStyle::Unified => {}
+            DiffViewStyle::Split => {
+                if self.too_narrow_for_split && is_split {
+                    self.unsplit(window, cx);
+                } else if !self.too_narrow_for_split && !is_split {
+                    self.split(window, cx);
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -2062,37 +2091,6 @@ impl EventEmitter<SearchEvent> for SplittableEditor {}
 impl Focusable for SplittableEditor {
     fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
         self.focused_editor().read(cx).focus_handle(cx)
-    }
-}
-
-impl SplittableEditor {
-    fn width_changed(&mut self, width: Pixels, window: &mut Window, cx: &mut Context<Self>) {
-        self.last_width = Some(width);
-
-        let min_ems = EditorSettings::get_global(cx).minimum_split_diff_width;
-
-        let style = self.rhs_editor.read(cx).create_style(cx);
-        let font_id = window.text_system().resolve_font(&style.text.font());
-        let font_size = style.text.font_size.to_pixels(window.rem_size());
-        let em_advance = window
-            .text_system()
-            .em_advance(font_id, font_size)
-            .unwrap_or(font_size);
-        let min_width = em_advance * min_ems;
-        let is_split = self.lhs.is_some();
-
-        self.too_narrow_for_split = min_ems > 0.0 && width < min_width;
-
-        match self.diff_view_style {
-            DiffViewStyle::Unified => {}
-            DiffViewStyle::Split => {
-                if self.too_narrow_for_split && is_split {
-                    self.unsplit(window, cx);
-                } else if !self.too_narrow_for_split && !is_split {
-                    self.split(window, cx);
-                }
-            }
-        }
     }
 }
 
