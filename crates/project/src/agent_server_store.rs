@@ -133,6 +133,7 @@ pub trait ExternalAgentServer {
 
     fn set_new_version_available_tx(&mut self, _tx: watch::Sender<Option<String>>) {}
 
+    fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
@@ -143,7 +144,7 @@ struct ExtensionAgentEntry {
     env: HashMap<String, String>,
     icon_path: Option<String>,
     display_name: Option<SharedString>,
-    version: Option<Arc<str>>,
+    version: Option<SharedString>,
 }
 
 enum AgentServerStoreState {
@@ -235,7 +236,7 @@ impl AgentServerStore {
                             env: agent_entry.env.clone(),
                             icon_path,
                             display_name: Some(display_name),
-                            version: Some(manifest.version.clone()),
+                            version: Some(SharedString::from(manifest.version.clone())),
                         });
                     }
                 }
@@ -497,10 +498,7 @@ impl AgentServerStore {
                         targets: entry.targets.clone(),
                         env,
                         agent_id: entry.agent_name.clone(),
-                        version: entry
-                            .version
-                            .as_ref()
-                            .map(|v| SharedString::from(v.clone())),
+                        version: entry.version.clone(),
                         new_version_available_tx: None,
                     }) as Box<dyn ExternalAgentServer>,
                     ExternalAgentSource::Extension,
@@ -934,7 +932,7 @@ impl AgentServerStore {
                     env: env.into_iter().collect(),
                     icon_path,
                     display_name: None,
-                    version: version.map(Arc::from),
+                    version: version.map(SharedString::from),
                 });
             }
 
@@ -954,17 +952,18 @@ impl AgentServerStore {
                 && let Some(mut tx) = entry.server.take_new_version_available_tx()
             {
                 tx.send(Some(envelope.payload.version)).ok();
+                entry.server.set_new_version_available_tx(tx);
             }
         });
         Ok(())
     }
 
-    pub fn get_extension_id_for_agent(&mut self, name: &AgentId) -> Option<Arc<str>> {
-        self.external_agents.get_mut(name).and_then(|entry| {
+    pub fn get_extension_id_for_agent(&self, name: &AgentId) -> Option<Arc<str>> {
+        self.external_agents.get(name).and_then(|entry| {
             entry
                 .server
-                .as_any_mut()
-                .downcast_mut::<LocalExtensionArchiveAgent>()
+                .as_any()
+                .downcast_ref::<LocalExtensionArchiveAgent>()
                 .map(|ext_agent| ext_agent.extension_id.clone())
         })
     }
@@ -1037,6 +1036,10 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
         })
     }
 
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
@@ -1094,8 +1097,7 @@ fn github_release_archive_from_url(archive_url: &str) -> Option<GithubReleaseArc
     })
 }
 
-fn sanitized_version_component(version: Option<&str>) -> String {
-    let version = version.unwrap_or("unknown");
+fn sanitized_version_component(version: &str) -> String {
     let sanitized = version
         .chars()
         .map(|character| match character {
@@ -1116,8 +1118,8 @@ fn versioned_archive_cache_dir(
     version: Option<&str>,
     archive_url: &str,
 ) -> PathBuf {
-    let version = version.unwrap_or("unknown");
-    let sanitized_version = sanitized_version_component(Some(version));
+    let version = version.unwrap_or_default();
+    let sanitized_version = sanitized_version_component(version);
 
     let mut version_hasher = Sha256::new();
     version_hasher.update(version.as_bytes());
@@ -1128,8 +1130,9 @@ fn versioned_archive_cache_dir(
     let url_hash = format!("{:x}", url_hasher.finalize());
 
     base_dir.join(format!(
-        "v_{sanitized_version}_{}_{url_hash}",
+        "v_{sanitized_version}_{}_{}",
         &version_hash[..16],
+        &url_hash[..16],
     ))
 }
 
@@ -1321,6 +1324,10 @@ impl ExternalAgentServer for LocalExtensionArchiveAgent {
         })
     }
 
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
@@ -1498,6 +1505,10 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
         })
     }
 
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
@@ -1578,6 +1589,10 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
         })
     }
 
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
@@ -1613,6 +1628,10 @@ impl ExternalAgentServer for LocalCustomAgent {
             command.env = Some(env);
             Ok(command)
         })
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
