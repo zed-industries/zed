@@ -436,7 +436,9 @@ mod tests {
         )
         .await;
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-        let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+        let (worktree_store, git_store) = project.read_with(cx, |project, _| {
+            (project.worktree_store(), project.git_store().clone())
+        });
         let rust_language = Arc::new(
             Language::new(
                 LanguageConfig {
@@ -453,6 +455,7 @@ mod tests {
             .unwrap()
             .with_context_provider(Some(Arc::new(BasicContextProvider::new(
                 worktree_store.clone(),
+                git_store.clone(),
             )))),
         );
 
@@ -476,6 +479,7 @@ mod tests {
             .unwrap()
             .with_context_provider(Some(Arc::new(BasicContextProvider::new(
                 worktree_store.clone(),
+                git_store.clone(),
             )))),
         );
 

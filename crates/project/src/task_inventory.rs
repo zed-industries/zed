@@ -28,7 +28,7 @@ use text::{BufferId, Point, ToPoint};
 use util::{NumericPrefixWithSuffix, ResultExt as _, post_inc, rel_path::RelPath};
 use worktree::WorktreeId;
 
-use crate::{task_store::TaskSettingsLocation, worktree_store::WorktreeStore};
+use crate::{git_store::GitStore, task_store::TaskSettingsLocation, worktree_store::WorktreeStore};
 
 #[derive(Clone, Debug, Default)]
 pub struct DebugScenarioContext {
@@ -931,11 +931,15 @@ fn task_variables_preference(task: &ResolvedTask) -> Reverse<usize> {
 /// Applied as a base for every custom [`ContextProvider`] unless explicitly oped out.
 pub struct BasicContextProvider {
     worktree_store: Entity<WorktreeStore>,
+    git_store: Entity<GitStore>,
 }
 
 impl BasicContextProvider {
-    pub fn new(worktree_store: Entity<WorktreeStore>) -> Self {
-        Self { worktree_store }
+    pub fn new(worktree_store: Entity<WorktreeStore>, git_store: Entity<GitStore>) -> Self {
+        Self {
+            worktree_store,
+            git_store,
+        }
     }
 }
 
@@ -1012,6 +1016,19 @@ impl ContextProvider for BasicContextProvider {
                         },
                     );
                 }
+            }
+        }
+
+        if let Some(worktree_id) = location.buffer.read(cx).file().map(|f| f.worktree_id(cx)) {
+            if let Some(path) = self
+                .git_store
+                .read(cx)
+                .original_repo_path_for_worktree(worktree_id, cx)
+            {
+                task_variables.insert(
+                    VariableName::MainGitWorktree,
+                    path.to_string_lossy().into_owned(),
+                );
             }
         }
 
