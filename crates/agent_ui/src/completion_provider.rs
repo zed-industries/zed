@@ -2577,7 +2577,7 @@ mod tests {
 
         let app_state = cx.update(|cx| {
             let state = AppState::test(cx);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
             state
         });

@@ -1,9 +1,8 @@
-use crate::{
-    Appearance, DEFAULT_ICON_THEME_NAME, SyntaxTheme, Theme, status_colors_refinement,
-    syntax_overrides, theme_colors_refinement,
-};
+#![allow(missing_docs)]
+
+use crate::schema::{status_colors_refinement, syntax_overrides, theme_colors_refinement};
+use crate::{merge_accent_colors, merge_player_colors};
 use collections::HashMap;
-use derive_more::{Deref, DerefMut};
 use gpui::{
     App, Context, Font, FontFallbacks, FontStyle, Global, Pixels, Subscription, Window, px,
 };
@@ -13,82 +12,24 @@ use serde::{Deserialize, Serialize};
 pub use settings::{FontFamilyName, IconThemeName, ThemeAppearanceMode, ThemeName};
 use settings::{IntoGpui, RegisterSetting, Settings, SettingsContent};
 use std::sync::Arc;
+use theme::{Appearance, DEFAULT_ICON_THEME_NAME, SyntaxTheme, Theme, UiDensity};
 
 const MIN_FONT_SIZE: Pixels = px(6.0);
 const MAX_FONT_SIZE: Pixels = px(100.0);
 const MIN_LINE_HEIGHT: f32 = 1.0;
 
-#[derive(
-    Debug,
-    Default,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Clone,
-    Copy,
-    Serialize,
-    Deserialize,
-    JsonSchema,
-)]
-
-/// Specifies the density of the UI.
-/// Note: This setting is still experimental. See [this tracking issue](https://github.com/zed-industries/zed/issues/18078)
-#[serde(rename_all = "snake_case")]
-pub enum UiDensity {
-    /// A denser UI with tighter spacing and smaller elements.
-    #[serde(alias = "compact")]
-    Compact,
-    #[default]
-    #[serde(alias = "default")]
-    /// The default UI density.
-    Default,
-    #[serde(alias = "comfortable")]
-    /// A looser UI with more spacing and larger elements.
-    Comfortable,
-}
-
-impl UiDensity {
-    /// The spacing ratio of a given density.
-    /// TODO: Standardize usage throughout the app or remove
-    pub fn spacing_ratio(self) -> f32 {
-        match self {
-            UiDensity::Compact => 0.75,
-            UiDensity::Default => 1.0,
-            UiDensity::Comfortable => 1.25,
-        }
+pub(crate) fn ui_density_from_settings(val: settings::UiDensity) -> UiDensity {
+    match val {
+        settings::UiDensity::Compact => UiDensity::Compact,
+        settings::UiDensity::Default => UiDensity::Default,
+        settings::UiDensity::Comfortable => UiDensity::Comfortable,
     }
 }
 
-impl From<String> for UiDensity {
-    fn from(s: String) -> Self {
-        match s.as_str() {
-            "compact" => Self::Compact,
-            "default" => Self::Default,
-            "comfortable" => Self::Comfortable,
-            _ => Self::default(),
-        }
-    }
-}
-
-impl From<UiDensity> for String {
-    fn from(val: UiDensity) -> Self {
-        match val {
-            UiDensity::Compact => "compact".to_string(),
-            UiDensity::Default => "default".to_string(),
-            UiDensity::Comfortable => "comfortable".to_string(),
-        }
-    }
-}
-
-impl From<settings::UiDensity> for UiDensity {
-    fn from(val: settings::UiDensity) -> Self {
-        match val {
-            settings::UiDensity::Compact => Self::Compact,
-            settings::UiDensity::Default => Self::Default,
-            settings::UiDensity::Comfortable => Self::Comfortable,
-        }
+pub fn appearance_to_mode(appearance: Appearance) -> ThemeAppearanceMode {
+    match appearance {
+        Appearance::Light => ThemeAppearanceMode::Light,
+        Appearance::Dark => ThemeAppearanceMode::Dark,
     }
 }
 
@@ -142,39 +83,6 @@ pub fn default_theme(appearance: Appearance) -> &'static str {
     match appearance {
         Appearance::Light => settings::DEFAULT_LIGHT_THEME,
         Appearance::Dark => settings::DEFAULT_DARK_THEME,
-    }
-}
-
-/// The appearance of the system.
-#[derive(Debug, Clone, Copy, Deref)]
-pub struct SystemAppearance(pub Appearance);
-
-impl Default for SystemAppearance {
-    fn default() -> Self {
-        Self(Appearance::Dark)
-    }
-}
-
-#[derive(Deref, DerefMut, Default)]
-struct GlobalSystemAppearance(SystemAppearance);
-
-impl Global for GlobalSystemAppearance {}
-
-impl SystemAppearance {
-    /// Initializes the [`SystemAppearance`] for the application.
-    pub fn init(cx: &mut App) {
-        *cx.default_global::<GlobalSystemAppearance>() =
-            GlobalSystemAppearance(SystemAppearance(cx.window_appearance().into()));
-    }
-
-    /// Returns the global [`SystemAppearance`].
-    pub fn global(cx: &App) -> Self {
-        cx.global::<GlobalSystemAppearance>().0
-    }
-
-    /// Returns a mutable reference to the global [`SystemAppearance`].
-    pub fn global_mut(cx: &mut App) -> &mut Self {
-        cx.global_mut::<GlobalSystemAppearance>()
     }
 }
 
@@ -327,21 +235,16 @@ pub fn set_theme(
             *theme = theme_name;
         }
         settings::ThemeSelection::Dynamic { mode, light, dark } => {
-            // Update the appropriate theme slot based on appearance.
             match theme_appearance {
                 Appearance::Light => *light = theme_name,
                 Appearance::Dark => *dark = theme_name,
             }
 
-            // Don't update the theme mode if it is set to system and the new theme has the same
-            // appearance.
             let should_update_mode =
                 !(mode == &ThemeAppearanceMode::System && theme_appearance == system_appearance);
 
             if should_update_mode {
-                // Update the mode to the specified appearance (otherwise we might set the theme and
-                // nothing gets updated because the system specified the other mode appearance).
-                *mode = ThemeAppearanceMode::from(theme_appearance);
+                *mode = appearance_to_mode(theme_appearance);
             }
         }
     }
@@ -379,9 +282,6 @@ pub fn set_mode(content: &mut SettingsContent, mode: ThemeAppearanceMode) {
     if let Some(selection) = theme.theme.as_mut() {
         match selection {
             settings::ThemeSelection::Static(_) => {
-                // If the theme was previously set to a single static theme,
-                // reset to the default dynamic light/dark pair and let users
-                // customize light/dark themes explicitly afterward.
                 *selection = settings::ThemeSelection::Dynamic {
                     mode: ThemeAppearanceMode::System,
                     light: ThemeName(settings::DEFAULT_LIGHT_THEME.into()),
@@ -404,9 +304,6 @@ pub fn set_mode(content: &mut SettingsContent, mode: ThemeAppearanceMode) {
     if let Some(selection) = theme.icon_theme.as_mut() {
         match selection {
             settings::IconThemeSelection::Static(icon_theme) => {
-                // If the icon theme was previously set to a single static
-                // theme, we don't know whether it was a light or dark
-                // theme, so we just use it for both.
                 *selection = settings::IconThemeSelection::Dynamic {
                     mode,
                     light: icon_theme.clone(),
@@ -424,7 +321,6 @@ pub fn set_mode(content: &mut SettingsContent, mode: ThemeAppearanceMode) {
         )));
     }
 }
-// }
 
 /// The buffer's line height.
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
@@ -530,7 +426,6 @@ impl ThemeSettings {
         self.agent_buffer_font_size
     }
 
-    // TODO: Rename: `line_height` -> `buffer_line_height`
     /// Returns the buffer's line height.
     pub fn line_height(&self) -> f32 {
         f32::max(self.buffer_line_height.value(), MIN_LINE_HEIGHT)
@@ -538,7 +433,6 @@ impl ThemeSettings {
 
     /// Applies the theme overrides, if there are any, to the current theme.
     pub fn apply_theme_overrides(&self, mut arc_theme: Arc<Theme>) -> Arc<Theme> {
-        // Apply the old overrides setting first, so that the new setting can override those.
         if let Some(experimental_theme_overrides) = &self.experimental_theme_overrides {
             let mut theme = (*arc_theme).clone();
             ThemeSettings::modify_theme(&mut theme, experimental_theme_overrides);
@@ -566,11 +460,11 @@ impl ThemeSettings {
             &status_color_refinement,
         ));
         base_theme.styles.status.refine(&status_color_refinement);
-        base_theme.styles.player.merge(&theme_overrides.players);
-        base_theme.styles.accents.merge(&theme_overrides.accents);
+        merge_player_colors(&mut base_theme.styles.player, &theme_overrides.players);
+        merge_accent_colors(&mut base_theme.styles.accents, &theme_overrides.accents);
         base_theme.styles.syntax = SyntaxTheme::merge(
             base_theme.styles.syntax.clone(),
-            syntax_overrides(&theme_overrides),
+            syntax_overrides(theme_overrides),
         );
     }
 }
@@ -614,7 +508,6 @@ pub fn reset_buffer_font_size(cx: &mut App) {
     }
 }
 
-// TODO: Make private, change usages to use `get_ui_font_size` instead.
 #[allow(missing_docs)]
 pub fn setup_ui_font(window: &mut Window, cx: &mut App) -> gpui::Font {
     let (ui_font, ui_font_size) = {
@@ -734,7 +627,7 @@ impl settings::Settings for ThemeSettings {
             experimental_theme_overrides: content.experimental_theme_overrides.clone(),
             theme_overrides: content.theme_overrides.clone(),
             icon_theme: icon_theme_selection,
-            ui_density: content.ui_density.unwrap_or_default().into(),
+            ui_density: ui_density_from_settings(content.ui_density.unwrap_or_default()),
             unnecessary_code_fade: content.unnecessary_code_fade.unwrap().0.clamp(0.0, 0.9),
         }
     }

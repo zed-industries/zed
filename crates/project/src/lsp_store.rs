@@ -73,8 +73,8 @@ use language::{
     Bias, BinaryStatus, Buffer, BufferRow, BufferSnapshot, CachedLspAdapter, Capability, CodeLabel,
     CodeLabelExt, Diagnostic, DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff,
     File as _, Language, LanguageName, LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate,
-    LspInstaller, ManifestDelegate, ManifestName, ModelineSettings, Patch, PointUtf16,
-    TextBufferSnapshot, ToOffset, ToPointUtf16, Toolchain, Transaction, Unclipped,
+    LspInstaller, ManifestDelegate, ManifestName, ModelineSettings, OffsetUtf16, Patch, PointUtf16,
+    TextBufferSnapshot, ToOffset, ToOffsetUtf16, ToPointUtf16, Toolchain, Transaction, Unclipped,
     language_settings::{
         AllLanguageSettings, FormatOnSave, Formatter, LanguageSettings, all_language_settings,
     },
@@ -149,6 +149,8 @@ pub use language::Location;
 pub use lsp_store::inlay_hints::{CacheInlayHints, InvalidationStrategy};
 #[cfg(any(test, feature = "test-support"))]
 pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
+#[cfg(any(test, feature = "test-support"))]
+pub use prettier::RANGE_FORMAT_SUFFIX as TEST_PRETTIER_RANGE_FORMAT_SUFFIX;
 pub use semantic_tokens::{
     BufferSemanticToken, BufferSemanticTokens, RefreshForServer, SemanticTokenStylizer, TokenType,
 };
@@ -1714,16 +1716,63 @@ impl LocalLspStore {
                 zlog::trace!(logger => "formatting");
                 let _timer = zlog::time!(logger => "Formatting buffer via prettier");
 
+                // When selection ranges are provided (via FormatSelections), we pass the
+                // encompassing UTF-16 range to Prettier so it can scope its formatting.
+                // After diffing, we filter the resulting edits to only keep those that
+                // overlap with the original byte-level selection ranges.
+                let (range_utf16, byte_ranges) = match buffer.ranges.as_ref() {
+                    Some(ranges) if !ranges.is_empty() => {
+                        let (utf16_range, byte_ranges) =
+                            buffer.handle.read_with(cx, |buffer, _cx| {
+                                let snapshot = buffer.snapshot();
+                                let mut min_start_utf16 = OffsetUtf16(usize::MAX);
+                                let mut max_end_utf16 = OffsetUtf16(0);
+                                let mut byte_ranges = Vec::with_capacity(ranges.len());
+                                for range in ranges {
+                                    let start_utf16 = range.start.to_offset_utf16(&snapshot);
+                                    let end_utf16 = range.end.to_offset_utf16(&snapshot);
+                                    min_start_utf16.0 = min_start_utf16.0.min(start_utf16.0);
+                                    max_end_utf16.0 = max_end_utf16.0.max(end_utf16.0);
+
+                                    let start_byte = range.start.to_offset(&snapshot);
+                                    let end_byte = range.end.to_offset(&snapshot);
+                                    byte_ranges.push(start_byte..end_byte);
+                                }
+                                (min_start_utf16..max_end_utf16, byte_ranges)
+                            });
+                        (Some(utf16_range), Some(byte_ranges))
+                    }
+                    _ => (None, None),
+                };
+
                 let prettier = lsp_store.read_with(cx, |lsp_store, _cx| {
                     lsp_store.prettier_store().unwrap().downgrade()
                 })?;
-                let diff = prettier_store::format_with_prettier(&prettier, &buffer.handle, cx)
-                    .await
-                    .transpose()?;
-                let Some(diff) = diff else {
+                let diff = prettier_store::format_with_prettier(
+                    &prettier,
+                    &buffer.handle,
+                    range_utf16,
+                    cx,
+                )
+                .await
+                .transpose()?;
+                let Some(mut diff) = diff else {
                     zlog::trace!(logger => "No changes");
                     return Ok(());
                 };
+
+                if let Some(byte_ranges) = byte_ranges {
+                    diff.edits.retain(|(edit_range, _)| {
+                        byte_ranges.iter().any(|selection_range| {
+                            edit_range.start < selection_range.end
+                                && edit_range.end > selection_range.start
+                        })
+                    });
+                    if diff.edits.is_empty() {
+                        zlog::trace!(logger => "No changes within selection");
+                        return Ok(());
+                    }
+                }
 
                 extend_formatting_transaction(
                     buffer,
@@ -1736,6 +1785,12 @@ impl LocalLspStore {
             }
             Formatter::External { command, arguments } => {
                 let logger = zlog::scoped!(logger => "command");
+
+                if buffer.ranges.is_some() {
+                    zlog::debug!(logger => "External formatter does not support range formatting; skipping");
+                    return Ok(());
+                }
+
                 zlog::trace!(logger => "formatting");
                 let _timer = zlog::time!(logger => "Formatting buffer via external command");
 

@@ -1,4 +1,4 @@
-use editor::EditorSettings;
+use editor::{EditorSettings, ui_scrollbar_settings_from_raw};
 use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -81,9 +81,13 @@ impl AutoOpenSettings {
     }
 }
 
-impl ScrollbarVisibility for ProjectPanelSettings {
+#[derive(Default)]
+pub(crate) struct ProjectPanelScrollbarProxy;
+
+impl ScrollbarVisibility for ProjectPanelScrollbarProxy {
     fn visibility(&self, cx: &ui::App) -> ShowScrollbar {
-        self.scrollbar
+        ProjectPanelSettings::get_global(cx)
+            .scrollbar
             .show
             .unwrap_or_else(|| EditorSettings::get_global(cx).scrollbar.show)
     }
@@ -120,7 +124,7 @@ impl Settings for ProjectPanelSettings {
             scrollbar: {
                 let scrollbar = project_panel.scrollbar.unwrap();
                 ScrollbarSettings {
-                    show: scrollbar.show.map(Into::into),
+                    show: scrollbar.show.map(ui_scrollbar_settings_from_raw),
                     horizontal_scroll: scrollbar.horizontal_scroll.unwrap(),
                 }
             },

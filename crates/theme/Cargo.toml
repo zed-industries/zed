@@ -10,7 +10,7 @@ workspace = true
 
 [features]
 default = []
-test-support = ["gpui/test-support", "settings/test-support"]
+test-support = ["gpui/test-support"]
 
 [lib]
 path = "src/theme.rs"
@@ -21,8 +21,6 @@ anyhow.workspace = true
 collections.workspace = true
 derive_more.workspace = true
 gpui.workspace = true
-gpui_util.workspace = true
-log.workspace = true
 palette = { workspace = true, default-features = false, features = ["std"] }
 parking_lot.workspace = true
 refineable.workspace = true
@@ -30,11 +28,9 @@ schemars = { workspace = true, features = ["indexmap2"] }
 serde.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true
-settings.workspace = true
 strum.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
-settings = { workspace = true, features = ["test-support"] }

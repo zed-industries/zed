@@ -1288,6 +1288,10 @@ impl AcpThread {
         self.work_dirs.as_ref()
     }
 
+    pub fn set_work_dirs(&mut self, work_dirs: PathList) {
+        self.work_dirs = Some(work_dirs);
+    }
+
     pub fn status(&self) -> ThreadStatus {
         if self.running_turn.is_some() {
             ThreadStatus::Generating
@@ -2240,7 +2244,24 @@ impl AcpThread {
                             this.had_error = true;
                             cx.emit(AcpThreadEvent::Error);
                             log::error!("Max tokens reached. Usage: {:?}", this.token_usage);
-                            return Err(anyhow!("Max tokens reached"));
+
+                            let exceeded_max_output_tokens =
+                                this.token_usage.as_ref().is_some_and(|u| {
+                                    u.max_output_tokens
+                                        .is_some_and(|max| u.output_tokens >= max)
+                                });
+
+                            let message = if exceeded_max_output_tokens {
+                                log::error!(
+                                    "Max output tokens reached. Usage: {:?}",
+                                    this.token_usage
+                                );
+                                "Maximum output tokens reached"
+                            } else {
+                                log::error!("Max tokens reached. Usage: {:?}", this.token_usage);
+                                "Maximum tokens reached"
+                            };
+                            return Err(anyhow!(message));
                         }
 
                         let canceled = matches!(r.stop_reason, acp::StopReason::Cancelled);

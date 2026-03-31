@@ -67,6 +67,7 @@ pub fn adapt_schema_to_format(
     if let Value::Object(obj) = json {
         obj.remove("$schema");
         obj.remove("title");
+        obj.remove("description");
     }
 
     match format {
@@ -105,9 +106,12 @@ fn adapt_to_json_schema_subset(json: &mut Value) -> Result<()> {
             );
         }
 
-        const KEYS_TO_REMOVE: [(&str, fn(&Value) -> bool); 5] = [
+        const KEYS_TO_REMOVE: [(&str, fn(&Value) -> bool); 6] = [
             ("format", |value| value.is_string()),
-            ("additionalProperties", |value| value.is_boolean()),
+            // Gemini doesn't support `additionalProperties` in any form (boolean or schema object)
+            ("additionalProperties", |_| true),
+            // Gemini doesn't support `propertyNames`
+            ("propertyNames", |_| true),
             ("exclusiveMinimum", |value| value.is_number()),
             ("exclusiveMaximum", |value| value.is_number()),
             ("optional", |value| value.is_boolean()),
@@ -232,6 +236,28 @@ mod tests {
                 "description": "A test field",
                 "type": "integer",
                 "format": {},
+            })
+        );
+
+        // additionalProperties as an object schema is also unsupported by Gemini
+        let mut json = json!({
+            "type": "object",
+            "properties": {
+                "name": { "type": "string" }
+            },
+            "additionalProperties": { "type": "string" },
+            "propertyNames": { "pattern": "^[A-Za-z]+$" }
+        });
+
+        adapt_to_json_schema_subset(&mut json).unwrap();
+
+        assert_eq!(
+            json,
+            json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" }
+                }
             })
         );
     }

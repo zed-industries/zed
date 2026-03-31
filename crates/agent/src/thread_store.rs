@@ -113,6 +113,10 @@ impl ThreadStore {
     pub fn entries(&self) -> impl Iterator<Item = DbThreadMetadata> + '_ {
         self.threads.iter().cloned()
     }
+
+    pub fn entry_ids(&self) -> impl Iterator<Item = acp::SessionId> + '_ {
+        self.threads.iter().map(|t| t.id.clone())
+    }
 }
 
 #[cfg(test)]

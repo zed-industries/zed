@@ -778,8 +778,11 @@ impl EditPredictionStore {
             while current_user.borrow().is_none() {
                 current_user.next().await;
             }
+
             this.update(cx, |this, cx| {
-                this.refresh_available_experiments(cx);
+                if cx.is_staff() {
+                    this.refresh_available_experiments(cx);
+                }
             })
             .log_err();
         });
@@ -1992,7 +1995,7 @@ impl EditPredictionStore {
 }
 
 fn currently_following(project: &Entity<Project>, cx: &App) -> bool {
-    let Some(app_state) = AppState::try_global(cx).and_then(|app_state| app_state.upgrade()) else {
+    let Some(app_state) = AppState::try_global(cx) else {
         return false;
     };
 

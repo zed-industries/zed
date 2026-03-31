@@ -77,10 +77,8 @@ use std::{
     sync::atomic::{self, AtomicBool},
 };
 use terminal_view::terminal_panel::{self, TerminalPanel};
-use theme::{
-    ActiveTheme, GlobalTheme, SystemAppearance, ThemeRegistry, ThemeSettings,
-    deserialize_icon_theme,
-};
+use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, deserialize_icon_theme};
+use theme_settings::{ThemeSettings, load_user_theme};
 use ui::{PopoverMenuHandle, prelude::*};
 use util::markdown::MarkdownString;
 use util::rel_path::RelPath;
@@ -903,10 +901,10 @@ fn register_actions(
                         let _ = settings
                             .theme
                             .ui_font_size
-                            .insert(f32::from(theme::clamp_font_size(ui_font_size)).into());
+                            .insert(f32::from(theme_settings::clamp_font_size(ui_font_size)).into());
                     });
                 } else {
-                    theme::adjust_ui_font_size(cx, |size| size + px(1.0));
+                    theme_settings::adjust_ui_font_size(cx, |size| size + px(1.0));
                 }
             }
         })
@@ -919,10 +917,10 @@ fn register_actions(
                         let _ = settings
                             .theme
                             .ui_font_size
-                            .insert(f32::from(theme::clamp_font_size(ui_font_size)).into());
+                            .insert(f32::from(theme_settings::clamp_font_size(ui_font_size)).into());
                     });
                 } else {
-                    theme::adjust_ui_font_size(cx, |size| size - px(1.0));
+                    theme_settings::adjust_ui_font_size(cx, |size| size - px(1.0));
                 }
             }
         })
@@ -934,7 +932,7 @@ fn register_actions(
                         settings.theme.ui_font_size = None;
                     });
                 } else {
-                    theme::reset_ui_font_size(cx);
+                    theme_settings::reset_ui_font_size(cx);
                 }
             }
         })
@@ -948,10 +946,10 @@ fn register_actions(
                         let _ = settings
                             .theme
                             .buffer_font_size
-                            .insert(f32::from(theme::clamp_font_size(buffer_font_size)).into());
+                            .insert(f32::from(theme_settings::clamp_font_size(buffer_font_size)).into());
                     });
                 } else {
-                    theme::adjust_buffer_font_size(cx, |size| size + px(1.0));
+                    theme_settings::adjust_buffer_font_size(cx, |size| size + px(1.0));
                 }
             }
         })
@@ -965,10 +963,10 @@ fn register_actions(
                         let _ = settings
                             .theme
                             .buffer_font_size
-                            .insert(f32::from(theme::clamp_font_size(buffer_font_size)).into());
+                            .insert(f32::from(theme_settings::clamp_font_size(buffer_font_size)).into());
                     });
                 } else {
-                    theme::adjust_buffer_font_size(cx, |size| size - px(1.0));
+                    theme_settings::adjust_buffer_font_size(cx, |size| size - px(1.0));
                 }
             }
         })
@@ -980,7 +978,7 @@ fn register_actions(
                         settings.theme.buffer_font_size = None;
                     });
                 } else {
-                    theme::reset_buffer_font_size(cx);
+                    theme_settings::reset_buffer_font_size(cx);
                 }
             }
         })
@@ -995,10 +993,10 @@ fn register_actions(
                         settings.theme.agent_buffer_font_size = None;
                     });
                 } else {
-                    theme::reset_ui_font_size(cx);
-                    theme::reset_buffer_font_size(cx);
-                    theme::reset_agent_ui_font_size(cx);
-                    theme::reset_agent_buffer_font_size(cx);
+                    theme_settings::reset_ui_font_size(cx);
+                    theme_settings::reset_buffer_font_size(cx);
+                    theme_settings::reset_agent_ui_font_size(cx);
+                    theme_settings::reset_agent_buffer_font_size(cx);
                 }
             }
         })
@@ -1074,104 +1072,99 @@ fn register_actions(
             },
         )
         .register_action({
-            let app_state = Arc::downgrade(&app_state);
+            let app_state = app_state.clone();
             move |_, _: &NewWindow, _, cx| {
-                if let Some(app_state) = app_state.upgrade() {
-                    open_new(
-                        Default::default(),
-                        app_state,
-                        cx,
-                        |workspace, window, cx| {
-                            cx.activate(true);
-                            // Create buffer synchronously to avoid flicker
-                            let project = workspace.project().clone();
-                            let buffer = project.update(cx, |project, cx| {
-                                project.create_local_buffer("", None, true, cx)
-                            });
-                            let editor = cx.new(|cx| {
-                                Editor::for_buffer(buffer, Some(project), window, cx)
-                            });
-                            workspace.add_item_to_active_pane(
-                                Box::new(editor),
-                                None,
-                                true,
-                                window,
-                                cx,
-                            );
-                        },
-                    )
-                    .detach();
-                }
+                open_new(
+                    Default::default(),
+                    app_state.clone(),
+                    cx,
+                    |workspace, window, cx| {
+                        cx.activate(true);
+                        // Create buffer synchronously to avoid flicker
+                        let project = workspace.project().clone();
+                        let buffer = project.update(cx, |project, cx| {
+                            project.create_local_buffer("", None, true, cx)
+                        });
+                        let editor = cx.new(|cx| {
+                            Editor::for_buffer(buffer, Some(project), window, cx)
+                        });
+                        workspace.add_item_to_active_pane(
+                            Box::new(editor),
+                            None,
+                            true,
+                            window,
+                            cx,
+                        );
+                    },
+                )
+                .detach();
             }
         })
         .register_action({
-            let app_state = Arc::downgrade(&app_state);
+            let app_state = app_state.clone();
             move |_workspace, _: &CloseProject, window, cx| {
                 let Some(window_handle) = window.window_handle().downcast::<MultiWorkspace>() else {
                     return;
                 };
-                if let Some(app_state) = app_state.upgrade() {
-                    cx.spawn_in(window, async move |this, cx| {
-                        let should_continue = this
-                            .update_in(cx, |workspace, window, cx| {
-                                workspace.prepare_to_close(
-                                    CloseIntent::ReplaceWindow,
-                                    window,
-                                    cx,
-                                )
-                            })?
-                            .await?;
-                        if should_continue {
-                            let task = cx.update(|_window, cx| {
-                                open_new(
-                                    workspace::OpenOptions {
-                                        replace_window: Some(window_handle),
-                                        ..Default::default()
-                                    },
-                                    app_state,
-                                    cx,
-                                    |workspace, window, cx| {
-                                        cx.activate(true);
-                                        let project = workspace.project().clone();
-                                        let buffer = project.update(cx, |project, cx| {
-                                            project.create_local_buffer("", None, true, cx)
-                                        });
-                                        let editor = cx.new(|cx| {
-                                            Editor::for_buffer(buffer, Some(project), window, cx)
-                                        });
-                                        workspace.add_item_to_active_pane(
-                                            Box::new(editor),
-                                            None,
-                                            true,
-                                            window,
-                                            cx,
-                                        );
-                                    },
-                                )
-                            })?;
-                            task.await
-                        } else {
-                            Ok(())
-                        }
-                    })
-                    .detach_and_log_err(cx);
-                }
+                let app_state = app_state.clone();
+                cx.spawn_in(window, async move |this, cx| {
+                    let should_continue = this
+                        .update_in(cx, |workspace, window, cx| {
+                            workspace.prepare_to_close(
+                                CloseIntent::ReplaceWindow,
+                                window,
+                                cx,
+                            )
+                        })?
+                        .await?;
+                    if should_continue {
+                        let task = cx.update(|_window, cx| {
+                            open_new(
+                                workspace::OpenOptions {
+                                    requesting_window: Some(window_handle),
+                                    ..Default::default()
+                                },
+                                app_state,
+                                cx,
+                                |workspace, window, cx| {
+                                    cx.activate(true);
+                                    let project = workspace.project().clone();
+                                    let buffer = project.update(cx, |project, cx| {
+                                        project.create_local_buffer("", None, true, cx)
+                                    });
+                                    let editor = cx.new(|cx| {
+                                        Editor::for_buffer(buffer, Some(project), window, cx)
+                                    });
+                                    workspace.add_item_to_active_pane(
+                                        Box::new(editor),
+                                        None,
+                                        true,
+                                        window,
+                                        cx,
+                                    );
+                                },
+                            )
+                        })?;
+                        task.await
+                    } else {
+                        Ok(())
+                    }
+                })
+                .detach_and_log_err(cx);
             }
         })
         .register_action({
-            let app_state = Arc::downgrade(&app_state);
+            let app_state = app_state.clone();
             move |_, _: &NewFile, _, cx| {
-                if let Some(app_state) = app_state.upgrade() {
-                    open_new(
-                        Default::default(),
-                        app_state,
-                        cx,
-                        |workspace, window, cx| {
-                            Editor::new_file(workspace, &Default::default(), window, cx)
-                        },
-                    )
-                    .detach_and_log_err(cx);
-                }
+                open_new(
+                    Default::default(),
+                    app_state.clone(),
+                    cx,
+                    |workspace, window, cx| {
+                        Editor::new_file(workspace, &Default::default(), window, cx)
+                    },
+                )
+                .detach_and_log_err(cx);
             }
         });
 
@@ -1209,6 +1202,8 @@ fn register_actions(
             }
         });
     }
+
+    workspace.register_action(sidebar::dump_workspace_info);
 }
 
 fn initialize_pane(
@@ -1382,7 +1377,7 @@ fn quit(_: &Quit, cx: &mut App) {
             for workspace in workspaces {
                 if let Some(should_close) = window
                     .update(cx, |multi_workspace, window, cx| {
-                        multi_workspace.activate(workspace.clone(), cx);
+                        multi_workspace.activate(workspace.clone(), window, cx);
                         window.activate_window();
                         workspace.update(cx, |workspace, cx| {
                             workspace.prepare_to_close(CloseIntent::Quit, window, cx)
@@ -2228,7 +2223,7 @@ pub(crate) fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &mut A
                 match load_target {
                     LoadTarget::Theme(theme_path) => {
                         if let Some(bytes) = fs.load_bytes(&theme_path).await.log_err()
-                            && theme_registry.load_user_theme(&bytes).log_err().is_some()
+                            && load_user_theme(theme_registry, &bytes).log_err().is_some()
                         {
                             reload_tasks.lock().push(ReloadTarget::Theme);
                         }
@@ -2252,8 +2247,8 @@ pub(crate) fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &mut A
 
     for reload_target in reload_tasks.into_inner() {
         match reload_target {
-            ReloadTarget::Theme => GlobalTheme::reload_theme(cx),
-            ReloadTarget::IconTheme => GlobalTheme::reload_icon_theme(cx),
+            ReloadTarget::Theme => theme_settings::reload_theme(cx),
+            ReloadTarget::IconTheme => theme_settings::reload_icon_theme(cx),
         };
     }
 }
@@ -2463,7 +2458,7 @@ mod tests {
                 &[PathBuf::from(path!("/root/e"))],
                 app_state,
                 workspace::OpenOptions {
-                    replace_window: Some(window),
+                    requesting_window: Some(window),
                     ..Default::default()
                 },
                 cx,
@@ -4457,7 +4452,7 @@ mod tests {
         cx.update(|cx| {
             let app_state = AppState::test(cx);
 
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             client::init(&app_state.client, cx);
             workspace::init(app_state.clone(), cx);
             onboarding::init(cx);
@@ -4584,7 +4579,10 @@ mod tests {
         assert_key_bindings_for(
             window.into(),
             cx,
-            vec![("backspace", &ActionB), ("{", &ActivatePreviousItem)],
+            vec![
+                ("backspace", &ActionB),
+                ("{", &ActivatePreviousItem::default()),
+            ],
             line!(),
         );
     }
@@ -4875,7 +4873,7 @@ mod tests {
             .unwrap();
         let themes = ThemeRegistry::default();
         settings::init(cx);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
 
         let mut has_default_theme = false;
         for theme_name in themes.list().into_iter().map(|meta| meta.name) {
@@ -5013,7 +5011,7 @@ mod tests {
             app_state.languages.add(markdown_lang());
 
             gpui_tokio::init(cx);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             audio::init(cx);
             channel::init(&app_state.client, app_state.user_store.clone(), cx);
             call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
@@ -5050,6 +5048,7 @@ mod tests {
                 app_state.client.clone(),
                 prompt_builder.clone(),
                 app_state.languages.clone(),
+                true,
                 false,
                 cx,
             );
@@ -5379,11 +5378,11 @@ mod tests {
             .unwrap();
 
         window
-            .update(cx, |multi_workspace, _, cx| {
-                multi_workspace.activate(workspace2.clone(), cx);
-                multi_workspace.activate(workspace3.clone(), cx);
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.activate(workspace2.clone(), window, cx);
+                multi_workspace.activate(workspace3.clone(), window, cx);
                 // Switch back to workspace1 for test setup
-                multi_workspace.activate(workspace1, cx);
+                multi_workspace.activate(workspace1, window, cx);
                 assert_eq!(multi_workspace.active_workspace_index(), 0);
             })
             .unwrap();
@@ -5565,9 +5564,9 @@ mod tests {
             .unwrap();
 
         window1
-            .update(cx, |multi_workspace, _, cx| {
-                multi_workspace.activate(workspace1_2.clone(), cx);
-                multi_workspace.activate(workspace1_1.clone(), cx);
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.activate(workspace1_2.clone(), window, cx);
+                multi_workspace.activate(workspace1_1.clone(), window, cx);
             })
             .unwrap();
 
@@ -5798,7 +5797,7 @@ mod tests {
     async fn test_multi_workspace_session_restore(cx: &mut TestAppContext) {
         use collections::HashMap;
         use session::Session;
-        use workspace::{Workspace, WorkspaceId};
+        use workspace::{OpenMode, Workspace, WorkspaceId};
 
         let app_state = init_test(cx);
 
@@ -5833,7 +5832,7 @@ mod tests {
                     None,
                     None,
                     None,
-                    true,
+                    OpenMode::Activate,
                     cx,
                 )
             })
@@ -5842,7 +5841,7 @@ mod tests {
 
         window_a
             .update(cx, |multi_workspace, window, cx| {
-                multi_workspace.open_project(vec![dir2.into()], window, cx)
+                multi_workspace.open_project(vec![dir2.into()], OpenMode::Activate, window, cx)
             })
             .unwrap()
             .await
@@ -5859,7 +5858,7 @@ mod tests {
                     None,
                     None,
                     None,
-                    true,
+                    OpenMode::Activate,
                     cx,
                 )
             })
@@ -5872,7 +5871,8 @@ mod tests {
         // still be active rather than whichever workspace happened to restore last.
         window_a
             .update(cx, |multi_workspace, window, cx| {
-                multi_workspace.activate_index(0, window, cx);
+                let workspace = multi_workspace.workspaces()[0].clone();
+                multi_workspace.activate(workspace, window, cx);
             })
             .unwrap();
 
