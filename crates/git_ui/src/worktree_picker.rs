@@ -470,9 +470,7 @@ impl WorktreeListDelegate {
         let Some(entry) = self.matches.get(idx).cloned() else {
             return;
         };
-        if entry.is_new
-            || entry.worktree.is_main
-            || self.forbidden_deletion_path.as_ref() == Some(&entry.worktree.path)
+        if !entry.can_delete(self.forbidden_deletion_path.as_ref())
         {
             return;
         }
