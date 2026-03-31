@@ -36,7 +36,7 @@ full architectural details.
 - [x] Tab/Shift-Tab navigation, focus indicators
 - [x] Hosts persisted as JSON in app sandbox
 
-## Phase 2 — SSH Transport & Connection (in progress)
+## Phase 2 — SSH Transport & Connection ✅
 - [x] russh-based SSH transport (`russh_ssh.rs`)
 - [x] TCP connect + SSH handshake
 - [x] Key auth (ed25519, ecdsa, rsa)
@@ -54,7 +54,13 @@ full architectural details.
 - [x] Workspace panels: project, outline, git, search, diagnostics
 - [x] Status bar items wired up
 - [x] Post-rebase fixes (AppDatabase, theme_settings, force-embed-assets)
-- [ ] Auto-connect on launch (eager per-host control connections)
+- [x] Auto-connect on launch (KVP persistence, eager per-host reconnect)
+- [x] Session persistence on backgrounding (applicationWillResignActive FFI)
+- [x] Landing screen: real-time SSH status, themed indicators (spinner/dot)
+- [x] Connection error states: retry icon, dismiss button, error detail modal
+- [x] Workspace switcher: all saved paths, open unconnected inline
+- [x] UIPointerInteraction: custom resize cursors (double-chevron CGPath)
+- [x] Sidebar toggle hidden on iOS (sidebar crate not initialized)
 
 ---
 
