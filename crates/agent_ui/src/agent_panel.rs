@@ -2375,7 +2375,7 @@ impl AgentPanel {
     ) {
         match agent {
             AgentType::TextThread => {
-                window.dispatch_action(NewTextThread.boxed_clone(), cx);
+                self.new_text_thread(window, cx);
             }
             AgentType::NativeAgent => self.external_thread(
                 Some(crate::Agent::NativeAgent),
@@ -5177,6 +5177,31 @@ mod tests {
         });
 
         cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_new_agent_thread_creates_text_thread(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+
+        cx.update(|_, cx| {
+            let slash_command_registry =
+                assistant_slash_command::SlashCommandRegistry::default_global(cx);
+            slash_command_registry
+                .register_command(assistant_slash_commands::DefaultSlashCommand, false);
+        });
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.new_agent_thread(AgentType::TextThread, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, _cx| {
+            assert!(
+                panel.active_text_thread_editor().is_some(),
+                "new_agent_thread(TextThread) should create a text thread"
+            );
+        });
     }
 
     /// Extracts the text from a Text content block, panicking if it's not Text.
