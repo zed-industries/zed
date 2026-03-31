@@ -234,9 +234,9 @@ impl RenderOnce for ListItem {
                 this.ml(self.indent_level as f32 * self.indent_step_size)
                     .px(DynamicSpacing::Base04.rems(cx))
             })
-            .when(!self.inset && !self.disabled, |this| {
+            .when(!self.inset, |this| {
                 this.when_some(self.focused, |this, focused| {
-                    if focused {
+                    if focused && !self.disabled {
                         this.border_1()
                             .when(self.docked_right, |this| this.border_r_2())
                             .border_color(cx.theme().colors().border_focused)
@@ -244,7 +244,7 @@ impl RenderOnce for ListItem {
                         this.border_1()
                     }
                 })
-                .when(self.selectable, |this| {
+                .when(self.selectable && !self.disabled, |this| {
                     this.hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
                         .active(|style| style.bg(cx.theme().colors().ghost_element_active))
                         .when(self.outlined, |this| this.rounded_sm())
@@ -268,16 +268,16 @@ impl RenderOnce for ListItem {
                         ListItemSpacing::ExtraDense => this.py_neg_px(),
                         ListItemSpacing::Sparse => this.py_1(),
                     })
-                    .when(self.inset && !self.disabled, |this| {
+                    .when(self.inset, |this| {
                         this.when_some(self.focused, |this, focused| {
-                            if focused {
+                            if focused && !self.disabled {
                                 this.border_1()
                                     .border_color(cx.theme().colors().border_focused)
                             } else {
                                 this.border_1()
                             }
                         })
-                        .when(self.selectable, |this| {
+                        .when(self.selectable && !self.disabled, |this| {
                             this.hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
                                 .active(|style| style.bg(cx.theme().colors().ghost_element_active))
                                 .when(self.selected, |this| {
