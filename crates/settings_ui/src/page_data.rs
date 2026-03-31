@@ -7470,61 +7470,33 @@ fn ai_page(cx: &App) -> SettingsPage {
         ]
     }
 
-    fn edit_prediction_display_sub_section() -> [SettingsPageItem; 2] {
-        [
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Display Mode",
-                description: "When to show edit predictions previews in buffer. The eager mode displays them inline, while the subtle mode displays them only when holding a modifier key.",
-                field: Box::new(SettingField {
-                    json_path: Some("edit_prediction.display_mode"),
-                    pick: |settings_content| {
-                        settings_content
-                            .project
-                            .all_languages
-                            .edit_predictions
-                            .as_ref()?
-                            .mode
-                            .as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .project
-                            .all_languages
-                            .edit_predictions
-                            .get_or_insert_default()
-                            .mode = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
+    fn edit_prediction_display_sub_section() -> [SettingsPageItem; 1] {
+        [SettingsPageItem::SettingItem(SettingItem {
+            title: "Display Mode",
+            description: "When to show edit predictions previews in buffer. The eager mode displays them inline, while the subtle mode displays them only when holding a modifier key.",
+            field: Box::new(SettingField {
+                json_path: Some("edit_prediction.display_mode"),
+                pick: |settings_content| {
+                    settings_content
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .mode
+                        .as_ref()
+                },
+                write: |settings_content, value| {
+                    settings_content
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .mode = value;
+                },
             }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Display In Text Threads",
-                description: "Whether edit predictions are enabled when editing text threads in the agent panel.",
-                field: Box::new(SettingField {
-                    json_path: Some("edit_prediction.in_text_threads"),
-                    pick: |settings_content| {
-                        settings_content
-                            .project
-                            .all_languages
-                            .edit_predictions
-                            .as_ref()?
-                            .enabled_in_text_threads
-                            .as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .project
-                            .all_languages
-                            .edit_predictions
-                            .get_or_insert_default()
-                            .enabled_in_text_threads = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-        ]
+            metadata: None,
+            files: USER,
+        })]
     }
 
     SettingsPage {

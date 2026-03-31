@@ -11,6 +11,7 @@ mod config_options;
 mod context;
 mod context_server_configuration;
 pub(crate) mod conversation_view;
+mod diagnostics;
 mod entry_view_state;
 mod external_source_prompt;
 mod favorite_models;
@@ -23,14 +24,10 @@ mod mode_selector;
 mod model_selector;
 mod model_selector_popover;
 mod profile_selector;
-mod slash_command;
-mod slash_command_picker;
 mod terminal_codegen;
 mod terminal_inline_assistant;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
-mod text_thread_editor;
-mod text_thread_history;
 mod thread_history;
 mod thread_history_view;
 mod thread_import;
@@ -41,10 +38,9 @@ mod ui;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use ::ui::IconName;
 use agent_client_protocol as acp;
 use agent_settings::{AgentProfileId, AgentSettings};
-use assistant_slash_command::SlashCommandRegistry;
-use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt as _};
 use fs::Fs;
@@ -65,9 +61,7 @@ use std::any::TypeId;
 use workspace::Workspace;
 
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
-pub use crate::agent_panel::{
-    AgentPanel, AgentPanelEvent, ConcreteAssistantPanelDelegate, WorktreeCreationStatus,
-};
+pub use crate::agent_panel::{AgentPanel, AgentPanelEvent, WorktreeCreationStatus};
 use crate::agent_registry_ui::AgentRegistryPage;
 pub use crate::inline_assistant::InlineAssistant;
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
@@ -76,7 +70,6 @@ pub use external_source_prompt::ExternalSourcePrompt;
 pub(crate) use mode_selector::ModeSelector;
 pub(crate) use model_selector::ModelSelector;
 pub(crate) use model_selector_popover::ModelSelectorPopover;
-pub use text_thread_editor::{AgentPanelDelegate, TextThreadEditor};
 pub(crate) use thread_history::ThreadHistory;
 pub(crate) use thread_history_view::*;
 pub use thread_import::{AcpThreadImportOnboarding, ThreadImportModal};
@@ -88,8 +81,6 @@ const PARALLEL_AGENT_LAYOUT_BACKFILL_KEY: &str = "parallel_agent_layout_backfill
 actions!(
     agent,
     [
-        /// Creates a new text-based conversation thread.
-        NewTextThread,
         /// Toggles the menu to create new agent threads.
         ToggleNewThreadMenu,
         /// Cycles through the options for where new threads start (current project or new worktree).
@@ -244,11 +235,13 @@ pub struct NewNativeAgentThreadFromSummary {
     from_session_id: agent_client_protocol::SessionId,
 }
 
-// TODO unify this with AgentType
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Agent {
+    #[default]
+    #[serde(alias = "NativeAgent", alias = "TextThread")]
     NativeAgent,
+    #[serde(alias = "Custom")]
     Custom {
         #[serde(rename = "name")]
         id: AgentId,
@@ -270,6 +263,24 @@ impl Agent {
         match self {
             Self::NativeAgent => agent::ZED_AGENT_ID.clone(),
             Self::Custom { id } => id.clone(),
+        }
+    }
+
+    pub fn is_native(&self) -> bool {
+        matches!(self, Self::NativeAgent)
+    }
+
+    pub fn label(&self) -> SharedString {
+        match self {
+            Self::NativeAgent => "Zed Agent".into(),
+            Self::Custom { id, .. } => id.0.clone(),
+        }
+    }
+
+    pub fn icon(&self) -> Option<IconName> {
+        match self {
+            Self::NativeAgent => None,
+            Self::Custom { .. } => Some(IconName::Sparkle),
         }
     }
 
@@ -350,10 +361,39 @@ impl ModelUsageContext {
     }
 }
 
+pub(crate) fn humanize_token_count(count: u64) -> String {
+    match count {
+        0..=999 => count.to_string(),
+        1000..=9999 => {
+            let thousands = count / 1000;
+            let hundreds = (count % 1000 + 50) / 100;
+            if hundreds == 0 {
+                format!("{}k", thousands)
+            } else if hundreds == 10 {
+                format!("{}k", thousands + 1)
+            } else {
+                format!("{}.{}k", thousands, hundreds)
+            }
+        }
+        10_000..=999_999 => format!("{}k", (count + 500) / 1000),
+        1_000_000..=9_999_999 => {
+            let millions = count / 1_000_000;
+            let hundred_thousands = (count % 1_000_000 + 50_000) / 100_000;
+            if hundred_thousands == 0 {
+                format!("{}M", millions)
+            } else if hundred_thousands == 10 {
+                format!("{}M", millions + 1)
+            } else {
+                format!("{}.{}M", millions, hundred_thousands)
+            }
+        }
+        10_000_000.. => format!("{}M", (count + 500_000) / 1_000_000),
+    }
+}
+
 /// Initializes the `agent` crate.
 pub fn init(
     fs: Arc<dyn Fs>,
-    client: Arc<Client>,
     prompt_builder: Arc<PromptBuilder>,
     language_registry: Arc<LanguageRegistry>,
     is_new_install: bool,
@@ -361,20 +401,16 @@ pub fn init(
     cx: &mut App,
 ) {
     agent::ThreadStore::init_global(cx);
-    assistant_text_thread::init(client, cx);
     rules_library::init(cx);
     if !is_eval {
         // Initializing the language model from the user settings messes with the eval, so we only initialize them when
         // we're not running inside of the eval.
         init_language_model_settings(cx);
     }
-    assistant_slash_command::init(cx);
     agent_panel::init(cx);
     context_server_configuration::init(language_registry.clone(), fs.clone(), cx);
-    TextThreadEditor::init(cx);
     thread_metadata_store::init(cx);
 
-    register_slash_commands(cx);
     inline_assistant::init(fs.clone(), prompt_builder.clone(), cx);
     terminal_inline_assistant::init(fs.clone(), prompt_builder, cx);
     cx.observe_new(move |workspace, window, cx| {
@@ -628,34 +664,6 @@ fn update_active_language_model_from_settings(cx: &mut App) {
     });
 }
 
-fn register_slash_commands(cx: &mut App) {
-    let slash_command_registry = SlashCommandRegistry::global(cx);
-
-    slash_command_registry.register_command(assistant_slash_commands::FileSlashCommand, true);
-    slash_command_registry.register_command(assistant_slash_commands::DeltaSlashCommand, true);
-    slash_command_registry.register_command(assistant_slash_commands::OutlineSlashCommand, true);
-    slash_command_registry.register_command(assistant_slash_commands::TabSlashCommand, true);
-    slash_command_registry.register_command(assistant_slash_commands::PromptSlashCommand, true);
-    slash_command_registry.register_command(assistant_slash_commands::SelectionCommand, true);
-    slash_command_registry.register_command(assistant_slash_commands::DefaultSlashCommand, false);
-    slash_command_registry.register_command(assistant_slash_commands::NowSlashCommand, false);
-    slash_command_registry
-        .register_command(assistant_slash_commands::DiagnosticsSlashCommand, true);
-    slash_command_registry.register_command(assistant_slash_commands::FetchSlashCommand, true);
-
-    cx.observe_flag::<assistant_slash_commands::StreamingExampleSlashCommandFeatureFlag, _>({
-        move |is_enabled, _cx| {
-            if is_enabled {
-                slash_command_registry.register_command(
-                    assistant_slash_commands::StreamingExampleSlashCommand,
-                    false,
-                );
-            }
-        }
-    })
-    .detach();
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -666,9 +674,7 @@ mod tests {
     use feature_flags::FeatureFlagAppExt;
     use gpui::{BorrowAppContext, TestAppContext, px};
     use project::DisableAiSettings;
-    use settings::{
-        DefaultAgentView, DockPosition, NotifyWhenAgentWaiting, Settings, SettingsStore,
-    };
+    use settings::{DockPosition, NotifyWhenAgentWaiting, Settings, SettingsStore};
 
     #[gpui::test]
     fn test_agent_command_palette_visibility(cx: &mut TestAppContext) {
@@ -697,7 +703,6 @@ mod tests {
             inline_alternatives: vec![],
             favorite_models: vec![],
             default_profile: AgentProfileId::default(),
-            default_view: DefaultAgentView::Thread,
             profiles: Default::default(),
             notify_when_agent_waiting: NotifyWhenAgentWaiting::default(),
             play_sound_when_agent_done: false,
@@ -731,10 +736,6 @@ mod tests {
                 !filter.is_hidden(&NewThread),
                 "NewThread should be visible by default"
             );
-            assert!(
-                !filter.is_hidden(&text_thread_editor::CopyCode),
-                "CopyCode should be visible when agent is enabled"
-            );
         });
 
         // Disable agent
@@ -753,10 +754,6 @@ mod tests {
             assert!(
                 filter.is_hidden(&NewThread),
                 "NewThread should be hidden when agent is disabled"
-            );
-            assert!(
-                filter.is_hidden(&text_thread_editor::CopyCode),
-                "CopyCode should be hidden when agent is disabled"
             );
         });
 
@@ -903,11 +900,11 @@ mod tests {
     #[test]
     fn test_deserialize_external_agent_variants() {
         assert_eq!(
-            serde_json::from_str::<Agent>(r#""native_agent""#).unwrap(),
+            serde_json::from_str::<Agent>(r#""NativeAgent""#).unwrap(),
             Agent::NativeAgent,
         );
         assert_eq!(
-            serde_json::from_str::<Agent>(r#"{"custom":{"name":"my-agent"}}"#).unwrap(),
+            serde_json::from_str::<Agent>(r#"{"Custom":{"name":"my-agent"}}"#).unwrap(),
             Agent::Custom {
                 id: "my-agent".into(),
             },

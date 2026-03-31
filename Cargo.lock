@@ -335,9 +335,6 @@ dependencies = [
  "agent_settings",
  "ai_onboarding",
  "anyhow",
- "assistant_slash_command",
- "assistant_slash_commands",
- "assistant_text_thread",
  "audio",
  "base64 0.22.1",
  "buffer_diff",
@@ -393,7 +390,6 @@ dependencies = [
  "rope",
  "rules_library",
  "schemars",
- "search",
  "semver",
  "serde",
  "serde_json",
@@ -781,108 +777,6 @@ dependencies = [
  "anyhow",
  "gpui",
  "rust-embed",
-]
-
-[[package]]
-name = "assistant_slash_command"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "collections",
- "derive_more",
- "extension",
- "futures 0.3.31",
- "gpui",
- "language",
- "language_model",
- "parking_lot",
- "pretty_assertions",
- "serde",
- "serde_json",
- "ui",
- "util",
- "workspace",
-]
-
-[[package]]
-name = "assistant_slash_commands"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "assistant_slash_command",
- "chrono",
- "collections",
- "editor",
- "feature_flags",
- "fs",
- "futures 0.3.31",
- "fuzzy",
- "gpui",
- "html_to_markdown",
- "http_client",
- "language",
- "multi_buffer",
- "pretty_assertions",
- "project",
- "prompt_store",
- "rope",
- "serde",
- "serde_json",
- "settings",
- "smol",
- "text",
- "ui",
- "util",
- "workspace",
- "worktree",
- "zlog",
-]
-
-[[package]]
-name = "assistant_text_thread"
-version = "0.1.0"
-dependencies = [
- "agent_settings",
- "anyhow",
- "assistant_slash_command",
- "assistant_slash_commands",
- "chrono",
- "client",
- "clock",
- "collections",
- "context_server",
- "fs",
- "futures 0.3.31",
- "fuzzy",
- "gpui",
- "itertools 0.14.0",
- "language",
- "language_model",
- "log",
- "open_ai",
- "parking_lot",
- "paths",
- "pretty_assertions",
- "project",
- "prompt_store",
- "proto",
- "rand 0.9.2",
- "regex",
- "rpc",
- "serde",
- "serde_json",
- "settings",
- "smallvec",
- "smol",
- "telemetry",
- "text",
- "ui",
- "unindent",
- "util",
- "uuid",
- "workspace",
- "zed_env_vars",
 ]
 
 [[package]]
@@ -3183,8 +3077,6 @@ version = "0.44.0"
 dependencies = [
  "agent",
  "anyhow",
- "assistant_slash_command",
- "assistant_text_thread",
  "async-trait",
  "async-tungstenite",
  "aws-config",
@@ -7257,6 +7149,7 @@ dependencies = [
  "menu",
  "project",
  "rand 0.9.2",
+ "remote_connection",
  "search",
  "serde_json",
  "settings",
@@ -9446,7 +9339,6 @@ dependencies = [
  "open_ai",
  "open_router",
  "parking_lot",
- "proto",
  "schemars",
  "serde",
  "serde_json",
@@ -15965,7 +15857,6 @@ dependencies = [
  "agent_settings",
  "agent_ui",
  "anyhow",
- "assistant_text_thread",
  "chrono",
  "collections",
  "editor",
@@ -16128,13 +16019,6 @@ name = "slab"
 version = "0.4.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a2ae44ef20feb57a68b23d846850f861394c2e02dc425a50098ae8c90267589"
-
-[[package]]
-name = "slash_commands_example"
-version = "0.1.0"
-dependencies = [
- "zed_extension_api 0.1.0",
-]
 
 [[package]]
 name = "slotmap"
@@ -17510,7 +17394,6 @@ name = "terminal_view"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "assistant_slash_command",
  "async-recursion",
  "breadcrumbs",
  "collections",

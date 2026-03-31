@@ -218,21 +218,23 @@ impl RenderOnce for ThreadItem {
         let color = cx.theme().colors();
         let sidebar_base_bg = color
             .title_bar_background
-            .blend(color.panel_background.opacity(0.2));
+            .blend(color.panel_background.opacity(0.32));
 
-        let base_bg = self.base_bg.unwrap_or(sidebar_base_bg);
+        let raw_bg = self.base_bg.unwrap_or(sidebar_base_bg);
+        let apparent_bg = color.background.blend(raw_bg);
 
         let base_bg = if self.selected {
-            color.element_active
+            apparent_bg.blend(color.element_active)
         } else {
-            base_bg
+            apparent_bg
         };
 
         let hover_color = color
             .element_active
             .blend(color.element_background.opacity(0.2));
+        let hover_bg = apparent_bg.blend(hover_color);
 
-        let gradient_overlay = GradientFade::new(base_bg, hover_color, hover_color)
+        let gradient_overlay = GradientFade::new(base_bg, hover_bg, hover_bg)
             .width(px(64.0))
             .right(px(-10.0))
             .gradient_stop(0.75)
@@ -399,7 +401,7 @@ impl RenderOnce for ThreadItem {
                     .child(gradient_overlay)
                     .when(self.hovered, |this| {
                         this.when_some(self.action_slot, |this, slot| {
-                            let overlay = GradientFade::new(base_bg, hover_color, hover_color)
+                            let overlay = GradientFade::new(base_bg, hover_bg, hover_bg)
                                 .width(px(64.0))
                                 .right(px(6.))
                                 .gradient_stop(0.75)
@@ -432,6 +434,7 @@ impl RenderOnce for ThreadItem {
                         .collect::<Vec<_>>()
                         .join("\n")
                         .into();
+
                     let worktree_tooltip_title = if self.worktrees.len() > 1 {
                         "Thread Running in Local Git Worktrees"
                     } else {

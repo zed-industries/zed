@@ -34,7 +34,7 @@ The sections below cover what you can do from here.
 
 By default, the Agent Panel uses Zed's first-party agent.
 
-To choose another agent, go to the plus button in the top-right of the Agent Panel and pick either one of the [external agents](./external-agents.md) installed out of the box or a new [Text Thread](./text-threads.md).
+To choose another agent, go to the plus button in the top-right of the Agent Panel and pick one of the [external agents](./external-agents.md) installed out of the box.
 
 ### Editing Messages {#editing-messages}
 
@@ -221,15 +221,6 @@ All [Zed's hosted models](./models.md) support tool calling out-of-the-box.
 
 Similarly to the built-in tools, some models may not support all tools included in a given MCP Server.
 Zed's UI will inform you about this via a warning icon that appears close to the model selector.
-
-## Text Threads {#text-threads}
-
-["Text Threads"](./text-threads.md) present your conversation with the LLM in a different format—as raw text.
-With text threads, you have full control over the conversation data.
-You can remove and edit responses from the LLM, swap roles, and include more context earlier in the conversation.
-
-Text threads are Zed's original assistant panel format, preserved for users who want direct control over conversation data.
-Autonomous code editing (where the agent writes to files) is only available in the default thread format, not text threads.
 
 ## Errors and Debugging {#errors-and-debugging}
 

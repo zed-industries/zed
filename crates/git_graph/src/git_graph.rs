@@ -20,12 +20,9 @@ use gpui::{
 };
 use language::line_diff;
 use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrevious};
-use project::{
-    Project,
-    git_store::{
-        CommitDataState, GitGraphEvent, GitStoreEvent, GraphDataResponse, Repository,
-        RepositoryEvent, RepositoryId,
-    },
+use project::git_store::{
+    CommitDataState, GitGraphEvent, GitStore, GitStoreEvent, GraphDataResponse, Repository,
+    RepositoryEvent, RepositoryId,
 };
 use search::{
     SearchOption, SearchOptions, SearchSource, SelectNextMatch, SelectPreviousMatch,
@@ -37,8 +34,7 @@ use std::{
     cell::Cell,
     ops::Range,
     rc::Rc,
-    sync::Arc,
-    sync::OnceLock,
+    sync::{Arc, OnceLock},
     time::{Duration, Instant},
 };
 use theme::AccentColors;
@@ -51,7 +47,7 @@ use ui::{
 };
 use workspace::{
     Workspace,
-    item::{Item, ItemEvent, SerializableItem, TabTooltipContent},
+    item::{Item, ItemEvent, TabTooltipContent},
 };
 
 const COMMIT_CIRCLE_RADIUS: Pixels = px(3.5);
@@ -744,16 +740,32 @@ pub fn init(cx: &mut App) {
                         move |_: &git_ui::git_panel::Open, window, cx| {
                             workspace
                                 .update(cx, |workspace, cx| {
-                                    let existing = workspace.items_of_type::<GitGraph>(cx).next();
+                                    let Some(repo) =
+                                        workspace.project().read(cx).active_repository(cx)
+                                    else {
+                                        return;
+                                    };
+                                    let selected_repo_id = repo.read(cx).id;
+
+                                    let existing = workspace
+                                        .items_of_type::<GitGraph>(cx)
+                                        .find(|graph| graph.read(cx).repo_id == selected_repo_id);
                                     if let Some(existing) = existing {
                                         workspace.activate_item(&existing, true, true, window, cx);
                                         return;
                                     }
 
-                                    let project = workspace.project().clone();
+                                    let git_store =
+                                        workspace.project().read(cx).git_store().clone();
                                     let workspace_handle = workspace.weak_handle();
                                     let git_graph = cx.new(|cx| {
-                                        GitGraph::new(project, workspace_handle, window, cx)
+                                        GitGraph::new(
+                                            selected_repo_id,
+                                            git_store,
+                                            workspace_handle,
+                                            window,
+                                            cx,
+                                        )
                                     });
                                     workspace.add_item_to_active_pane(
                                         Box::new(git_graph),
@@ -771,7 +783,16 @@ pub fn init(cx: &mut App) {
                             let sha = action.sha.clone();
                             workspace
                                 .update(cx, |workspace, cx| {
-                                    let existing = workspace.items_of_type::<GitGraph>(cx).next();
+                                    let Some(repo) =
+                                        workspace.project().read(cx).active_repository(cx)
+                                    else {
+                                        return;
+                                    };
+                                    let selected_repo_id = repo.read(cx).id;
+
+                                    let existing = workspace
+                                        .items_of_type::<GitGraph>(cx)
+                                        .find(|graph| graph.read(cx).repo_id == selected_repo_id);
                                     if let Some(existing) = existing {
                                         existing.update(cx, |graph, cx| {
                                             graph.select_commit_by_sha(sha.as_str(), cx);
@@ -780,11 +801,17 @@ pub fn init(cx: &mut App) {
                                         return;
                                     }
 
-                                    let project = workspace.project().clone();
+                                    let git_store =
+                                        workspace.project().read(cx).git_store().clone();
                                     let workspace_handle = workspace.weak_handle();
                                     let git_graph = cx.new(|cx| {
-                                        let mut graph =
-                                            GitGraph::new(project, workspace_handle, window, cx);
+                                        let mut graph = GitGraph::new(
+                                            selected_repo_id,
+                                            git_store,
+                                            workspace_handle,
+                                            window,
+                                            cx,
+                                        );
                                         graph.select_commit_by_sha(sha.as_str(), cx);
                                         graph
                                     });
@@ -869,7 +896,7 @@ pub struct GitGraph {
     focus_handle: FocusHandle,
     search_state: SearchState,
     graph_data: GraphData,
-    project: Entity<Project>,
+    git_store: Entity<GitStore>,
     workspace: WeakEntity<Workspace>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     row_height: Pixels,
@@ -886,7 +913,7 @@ pub struct GitGraph {
     selected_commit_diff_stats: Option<(usize, usize)>,
     _commit_diff_task: Option<Task<()>>,
     commit_details_split_state: Entity<SplitState>,
-    selected_repo_id: Option<RepositoryId>,
+    repo_id: RepositoryId,
     changed_files_scroll_handle: UniformListScrollHandle,
     pending_select_sha: Option<Oid>,
 }
@@ -911,7 +938,8 @@ impl GitGraph {
     }
 
     pub fn new(
-        project: Entity<Project>,
+        repo_id: RepositoryId,
+        git_store: Entity<GitStore>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -920,7 +948,6 @@ impl GitGraph {
         cx.on_focus(&focus_handle, window, |_, _, cx| cx.notify())
             .detach();
 
-        let git_store = project.read(cx).git_store().clone();
         let accent_colors = cx.theme().accents();
         let graph = GraphData::new(accent_colors_count(accent_colors));
         let log_source = LogSource::default();
@@ -928,31 +955,15 @@ impl GitGraph {
 
         cx.subscribe(&git_store, |this, _, event, cx| match event {
             GitStoreEvent::RepositoryUpdated(updated_repo_id, repo_event, _) => {
-                if this
-                    .selected_repo_id
-                    .as_ref()
-                    .is_some_and(|repo_id| repo_id == updated_repo_id)
-                {
-                    if let Some(repository) = this.get_selected_repository(cx) {
+                if this.repo_id == *updated_repo_id {
+                    if let Some(repository) = this.get_repository(cx) {
                         this.on_repository_event(repository, repo_event, cx);
                     }
-                }
-            }
-            GitStoreEvent::ActiveRepositoryChanged(changed_repo_id) => {
-                // todo(git_graph): Make this selectable from UI so we don't have to always use active repository
-                if this.selected_repo_id != *changed_repo_id {
-                    this.selected_repo_id = *changed_repo_id;
-                    this.invalidate_state(cx);
                 }
             }
             _ => {}
         })
         .detach();
-
-        let active_repository = project
-            .read(cx)
-            .active_repository(cx)
-            .map(|repo| repo.read(cx).id);
 
         let search_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
@@ -979,6 +990,7 @@ impl GitGraph {
 
         let mut this = GitGraph {
             focus_handle,
+            git_store,
             search_state: SearchState {
                 case_sensitive: false,
                 editor: search_editor,
@@ -986,7 +998,6 @@ impl GitGraph {
                 selected_index: None,
                 state: QueryState::Empty,
             },
-            project,
             workspace,
             graph_data: graph,
             _commit_diff_task: None,
@@ -1004,7 +1015,7 @@ impl GitGraph {
             log_source,
             log_order,
             commit_details_split_state: cx.new(|_cx| SplitState::new()),
-            selected_repo_id: active_repository,
+            repo_id,
             changed_files_scroll_handle: UniformListScrollHandle::new(),
             pending_select_sha: None,
         };
@@ -1092,7 +1103,7 @@ impl GitGraph {
     }
 
     fn fetch_initial_graph_data(&mut self, cx: &mut App) {
-        if let Some(repository) = self.get_selected_repository(cx) {
+        if let Some(repository) = self.get_repository(cx) {
             repository.update(cx, |repository, cx| {
                 let commits = repository
                     .graph_data(self.log_source.clone(), self.log_order, 0..usize::MAX, cx)
@@ -1102,11 +1113,9 @@ impl GitGraph {
         }
     }
 
-    fn get_selected_repository(&self, cx: &App) -> Option<Entity<Repository>> {
-        let project = self.project.read(cx);
-        self.selected_repo_id
-            .as_ref()
-            .and_then(|repo_id| project.repositories(cx).get(&repo_id).cloned())
+    fn get_repository(&self, cx: &App) -> Option<Entity<Repository>> {
+        let git_store = self.git_store.read(cx);
+        git_store.repositories().get(&self.repo_id).cloned()
     }
 
     fn render_chip(&self, name: &SharedString, accent_color: gpui::Hsla) -> impl IntoElement {
@@ -1122,7 +1131,7 @@ impl GitGraph {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<Vec<AnyElement>> {
-        let repository = self.get_selected_repository(cx);
+        let repository = self.get_repository(cx);
 
         let row_height = self.row_height;
 
@@ -1305,7 +1314,7 @@ impl GitGraph {
     }
 
     fn search(&mut self, query: SharedString, cx: &mut Context<Self>) {
-        let Some(repo) = self.get_selected_repository(cx) else {
+        let Some(repo) = self.get_repository(cx) else {
             return;
         };
 
@@ -1395,7 +1404,7 @@ impl GitGraph {
 
         let sha = commit.data.sha.to_string();
 
-        let Some(repository) = self.get_selected_repository(cx) else {
+        let Some(repository) = self.get_repository(cx) else {
             return;
         };
 
@@ -1460,9 +1469,22 @@ impl GitGraph {
         self.select_commit_by_sha(oid, cx);
     }
 
+    pub fn set_repo_id(&mut self, repo_id: RepositoryId, cx: &mut Context<Self>) {
+        if repo_id != self.repo_id
+            && self
+                .git_store
+                .read(cx)
+                .repositories()
+                .contains_key(&repo_id)
+        {
+            self.repo_id = repo_id;
+            self.invalidate_state(cx);
+        }
+    }
+
     pub fn select_commit_by_sha(&mut self, sha: impl TryInto<Oid>, cx: &mut Context<Self>) {
         fn inner(this: &mut GitGraph, oid: Oid, cx: &mut Context<GitGraph>) {
-            let Some(selected_repository) = this.get_selected_repository(cx) else {
+            let Some(selected_repository) = this.get_repository(cx) else {
                 return;
             };
 
@@ -1501,7 +1523,7 @@ impl GitGraph {
             return;
         };
 
-        let Some(repository) = self.get_selected_repository(cx) else {
+        let Some(repository) = self.get_repository(cx) else {
             return;
         };
 
@@ -1677,7 +1699,7 @@ impl GitGraph {
             return Empty.into_any_element();
         };
 
-        let Some(repository) = self.get_selected_repository(cx) else {
+        let Some(repository) = self.get_repository(cx) else {
             return Empty.into_any_element();
         };
 
@@ -2439,26 +2461,25 @@ impl Render for GitGraph {
         let (commit_count, is_loading) = match self.graph_data.max_commit_count {
             AllCommitCount::Loaded(count) => (count, true),
             AllCommitCount::NotLoaded => {
-                let (commit_count, is_loading) =
-                    if let Some(repository) = self.get_selected_repository(cx) {
-                        repository.update(cx, |repository, cx| {
-                            // Start loading the graph data if we haven't started already
-                            let GraphDataResponse {
-                                commits,
-                                is_loading,
-                                error: _,
-                            } = repository.graph_data(
-                                self.log_source.clone(),
-                                self.log_order,
-                                0..usize::MAX,
-                                cx,
-                            );
-                            self.graph_data.add_commits(&commits);
-                            (commits.len(), is_loading)
-                        })
-                    } else {
-                        (0, false)
-                    };
+                let (commit_count, is_loading) = if let Some(repository) = self.get_repository(cx) {
+                    repository.update(cx, |repository, cx| {
+                        // Start loading the graph data if we haven't started already
+                        let GraphDataResponse {
+                            commits,
+                            is_loading,
+                            error: _,
+                        } = repository.graph_data(
+                            self.log_source.clone(),
+                            self.log_order,
+                            0..usize::MAX,
+                            cx,
+                        );
+                        self.graph_data.add_commits(&commits);
+                        (commits.len(), is_loading)
+                    })
+                } else {
+                    (0, false)
+                };
 
                 (commit_count, is_loading)
             }
@@ -2684,7 +2705,7 @@ impl Item for GitGraph {
     }
 
     fn tab_tooltip_content(&self, cx: &App) -> Option<TabTooltipContent> {
-        let repo_name = self.get_selected_repository(cx).and_then(|repo| {
+        let repo_name = self.get_repository(cx).and_then(|repo| {
             repo.read(cx)
                 .work_directory_abs_path
                 .file_name()
@@ -2704,7 +2725,7 @@ impl Item for GitGraph {
     }
 
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
-        self.get_selected_repository(cx)
+        self.get_repository(cx)
             .and_then(|repo| {
                 repo.read(cx)
                     .work_directory_abs_path
@@ -2723,7 +2744,7 @@ impl Item for GitGraph {
     }
 }
 
-impl SerializableItem for GitGraph {
+impl workspace::SerializableItem for GitGraph {
     fn serialized_item_kind() -> &'static str {
         "GitGraph"
     }
@@ -2744,7 +2765,7 @@ impl SerializableItem for GitGraph {
     }
 
     fn deserialize(
-        project: Entity<Project>,
+        project: Entity<project::Project>,
         workspace: WeakEntity<Workspace>,
         workspace_id: workspace::WorkspaceId,
         item_id: workspace::ItemId,
@@ -2752,16 +2773,37 @@ impl SerializableItem for GitGraph {
         cx: &mut App,
     ) -> Task<gpui::Result<Entity<Self>>> {
         let db = persistence::GitGraphsDb::global(cx);
-        if db
-            .get_git_graph(item_id, workspace_id)
-            .ok()
-            .is_some_and(|is_open| is_open)
-        {
-            let git_graph = cx.new(|cx| GitGraph::new(project, workspace, window, cx));
-            Task::ready(Ok(git_graph))
-        } else {
-            Task::ready(Err(anyhow::anyhow!("No git graph to deserialize")))
-        }
+        let Some(repo_work_path) = db.get_git_graph(item_id, workspace_id).ok().flatten() else {
+            return Task::ready(Err(anyhow::anyhow!("No git graph to deserialize")));
+        };
+
+        let window_handle = window.window_handle();
+        let project = project.read(cx);
+        let git_store = project.git_store().clone();
+        let wait = project.wait_for_initial_scan(cx);
+
+        cx.spawn(async move |cx| {
+            wait.await;
+
+            cx.update_window(window_handle, |_, window, cx| {
+                let path = repo_work_path.as_path();
+
+                let repositories = git_store.read(cx).repositories();
+                let repo_id = repositories.iter().find_map(|(&repo_id, repo)| {
+                    if repo.read(cx).snapshot().work_directory_abs_path.as_ref() == path {
+                        Some(repo_id)
+                    } else {
+                        None
+                    }
+                });
+
+                let Some(repo_id) = repo_id else {
+                    return Err(anyhow::anyhow!("Repository not found for path: {:?}", path));
+                };
+
+                Ok(cx.new(|cx| GitGraph::new(repo_id, git_store, workspace, window, cx)))
+            })?
+        })
     }
 
     fn serialize(
@@ -2773,12 +2815,19 @@ impl SerializableItem for GitGraph {
         cx: &mut Context<Self>,
     ) -> Option<Task<gpui::Result<()>>> {
         let workspace_id = workspace.database_id()?;
+        let repo = self.get_repository(cx)?;
+        let repo_working_path = repo
+            .read(cx)
+            .snapshot()
+            .work_directory_abs_path
+            .to_string_lossy()
+            .to_string();
+
         let db = persistence::GitGraphsDb::global(cx);
-        Some(
-            cx.background_spawn(
-                async move { db.save_git_graph(item_id, workspace_id, true).await },
-            ),
-        )
+        Some(cx.background_spawn(async move {
+            db.save_git_graph(item_id, workspace_id, repo_working_path)
+                .await
+        }))
     }
 
     fn should_serialize(&self, event: &Self::Event) -> bool {
@@ -2787,6 +2836,8 @@ impl SerializableItem for GitGraph {
 }
 
 mod persistence {
+    use std::path::PathBuf;
+
     use db::{
         query,
         sqlez::{domain::Domain, thread_safe_connection::ThreadSafeConnection},
@@ -2799,17 +2850,22 @@ mod persistence {
     impl Domain for GitGraphsDb {
         const NAME: &str = stringify!(GitGraphsDb);
 
-        const MIGRATIONS: &[&str] = (&[sql!(
-            CREATE TABLE git_graphs (
-                workspace_id INTEGER,
-                item_id INTEGER UNIQUE,
-                is_open INTEGER DEFAULT FALSE,
+        const MIGRATIONS: &[&str] = &[
+            sql!(
+                CREATE TABLE git_graphs (
+                    workspace_id INTEGER,
+                    item_id INTEGER UNIQUE,
+                    is_open INTEGER DEFAULT FALSE,
 
-                PRIMARY KEY(workspace_id, item_id),
-                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
-                ON DELETE CASCADE
-            ) STRICT;
-        )]);
+                    PRIMARY KEY(workspace_id, item_id),
+                    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                    ON DELETE CASCADE
+                ) STRICT;
+            ),
+            sql!(
+                ALTER TABLE git_graphs ADD COLUMN repo_working_path TEXT;
+            ),
+        ];
     }
 
     db::static_connection!(GitGraphsDb, [WorkspaceDb]);
@@ -2819,9 +2875,9 @@ mod persistence {
             pub async fn save_git_graph(
                 item_id: workspace::ItemId,
                 workspace_id: workspace::WorkspaceId,
-                is_open: bool
+                repo_working_path: String
             ) -> Result<()> {
-                INSERT OR REPLACE INTO git_graphs(item_id, workspace_id, is_open)
+                INSERT OR REPLACE INTO git_graphs(item_id, workspace_id, repo_working_path)
                 VALUES (?, ?, ?)
             }
         }
@@ -2830,8 +2886,8 @@ mod persistence {
             pub fn get_git_graph(
                 item_id: workspace::ItemId,
                 workspace_id: workspace::WorkspaceId
-            ) -> Result<bool> {
-                SELECT is_open
+            ) -> Result<Option<PathBuf>> {
+                SELECT repo_working_path
                 FROM git_graphs
                 WHERE item_id = ? AND workspace_id = ?
             }
@@ -2856,16 +2912,8 @@ mod tests {
     use smallvec::{SmallVec, smallvec};
     use std::path::Path;
     use std::sync::{Arc, Mutex};
-    use workspace::MultiWorkspace;
 
     fn init_test(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-        });
-    }
-
-    fn init_test_with_theme(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
@@ -3582,7 +3630,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_graph_data_repopulated_from_cache_after_repo_switch(cx: &mut TestAppContext) {
-        init_test_with_theme(cx);
+        init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
@@ -3635,13 +3683,20 @@ mod tests {
         first_repository.update(cx, |repository, cx| repository.set_as_active_repository(cx));
         cx.run_until_parked();
 
-        let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
 
         let workspace_weak =
             multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
         let git_graph = cx.new_window_entity(|window, cx| {
-            GitGraph::new(project.clone(), workspace_weak, window, cx)
+            GitGraph::new(
+                first_repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                window,
+                cx,
+            )
         });
         cx.run_until_parked();
 
@@ -3653,8 +3708,8 @@ mod tests {
             "graph data should have been loaded, got 0 commits"
         );
 
-        second_repository.update(&mut *cx, |repository, cx| {
-            repository.set_as_active_repository(cx)
+        git_graph.update(cx, |graph, cx| {
+            graph.set_repo_id(second_repository.read(cx).id, cx)
         });
         cx.run_until_parked();
 
@@ -3665,9 +3720,10 @@ mod tests {
             "graph_data should be cleared after switching away"
         );
 
-        first_repository.update(&mut *cx, |repository, cx| {
-            repository.set_as_active_repository(cx)
+        git_graph.update(cx, |graph, cx| {
+            graph.set_repo_id(first_repository.read(cx).id, cx)
         });
+        cx.run_until_parked();
 
         git_graph.update_in(&mut *cx, |this, window, cx| {
             this.render(window, cx);

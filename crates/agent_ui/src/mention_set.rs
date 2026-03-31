@@ -1,9 +1,9 @@
+use crate::diagnostics::{DiagnosticsOptions, codeblock_fence_for_path, collect_diagnostics};
 use acp_thread::{MentionUri, selection_name};
 use agent::{ThreadStore, outline};
 use agent_client_protocol as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use anyhow::{Context as _, Result, anyhow};
-use assistant_slash_commands::{codeblock_fence_for_path, collect_diagnostics_output};
 use collections::{HashMap, HashSet};
 use editor::{
     Anchor, Editor, EditorSnapshot, ExcerptId, FoldPlaceholder, ToOffset,
@@ -131,9 +131,6 @@ impl MentionSet {
             MentionUri::Fetch { url } => self.confirm_mention_for_fetch(url, http_client, cx),
             MentionUri::Directory { .. } => Task::ready(Ok(Mention::Link)),
             MentionUri::Thread { id, .. } => self.confirm_mention_for_thread(id, cx),
-            MentionUri::TextThread { .. } => {
-                Task::ready(Err(anyhow!("Text thread mentions are no longer supported")))
-            }
             MentionUri::File { abs_path } => {
                 self.confirm_mention_for_file(abs_path, supports_images, cx)
             }
@@ -276,9 +273,6 @@ impl MentionSet {
             }
             MentionUri::Directory { .. } => Task::ready(Ok(Mention::Link)),
             MentionUri::Thread { id, .. } => self.confirm_mention_for_thread(id, cx),
-            MentionUri::TextThread { .. } => {
-                Task::ready(Err(anyhow!("Text thread mentions are no longer supported")))
-            }
             MentionUri::File { abs_path } => {
                 self.confirm_mention_for_file(abs_path, supports_images, cx)
             }
@@ -589,9 +583,9 @@ impl MentionSet {
             return Task::ready(Err(anyhow!("project not found")));
         };
 
-        let diagnostics_task = collect_diagnostics_output(
+        let diagnostics_task = collect_diagnostics(
             project,
-            assistant_slash_commands::Options {
+            DiagnosticsOptions {
                 include_errors,
                 include_warnings,
                 path_matcher: None,
@@ -599,9 +593,8 @@ impl MentionSet {
             cx,
         );
         cx.spawn(async move |_, _| {
-            let output = diagnostics_task.await?;
-            let content = output
-                .map(|output| output.text)
+            let content = diagnostics_task
+                .await?
                 .unwrap_or_else(|| "No diagnostics found.".into());
             Ok(Mention::Text {
                 content,

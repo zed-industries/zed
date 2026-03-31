@@ -3,9 +3,7 @@ pub mod terminal_element;
 pub mod terminal_panel;
 mod terminal_path_like_target;
 pub mod terminal_scrollbar;
-mod terminal_slash_command;
 
-use assistant_slash_command::SlashCommandRegistry;
 use editor::{
     Editor, EditorSettings, actions::SelectAll, blink_manager::BlinkManager,
     ui_scrollbar_settings_from_raw,
@@ -47,7 +45,6 @@ use terminal_element::TerminalElement;
 use terminal_panel::TerminalPanel;
 use terminal_path_like_target::{hover_path_like_target, open_path_like_target};
 use terminal_scrollbar::TerminalScrollHandle;
-use terminal_slash_command::TerminalSlashCommand;
 use ui::{
     ContextMenu, Divider, ScrollAxes, Scrollbars, Tooltip, WithScrollbar,
     prelude::*,
@@ -101,7 +98,6 @@ actions!(
 pub struct RenameTerminal;
 
 pub fn init(cx: &mut App) {
-    assistant_slash_command::init(cx);
     terminal_panel::init(cx);
 
     register_serializable_item::<TerminalView>(cx);
@@ -110,7 +106,6 @@ pub fn init(cx: &mut App) {
         workspace.register_action(TerminalView::deploy);
     })
     .detach();
-    SlashCommandRegistry::global(cx).register_command(TerminalSlashCommand, true);
 }
 
 pub struct BlockProperties {
