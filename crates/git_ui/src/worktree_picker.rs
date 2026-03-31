@@ -254,6 +254,14 @@ struct WorktreeEntry {
     is_new: bool,
 }
 
+impl WorktreeEntry {
+    fn can_delete(&self, forbidden_deletion_path: Option<&PathBuf>) -> bool {
+        !self.is_new
+            && !self.worktree.is_main
+            && forbidden_deletion_path != Some(&self.worktree.path)
+    }
+}
+
 pub struct WorktreeListDelegate {
     matches: Vec<WorktreeEntry>,
     all_worktrees: Option<Vec<GitWorktree>>,
@@ -462,7 +470,7 @@ impl WorktreeListDelegate {
         let Some(entry) = self.matches.get(idx).cloned() else {
             return;
         };
-        if entry.is_new || self.forbidden_deletion_path.as_ref() == Some(&entry.worktree.path) {
+        if !entry.can_delete(self.forbidden_deletion_path.as_ref()) {
             return;
         }
         let Some(repo) = self.repo.clone() else {
@@ -719,6 +727,7 @@ impl PickerDelegate for WorktreeListDelegate {
                                 path: Default::default(),
                                 ref_name: Some(format!("refs/heads/{query}").into()),
                                 sha: Default::default(),
+                                is_main: false,
                             },
                             positions: Vec::new(),
                             is_new: true,
@@ -805,8 +814,7 @@ impl PickerDelegate for WorktreeListDelegate {
 
         let focus_handle = self.focus_handle.clone();
 
-        let can_delete =
-            !entry.is_new && self.forbidden_deletion_path.as_ref() != Some(&entry.worktree.path);
+        let can_delete = entry.can_delete(self.forbidden_deletion_path.as_ref());
 
         let delete_button = |entry_ix: usize| {
             IconButton::new(("delete-worktree", entry_ix), IconName::Trash)
@@ -894,9 +902,8 @@ impl PickerDelegate for WorktreeListDelegate {
         let focus_handle = self.focus_handle.clone();
         let selected_entry = self.matches.get(self.selected_index);
         let is_creating = selected_entry.is_some_and(|entry| entry.is_new);
-        let can_delete = selected_entry.is_some_and(|entry| {
-            !entry.is_new && self.forbidden_deletion_path.as_ref() != Some(&entry.worktree.path)
-        });
+        let can_delete = selected_entry
+            .is_some_and(|entry| entry.can_delete(self.forbidden_deletion_path.as_ref()));
 
         let footer_container = h_flex()
             .w_full()

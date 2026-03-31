@@ -840,6 +840,8 @@ impl ConversationView {
 
         if let Some(scroll_position) = thread.read(cx).ui_scroll_position() {
             list_state.scroll_to(scroll_position);
+        } else {
+            list_state.set_follow_tail(true);
         }
 
         AgentDiff::set_active_thread(&self.workspace, thread.clone(), window, cx);

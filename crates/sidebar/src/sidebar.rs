@@ -3601,7 +3601,9 @@ impl WorkspaceSidebar for Sidebar {
                 .map(|(s, count)| (PathList::deserialize(&s), count))
                 .collect();
             if serialized.active_view == SerializedSidebarView::Archive {
-                self.show_archive(window, cx);
+                cx.defer_in(window, |this, window, cx| {
+                    this.show_archive(window, cx);
+                });
             }
         }
         cx.notify();

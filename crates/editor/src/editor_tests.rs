@@ -31953,6 +31953,65 @@ async fn test_sticky_scroll_with_expanded_deleted_diff_hunks(
 }
 
 #[gpui::test]
+async fn test_no_duplicated_sticky_headers(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        ˇimpl Foo { fn bar() {
+            let x = 1;
+            fn baz() {
+                let y = 2;
+            }
+        } }
+    "});
+
+    cx.update_editor(|e, _, cx| {
+        e.buffer()
+            .read(cx)
+            .as_singleton()
+            .unwrap()
+            .update(cx, |buffer, cx| {
+                buffer.set_language(Some(rust_lang()), cx);
+            })
+    });
+
+    let mut sticky_headers = |offset: ScrollOffset| {
+        cx.update_editor(|e, window, cx| {
+            e.scroll(gpui::Point { x: 0., y: offset }, None, window, cx);
+        });
+        cx.run_until_parked();
+        cx.update_editor(|e, window, cx| {
+            EditorElement::sticky_headers(&e, &e.snapshot(window, cx))
+                .into_iter()
+                .map(
+                    |StickyHeader {
+                         start_point,
+                         offset,
+                         ..
+                     }| { (start_point, offset) },
+                )
+                .collect::<Vec<_>>()
+        })
+    };
+
+    let struct_foo = Point { row: 0, column: 0 };
+    let fn_baz = Point { row: 2, column: 4 };
+
+    assert_eq!(sticky_headers(0.0), vec![]);
+    assert_eq!(sticky_headers(0.5), vec![(struct_foo, 0.0)]);
+    assert_eq!(sticky_headers(1.0), vec![(struct_foo, 0.0)]);
+    assert_eq!(sticky_headers(1.5), vec![(struct_foo, 0.0), (fn_baz, 1.0)]);
+    assert_eq!(sticky_headers(2.0), vec![(struct_foo, 0.0), (fn_baz, 1.0)]);
+    assert_eq!(sticky_headers(2.5), vec![(struct_foo, 0.0), (fn_baz, 0.5)]);
+    assert_eq!(sticky_headers(3.0), vec![(struct_foo, 0.0)]);
+    assert_eq!(sticky_headers(3.5), vec![(struct_foo, 0.0)]);
+    assert_eq!(sticky_headers(4.0), vec![(struct_foo, 0.0)]);
+    assert_eq!(sticky_headers(4.5), vec![(struct_foo, -0.5)]);
+    assert_eq!(sticky_headers(5.0), vec![]);
+}
+
+#[gpui::test]
 fn test_relative_line_numbers(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
