@@ -12,7 +12,7 @@ use gpui::{
 use project::agent_server_store::{AllAgentServersSettings, CustomAgentServerSettings};
 use project::{AgentRegistryStore, RegistryAgent};
 use settings::{Settings, SettingsStore, update_settings_file};
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{
     ButtonStyle, ScrollableHandle, ToggleButtonGroup, ToggleButtonGroupSize,
     ToggleButtonGroupStyle, ToggleButtonSimple, Tooltip, WithScrollbar, prelude::*,

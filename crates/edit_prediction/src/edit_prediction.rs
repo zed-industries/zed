@@ -50,7 +50,8 @@ use std::path::Path;
 use std::rc::Rc;
 use std::str::FromStr as _;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
+
 use thiserror::Error;
 use util::{RangeExt as _, ResultExt as _};
 
@@ -63,7 +64,6 @@ pub mod ollama;
 mod onboarding_modal;
 pub mod open_ai_response;
 mod prediction;
-pub mod sweep_ai;
 
 pub mod udiff;
 
@@ -83,7 +83,6 @@ use crate::onboarding_modal::ZedPredictModal;
 pub use crate::prediction::EditPrediction;
 pub use crate::prediction::EditPredictionId;
 use crate::prediction::EditPredictionResult;
-pub use crate::sweep_ai::SweepAi;
 pub use capture_example::capture_example;
 pub use language_model::ApiKeyState;
 pub use telemetry_events::EditPredictionRating;
@@ -143,7 +142,6 @@ pub struct EditPredictionStore {
     zeta2_raw_config: Option<Zeta2RawConfig>,
     preferred_experiment: Option<String>,
     available_experiments: Vec<String>,
-    pub sweep_ai: SweepAi,
     pub mercury: Mercury,
     data_collection_choice: DataCollectionChoice,
     reject_predictions_tx: mpsc::UnboundedSender<EditPredictionRejectionPayload>,
@@ -163,7 +161,6 @@ pub(crate) struct EditPredictionRejectionPayload {
 pub enum EditPredictionModel {
     Zeta,
     Fim { format: EditPredictionPromptFormat },
-    Sweep,
     Mercury,
 }
 
@@ -175,13 +172,11 @@ pub struct EditPredictionModelInput {
     position: Anchor,
     events: Vec<Arc<zeta_prompt::Event>>,
     related_files: Vec<RelatedFile>,
-    recent_paths: VecDeque<ProjectPath>,
     trigger: PredictEditsRequestTrigger,
     diagnostic_search_range: Range<Point>,
     debug_tx: Option<mpsc::UnboundedSender<DebugEvent>>,
     can_collect_data: bool,
     is_open_source: bool,
-    pub user_actions: Vec<UserActionRecord>,
 }
 
 #[derive(Debug)]
@@ -218,26 +213,6 @@ pub struct EditPredictionFinishedDebugEvent {
     pub buffer: WeakEntity<Buffer>,
     pub position: Anchor,
     pub model_output: Option<String>,
-}
-
-const USER_ACTION_HISTORY_SIZE: usize = 16;
-
-#[derive(Clone, Debug)]
-pub struct UserActionRecord {
-    pub action_type: UserActionType,
-    pub buffer_id: EntityId,
-    pub line_number: u32,
-    pub offset: usize,
-    pub timestamp_epoch_ms: u64,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum UserActionType {
-    InsertChar,
-    InsertSelection,
-    DeleteChar,
-    DeleteSelection,
-    CursorMovement,
 }
 
 /// An event with associated metadata for reconstructing buffer state.
@@ -339,19 +314,11 @@ struct ProjectState {
     cancelled_predictions: HashSet<usize>,
     context: Entity<RelatedExcerptStore>,
     license_detection_watchers: HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
-    user_actions: VecDeque<UserActionRecord>,
     _subscriptions: [gpui::Subscription; 2],
     copilot: Option<Entity<Copilot>>,
 }
 
 impl ProjectState {
-    fn record_user_action(&mut self, action: UserActionRecord) {
-        if self.user_actions.len() >= USER_ACTION_HISTORY_SIZE {
-            self.user_actions.pop_front();
-        }
-        self.user_actions.push_back(action);
-    }
-
     pub fn events(&self, cx: &App) -> Vec<StoredEvent> {
         self.events
             .iter()
@@ -811,8 +778,11 @@ impl EditPredictionStore {
             while current_user.borrow().is_none() {
                 current_user.next().await;
             }
+
             this.update(cx, |this, cx| {
-                this.refresh_available_experiments(cx);
+                if cx.is_staff() {
+                    this.refresh_available_experiments(cx);
+                }
             })
             .log_err();
         });
@@ -828,7 +798,6 @@ impl EditPredictionStore {
             zeta2_raw_config: Self::zeta2_raw_config_from_env(),
             preferred_experiment: None,
             available_experiments: Vec::new(),
-            sweep_ai: SweepAi::new(cx),
             mercury: Mercury::new(cx),
 
             data_collection_choice,
@@ -939,13 +908,6 @@ impl EditPredictionStore {
     pub fn icons(&self, cx: &App) -> edit_prediction_types::EditPredictionIconSet {
         use ui::IconName;
         match self.edit_prediction_model {
-            EditPredictionModel::Sweep => {
-                edit_prediction_types::EditPredictionIconSet::new(IconName::SweepAi)
-                    .with_disabled(IconName::SweepAiDisabled)
-                    .with_up(IconName::SweepAiUp)
-                    .with_down(IconName::SweepAiDown)
-                    .with_error(IconName::SweepAiError)
-            }
             EditPredictionModel::Mercury => {
                 edit_prediction_types::EditPredictionIconSet::new(IconName::Inception)
             }
@@ -968,10 +930,6 @@ impl EditPredictionStore {
                 }
             }
         }
-    }
-
-    pub fn has_sweep_api_token(&self, cx: &App) -> bool {
-        self.sweep_ai.api_token.read(cx).has_key()
     }
 
     pub fn has_mercury_api_token(&self, cx: &App) -> bool {
@@ -1132,7 +1090,6 @@ impl EditPredictionStore {
                 last_edit_prediction_refresh: None,
                 last_jump_prediction_refresh: None,
                 license_detection_watchers: HashMap::default(),
-                user_actions: VecDeque::with_capacity(USER_ACTION_HISTORY_SIZE),
                 _subscriptions: [
                     cx.subscribe(&project, Self::handle_project_event),
                     cx.observe_release(&project, move |this, _, cx| {
@@ -1347,24 +1304,16 @@ impl EditPredictionStore {
         }
         let old_file = mem::replace(&mut registered_buffer.file, new_file.clone());
         let old_snapshot = mem::replace(&mut registered_buffer.snapshot, new_snapshot.clone());
-        let mut num_edits = 0usize;
-        let mut total_deleted = 0usize;
-        let mut total_inserted = 0usize;
         let mut edit_range: Option<Range<Anchor>> = None;
-        let mut last_offset: Option<usize> = None;
         let now = cx.background_executor().now();
 
-        for (edit, anchor_range) in
+        for (_edit, anchor_range) in
             new_snapshot.anchored_edits_since::<usize>(&old_snapshot.version)
         {
-            num_edits += 1;
-            total_deleted += edit.old.len();
-            total_inserted += edit.new.len();
             edit_range = Some(match edit_range {
                 None => anchor_range,
                 Some(acc) => acc.start..anchor_range.end,
             });
-            last_offset = Some(edit.new.end);
         }
 
         let Some(edit_range) = edit_range else {
@@ -1386,32 +1335,6 @@ impl EditPredictionStore {
                 &edit_range,
                 cx,
             );
-
-        if is_local {
-            let action_type = match (total_deleted, total_inserted, num_edits) {
-                (0, ins, n) if ins == n => UserActionType::InsertChar,
-                (0, _, _) => UserActionType::InsertSelection,
-                (del, 0, n) if del == n => UserActionType::DeleteChar,
-                (_, 0, _) => UserActionType::DeleteSelection,
-                (_, ins, n) if ins == n => UserActionType::InsertChar,
-                (_, _, _) => UserActionType::InsertSelection,
-            };
-
-            if let Some(offset) = last_offset {
-                let point = new_snapshot.offset_to_point(offset);
-                let timestamp_epoch_ms = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map(|d| d.as_millis() as u64)
-                    .unwrap_or(0);
-                project_state.record_user_action(UserActionRecord {
-                    action_type,
-                    buffer_id: buffer.entity_id(),
-                    line_number: point.row,
-                    offset,
-                    timestamp_epoch_ms,
-                });
-            }
-        }
 
         if !include_in_history {
             return;
@@ -1562,9 +1485,6 @@ impl EditPredictionStore {
         }
 
         match self.edit_prediction_model {
-            EditPredictionModel::Sweep => {
-                sweep_ai::edit_prediction_accepted(self, current_prediction, cx)
-            }
             EditPredictionModel::Mercury => {
                 mercury::edit_prediction_accepted(
                     current_prediction.prediction.id,
@@ -1792,7 +1712,7 @@ impl EditPredictionStore {
         &mut self,
         project: &Entity<Project>,
         display_type: edit_prediction_types::SuggestionDisplayType,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) {
         let Some(project_state) = self.projects.get_mut(&project.entity_id()) else {
             return;
@@ -1813,18 +1733,6 @@ impl EditPredictionStore {
 
         if is_first_non_jump_show {
             current_prediction.was_shown = true;
-        }
-
-        let display_type_changed = previous_shown_with != Some(display_type);
-
-        if self.edit_prediction_model == EditPredictionModel::Sweep && display_type_changed {
-            sweep_ai::edit_prediction_shown(
-                &self.sweep_ai,
-                self.client.clone(),
-                &current_prediction.prediction,
-                display_type,
-                cx,
-            );
         }
 
         if is_first_non_jump_show {
@@ -1883,7 +1791,7 @@ impl EditPredictionStore {
                     cx,
                 );
             }
-            EditPredictionModel::Sweep | EditPredictionModel::Fim { .. } => {}
+            EditPredictionModel::Fim { .. } => {}
         }
     }
 
@@ -2087,7 +1995,7 @@ impl EditPredictionStore {
 }
 
 fn currently_following(project: &Entity<Project>, cx: &App) -> bool {
-    let Some(app_state) = AppState::try_global(cx).and_then(|app_state| app_state.upgrade()) else {
+    let Some(app_state) = AppState::try_global(cx) else {
         return false;
     };
 
@@ -2108,7 +2016,6 @@ fn currently_following(project: &Entity<Project>, cx: &App) -> bool {
 fn is_ep_store_provider(provider: EditPredictionProvider) -> bool {
     match provider {
         EditPredictionProvider::Zed
-        | EditPredictionProvider::Sweep
         | EditPredictionProvider::Mercury
         | EditPredictionProvider::Ollama
         | EditPredictionProvider::OpenAiCompatibleApi
@@ -2148,7 +2055,6 @@ impl EditPredictionStore {
         let (needs_acceptance_tracking, max_pending_predictions) =
             match all_language_settings(None, cx).edit_predictions.provider {
                 EditPredictionProvider::Zed
-                | EditPredictionProvider::Sweep
                 | EditPredictionProvider::Mercury
                 | EditPredictionProvider::Experimental(_) => (true, 2),
                 EditPredictionProvider::Ollama => (false, 1),
@@ -2370,28 +2276,6 @@ impl EditPredictionStore {
 
         let snapshot = active_buffer.read(cx).snapshot();
         let cursor_point = position.to_point(&snapshot);
-        let current_offset = position.to_offset(&snapshot);
-
-        let mut user_actions: Vec<UserActionRecord> =
-            project_state.user_actions.iter().cloned().collect();
-
-        if let Some(last_action) = user_actions.last() {
-            if last_action.buffer_id == active_buffer.entity_id()
-                && current_offset != last_action.offset
-            {
-                let timestamp_epoch_ms = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map(|d| d.as_millis() as u64)
-                    .unwrap_or(0);
-                user_actions.push(UserActionRecord {
-                    action_type: UserActionType::CursorMovement,
-                    buffer_id: active_buffer.entity_id(),
-                    line_number: cursor_point.row,
-                    offset: current_offset,
-                    timestamp_epoch_ms,
-                });
-            }
-        }
         let diagnostic_search_start = cursor_point.row.saturating_sub(DIAGNOSTIC_LINES_RANGE);
         let diagnostic_search_end = cursor_point.row + DIAGNOSTIC_LINES_RANGE;
         let diagnostic_search_range =
@@ -2410,8 +2294,6 @@ impl EditPredictionStore {
             && self.is_data_collection_enabled(cx)
             && matches!(self.edit_prediction_model, EditPredictionModel::Zeta);
 
-        let recent_paths = project_state.recent_paths.clone();
-
         let inputs = EditPredictionModelInput {
             project: project.clone(),
             buffer: active_buffer,
@@ -2419,11 +2301,9 @@ impl EditPredictionStore {
             position,
             events,
             related_files,
-            recent_paths,
             trigger,
             diagnostic_search_range: diagnostic_search_range,
             debug_tx,
-            user_actions,
             can_collect_data,
             is_open_source,
         };
@@ -2435,7 +2315,6 @@ impl EditPredictionStore {
                 zeta::request_prediction_with_zeta(self, inputs, capture_data, cx)
             }
             EditPredictionModel::Fim { format } => fim::request_prediction(inputs, format, cx),
-            EditPredictionModel::Sweep => self.sweep_ai.request_prediction_with_sweep(inputs, cx),
             EditPredictionModel::Mercury => self.mercury.request_prediction(inputs, cx),
         };
 

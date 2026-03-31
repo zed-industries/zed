@@ -11,7 +11,7 @@ use gpui::{App, Entity, Pixels, Task};
 use itertools::Itertools;
 use language::{
     BufferRow,
-    language_settings::{InlayHintKind, InlayHintSettings, language_settings},
+    language_settings::{InlayHintKind, InlayHintSettings},
 };
 use lsp::LanguageServerId;
 use multi_buffer::{Anchor, ExcerptId, MultiBufferSnapshot};
@@ -38,9 +38,7 @@ pub fn inlay_hint_settings(
     snapshot: &MultiBufferSnapshot,
     cx: &mut Context<Editor>,
 ) -> InlayHintSettings {
-    let file = snapshot.file_at(location);
-    let language = snapshot.language_at(location).map(|l| l.name());
-    language_settings(language, file, cx).inlay_hints
+    snapshot.language_settings_at(location, cx).inlay_hints
 }
 
 #[derive(Debug)]
@@ -4800,7 +4798,7 @@ let c = 3;"#
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             release_channel::init(semver::Version::new(0, 0, 0), cx);
             crate::init(cx);
         });

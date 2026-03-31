@@ -119,7 +119,7 @@ use {
         time::Duration,
     },
     util::ResultExt as _,
-    workspace::{AppState, MultiWorkspace, Panel as _, Workspace},
+    workspace::{AppState, MultiWorkspace, Workspace},
     zed_actions::OpenSettingsAt,
 };
 
@@ -170,13 +170,13 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
 
     // Set the global app state so settings_ui and other subsystems can find it
     cx.update(|cx| {
-        AppState::set_global(Arc::downgrade(&app_state), cx);
+        AppState::set_global(app_state.clone(), cx);
     });
 
     // Initialize all Zed subsystems
     cx.update(|cx| {
         gpui_tokio::init(cx);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
         client::init(&app_state.client, cx);
         audio::init(cx);
         workspace::init(app_state.clone(), cx);
@@ -214,6 +214,7 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
             app_state.client.clone(),
             prompt_builder,
             app_state.languages.clone(),
+            true,
             false,
             cx,
         );
@@ -965,7 +966,7 @@ fn init_app_state(cx: &mut App) -> Arc<AppState> {
     let user_store = cx.new(|cx| client::UserStore::new(client.clone(), cx));
     let workspace_store = cx.new(|cx| workspace::WorkspaceStore::new(client.clone(), cx));
 
-    theme::init(theme::LoadThemes::JustBase, cx);
+    theme_settings::init(theme::LoadThemes::JustBase, cx);
     client::init(&client, cx);
 
     let app_state = Arc::new(AppState {
@@ -978,7 +979,7 @@ fn init_app_state(cx: &mut App) -> Arc<AppState> {
         build_window_options: |_, _| Default::default(),
         session,
     });
-    AppState::set_global(Arc::downgrade(&app_state), cx);
+    AppState::set_global(app_state.clone(), cx);
     app_state
 }
 
@@ -2594,7 +2595,7 @@ fn run_multi_workspace_sidebar_visual_tests(
                     });
                     cx.new(|cx| {
                         let mut multi_workspace = MultiWorkspace::new(workspace1, window, cx);
-                        multi_workspace.activate(workspace2, cx);
+                        multi_workspace.activate(workspace2, window, cx);
                         multi_workspace
                     })
                 },
@@ -2645,7 +2646,8 @@ fn run_multi_workspace_sidebar_visual_tests(
     // Switch to workspace 1 so it's highlighted as active (index 0)
     multi_workspace_window
         .update(cx, |multi_workspace, window, cx| {
-            multi_workspace.activate_index(0, window, cx);
+            let workspace = multi_workspace.workspaces()[0].clone();
+            multi_workspace.activate(workspace, window, cx);
         })
         .context("Failed to activate workspace 1")?;
 
@@ -3545,7 +3547,6 @@ edition = "2021"
         new_workspace.update(cx, |workspace, cx| {
             if let Some(new_panel) = workspace.panel::<AgentPanel>(cx) {
                 new_panel.update(cx, |panel, cx| {
-                    panel.set_size(Some(px(480.0)), window, cx);
                     panel.open_external_thread_with_server(stub_agent.clone(), window, cx);
                 });
             }

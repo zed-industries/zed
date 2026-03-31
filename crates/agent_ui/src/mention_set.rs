@@ -667,7 +667,7 @@ mod tests {
         let settings_store = cx.update(SettingsStore::test);
         cx.set_global(settings_store);
         cx.update(|cx| {
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             release_channel::init(Version::new(0, 0, 0), cx);
             prompt_store::init(cx);
         });
@@ -835,6 +835,36 @@ pub(crate) async fn insert_images_as_context(
     }
 }
 
+fn image_format_from_external_content(format: image::ImageFormat) -> Option<ImageFormat> {
+    match format {
+        image::ImageFormat::Png => Some(ImageFormat::Png),
+        image::ImageFormat::Jpeg => Some(ImageFormat::Jpeg),
+        image::ImageFormat::WebP => Some(ImageFormat::Webp),
+        image::ImageFormat::Gif => Some(ImageFormat::Gif),
+        image::ImageFormat::Bmp => Some(ImageFormat::Bmp),
+        image::ImageFormat::Tiff => Some(ImageFormat::Tiff),
+        image::ImageFormat::Ico => Some(ImageFormat::Ico),
+        _ => None,
+    }
+}
+
+pub(crate) fn load_external_image_from_path(
+    path: &Path,
+    default_name: &SharedString,
+) -> Option<(Image, SharedString)> {
+    let content = std::fs::read(path).ok()?;
+    let format = image::guess_format(&content)
+        .ok()
+        .and_then(image_format_from_external_content)?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| SharedString::from(name.to_owned()))
+        .unwrap_or_else(|| default_name.clone());
+
+    Some((Image::from_bytes(format, content), name))
+}
+
 pub(crate) fn paste_images_as_context(
     editor: Entity<Editor>,
     mention_set: Entity<MentionSet>,
@@ -869,37 +899,11 @@ pub(crate) fn paste_images_as_context(
         if !paths.is_empty() {
             images.extend(
                 cx.background_spawn(async move {
-                    let mut images = vec![];
-                    for path in paths.into_iter().flat_map(|paths| paths.paths().to_owned()) {
-                        let Ok(content) = async_fs::read(&path).await else {
-                            continue;
-                        };
-                        let Ok(format) = image::guess_format(&content) else {
-                            continue;
-                        };
-                        let name: SharedString = path
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .map(|s| SharedString::from(s.to_owned()))
-                            .unwrap_or_else(|| default_name.clone());
-                        images.push((
-                            gpui::Image::from_bytes(
-                                match format {
-                                    image::ImageFormat::Png => gpui::ImageFormat::Png,
-                                    image::ImageFormat::Jpeg => gpui::ImageFormat::Jpeg,
-                                    image::ImageFormat::WebP => gpui::ImageFormat::Webp,
-                                    image::ImageFormat::Gif => gpui::ImageFormat::Gif,
-                                    image::ImageFormat::Bmp => gpui::ImageFormat::Bmp,
-                                    image::ImageFormat::Tiff => gpui::ImageFormat::Tiff,
-                                    image::ImageFormat::Ico => gpui::ImageFormat::Ico,
-                                    _ => continue,
-                                },
-                                content,
-                            ),
-                            name,
-                        ));
-                    }
-                    images
+                    paths
+                        .into_iter()
+                        .flat_map(|paths| paths.paths().to_owned())
+                        .filter_map(|path| load_external_image_from_path(&path, &default_name))
+                        .collect::<Vec<_>>()
                 })
                 .await,
             );

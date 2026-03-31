@@ -1,4 +1,5 @@
 use std::{
+    hash::{Hash, Hasher},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -7,13 +8,13 @@ use crate::paths::SanitizedPath;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
-/// A list of absolute paths, in a specific order.
+/// A list of absolute paths, with an associated display order.
 ///
-/// The paths are stored in lexicographic order, so that they can be compared to
-/// other path lists without regard to the order of the paths.
+/// Two `PathList` values are considered equal if they contain the same paths,
+/// regardless of the order in which those paths were originally provided.
 ///
 /// The paths can be retrieved in the original order using `ordered_paths()`.
-#[derive(Default, PartialEq, Eq, Hash, Debug, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct PathList {
     /// The paths, in lexicographic order.
     paths: Arc<[PathBuf]>,
@@ -21,6 +22,20 @@ pub struct PathList {
     ///
     /// See `ordered_paths()` for a way to get the paths in the original order.
     order: Arc<[usize]>,
+}
+
+impl PartialEq for PathList {
+    fn eq(&self, other: &Self) -> bool {
+        self.paths == other.paths
+    }
+}
+
+impl Eq for PathList {}
+
+impl Hash for PathList {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.paths.hash(state);
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -53,6 +68,11 @@ impl PathList {
     /// Get the paths in lexicographic order.
     pub fn paths(&self) -> &[PathBuf] {
         self.paths.as_ref()
+    }
+
+    /// Get the paths in the lexicographic order.
+    pub fn paths_owned(&self) -> Arc<[PathBuf]> {
+        self.paths.clone()
     }
 
     /// Get the order in which the paths were provided.
@@ -131,6 +151,12 @@ mod tests {
         assert_eq!(list1.paths(), list2.paths(), "paths differ");
         assert_eq!(list1.order(), &[1, 0], "list1 order incorrect");
         assert_eq!(list2.order(), &[0, 1], "list2 order incorrect");
+
+        // Same paths in different order are equal (order is display-only).
+        assert_eq!(
+            list1, list2,
+            "same paths with different order should be equal"
+        );
 
         let list1_deserialized = PathList::deserialize(&list1.serialize());
         assert_eq!(list1_deserialized, list1, "list1 deserialization failed");

@@ -204,6 +204,13 @@ pub struct SettingsContent {
 
     /// Settings related to Vim mode in Zed.
     pub vim: Option<VimSettingsContent>,
+
+    /// Number of lines to search for modelines at the beginning and end of files.
+    /// Modelines contain editor directives (e.g., vim/emacs settings) that configure
+    /// the editor behavior for specific files.
+    ///
+    /// Default: 5
+    pub modeline_lines: Option<usize>,
 }
 
 impl SettingsContent {
@@ -322,13 +329,6 @@ impl strum::VariantNames for BaseKeymapContent {
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct AudioSettingsContent {
-    /// Opt into the new audio system.
-    ///
-    /// You need to rejoin a call for this setting to apply
-    #[serde(rename = "experimental.rodio_audio")]
-    pub rodio_audio: Option<bool>, // default is false
-    /// Requires 'rodio_audio: true'
-    ///
     /// Automatically increase or decrease you microphone's volume. This affects how
     /// loud you sound to others.
     ///
@@ -338,35 +338,11 @@ pub struct AudioSettingsContent {
     /// compared to other speakers.
     #[serde(rename = "experimental.auto_microphone_volume")]
     pub auto_microphone_volume: Option<bool>,
-    /// Requires 'rodio_audio: true'
-    ///
-    /// Automatically increate or decrease the volume of other call members.
-    /// This only affects how things sound for you.
-    #[serde(rename = "experimental.auto_speaker_volume")]
-    pub auto_speaker_volume: Option<bool>,
-    /// Requires 'rodio_audio: true'
-    ///
     /// Remove background noises. Works great for typing, cars, dogs, AC. Does
     /// not work well on music.
-    #[serde(rename = "experimental.denoise")]
-    pub denoise: Option<bool>,
-    /// Requires 'rodio_audio: true'
-    ///
-    /// Use audio parameters compatible with the previous versions of
-    /// experimental audio and non-experimental audio. When this is false you
-    /// will sound strange to anyone not on the latest experimental audio. In
-    /// the future we will migrate by setting this to false
-    ///
-    /// You need to rejoin a call for this setting to apply
-    #[serde(rename = "experimental.legacy_audio_compatible")]
-    pub legacy_audio_compatible: Option<bool>,
-    /// Requires 'rodio_audio: true'
-    ///
     /// Select specific output audio device.
     #[serde(rename = "experimental.output_audio_device")]
     pub output_audio_device: Option<AudioOutputDeviceName>,
-    /// Requires 'rodio_audio: true'
-    ///
     /// Select specific input audio device.
     #[serde(rename = "experimental.input_audio_device")]
     pub input_audio_device: Option<AudioInputDeviceName>,
@@ -1157,15 +1133,15 @@ pub struct WhichKeySettingsContent {
     pub delay_ms: Option<u64>,
 }
 
+// An ExtendingVec in the settings can only accumulate new values.
+//
+// This is useful for things like private files where you only want
+// to allow new values to be added.
+//
+// Consider using a HashMap<String, bool> instead of this type
+// (like auto_install_extensions) so that user settings files can both add
+// and remove values from the set.
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-/// An ExtendingVec in the settings can only accumulate new values.
-///
-/// This is useful for things like private files where you only want
-/// to allow new values to be added.
-///
-/// Consider using a HashMap<String, bool> instead of this type
-/// (like auto_install_extensions) so that user settings files can both add
-/// and remove values from the set.
 pub struct ExtendingVec<T>(pub Vec<T>);
 
 impl<T> Into<Vec<T>> for ExtendingVec<T> {
@@ -1185,10 +1161,10 @@ impl<T: Clone> merge_from::MergeFrom for ExtendingVec<T> {
     }
 }
 
-/// A SaturatingBool in the settings can only ever be set to true,
-/// later attempts to set it to false will be ignored.
-///
-/// Used by `disable_ai`.
+// A SaturatingBool in the settings can only ever be set to true,
+// later attempts to set it to false will be ignored.
+//
+// Used by `disable_ai`.
 #[derive(Debug, Default, Copy, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SaturatingBool(pub bool);
 

@@ -30,7 +30,6 @@
       "ctrl-shift-=": ["zed::IncreaseBufferFontSize", { "persist": false }],
       "ctrl--": ["zed::DecreaseBufferFontSize", { "persist": false }],
       "ctrl-0": ["zed::ResetBufferFontSize", { "persist": false }],
-      "ctrl-,": "zed::OpenSettings",
       "ctrl-alt-,": "zed::OpenSettingsFile",
       "ctrl-q": "zed::Quit",
       "f4": "debugger::Start",
@@ -264,9 +263,12 @@
       "ctrl-shift-.": "agent::AddSelectionToThread",
       "ctrl-shift-e": "project_panel::ToggleFocus",
       "ctrl-shift-enter": "agent::ContinueThread",
+      "shift-alt-q": "agent::AllowAlways",
       "shift-alt-a": "agent::AllowOnce",
       "ctrl-alt-a": "agent::OpenPermissionDropdown",
-      "shift-alt-z": "agent::RejectOnce",
+      "shift-alt-x": "agent::RejectOnce",
+      "ctrl-tab": "agents_sidebar::ToggleThreadSwitcher",
+      "ctrl-shift-tab": ["agents_sidebar::ToggleThreadSwitcher", { "select_last": true }],
     },
   },
   {
@@ -339,6 +341,13 @@
       "ctrl-alt-'": "agent::ToggleThinkingEffortMenu",
       "ctrl-'": "agent::CycleThinkingEffort",
       "ctrl-alt-.": "agent::ToggleFastMode",
+    },
+  },
+  {
+    "context": "AcpThread > Editor && mode == full",
+    "use_key_equivalents": true,
+    "bindings": {
+      "alt-enter": "editor::OpenExcerpts",
     },
   },
   {
@@ -694,11 +703,26 @@
       "left": "menu::SelectParent",
       "right": "menu::SelectChild",
       "enter": "menu::Confirm",
-      "space": "menu::Confirm",
       "ctrl-f": "agents_sidebar::FocusSidebarFilter",
       "ctrl-g": "agents_sidebar::ToggleArchive",
       "shift-backspace": "agent::RemoveSelectedThread",
+      "ctrl-tab": "agents_sidebar::ToggleThreadSwitcher",
+      "ctrl-shift-tab": ["agents_sidebar::ToggleThreadSwitcher", { "select_last": true }],
     },
+  },
+  {
+    "context": "ThreadsSidebar && not_searching",
+    "use_key_equivalents": true,
+    "bindings": {
+      "space": "menu::Confirm",
+    },
+  },
+  {
+    "context": "ThreadSwitcher",
+    "bindings": {
+      "ctrl-tab": "agents_sidebar::ToggleThreadSwitcher",
+      "ctrl-shift-tab": ["agents_sidebar::ToggleThreadSwitcher", { "select_last": true }]
+    }
   },
   {
     "context": "ApplicationMenu",
@@ -784,7 +808,7 @@
     },
   },
   {
-    "context": "Editor && edit_prediction && edit_prediction_mode == eager",
+    "context": "Editor && edit_prediction && edit_prediction_mode == eager && !showing_completions",
     "use_key_equivalents": true,
     "bindings": {
       "tab": "editor::AcceptEditPrediction",
@@ -931,7 +955,7 @@
     },
   },
   {
-    "context": "GitPanel && ChangesList",
+    "context": "GitPanel && ChangesList && !GitBranchSelector",
     "use_key_equivalents": true,
     "bindings": {
       "up": "git_panel::PreviousEntry",
@@ -1070,6 +1094,7 @@
       "alt-up": "collab_panel::MoveChannelUp",
       "alt-down": "collab_panel::MoveChannelDown",
       "alt-enter": "collab_panel::OpenSelectedChannelNotes",
+      "shift-enter": "collab_panel::ToggleSelectedChannelFavorite",
     },
   },
   {
@@ -1355,6 +1380,15 @@
       "ctrl-shift-space": "git::WorktreeFromDefaultOnWindow",
       "ctrl-space": "git::WorktreeFromDefault",
       "ctrl-shift-backspace": "git::DeleteWorktree",
+    },
+  },
+  {
+    // Handled under a more specific context to avoid conflicts with the
+    // `OpenCurrentFile` keybind from the settings UI
+    "context": "!SettingsWindow",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-,": "zed::OpenSettings",
     },
   },
   {

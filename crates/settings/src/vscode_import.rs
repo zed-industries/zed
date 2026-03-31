@@ -219,6 +219,7 @@ impl VsCodeSettings {
             vim_mode: None,
             workspace: self.workspace_settings_content(),
             which_key: None,
+            modeline_lines: None,
         }
     }
 
@@ -307,6 +308,7 @@ impl VsCodeSettings {
             completion_menu_scrollbar: None,
             completion_detail_alignment: None,
             diff_view_style: None,
+            minimum_split_diff_width: None,
         }
     }
 
@@ -768,6 +770,7 @@ impl VsCodeSettings {
     fn status_bar_settings_content(&self) -> Option<StatusBarSettingsContent> {
         skip_default(StatusBarSettingsContent {
             show: self.read_bool("workbench.statusBar.visible"),
+            show_active_file: None,
             active_language_button: None,
             cursor_position_button: None,
             line_endings_button: None,
@@ -807,6 +810,7 @@ impl VsCodeSettings {
             sticky_scroll: None,
             auto_open: None,
             diagnostic_badges: None,
+            git_status_indicator: None,
         };
 
         if let (Some(false), Some(false)) = (
@@ -878,6 +882,7 @@ impl VsCodeSettings {
             scroll_multiplier: None,
             toolbar: None,
             show_count_badge: None,
+            flexible: None,
         })
     }
 

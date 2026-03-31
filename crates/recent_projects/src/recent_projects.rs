@@ -46,7 +46,7 @@ use ui::{
 };
 use util::{ResultExt, paths::PathExt};
 use workspace::{
-    HistoryManager, ModalView, MultiWorkspace, OpenOptions, OpenVisible, PathList,
+    HistoryManager, ModalView, MultiWorkspace, OpenMode, OpenOptions, OpenVisible, PathList,
     SerializedWorkspaceLocation, Workspace, WorkspaceDb, WorkspaceId,
     notifications::DetachAndPromptErr, with_active_or_new_workspace,
 };
@@ -262,13 +262,13 @@ pub fn init(cx: &mut App) {
                         user: None,
                     });
 
-                    let replace_window = match create_new_window {
+                    let requesting_window = match create_new_window {
                         false => window_handle,
                         true => None,
                     };
 
                     let open_options = workspace::OpenOptions {
-                        replace_window,
+                        requesting_window,
                         ..Default::default()
                     };
 
@@ -321,7 +321,7 @@ pub fn init(cx: &mut App) {
             let fs = workspace.project().read(cx).fs().clone();
             add_wsl_distro(fs, &open_wsl.distro, cx);
             let open_options = OpenOptions {
-                replace_window: window.window_handle().downcast::<MultiWorkspace>(),
+                requesting_window: window.window_handle().downcast::<MultiWorkspace>(),
                 ..Default::default()
             };
 
@@ -1031,14 +1031,14 @@ impl PickerDelegate for RecentProjectsDelegate {
                 if let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() {
                     cx.defer(move |cx| {
                         handle
-                            .update(cx, |multi_workspace, _window, cx| {
+                            .update(cx, |multi_workspace, window, cx| {
                                 let workspace = multi_workspace
                                     .workspaces()
                                     .iter()
                                     .find(|ws| ws.read(cx).database_id() == Some(workspace_id))
                                     .cloned();
                                 if let Some(workspace) = workspace {
-                                    multi_workspace.activate(workspace, cx);
+                                    multi_workspace.activate(workspace, window, cx);
                                 }
                             })
                             .log_err();
@@ -1079,7 +1079,12 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     cx.defer(move |cx| {
                                         if let Some(task) = handle
                                             .update(cx, |multi_workspace, window, cx| {
-                                                multi_workspace.open_project(paths, window, cx)
+                                                multi_workspace.open_project(
+                                                    paths,
+                                                    OpenMode::Replace,
+                                                    window,
+                                                    cx,
+                                                )
                                             })
                                             .log_err()
                                         {
@@ -1090,7 +1095,12 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 return;
                             } else {
                                 workspace
-                                    .open_workspace_for_paths(false, paths, window, cx)
+                                    .open_workspace_for_paths(
+                                        OpenMode::NewWindow,
+                                        paths,
+                                        window,
+                                        cx,
+                                    )
                                     .detach_and_prompt_err(
                                         "Failed to open project",
                                         window,
@@ -1107,7 +1117,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 None
                             };
                             let open_options = OpenOptions {
-                                replace_window,
+                                requesting_window: replace_window,
                                 ..Default::default()
                             };
                             if let RemoteConnectionOptions::Ssh(connection) = &mut connection {
@@ -1804,12 +1814,13 @@ impl RecentProjectsDelegate {
             cx.defer(move |cx| {
                 handle
                     .update(cx, |multi_workspace, window, cx| {
-                        let index = multi_workspace
+                        let workspace = multi_workspace
                             .workspaces()
                             .iter()
-                            .position(|ws| ws.read(cx).database_id() == Some(workspace_id));
-                        if let Some(index) = index {
-                            multi_workspace.remove_workspace(index, window, cx);
+                            .find(|ws| ws.read(cx).database_id() == Some(workspace_id))
+                            .cloned();
+                        if let Some(workspace) = workspace {
+                            multi_workspace.remove(&workspace, window, cx);
                         }
                     })
                     .log_err();
@@ -1886,7 +1897,7 @@ mod tests {
     use super::*;
 
     #[gpui::test]
-    async fn test_dirty_workspace_survives_when_opening_recent_project(cx: &mut TestAppContext) {
+    async fn test_dirty_workspace_replaced_when_opening_recent_project(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
 
         cx.update(|cx| {
@@ -1995,6 +2006,15 @@ mod tests {
         cx.dispatch_action(*multi_workspace, menu::Confirm);
         cx.run_until_parked();
 
+        // prepare_to_close triggers a save prompt for the dirty buffer.
+        // Choose "Don't Save" (index 2) to discard and continue replacing.
+        assert!(
+            cx.has_pending_prompt(),
+            "Should prompt to save dirty buffer before replacing workspace"
+        );
+        cx.simulate_prompt_answer("Don't Save");
+        cx.run_until_parked();
+
         multi_workspace
             .update(cx, |multi_workspace, _, cx| {
                 assert!(
@@ -2007,26 +2027,16 @@ mod tests {
                 );
 
                 assert!(
-                    multi_workspace.workspaces().len() >= 2,
-                    "Should have at least 2 workspaces: the dirty one and the newly opened one"
+                    !multi_workspace.workspaces().contains(&dirty_workspace),
+                    "The original dirty workspace should have been replaced"
                 );
 
                 assert!(
-                    multi_workspace.workspaces().contains(&dirty_workspace),
-                    "The original dirty workspace should still be present"
-                );
-
-                assert!(
-                    dirty_workspace.read(cx).is_edited(),
-                    "The original workspace should still be dirty"
+                    !multi_workspace.workspace().read(cx).is_edited(),
+                    "The active workspace should be the freshly opened one, not dirty"
                 );
             })
             .unwrap();
-
-        assert!(
-            !cx.has_pending_prompt(),
-            "No save prompt in multi-workspace mode — dirty workspace survives in background"
-        );
     }
 
     fn open_recent_projects(

@@ -1,10 +1,10 @@
 pub mod row_chunk;
 
 use crate::{
-    DebuggerTextObject, LanguageScope, Outline, OutlineConfig, PLAIN_TEXT, RunnableCapture,
-    RunnableTag, TextObject, TreeSitterOptions,
+    DebuggerTextObject, LanguageScope, ModelineSettings, Outline, OutlineConfig, PLAIN_TEXT,
+    RunnableCapture, RunnableTag, TextObject, TreeSitterOptions,
     diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup},
-    language_settings::{AutoIndentMode, LanguageSettings, language_settings},
+    language_settings::{AutoIndentMode, LanguageSettings},
     outline::OutlineItem,
     row_chunk::RowChunks,
     syntax_map::{
@@ -16,11 +16,10 @@ use crate::{
     unified_diff_with_offsets,
 };
 pub use crate::{
-    Grammar, Language, LanguageRegistry,
-    diagnostic_set::DiagnosticSet,
-    highlight_map::{HighlightId, HighlightMap},
+    Grammar, HighlightId, HighlightMap, Language, LanguageRegistry, diagnostic_set::DiagnosticSet,
     proto,
 };
+
 use anyhow::{Context as _, Result};
 use clock::Lamport;
 pub use clock::ReplicaId;
@@ -33,10 +32,8 @@ use gpui::{
     Task, TextStyle,
 };
 
-use lsp::{LanguageServerId, NumberOrString};
+use lsp::LanguageServerId;
 use parking_lot::Mutex;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use settings::WorktreeId;
 use smallvec::SmallVec;
 use smol::future::yield_now;
@@ -135,6 +132,7 @@ pub struct Buffer {
     /// The contents of a cell are (self.version, has_changes) at the time of a last call.
     has_unsaved_edits: Cell<(clock::Global, bool)>,
     change_bits: Vec<rc::Weak<Cell<bool>>>,
+    modeline: Option<Arc<ModelineSettings>>,
     _subscriptions: Vec<gpui::Subscription>,
     tree_sitter_data: Arc<TreeSitterData>,
     encoding: &'static Encoding,
@@ -195,6 +193,7 @@ pub struct BufferSnapshot {
     file: Option<Arc<dyn File>>,
     non_text_state_update_count: usize,
     pub capability: Capability,
+    modeline: Option<Arc<ModelineSettings>>,
 }
 
 /// The kind and amount of indentation in a particular line. For now,
@@ -248,57 +247,6 @@ struct SelectionSet {
     cursor_shape: CursorShape,
     selections: Arc<[Selection<Anchor>]>,
     lamport_timestamp: clock::Lamport,
-}
-
-/// A diagnostic associated with a certain range of a buffer.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Diagnostic {
-    /// The name of the service that produced this diagnostic.
-    pub source: Option<String>,
-    /// The ID provided by the dynamic registration that produced this diagnostic.
-    pub registration_id: Option<SharedString>,
-    /// A machine-readable code that identifies this diagnostic.
-    pub code: Option<NumberOrString>,
-    pub code_description: Option<lsp::Uri>,
-    /// Whether this diagnostic is a hint, warning, or error.
-    pub severity: DiagnosticSeverity,
-    /// The human-readable message associated with this diagnostic.
-    pub message: String,
-    /// The human-readable message (in markdown format)
-    pub markdown: Option<String>,
-    /// An id that identifies the group to which this diagnostic belongs.
-    ///
-    /// When a language server produces a diagnostic with
-    /// one or more associated diagnostics, those diagnostics are all
-    /// assigned a single group ID.
-    pub group_id: usize,
-    /// Whether this diagnostic is the primary diagnostic for its group.
-    ///
-    /// In a given group, the primary diagnostic is the top-level diagnostic
-    /// returned by the language server. The non-primary diagnostics are the
-    /// associated diagnostics.
-    pub is_primary: bool,
-    /// Whether this diagnostic is considered to originate from an analysis of
-    /// files on disk, as opposed to any unsaved buffer contents. This is a
-    /// property of a given diagnostic source, and is configured for a given
-    /// language server via the [`LspAdapter::disk_based_diagnostic_sources`](crate::LspAdapter::disk_based_diagnostic_sources) method
-    /// for the language server.
-    pub is_disk_based: bool,
-    /// Whether this diagnostic marks unnecessary code.
-    pub is_unnecessary: bool,
-    /// Quick separation of diagnostics groups based by their source.
-    pub source_kind: DiagnosticSourceKind,
-    /// Data from language server that produced this diagnostic. Passed back to the LS when we request code actions for this diagnostic.
-    pub data: Option<Value>,
-    /// Whether to underline the corresponding text range in the editor.
-    pub underline: bool,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum DiagnosticSourceKind {
-    Pulled,
-    Pushed,
-    Other,
 }
 
 /// An operation used to synchronize this buffer with its other replicas.
@@ -747,7 +695,7 @@ impl HighlightedTextBuilder {
 
             if let Some(highlight_style) = chunk
                 .syntax_highlight_id
-                .and_then(|id| id.style(syntax_theme))
+                .and_then(|id| syntax_theme.get(id).cloned())
             {
                 let highlight_style = override_style.map_or(highlight_style, |override_style| {
                     highlight_style.highlight(override_style)
@@ -1163,6 +1111,7 @@ impl Buffer {
             deferred_ops: OperationQueue::new(),
             has_conflict: false,
             change_bits: Default::default(),
+            modeline: None,
             _subscriptions: Vec::new(),
             encoding: encoding_rs::UTF_8,
             has_bom: false,
@@ -1175,6 +1124,7 @@ impl Buffer {
         text: Rope,
         language: Option<Arc<Language>>,
         language_registry: Option<Arc<LanguageRegistry>>,
+        modeline: Option<Arc<ModelineSettings>>,
         cx: &mut App,
     ) -> impl Future<Output = BufferSnapshot> + use<> {
         let entity_id = cx.reserve_entity::<Self>().entity_id();
@@ -1199,6 +1149,7 @@ impl Buffer {
                 language,
                 non_text_state_update_count: 0,
                 capability: Capability::ReadOnly,
+                modeline,
             }
         }
     }
@@ -1225,6 +1176,7 @@ impl Buffer {
             language: None,
             non_text_state_update_count: 0,
             capability: Capability::ReadOnly,
+            modeline: None,
         }
     }
 
@@ -1255,6 +1207,7 @@ impl Buffer {
             language,
             non_text_state_update_count: 0,
             capability: Capability::ReadOnly,
+            modeline: None,
         }
     }
 
@@ -1285,6 +1238,7 @@ impl Buffer {
             language: self.language.clone(),
             non_text_state_update_count: self.non_text_state_update_count,
             capability: self.capability,
+            modeline: self.modeline.clone(),
         }
     }
 
@@ -1535,6 +1489,21 @@ impl Buffer {
             true,
             cx,
         );
+    }
+
+    /// Assign the buffer [`ModelineSettings`].
+    pub fn set_modeline(&mut self, modeline: Option<ModelineSettings>) -> bool {
+        if modeline.as_ref() != self.modeline.as_deref() {
+            self.modeline = modeline.map(Arc::new);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Returns the [`ModelineSettings`].
+    pub fn modeline(&self) -> Option<&Arc<ModelineSettings>> {
+        self.modeline.as_ref()
     }
 
     /// Assign the buffer a new [`Capability`].
@@ -2755,8 +2724,12 @@ impl Buffer {
                     } else {
                         // The auto-indent setting is not present in editorconfigs, hence
                         // we can avoid passing the file here.
-                        let auto_indent_mode =
-                            language_settings(language.map(|l| l.name()), None, cx).auto_indent;
+                        let auto_indent_mode = LanguageSettings::resolve(
+                            None,
+                            language.map(|l| l.name()).as_ref(),
+                            cx,
+                        )
+                        .auto_indent;
                         let apply_syntax_indent = auto_indent_mode == AutoIndentMode::SyntaxAware;
                         previous_setting = Some((language_id, apply_syntax_indent));
                         apply_syntax_indent
@@ -3301,6 +3274,10 @@ impl Buffer {
     pub fn preserve_preview(&self) -> bool {
         !self.has_edits_since(&self.preview_version)
     }
+
+    pub fn set_group_interval(&mut self, group_interval: Duration) {
+        self.text.set_group_interval(group_interval);
+    }
 }
 
 #[doc(hidden)]
@@ -3314,10 +3291,6 @@ impl Buffer {
     ) {
         let edits = self.edits_for_marked_text(marked_string);
         self.edit(edits, autoindent_mode, cx);
-    }
-
-    pub fn set_group_interval(&mut self, group_interval: Duration) {
-        self.text.set_group_interval(group_interval);
     }
 
     pub fn randomly_edit<T>(&mut self, rng: &mut T, old_range_count: usize, cx: &mut Context<Self>)
@@ -3397,11 +3370,7 @@ impl BufferSnapshot {
     /// Returns [`IndentSize`] for a given position that respects user settings
     /// and language preferences.
     pub fn language_indent_size_at<T: ToOffset>(&self, position: T, cx: &App) -> IndentSize {
-        let settings = language_settings(
-            self.language_at(position).map(|l| l.name()),
-            self.file(),
-            cx,
-        );
+        let settings = self.settings_at(position, cx);
         if settings.hard_tabs {
             IndentSize::tab()
         } else {
@@ -3867,6 +3836,11 @@ impl BufferSnapshot {
             })
     }
 
+    /// Returns the [`ModelineSettings`].
+    pub fn modeline(&self) -> Option<&Arc<ModelineSettings>> {
+        self.modeline.as_ref()
+    }
+
     /// Returns the main [`Language`].
     pub fn language(&self) -> Option<&Arc<Language>> {
         self.language.as_ref()
@@ -3885,11 +3859,7 @@ impl BufferSnapshot {
         position: D,
         cx: &'a App,
     ) -> Cow<'a, LanguageSettings> {
-        language_settings(
-            self.language_at(position).map(|l| l.name()),
-            self.file.as_ref(),
-            cx,
-        )
+        LanguageSettings::for_buffer_snapshot(self, Some(position.to_offset(self)), cx)
     }
 
     pub fn char_classifier_at<T: ToOffset>(&self, point: T) -> CharClassifier {
@@ -4527,7 +4497,8 @@ impl BufferSnapshot {
                 let style = chunk
                     .syntax_highlight_id
                     .zip(theme)
-                    .and_then(|(highlight, theme)| highlight.style(theme));
+                    .and_then(|(highlight, theme)| theme.get(highlight).cloned());
+
                 if let Some(style) = style {
                     let start = text.len();
                     let end = start + chunk.text.len();
@@ -5511,6 +5482,7 @@ impl Clone for BufferSnapshot {
             tree_sitter_data: self.tree_sitter_data.clone(),
             non_text_state_update_count: self.non_text_state_update_count,
             capability: self.capability,
+            modeline: self.modeline.clone(),
         }
     }
 }
@@ -5807,27 +5779,6 @@ impl operation_queue::Operation for Operation {
             | Operation::UpdateLineEnding {
                 lamport_timestamp, ..
             } => *lamport_timestamp,
-        }
-    }
-}
-
-impl Default for Diagnostic {
-    fn default() -> Self {
-        Self {
-            source: Default::default(),
-            source_kind: DiagnosticSourceKind::Other,
-            code: None,
-            code_description: None,
-            severity: DiagnosticSeverity::ERROR,
-            message: Default::default(),
-            markdown: None,
-            group_id: 0,
-            is_primary: false,
-            is_disk_based: false,
-            is_unnecessary: false,
-            underline: true,
-            data: None,
-            registration_id: None,
         }
     }
 }

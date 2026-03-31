@@ -23,6 +23,7 @@ test-support = [
     "workspace/test-support",
     "agent/test-support",
 ]
+audio = ["dep:audio"]
 unit-eval = []
 
 [dependencies]
@@ -38,13 +39,12 @@ heapless.workspace = true
 assistant_text_thread.workspace = true
 assistant_slash_command.workspace = true
 assistant_slash_commands.workspace = true
-audio.workspace = true
+audio = { workspace = true, optional = true }
 base64.workspace = true
 buffer_diff.workspace = true
 chrono.workspace = true
 client.workspace = true
 cloud_api_types.workspace = true
-cloud_llm_client.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
 component.workspace = true
@@ -102,6 +102,7 @@ terminal.workspace = true
 terminal_view.workspace = true
 text.workspace = true
 theme.workspace = true
+theme_settings.workspace = true
 time.workspace = true
 time_format.workspace = true
 ui.workspace = true
@@ -113,7 +114,6 @@ watch.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 image.workspace = true
-async-fs.workspace = true
 reqwest_client = { workspace = true, optional = true }
 
 [dev-dependencies]

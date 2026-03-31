@@ -7,7 +7,7 @@ use gpui::{
 use settings::{Settings as _, SettingsStore, ToolPermissionMode};
 use shell_command_parser::extract_commands;
 use std::sync::Arc;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{Banner, ContextMenu, Divider, PopoverMenu, Severity, Tooltip, prelude::*};
 use util::ResultExt as _;
 use util::shell::ShellKind;
