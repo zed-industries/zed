@@ -1537,19 +1537,12 @@ impl GitStore {
                 ..
             } = update
             {
-                // For linked worktrees, common_dir points to the main repo's
-                // .git directory (different from the worktree-specific
-                // repository_dir), so we can derive the original repo's working
-                // directory from it. For normal repos and submodules,
-                // common_dir equals repository_dir, and the original repo is
-                // simply the work directory itself.
-                let is_linked_worktree =
-                    common_dir_abs_path.as_ref() != repository_dir_abs_path.as_ref();
-                let original_repo_abs_path: Arc<Path> = if is_linked_worktree {
-                    git::repository::original_repo_path_from_common_dir(common_dir_abs_path).into()
-                } else {
-                    work_directory_abs_path.clone()
-                };
+                let original_repo_abs_path: Arc<Path> = git::repository::original_repo_path(
+                    work_directory_abs_path,
+                    common_dir_abs_path,
+                    repository_dir_abs_path,
+                )
+                .into();
                 let id = RepositoryId(next_repository_id.fetch_add(1, atomic::Ordering::Release));
                 let is_trusted = TrustedWorktrees::try_get_global(cx)
                     .map(|trusted_worktrees| {
@@ -3722,6 +3715,8 @@ impl RepositorySnapshot {
     ///
     /// For example, if you had both `~/code/zed` and `~/code/worktrees/zed-2`,
     /// then `~/code/zed` is the main worktree and `~/code/worktrees/zed-2` is a linked worktree.
+    ///
+    /// Submodules also return `true` here, since they are not linked worktrees.
     pub fn is_main_worktree(&self) -> bool {
         self.work_directory_abs_path == self.original_repo_abs_path
     }
@@ -3729,7 +3724,7 @@ impl RepositorySnapshot {
     /// Returns true if this repository is a linked worktree, that is, one that
     /// was created from another worktree.
     ///
-    /// This is by definition the opposite of [`Self::is_main_worktree`].
+    /// Returns `false` for both the main worktree and submodules.
     pub fn is_linked_worktree(&self) -> bool {
         !self.is_main_worktree()
     }
