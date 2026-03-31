@@ -12,7 +12,7 @@ use ztracing::instrument;
 use crate::{
     Anchor, BufferState, BufferStateSnapshot, DiffChangeKind, Event, Excerpt, ExcerptOffset,
     ExcerptRange, ExcerptSummary, ExpandExcerptDirection, MultiBuffer, MultiBufferOffset,
-    PathKeyIndex, build_excerpt_ranges,
+    PathKeyIndex, build_excerpt_ranges, remove_diff_state,
 };
 
 #[derive(PartialEq, Eq, Ord, PartialOrd, Clone, Hash, Debug)]
@@ -416,7 +416,7 @@ impl MultiBuffer {
             let old_buffer_id = excerpt.buffer_id;
             self.buffers.remove(&old_buffer_id);
             snapshot.buffers.remove(&old_buffer_id);
-            snapshot.diffs.remove(&old_buffer_id);
+            remove_diff_state(&mut snapshot.diffs, old_buffer_id);
             self.diffs.remove(&old_buffer_id);
             let before = cursor.position.1;
             cursor.seek_forward(&path_key, Bias::Right);
@@ -657,7 +657,7 @@ impl MultiBuffer {
 
         if let Some(buffer_id) = buffer_id {
             snapshot.buffers.remove(&buffer_id);
-            snapshot.diffs.remove(&buffer_id);
+            remove_diff_state(&mut snapshot.diffs, buffer_id);
             self.buffers.remove(&buffer_id);
             self.diffs.remove(&buffer_id);
             cx.emit(Event::BuffersRemoved {

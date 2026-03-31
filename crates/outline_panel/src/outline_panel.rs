@@ -8035,7 +8035,7 @@ outline: struct Foo  <==== selected
                 outline_panel.read_with(cx, |panel, _cx| {
                     panel.selected_entry().and_then(|entry| match entry {
                         PanelEntry::Outline(OutlineEntry::Outline(outline)) => {
-                            Some(outline.outline.text.clone())
+                            Some(outline.text.clone())
                         }
                         _ => None,
                     })
