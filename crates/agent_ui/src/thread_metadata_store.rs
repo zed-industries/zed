@@ -65,7 +65,7 @@ fn migrate_thread_metadata(cx: &mut App) {
                         updated_at: entry.updated_at,
                         created_at: entry.created_at,
                         folder_paths: entry.folder_paths,
-                        archived: !is_first_migration,
+                        archived: true,
                     })
                 })
                 .collect::<Vec<_>>()
@@ -76,7 +76,7 @@ fn migrate_thread_metadata(cx: &mut App) {
         }
 
         // On the first migration (no entries in DB yet), keep the 5 most
-        // recent threads per project unarchived; archive the rest.
+        // recent threads per project unarchived.
         if is_first_migration {
             let mut per_project: HashMap<PathList, Vec<&mut ThreadMetadata>> = HashMap::default();
             for entry in &mut to_migrate {
@@ -87,8 +87,8 @@ fn migrate_thread_metadata(cx: &mut App) {
             }
             for entries in per_project.values_mut() {
                 entries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-                for entry in entries.iter_mut().skip(5) {
-                    entry.archived = true;
+                for entry in entries.iter_mut().take(5) {
+                    entry.archived = false;
                 }
             }
         }
