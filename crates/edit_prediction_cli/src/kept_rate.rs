@@ -21,29 +21,6 @@ pub struct KeptRateResult {
     pub token_annotations: Vec<TokenAnnotation>,
 }
 
-fn common_prefix_len(a: &[&str], b: &[&str]) -> usize {
-    a.iter()
-        .zip(b.iter())
-        .take_while(|(left, right)| left == right)
-        .count()
-}
-
-fn common_suffix_len(a: &[&str], b: &[&str], prefix_len: usize) -> usize {
-    let max_suffix = (a.len() - prefix_len).min(b.len() - prefix_len);
-    let mut suffix_len = 0;
-
-    while suffix_len < max_suffix {
-        let a_index = a.len() - 1 - suffix_len;
-        let b_index = b.len() - 1 - suffix_len;
-        if a[a_index] != b[b_index] {
-            break;
-        }
-        suffix_len += 1;
-    }
-
-    suffix_len
-}
-
 const DENSE_REGION_DP_CELL_THRESHOLD: usize = 200_000;
 const HIGH_MATCH_DENSITY_NUMERATOR: u128 = 1;
 const HIGH_MATCH_DENSITY_DENOMINATOR: u128 = 32;
@@ -52,7 +29,13 @@ fn dp_index(width: usize, row: usize, column: usize) -> usize {
     row * width + column
 }
 
-fn estimated_match_pairs(a: &[&str], b: &[&str]) -> u128 {
+#[cold]
+fn should_use_diff_alignment(a: &[&str], b: &[&str]) -> bool {
+    let dp_cell_count = (a.len() as u128 + 1) * (b.len() as u128 + 1);
+    if dp_cell_count < DENSE_REGION_DP_CELL_THRESHOLD as u128 {
+        return false;
+    }
+
     let mut counts_by_token = HashMap::new();
     for &token in a {
         *counts_by_token.entry(token).or_insert(0usize) += 1;
@@ -65,35 +48,7 @@ fn estimated_match_pairs(a: &[&str], b: &[&str]) -> u128 {
         }
     }
 
-    match_pairs
-}
-
-#[cold]
-fn should_use_diff_alignment(a: &[&str], b: &[&str]) -> bool {
-    let dp_cell_count = (a.len() as u128 + 1) * (b.len() as u128 + 1);
-    if dp_cell_count < DENSE_REGION_DP_CELL_THRESHOLD as u128 {
-        return false;
-    }
-
-    let match_pairs = estimated_match_pairs(a, b);
     match_pairs * HIGH_MATCH_DENSITY_DENOMINATOR >= dp_cell_count * HIGH_MATCH_DENSITY_NUMERATOR
-}
-
-#[cold]
-fn mark_equal_diff_ranges(a: &[&str], b: &[&str], keep_a: &mut [bool], keep_b: &mut [bool]) {
-    let diff = TextDiff::from_slices(a, b);
-    for operation in diff.ops() {
-        if operation.tag() != DiffTag::Equal {
-            continue;
-        }
-
-        for index in operation.old_range() {
-            keep_a[index] = true;
-        }
-        for index in operation.new_range() {
-            keep_b[index] = true;
-        }
-    }
 }
 
 /// Return boolean masks over `a` and `b` where `true` means the token is part
@@ -110,8 +65,26 @@ fn lcs_keep_masks(a: &[&str], b: &[&str]) -> (Vec<bool>, Vec<bool>) {
     let mut keep_a = vec![false; a.len()];
     let mut keep_b = vec![false; b.len()];
 
-    let prefix_len = common_prefix_len(a, b);
-    let suffix_len = common_suffix_len(a, b, prefix_len);
+    let prefix_len = a
+        .iter()
+        .zip(b.iter())
+        .take_while(|(left, right)| left == right)
+        .count();
+    let suffix_len = {
+        let max_suffix = (a.len() - prefix_len).min(b.len() - prefix_len);
+        let mut suffix_len = 0;
+
+        while suffix_len < max_suffix {
+            let a_index = a.len() - 1 - suffix_len;
+            let b_index = b.len() - 1 - suffix_len;
+            if a[a_index] != b[b_index] {
+                break;
+            }
+            suffix_len += 1;
+        }
+
+        suffix_len
+    };
 
     for index in 0..prefix_len {
         keep_a[index] = true;
@@ -133,14 +106,19 @@ fn lcs_keep_masks(a: &[&str], b: &[&str]) -> (Vec<bool>, Vec<bool>) {
     }
 
     if should_use_diff_alignment(a_mid, b_mid) {
-        let a_mid_start = prefix_len;
-        let b_mid_start = prefix_len;
-        mark_equal_diff_ranges(
-            a_mid,
-            b_mid,
-            &mut keep_a[a_mid_start..a_mid_start + a_mid.len()],
-            &mut keep_b[b_mid_start..b_mid_start + b_mid.len()],
-        );
+        let diff = TextDiff::from_slices(a_mid, b_mid);
+        for operation in diff.ops() {
+            if operation.tag() != DiffTag::Equal {
+                continue;
+            }
+
+            for index in operation.old_range() {
+                keep_a[index + prefix_len] = true;
+            }
+            for index in operation.new_range() {
+                keep_b[index + prefix_len] = true;
+            }
+        }
         return (keep_a, keep_b);
     }
 
@@ -185,20 +163,21 @@ fn lcs_keep_masks(a: &[&str], b: &[&str]) -> (Vec<bool>, Vec<bool>) {
     (keep_a, keep_b)
 }
 
-fn collect_unmasked_tokens<'a>(tokens: &[&'a str], mask: &[bool]) -> Vec<&'a str> {
-    tokens
-        .iter()
-        .zip(mask.iter())
-        .filter_map(|(&token, &is_masked)| (!is_masked).then_some(token))
-        .collect()
-}
+fn analyze_masked_tokens<'a>(tokens: &[&'a str], mask: &[bool]) -> (Vec<&'a str>, usize, usize) {
+    let mut unmasked_tokens = Vec::with_capacity(tokens.len());
+    let mut unmasked_chars = 0;
+    let mut masked_chars = 0;
 
-fn sum_masked_chars(tokens: &[&str], mask: &[bool], masked_value: bool) -> usize {
-    tokens
-        .iter()
-        .zip(mask.iter())
-        .filter_map(|(&token, &is_masked)| (is_masked == masked_value).then_some(token.len()))
-        .sum()
+    for (&token, &is_masked) in tokens.iter().zip(mask.iter()) {
+        if is_masked {
+            masked_chars += token.len();
+        } else {
+            unmasked_tokens.push(token);
+            unmasked_chars += token.len();
+        }
+    }
+
+    (unmasked_tokens, unmasked_chars, masked_chars)
 }
 
 pub fn compute_kept_rate(base: &str, predicted: &str, final_text: &str) -> KeptRateResult {
@@ -228,7 +207,8 @@ pub fn compute_kept_rate(base: &str, predicted: &str, final_text: &str) -> KeptR
         .map(|(&in_base, &in_final)| in_base && in_final)
         .collect();
 
-    let stripped_predicted = collect_unmasked_tokens(&predicted_tokens, &context_mask);
+    let (stripped_predicted, predicted_new_chars, context_chars) =
+        analyze_masked_tokens(&predicted_tokens, &context_mask);
 
     let (final_base_mask, _) = lcs_keep_masks(&final_tokens, &base_tokens);
     let final_context_mask: Vec<bool> = final_base_mask
@@ -237,18 +217,17 @@ pub fn compute_kept_rate(base: &str, predicted: &str, final_text: &str) -> KeptR
         .map(|(&in_base, &in_predicted)| in_base && in_predicted)
         .collect();
 
-    let stripped_final = collect_unmasked_tokens(&final_tokens, &final_context_mask);
+    let (stripped_final, final_new_chars, _) =
+        analyze_masked_tokens(&final_tokens, &final_context_mask);
 
     let keep_mask = lcs_keep_masks(&stripped_predicted, &stripped_final).0;
 
-    let predicted_new_chars = sum_masked_chars(&predicted_tokens, &context_mask, false);
-    let final_new_chars = sum_masked_chars(&final_tokens, &final_context_mask, false);
     let kept_chars: usize = stripped_predicted
         .iter()
         .zip(keep_mask.iter())
         .filter_map(|(&token, &is_kept)| is_kept.then_some(token.len()))
         .sum();
-    let context_chars = sum_masked_chars(&predicted_tokens, &context_mask, true);
+
     let discarded_chars = predicted_new_chars - kept_chars;
 
     let kept_rate = if predicted_new_chars == 0 {
