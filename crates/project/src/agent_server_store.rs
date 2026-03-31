@@ -1687,6 +1687,77 @@ impl CustomAgentServerSettings {
     }
 }
 
+impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
+    fn from(value: settings::CustomAgentServerSettings) -> Self {
+        match value {
+            settings::CustomAgentServerSettings::Custom {
+                path,
+                args,
+                env,
+                default_mode,
+                default_model,
+                favorite_models,
+                default_config_options,
+                favorite_config_option_values,
+            } => CustomAgentServerSettings::Custom {
+                command: AgentServerCommand {
+                    path: PathBuf::from(shellexpand::tilde(&path.to_string_lossy()).as_ref()),
+                    args,
+                    env: Some(env),
+                },
+                default_mode,
+                default_model,
+                favorite_models,
+                default_config_options,
+                favorite_config_option_values,
+            },
+            settings::CustomAgentServerSettings::Extension {
+                env,
+                default_mode,
+                default_model,
+                default_config_options,
+                favorite_models,
+                favorite_config_option_values,
+            } => CustomAgentServerSettings::Extension {
+                env,
+                default_mode,
+                default_model,
+                default_config_options,
+                favorite_models,
+                favorite_config_option_values,
+            },
+            settings::CustomAgentServerSettings::Registry {
+                env,
+                default_mode,
+                default_model,
+                default_config_options,
+                favorite_models,
+                favorite_config_option_values,
+            } => CustomAgentServerSettings::Registry {
+                env,
+                default_mode,
+                default_model,
+                default_config_options,
+                favorite_models,
+                favorite_config_option_values,
+            },
+        }
+    }
+}
+
+impl settings::Settings for AllAgentServersSettings {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        let agent_settings = content.agent_servers.clone().unwrap();
+        Self(
+            agent_settings
+                .0
+                .into_iter()
+                .map(|(k, v)| (k, v.into()))
+                .collect(),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1757,76 +1828,5 @@ mod tests {
             error,
             Some("unsupported archive type in URL: https://example.com/agent.tar.xz".to_string())
         );
-    }
-}
-
-impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
-    fn from(value: settings::CustomAgentServerSettings) -> Self {
-        match value {
-            settings::CustomAgentServerSettings::Custom {
-                path,
-                args,
-                env,
-                default_mode,
-                default_model,
-                favorite_models,
-                default_config_options,
-                favorite_config_option_values,
-            } => CustomAgentServerSettings::Custom {
-                command: AgentServerCommand {
-                    path: PathBuf::from(shellexpand::tilde(&path.to_string_lossy()).as_ref()),
-                    args,
-                    env: Some(env),
-                },
-                default_mode,
-                default_model,
-                favorite_models,
-                default_config_options,
-                favorite_config_option_values,
-            },
-            settings::CustomAgentServerSettings::Extension {
-                env,
-                default_mode,
-                default_model,
-                default_config_options,
-                favorite_models,
-                favorite_config_option_values,
-            } => CustomAgentServerSettings::Extension {
-                env,
-                default_mode,
-                default_model,
-                default_config_options,
-                favorite_models,
-                favorite_config_option_values,
-            },
-            settings::CustomAgentServerSettings::Registry {
-                env,
-                default_mode,
-                default_model,
-                default_config_options,
-                favorite_models,
-                favorite_config_option_values,
-            } => CustomAgentServerSettings::Registry {
-                env,
-                default_mode,
-                default_model,
-                default_config_options,
-                favorite_models,
-                favorite_config_option_values,
-            },
-        }
-    }
-}
-
-impl settings::Settings for AllAgentServersSettings {
-    fn from_settings(content: &settings::SettingsContent) -> Self {
-        let agent_settings = content.agent_servers.clone().unwrap();
-        Self(
-            agent_settings
-                .0
-                .into_iter()
-                .map(|(k, v)| (k, v.into()))
-                .collect(),
-        )
     }
 }
