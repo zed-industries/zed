@@ -12,7 +12,7 @@ Bash support is available natively in Zed.
 
 ## Configuration
 
-When `shellcheck` is available `bash-language-server` will use it internally to provide diagnostics.
+It is highly recommended to install `shellcheck`, as `bash-language-server` depends on it to provide diagnostics.
 
 ### Install `shellcheck`:
 
