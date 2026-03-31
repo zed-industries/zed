@@ -136,12 +136,6 @@ pub trait ExternalAgentServer {
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
-impl dyn ExternalAgentServer {
-    fn downcast_mut<T: ExternalAgentServer + 'static>(&mut self) -> Option<&mut T> {
-        self.as_any_mut().downcast_mut()
-    }
-}
-
 struct ExtensionAgentEntry {
     agent_name: Arc<str>,
     extension_id: String,
@@ -457,8 +451,9 @@ impl AgentServerStore {
             })
             .unwrap_or_default();
 
-        // Drain the existing agents, extracting version and notification
-        // channels from versioned agents so we can detect version changes.
+        // Drain the existing versioned agents, extracting reconnect state
+        // from any active connection so we can preserve it or trigger a
+        // reconnect when the version changes.
         let mut old_versioned_agents: HashMap<
             AgentId,
             (SharedString, watch::Sender<Option<String>>),
@@ -599,9 +594,8 @@ impl AgentServerStore {
             }
         }
 
-        // For each rebuilt versioned agent, check if the version changed
-        // compared to the old entry. If so, send the new version through the
-        // stored notification channel to trigger a reconnection. Otherwise,
+        // For each rebuilt versioned agent, compare the version. If it
+        // changed, notify the active connection to reconnect. Otherwise,
         // transfer the channel to the new entry so future updates can use it.
         for (name, entry) in &mut self.external_agents {
             let Some((old_version, mut tx)) = old_versioned_agents.remove(name) else {
@@ -920,6 +914,7 @@ impl AgentServerStore {
                 );
             };
 
+            extension_agents.clear();
             for ExternalExtensionAgent {
                 name,
                 icon_path,
@@ -968,6 +963,7 @@ impl AgentServerStore {
         self.external_agents.get_mut(name).and_then(|entry| {
             entry
                 .server
+                .as_any_mut()
                 .downcast_mut::<LocalExtensionArchiveAgent>()
                 .map(|ext_agent| ext_agent.extension_id.clone())
         })
@@ -1098,6 +1094,45 @@ fn github_release_archive_from_url(archive_url: &str) -> Option<GithubReleaseArc
     })
 }
 
+fn sanitized_version_component(version: Option<&str>) -> String {
+    let version = version.unwrap_or("unknown");
+    let sanitized = version
+        .chars()
+        .map(|character| match character {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '.' | '_' | '-' => character,
+            _ => '-',
+        })
+        .collect::<String>();
+
+    if sanitized.is_empty() {
+        "unknown".to_string()
+    } else {
+        sanitized
+    }
+}
+
+fn versioned_archive_cache_dir(
+    base_dir: &Path,
+    version: Option<&str>,
+    archive_url: &str,
+) -> PathBuf {
+    let version = version.unwrap_or("unknown");
+    let sanitized_version = sanitized_version_component(Some(version));
+
+    let mut version_hasher = Sha256::new();
+    version_hasher.update(version.as_bytes());
+    let version_hash = format!("{:x}", version_hasher.finalize());
+
+    let mut url_hasher = Sha256::new();
+    url_hasher.update(archive_url.as_bytes());
+    let url_hash = format!("{:x}", url_hasher.finalize());
+
+    base_dir.join(format!(
+        "v_{sanitized_version}_{}_{url_hash}",
+        &version_hash[..16],
+    ))
+}
+
 pub struct LocalExtensionArchiveAgent {
     pub fs: Arc<dyn Fs>,
     pub http_client: Arc<dyn HttpClient>,
@@ -1139,6 +1174,7 @@ impl ExternalAgentServer for LocalExtensionArchiveAgent {
         let agent_id = self.agent_id.clone();
         let targets = self.targets.clone();
         let base_env = self.env.clone();
+        let version = self.version.clone();
 
         cx.spawn(async move |cx| {
             // Get project environment
@@ -1194,13 +1230,11 @@ impl ExternalAgentServer for LocalExtensionArchiveAgent {
             })?;
 
             let archive_url = &target_config.archive;
-
-            // Use URL as version identifier for caching
-            // Hash the URL to get a stable directory name
-            let mut hasher = Sha256::new();
-            hasher.update(archive_url.as_bytes());
-            let url_hash = format!("{:x}", hasher.finalize());
-            let version_dir = dir.join(format!("v_{}", url_hash));
+            let version_dir = versioned_archive_cache_dir(
+                &dir,
+                version.as_ref().map(|version| version.as_ref()),
+                archive_url,
+            );
 
             if !fs.is_dir(&version_dir).await {
                 // Determine SHA256 for verification
@@ -1331,6 +1365,7 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
         let registry_id = self.registry_id.clone();
         let targets = self.targets.clone();
         let settings_env = self.env.clone();
+        let version = self.version.clone();
 
         cx.spawn(async move |cx| {
             let mut env = project_environment
@@ -1385,11 +1420,8 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
             env.extend(settings_env);
 
             let archive_url = &target_config.archive;
-
-            let mut hasher = Sha256::new();
-            hasher.update(archive_url.as_bytes());
-            let url_hash = format!("{:x}", hasher.finalize());
-            let version_dir = dir.join(format!("v_{}", url_hash));
+            let version_dir =
+                versioned_archive_cache_dir(&dir, Some(version.as_ref()), archive_url);
 
             if !fs.is_dir(&version_dir).await {
                 let sha256 = if let Some(provided_sha) = &target_config.sha256 {
@@ -2020,6 +2052,27 @@ mod tests {
             error,
             Some("unsupported archive type in URL: https://example.com/agent.tar.xz".to_string()),
         );
+    }
+
+    #[test]
+    fn versioned_archive_cache_dir_includes_version_before_url_hash() {
+        let slash_version_dir = versioned_archive_cache_dir(
+            Path::new("/tmp/agents"),
+            Some("release/2.3.5"),
+            "https://example.com/agent.zip",
+        );
+        let colon_version_dir = versioned_archive_cache_dir(
+            Path::new("/tmp/agents"),
+            Some("release:2.3.5"),
+            "https://example.com/agent.zip",
+        );
+        let file_name = slash_version_dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("cache directory should have a file name");
+
+        assert!(file_name.starts_with("v_release-2.3.5_"));
+        assert_ne!(slash_version_dir, colon_version_dir);
     }
 
     #[gpui::test]

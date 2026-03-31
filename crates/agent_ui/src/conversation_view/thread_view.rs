@@ -8281,6 +8281,18 @@ impl ThreadView {
 
     fn render_new_version_callout(&self, version: &SharedString, cx: &mut Context<Self>) -> Div {
         let server_view = self.server_view.clone();
+        let has_version = !version.is_empty();
+        let title = if has_version {
+            "New version available"
+        } else {
+            "Agent update available"
+        };
+        let button_label = if has_version {
+            format!("Update to v{}", version)
+        } else {
+            "Reconnect".to_string()
+        };
+
         v_flex().w_full().justify_end().child(
             h_flex()
                 .p_2()
@@ -8299,10 +8311,10 @@ impl ThreadView {
                                 .color(Color::Accent)
                                 .size(IconSize::Small),
                         )
-                        .child(Label::new("New version available").size(LabelSize::Small)),
+                        .child(Label::new(title).size(LabelSize::Small)),
                 )
                 .child(
-                    Button::new("update-button", format!("Update to v{}", version))
+                    Button::new("update-button", button_label)
                         .label_size(LabelSize::Small)
                         .style(ButtonStyle::Tinted(TintColor::Accent))
                         .on_click(move |_, window, cx| {
