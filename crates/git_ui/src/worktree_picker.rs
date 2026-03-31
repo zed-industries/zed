@@ -470,8 +470,7 @@ impl WorktreeListDelegate {
         let Some(entry) = self.matches.get(idx).cloned() else {
             return;
         };
-        if !entry.can_delete(self.forbidden_deletion_path.as_ref())
-        {
+        if !entry.can_delete(self.forbidden_deletion_path.as_ref()) {
             return;
         }
         let Some(repo) = self.repo.clone() else {
