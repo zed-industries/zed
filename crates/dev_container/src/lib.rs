@@ -4,6 +4,7 @@ use fs::Fs;
 use gpui::AppContext;
 use gpui::Entity;
 use gpui::Task;
+use gpui::WeakEntity;
 use http_client::anyhow;
 use picker::Picker;
 use picker::PickerDelegate;
@@ -29,7 +30,7 @@ use ui::rems_from_px;
 use ui::v_flex;
 use util::shell::Shell;
 
-use gpui::{Action, DismissEvent, EventEmitter, FocusHandle, Focusable, RenderOnce, WeakEntity};
+use gpui::{Action, DismissEvent, EventEmitter, FocusHandle, Focusable, RenderOnce};
 use serde::Deserialize;
 use ui::{
     AnyElement, App, Color, CommonAnimationExt, Context, Headline, HeadlineSize, Icon, IconName,
@@ -99,7 +100,7 @@ pub struct DevContainerContext {
     pub use_podman: bool,
     pub fs: Arc<dyn Fs>,
     pub http_client: Arc<dyn HttpClient>,
-    pub environment: Entity<ProjectEnvironment>,
+    pub environment: WeakEntity<ProjectEnvironment>,
 }
 
 impl DevContainerContext {
@@ -108,22 +109,23 @@ impl DevContainerContext {
         let use_podman = DevContainerSettings::get_global(cx).use_podman;
         let http_client = cx.http_client().clone();
         let fs = workspace.app_state().fs.clone();
-        let environment = workspace.project().read(cx).environment();
+        let environment = workspace.project().read(cx).environment().downgrade();
         Some(Self {
             project_directory,
             use_podman,
             fs,
             http_client,
-            environment: environment.clone(),
+            environment,
         })
     }
 
     pub async fn environment(&self, cx: &mut impl AppContext) -> HashMap<String, String> {
-        self.environment
-            .update(cx, |this, cx| {
-                this.local_directory_environment(&Shell::System, self.project_directory.clone(), cx)
-            })
-            .await
+        let Ok(task) = self.environment.update(cx, |this, cx| {
+            this.local_directory_environment(&Shell::System, self.project_directory.clone(), cx)
+        }) else {
+            return HashMap::default();
+        };
+        task.await
             .map(|env| env.into_iter().collect::<std::collections::HashMap<_, _>>())
             .unwrap_or_default()
     }

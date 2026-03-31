@@ -626,6 +626,13 @@ USER $_DEV_CONTAINERS_IMAGE_USER
 
         // If we're not adding a uid update layer, then we should add env vars to this layer instead
         if !update_remote_user_uid {
+            extended_dockerfile = format!(
+                r#"{extended_dockerfile}
+# Ensure that /etc/profile does not clobber the existing path
+RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
+"#
+            );
+
             for feature in &self.features {
                 let container_env_layer = feature.generate_dockerfile_env();
                 extended_dockerfile = format!("{extended_dockerfile}\n{container_env_layer}");
@@ -1408,6 +1415,7 @@ USER $_DEV_CONTAINERS_IMAGE_USER
         self.docker_client.inspect(&updated_image_tag).await
     }
 
+    #[cfg(not(target_os = "windows"))]
     fn generate_update_uid_dockerfile(&self) -> String {
         let mut dockerfile = r#"ARG BASE_IMAGE
 FROM $BASE_IMAGE
@@ -2480,7 +2488,7 @@ mod test {
             use_podman: false,
             fs: fs.clone(),
             http_client: http_client.clone(),
-            environment: project_environment,
+            environment: project_environment.downgrade(),
         };
 
         let test_dependencies = TestDependencies {
@@ -4745,6 +4753,9 @@ cp -ar /tmp/build-features-src/go_1 /tmp/dev-container-features \
 
 ARG _DEV_CONTAINERS_IMAGE_USER=root
 USER $_DEV_CONTAINERS_IMAGE_USER
+
+# Ensure that /etc/profile does not clobber the existing path
+RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
 
 ENV DOCKER_BUILDKIT=1
 
