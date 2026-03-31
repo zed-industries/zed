@@ -3810,7 +3810,7 @@ RUN echo "export HISTFILE=/home/$USERNAME/commandhistory/.bash_history" >> "/hom
             .iter()
             .find(|f| {
                 f.file_name()
-                    .is_some_and(|s| s.display().to_string() == "Dockerfile.extended".to_string())
+                    .is_some_and(|s| s.display().to_string() == "Dockerfile.extended")
             })
             .expect("to be found");
         let feature_dockerfile = test_dependencies.fs.load(feature_dockerfile).await.unwrap();
@@ -3878,7 +3878,7 @@ USER $_DEV_CONTAINERS_IMAGE_USER
             .iter()
             .find(|f| {
                 f.file_name()
-                    .is_some_and(|s| s.display().to_string() == "updateUID.Dockerfile".to_string())
+                    .is_some_and(|s| s.display().to_string() == "updateUID.Dockerfile")
             })
             .expect("to be found");
         let uid_dockerfile = test_dependencies.fs.load(uid_dockerfile).await.unwrap();
@@ -3936,9 +3936,9 @@ ENV VARIABLE_VALUE=value
         let golang_install_wrapper = files
             .iter()
             .find(|f| {
-                f.file_name().is_some_and(|s| {
-                    s.display().to_string() == "devcontainer-features-install.sh".to_string()
-                }) && f.to_str().is_some_and(|s| s.contains("/go_"))
+                f.file_name()
+                    .is_some_and(|s| s.display().to_string() == "devcontainer-features-install.sh")
+                    && f.to_str().is_some_and(|s| s.contains("/go_"))
             })
             .expect("to be found");
         let golang_install_wrapper = test_dependencies
@@ -4148,7 +4148,7 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
             .iter()
             .find(|f| {
                 f.file_name()
-                    .is_some_and(|s| s.display().to_string() == "Dockerfile.extended".to_string())
+                    .is_some_and(|s| s.display().to_string() == "Dockerfile.extended")
             })
             .expect("to be found");
         let feature_dockerfile = test_dependencies.fs.load(feature_dockerfile).await.unwrap();
@@ -4207,7 +4207,7 @@ USER $_DEV_CONTAINERS_IMAGE_USER
             .iter()
             .find(|f| {
                 f.file_name()
-                    .is_some_and(|s| s.display().to_string() == "updateUID.Dockerfile".to_string())
+                    .is_some_and(|s| s.display().to_string() == "updateUID.Dockerfile")
             })
             .expect("to be found");
         let uid_dockerfile = test_dependencies.fs.load(uid_dockerfile).await.unwrap();
@@ -4261,9 +4261,8 @@ ENV DOCKER_BUILDKIT=1
         let runtime_override = files
             .iter()
             .find(|f| {
-                f.file_name().is_some_and(|s| {
-                    s.display().to_string() == "docker_compose_runtime.json".to_string()
-                })
+                f.file_name()
+                    .is_some_and(|s| s.display().to_string() == "docker_compose_runtime.json")
             })
             .expect("to be found");
         let runtime_override = test_dependencies.fs.load(runtime_override).await.unwrap();
@@ -4317,7 +4316,6 @@ ENV DOCKER_BUILDKIT=1
                     name: "dind-var-lib-docker-42dad4b4ca7b8ced".to_string(),
                 },
             )]),
-            ..Default::default()
         };
 
         assert_eq!(
@@ -4442,7 +4440,7 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
             .iter()
             .find(|f| {
                 f.file_name()
-                    .is_some_and(|s| s.display().to_string() == "Dockerfile.extended".to_string())
+                    .is_some_and(|s| s.display().to_string() == "Dockerfile.extended")
             })
             .expect("to be found");
         let feature_dockerfile = test_dependencies.fs.load(feature_dockerfile).await.unwrap();
@@ -4499,7 +4497,7 @@ USER $_DEV_CONTAINERS_IMAGE_USER
             .iter()
             .find(|f| {
                 f.file_name()
-                    .is_some_and(|s| s.display().to_string() == "updateUID.Dockerfile".to_string())
+                    .is_some_and(|s| s.display().to_string() == "updateUID.Dockerfile")
             })
             .expect("to be found");
         let uid_dockerfile = test_dependencies.fs.load(uid_dockerfile).await.unwrap();
@@ -4686,7 +4684,7 @@ RUN echo "export HISTFILE=/home/$USERNAME/commandhistory/.bash_history" >> "/hom
             .iter()
             .find(|f| {
                 f.file_name()
-                    .is_some_and(|s| s.display().to_string() == "Dockerfile.extended".to_string())
+                    .is_some_and(|s| s.display().to_string() == "Dockerfile.extended")
             })
             .expect("to be found");
         let feature_dockerfile = test_dependencies.fs.load(feature_dockerfile).await.unwrap();
@@ -4760,9 +4758,9 @@ ENV VARIABLE_VALUE=value
         let golang_install_wrapper = files
             .iter()
             .find(|f| {
-                f.file_name().is_some_and(|s| {
-                    s.display().to_string() == "devcontainer-features-install.sh".to_string()
-                }) && f.to_str().is_some_and(|s| s.contains("/go_"))
+                f.file_name()
+                    .is_some_and(|s| s.display().to_string() == "devcontainer-features-install.sh")
+                    && f.to_str().is_some_and(|s| s.contains("/go_"))
             })
             .expect("to be found");
         let golang_install_wrapper = test_dependencies
