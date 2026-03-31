@@ -884,12 +884,30 @@ impl PickerDelegate for WorktreeListDelegate {
                             }
                         })),
                 )
-                .when(can_delete, |this| {
-                    if selected {
-                        this.end_slot(delete_button(ix))
-                    } else {
-                        this.end_hover_slot(delete_button(ix))
-                    }
+                .when(!entry.is_new, |this| {
+                    let focus_handle = self.focus_handle.clone();
+                    let open_in_new_window_button =
+                        IconButton::new(("open-new-window", ix), IconName::ArrowUpRight)
+                            .icon_size(IconSize::Small)
+                            .tooltip(move |_, cx| {
+                                Tooltip::for_action_in(
+                                    "Open in New Window",
+                                    &menu::SecondaryConfirm,
+                                    &focus_handle,
+                                    cx,
+                                )
+                            })
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx);
+                            });
+
+                    this.end_slot(
+                        h_flex()
+                            .gap_0p5()
+                            .child(open_in_new_window_button)
+                            .when(can_delete, |this| this.child(delete_button(ix))),
+                    )
+                    .show_end_slot_on_hover()
                 }),
         )
     }
