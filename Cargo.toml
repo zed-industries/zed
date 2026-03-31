@@ -767,7 +767,7 @@ uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
 walkdir = "2.5"
 wasm-encoder = "0.221"
 wasmparser = "0.221"
-wasmtime = { version = "33", default-features = false, features = [
+wasmtime = { version = "36", default-features = false, features = [
     "async",
     "demangle",
     "runtime",
@@ -776,7 +776,7 @@ wasmtime = { version = "33", default-features = false, features = [
     "incremental-cache",
     "parallel-compilation",
 ] }
-wasmtime-wasi = "33"
+wasmtime-wasi = "36"
 wax = "0.7"
 which = "6.0.0"
 wasm-bindgen = "0.2.113"
