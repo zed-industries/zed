@@ -142,6 +142,16 @@ impl dyn ExternalAgentServer {
     }
 }
 
+struct ExtensionAgentEntry {
+    agent_name: Arc<str>,
+    extension_id: String,
+    targets: HashMap<String, extension::TargetConfig>,
+    env: HashMap<String, String>,
+    icon_path: Option<String>,
+    display_name: Option<SharedString>,
+    version: Option<Arc<str>>,
+}
+
 enum AgentServerStoreState {
     Local {
         node_runtime: NodeRuntime,
@@ -150,14 +160,7 @@ enum AgentServerStoreState {
         downstream_client: Option<(u64, AnyProtoClient)>,
         settings: Option<AllAgentServersSettings>,
         http_client: Arc<dyn HttpClient>,
-        extension_agents: Vec<(
-            Arc<str>,
-            String,
-            HashMap<String, extension::TargetConfig>,
-            HashMap<String, String>,
-            Option<String>,
-            Option<SharedString>,
-        )>,
+        extension_agents: Vec<ExtensionAgentEntry>,
         _subscriptions: Vec<Subscription>,
     },
     Remote {
@@ -231,14 +234,15 @@ impl AgentServerStore {
                             resolve_extension_icon_path(&extensions_dir, ext_id, icon)
                         });
 
-                        extension_agents.push((
-                            agent_name.clone(),
-                            ext_id.to_owned(),
-                            agent_entry.targets.clone(),
-                            agent_entry.env.clone(),
+                        extension_agents.push(ExtensionAgentEntry {
+                            agent_name: agent_name.clone(),
+                            extension_id: ext_id.to_owned(),
+                            targets: agent_entry.targets.clone(),
+                            env: agent_entry.env.clone(),
                             icon_path,
-                            Some(display_name),
-                        ));
+                            display_name: Some(display_name),
+                            version: Some(manifest.version.clone()),
+                        });
                     }
                 }
                 self.reregister_agents(cx);
@@ -297,6 +301,7 @@ impl AgentServerStore {
                                 .iter()
                                 .map(|(k, v)| (k.clone(), v.clone()))
                                 .collect(),
+                            version: Some(manifest.version.to_string()),
                         });
                     }
                 }
@@ -467,12 +472,12 @@ impl AgentServerStore {
         }
 
         // Insert extension agents before custom/registry so registry entries override extensions.
-        for (agent_name, ext_id, targets, env, icon_path, display_name) in extension_agents.iter() {
-            let name = AgentId(agent_name.clone().into());
-            let mut env = env.clone();
+        for entry in extension_agents.iter() {
+            let name = AgentId(entry.agent_name.clone().into());
+            let mut env = entry.env.clone();
             if let Some(settings_env) =
                 new_settings
-                    .get(agent_name.as_ref())
+                    .get(entry.agent_name.as_ref())
                     .and_then(|settings| match settings {
                         CustomAgentServerSettings::Extension { env, .. } => Some(env.clone()),
                         _ => None,
@@ -480,7 +485,8 @@ impl AgentServerStore {
             {
                 env.extend(settings_env);
             }
-            let icon = icon_path
+            let icon = entry
+                .icon_path
                 .as_ref()
                 .map(|path| SharedString::from(path.clone()));
 
@@ -492,14 +498,19 @@ impl AgentServerStore {
                         http_client: http_client.clone(),
                         node_runtime: node_runtime.clone(),
                         project_environment: project_environment.clone(),
-                        extension_id: Arc::from(&**ext_id),
-                        targets: targets.clone(),
+                        extension_id: Arc::from(&*entry.extension_id),
+                        targets: entry.targets.clone(),
                         env,
-                        agent_id: agent_name.clone(),
+                        agent_id: entry.agent_name.clone(),
+                        version: entry
+                            .version
+                            .as_ref()
+                            .map(|v| SharedString::from(v.clone())),
+                        new_version_available_tx: None,
                     }) as Box<dyn ExternalAgentServer>,
                     ExternalAgentSource::Extension,
                     icon,
-                    display_name.clone(),
+                    entry.display_name.clone(),
                 ),
             );
         }
@@ -918,19 +929,21 @@ impl AgentServerStore {
                 extension_id,
                 targets,
                 env,
+                version,
             } in envelope.payload.agents
             {
-                extension_agents.push((
-                    Arc::from(&*name),
+                extension_agents.push(ExtensionAgentEntry {
+                    agent_name: Arc::from(&*name),
                     extension_id,
-                    targets
+                    targets: targets
                         .into_iter()
                         .map(|(k, v)| (k, extension::TargetConfig::from_proto(v)))
                         .collect(),
-                    env.into_iter().collect(),
+                    env: env.into_iter().collect(),
                     icon_path,
-                    None,
-                ));
+                    display_name: None,
+                    version: version.map(Arc::from),
+                });
             }
 
             this.reregister_agents(cx);
@@ -1093,15 +1106,30 @@ pub struct LocalExtensionArchiveAgent {
     pub agent_id: Arc<str>,
     pub targets: HashMap<String, extension::TargetConfig>,
     pub env: HashMap<String, String>,
+    pub version: Option<SharedString>,
+    pub new_version_available_tx: Option<watch::Sender<Option<String>>>,
 }
 
 impl ExternalAgentServer for LocalExtensionArchiveAgent {
+    fn version(&self) -> Option<&SharedString> {
+        self.version.as_ref()
+    }
+
+    fn take_new_version_available_tx(&mut self) -> Option<watch::Sender<Option<String>>> {
+        self.new_version_available_tx.take()
+    }
+
+    fn set_new_version_available_tx(&mut self, tx: watch::Sender<Option<String>>) {
+        self.new_version_available_tx = Some(tx);
+    }
+
     fn get_command(
         &mut self,
         extra_env: HashMap<String, String>,
-        _new_version_available_tx: Option<watch::Sender<Option<String>>>,
+        new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
     ) -> Task<Result<AgentServerCommand>> {
+        self.new_version_available_tx = new_version_available_tx;
         let fs = self.fs.clone();
         let http_client = self.http_client.clone();
         let node_runtime = self.node_runtime.clone();

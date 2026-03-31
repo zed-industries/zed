@@ -138,6 +138,7 @@ async fn archive_agent_uses_extension_and_agent_id_for_cache_key(cx: &mut TestAp
         project_environment,
         extension_id: Arc::from("my-extension"),
         agent_id: Arc::from("my-agent"),
+        version: Some(SharedString::from("1.0.0")),
         targets: {
             let mut map = HashMap::default();
             map.insert(
@@ -157,6 +158,7 @@ async fn archive_agent_uses_extension_and_agent_id_for_cache_key(cx: &mut TestAp
             map.insert("PORT".into(), "8080".into());
             map
         },
+        new_version_available_tx: None,
     };
 
     // Verify agent is properly constructed
@@ -220,6 +222,7 @@ async fn test_node_command_uses_managed_runtime(cx: &mut TestAppContext) {
         project_environment,
         extension_id: Arc::from("node-extension"),
         agent_id: Arc::from("node-agent"),
+        version: Some(SharedString::from("1.0.0")),
         targets: {
             let mut map = HashMap::default();
             map.insert(
@@ -235,6 +238,7 @@ async fn test_node_command_uses_managed_runtime(cx: &mut TestAppContext) {
             map
         },
         env: HashMap::default(),
+        new_version_available_tx: None,
     };
 
     // Verify that when cmd is "node", it attempts to use the node runtime
@@ -264,6 +268,7 @@ async fn test_commands_run_in_extraction_directory(cx: &mut TestAppContext) {
         project_environment,
         extension_id: Arc::from("test-ext"),
         agent_id: Arc::from("test-agent"),
+        version: Some(SharedString::from("1.0.0")),
         targets: {
             let mut map = HashMap::default();
             map.insert(
@@ -283,6 +288,7 @@ async fn test_commands_run_in_extraction_directory(cx: &mut TestAppContext) {
             map
         },
         env: Default::default(),
+        new_version_available_tx: None,
     };
 
     // Verify the agent is configured with relative paths in args
