@@ -7060,6 +7060,7 @@ fn worktree_to_proto(worktree: &git::repository::Worktree) -> proto::Worktree {
             .map(|s| s.to_string())
             .unwrap_or_default(),
         sha: worktree.sha.to_string(),
+        is_main: worktree.is_main,
     }
 }
 
@@ -7068,6 +7069,7 @@ fn proto_to_worktree(proto: &proto::Worktree) -> git::repository::Worktree {
         path: PathBuf::from(proto.path.clone()),
         ref_name: Some(SharedString::from(&proto.ref_name)),
         sha: proto.sha.clone().into(),
+        is_main: proto.is_main,
     }
 }
 

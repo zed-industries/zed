@@ -2428,6 +2428,7 @@ async fn test_cmd_n_shows_new_thread_entry_in_absorbed_worktree(cx: &mut TestApp
             path: std::path::PathBuf::from("/wt-feature-a"),
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "aaa".into(),
+            is_main: false,
         });
     })
     .unwrap();
@@ -2542,6 +2543,7 @@ async fn test_search_matches_worktree_name(cx: &mut TestAppContext) {
                 path: std::path::PathBuf::from("/wt/rosewood"),
                 ref_name: Some("refs/heads/rosewood".into()),
                 sha: "abc".into(),
+                is_main: false,
             });
         })
         .unwrap();
@@ -2603,6 +2605,7 @@ async fn test_git_worktree_added_live_updates_sidebar(cx: &mut TestAppContext) {
                 path: std::path::PathBuf::from("/wt/rosewood"),
                 ref_name: Some("refs/heads/rosewood".into()),
                 sha: "abc".into(),
+                is_main: false,
             });
         })
         .unwrap();
@@ -2704,11 +2707,13 @@ async fn test_two_worktree_workspaces_absorbed_when_main_added(cx: &mut TestAppC
             path: std::path::PathBuf::from("/wt-feature-a"),
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "aaa".into(),
+            is_main: false,
         });
         state.worktrees.push(git::repository::Worktree {
             path: std::path::PathBuf::from("/wt-feature-b"),
             ref_name: Some("refs/heads/feature-b".into()),
             sha: "bbb".into(),
+            is_main: false,
         });
     })
     .unwrap();
@@ -2786,11 +2791,13 @@ async fn test_threadless_workspace_shows_new_thread_with_worktree_chip(cx: &mut 
             path: std::path::PathBuf::from("/wt-feature-a"),
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "aaa".into(),
+            is_main: false,
         });
         state.worktrees.push(git::repository::Worktree {
             path: std::path::PathBuf::from("/wt-feature-b"),
             ref_name: Some("refs/heads/feature-b".into()),
             sha: "bbb".into(),
+            is_main: false,
         });
     })
     .unwrap();
@@ -2906,6 +2913,7 @@ async fn test_multi_worktree_thread_shows_multiple_chips(cx: &mut TestAppContext
                     path: std::path::PathBuf::from(format!("/worktrees/{repo}/{branch}/{repo}")),
                     ref_name: Some(format!("refs/heads/{branch}").into()),
                     sha: "aaa".into(),
+                    is_main: false,
                 });
             }
         })
@@ -3008,6 +3016,7 @@ async fn test_same_named_worktree_chips_are_deduplicated(cx: &mut TestAppContext
                 path: std::path::PathBuf::from(format!("/worktrees/{repo}/olivetti/{repo}")),
                 ref_name: Some("refs/heads/olivetti".into()),
                 sha: "aaa".into(),
+                is_main: false,
             });
         })
         .unwrap();
@@ -3098,6 +3107,7 @@ async fn test_absorbed_worktree_running_thread_shows_live_status(cx: &mut TestAp
             path: std::path::PathBuf::from("/wt-feature-a"),
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "aaa".into(),
+            is_main: false,
         });
     })
     .unwrap();
@@ -3213,6 +3223,7 @@ async fn test_absorbed_worktree_completion_triggers_notification(cx: &mut TestAp
             path: std::path::PathBuf::from("/wt-feature-a"),
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "aaa".into(),
+            is_main: false,
         });
     })
     .unwrap();
@@ -3319,6 +3330,7 @@ async fn test_clicking_worktree_thread_opens_workspace_when_none_exists(cx: &mut
             path: std::path::PathBuf::from("/wt-feature-a"),
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "aaa".into(),
+            is_main: false,
         });
     })
     .unwrap();
@@ -3424,6 +3436,7 @@ async fn test_clicking_worktree_thread_does_not_briefly_render_as_separate_proje
             path: std::path::PathBuf::from("/wt-feature-a"),
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "aaa".into(),
+            is_main: false,
         });
     })
     .unwrap();
@@ -3574,6 +3587,7 @@ async fn test_clicking_absorbed_worktree_thread_activates_worktree_workspace(
             path: std::path::PathBuf::from("/wt-feature-a"),
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "aaa".into(),
+            is_main: false,
         });
     })
     .unwrap();
@@ -4168,6 +4182,7 @@ async fn test_archive_thread_uses_next_threads_own_workspace(cx: &mut TestAppCon
             path: std::path::PathBuf::from("/wt-feature-a"),
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "aaa".into(),
+            is_main: false,
         });
     })
     .unwrap();
@@ -4339,6 +4354,7 @@ async fn test_linked_worktree_threads_not_duplicated_across_groups(cx: &mut Test
             path: std::path::PathBuf::from("/wt-feature-a"),
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "aaa".into(),
+            is_main: false,
         });
     })
     .unwrap();
@@ -5145,6 +5161,7 @@ mod property_test {
                             path: worktree_pathbuf,
                             ref_name: Some(format!("refs/heads/{}", worktree_name).into()),
                             sha: "aaa".into(),
+                            is_main: false,
                         });
                     })
                     .unwrap();
