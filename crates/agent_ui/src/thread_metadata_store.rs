@@ -139,42 +139,6 @@ impl From<&ThreadMetadata> for acp_thread::AgentSessionInfo {
     }
 }
 
-impl ThreadMetadata {
-    pub fn from_thread(
-        is_archived: bool,
-        thread: &Entity<acp_thread::AcpThread>,
-        cx: &App,
-    ) -> Self {
-        let thread_ref = thread.read(cx);
-        let session_id = thread_ref.session_id().clone();
-        let title = thread_ref
-            .title()
-            .unwrap_or_else(|| DEFAULT_THREAD_TITLE.into());
-        let updated_at = Utc::now();
-
-        let agent_id = thread_ref.connection().agent_id();
-
-        let folder_paths = {
-            let project = thread_ref.project().read(cx);
-            let paths: Vec<Arc<Path>> = project
-                .visible_worktrees(cx)
-                .map(|worktree| worktree.read(cx).abs_path())
-                .collect();
-            PathList::new(&paths)
-        };
-
-        Self {
-            session_id,
-            agent_id,
-            title,
-            created_at: Some(updated_at), // handled by db `ON CONFLICT`
-            updated_at,
-            folder_paths,
-            archived: is_archived,
-        }
-    }
-}
-
 /// The store holds all metadata needed to show threads in the sidebar/the archive.
 ///
 /// Automatically listens to AcpThread events and updates metadata if it has changed.
@@ -507,12 +471,42 @@ impl ThreadMetadataStore {
             | AcpThreadEvent::LoadError(_)
             | AcpThreadEvent::Refusal
             | AcpThreadEvent::WorkingDirectoriesUpdated => {
-                let is_archived = self
-                    .threads
-                    .get(thread.read(cx).session_id())
-                    .map(|t| t.archived)
-                    .unwrap_or(false);
-                let metadata = ThreadMetadata::from_thread(is_archived, &thread, cx);
+                let thread_ref = thread.read(cx);
+                let existing_thread = self.threads.get(thread_ref.session_id());
+                let session_id = thread_ref.session_id().clone();
+                let title = thread_ref
+                    .title()
+                    .unwrap_or_else(|| DEFAULT_THREAD_TITLE.into());
+
+                let updated_at = Utc::now();
+
+                let created_at = existing_thread
+                    .and_then(|t| t.created_at.clone())
+                    .unwrap_or_else(|| updated_at);
+
+                let agent_id = thread_ref.connection().agent_id();
+
+                let folder_paths = {
+                    let project = thread_ref.project().read(cx);
+                    let paths: Vec<Arc<Path>> = project
+                        .visible_worktrees(cx)
+                        .map(|worktree| worktree.read(cx).abs_path())
+                        .collect();
+                    PathList::new(&paths)
+                };
+
+                let archived = existing_thread.map(|t| t.archived).unwrap_or(false);
+
+                let metadata = ThreadMetadata {
+                    session_id,
+                    agent_id,
+                    title,
+                    created_at: Some(created_at),
+                    updated_at,
+                    folder_paths,
+                    archived,
+                };
+
                 self.save(metadata, cx);
             }
             AcpThreadEvent::TokenUsageUpdated
@@ -593,6 +587,7 @@ impl ThreadMetadataDb {
                            agent_id = excluded.agent_id, \
                            title = excluded.title, \
                            updated_at = excluded.updated_at, \
+                           created_at = excluded.created_at, \
                            folder_paths = excluded.folder_paths, \
                            folder_paths_order = excluded.folder_paths_order, \
                            archived = excluded.archived";
