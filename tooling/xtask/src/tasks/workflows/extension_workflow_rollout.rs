@@ -309,13 +309,17 @@ fn rollout_workflows_to_extension(
     }
 
     let (authenticate, token) =
-        generate_token(vars::ZED_ZIPPY_APP_ID, vars::ZED_ZIPPY_APP_PRIVATE_KEY).for_repository(
-            RepositoryTarget::new("zed-extensions", &["${{ matrix.repo }}"]).permissions([
+        generate_token(vars::ZED_ZIPPY_APP_ID, vars::ZED_ZIPPY_APP_PRIVATE_KEY)
+            .for_repository(RepositoryTarget::new(
+                "zed-extensions",
+                &["${{ matrix.repo }}"],
+            ))
+            .with_permissions([
                 ("permission-pull-requests".to_owned(), Level::Write),
                 ("permission-contents".to_owned(), Level::Write),
                 ("permission-workflows".to_owned(), Level::Write),
-            ]),
-        );
+            ])
+            .into();
 
     let (calculate_short_sha, short_sha) = get_short_sha();
 
@@ -372,10 +376,10 @@ fn create_rollout_tag(rollout_job: &NamedJob, filter_repos_input: &WorkflowInput
     }
 
     let (authenticate, token) =
-        generate_token(vars::ZED_ZIPPY_APP_ID, vars::ZED_ZIPPY_APP_PRIVATE_KEY).for_repository(
-            RepositoryTarget::current()
-                .permissions([("permission-contents".to_owned(), Level::Write)]),
-        );
+        generate_token(vars::ZED_ZIPPY_APP_ID, vars::ZED_ZIPPY_APP_PRIVATE_KEY)
+            .for_repository(RepositoryTarget::current())
+            .with_permissions([("permission-contents".to_owned(), Level::Write)])
+            .into();
 
     let job = Job::default()
         .needs([rollout_job.name.clone()])

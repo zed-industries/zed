@@ -518,15 +518,22 @@ pub(crate) struct GenerateAppToken<'a> {
     app_id: &'a str,
     app_secret: &'a str,
     repository_target: Option<RepositoryTarget>,
+    permissions: Option<Vec<(String, Level)>>,
 }
 
 impl<'a> GenerateAppToken<'a> {
-    pub fn for_repository(self, repository_target: RepositoryTarget) -> (Step<Use>, StepOutput) {
+    pub fn for_repository(self, repository_target: RepositoryTarget) -> Self {
         Self {
             repository_target: Some(repository_target),
             ..self
         }
-        .into()
+    }
+
+    pub fn with_permissions(self, permissions: impl Into<Vec<(String, Level)>>) -> Self {
+        Self {
+            permissions: Some(permissions.into()),
+            ..self
+        }
     }
 }
 
@@ -549,26 +556,24 @@ impl<'a> From<GenerateAppToken<'a>> for (Step<Use>, StepOutput) {
                          RepositoryTarget {
                              owner,
                              repositories,
-                             permissions,
                          }| {
                             input
                                 .when_some(owner, |input, owner| input.add("owner", owner))
                                 .when_some(repositories, |input, repositories| {
                                     input.add("repositories", repositories)
                                 })
-                                .when_some(permissions, |input, permissions| {
-                                    permissions.into_iter().fold(
-                                        input,
-                                        |input, (permission, level)| {
-                                            input.add(
-                                                permission,
-                                                serde_json::to_value(&level).unwrap_or_default(),
-                                            )
-                                        },
-                                    )
-                                })
                         },
-                    ),
+                    )
+                    .when_some(token.permissions, |input, permissions| {
+                        permissions
+                            .into_iter()
+                            .fold(input, |input, (permission, level)| {
+                                input.add(
+                                    permission,
+                                    serde_json::to_value(&level).unwrap_or_default(),
+                                )
+                            })
+                    }),
             );
 
         let generated_token = StepOutput::new(&step, "token");
@@ -579,7 +584,6 @@ impl<'a> From<GenerateAppToken<'a>> for (Step<Use>, StepOutput) {
 pub(crate) struct RepositoryTarget {
     owner: Option<String>,
     repositories: Option<String>,
-    permissions: Option<Vec<(String, Level)>>,
 }
 
 impl RepositoryTarget {
@@ -587,7 +591,6 @@ impl RepositoryTarget {
         Self {
             owner: Some(owner.to_string()),
             repositories: Some(repositories.join("\n")),
-            permissions: None,
         }
     }
 
@@ -595,14 +598,6 @@ impl RepositoryTarget {
         Self {
             owner: None,
             repositories: None,
-            permissions: None,
-        }
-    }
-
-    pub fn permissions(self, permissions: impl Into<Vec<(String, Level)>>) -> Self {
-        Self {
-            permissions: Some(permissions.into()),
-            ..self
         }
     }
 }
@@ -614,8 +609,8 @@ pub(crate) fn generate_token<'a>(
     generate_token_with_job_name(app_id_source, app_secret_source)
 }
 
-pub fn authenticate_as_zippy() -> (Step<Use>, StepOutput) {
-    generate_token_with_job_name(vars::ZED_ZIPPY_APP_ID, vars::ZED_ZIPPY_APP_PRIVATE_KEY).into()
+pub fn authenticate_as_zippy() -> GenerateAppToken<'static> {
+    generate_token_with_job_name(vars::ZED_ZIPPY_APP_ID, vars::ZED_ZIPPY_APP_PRIVATE_KEY)
 }
 
 fn generate_token_with_job_name<'a>(
@@ -627,5 +622,6 @@ fn generate_token_with_job_name<'a>(
         app_id: app_id_source,
         app_secret: app_secret_source,
         repository_target: None,
+        permissions: None,
     }
 }
