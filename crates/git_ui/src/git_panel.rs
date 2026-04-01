@@ -2,6 +2,7 @@ use crate::askpass_modal::AskPassModal;
 use crate::commit_modal::CommitModal;
 use crate::commit_tooltip::CommitTooltip;
 use crate::commit_view::CommitView;
+use crate::git_panel_settings::GitPanelScrollbarAccessor;
 use crate::project_diff::{self, BranchDiff, Diff, ProjectDiff};
 use crate::remote_output::{self, RemoteAction, SuccessMessage};
 use crate::{branch_picker, picker_prompt, render_remote_button};
@@ -48,7 +49,7 @@ use language_model::{
     LanguageModelRequestMessage, Role,
 };
 use menu;
-use multi_buffer::ExcerptInfo;
+use multi_buffer::ExcerptBoundaryInfo;
 use notifications::status_toast::{StatusToast, ToastIcon};
 use panel::{PanelHeader, panel_button, panel_filled_button, panel_icon_button};
 use project::{
@@ -4885,7 +4886,7 @@ impl GitPanel {
                         }),
                     )
                     .custom_scrollbars(
-                        Scrollbars::for_settings::<GitPanelSettings>()
+                        Scrollbars::for_settings::<GitPanelScrollbarAccessor>()
                             .tracked_scroll_handle(&self.scroll_handle)
                             .with_track_along(
                                 ScrollAxes::Horizontal,
@@ -5753,11 +5754,12 @@ impl editor::Addon for GitPanelAddon {
 
     fn render_buffer_header_controls(
         &self,
-        excerpt_info: &ExcerptInfo,
+        _excerpt_info: &ExcerptBoundaryInfo,
+        buffer: &language::BufferSnapshot,
         window: &Window,
         cx: &App,
     ) -> Option<AnyElement> {
-        let file = excerpt_info.buffer.file()?;
+        let file = buffer.file()?;
         let git_panel = self.workspace.upgrade()?.read(cx).panel::<GitPanel>(cx)?;
 
         git_panel

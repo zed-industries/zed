@@ -589,6 +589,7 @@ pub struct Project {
     pub repositories: Vec<proto::UpdateRepository>,
     pub language_servers: Vec<LanguageServer>,
     pub path_style: PathStyle,
+    pub features: Vec<String>,
 }
 
 pub struct ProjectCollaborator {

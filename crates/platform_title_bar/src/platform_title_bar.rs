@@ -1,4 +1,4 @@
-mod platforms;
+pub mod platforms;
 mod system_window_tabs;
 
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
@@ -115,6 +115,72 @@ impl PlatformTitleBar {
     }
 }
 
+/// Renders the platform-appropriate left-side window controls (e.g. Ubuntu/GNOME close button).
+///
+/// Only relevant on Linux with client-side decorations when the window manager
+/// places controls on the left.
+pub fn render_left_window_controls(
+    button_layout: Option<WindowButtonLayout>,
+    close_action: Box<dyn Action>,
+    window: &Window,
+) -> Option<AnyElement> {
+    if PlatformStyle::platform() != PlatformStyle::Linux {
+        return None;
+    }
+    if !matches!(window.window_decorations(), Decorations::Client { .. }) {
+        return None;
+    }
+    let button_layout = button_layout?;
+    if button_layout.left[0].is_none() {
+        return None;
+    }
+    Some(
+        platform_linux::LinuxWindowControls::new(
+            "left-window-controls",
+            button_layout.left,
+            close_action,
+        )
+        .into_any_element(),
+    )
+}
+
+/// Renders the platform-appropriate right-side window controls (close, minimize, maximize).
+///
+/// Returns `None` on Mac or when the platform doesn't need custom controls
+/// (e.g. Linux with server-side decorations).
+pub fn render_right_window_controls(
+    button_layout: Option<WindowButtonLayout>,
+    close_action: Box<dyn Action>,
+    window: &Window,
+) -> Option<AnyElement> {
+    let decorations = window.window_decorations();
+    let height = platform_title_bar_height(window);
+
+    match PlatformStyle::platform() {
+        PlatformStyle::Linux => {
+            if !matches!(decorations, Decorations::Client { .. }) {
+                return None;
+            }
+            let button_layout = button_layout?;
+            if button_layout.right[0].is_none() {
+                return None;
+            }
+            Some(
+                platform_linux::LinuxWindowControls::new(
+                    "right-window-controls",
+                    button_layout.right,
+                    close_action,
+                )
+                .into_any_element(),
+            )
+        }
+        PlatformStyle::Windows => {
+            Some(platform_windows::WindowsWindowControls::new(height).into_any_element())
+        }
+        PlatformStyle::Mac => None,
+    }
+}
+
 impl Render for PlatformTitleBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let supported_controls = window.window_controls();
@@ -173,20 +239,23 @@ impl Render for PlatformTitleBar {
                     })
             })
             .map(|this| {
+                let show_left_controls = !(sidebar.open && sidebar.side == SidebarSide::Left);
+
                 if window.is_fullscreen() {
                     this.pl_2()
-                } else if self.platform_style == PlatformStyle::Mac
-                    && !(sidebar.open && sidebar.side == SidebarSide::Left)
-                {
+                } else if self.platform_style == PlatformStyle::Mac && show_left_controls {
                     this.pl(px(TRAFFIC_LIGHT_PADDING))
-                } else if let Some(button_layout) =
-                    button_layout.filter(|button_layout| button_layout.left[0].is_some())
+                } else if let Some(controls) = show_left_controls
+                    .then(|| {
+                        render_left_window_controls(
+                            button_layout,
+                            close_action.as_ref().boxed_clone(),
+                            window,
+                        )
+                    })
+                    .flatten()
                 {
-                    this.child(platform_linux::LinuxWindowControls::new(
-                        "left-window-controls",
-                        button_layout.left,
-                        close_action.as_ref().boxed_clone(),
-                    ))
+                    this.child(controls)
                 } else {
                     this.pl_2()
                 }
@@ -224,33 +293,30 @@ impl Render for PlatformTitleBar {
                     .children(children),
             )
             .when(!window.is_fullscreen(), |title_bar| {
-                match self.platform_style {
-                    PlatformStyle::Mac => title_bar,
-                    PlatformStyle::Linux => {
-                        if matches!(decorations, Decorations::Client { .. }) {
-                            let mut result = title_bar;
-                            if let Some(button_layout) = button_layout
-                                .filter(|button_layout| button_layout.right[0].is_some())
-                            {
-                                result = result.child(platform_linux::LinuxWindowControls::new(
-                                    "right-window-controls",
-                                    button_layout.right,
-                                    close_action.as_ref().boxed_clone(),
-                                ));
-                            }
+                let show_right_controls = !(sidebar.open && sidebar.side == SidebarSide::Right);
 
-                            result.when(supported_controls.window_menu, |titlebar| {
-                                titlebar.on_mouse_down(MouseButton::Right, move |ev, window, _| {
-                                    window.show_window_menu(ev.position)
-                                })
-                            })
-                        } else {
-                            title_bar
-                        }
-                    }
-                    PlatformStyle::Windows => {
-                        title_bar.child(platform_windows::WindowsWindowControls::new(height))
-                    }
+                let title_bar = title_bar.children(
+                    show_right_controls
+                        .then(|| {
+                            render_right_window_controls(
+                                button_layout,
+                                close_action.as_ref().boxed_clone(),
+                                window,
+                            )
+                        })
+                        .flatten(),
+                );
+
+                if self.platform_style == PlatformStyle::Linux
+                    && matches!(decorations, Decorations::Client { .. })
+                {
+                    title_bar.when(supported_controls.window_menu, |titlebar| {
+                        titlebar.on_mouse_down(MouseButton::Right, move |ev, window, _| {
+                            window.show_window_menu(ev.position)
+                        })
+                    })
+                } else {
+                    title_bar
                 }
             });
 

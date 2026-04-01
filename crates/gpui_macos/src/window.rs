@@ -49,6 +49,7 @@ use objc::{
     runtime::{BOOL, Class, NO, Object, Protocol, Sel, YES},
     sel, sel_impl,
 };
+use objc2_app_kit::NSBeep;
 use parking_lot::Mutex;
 use raw_window_handle as rwh;
 use smallvec::SmallVec;
@@ -1674,6 +1675,10 @@ impl PlatformWindow for MacWindow {
             let event: id = msg_send![app, currentEvent];
             let _: () = msg_send![window, performWindowDragWithEvent: event];
         }
+    }
+
+    fn play_system_bell(&self) {
+        unsafe { NSBeep() }
     }
 
     #[cfg(any(test, feature = "test-support"))]

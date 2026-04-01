@@ -31,10 +31,10 @@ use settings::{
     BaseKeymap, KeybindSource, KeymapFile, Settings as _, SettingsAssets, infer_json_indent_size,
 };
 use ui::{
-    ActiveTheme as _, App, Banner, BorrowAppContext, ContextMenu, IconButtonShape, IconPosition,
-    Indicator, Modal, ModalFooter, ModalHeader, ParentElement as _, PopoverMenu, Render, Section,
-    SharedString, Styled as _, Table, TableColumnWidths, TableInteractionState,
-    TableResizeBehavior, Tooltip, Window, prelude::*,
+    ActiveTheme as _, App, Banner, BorrowAppContext, ColumnWidthConfig, ContextMenu,
+    IconButtonShape, IconPosition, Indicator, Modal, ModalFooter, ModalHeader, ParentElement as _,
+    PopoverMenu, RedistributableColumnsState, Render, Section, SharedString, Styled as _, Table,
+    TableInteractionState, TableResizeBehavior, Tooltip, Window, prelude::*,
 };
 use ui_input::InputField;
 use util::ResultExt;
@@ -450,7 +450,7 @@ struct KeymapEditor {
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     previous_edit: Option<PreviousEdit>,
     humanized_action_names: HumanizedActionNameCache,
-    current_widths: Entity<TableColumnWidths>,
+    current_widths: Entity<RedistributableColumnsState>,
     show_hover_menus: bool,
     actions_with_schemas: HashSet<&'static str>,
     /// In order for the JSON LSP to run in the actions arguments editor, we
@@ -542,8 +542,9 @@ impl KeymapEditor {
         let _keymap_subscription =
             cx.observe_global_in::<KeymapEventChannel>(window, Self::on_keymap_changed);
         let table_interaction_state = cx.new(|cx| {
-            TableInteractionState::new(cx)
-                .with_custom_scrollbar(ui::Scrollbars::for_settings::<editor::EditorSettings>())
+            TableInteractionState::new(cx).with_custom_scrollbar(ui::Scrollbars::for_settings::<
+                editor::EditorSettingsScrollbarProxy,
+            >())
         });
 
         let keystroke_editor = cx.new(|cx| {
@@ -622,7 +623,27 @@ impl KeymapEditor {
             actions_with_schemas: HashSet::default(),
             action_args_temp_dir: None,
             action_args_temp_dir_worktree: None,
-            current_widths: cx.new(|cx| TableColumnWidths::new(COLS, cx)),
+            current_widths: cx.new(|_cx| {
+                RedistributableColumnsState::new(
+                    COLS,
+                    vec![
+                        DefiniteLength::Absolute(AbsoluteLength::Pixels(px(36.))),
+                        DefiniteLength::Fraction(0.25),
+                        DefiniteLength::Fraction(0.20),
+                        DefiniteLength::Fraction(0.14),
+                        DefiniteLength::Fraction(0.45),
+                        DefiniteLength::Fraction(0.08),
+                    ],
+                    vec![
+                        TableResizeBehavior::None,
+                        TableResizeBehavior::Resizable,
+                        TableResizeBehavior::Resizable,
+                        TableResizeBehavior::Resizable,
+                        TableResizeBehavior::Resizable,
+                        TableResizeBehavior::Resizable,
+                    ],
+                )
+            }),
         };
 
         this.on_keymap_changed(window, cx);
@@ -2094,26 +2115,9 @@ impl Render for KeymapEditor {
                         let this = cx.entity();
                         move |window, cx| this.read(cx).render_no_matches_hint(window, cx)
                     })
-                    .column_widths(vec![
-                        DefiniteLength::Absolute(AbsoluteLength::Pixels(px(36.))),
-                        DefiniteLength::Fraction(0.25),
-                        DefiniteLength::Fraction(0.20),
-                        DefiniteLength::Fraction(0.14),
-                        DefiniteLength::Fraction(0.45),
-                        DefiniteLength::Fraction(0.08),
-                    ])
-                    .resizable_columns(
-                        vec![
-                            TableResizeBehavior::None,
-                            TableResizeBehavior::Resizable,
-                            TableResizeBehavior::Resizable,
-                            TableResizeBehavior::Resizable,
-                            TableResizeBehavior::Resizable,
-                            TableResizeBehavior::Resizable, // this column doesn't matter
-                        ],
-                        &self.current_widths,
-                        cx,
-                    )
+                    .width_config(ColumnWidthConfig::redistributable(
+                        self.current_widths.clone(),
+                    ))
                     .header(vec!["", "Action", "Arguments", "Keystrokes", "Context", "Source"])
                     .uniform_list(
                         "keymap-editor-table",
@@ -2184,7 +2188,7 @@ impl Render for KeymapEditor {
                                             .cloned()
                                             .unwrap_or_default()
                                             .into_any_element(),
-                                        |binding| ui::KeyBinding::from_keystrokes(binding.keystrokes.clone(), binding.source).into_any_element()
+                                        |binding| ui::KeyBinding::from_keystrokes(binding.keystrokes.clone(), binding.source == KeybindSource::Vim).into_any_element()
                                     );
 
                                     let action_arguments = match binding.action().arguments.clone()
@@ -3476,7 +3480,6 @@ struct KeyContextCompletionProvider {
 impl CompletionProvider for KeyContextCompletionProvider {
     fn completions(
         &self,
-        _excerpt_id: editor::ExcerptId,
         buffer: &Entity<language::Buffer>,
         buffer_position: language::Anchor,
         _trigger: editor::CompletionContext,
