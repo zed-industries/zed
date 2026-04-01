@@ -1,5 +1,6 @@
 pub mod excerpt_ranges;
 pub mod multi_region;
+pub mod udiff;
 
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
