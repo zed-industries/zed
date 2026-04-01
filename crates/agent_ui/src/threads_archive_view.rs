@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::agent_connection_store::AgentConnectionStore;
@@ -1212,16 +1213,25 @@ impl PickerDelegate for ProjectPickerDelegate {
     }
 
     fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
+        let has_selection = self.selected_match().is_some();
+        let focus_handle = self.focus_handle.clone();
+
         Some(
-            v_flex()
-                .p_1p5()
+            h_flex()
                 .flex_1()
+                .p_1p5()
                 .gap_1()
+                .justify_end()
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child(
-                    Button::new("open_local_folder", "Open Local Folder").on_click(cx.listener(
-                        move |_picker, _, _window, cx| {
+                    Button::new("open_local_folder", "Choose from Local Folders")
+                        .key_binding(KeyBinding::for_action_in(
+                            &workspace::Open::default(),
+                            &focus_handle,
+                            cx,
+                        ))
+                        .on_click(cx.listener(move |_picker, _, _window, cx| {
                             let paths_receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
                                 files: false,
                                 directories: true,
@@ -1245,8 +1255,30 @@ impl PickerDelegate for ProjectPickerDelegate {
                                 .log_err();
                             })
                             .detach();
-                        },
-                    )),
+                        })),
+                )
+                .child(
+                    Button::new("select_project", "Select")
+                        .disabled(!has_selection)
+                        .key_binding(KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx))
+                        .on_click(cx.listener(move |picker, _, _window, cx| {
+                            let candidate_id = match picker
+                                .delegate
+                                .filtered_entries
+                                .get(picker.delegate.selected_index)
+                            {
+                                Some(ProjectPickerEntry::Workspace(hit)) => hit.candidate_id,
+                                _ => return,
+                            };
+                            let Some((_workspace_id, _location, paths, _)) =
+                                picker.delegate.workspaces.get(candidate_id)
+                            else {
+                                return;
+                            };
+                            let paths = paths.clone();
+                            picker.delegate.update_working_and_unarchive(paths, cx);
+                            cx.emit(DismissEvent);
+                        })),
                 )
                 .into_any(),
         )
