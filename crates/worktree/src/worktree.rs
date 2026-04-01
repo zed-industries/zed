@@ -257,6 +257,7 @@ pub struct LocalSnapshot {
 
 struct BackgroundScannerState {
     snapshot: LocalSnapshot,
+    external_symlink_paths_by_target: HashMap<Arc<Path>, SmallVec<[Arc<RelPath>; 1]>>,
     scanned_dirs: HashSet<ProjectEntryId>,
     path_prefixes_to_scan: HashSet<Arc<RelPath>>,
     paths_to_scan: HashSet<Arc<RelPath>>,
@@ -1121,6 +1122,7 @@ impl LocalWorktree {
                     state: async_lock::Mutex::new(BackgroundScannerState {
                         prev_snapshot: snapshot.snapshot.clone(),
                         snapshot,
+                        external_symlink_paths_by_target: Default::default(),
                         scanned_dirs: Default::default(),
                         scanning_enabled,
                         path_prefixes_to_scan: Default::default(),
@@ -4074,6 +4076,67 @@ impl BackgroundScanner {
 
         self.send_status_update(scanning, request.done, &[]).await
     }
+    fn normalized_events_for_worktree(state: &BackgroundScannerState, root_canonical_path: &SanitizedPath, events: Vec<PathEvent>) -> Vec<PathEvent> {
+        let mut normalized_events = Vec::new();
+
+        for event in events {
+            let abs_path = SanitizedPath::new(&event.path);
+            if abs_path.starts_with(root_canonical_path) {
+                normalized_events.push(event);
+                continue;
+            }
+
+            let mut best_target_root: Option<&Arc<Path>> = None;
+            let mut best_depth = 0;
+            for target_root in state.external_symlink_paths_by_target.keys() {
+                if abs_path.as_path().starts_with(target_root.as_ref()) {
+                    let depth = target_root.as_ref().components().count();
+                    if depth > best_depth {
+                        best_depth = depth;
+                        best_target_root = Some(target_root);
+                    }
+                }
+            }
+
+            let Some(target_root) = best_target_root else {
+                normalized_events.push(event);
+                continue;
+            };
+
+            let Some(symlink_paths) = state.external_symlink_paths_by_target.get(target_root) else {
+                normalized_events.push(event);
+                continue;
+            };
+
+            let Ok(suffix) = abs_path.as_path().strip_prefix(target_root.as_ref()) else {
+                normalized_events.push(event);
+                continue;
+            };
+
+            let mut added_any = false;
+
+            for symlink_path in symlink_paths {
+                let mapped_path = if suffix.as_os_str().is_empty() {
+                    root_canonical_path
+                        .as_path()
+                        .join(symlink_path.as_std_path())
+                } else {
+                  root_canonical_path
+                      .as_path()
+                      .join(symlink_path.as_std_path())
+                      .join(suffix)
+                };
+                normalized_events.push(PathEvent {
+                    path: mapped_path, kind: event.kind
+                });
+                added_any = true;
+            }
+            if !added_any {
+                normalized_events.push(event);
+            }
+        }
+        normalized_events
+    }
 
     async fn process_events(&self, mut events: Vec<PathEvent>) {
         let root_path = self.state.lock().await.snapshot.abs_path.clone();
@@ -4125,6 +4188,11 @@ impl BackgroundScanner {
                 return;
             }
         };
+
+        {
+            let state = self.state.lock().await;
+            events = Self::normalized_events_for_worktree(&state, &root_canonical_path, events);
+        }
 
         // Certain directories may have FS changes, but do not lead to git data changes that Zed cares about.
         // Ignore these, to avoid Zed unnecessarily rescanning git metadata.
@@ -4577,6 +4645,7 @@ impl BackgroundScanner {
 
         for child_abs_path in child_paths {
             let child_abs_path: Arc<Path> = child_abs_path.into();
+            let mut child_scan_abs_path = child_abs_path.clone();
             let child_name = child_abs_path.file_name().unwrap();
             let Some(child_path) = child_name
                 .to_str()
@@ -4662,8 +4731,19 @@ impl BackgroundScanner {
                     },
                 };
 
-                if !canonical_path.starts_with(root_canonical_path) {
-                    child_entry.is_external = true;
+                if !canonical_path.starts_with(root_canonical_path) && child_metadata.is_dir{
+                    let mut state = self.state.lock().await;
+                    let paths = state.
+                        external_symlink_paths_by_target
+                        .entry(Arc::from(canonical_path.clone()))
+                        .or_default();
+                    if !paths.iter().any(|path| path == &child_path) {
+                        paths.push(child_path.clone());
+                    }
+                }
+                // recurse into the real target path when scanning children.
+                if child_metadata.is_dir {
+                    child_scan_abs_path = Arc::from(canonical_path.clone());
                 }
 
                 child_entry.canonical_path = Some(canonical_path.into());
@@ -4682,7 +4762,7 @@ impl BackgroundScanner {
                     ancestor_inodes.insert(child_entry.inode);
 
                     new_jobs.push(Some(ScanJob {
-                        abs_path: child_abs_path.clone(),
+                        abs_path: child_scan_abs_path.clone(),
                         path: child_path,
                         is_external: child_entry.is_external,
                         ignore_stack: if child_entry.is_ignored {
