@@ -1931,7 +1931,7 @@ impl Pane {
                         "Do you want to save changes to the following files?",
                         Some(detail),
                         vec!["Save all", "Discard all", "Cancel"],
-                        true,
+                        Some(1),
                         window,
                         cx,
                     )
@@ -1975,7 +1975,7 @@ impl Pane {
                                     format!("Unable to save file: {}", &err),
                                     Some(detail),
                                     vec!["Close Without Saving", "Cancel"],
-                                    true,
+                                    Some(0),
                                     window,
                                     cx,
                                 )
@@ -2237,7 +2237,7 @@ impl Pane {
                                 DELETED_MESSAGE,
                                 None::<String>,
                                 vec!["Save", "Close", "Cancel"],
-                                false,
+                                None,
                                 window,
                                 cx,
                             )
@@ -2279,7 +2279,7 @@ impl Pane {
                                 CONFLICT_MESSAGE,
                                 None::<String>,
                                 vec!["Overwrite", "Discard", "Cancel"],
-                                false,
+                                None,
                                 window,
                                 cx,
                             )
@@ -2329,7 +2329,7 @@ impl Pane {
                                         prompt,
                                         None::<String>,
                                         vec!["Save", "Don't Save", "Cancel"],
-                                        true,
+                                        Some(1),
                                         window,
                                         cx,
                                     )

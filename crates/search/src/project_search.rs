@@ -1192,7 +1192,7 @@ impl ProjectSearchView {
                             "Project search buffer contains unsaved edits. Do you want to save it?",
                             None::<String>,
                             vec!["Save", "Don't Save", "Cancel"],
-                            true,
+                            Some(1),
                             window,
                             cx,
                         )

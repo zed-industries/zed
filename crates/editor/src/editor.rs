@@ -3946,7 +3946,7 @@ impl Editor {
                     "Cannot Save Changes",
                     Some(detail),
                     vec!["OK"],
-                    false,
+                    None,
                     window,
                     cx,
                 )
@@ -3978,7 +3978,7 @@ impl Editor {
                         "Validation Error",
                         Some(detail),
                         vec!["OK"],
-                        false,
+                        None,
                         window,
                         cx,
                     )
@@ -4017,7 +4017,7 @@ impl Editor {
                 "Confirm Changes",
                 Some(detail),
                 vec!["Confirm", "Cancel"],
-                false,
+                None,
                 window,
                 cx,
             );

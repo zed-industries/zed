@@ -18,7 +18,7 @@ pub struct ConfirmationDialog {
     selected_button: usize,
     focus_handle: FocusHandle,
     result_sender: Option<oneshot::Sender<usize>>,
-    show_key_h_for_dont_save: bool,
+    key_h_button_index: Option<usize>,
 }
 
 impl ModalView for ConfirmationDialog {}
@@ -29,7 +29,7 @@ impl ConfirmationDialog {
         message: impl Into<Arc<str>>,
         detail: Option<impl Into<Arc<str>>>,
         buttons: Vec<impl Into<String>>,
-        show_key_h_for_dont_save: bool,
+        key_h_button_index: Option<usize>,
         window: &mut Window,
         cx: &mut Context<crate::Workspace>,
     ) -> Task<Option<usize>> {
@@ -47,7 +47,7 @@ impl ConfirmationDialog {
                 selected_button: 0,
                 focus_handle: cx.focus_handle(),
                 result_sender: Some(sender),
-                show_key_h_for_dont_save,
+                key_h_button_index,
             };
             modal.focus_handle.focus(window, cx);
             modal
@@ -72,7 +72,6 @@ impl ConfirmationDialog {
 
     fn cancel(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(sender) = self.result_sender.take() {
-            // Find "Cancel" button index, or use last button as default
             let cancel_index = self
                 .buttons
                 .iter()
@@ -95,6 +94,7 @@ impl Focusable for ConfirmationDialog {
 impl Render for ConfirmationDialog {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle.clone();
+        let key_h_button_index = self.key_h_button_index;
 
         v_flex()
             .key_context("ConfirmationDialog")
@@ -113,9 +113,11 @@ impl Render for ConfirmationDialog {
             .on_action(cx.listener(|this, _: &menu::Cancel, window, cx| {
                 this.cancel(window, cx);
             }))
-            .on_action(cx.listener(|this, _: &ConfirmDontSave, window, cx| {
-                this.select_button(1, window, cx);
-                this.confirm_selection(window, cx);
+            .on_action(cx.listener(move |this, _: &ConfirmDontSave, window, cx| {
+                if let Some(index) = key_h_button_index {
+                    this.select_button(index, window, cx);
+                    this.confirm_selection(window, cx);
+                }
             }))
             .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
                 match event.keystroke.key.as_str() {
@@ -130,7 +132,6 @@ impl Render for ConfirmationDialog {
                 }
             }))
             .child(
-                // Warning icon and message
                 h_flex()
                     .gap_3()
                     .items_start()
@@ -164,21 +165,21 @@ impl Render for ConfirmationDialog {
                     ),
             )
             .child(
-                // Buttons
                 h_flex()
                     .gap_2()
                     .justify_end()
                     .children(self.buttons.iter().enumerate().map(|(index, button_text)| {
                         let _is_selected = index == self.selected_button;
-                        let is_primary = index == 0; // First button (Save) is primary
+                        let is_primary = index == 0;
                         let is_destructive = button_text.to_lowercase().contains("don't save")
                             || button_text.to_lowercase().contains("discard");
 
-                        // Add keybinding hint to button text
                         let mut button_text_with_key = button_text.clone();
-                        if index == 0 {
+                        if index == 0 && Some(index) == self.key_h_button_index {
+                            button_text_with_key.push_str(" (Enter/h)");
+                        } else if index == 0 {
                             button_text_with_key.push_str(" (Enter)");
-                        } else if index == 1 && self.show_key_h_for_dont_save {
+                        } else if Some(index) == self.key_h_button_index {
                             button_text_with_key.push_str(" (h)");
                         } else if index == self.buttons.len().saturating_sub(1) {
                             button_text_with_key.push_str(" (Escape)");
