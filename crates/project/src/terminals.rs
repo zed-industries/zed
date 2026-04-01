@@ -416,6 +416,7 @@ impl Project {
                         channel.output_rx,
                         channel.exit_rx,
                         Some(format!("{host} — Terminal")),
+                        path.as_ref().map(|p| p.to_path_buf()),
                         settings.cursor_shape,
                         settings.alternate_scroll,
                         settings.max_scroll_history_lines,

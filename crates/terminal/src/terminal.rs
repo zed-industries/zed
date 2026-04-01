@@ -400,6 +400,7 @@ impl TerminalBuilder {
             hyperlink_regex_searches: RegexSearches::default(),
             vi_mode_enabled: false,
             is_remote_terminal: false,
+            initial_working_directory: None,
             last_mouse_move_time: Instant::now(),
             last_hyperlink_search_position: None,
             mouse_down_hyperlink: None,
@@ -439,6 +440,7 @@ impl TerminalBuilder {
         output_rx: smol::channel::Receiver<Vec<u8>>,
         exit_rx: smol::channel::Receiver<Option<u32>>,
         title_override: Option<String>,
+        working_directory: Option<PathBuf>,
         cursor_shape: CursorShape,
         alternate_scroll: AlternateScroll,
         max_scroll_history_lines: Option<usize>,
@@ -489,6 +491,7 @@ impl TerminalBuilder {
             hyperlink_regex_searches: RegexSearches::default(),
             vi_mode_enabled: false,
             is_remote_terminal: true,
+            initial_working_directory: working_directory,
             last_mouse_move_time: Instant::now(),
             last_hyperlink_search_position: None,
             mouse_down_hyperlink: None,
@@ -725,6 +728,7 @@ impl TerminalBuilder {
                 ),
                 vi_mode_enabled: false,
                 is_remote_terminal,
+                initial_working_directory: None,
                 last_mouse_move_time: Instant::now(),
                 last_hyperlink_search_position: None,
                 mouse_down_hyperlink: None,
@@ -1007,6 +1011,9 @@ pub struct Terminal {
     task: Option<TaskState>,
     vi_mode_enabled: bool,
     is_remote_terminal: bool,
+    /// For SSH terminals, the initial working directory passed at creation.
+    /// Used for serialization since we can't detect the remote shell's cwd.
+    initial_working_directory: Option<PathBuf>,
     last_mouse_move_time: Instant,
     last_hyperlink_search_position: Option<Point<Pixels>>,
     mouse_down_hyperlink: Option<(String, bool, Match)>,
@@ -2273,10 +2280,7 @@ impl Terminal {
 
     pub fn working_directory(&self) -> Option<PathBuf> {
         if self.is_remote_terminal {
-            // We can't yet reliably detect the working directory of a shell on the
-            // SSH host. Until we can do that, it doesn't make sense to display
-            // the working directory on the client and persist that.
-            None
+            self.initial_working_directory.clone()
         } else {
             self.client_side_working_directory()
         }
