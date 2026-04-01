@@ -3526,7 +3526,7 @@ impl Sidebar {
                             SidebarSide::Left => "left",
                             SidebarSide::Right => "right",
                         };
-                        telemetry::event!("Sidebar Open Project Clicked", side = side);
+                        telemetry::event!("Sidebar Add Project Clicked", side = side);
                         window.dispatch_action(
                             Open {
                                 create_new_window: false,
