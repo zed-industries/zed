@@ -1,6 +1,6 @@
 use anyhow::Context as _;
 use collections::HashSet;
-use editor::EditorSettings;
+use editor::{EditorSettings, ui_scrollbar_settings_from_raw};
 use gpui::{App, Pixels, ReadGlobal};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -40,6 +40,7 @@ pub struct ProjectPanelSettings {
     pub auto_open: AutoOpenSettings,
     pub sort_mode: ProjectPanelSortMode,
     pub diagnostic_badges: bool,
+    pub git_status_indicator: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, RegisterSetting)]
@@ -116,9 +117,13 @@ impl AutoOpenSettings {
     }
 }
 
-impl ScrollbarVisibility for ProjectPanelSettings {
+#[derive(Default)]
+pub(crate) struct ProjectPanelScrollbarProxy;
+
+impl ScrollbarVisibility for ProjectPanelScrollbarProxy {
     fn visibility(&self, cx: &ui::App) -> ShowScrollbar {
-        self.scrollbar
+        ProjectPanelSettings::get_global(cx)
+            .scrollbar
             .show
             .unwrap_or_else(|| EditorSettings::get_global(cx).scrollbar.show)
     }
@@ -155,7 +160,7 @@ impl Settings for ProjectPanelSettings {
             scrollbar: {
                 let scrollbar = project_panel.scrollbar.unwrap();
                 ScrollbarSettings {
-                    show: scrollbar.show.map(Into::into),
+                    show: scrollbar.show.map(ui_scrollbar_settings_from_raw),
                     horizontal_scroll: scrollbar.horizontal_scroll.unwrap(),
                 }
             },
@@ -173,6 +178,7 @@ impl Settings for ProjectPanelSettings {
             },
             sort_mode: project_panel.sort_mode.unwrap(),
             diagnostic_badges: project_panel.diagnostic_badges.unwrap(),
+            git_status_indicator: project_panel.git_status_indicator.unwrap(),
         }
     }
 }

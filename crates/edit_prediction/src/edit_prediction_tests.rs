@@ -204,7 +204,7 @@ async fn test_diagnostics_refresh_suppressed_while_following(cx: &mut TestAppCon
 
     let app_state = cx.update(|cx| {
         let app_state = AppState::test(cx);
-        AppState::set_global(Arc::downgrade(&app_state), cx);
+        AppState::set_global(app_state.clone(), cx);
         app_state
     });
 
@@ -214,7 +214,7 @@ async fn test_diagnostics_refresh_suppressed_while_following(cx: &mut TestAppCon
         .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
         .unwrap();
     cx.update(|cx| {
-        AppState::set_global(Arc::downgrade(workspace.read(cx).app_state()), cx);
+        AppState::set_global(workspace.read(cx).app_state().clone(), cx);
     });
     let _ = app_state;
 
@@ -1013,6 +1013,81 @@ async fn test_irrelevant_collaborator_edits_in_different_files_are_omitted_from_
 }
 
 #[gpui::test]
+async fn test_large_edits_are_omitted_from_history(cx: &mut TestAppContext) {
+    let (ep_store, _requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.rs": (0..20)
+                .map(|i| format!("line {i}\n"))
+                .collect::<String>()
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.rs"), cx).unwrap();
+            project.set_active_path(Some(path.clone()), cx);
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    let cursor = buffer.read_with(cx, |buffer, _cx| buffer.anchor_before(Point::new(1, 0)));
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&buffer, &project, cx);
+        let _ = ep_store.prediction_at(&buffer, Some(cursor), &project, cx);
+    });
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit(vec![(0..6, "LOCAL ZERO")], None, cx);
+    });
+
+    let (collaborator, mut collaborator_version) = make_collaborator_replica(&buffer, cx);
+
+    let (line_three_start, line_three_len) = collaborator.read_with(cx, |buffer, _cx| {
+        (Point::new(3, 0).to_offset(buffer), buffer.line_len(3))
+    });
+    let large_edit = "X".repeat(EDIT_HISTORY_DIFF_SIZE_LIMIT + 1);
+
+    apply_collaborator_edit(
+        &collaborator,
+        &buffer,
+        &mut collaborator_version,
+        line_three_start..line_three_start + line_three_len as usize,
+        &large_edit,
+        cx,
+    )
+    .await;
+
+    buffer.update(cx, |buffer, cx| {
+        let line_seven_start = Point::new(7, 0).to_offset(buffer);
+        let line_seven_end = Point::new(7, 6).to_offset(buffer);
+        buffer.edit(
+            vec![(line_seven_start..line_seven_end, "LOCAL SEVEN")],
+            None,
+            cx,
+        );
+    });
+
+    let events = ep_store.update(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+
+    let rendered_events = render_events_with_predicted(&events);
+
+    assert_eq!(rendered_events.len(), 2);
+    assert!(rendered_events[0].contains("+LOCAL ZERO"));
+    assert!(!rendered_events[0].contains(&large_edit));
+    assert!(rendered_events[1].contains("+LOCAL SEVEN"));
+    assert!(!rendered_events[1].contains(&large_edit));
+}
+
+#[gpui::test]
 async fn test_predicted_flag_coalescing(cx: &mut TestAppContext) {
     let (ep_store, _requests) = init_test_with_fake_client(cx);
     let fs = FakeFs::new(cx.executor());
@@ -1323,6 +1398,7 @@ async fn test_empty_prediction(cx: &mut TestAppContext) {
             reason: EditPredictionRejectReason::Empty,
             was_shown: false,
             model_version: None,
+            e2e_latency_ms: Some(0),
         }]
     );
 }
@@ -1384,6 +1460,7 @@ async fn test_interpolated_empty(cx: &mut TestAppContext) {
             reason: EditPredictionRejectReason::InterpolatedEmpty,
             was_shown: false,
             model_version: None,
+            e2e_latency_ms: Some(0),
         }]
     );
 }
@@ -1477,6 +1554,7 @@ async fn test_replace_current(cx: &mut TestAppContext) {
             reason: EditPredictionRejectReason::Replaced,
             was_shown: false,
             model_version: None,
+            e2e_latency_ms: Some(0),
         }]
     );
 }
@@ -1572,6 +1650,7 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
             reason: EditPredictionRejectReason::CurrentPreferred,
             was_shown: false,
             model_version: None,
+            e2e_latency_ms: Some(0),
         }]
     );
 }
@@ -1664,6 +1743,7 @@ async fn test_cancel_earlier_pending_requests(cx: &mut TestAppContext) {
             reason: EditPredictionRejectReason::Canceled,
             was_shown: false,
             model_version: None,
+            e2e_latency_ms: None,
         }]
     );
 }
@@ -1795,12 +1875,16 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
                 reason: EditPredictionRejectReason::Canceled,
                 was_shown: false,
                 model_version: None,
+                e2e_latency_ms: None,
             },
             EditPredictionRejection {
                 request_id: first_id,
                 reason: EditPredictionRejectReason::Replaced,
                 was_shown: false,
                 model_version: None,
+                // 2 throttle waits (for 2nd and 3rd requests) elapsed
+                // between this request's start and response.
+                e2e_latency_ms: Some(2 * EditPredictionStore::THROTTLE_TIMEOUT.as_millis()),
             }
         ]
     );
@@ -1963,12 +2047,14 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
             EditPredictionRejectReason::Discarded,
             false,
             None,
+            None,
             cx,
         );
         ep_store.reject_prediction(
             EditPredictionId("test-2".into()),
             EditPredictionRejectReason::Canceled,
             true,
+            None,
             None,
             cx,
         );
@@ -1989,6 +2075,7 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
             reason: EditPredictionRejectReason::Discarded,
             was_shown: false,
             model_version: None,
+            e2e_latency_ms: None
         }
     );
     assert_eq!(
@@ -1998,6 +2085,7 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
             reason: EditPredictionRejectReason::Canceled,
             was_shown: true,
             model_version: None,
+            e2e_latency_ms: None
         }
     );
 
@@ -2008,6 +2096,7 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
                 EditPredictionId(format!("batch-{}", i).into()),
                 EditPredictionRejectReason::Discarded,
                 false,
+                None,
                 None,
                 cx,
             );
@@ -2041,6 +2130,7 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
             EditPredictionRejectReason::Discarded,
             false,
             None,
+            None,
             cx,
         );
     });
@@ -2060,6 +2150,7 @@ async fn test_rejections_flushing(cx: &mut TestAppContext) {
             EditPredictionId("retry-2".into()),
             EditPredictionRejectReason::Discarded,
             false,
+            None,
             None,
             cx,
         );
@@ -2270,6 +2361,7 @@ fn empty_response() -> PredictEditsV3Response {
 
 fn prompt_from_request(request: &PredictEditsV3Request) -> String {
     zeta_prompt::format_zeta_prompt(&request.input, zeta_prompt::ZetaFormat::default())
+        .expect("default zeta prompt formatting should succeed in edit prediction tests")
 }
 
 fn assert_no_predict_request_ready(
@@ -2393,8 +2485,6 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
             can_collect_data: false,
             repo_url: None,
         },
-        buffer_snapshotted_at: Instant::now(),
-        response_received_at: Instant::now(),
         model_version: None,
     };
 
@@ -3114,6 +3204,7 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
             &snapshot_a,
             editable_region_a.clone(),
             None,
+            Duration::from_secs(0),
             cx,
         );
     });
@@ -3177,6 +3268,7 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
             &snapshot_b2,
             editable_region_b.clone(),
             None,
+            Duration::from_secs(0),
             cx,
         );
     });

@@ -392,8 +392,7 @@ TBD: Centered layout related settings
 
 ```json [settings]
   "edit_predictions": {
-    "mode": "eager",                // Automatically show (eager) or hold-alt (subtle)
-    "enabled_in_text_threads": true // Show/hide predictions in agent text threads
+    "mode": "eager"                  // Automatically show (eager) or hold-alt (subtle)
   },
   "show_edit_predictions": true     // Show/hide predictions in editor
 ```

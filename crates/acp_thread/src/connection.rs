@@ -2,20 +2,15 @@ use crate::AcpThread;
 use agent_client_protocol::{self as acp};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use collections::IndexMap;
+use collections::{HashMap, IndexMap};
 use gpui::{Entity, SharedString, Task};
 use language_model::LanguageModelProviderId;
-use project::Project;
+use project::{AgentId, Project};
 use serde::{Deserialize, Serialize};
-use std::{
-    any::Any,
-    error::Error,
-    fmt,
-    path::{Path, PathBuf},
-    rc::Rc,
-    sync::Arc,
-};
+use std::{any::Any, error::Error, fmt, path::PathBuf, rc::Rc, sync::Arc};
+use task::{HideStrategy, SpawnInTerminal, TaskId};
 use ui::{App, IconName};
+use util::path_list::PathList;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
@@ -27,13 +22,37 @@ impl UserMessageId {
     }
 }
 
+pub fn build_terminal_auth_task(
+    id: String,
+    label: String,
+    command: String,
+    args: Vec<String>,
+    env: HashMap<String, String>,
+) -> SpawnInTerminal {
+    SpawnInTerminal {
+        id: TaskId(id),
+        full_label: label.clone(),
+        label: label.clone(),
+        command: Some(command),
+        args,
+        command_label: label,
+        env,
+        use_new_terminal: true,
+        allow_concurrent_runs: true,
+        hide: HideStrategy::Always,
+        ..Default::default()
+    }
+}
+
 pub trait AgentConnection {
+    fn agent_id(&self) -> AgentId;
+
     fn telemetry_id(&self) -> SharedString;
 
     fn new_session(
         self: Rc<Self>,
         project: Entity<Project>,
-        cwd: &Path,
+        _work_dirs: PathList,
         cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>>;
 
@@ -47,7 +66,7 @@ pub trait AgentConnection {
         self: Rc<Self>,
         _session_id: acp::SessionId,
         _project: Entity<Project>,
-        _cwd: &Path,
+        _work_dirs: PathList,
         _title: Option<SharedString>,
         _cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
@@ -78,7 +97,7 @@ pub trait AgentConnection {
         self: Rc<Self>,
         _session_id: acp::SessionId,
         _project: Entity<Project>,
-        _cwd: &Path,
+        _work_dirs: PathList,
         _title: Option<SharedString>,
         _cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
@@ -93,6 +112,14 @@ pub trait AgentConnection {
     }
 
     fn auth_methods(&self) -> &[acp::AuthMethod];
+
+    fn terminal_auth_task(
+        &self,
+        _method: &acp::AuthMethodId,
+        _cx: &App,
+    ) -> Option<SpawnInTerminal> {
+        None
+    }
 
     fn authenticate(&self, method: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>>;
 
@@ -243,7 +270,7 @@ impl AgentSessionListResponse {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgentSessionInfo {
     pub session_id: acp::SessionId,
-    pub cwd: Option<PathBuf>,
+    pub work_dirs: Option<PathList>,
     pub title: Option<SharedString>,
     pub updated_at: Option<DateTime<Utc>>,
     pub created_at: Option<DateTime<Utc>>,
@@ -254,7 +281,7 @@ impl AgentSessionInfo {
     pub fn new(session_id: impl Into<acp::SessionId>) -> Self {
         Self {
             session_id: session_id.into(),
-            cwd: None,
+            work_dirs: None,
             title: None,
             updated_at: None,
             created_at: None,
@@ -443,18 +470,53 @@ impl AgentModelList {
 pub struct PermissionOptionChoice {
     pub allow: acp::PermissionOption,
     pub deny: acp::PermissionOption,
+    pub sub_patterns: Vec<String>,
 }
 
 impl PermissionOptionChoice {
     pub fn label(&self) -> SharedString {
         self.allow.name.clone().into()
     }
+
+    /// Build a `SelectedPermissionOutcome` for this choice.
+    ///
+    /// If the choice carries `sub_patterns`, they are attached as
+    /// `SelectedPermissionParams::Terminal`.
+    pub fn build_outcome(&self, is_allow: bool) -> crate::SelectedPermissionOutcome {
+        let option = if is_allow { &self.allow } else { &self.deny };
+
+        let params = if !self.sub_patterns.is_empty() {
+            Some(crate::SelectedPermissionParams::Terminal {
+                patterns: self.sub_patterns.clone(),
+            })
+        } else {
+            None
+        };
+
+        crate::SelectedPermissionOutcome::new(option.option_id.clone(), option.kind).params(params)
+    }
+}
+
+/// Pairs a tool's permission pattern with its display name
+///
+/// For example, a pattern of `^cargo\\s+build(\\s|$)` would display as `cargo
+/// build`. It's handy to keep these together rather than trying to derive
+/// one from the other.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PermissionPattern {
+    pub pattern: String,
+    pub display_name: String,
 }
 
 #[derive(Debug, Clone)]
 pub enum PermissionOptions {
     Flat(Vec<acp::PermissionOption>),
     Dropdown(Vec<PermissionOptionChoice>),
+    DropdownWithPatterns {
+        choices: Vec<PermissionOptionChoice>,
+        patterns: Vec<PermissionPattern>,
+        tool_name: String,
+    },
 }
 
 impl PermissionOptions {
@@ -462,6 +524,7 @@ impl PermissionOptions {
         match self {
             PermissionOptions::Flat(options) => options.is_empty(),
             PermissionOptions::Dropdown(options) => options.is_empty(),
+            PermissionOptions::DropdownWithPatterns { choices, .. } => choices.is_empty(),
         }
     }
 
@@ -480,6 +543,17 @@ impl PermissionOptions {
                     None
                 }
             }),
+            PermissionOptions::DropdownWithPatterns { choices, .. } => {
+                choices.iter().find_map(|choice| {
+                    if choice.allow.kind == kind {
+                        Some(&choice.allow)
+                    } else if choice.deny.kind == kind {
+                        Some(&choice.deny)
+                    } else {
+                        None
+                    }
+                })
+            }
         }
     }
 
@@ -491,6 +565,57 @@ impl PermissionOptions {
     pub fn deny_once_option_id(&self) -> Option<acp::PermissionOptionId> {
         self.first_option_of_kind(acp::PermissionOptionKind::RejectOnce)
             .map(|option| option.option_id.clone())
+    }
+
+    /// Build a `SelectedPermissionOutcome` for the `DropdownWithPatterns`
+    /// variant when the user has checked specific pattern indices.
+    ///
+    /// Returns `Some` with the always-allow/deny outcome when at least one
+    /// pattern is checked. Returns `None` when zero patterns are checked,
+    /// signaling that the caller should degrade to allow-once / deny-once.
+    ///
+    /// Panics (debug) or returns `None` (release) if called on a non-
+    /// `DropdownWithPatterns` variant.
+    pub fn build_outcome_for_checked_patterns(
+        &self,
+        checked_indices: &[usize],
+        is_allow: bool,
+    ) -> Option<crate::SelectedPermissionOutcome> {
+        let PermissionOptions::DropdownWithPatterns {
+            choices, patterns, ..
+        } = self
+        else {
+            debug_assert!(
+                false,
+                "build_outcome_for_checked_patterns called on non-DropdownWithPatterns"
+            );
+            return None;
+        };
+
+        let checked_patterns: Vec<String> = patterns
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| checked_indices.contains(index))
+            .map(|(_, cp)| cp.pattern.clone())
+            .collect();
+
+        if checked_patterns.is_empty() {
+            return None;
+        }
+
+        // Use the first choice (the "Always" choice) as the base for the outcome.
+        let always_choice = choices.first()?;
+        let option = if is_allow {
+            &always_choice.allow
+        } else {
+            &always_choice.deny
+        };
+
+        let outcome = crate::SelectedPermissionOutcome::new(option.option_id.clone(), option.kind)
+            .params(Some(crate::SelectedPermissionParams::Terminal {
+                patterns: checked_patterns,
+            }));
+        Some(outcome)
     }
 }
 
@@ -540,16 +665,25 @@ mod test_support {
         )
     }
 
-    #[derive(Clone, Default)]
+    #[derive(Clone)]
     pub struct StubAgentConnection {
         sessions: Arc<Mutex<HashMap<acp::SessionId, Session>>>,
         permission_requests: HashMap<acp::ToolCallId, PermissionOptions>,
         next_prompt_updates: Arc<Mutex<Vec<acp::SessionUpdate>>>,
+        supports_load_session: bool,
+        agent_id: AgentId,
+        telemetry_id: SharedString,
     }
 
     struct Session {
         thread: WeakEntity<AcpThread>,
         response_tx: Option<oneshot::Sender<acp::StopReason>>,
+    }
+
+    impl Default for StubAgentConnection {
+        fn default() -> Self {
+            Self::new()
+        }
     }
 
     impl StubAgentConnection {
@@ -558,6 +692,9 @@ mod test_support {
                 next_prompt_updates: Default::default(),
                 permission_requests: HashMap::default(),
                 sessions: Arc::default(),
+                supports_load_session: false,
+                agent_id: AgentId::new("stub"),
+                telemetry_id: "stub".into(),
             }
         }
 
@@ -571,6 +708,58 @@ mod test_support {
         ) -> Self {
             self.permission_requests = permission_requests;
             self
+        }
+
+        pub fn with_supports_load_session(mut self, supports_load_session: bool) -> Self {
+            self.supports_load_session = supports_load_session;
+            self
+        }
+
+        pub fn with_agent_id(mut self, agent_id: AgentId) -> Self {
+            self.agent_id = agent_id;
+            self
+        }
+
+        pub fn with_telemetry_id(mut self, telemetry_id: SharedString) -> Self {
+            self.telemetry_id = telemetry_id;
+            self
+        }
+
+        fn create_session(
+            self: Rc<Self>,
+            session_id: acp::SessionId,
+            project: Entity<Project>,
+            work_dirs: PathList,
+            title: Option<SharedString>,
+            cx: &mut gpui::App,
+        ) -> Entity<AcpThread> {
+            let action_log = cx.new(|_| ActionLog::new(project.clone()));
+            let thread = cx.new(|cx| {
+                AcpThread::new(
+                    None,
+                    title,
+                    Some(work_dirs),
+                    self.clone(),
+                    project,
+                    action_log,
+                    session_id.clone(),
+                    watch::Receiver::constant(
+                        acp::PromptCapabilities::new()
+                            .image(true)
+                            .audio(true)
+                            .embedded_context(true),
+                    ),
+                    cx,
+                )
+            });
+            self.sessions.lock().insert(
+                session_id,
+                Session {
+                    thread: thread.downgrade(),
+                    response_tx: None,
+                },
+            );
+            thread
         }
 
         pub fn send_update(
@@ -609,8 +798,12 @@ mod test_support {
     }
 
     impl AgentConnection for StubAgentConnection {
+        fn agent_id(&self) -> AgentId {
+            self.agent_id.clone()
+        }
+
         fn telemetry_id(&self) -> SharedString {
-            "stub".into()
+            self.telemetry_id.clone()
         }
 
         fn auth_methods(&self) -> &[acp::AuthMethod] {
@@ -627,38 +820,33 @@ mod test_support {
         fn new_session(
             self: Rc<Self>,
             project: Entity<Project>,
-            cwd: &Path,
+            work_dirs: PathList,
             cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             static NEXT_SESSION_ID: AtomicUsize = AtomicUsize::new(0);
             let session_id =
                 acp::SessionId::new(NEXT_SESSION_ID.fetch_add(1, Ordering::SeqCst).to_string());
-            let action_log = cx.new(|_| ActionLog::new(project.clone()));
-            let thread = cx.new(|cx| {
-                AcpThread::new(
-                    None,
-                    "Test",
-                    Some(cwd.to_path_buf()),
-                    self.clone(),
-                    project,
-                    action_log,
-                    session_id.clone(),
-                    watch::Receiver::constant(
-                        acp::PromptCapabilities::new()
-                            .image(true)
-                            .audio(true)
-                            .embedded_context(true),
-                    ),
-                    cx,
-                )
-            });
-            self.sessions.lock().insert(
-                session_id,
-                Session {
-                    thread: thread.downgrade(),
-                    response_tx: None,
-                },
-            );
+            let thread = self.create_session(session_id, project, work_dirs, None, cx);
+            Task::ready(Ok(thread))
+        }
+
+        fn supports_load_session(&self) -> bool {
+            self.supports_load_session
+        }
+
+        fn load_session(
+            self: Rc<Self>,
+            session_id: acp::SessionId,
+            project: Entity<Project>,
+            work_dirs: PathList,
+            title: Option<SharedString>,
+            cx: &mut App,
+        ) -> Task<Result<Entity<AcpThread>>> {
+            if !self.supports_load_session {
+                return Task::ready(Err(anyhow::Error::msg("Loading sessions is not supported")));
+            }
+
+            let thread = self.create_session(session_id, project, work_dirs, title, cx);
             Task::ready(Ok(thread))
         }
 

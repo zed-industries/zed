@@ -97,6 +97,10 @@ impl PaneGroup {
         }
     }
 
+    pub fn width_fraction_for_pane(&self, pane: &Entity<Pane>) -> Option<f32> {
+        self.root.width_fraction_for_pane(pane)
+    }
+
     pub fn pane_at_pixel_position(&self, coordinate: Point<Pixels>) -> Option<&Entity<Pane>> {
         match &self.root {
             Member::Pane(pane) => Some(pane),
@@ -299,6 +303,13 @@ impl Member {
             Member::Pane(entity) => entity.update(cx, |pane, _| {
                 pane.in_center_group = in_center_group;
             }),
+        }
+    }
+
+    fn width_fraction_for_pane(&self, pane: &Entity<Pane>) -> Option<f32> {
+        match self {
+            Member::Pane(found) => (found == pane).then_some(1.0),
+            Member::Axis(axis) => axis.width_fraction_for_pane(pane),
         }
     }
 }
@@ -881,6 +892,40 @@ impl PaneAxis {
                 };
             }
         }
+        None
+    }
+
+    fn width_fraction_for_pane(&self, pane: &Entity<Pane>) -> Option<f32> {
+        let flexes = self.flexes.lock();
+        let total_flex = flexes.iter().copied().sum::<f32>();
+
+        for (index, member) in self.members.iter().enumerate() {
+            let child_fraction = if total_flex > 0.0 {
+                flexes[index] / total_flex
+            } else {
+                1.0 / self.members.len() as f32
+            };
+
+            match member {
+                Member::Pane(found) => {
+                    if found == pane {
+                        return Some(match self.axis {
+                            Axis::Horizontal => child_fraction,
+                            Axis::Vertical => 1.0,
+                        });
+                    }
+                }
+                Member::Axis(axis) => {
+                    if let Some(descendant_fraction) = axis.width_fraction_for_pane(pane) {
+                        return Some(match self.axis {
+                            Axis::Horizontal => child_fraction * descendant_fraction,
+                            Axis::Vertical => descendant_fraction,
+                        });
+                    }
+                }
+            }
+        }
+
         None
     }
 

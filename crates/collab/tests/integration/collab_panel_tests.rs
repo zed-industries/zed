@@ -1,0 +1,356 @@
+use crate::TestServer;
+use collab_ui::CollabPanel;
+use collab_ui::collab_panel::{MoveChannelDown, MoveChannelUp, ToggleSelectedChannelFavorite};
+use gpui::TestAppContext;
+use menu::{SelectNext, SelectPrevious};
+
+#[gpui::test]
+async fn test_reorder_favorite_channels_independently_of_channels(cx: &mut TestAppContext) {
+    let (server, client) = TestServer::start1(cx).await;
+    let root = server
+        .make_channel("root", None, (&client, cx), &mut [])
+        .await;
+    let _ = server
+        .make_channel("channel-a", Some(root), (&client, cx), &mut [])
+        .await;
+    let _ = server
+        .make_channel("channel-b", Some(root), (&client, cx), &mut [])
+        .await;
+    let _ = server
+        .make_channel("channel-c", Some(root), (&client, cx), &mut [])
+        .await;
+
+    let (workspace, cx) = client.build_test_workspace(cx).await;
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        let panel = CollabPanel::new(workspace, window, cx);
+        workspace.add_panel(panel.clone(), window, cx);
+        panel
+    });
+    cx.run_until_parked();
+
+    // Verify initial state.
+    assert_eq!(
+        panel.read_with(cx, |panel, _| panel.entries_as_strings()),
+        &[
+            "[Channels]",
+            "  v root",
+            "    #️⃣ channel-a",
+            "    #️⃣ channel-b",
+            "    #️⃣ channel-c",
+            "[Contacts]",
+        ]
+    );
+
+    // Select channel-b.
+    panel.update_in(cx, |panel, window, cx| {
+        panel.select_next(&SelectNext, window, cx);
+        panel.select_next(&SelectNext, window, cx);
+        panel.select_next(&SelectNext, window, cx);
+        panel.select_next(&SelectNext, window, cx);
+    });
+    assert_eq!(
+        panel.read_with(cx, |panel, _| panel.entries_as_strings()),
+        &[
+            "[Channels]",
+            "  v root",
+            "    #️⃣ channel-a",
+            "    #️⃣ channel-b  <== selected",
+            "    #️⃣ channel-c",
+            "[Contacts]",
+        ]
+    );
+
+    // Favorite channel-b.
+    panel.update_in(cx, |panel, window, cx| {
+        panel.toggle_selected_channel_favorite(&ToggleSelectedChannelFavorite, window, cx);
+    });
+    assert_eq!(
+        panel.read_with(cx, |panel, _| panel.entries_as_strings()),
+        &[
+            "[Favorites]",
+            "  #️⃣ channel-b",
+            "[Channels]",
+            "  v root",
+            "    #️⃣ channel-a",
+            "    #️⃣ channel-b  <== selected",
+            "    #️⃣ channel-c",
+            "[Contacts]",
+        ]
+    );
+
+    // Select channel-c.
+    panel.update_in(cx, |panel, window, cx| {
+        panel.select_next(&SelectNext, window, cx);
+    });
+    // Favorite channel-c.
+    panel.update_in(cx, |panel, window, cx| {
+        panel.toggle_selected_channel_favorite(&ToggleSelectedChannelFavorite, window, cx);
+    });
+    assert_eq!(
+        panel.read_with(cx, |panel, _| panel.entries_as_strings()),
+        &[
+            "[Favorites]",
+            "  #️⃣ channel-b",
+            "  #️⃣ channel-c",
+            "[Channels]",
+            "  v root",
+            "    #️⃣ channel-a",
+            "    #️⃣ channel-b",
+            "    #️⃣ channel-c  <== selected",
+            "[Contacts]",
+        ]
+    );
+
+    // Navigate up to favorite channel-b .
+    panel.update_in(cx, |panel, window, cx| {
+        panel.select_previous(&SelectPrevious, window, cx);
+        panel.select_previous(&SelectPrevious, window, cx);
+        panel.select_previous(&SelectPrevious, window, cx);
+        panel.select_previous(&SelectPrevious, window, cx);
+        panel.select_previous(&SelectPrevious, window, cx);
+        panel.select_previous(&SelectPrevious, window, cx);
+    });
+    assert_eq!(
+        panel.read_with(cx, |panel, _| panel.entries_as_strings()),
+        &[
+            "[Favorites]",
+            "  #️⃣ channel-b  <== selected",
+            "  #️⃣ channel-c",
+            "[Channels]",
+            "  v root",
+            "    #️⃣ channel-a",
+            "    #️⃣ channel-b",
+            "    #️⃣ channel-c",
+            "[Contacts]",
+        ]
+    );
+
+    // Move favorite channel-b down.
+    // The Channels section should remain unchanged
+    panel.update_in(cx, |panel, window, cx| {
+        panel.move_channel_down(&MoveChannelDown, window, cx);
+    });
+    assert_eq!(
+        panel.read_with(cx, |panel, _| panel.entries_as_strings()),
+        &[
+            "[Favorites]",
+            "  #️⃣ channel-c",
+            "  #️⃣ channel-b  <== selected",
+            "[Channels]",
+            "  v root",
+            "    #️⃣ channel-a",
+            "    #️⃣ channel-b",
+            "    #️⃣ channel-c",
+            "[Contacts]",
+        ]
+    );
+
+    // Move favorite channel-b down again when it's already last (should be no-op).
+    panel.update_in(cx, |panel, window, cx| {
+        panel.move_channel_down(&MoveChannelDown, window, cx);
+    });
+    assert_eq!(
+        panel.read_with(cx, |panel, _| panel.entries_as_strings()),
+        &[
+            "[Favorites]",
+            "  #️⃣ channel-c",
+            "  #️⃣ channel-b  <== selected",
+            "[Channels]",
+            "  v root",
+            "    #️⃣ channel-a",
+            "    #️⃣ channel-b",
+            "    #️⃣ channel-c",
+            "[Contacts]",
+        ]
+    );
+
+    // Move favorite channel-b back up.
+    // The Channels section should remain unchanged.
+    panel.update_in(cx, |panel, window, cx| {
+        panel.move_channel_up(&MoveChannelUp, window, cx);
+    });
+    assert_eq!(
+        panel.read_with(cx, |panel, _| panel.entries_as_strings()),
+        &[
+            "[Favorites]",
+            "  #️⃣ channel-b  <== selected",
+            "  #️⃣ channel-c",
+            "[Channels]",
+            "  v root",
+            "    #️⃣ channel-a",
+            "    #️⃣ channel-b",
+            "    #️⃣ channel-c",
+            "[Contacts]",
+        ]
+    );
+
+    // Move favorite channel-b up again when it's already first (should be no-op).
+    panel.update_in(cx, |panel, window, cx| {
+        panel.move_channel_up(&MoveChannelUp, window, cx);
+    });
+    assert_eq!(
+        panel.read_with(cx, |panel, _| panel.entries_as_strings()),
+        &[
+            "[Favorites]",
+            "  #️⃣ channel-b  <== selected",
+            "  #️⃣ channel-c",
+            "[Channels]",
+            "  v root",
+            "    #️⃣ channel-a",
+            "    #️⃣ channel-b",
+            "    #️⃣ channel-c",
+            "[Contacts]",
+        ]
+    );
+
+    // Unfavorite channel-b.
+    // Selection should move to the next favorite (channel-c).
+    panel.update_in(cx, |panel, window, cx| {
+        panel.toggle_selected_channel_favorite(&ToggleSelectedChannelFavorite, window, cx);
+    });
+    assert_eq!(
+        panel.read_with(cx, |panel, _| panel.entries_as_strings()),
+        &[
+            "[Favorites]",
+            "  #️⃣ channel-c  <== selected",
+            "[Channels]",
+            "  v root",
+            "    #️⃣ channel-a",
+            "    #️⃣ channel-b",
+            "    #️⃣ channel-c",
+            "[Contacts]",
+        ]
+    );
+
+    // Unfavorite channel-c.
+    // Favorites section should disappear entirely.
+    // Selection should move to the next available item.
+    panel.update_in(cx, |panel, window, cx| {
+        panel.toggle_selected_channel_favorite(&ToggleSelectedChannelFavorite, window, cx);
+    });
+    assert_eq!(
+        panel.read_with(cx, |panel, _| panel.entries_as_strings()),
+        &[
+            "[Channels]",
+            "  v root  <== selected",
+            "    #️⃣ channel-a",
+            "    #️⃣ channel-b",
+            "    #️⃣ channel-c",
+            "[Contacts]",
+        ]
+    );
+}
+
+#[gpui::test]
+async fn test_reorder_channels_independently_of_favorites(cx: &mut TestAppContext) {
+    let (server, client) = TestServer::start1(cx).await;
+    let root = server
+        .make_channel("root", None, (&client, cx), &mut [])
+        .await;
+    let _ = server
+        .make_channel("channel-a", Some(root), (&client, cx), &mut [])
+        .await;
+    let _ = server
+        .make_channel("channel-b", Some(root), (&client, cx), &mut [])
+        .await;
+    let _ = server
+        .make_channel("channel-c", Some(root), (&client, cx), &mut [])
+        .await;
+
+    let (workspace, cx) = client.build_test_workspace(cx).await;
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        let panel = CollabPanel::new(workspace, window, cx);
+        workspace.add_panel(panel.clone(), window, cx);
+        panel
+    });
+    cx.run_until_parked();
+
+    // Select channel-a.
+    panel.update_in(cx, |panel, window, cx| {
+        panel.select_next(&SelectNext, window, cx);
+        panel.select_next(&SelectNext, window, cx);
+        panel.select_next(&SelectNext, window, cx);
+    });
+    assert_eq!(
+        panel.read_with(cx, |panel, _| panel.entries_as_strings()),
+        &[
+            "[Channels]",
+            "  v root",
+            "    #️⃣ channel-a  <== selected",
+            "    #️⃣ channel-b",
+            "    #️⃣ channel-c",
+            "[Contacts]",
+        ]
+    );
+
+    // Favorite channel-a.
+    panel.update_in(cx, |panel, window, cx| {
+        panel.toggle_selected_channel_favorite(&ToggleSelectedChannelFavorite, window, cx);
+    });
+
+    // Select channel-b.
+    // Favorite channel-b.
+    panel.update_in(cx, |panel, window, cx| {
+        panel.select_next(&SelectNext, window, cx);
+        panel.toggle_selected_channel_favorite(&ToggleSelectedChannelFavorite, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        panel.read_with(cx, |panel, _| panel.entries_as_strings()),
+        &[
+            "[Favorites]",
+            "  #️⃣ channel-a",
+            "  #️⃣ channel-b",
+            "[Channels]",
+            "  v root",
+            "    #️⃣ channel-a",
+            "    #️⃣ channel-b  <== selected",
+            "    #️⃣ channel-c",
+            "[Contacts]",
+        ]
+    );
+
+    // Select channel-a in the Channels section.
+    panel.update_in(cx, |panel, window, cx| {
+        panel.select_previous(&SelectPrevious, window, cx);
+    });
+    assert_eq!(
+        panel.read_with(cx, |panel, _| panel.entries_as_strings()),
+        &[
+            "[Favorites]",
+            "  #️⃣ channel-a",
+            "  #️⃣ channel-b",
+            "[Channels]",
+            "  v root",
+            "    #️⃣ channel-a  <== selected",
+            "    #️⃣ channel-b",
+            "    #️⃣ channel-c",
+            "[Contacts]",
+        ]
+    );
+
+    // Move channel-a down.
+    // The Favorites section should remain unchanged.
+    // Selection should remain on channel-a in the Channels section,
+    // not jump to channel-a in Favorites.
+    panel.update_in(cx, |panel, window, cx| {
+        panel.move_channel_down(&MoveChannelDown, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        panel.read_with(cx, |panel, _| panel.entries_as_strings()),
+        &[
+            "[Favorites]",
+            "  #️⃣ channel-a",
+            "  #️⃣ channel-b",
+            "[Channels]",
+            "  v root",
+            "    #️⃣ channel-b",
+            "    #️⃣ channel-a  <== selected",
+            "    #️⃣ channel-c",
+            "[Contacts]",
+        ]
+    );
+}

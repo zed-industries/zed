@@ -3,7 +3,6 @@ use anyhow::Result;
 use channel::ChannelStore;
 use client::{ChannelId, Client, Notification, User, UserStore};
 use collections::HashMap;
-use db::kvp::KEY_VALUE_STORE;
 use futures::StreamExt;
 use gpui::{
     AnyElement, App, AsyncWindowContext, ClickEvent, Context, DismissEvent, Element, Entity,
@@ -14,14 +13,14 @@ use gpui::{
 use notifications::{NotificationEntry, NotificationEvent, NotificationStore};
 use project::Fs;
 use rpc::proto;
-use serde::{Deserialize, Serialize};
+
 use settings::{Settings, SettingsStore};
 use std::{sync::Arc, time::Duration};
 use time::{OffsetDateTime, UtcOffset};
 use ui::{
     Avatar, Button, Icon, IconButton, IconName, Label, Tab, Tooltip, h_flex, prelude::*, v_flex,
 };
-use util::{ResultExt, TryFutureExt};
+use util::ResultExt;
 use workspace::notifications::{
     Notification as WorkspaceNotification, NotificationId, SuppressEvent,
 };
@@ -41,10 +40,8 @@ pub struct NotificationPanel {
     channel_store: Entity<ChannelStore>,
     notification_store: Entity<NotificationStore>,
     fs: Arc<dyn Fs>,
-    width: Option<Pixels>,
     active: bool,
     notification_list: ListState,
-    pending_serialization: Task<Option<()>>,
     subscriptions: Vec<gpui::Subscription>,
     workspace: WeakEntity<Workspace>,
     current_notification_toast: Option<(u64, Task<()>)>,
@@ -52,11 +49,6 @@ pub struct NotificationPanel {
     focus_handle: FocusHandle,
     mark_as_read_tasks: HashMap<u64, Task<Result<()>>>,
     unseen_notifications: Vec<NotificationEntry>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct SerializedNotificationPanel {
-    width: Option<Pixels>,
 }
 
 #[derive(Debug)]
@@ -146,15 +138,13 @@ impl NotificationPanel {
                 channel_store: ChannelStore::global(cx),
                 notification_store: NotificationStore::global(cx),
                 notification_list,
-                pending_serialization: Task::ready(None),
                 workspace: workspace_handle,
                 focus_handle: cx.focus_handle(),
+                subscriptions: Default::default(),
                 current_notification_toast: None,
-                subscriptions: Vec::new(),
                 active: false,
-                mark_as_read_tasks: HashMap::default(),
-                width: None,
-                unseen_notifications: Vec::new(),
+                mark_as_read_tasks: Default::default(),
+                unseen_notifications: Default::default(),
             };
 
             let mut old_dock_position = this.position(window, cx);
@@ -186,44 +176,8 @@ impl NotificationPanel {
         cx: AsyncWindowContext,
     ) -> Task<Result<Entity<Self>>> {
         cx.spawn(async move |cx| {
-            let serialized_panel = if let Some(panel) = cx
-                .background_spawn(async move { KEY_VALUE_STORE.read_kvp(NOTIFICATION_PANEL_KEY) })
-                .await
-                .log_err()
-                .flatten()
-            {
-                Some(serde_json::from_str::<SerializedNotificationPanel>(&panel)?)
-            } else {
-                None
-            };
-
-            workspace.update_in(cx, |workspace, window, cx| {
-                let panel = Self::new(workspace, window, cx);
-                if let Some(serialized_panel) = serialized_panel {
-                    panel.update(cx, |panel, cx| {
-                        panel.width = serialized_panel.width.map(|w| w.round());
-                        cx.notify();
-                    });
-                }
-                panel
-            })
+            workspace.update_in(cx, |workspace, window, cx| Self::new(workspace, window, cx))
         })
-    }
-
-    fn serialize(&mut self, cx: &mut Context<Self>) {
-        let width = self.width;
-        self.pending_serialization = cx.background_spawn(
-            async move {
-                KEY_VALUE_STORE
-                    .write_kvp(
-                        NOTIFICATION_PANEL_KEY.into(),
-                        serde_json::to_string(&SerializedNotificationPanel { width })?,
-                    )
-                    .await?;
-                anyhow::Ok(())
-            }
-            .log_err(),
-        );
     }
 
     fn render_notification(
@@ -635,15 +589,8 @@ impl Panel for NotificationPanel {
         });
     }
 
-    fn size(&self, _: &Window, cx: &App) -> Pixels {
-        self.width
-            .unwrap_or_else(|| NotificationPanelSettings::get_global(cx).default_width)
-    }
-
-    fn set_size(&mut self, size: Option<Pixels>, _: &mut Window, cx: &mut Context<Self>) {
-        self.width = size;
-        self.serialize(cx);
-        cx.notify();
+    fn default_size(&self, _: &Window, cx: &App) -> Pixels {
+        NotificationPanelSettings::get_global(cx).default_width
     }
 
     fn set_active(&mut self, active: bool, _: &mut Window, cx: &mut Context<Self>) {
@@ -677,6 +624,9 @@ impl Panel for NotificationPanel {
     }
 
     fn icon_label(&self, _window: &Window, cx: &App) -> Option<String> {
+        if !NotificationPanelSettings::get_global(cx).show_count_badge {
+            return None;
+        }
         let count = self.notification_store.read(cx).unread_notification_count();
         if count == 0 {
             None
@@ -690,7 +640,7 @@ impl Panel for NotificationPanel {
     }
 
     fn activation_priority(&self) -> u32 {
-        8
+        4
     }
 }
 

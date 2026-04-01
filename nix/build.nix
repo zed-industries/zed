@@ -180,6 +180,7 @@ let
         libxkbcommon
         wayland
         gpu-lib
+        libglvnd
         xorg.libX11
         xorg.libxcb
         libdrm
