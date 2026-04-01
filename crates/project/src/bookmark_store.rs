@@ -278,10 +278,6 @@ impl BookmarkStore {
         cx.notify();
     }
 
-    pub fn bookmarks(&self) -> &BTreeMap<Arc<Path>, BookmarkEntry> {
-        &self.bookmarks
-    }
-
     /// Returns the bookmarks for a given buffer within an optional range.
     /// Only returns bookmarks that have been resolved to anchors (loaded).
     /// Unloaded bookmarks for the given buffer will be resolved first.
