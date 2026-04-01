@@ -46,9 +46,9 @@ use http_client::HttpClient;
 mod command_json;
 mod devcontainer_api;
 mod devcontainer_json;
+mod devcontainer_manifest;
 mod docker;
 mod features;
-mod model;
 mod oci;
 
 use devcontainer_api::read_default_devcontainer_configuration;

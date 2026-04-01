@@ -18,8 +18,8 @@ use worktree::Snapshot;
 use crate::{
     DevContainerContext, DevContainerFeature, DevContainerTemplate,
     devcontainer_json::DevContainer,
+    devcontainer_manifest::{read_devcontainer_configuration, spawn_dev_container},
     devcontainer_templates_repository, get_latest_oci_manifest, get_oci_token, ghcr_registry,
-    model::{read_devcontainer_configuration, spawn_dev_container},
     oci::download_oci_tarball,
 };
 

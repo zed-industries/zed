@@ -1304,6 +1304,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
         }
 
         let remote_user = get_remote_user_from_config(&image, self)?;
+        dbg!(&remote_user);
         if remote_user == "root" || remote_user.chars().all(|c| c.is_ascii_digit()) {
             return Ok(image);
         }
@@ -1351,18 +1352,11 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                     })
             })?;
 
-        let temp_dir = std::env::temp_dir()
-            .join("devcontainer-zed")
-            .join(format!("update-uid-{}", std::process::id()));
-
-        self.fs.create_dir(&temp_dir).await.map_err(|e| {
-            log::error!("Failed to create temp dir for UID update: {e}");
-            DevContainerError::FilesystemError
-        })?;
-
         let dockerfile_content = self.generate_update_uid_dockerfile();
 
-        let dockerfile_path = temp_dir.join("updateUID.Dockerfile");
+        let dockerfile_path = features_build_info
+            .features_content_dir
+            .join("updateUID.Dockerfile");
         self.fs
             .write(&dockerfile_path, dockerfile_content.as_bytes())
             .await
@@ -1370,12 +1364,6 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                 log::error!("Failed to write updateUID Dockerfile: {e}");
                 DevContainerError::FilesystemError
             })?;
-
-        let empty_context_dir = temp_dir.join("empty-context");
-        self.fs.create_dir(&empty_context_dir).await.map_err(|e| {
-            log::error!("Failed to create empty context dir: {e}");
-            DevContainerError::FilesystemError
-        })?;
 
         let updated_image_tag = override_tag
             .map(|t| t.to_string())
@@ -1393,7 +1381,9 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
         command.args(["--build-arg", &format!("NEW_UID={}", host_uid)]);
         command.args(["--build-arg", &format!("NEW_GID={}", host_gid)]);
         command.args(["--build-arg", &format!("IMAGE_USER={}", image_user)]);
-        command.arg(empty_context_dir.display().to_string());
+        command.arg(features_build_info.empty_context_dir.display().to_string());
+
+        dbg!(&command);
 
         let output = self
             .command_runner
@@ -1616,6 +1606,8 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             command.args(&["-f", &docker_compose_file.display().to_string()]);
         }
         command.args(&["up", "-d"]);
+
+        dbg!(&command);
 
         let output = self
             .command_runner
@@ -2374,14 +2366,14 @@ mod test {
         command_json::CommandRunner,
         devcontainer_api::DevContainerError,
         devcontainer_json::MountDefinition,
+        devcontainer_manifest::{
+            ConfigStatus, DevContainerManifest, DockerBuildResources, DockerComposeResources,
+            DockerInspect, extract_feature_id, find_primary_service, get_remote_user_from_config,
+        },
         docker::{
             DockerClient, DockerComposeConfig, DockerComposeService, DockerComposeServiceBuild,
             DockerComposeVolume, DockerConfigLabels, DockerInspectConfig, DockerInspectMount,
             DockerPs,
-        },
-        model::{
-            ConfigStatus, DevContainerManifest, DockerBuildResources, DockerComposeResources,
-            DockerInspect, extract_feature_id, find_primary_service, get_remote_user_from_config,
         },
         oci::TokenResponse,
     };
