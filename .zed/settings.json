@@ -70,7 +70,7 @@
     "**/.settings",
   ],
   "read_only_files": ["**/.rustup/**", "**/.cargo/registry/**", "**/.cargo/git/**", "target/**/*.rs", "**/*.lock"],
-  "profiles": {
+  "project_profiles": {
     "iOS": {
       "lsp": {
         "rust-analyzer": {

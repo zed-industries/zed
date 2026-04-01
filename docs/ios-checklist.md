@@ -64,6 +64,15 @@ full architectural details.
 - [x] Bottom dock resize (flex value not passed — shared bug, fixed)
 - [x] Workspace database: persist/restore dock state (panel sizes, visibility)
 - [x] Workspace database: restore open files (deserialize pane items on relaunch)
+- [x] SSH-backed terminal panel with full keybindings
+- [x] Terminal session restore (initial working directory)
+- [x] Trackpad scroll targeting (hover position, momentum fix)
+- [x] UIPointerInteraction: custom resize cursors (double-chevron CGPath)
+- [x] Settings profile selector + per-workspace persistence
+- [x] Project-level profiles (`project_profiles` in `.zed/settings.json`)
+- [x] Active profile sync to remote server (UpdateUserSettings proto change)
+- [x] Status bar prefix/suffix survives SSH reconnection
+- [x] Dev remote server build and deployment workflow
 
 ---
 

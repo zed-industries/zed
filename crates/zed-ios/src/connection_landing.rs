@@ -488,7 +488,7 @@ impl Render for WorkspaceSwitcher {
     }
 }
 
-struct StatusBarSuffix;
+pub struct StatusBarSuffix;
 
 impl Render for StatusBarSuffix {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {

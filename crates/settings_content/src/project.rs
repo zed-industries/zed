@@ -95,7 +95,7 @@ pub struct ProjectSettingsContent {
     /// Example:
     /// ```json
     /// {
-    ///   "profiles": {
+    ///   "project_profiles": {
     ///     "iOS": {
     ///       "lsp": {
     ///         "rust-analyzer": {
@@ -107,7 +107,7 @@ pub struct ProjectSettingsContent {
     /// }
     /// ```
     #[serde(default)]
-    pub profiles: IndexMap<String, ProjectSettingsContent>,
+    pub project_profiles: IndexMap<String, ProjectSettingsContent>,
 }
 
 #[with_fallible_options]

@@ -541,6 +541,30 @@ mod ios {
                         status_bar.add_right_item(cursor_position, window, cx);
                     });
 
+                    // Status bar prefix/suffix for remote workspaces.
+                    // Set here (in addition to create_workspace_for_path) so they
+                    // survive SSH reconnection, which may recreate the workspace.
+                    if let Some(conn) = workspace.project().read(cx).remote_connection_options(cx) {
+                        if let remote::RemoteConnectionOptions::Ssh(ref opts) = conn {
+                            let host = opts.host.to_string();
+                            let username = opts.username.clone().unwrap_or_default();
+                            let port = opts.port.unwrap_or(22);
+                            let path = workspace
+                                .worktrees(cx)
+                                .next()
+                                .map(|wt| wt.read(cx).abs_path().to_string_lossy().to_string())
+                                .unwrap_or_default();
+                            let switcher = cx.new(|_cx| {
+                                crate::connection_landing::WorkspaceSwitcher::new(
+                                    &path, &host, &username, port,
+                                )
+                            });
+                            let suffix = cx.new(|_cx| crate::connection_landing::StatusBarSuffix);
+                            workspace.set_status_bar_prefix(switcher.into(), cx);
+                            workspace.set_status_bar_suffix(suffix.into(), cx);
+                        }
+                    }
+
                     // Toolbar items for panes
                     let center_pane = workspace.active_pane().clone();
                     initialize_pane(workspace, &center_pane, window, cx);

@@ -908,17 +908,26 @@ impl SettingsObserver {
         if cx.try_global::<SettingsStore>().is_some() {
             if let Some(upstream_client) = upstream_client {
                 let mut user_settings = None;
+                let mut last_profile: Option<String> = None;
+                let upstream_client_for_profile = upstream_client.clone();
                 user_settings_watcher = Some(cx.observe_global::<SettingsStore>(move |_, cx| {
                     if let Some(new_settings) = cx.global::<SettingsStore>().raw_user_settings() {
-                        if Some(new_settings) != user_settings.as_ref() {
+                        let active_profile = cx
+                            .try_global::<settings::ActiveSettingsProfileName>()
+                            .map(|p| p.0.clone());
+                        if Some(new_settings) != user_settings.as_ref()
+                            || active_profile != last_profile
+                        {
                             if let Some(new_settings_string) =
                                 serde_json::to_string(new_settings).ok()
                             {
                                 user_settings = Some(new_settings.clone());
+                                last_profile = active_profile.clone();
                                 upstream_client
                                     .send(proto::UpdateUserSettings {
                                         project_id: REMOTE_SERVER_PROJECT_ID,
                                         contents: new_settings_string,
+                                        active_profile,
                                     })
                                     .log_err();
                             }
@@ -1059,6 +1068,15 @@ impl SettingsObserver {
                 .context("setting new user settings")?;
             anyhow::Ok(())
         })?;
+        // Apply the active profile if the client sent one. Old clients
+        // that don't send this field leave it as None (no change).
+        cx.update(|cx| {
+            if let Some(ref profile) = envelope.payload.active_profile {
+                cx.set_global(settings::ActiveSettingsProfileName(profile.clone()));
+            } else if cx.has_global::<settings::ActiveSettingsProfileName>() {
+                cx.remove_global::<settings::ActiveSettingsProfileName>();
+            }
+        });
         Ok(())
     }
 

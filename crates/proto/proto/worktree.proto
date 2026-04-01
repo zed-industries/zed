@@ -159,6 +159,7 @@ enum LocalSettingsKind {
 message UpdateUserSettings {
   uint64 project_id = 1;
   string contents = 2;
+  optional string active_profile = 3;
 }
 
 message TrustWorktrees {

@@ -10,16 +10,18 @@ It is the Rust-side entry point for everything iOS-specific that doesn't belong 
 - `Session::new` is async, so workspace window opening is deferred to a `cx.spawn`.
 - `connection_landing.rs` — connection manager UI with saved hosts list, add/remove/edit
   mode, Tab navigation, focus indicators, and JSON persistence to `~/.config/zed/ssh_hosts.json`.
-- `TextSmokeView` in `lib.rs` is a legacy demo, still present but unused.
-- `keychain.rs`, `network_monitor.rs`, `ssh_transport.rs` are planned for Phase 2 (commented out).
+  Includes auto-reconnect, session persistence, workspace switcher with all saved paths,
+  and connection error states.
+- Terminal panel with SSH-backed terminals (PTY over SSH channel via russh).
+- Workspace state persisted to database (dock layout, open files, active profile).
+- Settings profile selector for project-level profiles.
 
 ## Responsibilities
 
-- C FFI entry points (`zed_ios_main`, `zed_ios_open_window`, `zed_ios_close_window`)
-- Full Zed app initialization (settings, theme, fonts, client, workspace)
-- (Phase 2) SSH key management via iOS Keychain
-- (Phase 2) Network connectivity monitoring via NWPathMonitor
-- (Phase 2) Embedded SSH transport using `russh`
+- C FFI entry points (`zed_ios_main`, `zed_ios_open_window`, `zed_ios_close_window`,
+  `zed_ios_will_resign_active`, `zed_ios_build_menus`)
+- Full Zed app initialization (settings, theme, fonts, client, workspace, terminal,
+  profile selector, panels)
 
 ## Build
 
@@ -32,6 +34,28 @@ cargo build -p zed-ios --target aarch64-apple-ios --release --no-default-feature
 
 Note: do not pass `--features ios` — there is no such feature flag; iOS-specific code
 is gated by `cfg(target_os = "ios")` automatically when targeting `aarch64-apple-ios*`.
+
+## Dev Remote Server
+
+The iPad connects to a remote `zed --headless` server. For development with features
+on this branch (e.g. settings profile sync), build and deploy the server binary:
+
+```bash
+# Build (release recommended for ongoing use, debug for iteration):
+cargo build -p remote_server --release
+
+# Deploy — copy to ~/.zed_server/ with a name matching the glob pattern:
+cp target/release/remote_server ~/.zed_server/zed-remote-server-dev-ipad
+
+# Kill running server so next connection picks up the new binary:
+pkill -9 -f "zed-remote-server"
+```
+
+The iPad's russh transport resolves the server binary via `ls -t ~/.zed_server/zed-remote-server-*`
+(newest by modification time). The dev binary must be newer than the stable release binary.
+
+Features requiring an updated server:
+- Settings profile sync (active profile sent via `UpdateUserSettings` proto message)
 
 ## This crate must NEVER
 
@@ -51,6 +75,7 @@ When adding a new feature or action to the iPad build:
 2. Add keybindings for the new actions to `assets/keymaps/default-ios.json`.
 3. Only reference actions whose crates are initialized — unregistered actions cause a
    load failure. Check `init_zed()` to see what's available.
+4. Touch `crates/assets/src/assets.rs` to force RustEmbed to pick up keymap changes.
 
 The vim keymap (`keymaps/vim.json`) is loaded separately with partial-failure tolerance
 since it may reference actions from crates not yet ported to iPad (e.g. terminal).

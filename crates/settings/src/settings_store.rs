@@ -446,7 +446,7 @@ impl SettingsStore {
             .flat_map(|settings| settings.profiles.keys().map(|k| k.as_str()))
             .collect();
         for local_settings in self.local_settings.values() {
-            for key in local_settings.project.profiles.keys() {
+            for key in local_settings.project.project_profiles.keys() {
                 if !profiles.contains(&key.as_str()) {
                     profiles.push(key.as_str());
                 }
@@ -1307,7 +1307,7 @@ impl SettingsStore {
             // in this project's .zed/settings.json.
             if let Some(active_profile) = cx.try_global::<ActiveSettingsProfileName>() {
                 if let Some(profile_settings) =
-                    local_settings.project.profiles.get(&active_profile.0)
+                    local_settings.project.project_profiles.get(&active_profile.0)
                 {
                     merged_local_settings.project.merge_from(profile_settings);
                 }
