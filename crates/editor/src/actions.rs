@@ -620,14 +620,20 @@ actions!(
         InsertUuidV7,
         /// Joins the current line with the next line.
         JoinLines,
+        /// Kills the previous word and pushes to kill ring (Emacs-style).
+        KillRingBackwardKillWord,
         /// Cuts to kill ring (Emacs-style).
         KillRingCut,
         /// Cuts the active selection to kill ring (Emacs-style).
         KillRingCutRegion,
+        /// Kills the next word and pushes to kill ring (Emacs-style).
+        KillRingKillWord,
         /// Saves the active selection to kill ring (Emacs-style).
         KillRingSave,
         /// Yanks from kill ring (Emacs-style).
         KillRingYank,
+        /// Cycles through kill ring entries, replacing the last yank (Emacs-style).
+        KillRingYankPop,
         /// Moves cursor down one line.
         LineDown,
         /// Moves cursor up one line.

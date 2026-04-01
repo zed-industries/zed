@@ -8879,6 +8879,142 @@ async fn test_kill_ring_region_actions_share_ring_and_clear_mark(cx: &mut TestAp
 }
 
 #[gpui::test]
+async fn test_kill_ring_kill_word(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("ˇone two three");
+    cx.update_editor(|editor, window, cx| {
+        editor.kill_ring_kill_word(&KillRingKillWord, window, cx)
+    });
+    cx.assert_editor_state("ˇ two three");
+    assert_eq!(kill_ring_texts(&mut cx), vec!["one".to_string()]);
+
+    cx.update_editor(|editor, window, cx| {
+        editor.kill_ring_kill_word(&KillRingKillWord, window, cx)
+    });
+    cx.assert_editor_state("ˇ three");
+    assert_eq!(kill_ring_texts(&mut cx), vec!["one two".to_string()]);
+
+    cx.set_state("ˇhello world");
+    cx.update_editor(|editor, window, cx| {
+        editor.kill_ring_kill_word(&KillRingKillWord, window, cx)
+    });
+    assert_eq!(
+        kill_ring_texts(&mut cx),
+        vec!["hello".to_string(), "one two".to_string()]
+    );
+}
+
+#[gpui::test]
+async fn test_kill_ring_backward_kill_word(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("one two threeˇ");
+    cx.update_editor(|editor, window, cx| {
+        editor.kill_ring_backward_kill_word(&KillRingBackwardKillWord, window, cx)
+    });
+    cx.assert_editor_state("one two ˇ");
+    assert_eq!(kill_ring_texts(&mut cx), vec!["three".to_string()]);
+
+    cx.update_editor(|editor, window, cx| {
+        editor.kill_ring_backward_kill_word(&KillRingBackwardKillWord, window, cx)
+    });
+    cx.assert_editor_state("one ˇ");
+    assert_eq!(kill_ring_texts(&mut cx), vec!["two three".to_string()]);
+}
+
+#[gpui::test]
+async fn test_kill_ring_yank_pop(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("ˇ");
+    cx.update_editor(|editor, window, cx| editor.kill_ring_yank_pop(&KillRingYankPop, window, cx));
+    cx.assert_editor_state("ˇ");
+
+    cx.set_state("ˇfirst");
+    cx.update_editor(|editor, window, cx| editor.kill_ring_cut(&KillRingCut, window, cx));
+    cx.set_state("ˇsecond");
+    cx.update_editor(|editor, window, cx| editor.kill_ring_cut(&KillRingCut, window, cx));
+    cx.set_state("ˇthird");
+    cx.update_editor(|editor, window, cx| editor.kill_ring_cut(&KillRingCut, window, cx));
+
+    assert_eq!(
+        kill_ring_texts(&mut cx),
+        vec![
+            "third".to_string(),
+            "second".to_string(),
+            "first".to_string()
+        ]
+    );
+
+    cx.set_state("before ˇ after");
+    cx.update_editor(|editor, window, cx| editor.kill_ring_yank(&KillRingYank, window, cx));
+    cx.assert_editor_state("before thirdˇ after");
+
+    cx.update_editor(|editor, window, cx| editor.kill_ring_yank_pop(&KillRingYankPop, window, cx));
+    cx.assert_editor_state("before secondˇ after");
+
+    cx.update_editor(|editor, window, cx| editor.kill_ring_yank_pop(&KillRingYankPop, window, cx));
+    cx.assert_editor_state("before firstˇ after");
+
+    cx.update_editor(|editor, window, cx| editor.kill_ring_yank_pop(&KillRingYankPop, window, cx));
+    cx.assert_editor_state("before thirdˇ after");
+}
+
+#[gpui::test]
+async fn test_kill_ring_yank_pop_undo(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("ˇfirst");
+    cx.update_editor(|editor, window, cx| editor.kill_ring_cut(&KillRingCut, window, cx));
+    cx.set_state("ˇsecond");
+    cx.update_editor(|editor, window, cx| editor.kill_ring_cut(&KillRingCut, window, cx));
+
+    cx.set_state("ˇ");
+    cx.update_editor(|editor, window, cx| editor.kill_ring_yank(&KillRingYank, window, cx));
+    cx.assert_editor_state("secondˇ");
+
+    cx.update_editor(|editor, window, cx| editor.kill_ring_yank_pop(&KillRingYankPop, window, cx));
+    cx.assert_editor_state("firstˇ");
+
+    cx.update_editor(|editor, window, cx| editor.undo(&Undo, window, cx));
+    cx.assert_editor_state("secondˇ");
+
+    cx.update_editor(|editor, window, cx| editor.undo(&Undo, window, cx));
+    cx.assert_editor_state("ˇ");
+}
+
+#[gpui::test]
+async fn test_kill_ring_yank_pop_invalidated_by_edit(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("ˇfirst");
+    cx.update_editor(|editor, window, cx| editor.kill_ring_cut(&KillRingCut, window, cx));
+    cx.set_state("ˇsecond");
+    cx.update_editor(|editor, window, cx| editor.kill_ring_cut(&KillRingCut, window, cx));
+
+    cx.set_state("ˇ");
+    cx.update_editor(|editor, window, cx| editor.kill_ring_yank(&KillRingYank, window, cx));
+    cx.assert_editor_state("secondˇ");
+
+    cx.update_editor(|editor, window, cx| editor.handle_input("x", window, cx));
+    cx.assert_editor_state("secondxˇ");
+
+    cx.update_editor(|editor, window, cx| editor.kill_ring_yank_pop(&KillRingYankPop, window, cx));
+    cx.assert_editor_state("secondxˇ");
+}
+
+#[gpui::test]
 async fn test_clipboard(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

@@ -576,8 +576,11 @@ impl EditorElement {
             register_action(editor, window, Editor::cut);
             register_action(editor, window, Editor::kill_ring_cut);
             register_action(editor, window, Editor::kill_ring_cut_region);
+            register_action(editor, window, Editor::kill_ring_kill_word);
+            register_action(editor, window, Editor::kill_ring_backward_kill_word);
             register_action(editor, window, Editor::kill_ring_save);
             register_action(editor, window, Editor::kill_ring_yank);
+            register_action(editor, window, Editor::kill_ring_yank_pop);
             register_action(editor, window, Editor::paste);
             register_action(editor, window, Editor::undo);
             register_action(editor, window, Editor::redo);

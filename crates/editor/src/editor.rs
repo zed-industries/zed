@@ -1314,6 +1314,8 @@ pub struct Editor {
     /// Whether we are temporarily displaying a diff other than git's
     temporary_diff_override: bool,
     selection_mark_mode: bool,
+    kill_ring_yank_state: Option<KillRingYankState>,
+    in_kill_ring_yank: bool,
     toggle_fold_multiple_buffers: Task<()>,
     _scroll_cursor_center_top_bottom_task: Task<()>,
     serialize_selections: Task<()>,
@@ -2588,6 +2590,8 @@ impl Editor {
             registered_buffers: HashMap::default(),
             _scroll_cursor_center_top_bottom_task: Task::ready(()),
             selection_mark_mode: false,
+            kill_ring_yank_state: None,
+            in_kill_ring_yank: false,
             toggle_fold_multiple_buffers: Task::ready(()),
             serialize_selections: Task::ready(()),
             serialize_folds: Task::ready(()),
@@ -11429,7 +11433,7 @@ impl Editor {
             });
         });
         let item = self.cut_common(false, window, cx);
-        self.push_to_kill_ring(item, allow_append, true, cx);
+        self.push_to_kill_ring(item, allow_append, false, true, cx);
         self.deactivate_selection_mark_mode(cx);
     }
 
@@ -11445,7 +11449,7 @@ impl Editor {
 
         let allow_append = self.should_append_to_kill_ring(cx);
         let item = self.cut_common(false, window, cx);
-        self.push_to_kill_ring(item, allow_append, true, cx);
+        self.push_to_kill_ring(item, allow_append, false, true, cx);
         self.deactivate_selection_mark_mode(cx);
     }
 
@@ -11454,7 +11458,7 @@ impl Editor {
             return;
         };
 
-        self.push_to_kill_ring(item, false, false, cx);
+        self.push_to_kill_ring(item, false, false, false, cx);
         self.deactivate_selection_mark_mode(cx);
     }
 
@@ -11473,7 +11477,118 @@ impl Editor {
         };
 
         cx.default_global::<KillRingState>().clear_pending_append();
+        let start_anchors = self.yank_start_anchors(cx);
         self.do_paste(&text, metadata, false, window, cx);
+        self.kill_ring_yank_state = Some(KillRingYankState {
+            index: 0,
+            start_anchors,
+        });
+    }
+
+    pub fn kill_ring_yank_pop(
+        &mut self,
+        _: &KillRingYankPop,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(yank_state) = self.kill_ring_yank_state.take() else {
+            return;
+        };
+
+        let entry_count = cx
+            .try_global::<KillRingState>()
+            .map_or(0, |state| state.entries.len());
+        if entry_count == 0 {
+            return;
+        }
+
+        let next_index = (yank_state.index + 1) % entry_count;
+
+        let Some((text, _metadata)) = cx
+            .try_global::<KillRingState>()
+            .and_then(|state| state.entry_at(next_index))
+            .map(KillRingEntry::to_paste_data)
+        else {
+            return;
+        };
+
+        let display_snapshot = self.display_snapshot(cx);
+        let buffer_snapshot = display_snapshot.buffer_snapshot();
+        let current_selections = self.selections.all::<Point>(&display_snapshot);
+        if current_selections.len() != yank_state.start_anchors.len() {
+            return;
+        }
+
+        let new_selections: Vec<_> = yank_state
+            .start_anchors
+            .iter()
+            .zip(current_selections.iter())
+            .map(|(start_anchor, current)| {
+                let start = start_anchor.to_point(buffer_snapshot);
+                Selection {
+                    id: current.id,
+                    start,
+                    end: current.head(),
+                    reversed: false,
+                    goal: SelectionGoal::None,
+                }
+            })
+            .collect();
+
+        self.in_kill_ring_yank = true;
+        self.transact(window, cx, |this, window, cx| {
+            this.change_selections(Default::default(), window, cx, |s| {
+                s.select(new_selections);
+            });
+            this.insert(&text, window, cx);
+        });
+
+        cx.default_global::<KillRingState>().clear_pending_append();
+        let start_anchors = yank_state.start_anchors;
+        self.in_kill_ring_yank = false;
+
+        self.kill_ring_yank_state = Some(KillRingYankState {
+            index: next_index,
+            start_anchors,
+        });
+    }
+
+    pub fn kill_ring_kill_word(
+        &mut self,
+        _: &KillRingKillWord,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let allow_append = self.should_append_to_kill_ring(cx);
+        self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.move_with(&mut |map, selection| {
+                if selection.is_empty() {
+                    let cursor = movement::next_word_end_or_newline(map, selection.head());
+                    selection.set_head(cursor, SelectionGoal::None);
+                }
+            });
+        });
+        let item = self.cut_common(false, window, cx);
+        self.push_to_kill_ring(item, allow_append, false, true, cx);
+    }
+
+    pub fn kill_ring_backward_kill_word(
+        &mut self,
+        _: &KillRingBackwardKillWord,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let allow_append = self.should_append_to_kill_ring(cx);
+        self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.move_with(&mut |map, selection| {
+                if selection.is_empty() {
+                    let cursor = movement::previous_word_start_or_newline(map, selection.head());
+                    selection.set_head(cursor, SelectionGoal::None);
+                }
+            });
+        });
+        let item = self.cut_common(false, window, cx);
+        self.push_to_kill_ring(item, allow_append, true, true, cx);
     }
 
     pub fn copy_and_trim(&mut self, _: &CopyAndTrim, _: &mut Window, cx: &mut Context<Self>) {
@@ -11563,6 +11678,7 @@ impl Editor {
         &mut self,
         item: ClipboardItem,
         allow_append: bool,
+        prepend: bool,
         set_pending_append: bool,
         cx: &mut Context<Self>,
     ) {
@@ -11575,6 +11691,7 @@ impl Editor {
         let item = cx.default_global::<KillRingState>().push(
             entry,
             allow_append,
+            prepend,
             set_pending_append.then_some(selections),
         );
 
@@ -11588,6 +11705,16 @@ impl Editor {
             self.selection_mark_mode = false;
             cx.notify();
         }
+    }
+
+    fn yank_start_anchors(&self, cx: &mut Context<Self>) -> Vec<Anchor> {
+        let display_snapshot = self.display_snapshot(cx);
+        let buffer = display_snapshot.buffer_snapshot();
+        self.selections
+            .all::<Point>(&display_snapshot)
+            .iter()
+            .map(|selection| buffer.anchor_before(selection.head()))
+            .collect()
     }
 
     fn do_copy(&self, strip_leading_indents: bool, cx: &mut Context<Self>) {
@@ -11949,6 +12076,7 @@ impl Editor {
             return;
         }
 
+        self.kill_ring_yank_state = None;
         if let Some(transaction_id) = self.buffer.update(cx, |buffer, cx| buffer.undo(cx)) {
             if let Some((selections, _)) =
                 self.selection_history.transaction(transaction_id).cloned()
@@ -11977,6 +12105,7 @@ impl Editor {
             return;
         }
 
+        self.kill_ring_yank_state = None;
         if let Some(transaction_id) = self.buffer.update(cx, |buffer, cx| buffer.redo(cx)) {
             if let Some((_, Some(selections))) =
                 self.selection_history.transaction(transaction_id).cloned()
@@ -17392,6 +17521,9 @@ impl Editor {
         cx: &mut Context<Self>,
         update: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>),
     ) -> Option<TransactionId> {
+        if !self.in_kill_ring_yank {
+            self.kill_ring_yank_state = None;
+        }
         self.with_selection_effects_deferred(window, cx, |this, window, cx| {
             this.start_transaction_at(Instant::now(), window, cx);
             update(this, window, cx);
@@ -24427,6 +24559,10 @@ impl KillRingState {
         self.entries.front()
     }
 
+    fn entry_at(&self, index: usize) -> Option<&KillRingEntry> {
+        self.entries.get(index)
+    }
+
     fn should_append_to_latest(&self, selections: &Arc<[Selection<Anchor>]>) -> bool {
         self.pending_append
             .as_ref()
@@ -24442,6 +24578,7 @@ impl KillRingState {
         &mut self,
         entry: KillRingEntry,
         allow_append: bool,
+        prepend: bool,
         next_append_selections: Option<Arc<[Selection<Anchor>]>>,
     ) -> Option<ClipboardItem> {
         if entry.is_empty() {
@@ -24451,7 +24588,7 @@ impl KillRingState {
 
         if allow_append
             && let Some(latest_entry) = self.entries.front_mut()
-            && latest_entry.append(entry.clone())
+            && latest_entry.append(entry.clone(), prepend)
         {
             self.pending_append =
                 next_append_selections.map(|selections| KillRingAppendState { selections });
@@ -24471,6 +24608,11 @@ impl Global for KillRingState {}
 #[derive(Clone)]
 struct KillRingAppendState {
     selections: Arc<[Selection<Anchor>]>,
+}
+
+struct KillRingYankState {
+    index: usize,
+    start_anchors: Vec<Anchor>,
 }
 
 #[derive(Clone)]
@@ -24520,7 +24662,7 @@ impl KillRingEntry {
             .all(|selection| selection.text.is_empty())
     }
 
-    fn append(&mut self, other: Self) -> bool {
+    fn append(&mut self, other: Self, prepend: bool) -> bool {
         if self.selections.len() != other.selections.len() {
             return false;
         }
@@ -24535,7 +24677,11 @@ impl KillRingEntry {
         }
 
         for (this, other) in self.selections.iter_mut().zip(other.selections) {
-            this.text.push_str(&other.text);
+            if prepend {
+                this.text.insert_str(0, &other.text);
+            } else {
+                this.text.push_str(&other.text);
+            }
             this.metadata.len = this.text.len();
         }
 
