@@ -1304,7 +1304,6 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
         }
 
         let remote_user = get_remote_user_from_config(&image, self)?;
-        dbg!(&remote_user);
         if remote_user == "root" || remote_user.chars().all(|c| c.is_ascii_digit()) {
             return Ok(image);
         }
@@ -1382,8 +1381,6 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
         command.args(["--build-arg", &format!("NEW_GID={}", host_gid)]);
         command.args(["--build-arg", &format!("IMAGE_USER={}", image_user)]);
         command.arg(features_build_info.empty_context_dir.display().to_string());
-
-        dbg!(&command);
 
         let output = self
             .command_runner
@@ -1606,8 +1603,6 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             command.args(&["-f", &docker_compose_file.display().to_string()]);
         }
         command.args(&["up", "-d"]);
-
-        dbg!(&command);
 
         let output = self
             .command_runner
