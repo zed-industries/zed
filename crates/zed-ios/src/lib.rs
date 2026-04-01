@@ -433,6 +433,7 @@ mod ios {
                 outline_panel::init(cx);
                 language_selector::init(cx);
                 theme_selector::init(cx);
+                settings_profile_selector::init(cx);
                 workspace::init(app_state.clone(), cx);
                 project_panel::init(cx);
                 recent_projects::init(cx);
@@ -802,6 +803,10 @@ mod ios {
                     MenuItem::action(
                         "Select Language…",
                         language_selector::Toggle,
+                    ),
+                    MenuItem::action(
+                        "Select Profile…",
+                        zed_actions::settings_profile_selector::Toggle,
                     ),
                     MenuItem::separator(),
                     MenuItem::action("Open Keymap", zed_actions::OpenKeymap),

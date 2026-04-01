@@ -105,7 +105,8 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use session::AppSession;
 use settings::{
-    CenteredPaddingSettings, Settings, SettingsLocation, SettingsStore, update_settings_file,
+    ActiveSettingsProfileName, CenteredPaddingSettings, Settings, SettingsLocation, SettingsStore,
+    update_settings_file,
 };
 
 use sqlez::{
@@ -6553,6 +6554,9 @@ impl Workspace {
                 let docks = build_serialized_docks(self, window, cx);
                 let window_bounds = Some(SerializedWindowBounds(window.window_bounds()));
 
+                let active_profile = cx
+                    .try_global::<ActiveSettingsProfileName>()
+                    .map(|p| p.0.clone());
                 let serialized_workspace = SerializedWorkspace {
                     id: database_id,
                     location,
@@ -6563,6 +6567,7 @@ impl Workspace {
                     docks,
                     centered_layout: self.centered_layout,
                     session_id: self.session_id.clone(),
+                    active_profile,
                     breakpoints,
                     window_id: Some(window.window_handle().window_id().as_u64()),
                     user_toolchains,
@@ -6789,6 +6794,10 @@ impl Workspace {
                         dock.serialized_dock = Some(serialized_dock.clone());
                         dock.restore_state(window, cx);
                     });
+                }
+
+                if let Some(profile) = serialized_workspace.active_profile {
+                    cx.set_global(ActiveSettingsProfileName(profile));
                 }
 
                 cx.notify();
