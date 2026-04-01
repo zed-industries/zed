@@ -709,7 +709,7 @@ impl Sidebar {
         // Derive active_entry from the active workspace's agent panel.
         // Draft is checked first because a conversation can have a session_id
         // before any messages are sent. However, a thread that's still loading
-        // also appears as a "draft" (no messages yet), so when we already have
+        // also appears as a "draft" (no messages yet).
         if let Some(active_ws) = &active_workspace {
             if let Some(panel) = active_ws.read(cx).panel::<AgentPanel>(cx) {
                 if panel.read(cx).active_thread_is_draft(cx)
