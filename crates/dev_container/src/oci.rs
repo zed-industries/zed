@@ -40,7 +40,7 @@ pub(crate) async fn get_oci_token(
     let url = format!(
         "https://{registry}/token?service={registry}&scope=repository:{repository_path}:pull",
     );
-    log::info!("Fetching OCI token from: {}", url);
+    log::debug!("Fetching OCI token from: {}", url);
     get_deserialized_response("", &url, client)
         .await
         .map_err(|e| {

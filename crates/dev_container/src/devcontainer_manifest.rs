@@ -65,7 +65,7 @@ impl DevContainerManifest {
         local_project_path: &Path,
     ) -> Result<Self, DevContainerError> {
         let config_path = local_project_path.join(local_config.config_path.clone());
-        log::info!("parsing devcontainer json found in {:?}", &config_path);
+        log::debug!("parsing devcontainer json found in {:?}", &config_path);
         let devcontainer_contents = context.fs.load(&config_path).await.map_err(|e| {
             log::error!("Unable to read devcontainer contents: {e}");
             DevContainerError::DevContainerParseFailed
@@ -319,7 +319,7 @@ impl DevContainerManifest {
         if dev_container.build_type() == DevContainerBuildType::Image
             && !dev_container.has_features()
         {
-            log::info!("No resources to download. Proceeding with just the image");
+            log::debug!("No resources to download. Proceeding with just the image");
             return Ok(());
         }
 
@@ -387,7 +387,7 @@ impl DevContainerManifest {
 
         for (index, (feature_ref, options)) in ordered_features.iter().enumerate() {
             if matches!(options, FeatureOptions::Bool(false)) {
-                log::info!(
+                log::debug!(
                     "Feature '{}' is disabled (set to false), skipping",
                     feature_ref
                 );
@@ -485,7 +485,7 @@ impl DevContainerManifest {
 
             let feature_manifest = FeatureManifest::new(consecutive_id, feature_dir, feature_json);
 
-            log::info!("Downloaded OCI feature content for '{}'", feature_ref);
+            log::debug!("Downloaded OCI feature content for '{}'", feature_ref);
 
             let env_content = feature_manifest
                 .write_feature_env(&self.fs, options)
@@ -535,7 +535,7 @@ impl DevContainerManifest {
                 DevContainerError::FilesystemError
             })?;
 
-        log::info!(
+        log::debug!(
             "Features build resources written to {:?}",
             build_info.features_content_dir
         );
@@ -710,7 +710,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                 Ok(DevContainerBuildResources::Docker(resources))
             }
             DevContainerBuildType::DockerCompose => {
-                log::info!("Using docker compose. Building extended compose files");
+                log::debug!("Using docker compose. Building extended compose files");
                 let docker_compose_resources = self.build_and_extend_compose_files().await?;
 
                 return Ok(DevContainerBuildResources::DockerCompose(
@@ -1236,7 +1236,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                     .as_ref()
                     .is_none_or(|features| features.is_empty())
                 {
-                    log::info!("No features to add. Using base image");
+                    log::debug!("No features to add. Using base image");
                     return Ok(base_image);
                 }
             }
@@ -1622,7 +1622,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
         }
 
         if let Some(docker_ps) = self.check_for_existing_container().await? {
-            log::info!("Found newly created dev container");
+            log::debug!("Found newly created dev container");
             return self.docker_client.inspect(&docker_ps.id).await;
         }
 
@@ -1656,7 +1656,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             ));
         }
 
-        log::info!("Checking for container that was started");
+        log::debug!("Checking for container that was started");
         let Some(docker_ps) = self.check_for_existing_container().await? else {
             log::error!("Could not locate container just created");
             return Err(DevContainerError::DevContainerParseFailed);
@@ -1813,7 +1813,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
         if new_container {
             if let Some(on_create_command) = &config.on_create_command {
                 for (command_name, command) in on_create_command.script_commands() {
-                    log::info!("Running on create command {command_name}");
+                    log::debug!("Running on create command {command_name}");
                     self.docker_client
                         .run_docker_exec(
                             &devcontainer_up.container_id,
@@ -1827,7 +1827,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             }
             if let Some(update_content_command) = &config.update_content_command {
                 for (command_name, command) in update_content_command.script_commands() {
-                    log::info!("Running update content command {command_name}");
+                    log::debug!("Running update content command {command_name}");
                     self.docker_client
                         .run_docker_exec(
                             &devcontainer_up.container_id,
@@ -1842,7 +1842,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
 
             if let Some(post_create_command) = &config.post_create_command {
                 for (command_name, command) in post_create_command.script_commands() {
-                    log::info!("Running post create command {command_name}");
+                    log::debug!("Running post create command {command_name}");
                     self.docker_client
                         .run_docker_exec(
                             &devcontainer_up.container_id,
@@ -1856,7 +1856,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             }
             if let Some(post_start_command) = &config.post_start_command {
                 for (command_name, command) in post_start_command.script_commands() {
-                    log::info!("Running post start command {command_name}");
+                    log::debug!("Running post start command {command_name}");
                     self.docker_client
                         .run_docker_exec(
                             &devcontainer_up.container_id,
@@ -1871,7 +1871,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
         }
         if let Some(post_attach_command) = &config.post_attach_command {
             for (command_name, command) in post_attach_command.script_commands() {
-                log::info!("Running post attach command {command_name}");
+                log::debug!("Running post attach command {command_name}");
                 self.docker_client
                     .run_docker_exec(
                         &devcontainer_up.container_id,
@@ -1894,7 +1894,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
         };
 
         if let Some(initialize_command) = &config.initialize_command {
-            log::info!("Running initialize command");
+            log::debug!("Running initialize command");
             initialize_command
                 .run(&self.command_runner, &self.local_project_directory)
                 .await
@@ -1908,12 +1908,12 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
         &self,
     ) -> Result<Option<DevContainerUp>, DevContainerError> {
         if let Some(docker_ps) = self.check_for_existing_container().await? {
-            log::info!("Dev container already found. Proceeding with it");
+            log::debug!("Dev container already found. Proceeding with it");
 
             let docker_inspect = self.docker_client.inspect(&docker_ps.id).await?;
 
             if !docker_inspect.is_running() {
-                log::info!("Container not running. Will attempt to start, and then proceed");
+                log::debug!("Container not running. Will attempt to start, and then proceed");
                 self.docker_client.start_container(&docker_ps.id).await?;
             }
 
@@ -1938,7 +1938,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
 
             Ok(Some(dev_container_up))
         } else {
-            log::info!("Existing container not found.");
+            log::debug!("Existing container not found.");
 
             Ok(None)
         }
@@ -2032,14 +2032,14 @@ pub(crate) async fn spawn_dev_container(
 
     devcontainer_manifest.parse_nonremote_vars()?;
 
-    log::info!("Checking for existing container");
+    log::debug!("Checking for existing container");
     if let Some(devcontainer) = devcontainer_manifest
         .check_for_existing_devcontainer()
         .await?
     {
         Ok(devcontainer)
     } else {
-        log::info!("Existing container not found. Building");
+        log::debug!("Existing container not found. Building");
 
         devcontainer_manifest.build_and_run().await
     }

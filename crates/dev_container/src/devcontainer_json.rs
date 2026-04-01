@@ -324,7 +324,7 @@ impl LifecycleScript {
         working_directory: &Path,
     ) -> Result<(), DevContainerError> {
         for (command_name, mut command) in self.script_commands() {
-            log::info!("Running script {command_name}");
+            log::debug!("Running script {command_name}");
 
             command.current_dir(working_directory);
 
@@ -342,7 +342,7 @@ impl LifecycleScript {
                 );
             }
             let std_out = String::from_utf8_lossy(&output.stdout);
-            log::info!("Command {command_name} output:\n {std_out}");
+            log::debug!("Command {command_name} output:\n {std_out}");
         }
         Ok(())
     }

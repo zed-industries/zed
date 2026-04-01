@@ -282,7 +282,7 @@ impl DockerClient for Docker {
             log::error!("Command produced a non-successful output. StdErr: {std_err}");
         }
         let std_out = String::from_utf8_lossy(&output.stdout);
-        log::info!("Command output:\n {std_out}");
+        log::debug!("Command output:\n {std_out}");
 
         Ok(())
     }
