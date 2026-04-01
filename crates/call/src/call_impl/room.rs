@@ -21,7 +21,7 @@ use language::LanguageRegistry;
 use livekit::{LocalTrackPublication, ParticipantIdentity, RoomEvent};
 use livekit_client::{self as livekit, AudioStream, TrackSid};
 use postage::{sink::Sink, stream::Stream, watch};
-use project::{CURRRENT_PROJECT_FEATURES, Project};
+use project::{CURRENT_PROJECT_FEATURES, Project};
 use settings::Settings as _;
 use std::sync::atomic::AtomicU64;
 use std::{future::Future, mem, rc::Rc, sync::Arc, time::Duration, time::Instant};
@@ -1237,7 +1237,7 @@ impl Room {
             worktrees: project.read(cx).worktree_metadata_protos(cx),
             is_ssh_project: project.read(cx).is_via_remote_server(),
             windows_paths: Some(project.read(cx).path_style(cx) == PathStyle::Windows),
-            features: CURRRENT_PROJECT_FEATURES
+            features: CURRENT_PROJECT_FEATURES
                 .iter()
                 .map(|s| s.to_string())
                 .collect(),

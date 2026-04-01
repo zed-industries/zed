@@ -1032,7 +1032,7 @@ impl DirectoryLister {
     }
 }
 
-pub const CURRRENT_PROJECT_FEATURES: &[&str] = &["new-style-anchors"];
+pub const CURRENT_PROJECT_FEATURES: &[&str] = &["new-style-anchors"];
 
 #[cfg(feature = "test-support")]
 pub const DEFAULT_COMPLETION_CONTEXT: CompletionContext = CompletionContext {
@@ -1646,7 +1646,7 @@ impl Project {
                 project_id: remote_id,
                 committer_email: committer.email,
                 committer_name: committer.name,
-                features: CURRRENT_PROJECT_FEATURES
+                features: CURRENT_PROJECT_FEATURES
                     .iter()
                     .map(|s| s.to_string())
                     .collect(),
