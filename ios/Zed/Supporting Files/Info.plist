@@ -45,6 +45,10 @@
 	<array>
 		<string>arm64</string>
 	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>Zed uses the camera for video calls during collaboration sessions.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Zed uses the microphone for voice calls during collaboration sessions.</string>
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>
 		<string>UIInterfaceOrientationLandscapeLeft</string>

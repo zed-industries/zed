@@ -90,7 +90,7 @@ HTTPS calls directly to LLM providers (Anthropic, OpenAI, etc.). Agent *tool* in
 transparently proxies them to the remote host via protobuf RPC. The headless server has
 **no agent, language model, or LLM provider infrastructure** — it only handles tool
 execution. API keys are configured in iPad-local settings or via Zed Pro account auth
-(see Phase 3.9). Remote settings sync is a Phase 3B enhancement (Phase 3.10).
+(see Phase 3.9). Remote settings sync is a future enhancement (Phase 3.10).
 
 ---
 
@@ -178,7 +178,7 @@ where the agent assumes local context:
 
 ### Architecture decision for iPad
 
-**Zed agent (built-in) — works with stock server (Phase 3A):**
+**Zed agent (built-in) — works with stock server:**
 
 The iPad runs the Thread engine locally, identical to desktop. LLM calls go directly from
 iPad to providers over HTTPS (reqwest, no platform deps). Tool invocations proxy through
@@ -191,7 +191,7 @@ The agent code doesn't know or care that it's on an iPad — it gets settings fr
 Limitation: iOS kills backgrounded apps after ~30s. Agent turns that outlast the user's
 attention span get killed. Acceptable for v1 with a warning.
 
-**External agents (Claude Code, Gemini CLI) — via SSH channels (Phase 3A):**
+**External agents (Claude Code, Gemini CLI) — via SSH channels:**
 
 External agents are discovered on the remote host and advertised to the client via
 `ExternalAgentsUpdated` proto. On desktop, the client spawns the binary locally. On iPad,
@@ -199,7 +199,7 @@ we open an SSH channel and exec the agent binary on the remote host — same tec
 the terminal (Phase 3.7). ACP messages flow over the channel's stdio. No server protocol
 changes needed.
 
-**Remote Zed agent execution — future enhancement (Phase 3B):**
+**Remote Zed agent execution — future enhancement:**
 
 Move `Thread.run_turn()` and LLM streaming to the headless server so agent turns survive
 iOS backgrounding. Requires new proto messages and agent initialization in
@@ -478,12 +478,9 @@ host on launch.
 decorations (from remote), remote terminal, agent panel with LLM integration, debug panel,
 edit predictions, collab panel, and git branch/worktree management.
 
-Phase 3 is split at a **protocol cut line**. Phase 3A items work with a stock
-`zed --headless` binary (the same one desktop Zed installs). Phase 3B items require
-running a modified server with new protocol messages — which means setting up a dev
-workflow for building and deploying a custom `remote_server` binary to the remote host.
-
-#### ═══ Phase 3A — Stock Server (no protocol changes) ═══
+Most items work with a stock `zed --headless` binary. Items requiring new protocol
+messages (remote agent execution, settings sync) need a custom `remote_server` binary —
+the dev workflow for building and deploying one is already established.
 
 #### 3.1 — Editor Interaction
 
@@ -586,7 +583,7 @@ remote host.
 - Requires a git repository in the workspace (validated in `set_start_thread_in()`)
 - Gated behind `AgentV2FeatureFlag` on desktop
 
-**iPad status: Works with stock server** — all git operations proxy through existing
+**iPad status: Works** — all git operations proxy through existing
 remote protocol messages. No additional crates needed beyond `git_ui` (already included).
 
 **Keybindings:**
@@ -775,12 +772,7 @@ implemented).
 - Tool invocations need end-to-end testing
 - Agent panel input lag (conversation re-rendering on every keystroke — needs profiling)
 
-#### ═══ Phase 3B — Modified Server (new protocol messages) ═══
-
-Phase 3B requires building and deploying a custom `remote_server` binary. The dev
-workflow is already established (see `crates/zed_ios/CLAUDE.md` for build/deploy steps).
-
-#### 3.10 — Remote Zed Agent Execution (survives backgrounding)
+#### 3.10 — Remote Zed Agent Execution (survives backgrounding, needs new proto)
 
 Move the Thread engine to the remote host so agent turns survive iOS backgrounding.
 Requires new proto messages for thread lifecycle and LLM streaming, plus server-side
@@ -1070,7 +1062,7 @@ Swift host app (AppDelegate, SceneDelegate)
 - **`russh` vs `ssh2` for the embedded SSH library?** (Recommendation: `russh` — pure
   Rust, no C dependencies, async-native, simpler cross-compilation.)
 
-**Before Phase 3A:**
+**Before Phase 3 features:**
 - What languages get in-process syntax highlighting (Tree-sitter grammars) as a fallback
   when disconnected? All of them? Or a curated set?
 - **What is the Jetsam memory budget we're targeting?** Profile on the lowest-RAM
@@ -1083,7 +1075,7 @@ Swift host app (AppDelegate, SceneDelegate)
 - **Edit prediction: what happens for Copilot users?** Silently fall back to Zed provider?
   Show a notification? Respect the setting and show no predictions?
 
-**Before Phase 3B:**
+**Before remote agent execution:**
 - **Remote terminal: how to design the PTY multiplexing protocol?** Should terminal I/O
   messages be length-prefixed binary (efficient) or protobuf-wrapped (consistent with
   the rest of the protocol)?
@@ -1101,3 +1093,28 @@ Swift host app (AppDelegate, SceneDelegate)
 - **Per-project profiles: should profile selection be global or per-workspace?**
   Per-workspace is more useful but requires scoping `ActiveSettingsProfileName` to a
   workspace entity rather than a global.
+
+---
+
+## Feature Delta: Desktop vs iPad
+
+Compared against desktop `crates/zed/Cargo.toml`, the iPad build is missing these
+feature areas. See `docs/ios-checklist.md` for the working task list.
+
+**No platform blockers (add crate + init):**
+notifications, sidebar, outline, tab_switcher, markdown/markdown_preview, image_viewer,
+git_graph, encoding_selector, line_ending_selector, web_search, snippet_provider/snippets_ui,
+toolchain_selector, project_symbols, csv_preview, svg_preview, settings_ui, which_key, journal
+
+**Blocked on Zed Cloud auth (ASWebAuthenticationSession redirect URI):**
+collab_ui, channel, title_bar (user menu), Zed Pro LLM access, edit prediction verification
+
+**Blocked on WASM JIT (needs WKWebView host):**
+extension_host (WASM runtime), extensions_ui, language_extension, theme_extension
+
+**Blocked on remote execution proxy (no local process spawn):**
+task/tasks_ui, repl, dev_container, copilot/copilot_ui/copilot_chat (Node.js)
+
+**N/A on iPad:**
+auto_update (App Store), install_cli, cli, gpui_platform (desktop window chrome),
+crashes/ztracing/profiling (use Instruments), windows (Win32)

@@ -304,8 +304,10 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIconDev;
 				CODE_SIGN_ENTITLEMENTS = Zed/Entitlements/Zed.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = 2U6G6353D3;
 				EAGER_LINKING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "Zed/Supporting Files/Info.plist";
@@ -335,13 +337,15 @@
 					"-framework",
 					CoreFoundation,
 					"-framework",
+					CoreGraphics,
+					"-framework",
+					QuartzCore,
+					"-framework",
 					AVFoundation,
 					"-framework",
 					CoreAudio,
 					"-framework",
 					CoreVideo,
-					"-framework",
-					CoreGraphics,
 					"-framework",
 					CoreMedia,
 					"-framework",
@@ -351,19 +355,16 @@
 					"-framework",
 					Network,
 					"-framework",
-					QuartzCore,
-					"-framework",
 					MetalKit,
-					"-framework",
-					GLKit,
-					"-framework",
-					OpenGLES,
 					"$(inherited)",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = dev.zed.ipad.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "Zed/Zed-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
@@ -376,8 +377,10 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Zed/Entitlements/Zed.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = 2U6G6353D3;
 				EAGER_LINKING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "Zed/Supporting Files/Info.plist";
@@ -407,13 +410,15 @@
 					"-framework",
 					CoreFoundation,
 					"-framework",
+					CoreGraphics,
+					"-framework",
+					QuartzCore,
+					"-framework",
 					AVFoundation,
 					"-framework",
 					CoreAudio,
 					"-framework",
 					CoreVideo,
-					"-framework",
-					CoreGraphics,
 					"-framework",
 					CoreMedia,
 					"-framework",
@@ -423,19 +428,16 @@
 					"-framework",
 					Network,
 					"-framework",
-					QuartzCore,
-					"-framework",
 					MetalKit,
-					"-framework",
-					GLKit,
-					"-framework",
-					OpenGLES,
 					"$(inherited)",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = dev.zed.ipad.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "Zed/Zed-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;

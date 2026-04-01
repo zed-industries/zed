@@ -10,7 +10,7 @@ full architectural details.
 - [x] `force-embed-assets` feature for iOS debug builds
 - [x] CI-ready build pipeline
 
-## Phase 1 — GPUI iOS Platform Layer ✅
+## Phase 1 — GPUI iOS Platform Layer & Headless Boot ✅
 - [x] Metal renderer (runtime shaders, MSAA, instance buffering)
 - [x] CoreText text system (font loading, shaping, glyph rasterization)
 - [x] GCD dispatcher (foreground/background, timers)
@@ -21,19 +21,15 @@ full architectural details.
 - [x] Trackpad scroll, hover, right-click, secondary click
 - [x] Clipboard, dark mode, prompt dialogs, open_url stubs
 
-## Phase 1.5 — Headless Boot ✅
 - [x] Full workspace UI renders with embedded fonts
 - [x] Syntax highlighting, command palette, theme selector, file finder
 - [x] Vim mode with partial-failure tolerance
 - [x] Default iOS keymap (`assets/keymaps/default-ios.json`)
 - [x] Settings watcher, globe key fix
 - [x] iPadOS menu bar, momentum scrolling, secondary click
-
-## Phase 1.8 — Connection Landing Screen ✅
-- [x] GPUI-based connection manager
+- [x] GPUI-based connection landing screen
 - [x] Saved hosts list with add/remove, edit mode
 - [x] Per-host project paths with add/edit/remove
-- [x] Tab/Shift-Tab navigation, focus indicators
 - [x] Hosts persisted as JSON in app sandbox
 
 ## Phase 2 — SSH Transport & Connection ✅
@@ -67,7 +63,6 @@ full architectural details.
 - [x] SSH-backed terminal panel with full keybindings
 - [x] Terminal session restore (initial working directory)
 - [x] Trackpad scroll targeting (hover position, momentum fix)
-- [x] UIPointerInteraction: custom resize cursors (double-chevron CGPath)
 - [x] Settings profile selector + per-workspace persistence
 - [x] Project-level profiles (`project_profiles` in `.zed/settings.json`)
 - [x] Active profile sync to remote server (UpdateUserSettings proto change)
@@ -75,170 +70,102 @@ full architectural details.
 - [x] Dev remote server build and deployment workflow
 - [x] Debug panel (debugger_ui, debugger_tools, dap_adapters)
 - [ ] Debug panel: test full debug workflow end-to-end
-- [ ] Debug panel: "Edit debug.json" button doesn't open the file
 
 ---
 
-## Phase 3A — Stock Server (no protocol changes)
+## Phase 3 — Features
 
-These items work with the standard `zed --headless` binary.
+### 3.1 — Edit Prediction ✅
+- [x] Provider registry, keybindings, Copilot graceful skip
+- [ ] Verify providers work end-to-end (needs Zed Cloud auth)
 
-### 3.1 — Editor Interaction
-- [ ] Verify completion menu, hover, diagnostics on iPad screen sizes
-- [ ] Long-tap → right-click context menu (go to definition, etc.)
-- [ ] Scrolling performance profiling on device
-- [ ] Memory management: `os_proc_available_memory()` monitoring
-
-### 3.2 — Settings Path Adjustment
-- [ ] iOS config_dir() → Application Support/zed/
-- [ ] iOS log/cache/temp directory routing
-
-### 3.3 — Debug Panel
-- [ ] Add `debugger_ui`, `debugger_tools`, `dap_adapters` to zed_ios
-- [ ] Init debugger_ui, debugger_tools, dap_adapters
-- [ ] Verify RemoteDapStore works over SSH connection
-- [ ] cfg-gate local dap transport if needed for iOS compilation
-
-### 3.4 — Git Branch Picker & AI Worktree Selection
-- [ ] Verify `git_ui` branch/worktree picker works over remote proxy
-- [ ] Test AI worktree selection in agent panel
-
-### 3.5 — Collab Panel
-- [ ] Feature-gate `livekit_client`, `audio`, screen-capture in `call` crate
-- [ ] Implement `ASWebAuthenticationSession` for Zed account OAuth
-- [ ] Add `collab_ui` (channel list, contacts, chat — no voice/video)
-- [ ] Handle `title_bar` exclusion on iPad
-
-### 3.6 — Edit Prediction ✅
-- [x] Add edit_prediction crates to zed_ios
-- [x] Extract provider registry (copied from desktop `zed` crate, adapted for iOS)
-- [x] Copilot provider initialized with `NodeRuntime::unavailable` (graceful skip)
-- [x] Keybindings: Alt-Tab accept, Tab accept
-- [ ] Verify Zed/Codestral/OpenAI providers work on iPad (needs Zed Cloud auth)
-- [ ] Handle Copilot fallback (skip or map to Zed provider)
-
-### 3.7 — Remote Terminal (via SSH channels) ✅
-- [x] `open_shell_channel()` — opens new SSH session channel with PTY
-- [x] PTY allocation via `channel.request_pty()` + `channel.exec()` (login shell)
-- [x] Bidirectional I/O via `channel.split()` with tokio tasks
-- [x] Terminal resize via `channel.window_change()`
-- [x] `TerminalType::Ssh` variant with `TerminalBuilder::new_ssh()`
-- [x] Wire into `project::terminals` as iPad alternative to `build_command()`
-- [x] Terminal rendering via GPUI text system (alacritty_terminal + SSH output)
-- [x] `open_command_channel()` — no-PTY exec for agents and tasks
-- [x] iOS terminal task support (`create_terminal_task_ios()`)
-- [x] SSH shell exit status detection (collect ExitStatus before Close)
+### 3.2 — Remote Terminal (via SSH channels) ✅
+- [x] `open_shell_channel()` / `open_command_channel()` on RemoteConnection
+- [x] `TerminalType::Ssh`, iOS terminal task support, exit status fix
 - [ ] Touch keyboard accessory bar (Esc, Tab, Ctrl, arrows, etc.)
 
-### 3.8 — Extensions & Tree-sitter Grammar Support
-- [ ] Extension downloading from extensions.zed.dev (HTTP + tar.gz unpack)
-- [ ] Extension index scanning and metadata loading
+### 3.3 — Agent Panel (Zed Agent + External Agents) 🔧
+- [x] Agent crates initialized, external agents via ACP over SSH
+- [x] Keychain unlock auth flow for macOS remotes
+- [x] AcpThread keybindings (enter to send, cmd-enter follow)
+- [ ] Zed agent: verify LLM calls + tool invocations (needs Zed Cloud auth)
+- [ ] Keychain auth: Linux credential file support
+- [ ] Add warning: "Keep Zed in foreground while agent is working"
+
+### 3.4 — Additional crates (no platform blockers)
+- [ ] `notifications` — toast/workspace notifications (already transitive dep, just init)
+- [ ] `sidebar` — sidebar toggle (just init, currently hidden)
+- [ ] `outline` — document symbol list (pure UI)
+- [ ] `tab_switcher` — ctrl-tab switcher (pure UI)
+- [ ] `markdown`, `markdown_preview` — markdown rendering/preview
+- [ ] `image_viewer` — image file preview
+- [ ] `git_graph` — commit graph visualization
+- [ ] `encoding_selector`, `line_ending_selector` — status bar selectors
+- [ ] `web_search`, `web_search_providers` — web search from agent panel
+- [ ] `snippet_provider`, `snippets_ui` — snippet management
+- [ ] `toolchain_selector` — Python/Node toolchain picker
+- [ ] `project_symbols` — workspace-wide symbol search
+- [ ] `csv_preview`, `svg_preview` — file type previews
+- [ ] `settings_ui` — settings GUI
+- [ ] `which_key` — key binding hints overlay
+- [ ] `journal` — daily journal files
+
+### 3.5 — Collab Panel (blocked on Zed Cloud auth)
+- [ ] `ASWebAuthenticationSession` for Zed account OAuth — blocked on redirect URI
+- [ ] `collab_ui` — channel list, contacts, chat
+- [ ] `call` — voice/video (already transitive dep via git_ui, WebRTC linked)
+- [ ] `channel` — channel store, channel buffers
+- [ ] `title_bar` — user menu, sharing controls
+
+### 3.6 — Extensions & Tree-sitter (blocked on JIT)
+- [ ] Extension downloading/indexing (HTTP + tar.gz — no WASM needed)
 - [ ] Language config + theme loading (JSON/TOML — no WASM needed)
-- [ ] WKWebView WASM host for Tree-sitter grammars (JIT-enabled JavaScriptCore)
-- [ ] Bundle web-tree-sitter JS module in app
-- [ ] Grammar bridge: async parse() interface over WKScriptMessageHandler
-- [ ] Language registry integration: route WASM bytes to WKWebView on iOS
-- [ ] Extension panel UI (show installed extensions, install new ones)
+- [ ] `extensions_ui` — extension panel UI
+- [ ] WKWebView WASM host for Tree-sitter grammars (JIT via JavaScriptCore)
+- [ ] `language_extension`, `theme_extension` — extension-provided content
 - [ ] Mark extensions with subprocess capabilities as "not supported on iPad"
 
-### 3.9 — Agent Panel (Zed Agent + External Agents) 🔧
-- [x] Add agent crates to zed_ios (agent, agent_ui, agent_settings, language_model, etc.)
-- [x] Initialize agent panel in `init_zed()` (ToggleFocus/Toggle actions, AgentRegistryStore)
-- [x] TLS fix: use `proxy_and_user_agent()` for platform TLS verifier (was UnknownIssuer)
-- [x] LMDB fix: `MDB_NOLOCK` flag for heed on iOS (no SysV semaphores)
-- [x] External agents: `open_command_channel()` for SSH exec (no PTY, no subprocess)
-- [x] External agents: `AcpConnection::ssh()` with `SshChannelBridgeReader` (futures mpsc)
-- [x] External agents: separate stderr from stdout in command channels (ACP stream integrity)
-- [x] External agents: ACP handshake works over SSH — connection established
-- [x] Keychain auth: `security unlock-keychain` via SSH terminal on macOS remotes
-- [x] Keychain auth: force `restart_connection` after auth success (fresh agent process)
-- [x] Keychain auth: SSH exit status plumbing for PTY shells (ExitStatus vs EOF race fix)
-- [x] AcpThread keybindings: enter to send, cmd-enter follow, cmd-shift-enter send immediately
-- [ ] Zed agent: verify LLM calls work directly from iPad (needs Zed Cloud auth)
-- [ ] Zed agent: verify tool invocations proxy through Project → remote host
-- [ ] Zed Pro auth via ASWebAuthenticationSession (OAuth/PKCE) — blocked on redirect URI
-- [ ] Keychain auth: Linux credential file support (no keychain on Linux)
-- [ ] Add warning: "Keep Zed in foreground while agent is working"
-- [ ] Remove debug logging from acp.rs, agent_server_store.rs, russh_ssh.rs, terminal.rs
+### 3.7 — Blocked on remote execution proxy
+- [ ] `task`, `tasks_ui` — local task runner (needs remote proxy, no local spawn)
+- [ ] `repl` — notebook/REPL (needs remote kernel proxy)
+- [ ] `dev_container` — dev container support
 
 ---
 
-## Phase 3B — Modified Server (new protocol messages)
-
-Prerequisite: dev workflow for building and deploying custom `remote_server` binary.
-
-### 3.10 — Remote Zed Agent Execution (survives backgrounding)
-- [ ] `proto::AgentStartThread`, `AgentSendMessage`, `AgentStreamEvent`
-- [ ] `proto::AgentListThreads`, `AgentResumeThread` for reconnection
+### 3.8 — Remote Zed Agent Execution (survives backgrounding)
 - [ ] Server-side Thread engine in HeadlessProject
-- [ ] Agent settings sync from host (new proto: GetAgentSettings, GetEnvironmentVariables)
+- [ ] New proto messages for thread lifecycle and LLM streaming
+- [ ] Agent settings sync from host
 
-### 3.11 — Notifications
-- [ ] Toast notifications — already work (pure GPUI)
-- [ ] Workspace notifications — already work
-- [ ] Local notification: "Connection to {host} lost" (backgrounded)
-- [ ] Local notification: "Agent finished editing {n} files" (backgrounded)
-- [ ] `UNUserNotificationCenter` permission request at first SSH connection
-- [ ] Collab notification panel (requires Zed account auth — see 3.5/3.9)
-- [ ] Push notifications via APNs (defer to v2)
+### 3.9 — Notifications
+- [ ] Local notification: "Connection lost" / "Agent finished" (backgrounded)
+- [ ] `UNUserNotificationCenter` permission request
+- [ ] Collab notification panel (requires Zed account auth)
 
 ---
 
 ## Phase 4 — iPad UX Polish
 
-### 4.1 — Stage Manager Multi-Window
-- [ ] Each UIWindowScene = one workspace connection
-- [ ] SceneDelegate with NSUserActivity state restoration
-- [ ] Window sizing hints via UIWindowSceneGeometryPreferencesIOS
-
-### 4.2 — UIKeyCommand Discoverability HUD
-- [ ] Register UIKeyCommand instances for major actions
-- [ ] Swift → Rust FFI bridge for action dispatch
-
-### 4.3 — Layout Adaptation
-- [ ] Breakpoints: <600pt / 600-900pt / >900pt
-- [ ] Sidebar show/hide logic based on window width
-
-### 4.4 �� App Store Entitlements
-- [ ] Keychain access groups
-- [ ] Increased memory limit (if profiling shows need)
-- [ ] Final entitlements review
-
-### 4.5 — Per-Project Settings Profiles
-- [ ] Add `profiles` to `ProjectSettingsContent`
-- [ ] Update `SettingsStore::set_local_settings()` for project profiles
-- [ ] Update `recompute_values()` merge order
-- [ ] Update profile selector UI (distinguish project vs user profiles)
-- [ ] Decide: global vs per-workspace profile scope
-
-### 4.6 — SSH Key Management (Keychain)
-- [ ] `store_ssh_key`, `load_ssh_key`, `delete_ssh_key`, `list_ssh_key_labels`
-- [ ] Integration with russh auth flow
-- [ ] SSH key import UI via UIDocumentPicker
-
-### 4.7 — Network Resilience
-- [ ] NWPathMonitor wrapper (network_monitor.rs)
-- [ ] NetworkEvent::Available / Lost into GPUI event system
-- [ ] Exponential backoff reconnection strategy
-- [ ] Read-only mode with "Reconnecting…" banner
-
-### 4.8 — Server Host Key Verification
-- [ ] Known_hosts file in app sandbox
-- [ ] First-connection fingerprint prompt
-- [ ] Key mismatch warning
+- [ ] Stage Manager multi-window (UIWindowScene per workspace)
+- [ ] UIKeyCommand discoverability HUD (hold ⌘ overlay)
+- [ ] Layout adaptation (breakpoints for sidebar/panel visibility)
+- [ ] SSH key management via iOS Keychain + UIDocumentPicker import
+- [ ] Network resilience (NWPathMonitor, exponential backoff, read-only mode)
+- [ ] Server host key verification (known_hosts, fingerprint prompt)
+- [ ] App Store entitlements review
 
 ---
 
 ## Known Bugs
 - [ ] Rope panic: UTF-16 point beyond end of line in iOS text input (see `plans/ios-rope-panic.md`)
-- [ ] Agent panel input lag — likely conversation view re-rendering on every keystroke (needs profiling)
+- [ ] Agent panel input lag (conversation re-rendering on every keystroke — needs profiling)
 - [ ] `ExternalAgentsUpdated` arrives before handler registered (race on first connect — benign)
 
 ## Deferred / Follow-up
 - [ ] Feature-gate libgit2 out of iOS build (currently requires -lz, -liconv)
 - [ ] Full UITextInput protocol (selectedTextRange, textInRange, etc. — currently UIKeyInput only)
-- [ ] IME position (update_ime_position) — editor polish
-- [ ] Cursor styling (UIPointerInteraction) — trackpad polish
-- [ ] File dialogs (UIDocumentPicker) — SSH key import
+- [ ] IME / CJK composition support
+- [ ] `auto_update` — N/A for App Store distribution
+- [ ] `copilot_ui`, `copilot_chat` — blocked on Node.js (no local process)
 - [ ] ssh-agent forwarding
 - [ ] upload_directory over russh
