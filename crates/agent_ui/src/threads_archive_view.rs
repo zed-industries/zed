@@ -838,7 +838,45 @@ impl Render for ProjectPickerModal {
             .key_context("ProjectPickerModal")
             .elevation_3(cx)
             .w(rems(34.))
+            .on_action(cx.listener(Self::open_local_folder))
             .child(self.picker.clone())
+    }
+}
+
+impl ProjectPickerModal {
+    fn open_local_folder(
+        &mut self,
+        _: &workspace::Open,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let paths_receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: None,
+        });
+        let picker = self.picker.downgrade();
+        cx.spawn_in(window, async move |_this, cx| {
+            let Ok(Ok(Some(paths))) = paths_receiver.await else {
+                return;
+            };
+            if paths.is_empty() {
+                return;
+            }
+
+            let work_dirs = PathList::new(&paths);
+
+            picker
+                .update_in(cx, |picker, window, cx| {
+                    picker
+                        .delegate
+                        .update_working_directories_and_unarchive(work_dirs, window, cx);
+                    cx.emit(DismissEvent);
+                })
+                .log_err();
+        })
+        .detach();
     }
 }
 
@@ -867,6 +905,7 @@ impl ProjectPickerDelegate {
     fn update_working_directories_and_unarchive(
         &mut self,
         paths: PathList,
+        window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) {
         self.thread.folder_paths = paths.clone();
@@ -877,6 +916,7 @@ impl ProjectPickerDelegate {
         self.archive_view
             .update(cx, |view, cx| {
                 view.selection = None;
+                view.reset_filter_editor_text(window, cx);
                 cx.emit(ThreadsArchiveViewEvent::Unarchive {
                     thread: self.thread.clone(),
                 });
@@ -898,6 +938,33 @@ impl ProjectPickerDelegate {
             ProjectPickerEntry::Workspace(hit) => Some(hit),
             ProjectPickerEntry::Header(_) => None,
         }
+    }
+
+    fn open_local_folder(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        let paths_receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: None,
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(paths))) = paths_receiver.await else {
+                return;
+            };
+            if paths.is_empty() {
+                return;
+            }
+
+            let work_dirs = PathList::new(&paths);
+
+            this.update_in(cx, |this, window, cx| {
+                this.delegate
+                    .update_working_directories_and_unarchive(work_dirs, window, cx);
+                cx.emit(DismissEvent);
+            })
+            .log_err();
+        })
+        .detach();
     }
 }
 
@@ -1095,7 +1162,7 @@ impl PickerDelegate for ProjectPickerDelegate {
         Task::ready(())
     }
 
-    fn confirm(&mut self, _secondary: bool, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let candidate_id = match self.filtered_entries.get(self.selected_index) {
             Some(ProjectPickerEntry::Workspace(hit)) => hit.candidate_id,
             _ => return,
@@ -1104,7 +1171,7 @@ impl PickerDelegate for ProjectPickerDelegate {
             return;
         };
 
-        self.update_working_directories_and_unarchive(paths.clone(), cx);
+        self.update_working_directories_and_unarchive(paths.clone(), window, cx);
         cx.emit(DismissEvent);
     }
 
@@ -1233,57 +1300,16 @@ impl PickerDelegate for ProjectPickerDelegate {
                             &focus_handle,
                             cx,
                         ))
-                        .on_click(cx.listener(move |_picker, _, _window, cx| {
-                            let paths_receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
-                                files: false,
-                                directories: true,
-                                multiple: false,
-                                prompt: None,
-                            });
-                            cx.spawn(async move |this, cx| {
-                                let Ok(Ok(Some(paths))) = paths_receiver.await else {
-                                    return;
-                                };
-                                if paths.is_empty() {
-                                    return;
-                                }
-
-                                let work_dirs = PathList::new(&paths);
-
-                                this.update(cx, |picker, cx| {
-                                    picker
-                                        .delegate
-                                        .update_working_directories_and_unarchive(work_dirs, cx);
-                                    cx.emit(DismissEvent);
-                                })
-                                .log_err();
-                            })
-                            .detach();
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.delegate.open_local_folder(window, cx);
                         })),
                 )
                 .child(
                     Button::new("select_project", "Select")
                         .disabled(!has_selection)
                         .key_binding(KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx))
-                        .on_click(cx.listener(move |picker, _, _window, cx| {
-                            let candidate_id = match picker
-                                .delegate
-                                .filtered_entries
-                                .get(picker.delegate.selected_index)
-                            {
-                                Some(ProjectPickerEntry::Workspace(hit)) => hit.candidate_id,
-                                _ => return,
-                            };
-                            let Some((_workspace_id, _location, paths, _)) =
-                                picker.delegate.workspaces.get(candidate_id)
-                            else {
-                                return;
-                            };
-                            let paths = paths.clone();
-                            picker
-                                .delegate
-                                .update_working_directories_and_unarchive(paths, cx);
-                            cx.emit(DismissEvent);
+                        .on_click(cx.listener(move |picker, _, window, cx| {
+                            picker.delegate.confirm(false, window, cx);
                         })),
                 )
                 .into_any(),
