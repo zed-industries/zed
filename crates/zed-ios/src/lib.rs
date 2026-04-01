@@ -10,6 +10,9 @@
 mod connection_landing;
 
 #[cfg(target_os = "ios")]
+mod edit_prediction_registry;
+
+#[cfg(target_os = "ios")]
 mod ios {
     #[allow(unused_imports)]
     use gpui::{
@@ -418,9 +421,25 @@ mod ios {
                     git::GitHostingProviderRegistry::default_global(cx),
                     cx,
                 );
-                language_model::init_settings(cx);
+                language_model::init(
+                    app_state.user_store.clone(),
+                    app_state.client.clone(),
+                    cx,
+                );
+                language_models::init(
+                    app_state.user_store.clone(),
+                    app_state.client.clone(),
+                    cx,
+                );
                 command_palette::init(cx);
                 editor::init(cx);
+                edit_prediction_ui::init(cx);
+                edit_prediction::init(cx);
+                crate::edit_prediction_registry::init(
+                    app_state.client.clone(),
+                    app_state.user_store.clone(),
+                    cx,
+                );
                 go_to_line::init(cx);
                 file_finder::init(cx);
                 diagnostics::init(cx);
@@ -433,6 +452,18 @@ mod ios {
                 debugger_ui::init(cx);
                 debugger_tools::init(cx);
                 dap_adapters::init(cx);
+                {
+                    let prompt_builder =
+                        prompt_store::PromptBuilder::load(settings_fs.clone(), false, cx);
+                    agent_ui::init(
+                        settings_fs.clone(),
+                        prompt_builder,
+                        app_state.languages.clone(),
+                        true,
+                        false,
+                        cx,
+                    );
+                }
                 outline_panel::init(cx);
                 language_selector::init(cx);
                 theme_selector::init(cx);
@@ -498,6 +529,11 @@ mod ios {
                         let (_tx, rx) = futures::channel::oneshot::channel();
                         rx
                     }));
+
+                    // Register agent panel toggle actions (on desktop these are in zed.rs)
+                    workspace
+                        .register_action(agent_ui::AgentPanel::toggle_focus)
+                        .register_action(agent_ui::AgentPanel::toggle);
 
                     let Some(window) = window else { return };
 
@@ -622,6 +658,14 @@ mod ios {
                         }
                         if let Some(panel) = debugger_ui::debugger_panel::DebugPanel::load(
                             workspace_handle.clone(), &mut cx,
+                        ).await.log_err() {
+                            workspace_handle.update_in(
+                                &mut cx.clone(),
+                                |workspace, window, cx| workspace.add_panel(panel, window, cx),
+                            ).log_err();
+                        }
+                        if let Some(panel) = agent_ui::AgentPanel::load(
+                            workspace_handle.clone(), cx.clone(),
                         ).await.log_err() {
                             workspace_handle.update_in(
                                 &mut cx.clone(),

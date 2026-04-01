@@ -254,10 +254,14 @@ impl PromptStore {
             std::fs::create_dir_all(&db_path)?;
 
             let db_env = unsafe {
-                heed::EnvOpenOptions::new()
-                    .map_size(1024 * 1024 * 1024) // 1GB
-                    .max_dbs(4) // Metadata and bodies (possibly v1 of both as well)
-                    .open(db_path)?
+                let mut opts = heed::EnvOpenOptions::new();
+                opts.map_size(1024 * 1024 * 1024) // 1GB
+                    .max_dbs(4); // Metadata and bodies (possibly v1 of both as well)
+                // iOS prohibits System V semaphores (semget). MDB_NOLOCK
+                // skips lock file creation. Safe because iOS is single-process.
+                #[cfg(target_os = "ios")]
+                opts.flags(heed::EnvFlags::NO_LOCK);
+                opts.open(db_path)?
             };
 
             let mut txn = db_env.write_txn()?;
