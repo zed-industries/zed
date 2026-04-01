@@ -760,7 +760,6 @@ impl ProjectPickerModal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-
         let delegate = ProjectPickerDelegate {
             thread,
             archive_view,
@@ -809,7 +808,6 @@ impl ProjectPickerModal {
         picker.focus_handle(cx).focus(window, cx);
 
         Self {
-
             picker,
             _subscription,
         }
