@@ -270,6 +270,7 @@ pub struct MarkdownOptions {
     pub render_mermaid_diagrams: bool,
 }
 
+#[derive(PartialEq, Eq)]
 pub enum CopyButtonVisibility {
     Hidden,
     AlwaysVisible,
@@ -1690,7 +1691,8 @@ impl Element for MarkdownElement {
                         builder.pop_text_style();
 
                         if let CodeBlockRenderer::Default {
-                            copy_button_visibility, ..
+                            copy_button_visibility,
+                            ..
                         } = &self.code_block_renderer
                         {
                             if !matches!(copy_button_visibility, CopyButtonVisibility::Hidden) {
@@ -1698,9 +1700,8 @@ impl Element for MarkdownElement {
                                     let content_range = parser::extract_code_block_content_range(
                                         &parsed_markdown.source()[range.clone()],
                                     );
-                                    let content_range =
-                                        content_range.start + range.start
-                                            ..content_range.end + range.start;
+                                    let content_range = content_range.start + range.start
+                                        ..content_range.end + range.start;
 
                                     let code = parsed_markdown.source()[content_range].to_string();
                                     let codeblock = render_copy_code_block_button(
@@ -1713,18 +1714,10 @@ impl Element for MarkdownElement {
                                             .w_4()
                                             .absolute()
                                             .justify_end()
-                                            .when(
-                                                matches!(
-                                                    copy_button_visibility,
-                                                    CopyButtonVisibility::AlwaysVisible
-                                                ),
+                                            .when_else(
+                                                copy_button_visibility
+                                                    == &CopyButtonVisibility::AlwaysVisible,
                                                 |this| this.top_1p5().right_1p5(),
-                                            )
-                                            .when(
-                                                matches!(
-                                                    copy_button_visibility,
-                                                    CopyButtonVisibility::VisibleOnHover
-                                                ),
                                                 |this| {
                                                     this.top_0()
                                                         .right_0()
