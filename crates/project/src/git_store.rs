@@ -4705,12 +4705,11 @@ impl Repository {
                                 .commit_oid_to_index
                                 .insert(commit_data.sha, graph_data.commit_data.len());
                             graph_data.commit_data.push(commit_data);
-
-                            cx.emit(RepositoryEvent::GraphEvent(
-                                graph_data_key.clone(),
-                                GitGraphEvent::CountUpdated(graph_data.commit_data.len()),
-                            ));
                         }
+                        cx.emit(RepositoryEvent::GraphEvent(
+                            graph_data_key.clone(),
+                            GitGraphEvent::CountUpdated(graph_data.commit_data.len()),
+                        ));
                     });
 
                 match &graph_data {
