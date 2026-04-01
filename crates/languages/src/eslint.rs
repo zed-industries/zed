@@ -189,14 +189,17 @@ impl EslintSettingsOverrides {
         }
 
         if let Some(experimental_use_flat_config) = self.experimental_use_flat_config
-            && let Some(experimental) = workspace_configuration
-                .get_mut("experimental")
-                .and_then(Value::as_object_mut)
+            && let Some(workspace_configuration) = workspace_configuration.as_object_mut()
         {
-            experimental.insert(
-                "useFlatConfig".to_string(),
-                json!(experimental_use_flat_config),
-            );
+            let experimental = workspace_configuration
+                .entry("experimental")
+                .or_insert_with(|| json!({}));
+            if let Some(experimental) = experimental.as_object_mut() {
+                experimental.insert(
+                    "useFlatConfig".to_string(),
+                    json!(experimental_use_flat_config),
+                );
+            }
         }
     }
 }
@@ -266,8 +269,7 @@ impl LspAdapter for EsLintLspAdapter {
                 "showDocumentation": {
                     "enable": true
                 }
-            },
-            "experimental": {}
+            }
         });
         eslint_settings_overrides.apply_to(&mut default_workspace_configuration);
 
