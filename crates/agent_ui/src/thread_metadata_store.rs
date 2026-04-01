@@ -517,7 +517,13 @@ impl ThreadMetadataStore {
                     PathList::new(&paths)
                 };
 
-                let archived = existing_thread.map(|t| t.archived).unwrap_or(false);
+                // Threads without a folder path (e.g. started in an empty
+                // window) are archived by default so they don't get lost,
+                // because they won't show up in the sidebar. Users can reload
+                // them from the archive.
+                let archived = existing_thread
+                    .map(|t| t.archived)
+                    .unwrap_or(folder_paths.is_empty());
 
                 let metadata = ThreadMetadata {
                     session_id,
