@@ -4076,7 +4076,11 @@ impl BackgroundScanner {
 
         self.send_status_update(scanning, request.done, &[]).await
     }
-    fn normalized_events_for_worktree(state: &BackgroundScannerState, root_canonical_path: &SanitizedPath, events: Vec<PathEvent>) -> Vec<PathEvent> {
+    fn normalized_events_for_worktree(
+        state: &BackgroundScannerState,
+        root_canonical_path: &SanitizedPath,
+        events: Vec<PathEvent>,
+    ) -> Vec<PathEvent> {
         let mut normalized_events = Vec::new();
 
         for event in events {
@@ -4103,7 +4107,8 @@ impl BackgroundScanner {
                 continue;
             };
 
-            let Some(symlink_paths) = state.external_symlink_paths_by_target.get(target_root) else {
+            let Some(symlink_paths) = state.external_symlink_paths_by_target.get(target_root)
+            else {
                 normalized_events.push(event);
                 continue;
             };
@@ -4121,13 +4126,14 @@ impl BackgroundScanner {
                         .as_path()
                         .join(symlink_path.as_std_path())
                 } else {
-                  root_canonical_path
-                      .as_path()
-                      .join(symlink_path.as_std_path())
-                      .join(suffix)
+                    root_canonical_path
+                        .as_path()
+                        .join(symlink_path.as_std_path())
+                        .join(suffix)
                 };
                 normalized_events.push(PathEvent {
-                    path: mapped_path, kind: event.kind
+                    path: mapped_path,
+                    kind: event.kind,
                 });
                 added_any = true;
             }
@@ -4731,10 +4737,10 @@ impl BackgroundScanner {
                     },
                 };
 
-                if !canonical_path.starts_with(root_canonical_path) && child_metadata.is_dir{
+                if !canonical_path.starts_with(root_canonical_path) && child_metadata.is_dir {
                     let mut state = self.state.lock().await;
-                    let paths = state.
-                        external_symlink_paths_by_target
+                    let paths = state
+                        .external_symlink_paths_by_target
                         .entry(Arc::from(canonical_path.clone()))
                         .or_default();
                     if !paths.iter().any(|path| path == &child_path) {

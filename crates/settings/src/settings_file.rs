@@ -134,10 +134,7 @@ pub fn watch_config_file(
 ) -> (mpsc::UnboundedReceiver<String>, gpui::Task<()>) {
     let (tx, rx) = mpsc::unbounded();
     let task = executor.spawn(async move {
-        let path = fs.
-            canonicalize(&path)
-            .await
-            .unwrap_or_else(|_| path);
+        let path = fs.canonicalize(&path).await.unwrap_or_else(|_| path);
         let (events, _) = fs.watch(&path, Duration::from_millis(100)).await;
         futures::pin_mut!(events);
 
