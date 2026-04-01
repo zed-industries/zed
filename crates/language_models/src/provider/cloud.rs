@@ -12,6 +12,7 @@ use language_model::{
     RateLimiter, ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME,
 };
 use language_models_cloud::{CloudLanguageModel, CloudLlmTokenProvider};
+use release_channel::AppVersion;
 use smol::io::AsyncReadExt;
 
 use settings::SettingsStore;
@@ -266,6 +267,7 @@ impl CloudLanguageModelProvider {
         model: Arc<cloud_llm_client::LanguageModel>,
         llm_api_token: LlmApiToken,
         organization_id: Option<cloud_api_types::OrganizationId>,
+        cx: &App,
     ) -> Arc<dyn LanguageModel> {
         let token_provider = Arc::new(ClientTokenProvider {
             client: self.client.clone(),
@@ -277,6 +279,7 @@ impl CloudLanguageModelProvider {
             model,
             token_provider,
             http_client: self.client.http_client(),
+            app_version: Some(AppVersion::global(cx)),
             request_limiter: RateLimiter::new(4),
         })
     }
@@ -312,7 +315,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
             .read(cx)
             .current_organization()
             .map(|organization| organization.id.clone());
-        Some(self.create_language_model(default_model, llm_api_token, organization_id))
+        Some(self.create_language_model(default_model, llm_api_token, organization_id, cx))
     }
 
     fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
@@ -324,7 +327,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
             .read(cx)
             .current_organization()
             .map(|organization| organization.id.clone());
-        Some(self.create_language_model(default_fast_model, llm_api_token, organization_id))
+        Some(self.create_language_model(default_fast_model, llm_api_token, organization_id, cx))
     }
 
     fn recommended_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -340,7 +343,12 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
             .iter()
             .cloned()
             .map(|model| {
-                self.create_language_model(model, llm_api_token.clone(), organization_id.clone())
+                self.create_language_model(
+                    model,
+                    llm_api_token.clone(),
+                    organization_id.clone(),
+                    cx,
+                )
             })
             .collect()
     }
@@ -358,7 +366,12 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
             .iter()
             .cloned()
             .map(|model| {
-                self.create_language_model(model, llm_api_token.clone(), organization_id.clone())
+                self.create_language_model(
+                    model,
+                    llm_api_token.clone(),
+                    organization_id.clone(),
+                    cx,
+                )
             })
             .collect()
     }

@@ -26,7 +26,7 @@ use language_model::{
     OPEN_AI_PROVIDER_NAME, PaymentRequiredError, RateLimiter, X_AI_PROVIDER_ID, X_AI_PROVIDER_NAME,
     ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME,
 };
-use release_channel::AppVersion;
+
 use schemars::JsonSchema;
 use semver::Version;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -83,6 +83,7 @@ pub struct CloudLanguageModel {
     pub model: Arc<cloud_llm_client::LanguageModel>,
     pub token_provider: Arc<dyn CloudLlmTokenProvider>,
     pub http_client: Arc<HttpClientWithUrl>,
+    pub app_version: Option<Version>,
     pub request_limiter: RateLimiter,
 }
 
@@ -449,7 +450,7 @@ impl LanguageModel for CloudLanguageModel {
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
-        cx: &AsyncApp,
+        _cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
         Result<
@@ -459,7 +460,7 @@ impl LanguageModel for CloudLanguageModel {
     > {
         let thread_id = request.thread_id.clone();
         let prompt_id = request.prompt_id.clone();
-        let app_version = Some(cx.update(|cx| AppVersion::global(cx)));
+        let app_version = self.app_version.clone();
         let thinking_allowed = request.thinking_allowed;
         let enable_thinking = thinking_allowed && self.model.supports_thinking;
         let provider_name = provider_name(&self.model.provider);

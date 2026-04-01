@@ -22,7 +22,6 @@ gpui.workspace = true
 http_client.workspace = true
 language_model.workspace = true
 open_ai = { workspace = true, features = ["schemars"] }
-release_channel.workspace = true
 schemars.workspace = true
 semver.workspace = true
 serde.workspace = true
