@@ -1,9 +1,9 @@
 use crate::types::TableCell;
 use gpui::{AnyElement, Entity};
 use std::ops::Range;
-use ui::RedistributableColumnsState;
-use ui::Table;
-use ui::{ColumnWidthConfig, UncheckedTableRow, div, prelude::*};
+use ui::{
+    ColumnWidthConfig, RedistributableColumnsState, Table, UncheckedTableRow, div, prelude::*,
+};
 
 use crate::{
     CsvPreviewView,
@@ -54,10 +54,7 @@ impl CsvPreviewView {
         Table::new(cols)
             .interactable(&self.table_interaction_state)
             .striped()
-            .width_config(ColumnWidthConfig::Redistributable {
-                entity: current_widths.clone(),
-                table_width: None,
-            })
+            .width_config(ColumnWidthConfig::redistributable(current_widths.clone()))
             .header(headers)
             .disable_base_style()
             .map(|table| {

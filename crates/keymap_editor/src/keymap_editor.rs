@@ -2115,10 +2115,9 @@ impl Render for KeymapEditor {
                         let this = cx.entity();
                         move |window, cx| this.read(cx).render_no_matches_hint(window, cx)
                     })
-                    .width_config(ColumnWidthConfig::Redistributable {
-                        entity: self.current_widths.clone(),
-                        table_width: None,
-                    })
+                    .width_config(ColumnWidthConfig::redistributable(
+                        self.current_widths.clone(),
+                    ))
                     .header(vec!["", "Action", "Arguments", "Keystrokes", "Context", "Source"])
                     .uniform_list(
                         "keymap-editor-table",

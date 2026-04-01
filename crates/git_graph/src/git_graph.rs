@@ -2552,10 +2552,9 @@ impl Render for GitGraph {
                                 Label::new("Author").color(Color::Muted).into_any_element(),
                                 Label::new("Commit").color(Color::Muted).into_any_element(),
                             ])
-                            .width_config(ColumnWidthConfig::Redistributable {
-                                entity: self.table_column_widths.clone(),
-                                table_width: None,
-                            })
+                            .width_config(ColumnWidthConfig::redistributable(
+                                self.table_column_widths.clone(),
+                            ))
                             .map_row(move |(index, row), window, cx| {
                                 let is_selected = selected_entry_idx == Some(index);
                                 let is_hovered = hovered_entry_idx == Some(index);

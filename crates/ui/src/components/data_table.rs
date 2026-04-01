@@ -241,7 +241,7 @@ pub enum ColumnWidthConfig {
     /// Redistributable columns — dragging redistributes the fixed available space
     /// among columns without changing the overall table width.
     Redistributable {
-        entity: Entity<RedistributableColumnsState>,
+        columns_state: Entity<RedistributableColumnsState>,
         table_width: Option<DefiniteLength>,
     },
 }
@@ -258,6 +258,14 @@ impl ColumnWidthConfig {
     pub fn auto() -> Self {
         ColumnWidthConfig::Static {
             widths: StaticColumnWidths::Auto,
+            table_width: None,
+        }
+    }
+
+    /// Redistributable columns with no fixed table width.
+    pub fn redistributable(columns_state: Entity<RedistributableColumnsState>) -> Self {
+        ColumnWidthConfig::Redistributable {
+            columns_state,
             table_width: None,
         }
     }
@@ -281,7 +289,10 @@ impl ColumnWidthConfig {
                 widths: StaticColumnWidths::Explicit(widths),
                 ..
             } => Some(widths.map_cloned(Length::Definite)),
-            ColumnWidthConfig::Redistributable { entity, .. } => {
+            ColumnWidthConfig::Redistributable {
+                columns_state: entity,
+                ..
+            } => {
                 let state = entity.read(cx);
                 Some(state.preview_widths.map_cloned(Length::Definite))
             }
@@ -309,7 +320,10 @@ impl ColumnWidthConfig {
     /// Render resize handles overlay if applicable.
     pub fn render_resize_handles(&self, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         match self {
-            ColumnWidthConfig::Redistributable { entity, .. } => {
+            ColumnWidthConfig::Redistributable {
+                columns_state: entity,
+                ..
+            } => {
                 let (column_widths, resize_behavior, initial_widths) = {
                     let state = entity.read(cx);
                     (
@@ -331,27 +345,27 @@ impl ColumnWidthConfig {
         }
     }
 
-    /// Returns the initial sizes for header double-click, if applicable.
-    pub fn header_double_click_info(
-        &self,
-        cx: &App,
-    ) -> Option<(
-        WeakEntity<RedistributableColumnsState>,
-        TableRow<TableResizeBehavior>,
-        TableRow<DefiniteLength>,
-    )> {
+    /// Returns info needed for header double-click-to-reset, if applicable.
+    pub fn header_resize_info(&self, cx: &App) -> Option<HeaderResizeInfo> {
         match self {
-            ColumnWidthConfig::Redistributable { entity, .. } => {
-                let state = entity.read(cx);
-                Some((
-                    entity.downgrade(),
-                    state.resize_behavior.clone(),
-                    state.initial_widths.clone(),
-                ))
+            ColumnWidthConfig::Redistributable { columns_state, .. } => {
+                let state = columns_state.read(cx);
+                Some(HeaderResizeInfo {
+                    columns_state: columns_state.downgrade(),
+                    resize_behavior: state.resize_behavior.clone(),
+                    initial_widths: state.initial_widths.clone(),
+                })
             }
             _ => None,
         }
     }
+}
+
+#[derive(Clone)]
+pub struct HeaderResizeInfo {
+    pub columns_state: WeakEntity<RedistributableColumnsState>,
+    pub resize_behavior: TableRow<TableResizeBehavior>,
+    pub initial_widths: TableRow<DefiniteLength>,
 }
 
 pub struct RedistributableColumnsState {
@@ -860,11 +874,7 @@ pub fn render_table_row(
 pub fn render_table_header(
     headers: TableRow<impl IntoElement>,
     table_context: TableRenderContext,
-    columns_widths: Option<(
-        WeakEntity<RedistributableColumnsState>,
-        TableRow<TableResizeBehavior>,
-        TableRow<gpui::DefiniteLength>,
-    )>,
+    resize_info: Option<HeaderResizeInfo>,
     entity_id: Option<EntityId>,
     cx: &mut App,
 ) -> impl IntoElement {
@@ -903,29 +913,26 @@ pub fn render_table_header(
                             shared_element_id.clone(),
                             header_idx as u64,
                         ))
-                        .when_some(
-                            columns_widths.as_ref().cloned(),
-                            |this, (column_widths, resizables, initial_sizes)| {
-                                if resizables[header_idx].is_resizable() {
-                                    this.on_click(move |event, window, cx| {
-                                        if event.click_count() > 1 {
-                                            column_widths
-                                                .update(cx, |column, _| {
-                                                    column.on_double_click(
-                                                        header_idx,
-                                                        &initial_sizes,
-                                                        &resizables,
-                                                        window,
-                                                    );
-                                                })
-                                                .ok();
-                                        }
-                                    })
-                                } else {
-                                    this
-                                }
-                            },
-                        )
+                        .when_some(resize_info.as_ref().cloned(), |this, info| {
+                            if info.resize_behavior[header_idx].is_resizable() {
+                                this.on_click(move |event, window, cx| {
+                                    if event.click_count() > 1 {
+                                        info.columns_state
+                                            .update(cx, |column, _| {
+                                                column.on_double_click(
+                                                    header_idx,
+                                                    &info.initial_widths,
+                                                    &info.resize_behavior,
+                                                    window,
+                                                );
+                                            })
+                                            .ok();
+                                    }
+                                })
+                            } else {
+                                this
+                            }
+                        })
                 }),
         )
 }
@@ -962,9 +969,9 @@ impl RenderOnce for Table {
         let table_context = TableRenderContext::new(&self, cx);
         let interaction_state = self.interaction_state.and_then(|state| state.upgrade());
 
-        let header_double_click_info = interaction_state
+        let header_resize_info = interaction_state
             .as_ref()
-            .and_then(|_| self.column_width_config.header_double_click_info(cx));
+            .and_then(|_| self.column_width_config.header_resize_info(cx));
 
         let table_width = self.column_width_config.table_width();
         let horizontal_sizing = self.column_width_config.list_horizontal_sizing();
@@ -975,7 +982,10 @@ impl RenderOnce for Table {
             interaction_state
                 .as_ref()
                 .and_then(|_| match &self.column_width_config {
-                    ColumnWidthConfig::Redistributable { entity, .. } => Some(entity.downgrade()),
+                    ColumnWidthConfig::Redistributable {
+                        columns_state: entity,
+                        ..
+                    } => Some(entity.downgrade()),
                     _ => None,
                 });
 
@@ -991,7 +1001,7 @@ impl RenderOnce for Table {
                 this.child(render_table_header(
                     headers,
                     table_context.clone(),
-                    header_double_click_info,
+                    header_resize_info,
                     interaction_state.as_ref().map(Entity::entity_id),
                     cx,
                 ))
