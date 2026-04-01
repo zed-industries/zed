@@ -2616,8 +2616,9 @@ mod test {
         let docker_run_command = docker_run_command.expect("ok");
 
         assert_eq!(docker_run_command.get_program(), "docker");
-        let expected_config_file_label =
-            PathBuf::from(TEST_PROJECT_PATH).join(".devcontainer/devcontainer.json");
+        let expected_config_file_label = PathBuf::from(TEST_PROJECT_PATH)
+            .join(".devcontainer")
+            .join("devcontainer.json");
         let expected_config_file_label = expected_config_file_label.display();
         assert_eq!(
             docker_run_command.get_args().collect::<Vec<&OsStr>>(),
@@ -4311,7 +4312,6 @@ chmod +x ./install.sh
     #[async_trait]
     impl DockerClient for FakeDocker {
         async fn inspect(&self, id: &String) -> Result<DockerInspect, DevContainerError> {
-            dbg!(id);
             if id == "mcr.microsoft.com/devcontainers/typescript-node:1-18-bookworm" {
                 return Ok(DockerInspect {
                     id: "sha256:610e6cfca95280188b021774f8cf69dd6f49bdb6eebc34c5ee2010f4d51cc104"
@@ -4348,7 +4348,7 @@ chmod +x ./install.sh
                     state: None,
                 });
             }
-            if id.starts_with("cli_42") {
+            if id.starts_with("cli_") {
                 return Ok(DockerInspect {
                     id: "sha256:610e6cfca95280188b021774f8cf69dd6f49bdb6eebc34c5ee2010f4d51cc105"
                         .to_string(),
@@ -4412,7 +4412,6 @@ chmod +x ./install.sh
             &self,
             config_files: &Vec<PathBuf>,
         ) -> Result<Option<DockerComposeConfig>, DevContainerError> {
-            dbg!(&config_files);
             if config_files.len() == 1
                 && config_files.get(0)
                     == Some(&PathBuf::from(
