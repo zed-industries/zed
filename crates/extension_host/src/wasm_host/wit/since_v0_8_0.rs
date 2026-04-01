@@ -132,16 +132,12 @@ impl From<extension::TcpArgumentsTemplate> for TcpArgumentsTemplate {
 impl From<TcpArgumentsTemplate> for extension::TcpArgumentsTemplate {
     fn from(value: TcpArgumentsTemplate) -> Self {
         Self {
-            host: value
-                .host
-                .map(|bits| IpAddr::V4(Ipv4Addr::from_bits(bits))),
+            host: value.host.map(|bits| IpAddr::V4(Ipv4Addr::from_bits(bits))),
             port: value.port,
             timeout: value.timeout,
         }
     }
 }
-
-
 
 impl TryFrom<extension::DebugTaskDefinition> for DebugTaskDefinition {
     type Error = anyhow::Error;
@@ -911,7 +907,9 @@ impl dap::Host for WasmState {
                 .await?;
             let host_bits = match host {
                 IpAddr::V4(v4) => v4.to_bits(),
-                IpAddr::V6(_) => anyhow::bail!("IPv6 addresses are not supported in the extension API"),
+                IpAddr::V6(_) => {
+                    anyhow::bail!("IPv6 addresses are not supported in the extension API")
+                }
             };
             Ok(TcpArguments {
                 port,
