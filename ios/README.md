@@ -1,91 +1,133 @@
 # Zed for iPad
 
-This directory contains the iOS host app for Zed on iPadOS. Zed on iPad is a
-thin client: all editing and language intelligence runs on a remote host (your
-Mac, a cloud VM, etc.) over SSH. The iPad renders the UI locally via GPUI and
-Metal.
+Zed on iPad is a thin client: the iPad renders the UI locally via GPUI and Metal,
+while all editing, language intelligence, terminals, and extensions run on a remote
+host over SSH.
+
+## Prerequisites
+
+- macOS with Xcode 16+ installed
+- Rust toolchain (`rustup`)
+- iOS targets: `rustup target add aarch64-apple-ios aarch64-apple-ios-sim`
+- An Apple Developer account (free or paid — needed for device signing)
+- A remote host running `zed --headless` (your Mac, a Linux box, a cloud VM)
+
+## Quick start
+
+### Simulator
+
+```bash
+# Open in Xcode and hit Run (Cmd+R), selecting an iPad simulator
+open ios/Zed.xcodeproj
+```
+
+Xcode's build phase script (`ios/scripts/cargo-build-ios`) handles the Rust
+build automatically. The first build takes ~10 minutes; subsequent builds are
+incremental (~30s for Rust, ~5s for Swift).
+
+### Physical device
+
+1. Open `ios/Zed.xcodeproj` in Xcode
+2. Select your team in Signing & Capabilities (any Apple Developer account works)
+3. Connect your iPad via USB or select it as a wireless destination
+4. Hit Run (Cmd+R)
+
+### Manual Rust build (optional)
+
+If you want to check Rust compilation without Xcode:
+
+```bash
+# Simulator:
+cargo check -p zed_ios --target aarch64-apple-ios-sim --no-default-features
+# Device:
+cargo check -p zed_ios --target aarch64-apple-ios --no-default-features
+```
+
+Do not pass `--features ios` — there is no such feature flag. iOS-specific code is
+gated by `cfg(target_os = "ios")` automatically.
+
+## Connecting to a remote host
+
+On first launch you'll see the connection landing screen. Add your remote host
+(hostname, port, username) and a project path. Zed connects over SSH using the
+embedded `russh` library — no system `ssh` binary needed.
+
+The remote host needs `zed --headless` running. On macOS or Linux:
+
+```bash
+# Install Zed CLI if you haven't
+curl -f https://zed.dev/install.sh | sh
+
+# The iPad will auto-install the headless server on first connect,
+# or you can pre-install it:
+zed --headless
+```
+
+SSH keys are loaded from `~/.ssh/` on the remote host. Password auth is also
+supported (the iPad prompts interactively).
 
 ## Architecture
 
-The app is structured as a minimal Swift host that bootstraps UIKit and
-delegates immediately into Rust:
+The app is a minimal Swift host that bootstraps UIKit and delegates into Rust:
 
 ```
-Swift (UIKit lifecycle)  →  C FFI  →  Rust (crates/zed_ios, crates/gpui)
+Swift (UIKit lifecycle)  ->  C FFI  ->  Rust (crates/zed_ios, crates/gpui_ios)
 ```
 
-`AppDelegate` and `SceneDelegate` handle the iOS scene lifecycle and call three
-FFI functions: `zed_ios_main()`, `zed_ios_open_window()`, and
-`zed_ios_close_window()`. Everything else — rendering, input, networking, editor
-logic — lives in Rust.
+`AppDelegate` and `SceneDelegate` handle the iOS scene lifecycle and call FFI
+functions: `zed_ios_main()`, `zed_ios_open_window()`, `zed_ios_close_window()`.
+Everything else — rendering, input, networking, editor logic — lives in Rust.
 
-## Why a Swift host instead of pure Rust?
+### Why a Swift host instead of pure Rust?
 
-The macOS Zed app is built entirely in Rust: GPUI uses the `objc` crate to
-register `NSApplication` subclasses at runtime, and `cargo-bundle` assembles the
-`.app` without Xcode. We considered the same approach for iOS.
+The macOS Zed app is built entirely in Rust. On iOS, a Swift host is needed
+because asset catalogs (`actool`), code signing, and App Store distribution all
+require Xcode's toolchain. The Swift host is three files (~60 lines). See
+`ios/CLAUDE.md` for project structure details.
 
-The short answer is that the iOS toolchain makes this impractical:
+## Key directories
 
-- **Asset catalogs** — `actool` produces a proprietary compiled `.car` format.
-  No open-source tool can generate it. Even a pure-Rust build needs to shell out
-  to Apple's toolchain for this step.
-- **App distribution** — App Store and TestFlight require a signed `.ipa`
-  produced by `xcodebuild archive`. There is no Cargo-native path to a
-  distributable iOS build.
-- **Code signing** — iOS provisioning profiles, entitlements, and device
-  registration are significantly more complex than macOS signing. Xcode manages
-  this; reimplementing it in a build script is not worthwhile.
-- **`cargo-bundle` has no iOS support** — and tools like `cargo-mobile2`
-  (which Tauri uses) don't bypass Xcode either. They automate generating
-  `project.pbxproj` and then call `xcodebuild`. We wrote that file once; it's
-  done.
+| Path | Purpose |
+|---|---|
+| `ios/` | Xcode project, Swift host app |
+| `crates/zed_ios/` | Rust staticlib — app init, connection landing, edit prediction registry |
+| `crates/gpui_ios/` | GPUI iOS platform layer — Metal renderer, CoreText, UIKit integration |
+| `assets/keymaps/default-ios.json` | iPad keymap (standalone, not an overlay on macOS) |
+| `docs/ios-port-plan.md` | Full architecture and phase plan |
+| `docs/ios-checklist.md` | Working checklist of what's done and next |
 
-The Swift host is three files and about 60 lines of code. The maintenance burden
-is negligible compared to what would be required to replicate the iOS build
-pipeline without Xcode.
+## Editor setup for Swift files
 
-## Editor setup
-
-For Swift language server support (UIKit completions, error highlighting) in Zed,
-install `xcode-build-server` and run it once from the `ios/` directory:
+For Swift language server support in Zed (UIKit completions, diagnostics):
 
 ```bash
 brew install xcode-build-server
 cd ios && xcode-build-server config -project Zed.xcodeproj -scheme Zed
 ```
 
-This generates `ios/buildServer.json` (gitignored) which tells sourcekit-lsp to
-use the iOS SDK instead of the macOS SDK.
+Re-run after `xcodebuild clean` — clean wipes the build index that sourcekit-lsp reads.
 
-**Re-run after any `clean build`**: `xcodebuild clean` wipes the build index
-that sourcekit-lsp reads. If UIKit errors reappear in Swift files, run
-`xcode-build-server config` again from `ios/`, then restart the language server
-in your editor.
+## Asset changes
 
-## Building
-
-The Xcode project drives the full build. The `cargo build` step is wired in as
-a shell script build phase that runs before Swift compilation.
+Assets (keymaps, themes, fonts) are embedded at Rust compile time via `RustEmbed`.
+After changing an asset file, touch the embedding source to force a rebuild:
 
 ```bash
-# Build and run on the iPad Pro simulator
-xcodebuild -project ios/Zed.xcodeproj -scheme Zed \
-  -destination 'platform=iOS Simulator,name=iPad Pro 13-inch (M5)' \
-  build
-
-# For a physical device, open Zed.xcodeproj in Xcode and run from there
-# (requires an Apple Developer account for code signing)
+touch crates/assets/src/assets.rs
 ```
 
-The Rust static library is built as part of the Xcode build phase — you do not
-need to run `cargo build` separately unless you want to check for compile errors
-without going through Xcode.
+## Pushing files to device
 
-See `CLAUDE.md` in this directory for agent-facing build details and Swift
-conventions.
+```bash
+# Pull settings from device:
+xcrun devicectl device copy from --device <UDID> \
+  --domain-type appDataContainer --domain-identifier dev.zed.ipad.app \
+  --source "Library/Application Support/Zed/settings.json" \
+  --destination /tmp/settings.json
 
-## Project plan
-
-See `docs/ios-port-plan.md` in the repository root for the full architecture,
-phase plan, SSH transport design, and technical specifics.
+# Push settings to device:
+xcrun devicectl device copy to --device <UDID> \
+  --domain-type appDataContainer --domain-identifier dev.zed.ipad.app \
+  --source /tmp/settings.json \
+  --destination "Library/Application Support/Zed/settings.json"
+```

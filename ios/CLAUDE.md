@@ -11,21 +11,17 @@ calls into Rust via C FFI. All substantive logic lives in `crates/zed_ios/` and
 
 ## Build
 
-The iOS build is a two-step process: build the Rust static library, then build
-the Swift app in Xcode which links against it.
+Open `ios/Zed.xcodeproj` in Xcode and hit Run. The Xcode build phase script
+(`ios/scripts/cargo-build-ios`) handles the Rust `cargo build` automatically —
+you do not need to run cargo separately.
+
+For quick Rust-only error checking without Xcode:
 
 ```bash
-# 1. Build the Rust static library
+# Simulator:
+cargo check -p zed_ios --target aarch64-apple-ios-sim --no-default-features
 # Device:
-cargo build -p zed_ios --target aarch64-apple-ios --release --no-default-features
-# Simulator:
-cargo build -p zed_ios --target aarch64-apple-ios-sim --release --no-default-features
-
-# 2. Build the Swift app (Xcode picks up the .a from target/)
-# Device: build+run from Xcode with a connected device and valid signing
-# Simulator:
-xcodebuild -project ios/Zed.xcodeproj -scheme Zed \
-  -destination 'platform=iOS Simulator,name=iPad Pro 13-inch (M5)' build
+cargo check -p zed_ios --target aarch64-apple-ios --no-default-features
 ```
 
 Do not pass `--features ios` — there is no such feature flag. iOS-specific code
@@ -45,6 +41,25 @@ source to force a rebuild:
 ```bash
 touch crates/assets/src/assets.rs
 ```
+
+## Dev Remote Server
+
+The iPad connects to a remote `zed --headless` server. For development with features
+on this branch (e.g. settings profile sync), build and deploy a custom server binary:
+
+```bash
+# Build (release recommended for ongoing use, debug for iteration):
+cargo build -p remote_server --release
+
+# Deploy — copy to ~/.zed_server/ with a name matching the glob pattern:
+cp target/release/remote_server ~/.zed_server/zed-remote-server-dev-ipad
+
+# Kill running server so next connection picks up the new binary:
+pkill -9 -f "zed-remote-server"
+```
+
+The iPad's russh transport resolves the server binary via `ls -t ~/.zed_server/zed-remote-server-*`
+(newest by modification time). The dev binary must be newer than the stable release binary.
 
 ## Xcode project structure
 

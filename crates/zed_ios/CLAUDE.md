@@ -28,14 +28,18 @@ It is the Rust-side entry point for everything iOS-specific that doesn't belong 
 
 ## Build
 
+The primary build path is Xcode — open `ios/Zed.xcodeproj` and hit Run. The Xcode
+build phase handles `cargo build` automatically.
+
+For quick Rust-only error checking:
 ```bash
 # Simulator:
-cargo build -p zed_ios --target aarch64-apple-ios-sim --release --no-default-features
+cargo check -p zed_ios --target aarch64-apple-ios-sim --no-default-features
 # Device:
-cargo build -p zed_ios --target aarch64-apple-ios --release --no-default-features
+cargo check -p zed_ios --target aarch64-apple-ios --no-default-features
 ```
 
-Note: do not pass `--features ios` — there is no such feature flag; iOS-specific code
+Do not pass `--features ios` — there is no such feature flag; iOS-specific code
 is gated by `cfg(target_os = "ios")` automatically when targeting `aarch64-apple-ios*`.
 
 ## Dev Remote Server
