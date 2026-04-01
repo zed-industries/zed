@@ -273,7 +273,14 @@ impl ThreadsArchiveView {
 
         self.list_state.reset(items.len());
         self.items = items;
-        self.hovered_index = None;
+
+        if !preserve {
+            self.hovered_index = None;
+        } else if let Some(ix) = self.hovered_index {
+            if ix >= self.items.len() || !self.is_selectable_item(ix) {
+                self.hovered_index = None;
+            }
+        }
 
         if let Some(scroll_top) = saved_scroll {
             self.list_state.scroll_to(scroll_top);
@@ -532,6 +539,7 @@ impl ThreadsArchiveView {
                                 let agent = thread.agent_id.clone();
                                 let session_id = thread.session_id.clone();
                                 cx.listener(move |this, _, _, cx| {
+                                    this.preserve_selection_on_next_update = true;
                                     this.delete_thread(session_id.clone(), agent.clone(), cx);
                                     cx.stop_propagation();
                                 })
