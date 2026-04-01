@@ -2467,7 +2467,7 @@ impl Thread {
             event_stream_clone.send_tool_use_finished(finished_event.clone());
 
             if let Some(ref command) = hooks.post_tool_use {
-                run_hook_command_sync(command, &finished_event);
+                run_hook_command_async(command, &finished_event).await;
             }
 
             LanguageModelToolResult {
@@ -4126,13 +4126,12 @@ fn run_hook_command(command: &str, event: &ToolUseHookEvent, cx: &mut App) {
         }
     };
     cx.background_spawn(async move {
-        run_hook_command_inner(&command, &json);
+        run_hook_command_inner(&command, &json).await;
     })
     .detach();
 }
 
-fn run_hook_command_sync(command: &str, event: &ToolUseHookEvent) {
-    let command = command.to_string();
+async fn run_hook_command_async(command: &str, event: &ToolUseHookEvent) {
     let json = match serde_json::to_string(event) {
         Ok(json) => json,
         Err(err) => {
@@ -4140,14 +4139,12 @@ fn run_hook_command_sync(command: &str, event: &ToolUseHookEvent) {
             return;
         }
     };
-    std::thread::spawn(move || {
-        run_hook_command_inner(&command, &json);
-    });
+    run_hook_command_inner(command, &json).await;
 }
 
-fn run_hook_command_inner(command: &str, json: &str) {
-    use std::io::Write;
-    use std::process::{Command, Stdio};
+async fn run_hook_command_inner(command: &str, json: &str) {
+    use futures::AsyncWriteExt;
+    use util::command::Stdio;
 
     let shell = if cfg!(target_os = "windows") {
         "cmd"
@@ -4160,7 +4157,7 @@ fn run_hook_command_inner(command: &str, json: &str) {
         "-c"
     };
 
-    let child = Command::new(shell)
+    let child = util::command::new_command(shell)
         .arg(shell_arg)
         .arg(command)
         .stdin(Stdio::piped())
@@ -4171,11 +4168,11 @@ fn run_hook_command_inner(command: &str, json: &str) {
     match child {
         Ok(mut child) => {
             if let Some(mut stdin) = child.stdin.take() {
-                if let Err(err) = stdin.write_all(json.as_bytes()) {
+                if let Err(err) = stdin.write_all(json.as_bytes()).await {
                     log::warn!("Failed to write to hook stdin: {}", err);
                 }
             }
-            match child.wait() {
+            match child.status().await {
                 Ok(status) => {
                     if !status.success() {
                         log::warn!("Hook command exited with status: {}", status);
