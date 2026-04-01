@@ -1714,51 +1714,25 @@ impl MultiBuffer {
         cursor_shape: CursorShape,
         cx: &mut Context<Self>,
     ) {
+        let snapshot = self.snapshot(cx);
         let mut selections_by_buffer: HashMap<BufferId, Vec<Selection<text::Anchor>>> =
             Default::default();
-        let snapshot = self.snapshot(cx);
-        let mut cursor = snapshot.excerpts.cursor::<ExcerptSummary>(());
-        for selection in selections {
-            let start = selection.start.seek_target(&snapshot);
 
-            cursor.seek(&start, Bias::Left);
-            while let Some(excerpt) = cursor.item() {
-                let excerpt_start =
-                    Anchor::in_buffer(excerpt.path_key_index, excerpt.range.context.start);
-                if excerpt_start.cmp(&selection.end, &snapshot).is_gt() {
-                    break;
-                }
-                let buffer = excerpt.buffer_snapshot(&snapshot);
-                let start = *text::Anchor::max(
-                    &excerpt.range.context.start,
-                    &selection
-                        .start
-                        .excerpt_anchor()
-                        .map(|excerpt_anchor| excerpt_anchor.text_anchor())
-                        .unwrap_or(text::Anchor::min_for_buffer(excerpt.buffer_id)),
-                    buffer,
-                );
-                let end = *text::Anchor::min(
-                    &excerpt.range.context.end,
-                    &selection
-                        .end
-                        .excerpt_anchor()
-                        .map(|excerpt_anchor| excerpt_anchor.text_anchor())
-                        .unwrap_or(text::Anchor::max_for_buffer(excerpt.buffer_id)),
-                    buffer,
-                );
+        for selection in selections {
+            for (buffer_snapshot, buffer_range, _) in
+                snapshot.range_to_buffer_ranges(selection.start..selection.end)
+            {
                 selections_by_buffer
-                    .entry(buffer.remote_id())
+                    .entry(buffer_snapshot.remote_id())
                     .or_default()
                     .push(Selection {
                         id: selection.id,
-                        start,
-                        end,
+                        start: buffer_snapshot
+                            .anchor_at(buffer_range.start, selection.start.bias()),
+                        end: buffer_snapshot.anchor_at(buffer_range.end, selection.end.bias()),
                         reversed: selection.reversed,
                         goal: selection.goal,
                     });
-
-                cursor.next();
             }
         }
 
