@@ -430,6 +430,9 @@ mod ios {
                 language_tools::init(cx);
                 vim::init(cx);
                 terminal_view::init(cx);
+                debugger_ui::init(cx);
+                debugger_tools::init(cx);
+                dap_adapters::init(cx);
                 outline_panel::init(cx);
                 language_selector::init(cx);
                 theme_selector::init(cx);
@@ -579,7 +582,7 @@ mod ios {
                     .detach();
 
                     // Panels
-                    let panels_task = cx.spawn_in(window, async move |workspace_handle, cx| {
+                    let panels_task = cx.spawn_in(window, async move |workspace_handle, mut cx| {
                         if let Some(panel) = project_panel::ProjectPanel::load(
                             workspace_handle.clone(), cx.clone(),
                         ).await.log_err() {
@@ -611,6 +614,14 @@ mod ios {
                         }
                         if let Some(panel) = terminal_view::terminal_panel::TerminalPanel::load(
                             workspace_handle.clone(), cx.clone(),
+                        ).await.log_err() {
+                            workspace_handle.update_in(
+                                &mut cx.clone(),
+                                |workspace, window, cx| workspace.add_panel(panel, window, cx),
+                            ).log_err();
+                        }
+                        if let Some(panel) = debugger_ui::debugger_panel::DebugPanel::load(
+                            workspace_handle.clone(), &mut cx,
                         ).await.log_err() {
                             workspace_handle.update_in(
                                 &mut cx.clone(),

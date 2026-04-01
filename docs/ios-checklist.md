@@ -73,6 +73,9 @@ full architectural details.
 - [x] Active profile sync to remote server (UpdateUserSettings proto change)
 - [x] Status bar prefix/suffix survives SSH reconnection
 - [x] Dev remote server build and deployment workflow
+- [x] Debug panel (debugger_ui, debugger_tools, dap_adapters)
+- [ ] Debug panel: test full debug workflow end-to-end
+- [ ] Debug panel: "Edit debug.json" button doesn't open the file
 
 ---
 
