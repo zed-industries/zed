@@ -5207,9 +5207,12 @@ impl ThreadView {
 
         match thinking_display {
             ThinkingBlockDisplay::Auto => {
-                if self.expanded_thinking_blocks.contains(&key) {
+                let is_open = self.expanded_thinking_blocks.contains(&key)
+                    || self.user_toggled_thinking_blocks.contains(&key);
+
+                if is_open {
                     self.expanded_thinking_blocks.remove(&key);
-                    self.user_toggled_thinking_blocks.insert(key);
+                    self.user_toggled_thinking_blocks.remove(&key);
                 } else {
                     self.expanded_thinking_blocks.insert(key);
                     self.user_toggled_thinking_blocks.insert(key);
