@@ -857,9 +857,9 @@ mod tests {
         #[gpui::test]
         async fn test_eslint_8_56_does_not_treat_cjs_as_flat_config(cx: &mut TestAppContext) {
             let fs = FakeFs::new(cx.executor());
-            fs.insert_file(
-                unix_path_to_platform("/workspace/eslint.config.cjs"),
-                vec![],
+            fs.insert_tree(
+                unix_path_to_platform("/workspace"),
+                json!({ "eslint.config.cjs": "" }),
             )
             .await;
             let worktree_root = PathBuf::from(unix_path_to_platform("/workspace"));
@@ -880,9 +880,9 @@ mod tests {
         #[gpui::test]
         async fn test_eslint_8_57_treats_cjs_as_flat_config(cx: &mut TestAppContext) {
             let fs = FakeFs::new(cx.executor());
-            fs.insert_file(
-                unix_path_to_platform("/workspace/eslint.config.cjs"),
-                vec![],
+            fs.insert_tree(
+                unix_path_to_platform("/workspace"),
+                json!({ "eslint.config.cjs": "" }),
             )
             .await;
             let worktree_root = PathBuf::from(unix_path_to_platform("/workspace"));
@@ -903,8 +903,11 @@ mod tests {
         #[gpui::test]
         async fn test_eslint_10_treats_typescript_config_as_flat_config(cx: &mut TestAppContext) {
             let fs = FakeFs::new(cx.executor());
-            fs.insert_file(unix_path_to_platform("/workspace/eslint.config.ts"), vec![])
-                .await;
+            fs.insert_tree(
+                unix_path_to_platform("/workspace"),
+                json!({ "eslint.config.ts": "" }),
+            )
+            .await;
             let worktree_root = PathBuf::from(unix_path_to_platform("/workspace"));
             let requested_file = PathBuf::from(unix_path_to_platform("/workspace/src/index.js"));
             let version = Version::parse("10.0.0").expect("valid ESLint version");
@@ -925,11 +928,16 @@ mod tests {
             cx: &mut TestAppContext,
         ) {
             let fs = FakeFs::new(cx.executor());
-            fs.insert_file(unix_path_to_platform("/workspace/eslint.config.js"), vec![])
-                .await;
-            fs.insert_file(
-                unix_path_to_platform("/workspace/packages/web/eslint.config.js"),
-                vec![],
+            fs.insert_tree(
+                unix_path_to_platform("/workspace"),
+                json!({
+                    "eslint.config.js": "",
+                    "packages": {
+                        "web": {
+                            "eslint.config.js": ""
+                        }
+                    }
+                }),
             )
             .await;
             let worktree_root = PathBuf::from(unix_path_to_platform("/workspace"));
@@ -954,9 +962,15 @@ mod tests {
             cx: &mut TestAppContext,
         ) {
             let fs = FakeFs::new(cx.executor());
-            fs.insert_file(
-                unix_path_to_platform("/workspace/packages/web/.eslintrc.cjs"),
-                vec![],
+            fs.insert_tree(
+                unix_path_to_platform("/workspace"),
+                json!({
+                    "packages": {
+                        "web": {
+                            ".eslintrc.cjs": ""
+                        }
+                    }
+                }),
             )
             .await;
             let worktree_root = PathBuf::from(unix_path_to_platform("/workspace"));
