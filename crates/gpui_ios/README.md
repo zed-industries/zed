@@ -24,5 +24,5 @@ dependencies and build scripts.
 
 ## See also
 
-- `ios/port-plan.md` — Phase 1 covers the platform layer in detail
+- `ios/plan.md` — Phase 1 covers the platform layer in detail
 - `crates/gpui_macos/` — macOS sibling (AppKit + Metal)

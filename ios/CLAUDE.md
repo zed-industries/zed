@@ -12,7 +12,7 @@ calls into Rust via C FFI. All substantive logic lives in `crates/zed_ios/` and
 ## Build
 
 Open `ios/Zed.xcodeproj` in Xcode and hit Run. The Xcode build phase script
-(`ios/scripts/cargo-build-ios`) handles the Rust `cargo build` automatically —
+(`ios/script/cargo-build-ios`) handles the Rust `cargo build` automatically —
 you do not need to run cargo separately.
 
 For quick Rust-only error checking without Xcode:

@@ -21,7 +21,7 @@ host over SSH.
 open ios/Zed.xcodeproj
 ```
 
-Xcode's build phase script (`ios/scripts/cargo-build-ios`) handles the Rust
+Xcode's build phase script (`ios/script/cargo-build-ios`) handles the Rust
 build automatically. The first build takes ~10 minutes; subsequent builds are
 incremental (~30s for Rust, ~5s for Swift).
 
@@ -93,7 +93,7 @@ require Xcode's toolchain. The Swift host is three files (~60 lines). See
 | `crates/zed_ios/` | Rust staticlib — app init, connection landing, edit prediction registry |
 | `crates/gpui_ios/` | GPUI iOS platform layer — Metal renderer, CoreText, UIKit integration |
 | `assets/keymaps/default-ios.json` | iPad keymap (standalone, not an overlay on macOS) |
-| `ios/port-plan.md` | Full architecture and phase plan |
+| `ios/plan.md` | Full architecture and phase plan |
 | `ios/checklist.md` | Working checklist of what's done and next |
 
 ## Editor setup for Swift files

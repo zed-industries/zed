@@ -162,7 +162,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
-			shellScript = "\"$PROJECT_DIR/../ios/scripts/cargo-build-ios\"\n";
+			shellScript = "\"$PROJECT_DIR/../ios/script/cargo-build-ios\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
