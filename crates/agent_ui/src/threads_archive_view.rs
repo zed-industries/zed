@@ -833,13 +833,6 @@ impl Render for ProjectPickerModal {
             .key_context("ProjectPickerModal")
             .elevation_3(cx)
             .w(rems(34.))
-            .child(
-                v_flex().px_2().py_1().gap_0p5().child(
-                    Label::new(format!("Select a project for \"{}\"", self.title))
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                ),
-            )
             .child(self.picker.clone())
     }
 }
@@ -905,7 +898,7 @@ impl PickerDelegate for ProjectPickerDelegate {
     type ListItem = AnyElement;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Search recent projects…".into()
+        format!("Associate the \"{}\" thread with...", self.thread.title).into()
     }
 
     fn render_editor(
