@@ -636,7 +636,6 @@ impl RemoteConnection for RusshRemoteConnection {
         }
         let inner = inner_parts.join(" ");
         let full_command = format!("{} -l -c {}", shell, shell_escape(&inner));
-        log::info!("[ssh] open_command_channel: {full_command}");
 
         Tokio::spawn_result(cx, async move {
             let handle = session.lock().await;
@@ -691,12 +690,10 @@ impl RemoteConnection for RusshRemoteConnection {
                             }
                         }
                         russh::ChannelMsg::ExitStatus { exit_status } => {
-                            log::info!("[ssh] command channel exited with status {exit_status}");
                             exit_tx.send(Some(exit_status)).await.ok();
                             break;
                         }
                         russh::ChannelMsg::Eof | russh::ChannelMsg::Close => {
-                            log::info!("[ssh] command channel closed");
                             exit_tx.send(None).await.ok();
                             break;
                         }

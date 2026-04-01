@@ -899,7 +899,6 @@ impl TerminalBuilder {
                                 futures::future::pending::<Option<Option<u32>>>().await
                             }
                         }.fuse() => {
-                            log::info!("[terminal] SSH exit received (in select): {:?}", exit);
                             if let Some(status) = exit {
                                 let code = status.map(|s| s as i32);
                                 terminal.update(cx, |terminal, cx| {
@@ -914,7 +913,6 @@ impl TerminalBuilder {
                 // the exit signal may already be waiting. Check it now.
                 if let Some(ref rx) = exit_rx {
                     if let Ok(status) = rx.try_recv() {
-                        log::info!("[terminal] SSH exit received (after loop): {:?}", status);
                         let code = status.map(|s| s as i32);
                         terminal.update(cx, |terminal, cx| {
                             terminal.register_task_finished(code, cx);

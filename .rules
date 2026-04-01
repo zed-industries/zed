@@ -206,7 +206,7 @@ through the remote protocol.
 
 **Key directories for this port:**
 - `ios/` — Xcode project, Swift host app, entitlements
-- `crates/zed_ios/` — Rust staticlib entry point, app init, Keychain bridge, network monitor
+- `crates/zed_ios/` — Rust staticlib entry point, app init, connection landing, edit prediction registry
 - `crates/gpui_ios/` — GPUI iOS platform layer (Metal renderer, CoreText text system, UIKit window, GCD dispatcher) — ~4900 lines
 
 **For the full architecture, phase plan, and technical details:**

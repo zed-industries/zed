@@ -8,11 +8,12 @@ It is the Rust-side entry point for everything iOS-specific that doesn't belong 
 - `ios_main()` initializes GPUI with the iOS platform + embedded assets, then boots the
   real Zed workspace (settings, themes, fonts, client, workspace) via `init_zed()`.
 - `Session::new` is async, so workspace window opening is deferred to a `cx.spawn`.
-- `connection_landing.rs` — connection manager UI with saved hosts list, add/remove/edit
-  mode, Tab navigation, focus indicators, and JSON persistence to `~/.config/zed/ssh_hosts.json`.
-  Includes auto-reconnect, session persistence, workspace switcher with all saved paths,
-  and connection error states.
+- `connection_landing.rs` — connection manager UI with saved hosts list, auto-reconnect,
+  session persistence, workspace switcher. Hosts persisted as JSON in App Support.
 - Terminal panel with SSH-backed terminals (PTY over SSH channel via russh).
+- Agent panel with external agent support (Claude Code via ACP over SSH channels).
+- Edit prediction with provider registry (copied from desktop, Copilot skipped).
+- Keychain unlock auth flow for external agents on macOS remotes.
 - Workspace state persisted to database (dock layout, open files, active profile).
 - Settings profile selector for project-level profiles.
 
@@ -21,7 +22,9 @@ It is the Rust-side entry point for everything iOS-specific that doesn't belong 
 - C FFI entry points (`zed_ios_main`, `zed_ios_open_window`, `zed_ios_close_window`,
   `zed_ios_will_resign_active`, `zed_ios_build_menus`)
 - Full Zed app initialization (settings, theme, fonts, client, workspace, terminal,
-  profile selector, panels)
+  agent panel, edit prediction, profile selector, panels)
+- `edit_prediction_registry.rs` — provider assignment (adapted from desktop `zed` crate)
+- HTTP client configured with `proxy_and_user_agent()` for platform TLS verifier
 
 ## Build
 
@@ -78,7 +81,10 @@ When adding a new feature or action to the iPad build:
 4. Touch `crates/assets/src/assets.rs` to force RustEmbed to pick up keymap changes.
 
 The vim keymap (`keymaps/vim.json`) is loaded separately with partial-failure tolerance
-since it may reference actions from crates not yet ported to iPad (e.g. terminal).
+since it may reference actions from crates not yet ported to iPad.
+
+The iOS keymap includes `AcpThread > Editor` contexts for agent panel input (enter to
+send, cmd-enter follow mode) — these are separate from the `AgentPanel` context bindings.
 
 ## FFI pattern
 

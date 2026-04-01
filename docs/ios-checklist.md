@@ -109,21 +109,25 @@ These items work with the standard `zed --headless` binary.
 - [ ] Add `collab_ui` (channel list, contacts, chat — no voice/video)
 - [ ] Handle `title_bar` exclusion on iPad
 
-### 3.6 — Edit Prediction
-- [ ] Add edit_prediction crates to zed_ios
-- [ ] Extract or duplicate provider registry (currently in desktop `zed` crate)
-- [ ] Verify Zed/Codestral/OpenAI providers work on iPad
+### 3.6 — Edit Prediction ✅
+- [x] Add edit_prediction crates to zed_ios
+- [x] Extract provider registry (copied from desktop `zed` crate, adapted for iOS)
+- [x] Copilot provider initialized with `NodeRuntime::unavailable` (graceful skip)
+- [x] Keybindings: Alt-Tab accept, Tab accept
+- [ ] Verify Zed/Codestral/OpenAI providers work on iPad (needs Zed Cloud auth)
 - [ ] Handle Copilot fallback (skip or map to Zed provider)
-- [ ] Keybindings: Tab accept, Escape dismiss, Alt+]/[ cycle
 
-### 3.7 — Remote Terminal (via SSH channels)
-- [ ] `RusshRemoteConnection::open_terminal()` — opens new SSH session channel
-- [ ] PTY allocation via `channel.request_pty()` + `channel.request_shell()`
-- [ ] Bidirectional I/O via `channel.split()` (same pattern as `start_proxy`)
-- [ ] Terminal resize via `channel.window_change()`
-- [ ] Wire into `project::terminals` as iPad alternative to `build_command()`
-- [ ] Client-side: display-only terminal via `TerminalBuilder::new_display_only()`
-- [ ] Terminal rendering via GPUI text system
+### 3.7 — Remote Terminal (via SSH channels) ✅
+- [x] `open_shell_channel()` — opens new SSH session channel with PTY
+- [x] PTY allocation via `channel.request_pty()` + `channel.exec()` (login shell)
+- [x] Bidirectional I/O via `channel.split()` with tokio tasks
+- [x] Terminal resize via `channel.window_change()`
+- [x] `TerminalType::Ssh` variant with `TerminalBuilder::new_ssh()`
+- [x] Wire into `project::terminals` as iPad alternative to `build_command()`
+- [x] Terminal rendering via GPUI text system (alacritty_terminal + SSH output)
+- [x] `open_command_channel()` — no-PTY exec for agents and tasks
+- [x] iOS terminal task support (`create_terminal_task_ios()`)
+- [x] SSH shell exit status detection (collect ExitStatus before Close)
 - [ ] Touch keyboard accessory bar (Esc, Tab, Ctrl, arrows, etc.)
 
 ### 3.8 — Extensions & Tree-sitter Grammar Support
@@ -137,15 +141,25 @@ These items work with the standard `zed --headless` binary.
 - [ ] Extension panel UI (show installed extensions, install new ones)
 - [ ] Mark extensions with subprocess capabilities as "not supported on iPad"
 
-### 3.9 — Agent Panel (Zed Agent + External Agents)
-- [ ] Add agent crates to zed_ios (agent, agent_ui, agent_settings, language_model, etc.)
-- [ ] Initialize agent panel in `init_zed()`
-- [ ] Zed agent: verify LLM calls work directly from iPad (HTTPS to providers)
+### 3.9 — Agent Panel (Zed Agent + External Agents) 🔧
+- [x] Add agent crates to zed_ios (agent, agent_ui, agent_settings, language_model, etc.)
+- [x] Initialize agent panel in `init_zed()` (ToggleFocus/Toggle actions, AgentRegistryStore)
+- [x] TLS fix: use `proxy_and_user_agent()` for platform TLS verifier (was UnknownIssuer)
+- [x] LMDB fix: `MDB_NOLOCK` flag for heed on iOS (no SysV semaphores)
+- [x] External agents: `open_command_channel()` for SSH exec (no PTY, no subprocess)
+- [x] External agents: `AcpConnection::ssh()` with `SshChannelBridgeReader` (futures mpsc)
+- [x] External agents: separate stderr from stdout in command channels (ACP stream integrity)
+- [x] External agents: ACP handshake works over SSH — connection established
+- [x] Keychain auth: `security unlock-keychain` via SSH terminal on macOS remotes
+- [x] Keychain auth: force `restart_connection` after auth success (fresh agent process)
+- [x] Keychain auth: SSH exit status plumbing for PTY shells (ExitStatus vs EOF race fix)
+- [x] AcpThread keybindings: enter to send, cmd-enter follow, cmd-shift-enter send immediately
+- [ ] Zed agent: verify LLM calls work directly from iPad (needs Zed Cloud auth)
 - [ ] Zed agent: verify tool invocations proxy through Project → remote host
-- [ ] Zed Pro auth via ASWebAuthenticationSession (OAuth/PKCE)
-- [ ] External agents: replace `Child::spawn()` with SSH channel exec on iPad
-- [ ] External agents: pipe ACP JSON-RPC over SSH channel stdio
+- [ ] Zed Pro auth via ASWebAuthenticationSession (OAuth/PKCE) — blocked on redirect URI
+- [ ] Keychain auth: Linux credential file support (no keychain on Linux)
 - [ ] Add warning: "Keep Zed in foreground while agent is working"
+- [ ] Remove debug logging from acp.rs, agent_server_store.rs, russh_ssh.rs, terminal.rs
 
 ---
 
@@ -215,8 +229,14 @@ Prerequisite: dev workflow for building and deploying custom `remote_server` bin
 
 ---
 
+## Known Bugs
+- [ ] Rope panic: UTF-16 point beyond end of line in iOS text input (see `plans/ios-rope-panic.md`)
+- [ ] Agent panel input lag — likely conversation view re-rendering on every keystroke (needs profiling)
+- [ ] `ExternalAgentsUpdated` arrives before handler registered (race on first connect — benign)
+
 ## Deferred / Follow-up
 - [ ] Feature-gate libgit2 out of iOS build (currently requires -lz, -liconv)
+- [ ] Full UITextInput protocol (selectedTextRange, textInRange, etc. — currently UIKeyInput only)
 - [ ] IME position (update_ime_position) — editor polish
 - [ ] Cursor styling (UIPointerInteraction) — trackpad polish
 - [ ] File dialogs (UIDocumentPicker) — SSH key import

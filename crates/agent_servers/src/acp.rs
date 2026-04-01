@@ -175,7 +175,6 @@ pub async fn connect(
 ) -> Result<Rc<dyn AgentConnection>> {
     #[cfg(target_os = "ios")]
     let conn = {
-        log::info!("[acp] iOS: connecting external agent {:?} cmd={:?} args={:?}", agent_id, command.path, command.args);
         // On iOS, execute the agent command on the remote host via SSH channel.
         let (connection, working_dir) = cx.update(|cx| {
             let project_ref = project.read(cx);
@@ -189,10 +188,8 @@ pub async fn connect(
                 .map(|wt| wt.read(cx).abs_path().to_string_lossy().to_string());
             anyhow::Ok((conn, dir))
         })?;
-        log::info!("[acp] iOS: got remote connection, working_dir={:?}", working_dir);
 
         let env = command.env.clone().unwrap_or_default();
-        log::info!("[acp] iOS: opening command channel...");
         let channel = connection
             .open_command_channel(
                 &command.path.display().to_string(),
@@ -202,7 +199,6 @@ pub async fn connect(
                 cx,
             )
             .await?;
-        log::info!("[acp] iOS: command channel opened, starting ACP handshake...");
 
         AcpConnection::ssh(
             agent_id,
@@ -214,9 +210,7 @@ pub async fn connect(
             channel,
             cx,
         )
-        .await
-        .inspect(|_| log::info!("[acp] iOS: ACP connection established successfully"))
-        .inspect_err(|e| log::error!("[acp] iOS: ACP connection failed: {e:?}"))?
+        .await?
     };
 
     #[cfg(not(target_os = "ios"))]
