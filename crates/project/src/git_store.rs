@@ -1816,7 +1816,7 @@ impl GitStore {
                     .is_some_and(|ids| ids.contains(&worktree_id))
             })
             .and_then(|repo_id| self.repositories.get(repo_id))
-            .map(|repo| repo.read(cx).snapshot().original_repo_abs_path.clone())
+            .map(|repo| repo.read(cx).snapshot().original_repo_abs_path)
     }
 
     pub fn status_for_buffer_id(&self, buffer_id: BufferId, cx: &App) -> Option<FileStatus> {
