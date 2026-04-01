@@ -4674,6 +4674,13 @@ impl EditorElement {
                 .display_snapshot
                 .point_to_display_point(start_point, Bias::Left)
                 .row();
+            if rows
+                .last()
+                .is_some_and(|last| last.sticky_row == sticky_row)
+            {
+                continue;
+            }
+
             let end_row = snapshot
                 .display_snapshot
                 .point_to_display_point(end_point, Bias::Left)
@@ -9772,26 +9779,14 @@ impl Element for EditorElement {
                         f64::from(visible_bounds.size.height / line_height);
 
                     // The max scroll position for the top of the window
-                    let max_scroll_top = if matches!(
-                        snapshot.mode,
-                        EditorMode::SingleLine
-                            | EditorMode::AutoHeight { .. }
-                            | EditorMode::Full {
-                                sizing_behavior: SizingBehavior::ExcludeOverscrollMargin
-                                    | SizingBehavior::SizeByContent,
-                                ..
-                            }
-                    ) {
-                        (max_row - height_in_lines + 1.).max(0.)
-                    } else {
-                        let settings = EditorSettings::get_global(cx);
-                        match settings.scroll_beyond_last_line {
-                            ScrollBeyondLastLine::OnePage => max_row,
-                            ScrollBeyondLastLine::Off => (max_row - height_in_lines + 1.).max(0.),
-                            ScrollBeyondLastLine::VerticalScrollMargin => {
-                                (max_row - height_in_lines + 1. + settings.vertical_scroll_margin)
-                                    .max(0.)
-                            }
+                    let scroll_beyond_last_line = self.editor.read(cx).scroll_beyond_last_line(cx);
+                    let max_scroll_top = match scroll_beyond_last_line {
+                        ScrollBeyondLastLine::OnePage => max_row,
+                        ScrollBeyondLastLine::Off => (max_row - height_in_lines + 1.).max(0.),
+                        ScrollBeyondLastLine::VerticalScrollMargin => {
+                            let settings = EditorSettings::get_global(cx);
+                            (max_row - height_in_lines + 1. + settings.vertical_scroll_margin)
+                                .max(0.)
                         }
                     };
 
@@ -10309,6 +10304,7 @@ impl Element for EditorElement {
                         ),
                         longest_line_blame_width,
                         EditorSettings::get_global(cx),
+                        scroll_beyond_last_line,
                     );
 
                     let mut scroll_width = scrollbar_layout_information.scroll_range.width;
@@ -11187,8 +11183,9 @@ impl ScrollbarLayoutInformation {
         document_size: Size<Pixels>,
         longest_line_blame_width: Pixels,
         settings: &EditorSettings,
+        scroll_beyond_last_line: ScrollBeyondLastLine,
     ) -> Self {
-        let vertical_overscroll = match settings.scroll_beyond_last_line {
+        let vertical_overscroll = match scroll_beyond_last_line {
             ScrollBeyondLastLine::OnePage => editor_bounds.size.height,
             ScrollBeyondLastLine::Off => glyph_grid_cell.height,
             ScrollBeyondLastLine::VerticalScrollMargin => {

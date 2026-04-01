@@ -7,7 +7,7 @@ description: Transform code inline with AI in Zed. Send selections to any LLM fo
 
 ## Usage Overview
 
-Use {#kb assistant::InlineAssist} to open the Inline Assistant in editors, text threads, the rules library, channel notes, and the terminal panel.
+Use {#kb assistant::InlineAssist} to open the Inline Assistant in editors, the rules library, channel notes, and the terminal panel.
 
 The Inline Assistant sends your current selection (or line) to a language model and replaces it with the response.
 

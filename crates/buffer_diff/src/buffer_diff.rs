@@ -115,6 +115,7 @@ pub struct DiffHunk {
 struct InternalDiffHunk {
     buffer_range: Range<Anchor>,
     diff_base_byte_range: Range<usize>,
+    diff_base_point_range: Range<Point>,
     base_word_diffs: Vec<Range<usize>>,
     buffer_word_diffs: Vec<Range<Anchor>>,
 }
@@ -131,15 +132,25 @@ struct PendingHunk {
 pub struct DiffHunkSummary {
     buffer_range: Range<Anchor>,
     diff_base_byte_range: Range<usize>,
+    added_rows: u32,
+    removed_rows: u32,
 }
 
 impl sum_tree::Item for InternalDiffHunk {
     type Summary = DiffHunkSummary;
 
-    fn summary(&self, _cx: &text::BufferSnapshot) -> Self::Summary {
+    fn summary(&self, buffer: &text::BufferSnapshot) -> Self::Summary {
+        let buffer_start = self.buffer_range.start.to_point(buffer);
+        let buffer_end = self.buffer_range.end.to_point(buffer);
         DiffHunkSummary {
             buffer_range: self.buffer_range.clone(),
             diff_base_byte_range: self.diff_base_byte_range.clone(),
+            added_rows: buffer_end.row.saturating_sub(buffer_start.row),
+            removed_rows: self
+                .diff_base_point_range
+                .end
+                .row
+                .saturating_sub(self.diff_base_point_range.start.row),
         }
     }
 }
@@ -151,6 +162,8 @@ impl sum_tree::Item for PendingHunk {
         DiffHunkSummary {
             buffer_range: self.buffer_range.clone(),
             diff_base_byte_range: self.diff_base_byte_range.clone(),
+            added_rows: 0,
+            removed_rows: 0,
         }
     }
 }
@@ -162,6 +175,8 @@ impl sum_tree::Summary for DiffHunkSummary {
         DiffHunkSummary {
             buffer_range: Anchor::MIN..Anchor::MIN,
             diff_base_byte_range: 0..0,
+            added_rows: 0,
+            removed_rows: 0,
         }
     }
 
@@ -180,6 +195,9 @@ impl sum_tree::Summary for DiffHunkSummary {
             .diff_base_byte_range
             .end
             .max(other.diff_base_byte_range.end);
+
+        self.added_rows += other.added_rows;
+        self.removed_rows += other.removed_rows;
     }
 }
 
@@ -232,6 +250,11 @@ impl BufferDiffSnapshot {
 
     pub fn is_empty(&self) -> bool {
         self.inner.hunks.is_empty()
+    }
+
+    pub fn changed_row_counts(&self) -> (u32, u32) {
+        let summary = self.inner.hunks.summary();
+        (summary.added_rows, summary.removed_rows)
     }
 
     pub fn base_text_string(&self) -> Option<String> {
@@ -1120,6 +1143,8 @@ fn compute_hunks(
                 InternalDiffHunk {
                     buffer_range: buffer.anchor_before(0)..buffer.anchor_before(0),
                     diff_base_byte_range: 0..diff_base.len() - 1,
+                    diff_base_point_range: Point::new(0, 0)
+                        ..diff_base_rope.offset_to_point(diff_base.len() - 1),
                     base_word_diffs: Vec::default(),
                     buffer_word_diffs: Vec::default(),
                 },
@@ -1147,6 +1172,7 @@ fn compute_hunks(
             InternalDiffHunk {
                 buffer_range: Anchor::min_max_range_for_buffer(buffer.remote_id()),
                 diff_base_byte_range: 0..0,
+                diff_base_point_range: Point::new(0, 0)..Point::new(0, 0),
                 base_word_diffs: Vec::default(),
                 buffer_word_diffs: Vec::default(),
             },
@@ -1460,7 +1486,9 @@ fn process_patch_hunk(
 
     InternalDiffHunk {
         buffer_range,
-        diff_base_byte_range,
+        diff_base_byte_range: diff_base_byte_range.clone(),
+        diff_base_point_range: diff_base.offset_to_point(diff_base_byte_range.start)
+            ..diff_base.offset_to_point(diff_base_byte_range.end),
         base_word_diffs,
         buffer_word_diffs,
     }
@@ -1565,6 +1593,8 @@ impl BufferDiff {
             self.inner.pending_hunks = SumTree::from_summary(DiffHunkSummary {
                 buffer_range: Anchor::min_min_range_for_buffer(self.buffer_id),
                 diff_base_byte_range: 0..0,
+                added_rows: 0,
+                removed_rows: 0,
             });
             let changed_range = Some(Anchor::min_max_range_for_buffer(self.buffer_id));
             let base_text_range = Some(0..self.base_text(cx).len());

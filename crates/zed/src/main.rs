@@ -441,10 +441,8 @@ fn main() {
         }
     });
     app.on_reopen(move |cx| {
-        if let Some(app_state) = AppState::try_global(cx).and_then(|app_state| app_state.upgrade())
-        {
+        if let Some(app_state) = AppState::try_global(cx) {
             cx.spawn({
-                let app_state = app_state;
                 async move |cx| {
                     if let Err(e) = restore_or_create_workspace(app_state, cx).await {
                         fail_to_open_window_async(e, cx)
@@ -539,6 +537,7 @@ fn main() {
             tx.send(Some(options)).log_err();
         })
         .detach();
+        ui::on_new_scrollbars::<SettingsStore>(cx);
 
         let node_runtime = NodeRuntime::new(client.http_client(), Some(shell_env_loaded_rx), rx);
 
@@ -599,6 +598,8 @@ fn main() {
         })
         .detach();
 
+        let is_new_install = matches!(&installation_id, Some(IdType::New(_)));
+
         // We should rename these in the future to `first app open`, `first app open for release channel`, and `app open`
         if let (Some(system_id), Some(installation_id)) = (&system_id, &installation_id) {
             match (&system_id, &installation_id) {
@@ -626,7 +627,7 @@ fn main() {
             node_runtime,
             session: app_session,
         });
-        AppState::set_global(Arc::downgrade(&app_state), cx);
+        AppState::set_global(app_state.clone(), cx);
 
         auto_update::init(client.clone(), cx);
         dap_adapters::init(cx);
@@ -681,9 +682,9 @@ fn main() {
         );
         agent_ui::init(
             app_state.fs.clone(),
-            app_state.client.clone(),
-            prompt_builder.clone(),
+            prompt_builder,
             app_state.languages.clone(),
+            is_new_install,
             false,
             cx,
         );
@@ -817,7 +818,7 @@ fn main() {
 
         let menus = app_menus(cx);
         cx.set_menus(menus);
-        initialize_workspace(app_state.clone(), prompt_builder, cx);
+        initialize_workspace(app_state.clone(), cx);
 
         cx.activate(true);
 

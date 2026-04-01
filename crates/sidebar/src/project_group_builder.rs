@@ -73,6 +73,16 @@ impl ProjectGroup {
             .first()
             .expect("groups always have at least one workspace")
     }
+
+    pub fn main_workspace(&self, cx: &App) -> &Entity<Workspace> {
+        self.workspaces
+            .iter()
+            .find(|ws| {
+                !crate::root_repository_snapshots(ws, cx)
+                    .any(|snapshot| snapshot.is_linked_worktree())
+            })
+            .unwrap_or_else(|| self.first_workspace())
+    }
 }
 
 pub struct ProjectGroupBuilder {
@@ -91,7 +101,6 @@ impl ProjectGroupBuilder {
 
     pub fn from_multiworkspace(mw: &MultiWorkspace, cx: &App) -> Self {
         let mut builder = Self::new();
-
         // First pass: collect all directory mappings from every workspace
         // so we know how to canonicalize any path (including linked
         // worktree paths discovered by the main repo's workspace).
@@ -111,7 +120,7 @@ impl ProjectGroupBuilder {
     }
 
     fn project_group_entry(&mut self, name: &ProjectGroupName) -> &mut ProjectGroup {
-        self.project_groups.entry(name.clone()).or_insert_default()
+        self.project_groups.entry_ref(name).or_insert_default()
     }
 
     fn add_mapping(&mut self, work_directory: &Path, original_repo: &Path) {
@@ -148,9 +157,8 @@ impl ProjectGroupBuilder {
         workspace: &Entity<Workspace>,
         cx: &App,
     ) -> ProjectGroupName {
-        let paths: Vec<_> = workspace
-            .read(cx)
-            .root_paths(cx)
+        let root_paths = workspace.read(cx).root_paths(cx);
+        let paths: Vec<_> = root_paths
             .iter()
             .map(|p| self.canonicalize_path(p).to_path_buf())
             .collect();
@@ -166,24 +174,26 @@ impl ProjectGroupBuilder {
             .unwrap_or(path)
     }
 
-    /// Whether the given group should load threads for a linked worktree at
-    /// `worktree_path`. Returns `false` if the worktree already has an open
-    /// workspace in the group (its threads are loaded via the workspace loop)
-    /// or if the worktree's canonical path list doesn't match `group_path_list`.
+    /// Whether the given group should load threads for a linked worktree
+    /// at `worktree_path`. Returns `false` if the worktree already has an
+    /// open workspace in the group (its threads are loaded via the
+    /// workspace loop) or if the worktree's canonical path list doesn't
+    /// match `group_path_list`.
     pub fn group_owns_worktree(
         &self,
         group: &ProjectGroup,
         group_path_list: &PathList,
         worktree_path: &Path,
     ) -> bool {
-        let worktree_arc: Arc<Path> = Arc::from(worktree_path);
-        if group.covered_paths.contains(&worktree_arc) {
+        if group.covered_paths.contains(worktree_path) {
             return false;
         }
         let canonical = self.canonicalize_path_list(&PathList::new(&[worktree_path]));
         canonical == *group_path_list
     }
 
+    /// Canonicalizes every path in a [`PathList`] using the builder's
+    /// directory mappings.
     fn canonicalize_path_list(&self, path_list: &PathList) -> PathList {
         let paths: Vec<_> = path_list
             .paths()
@@ -245,6 +255,7 @@ mod tests {
                 path: std::path::PathBuf::from("/wt/feature-a"),
                 ref_name: Some("refs/heads/feature-a".into()),
                 sha: "abc".into(),
+                is_main: false,
             });
         })
         .expect("git state should be set");

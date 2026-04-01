@@ -4146,7 +4146,6 @@ impl Window {
                 self.modifiers = scroll_wheel.modifiers;
                 PlatformInput::ScrollWheel(scroll_wheel)
             }
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
             PlatformInput::Pinch(pinch) => {
                 self.mouse_position = pinch.position;
                 self.modifiers = pinch.modifiers;
@@ -5023,6 +5022,12 @@ impl Window {
     pub fn set_tabbing_identifier(&self, tabbing_identifier: Option<String>) {
         self.platform_window
             .set_tabbing_identifier(tabbing_identifier)
+    }
+
+    /// Request the OS to play an alert sound. On some platforms this is associated
+    /// with the window, for others it's just a simple global function call.
+    pub fn play_system_bell(&self) {
+        self.platform_window.play_system_bell()
     }
 
     /// Toggles the inspector mode on this window.

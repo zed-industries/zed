@@ -2,6 +2,7 @@ use crate::{
     ActiveDiagnostic, Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings,
     EditorSnapshot, GlobalDiagnosticRenderer, HighlightKey, Hover,
     display_map::{InlayOffset, ToDisplayPoint, is_invisible},
+    editor_settings::EditorSettingsScrollbarProxy,
     hover_links::{InlayHighlight, RangeInEditor},
     movement::TextLayoutDetails,
     scroll::ScrollAmount,
@@ -16,7 +17,7 @@ use gpui::{
 use itertools::Itertools;
 use language::{DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
-use markdown::{Markdown, MarkdownElement, MarkdownStyle};
+use markdown::{CopyButtonVisibility, Markdown, MarkdownElement, MarkdownStyle};
 use multi_buffer::{MultiBufferOffset, ToOffset, ToPoint};
 use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
 use settings::Settings;
@@ -1039,8 +1040,7 @@ impl InfoPopover {
                         .child(
                             MarkdownElement::new(markdown, hover_markdown_style(window, cx))
                                 .code_block_renderer(markdown::CodeBlockRenderer::Default {
-                                    copy_button: false,
-                                    copy_button_on_hover: false,
+                                    copy_button_visibility: CopyButtonVisibility::Hidden,
                                     border: false,
                                 })
                                 .on_url_click(open_markdown_url)
@@ -1048,7 +1048,7 @@ impl InfoPopover {
                         ),
                 )
                 .custom_scrollbars(
-                    Scrollbars::for_settings::<EditorSettings>()
+                    Scrollbars::for_settings::<EditorSettingsScrollbarProxy>()
                         .tracked_scroll_handle(&self.scroll_handle),
                     window,
                     cx,
@@ -1154,8 +1154,7 @@ impl DiagnosticPopover {
                                     diagnostics_markdown_style(window, cx),
                                 )
                                 .code_block_renderer(markdown::CodeBlockRenderer::Default {
-                                    copy_button: false,
-                                    copy_button_on_hover: false,
+                                    copy_button_visibility: CopyButtonVisibility::Hidden,
                                     border: false,
                                 })
                                 .on_url_click(
@@ -1176,7 +1175,7 @@ impl DiagnosticPopover {
                         CopyButton::new("copy-diagnostic", message).tooltip_label("Copy Diagnostic")
                     }))
                     .custom_scrollbars(
-                        Scrollbars::for_settings::<EditorSettings>()
+                        Scrollbars::for_settings::<EditorSettingsScrollbarProxy>()
                             .tracked_scroll_handle(&self.scroll_handle),
                         window,
                         cx,

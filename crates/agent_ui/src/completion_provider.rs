@@ -28,7 +28,7 @@ use prompt_store::{PromptStore, UserPromptId};
 use rope::Point;
 use settings::{Settings, TerminalDockPosition};
 use terminal::terminal_settings::TerminalSettings;
-use terminal_view::terminal_panel::TerminalPanel;
+use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use text::{Anchor, ToOffset as _, ToPoint as _};
 use ui::IconName;
 use ui::prelude::*;
@@ -562,8 +562,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                     .collect();
 
                 // Collect terminal selections from all terminal views if the terminal panel is visible
-                let terminal_selections: Vec<String> =
-                    terminal_selections_if_panel_open(workspace, cx);
+                let terminal_selections: Vec<String> = terminal_selections(workspace, cx);
 
                 const EDITOR_PLACEHOLDER: &str = "selection ";
                 const TERMINAL_PLACEHOLDER: &str = "terminal ";
@@ -1198,7 +1197,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 })
             });
 
-        let has_terminal_selection = !terminal_selections_if_panel_open(workspace, cx).is_empty();
+        let has_terminal_selection = !terminal_selections(workspace, cx).is_empty();
 
         if has_editor_selection || has_terminal_selection {
             entries.push(PromptContextEntry::Action(
@@ -2169,28 +2168,45 @@ fn build_code_label_for_path(
     label.build()
 }
 
-/// Returns terminal selections from all terminal views if the terminal panel is open.
-fn terminal_selections_if_panel_open(workspace: &Entity<Workspace>, cx: &App) -> Vec<String> {
-    let Some(panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
-        return Vec::new();
-    };
+fn terminal_selections(workspace: &Entity<Workspace>, cx: &App) -> Vec<String> {
+    let mut selections = Vec::new();
 
-    // Check if the dock containing this panel is open
-    let position = match TerminalSettings::get_global(cx).dock {
-        TerminalDockPosition::Left => DockPosition::Left,
-        TerminalDockPosition::Bottom => DockPosition::Bottom,
-        TerminalDockPosition::Right => DockPosition::Right,
-    };
-    let dock_is_open = workspace
+    // Check if the active item is a terminal (in a panel or not)
+    if let Some(terminal_view) = workspace
         .read(cx)
-        .dock_at_position(position)
-        .read(cx)
-        .is_open();
-    if !dock_is_open {
-        return Vec::new();
+        .active_item(cx)
+        .and_then(|item| item.act_as::<TerminalView>(cx))
+    {
+        if let Some(text) = terminal_view
+            .read(cx)
+            .terminal()
+            .read(cx)
+            .last_content
+            .selection_text
+            .clone()
+            .filter(|text| !text.is_empty())
+        {
+            selections.push(text);
+        }
     }
 
-    panel.read(cx).terminal_selections(cx)
+    if let Some(panel) = workspace.read(cx).panel::<TerminalPanel>(cx) {
+        let position = match TerminalSettings::get_global(cx).dock {
+            TerminalDockPosition::Left => DockPosition::Left,
+            TerminalDockPosition::Bottom => DockPosition::Bottom,
+            TerminalDockPosition::Right => DockPosition::Right,
+        };
+        let dock_is_open = workspace
+            .read(cx)
+            .dock_at_position(position)
+            .read(cx)
+            .is_open();
+        if dock_is_open {
+            selections.extend(panel.read(cx).terminal_selections(cx));
+        }
+    }
+
+    selections
 }
 
 fn selection_ranges(
@@ -2213,17 +2229,8 @@ fn selection_ranges(
 
         selections
             .into_iter()
-            .map(|s| {
-                let (start, end) = if s.is_empty() {
-                    let row = multi_buffer::MultiBufferRow(s.start.row);
-                    let line_start = text::Point::new(s.start.row, 0);
-                    let line_end = text::Point::new(s.start.row, snapshot.line_len(row));
-                    (line_start, line_end)
-                } else {
-                    (s.start, s.end)
-                };
-                snapshot.anchor_after(start)..snapshot.anchor_before(end)
-            })
+            .filter(|s| !s.is_empty())
+            .map(|s| snapshot.anchor_after(s.start)..snapshot.anchor_before(s.end))
             .flat_map(|range| {
                 let (start_buffer, start) = buffer.text_anchor_for_position(range.start, cx)?;
                 let (end_buffer, end) = buffer.text_anchor_for_position(range.end, cx)?;

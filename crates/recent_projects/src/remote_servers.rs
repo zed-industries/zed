@@ -1566,7 +1566,7 @@ impl RemoteServerProjects {
                         project.paths.into_iter().map(PathBuf::from).collect(),
                         app_state,
                         OpenOptions {
-                            replace_window,
+                            requesting_window: replace_window,
                             ..OpenOptions::default()
                         },
                         cx,
@@ -1621,23 +1621,24 @@ impl RemoteServerProjects {
                     }))
                     .tooltip(Tooltip::text(project.paths.join("\n")))
                     .when(is_from_zed, |server_list_item| {
-                        server_list_item.end_hover_slot::<AnyElement>(Some(
-                            div()
-                                .mr_2()
-                                .child({
-                                    let project = project.clone();
-                                    // Right-margin to offset it from the Scrollbar
-                                    IconButton::new("remove-remote-project", IconName::Trash)
-                                        .icon_size(IconSize::Small)
-                                        .shape(IconButtonShape::Square)
-                                        .size(ButtonSize::Large)
-                                        .tooltip(Tooltip::text("Delete Remote Project"))
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.delete_remote_project(server_ix, &project, cx)
-                                        }))
-                                })
-                                .into_any_element(),
-                        ))
+                        server_list_item
+                            .end_slot(
+                                div()
+                                    .mr_2()
+                                    .child({
+                                        let project = project.clone();
+                                        IconButton::new("remove-remote-project", IconName::Trash)
+                                            .icon_size(IconSize::Small)
+                                            .shape(IconButtonShape::Square)
+                                            .size(ButtonSize::Large)
+                                            .tooltip(Tooltip::text("Delete Remote Project"))
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.delete_remote_project(server_ix, &project, cx)
+                                            }))
+                                    })
+                                    .into_any_element(),
+                            )
+                            .show_end_slot_on_hover()
                     }),
             )
     }
@@ -1852,7 +1853,6 @@ impl RemoteServerProjects {
         cx: &mut Context<Self>,
     ) {
         let replace_window = window.window_handle().downcast::<MultiWorkspace>();
-
         let app_state = Arc::downgrade(&app_state);
         cx.spawn_in(window, async move |entity, cx| {
             let (connection, starting_dir) =
@@ -1895,7 +1895,7 @@ impl RemoteServerProjects {
                 vec![starting_dir].into_iter().map(PathBuf::from).collect(),
                 app_state,
                 OpenOptions {
-                    replace_window,
+                    requesting_window: replace_window,
                     ..OpenOptions::default()
                 },
                 cx,
@@ -2414,9 +2414,8 @@ impl RemoteServerProjects {
                             .spacing(ui::ListItemSpacing::Sparse)
                             .start_slot(Icon::new(IconName::Copy).color(Color::Muted))
                             .child(Label::new("Copy Server Address"))
-                            .end_hover_slot(
-                                Label::new(connection_string.clone()).color(Color::Muted),
-                            )
+                            .end_slot(Label::new(connection_string.clone()).color(Color::Muted))
+                            .show_end_slot_on_hover()
                             .on_click({
                                 let connection_string = connection_string.clone();
                                 move |_, _, cx| {

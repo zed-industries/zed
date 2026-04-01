@@ -710,12 +710,9 @@ fn render_github_copilot_provider(window: &mut Window, cx: &mut App) -> Option<i
     let configuration_view = window.use_state(cx, |_, cx| {
         copilot_ui::ConfigurationView::new(
             move |cx| {
-                if let Some(app_state) = AppState::global(cx).upgrade() {
-                    copilot::GlobalCopilotAuth::try_get_or_init(app_state, cx)
-                        .is_some_and(|copilot| copilot.0.read(cx).is_authenticated())
-                } else {
-                    false
-                }
+                let app_state = AppState::global(cx);
+                copilot::GlobalCopilotAuth::try_get_or_init(app_state, cx)
+                    .is_some_and(|copilot| copilot.0.read(cx).is_authenticated())
             },
             copilot_ui::ConfigurationMode::EditPrediction,
             cx,

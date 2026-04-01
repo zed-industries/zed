@@ -9,7 +9,7 @@ use itertools::Itertools;
 use language::CodeLabel;
 use language::{Buffer, LanguageName, LanguageRegistry};
 use lsp::CompletionItemTag;
-use markdown::{Markdown, MarkdownElement};
+use markdown::{CopyButtonVisibility, Markdown, MarkdownElement};
 use multi_buffer::{Anchor, ExcerptId};
 use ordered_float::OrderedFloat;
 use project::lsp_store::CompletionDocumentation;
@@ -287,13 +287,8 @@ impl Drop for CompletionsMenu {
     }
 }
 
+#[derive(Default)]
 struct CompletionMenuScrollBarSetting;
-
-impl ui::scrollbars::GlobalSetting for CompletionMenuScrollBarSetting {
-    fn get_value(_cx: &App) -> &Self {
-        &Self
-    }
-}
 
 impl ui::scrollbars::ScrollbarVisibility for CompletionMenuScrollBarSetting {
     fn visibility(&self, cx: &App) -> ui::scrollbars::ShowScrollbar {
@@ -1123,8 +1118,7 @@ impl CompletionsMenu {
         div().child(
             MarkdownElement::new(markdown, hover_markdown_style(window, cx))
                 .code_block_renderer(markdown::CodeBlockRenderer::Default {
-                    copy_button: false,
-                    copy_button_on_hover: false,
+                    copy_button_visibility: CopyButtonVisibility::Hidden,
                     border: false,
                 })
                 .on_url_click(open_markdown_url),

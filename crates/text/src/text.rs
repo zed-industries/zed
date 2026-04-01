@@ -223,10 +223,11 @@ impl History {
             redo_stack: Vec::new(),
             transaction_depth: 0,
             // Don't group transactions in tests unless we opt in, because it's a footgun.
-            #[cfg(any(test, feature = "test-support"))]
-            group_interval: Duration::ZERO,
-            #[cfg(not(any(test, feature = "test-support")))]
-            group_interval: Duration::from_millis(300),
+            group_interval: if cfg!(any(test, feature = "test-support")) {
+                Duration::ZERO
+            } else {
+                Duration::from_millis(300)
+            },
         }
     }
 
@@ -1825,6 +1826,10 @@ impl Buffer {
             tx.try_send(()).ok();
         }
     }
+
+    pub fn set_group_interval(&mut self, group_interval: Duration) {
+        self.history.group_interval = group_interval;
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -1927,10 +1932,6 @@ impl Buffer {
         );
 
         assert!(!self.text().contains("\r\n"));
-    }
-
-    pub fn set_group_interval(&mut self, group_interval: Duration) {
-        self.history.group_interval = group_interval;
     }
 
     pub fn random_byte_range(&self, start_offset: usize, rng: &mut impl rand::Rng) -> Range<usize> {
