@@ -8685,7 +8685,7 @@ mod tests {
         pane.update_in(cx, |pane, window, cx| {
             let item_b = Box::new(cx.new(|cx| TestItem::new(cx).with_label("B")));
             pane.replace_preview_item_id(item_b.item_id(), window, cx);
-            pane.add_item(item_b.clone(), true, true, None, window, cx);
+            pane.add_item(item_b, true, true, None, window, cx);
         });
 
         let has_closed_items = pane.read_with(cx, |pane, _| {
