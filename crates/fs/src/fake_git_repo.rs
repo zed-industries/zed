@@ -53,7 +53,7 @@ pub struct FakeGitRepositoryState {
     pub simulated_create_worktree_error: Option<String>,
     pub refs: HashMap<String, String>,
     pub graph_commits: Vec<Arc<InitialGraphCommitData>>,
-    pub worktrees: Vec<Worktree>,
+    pub(crate) worktrees: Vec<Worktree>,
 }
 
 impl FakeGitRepositoryState {

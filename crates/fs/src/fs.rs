@@ -57,7 +57,7 @@ use collections::{BTreeMap, btree_map};
 use fake_git_repo::FakeGitRepositoryState;
 #[cfg(feature = "test-support")]
 use git::{
-    repository::{InitialGraphCommitData, RepoPath, repo_path},
+    repository::{InitialGraphCommitData, RepoPath, Worktree, repo_path},
     status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
 #[cfg(feature = "test-support")]
@@ -1956,6 +1956,27 @@ impl FakeFs {
             state
                 .branches
                 .extend(branches.iter().map(ToString::to_string));
+        })
+        .unwrap();
+    }
+
+    pub fn add_linked_worktree_for_repo(
+        &self,
+        dot_git: &Path,
+        emit_git_event: bool,
+        worktree: Worktree,
+    ) {
+        self.with_git_state(dot_git, emit_git_event, |state| {
+            state.worktrees.push(worktree);
+        })
+        .unwrap();
+    }
+
+    pub fn remove_worktree_for_repo(&self, dot_git: &Path, emit_git_event: bool, ref_name: &str) {
+        self.with_git_state(dot_git, emit_git_event, |state| {
+            state
+                .worktrees
+                .retain(|wt| wt.ref_name.as_ref().map(|r| r.as_ref()) != Some(ref_name));
         })
         .unwrap();
     }

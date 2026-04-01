@@ -30,7 +30,7 @@ use crate::{
     transport::parse_platform,
 };
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DockerConnectionOptions {
     pub name: String,
     pub container_id: String,
