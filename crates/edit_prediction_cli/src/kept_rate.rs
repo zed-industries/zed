@@ -25,8 +25,8 @@ fn dp_index(width: usize, row: usize, column: usize) -> usize {
     row * width + column
 }
 
-/// Return boolean masks over `a` and `b` where `true` means the token is part
-/// of one LCS(a, b), interpreted as "kept".
+/// Return masks over `a` and `b` using one-sided LCS tie-breaking for each
+/// side while sharing a single DP table construction.
 fn lcs_keep_masks(a: &[&str], b: &[&str]) -> (Vec<bool>, Vec<bool>) {
     if a.is_empty() || b.is_empty() {
         return (vec![false; a.len()], vec![false; b.len()]);
@@ -103,7 +103,6 @@ fn lcs_keep_masks(a: &[&str], b: &[&str]) -> (Vec<bool>, Vec<bool>) {
     while i > 0 && j > 0 {
         if a_mid[i - 1] == b_mid[j - 1] {
             keep_a[prefix_len + i - 1] = true;
-            keep_b[prefix_len + j - 1] = true;
             i -= 1;
             j -= 1;
         } else {
@@ -113,6 +112,25 @@ fn lcs_keep_masks(a: &[&str], b: &[&str]) -> (Vec<bool>, Vec<bool>) {
                 i -= 1;
             } else {
                 j -= 1;
+            }
+        }
+    }
+
+    let mut i = a_mid.len();
+    let mut j = b_mid.len();
+
+    while i > 0 && j > 0 {
+        if a_mid[i - 1] == b_mid[j - 1] {
+            keep_b[prefix_len + j - 1] = true;
+            i -= 1;
+            j -= 1;
+        } else {
+            let up = dp[dp_index(column_count, i - 1, j)];
+            let left = dp[dp_index(column_count, i, j - 1)];
+            if left >= up {
+                j -= 1;
+            } else {
+                i -= 1;
             }
         }
     }
@@ -240,6 +258,15 @@ mod test_kept_rate {
         let (a_mask, b_mask) = lcs_keep_masks(&[], &["x"]);
         assert!(a_mask.is_empty());
         assert_eq!(b_mask, vec![false]);
+    }
+
+    #[test]
+    fn test_lcs_keep_masks_matches_historical_one_sided_masks() {
+        let a = ["x", "a", "x", "b"];
+        let b = ["a", "x", "b", "x"];
+        let (a_mask, b_mask) = lcs_keep_masks(&a, &b);
+        assert_eq!(a_mask, lcs_keep_masks(&a, &b).0);
+        assert_eq!(b_mask, lcs_keep_masks(&b, &a).0);
     }
 
     #[test]
