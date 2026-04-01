@@ -270,7 +270,7 @@ pub struct MarkdownOptions {
     pub render_mermaid_diagrams: bool,
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CopyButtonVisibility {
     Hidden,
     AlwaysVisible,
@@ -1694,40 +1694,39 @@ impl Element for MarkdownElement {
                             copy_button_visibility,
                             ..
                         } = &self.code_block_renderer
+                            && copy_button_visibility != CopyButtonVisibility::Hidden
                         {
-                            if !matches!(copy_button_visibility, CopyButtonVisibility::Hidden) {
-                                builder.modify_current_div(|el| {
-                                    let content_range = parser::extract_code_block_content_range(
-                                        &parsed_markdown.source()[range.clone()],
-                                    );
-                                    let content_range = content_range.start + range.start
-                                        ..content_range.end + range.start;
+                            builder.modify_current_div(|el| {
+                                let content_range = parser::extract_code_block_content_range(
+                                    &parsed_markdown.source()[range.clone()],
+                                );
+                                let content_range = content_range.start + range.start
+                                    ..content_range.end + range.start;
 
-                                    let code = parsed_markdown.source()[content_range].to_string();
-                                    let codeblock = render_copy_code_block_button(
-                                        range.end,
-                                        code,
-                                        self.markdown.clone(),
-                                    );
-                                    el.child(
-                                        h_flex()
-                                            .w_4()
-                                            .absolute()
-                                            .justify_end()
-                                            .when_else(
-                                                copy_button_visibility
-                                                    == &CopyButtonVisibility::AlwaysVisible,
-                                                |this| this.top_1p5().right_1p5(),
-                                                |this| {
-                                                    this.top_0()
-                                                        .right_0()
-                                                        .visible_on_hover("code_block")
-                                                },
-                                            )
-                                            .child(codeblock),
-                                    )
-                                });
-                            }
+                                let code = parsed_markdown.source()[content_range].to_string();
+                                let codeblock = render_copy_code_block_button(
+                                    range.end,
+                                    code,
+                                    self.markdown.clone(),
+                                );
+                                el.child(
+                                    h_flex()
+                                        .w_4()
+                                        .absolute()
+                                        .justify_end()
+                                        .when_else(
+                                            copy_button_visibility
+                                                == &CopyButtonVisibility::AlwaysVisible,
+                                            |this| this.top_1p5().right_1p5(),
+                                            |this| {
+                                                this.top_0()
+                                                    .right_0()
+                                                    .visible_on_hover("code_block")
+                                            },
+                                        )
+                                        .child(codeblock),
+                                )
+                            });
                         }
 
                         // Pop the parent container.
