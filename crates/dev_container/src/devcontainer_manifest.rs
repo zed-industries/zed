@@ -4496,8 +4496,6 @@ chmod +x ./install.sh
             }
         }
 
-        // Unused function in the windows test
-        #[cfg(not(target_os = "windows"))]
         fn commands_by_program(&self, program: &str) -> Vec<TestCommand> {
             let record = self.commands_recorded.lock().expect("poisoned");
             record
