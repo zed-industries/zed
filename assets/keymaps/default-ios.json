@@ -651,5 +651,71 @@
       "ctrl-alt-right": "pane::SplitRight",
       "cmd-d": "pane::SplitRight"
     }
+  },
+  // Edit prediction
+  {
+    "context": "Editor && mode == full && edit_prediction",
+    "use_key_equivalents": true,
+    "bindings": {
+      "alt-tab": "editor::NextEditPrediction",
+      "alt-shift-tab": "editor::PreviousEditPrediction"
+    }
+  },
+  {
+    "context": "Editor && !edit_prediction",
+    "use_key_equivalents": true,
+    "bindings": {
+      "alt-tab": "editor::ShowEditPrediction"
+    }
+  },
+  {
+    "context": "Editor && edit_prediction",
+    "bindings": {
+      "alt-tab": "editor::AcceptEditPrediction",
+      "ctrl-cmd-right": "editor::AcceptNextWordEditPrediction",
+      "ctrl-cmd-down": "editor::AcceptNextLineEditPrediction"
+    }
+  },
+  {
+    "context": "Editor && edit_prediction && edit_prediction_mode == eager && !showing_completions",
+    "bindings": {
+      "tab": "editor::AcceptEditPrediction"
+    }
+  },
+  // Agent panel
+  {
+    "context": "AgentPanel",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-n": "agent::NewThread",
+      "cmd-shift-h": "agent::OpenHistory",
+      "cmd-alt-c": "agent::OpenSettings",
+      "cmd-alt-l": "agent::OpenRulesLibrary",
+      "cmd-alt-p": "agent::ManageProfiles",
+      "cmd-i": "agent::ToggleProfileSelector",
+      "shift-tab": "agent::CycleModeSelector",
+      "cmd-alt-/": "agent::ToggleModelSelector",
+      "cmd-enter": "agent::ChatWithFollow",
+      "cmd-shift-enter": "agent::SendImmediately",
+      "cmd-shift-enter": "agent::ContinueThread",
+      "cmd-y": "agent::AllowOnce",
+      "cmd-alt-z": "agent::RejectOnce"
+    }
+  },
+  {
+    "context": "AgentPanel > Markdown",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-c": "markdown::CopyAsMarkdown"
+    }
+  },
+  {
+    "context": "AgentFeedbackMessageEditor > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "menu::Cancel",
+      "enter": "menu::Confirm",
+      "alt-enter": "editor::Newline"
+    }
   }
 ]
