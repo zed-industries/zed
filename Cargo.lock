@@ -21724,6 +21724,8 @@ dependencies = [
  "postage",
  "pretty_assertions",
  "project",
+ "proptest",
+ "proptest-derive",
  "release_channel",
  "remote",
  "schemars",
